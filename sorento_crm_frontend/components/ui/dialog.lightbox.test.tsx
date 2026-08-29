@@ -9,7 +9,7 @@
  * default flips and the bubble exemption goes.
  */
 import React from 'react';
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 import { Dialog, DialogContent, DialogTitle, DialogTrigger } from './dialog';
@@ -55,6 +55,73 @@ describe('Dialog is a lightbox (S1-01)', () => {
 
     await waitFor(() => expect(screen.queryByText('Edit record')).toBeNull());
     await waitFor(() => expect(trigger).toHaveFocus());
+  });
+});
+
+/**
+ * Almost every dialog in this product is opened by a plain button flipping
+ * state - 244 files render <Dialog>, 6 use <DialogTrigger> - so Radix has no
+ * trigger node to hand focus back to and drops it on <body>. After Escape the
+ * keyboard user is at the top of the document, having lost their place in the
+ * list they were working.
+ */
+function StateOpenedHarness({ onCloseAutoFocus }: { onCloseAutoFocus?: (e: Event) => void }) {
+  const [open, setOpen] = React.useState(false);
+  return (
+    <div>
+      <button type="button" onClick={() => setOpen(true)}>
+        Create Category
+      </button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent onCloseAutoFocus={onCloseAutoFocus}>
+          <DialogTitle>Create Category</DialogTitle>
+          <button type="button" onClick={() => setOpen(false)}>
+            Cancel
+          </button>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+describe('Focus comes back to where it left (S1-01)', () => {
+  it('S1-01: Escape returns focus to the plain button that opened it', async () => {
+    render(<StateOpenedHarness />);
+
+    const opener = screen.getByRole('button', { name: 'Create Category' });
+    opener.focus();
+    fireEvent.click(opener);
+    await screen.findByRole('button', { name: 'Cancel' });
+
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape', code: 'Escape' });
+
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(opener));
+  });
+
+  it('S1-01: Cancel returns focus to the plain button that opened it', async () => {
+    render(<StateOpenedHarness />);
+
+    const opener = screen.getByRole('button', { name: 'Create Category' });
+    opener.focus();
+    fireEvent.click(opener);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel' }));
+
+    await waitFor(() => expect(document.activeElement).toBe(opener));
+  });
+
+  it('S1-01: a caller that wants focus somewhere else still wins', async () => {
+    const onCloseAutoFocus = vi.fn((event: Event) => event.preventDefault());
+    render(<StateOpenedHarness onCloseAutoFocus={onCloseAutoFocus} />);
+
+    const opener = screen.getByRole('button', { name: 'Create Category' });
+    opener.focus();
+    fireEvent.click(opener);
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel' }));
+
+    await waitFor(() => expect(onCloseAutoFocus).toHaveBeenCalled());
+    await waitFor(() => expect(document.activeElement).toBe(document.body));
   });
 });
 
@@ -173,5 +240,40 @@ describe('Tall surfaces stay reachable (S1-03)', () => {
     );
 
     expect(document.querySelector('[data-slot="sheet-overlay"]')).toBeNull();
+  });
+
+  it('S1-03: dropping the scrim is not enough - a passive panel is also not modal', () => {
+    render(
+      <div>
+        <p data-testid="behind">Behind the panel</p>
+        <Sheet open modal={false}>
+          <SheetContent overlay={false}>
+            <SheetTitle>S</SheetTitle>
+          </SheetContent>
+        </Sheet>
+      </div>,
+    );
+
+    // `overlay={false}` only removes the paint. Radix still locks and inerts the
+    // page unless the ROOT says modal={false}, which left the three utility
+    // panels dimming nothing while nothing behind them answered.
+    expect(screen.getByTestId('behind').closest('[aria-hidden="true"]')).toBeNull();
+  });
+
+  it('S1-03: a modal sheet still inerts the page, so the two props are independent', async () => {
+    render(
+      <div>
+        <p data-testid="behind">Behind the panel</p>
+        <Sheet open>
+          <SheetContent overlay={false}>
+            <SheetTitle>S</SheetTitle>
+          </SheetContent>
+        </Sheet>
+      </div>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('behind').closest('[aria-hidden="true"]')).not.toBeNull();
+    });
   });
 });

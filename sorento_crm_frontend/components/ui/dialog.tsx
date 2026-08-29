@@ -76,6 +76,7 @@ function DialogContent({
   showCloseButton = true,
   overlay = true,
   variant,
+  onCloseAutoFocus,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> &
   VariantProps<typeof dialogContentVariants> & {
@@ -93,16 +94,60 @@ function DialogContent({
   // same click cycle and their last event would otherwise land outside the
   // freshly-opened dialog and instantly close it.
   const mountedAtRef = React.useRef<number>(0);
+  // Where the keyboard was when this dialog opened.
+  //
+  // Radix hands focus back to its own DialogTrigger, and this product almost
+  // never uses one: 244 files render <Dialog>, 6 use <DialogTrigger>. Everywhere
+  // else a plain button flips state, so Radix has no trigger to return to and
+  // focus lands on <body> - after Escape the keyboard user is at the top of the
+  // document, having lost their place in the list they were working in. Captured
+  // in the ref callback because refs attach before Radix's focus effect runs, so
+  // this still sees the opener rather than the dialog.
+  const openerRef = React.useRef<HTMLElement | null>(null);
   const contentRefCallback = React.useCallback(
     (node: HTMLDivElement | null) => {
       if (node) {
         mountedAtRef.current = performance.now();
+        // Capture ONCE per open, and never something inside the dialog.
+        //
+        // Radix composes this ref, so React detaches and re-attaches it on every
+        // render of an open dialog. By the second attach the focus is already on
+        // the first control INSIDE the content, and capturing that overwrote the
+        // opener with a button that leaves the DOM a moment later - the restore
+        // then found a disconnected node and silently gave up, which is exactly
+        // the "focus lands on body" the tester saw.
+        const active = document.activeElement;
+        if (
+          openerRef.current === null &&
+          active instanceof HTMLElement &&
+          active !== document.body &&
+          !node.contains(active)
+        ) {
+          openerRef.current = active;
+        }
       } else {
         mountedAtRef.current = 0;
       }
     },
     [],
   );
+
+  const restoreFocusToOpener = (event: Event) => {
+    // The caller decides first; if it took over, leave focus alone.
+    onCloseAutoFocus?.(event);
+    if (event.defaultPrevented) return;
+
+    const opener = openerRef.current;
+    openerRef.current = null;
+    // Gone from the DOM - the row that opened this dialog was just deleted - so
+    // let Radix do whatever it would have done.
+    if (!opener || !opener.isConnected) return;
+
+    // Where a DialogTrigger WAS used, the opener is that trigger, so this lands
+    // in the same place Radix would have.
+    event.preventDefault();
+    opener.focus();
+  };
   // Radix wraps these in a CustomEvent whose `target` is the DialogContent itself.
   // The actual click/pointer/focus target is on `event.detail.originalEvent.target`.
   const guardOutsideInteraction = (event: Event) => {
@@ -151,6 +196,7 @@ function DialogContent({
         onPointerDownOutside={guardOutsideInteraction}
         onInteractOutside={guardOutsideInteraction}
         onFocusOutside={guardOutsideInteraction}
+        onCloseAutoFocus={restoreFocusToOpener}
         {...props}
       >
         {needsFallbackTitle ? (
