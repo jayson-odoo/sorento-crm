@@ -276,7 +276,10 @@ describe('A row is a link (S1-06)', () => {
     render(<Harness rowHref={(row) => `/order-management/orders/${row.id}`} />);
     const row = screen.getByText('Alpha').closest('tr')!;
 
-    expect(row).toHaveAttribute('role', 'link');
+    // No role override: an explicit one REPLACES the implicit `row`, and the
+    // table stops being a table to assistive tech. tabIndex plus Enter and
+    // Space is what S1-06 asks for and costs the grid nothing.
+    expect(row).not.toHaveAttribute('role');
     expect(row).toHaveAttribute('tabindex', '0');
 
     fireEvent.keyDown(row, { key: 'Enter' });
@@ -395,8 +398,7 @@ describe('A row is a link (S1-06)', () => {
     const row = screen.getByText('Alpha').closest('tr')!;
 
     expect(row).not.toHaveClass('cursor-pointer');
-    expect(row).not.toHaveAttribute('role', 'link');
-    expect(row).not.toHaveAttribute('role', 'button');
+    expect(row).not.toHaveAttribute('role');
     expect(row).not.toHaveAttribute('tabindex');
   });
 
@@ -418,7 +420,6 @@ describe('A row is a link (S1-06)', () => {
     render(<Harness onRowClick={onRowClick} />);
     const row = screen.getByText('Alpha').closest('tr')!;
 
-    expect(row).toHaveAttribute('role', 'button');
     expect(row).toHaveAttribute('tabindex', '0');
 
     fireEvent.keyDown(row, { key: 'Enter' });
@@ -426,6 +427,18 @@ describe('A row is a link (S1-06)', () => {
 
     fireEvent.keyDown(row, { key: ' ' });
     expect(onRowClick).toHaveBeenCalledTimes(2);
+  });
+
+  it('S4-03: an openable row is still a table row', () => {
+    // `role="link"` on the <tr> replaced the implicit `row`, so the grid was no
+    // longer a table to assistive tech and `getAllByRole('row')` found nothing
+    // - which is how the fulfilment board's own tests reported it.
+    const { unmount } = render(<Harness onRowClick={vi.fn()} />);
+    expect(screen.getAllByRole('row').length).toBeGreaterThan(DATA.length);
+    unmount();
+
+    render(<Harness rowHref={(row) => `/order-management/orders/${row.id}`} />);
+    expect(screen.getAllByRole('row').length).toBeGreaterThan(DATA.length);
   });
 
   it('S4-03: a control inside a lightbox row keeps its own click', () => {

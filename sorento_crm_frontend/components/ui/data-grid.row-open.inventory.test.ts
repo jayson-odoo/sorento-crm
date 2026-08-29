@@ -32,12 +32,21 @@ const ROW_LIGHTBOX = [
   'app/(protected)/master-data-management/brands/components/BrandsList.tsx',
   'app/(protected)/user-management/access-agents/components/ContactAccessAgentsTable.tsx',
   'app/(protected)/user-management/contacts/[id]/components/ContactAccessAgentsTable.tsx',
+  // Audit Logs looks like a log table and is not one: a row opens an "Audit
+  // entry details" lightbox holding the before and after values, which is the
+  // record's only view. Reported during the S4 sweep as a pointer that does
+  // nothing; it was the missing guard on the onRowClick branch, not a stray
+  // cursor. Verified on the lane: the dialog opens and is titled.
+  'app/(protected)/system-management/audit-logs/components/AuditLogsList.tsx',
 ];
 
 /**
  * Log tables and sub-tables. A row here is an event, a tier or a line, not a
  * record with a page of its own, so clicking it has nowhere to go and a pointer
  * cursor would be a promise the screen cannot keep.
+ *
+ * "It is a log" is not the test - having somewhere to go is. Audit Logs is in
+ * ROW_LIGHTBOX above for exactly that reason.
  */
 const INERT = [
   'app/(protected)/sla-management/conversation-sla-tracking/components/EventLogTable.tsx',

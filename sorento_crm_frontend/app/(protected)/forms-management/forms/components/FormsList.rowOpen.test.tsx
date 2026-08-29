@@ -75,7 +75,12 @@ describe('FormsList - the row opens the form', () => {
   it('B3: the whole row is a link to the form, carrying the list query', () => {
     renderList();
 
-    const row = screen.getAllByRole('link').find((el) => el.tagName === 'TR') as HTMLElement;
+    // The row is a `row`, not a `link`: an explicit role on a <tr> replaces the
+    // implicit one and the table stops being a table. What makes it openable is
+    // the tabindex and the handlers.
+    const row = screen
+      .getAllByRole('row')
+      .find((el) => el.getAttribute('tabindex') === '0') as HTMLElement;
     expect(row).toBeTruthy();
 
     fireEvent.click(row);
@@ -96,7 +101,9 @@ describe('FormsList - the row opens the form', () => {
   it('B3: Enter on the focused row opens it too', () => {
     renderList();
 
-    const row = screen.getAllByRole('link').find((el) => el.tagName === 'TR') as HTMLElement;
+    const row = screen
+      .getAllByRole('row')
+      .find((el) => el.getAttribute('tabindex') === '0') as HTMLElement;
     fireEvent.keyDown(row, { key: 'Enter', code: 'Enter' });
 
     expect(push).toHaveBeenCalledWith(expect.stringContaining('/forms-management/forms/form-1'));

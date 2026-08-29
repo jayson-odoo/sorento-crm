@@ -398,23 +398,29 @@ const ROW_INTERACTIVE_SELECTOR =
  * The same hole put the row's open action out of reach of the keyboard and left
  * it with no role for assistive tech to announce.
  *
- * `newTab` is only ever true for a row that opens a URL: a lightbox has no
- * second tab to open in, so a modified click on one of those rows just opens it
- * here.
+ * `opensUrl` is what separates the two: a row that opens a URL honours the
+ * modifiers an anchor honours and can go to a new tab; a row that opens a
+ * lightbox has no second tab, so a modified click just opens it here.
+ *
+ * No `role` on the `<tr>`. S1 put `role="link"` there and it looked right, but
+ * an explicit role REPLACES the implicit one, so the row stopped being a `row`
+ * to assistive tech and the table lost its grid semantics with it. The
+ * fulfilment board's own tests caught it - `getAllByRole('row')` returned
+ * nothing. `tabIndex` plus Enter and Space is what S1-06 and D3 actually ask
+ * for ("the whole row is the target, keyboard included"), and it costs the
+ * table nothing.
  */
 function rowOpenProps({
-  role,
+  opensUrl,
   open,
 }: {
-  role: 'link' | 'button';
+  opensUrl: boolean;
   open: (newTab: boolean) => void;
 }): React.ComponentProps<'tr'> {
   const fromOwnControl = (target: EventTarget | null) =>
     Boolean((target as Element | null)?.closest?.(ROW_INTERACTIVE_SELECTOR));
-  const opensUrl = role === 'link';
 
   return {
-    role,
     tabIndex: 0,
     onClick: (event) => {
       // The PRIMARY button only. A real middle click fires auxclick alone, but a
@@ -478,7 +484,7 @@ function LinkableBodyRow({
   };
 
   return (
-    <tr {...rowProps} {...rowOpenProps({ role: 'link', open: openRecord })}>
+    <tr {...rowProps} {...rowOpenProps({ opensUrl: true, open: openRecord })}>
       {children}
     </tr>
   );
@@ -533,11 +539,11 @@ function DataGridTableBodyRow<TData>({
   }
 
   if (props.onRowClick) {
-    // A lightbox, not a URL: `role="button"`, and no new tab to open in.
+    // A lightbox, not a URL: there is no second tab to open it in.
     return (
       <tr
         {...rowProps}
-        {...rowOpenProps({ role: 'button', open: () => props.onRowClick?.(row.original) })}
+        {...rowOpenProps({ opensUrl: false, open: () => props.onRowClick?.(row.original) })}
       >
         {children}
       </tr>
