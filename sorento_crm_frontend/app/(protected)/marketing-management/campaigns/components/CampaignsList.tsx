@@ -31,7 +31,6 @@ import { useCampaigns } from '../hooks/useCampaigns';
 import type { Campaign } from '../types/campaign.types';
 import { CAMPAIGN_STATUSES, campaignStatusLabel } from '../types/campaign.types';
 import { formatDate } from '@/lib/helpers';
-import { getStatusBadgeVariant } from '@/lib/status-badge';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 
 export default function CampaignsList() {
@@ -129,7 +128,7 @@ export default function CampaignsList() {
         cell: ({ row }) => {
           const status = row.original.status;
           return (
-            <Badge variant={getStatusBadgeVariant(status)} appearance="ghost">
+            <Badge status={status} appearance="ghost">
               {campaignStatusLabel(status)}
             </Badge>
           );

@@ -27,7 +27,7 @@ import {
 } from '@/components/ui/table';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { formatDate } from '@/lib/helpers';
-import { formatStatusLabel, getStatusBadgeVariant } from '@/lib/status-badge';
+import { formatStatusLabel } from '@/lib/status-badge';
 import { getProducts } from '@/app/(protected)/master-data-management/products/services/productService';
 import { ProductComboboxSearchable } from './ProductComboboxSearchable';
 import { SupplierCombobox } from './SupplierCombobox';
@@ -646,7 +646,7 @@ export function PackingListLinesTab() {
                                             </span>
                                             {spo.receipt_status ? (
                                               <Badge
-                                                variant={getStatusBadgeVariant(spo.receipt_status)}
+                                                status={spo.receipt_status}
                                                 className="shrink-0"
                                               >
                                                 {formatStatusLabel(spo.receipt_status)}
@@ -707,7 +707,7 @@ export function PackingListLinesTab() {
                                             </span>
                                             {grn.picking_status ? (
                                               <Badge
-                                                variant={getStatusBadgeVariant(grn.picking_status)}
+                                                status={grn.picking_status}
                                                 className="shrink-0"
                                               >
                                                 {formatStatusLabel(grn.picking_status)}
@@ -730,7 +730,7 @@ export function PackingListLinesTab() {
                           </div>
                         </TableCell>
                         <TableCell>
-                          <Badge variant={getStatusBadgeVariant(lineStatus)}>
+                          <Badge status={lineStatus}>
                             {formatStatusLabel(lineStatus)}
                           </Badge>
                         </TableCell>

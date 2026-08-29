@@ -21,7 +21,6 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Progress } from '@/components/ui/progress';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
-import { getStatusBadgeVariant } from '@/lib/status-badge';
 import {
   getImportJob,
   getImportJobs,
@@ -304,7 +303,7 @@ export default function ImportJobDetailPage({ params }: ImportJobDetailPageProps
             <CardHeader>
               <div className="flex items-center justify-between">
                 <CardTitle>Job Summary</CardTitle>
-                <Badge variant={getStatusBadgeVariant(statusData?.status || job.status)}>
+                <Badge status={statusData?.status || job.status}>
                   {(statusData?.status || job.status || '').toUpperCase()}
                 </Badge>
               </div>
@@ -318,7 +317,7 @@ export default function ImportJobDetailPage({ params }: ImportJobDetailPageProps
                 <div>
                   <p className="text-muted-foreground">Status</p>
                   <p className="font-medium">
-                    <Badge variant={getStatusBadgeVariant(statusData?.status || job.status)}>
+                    <Badge status={statusData?.status || job.status}>
                       {(statusData?.status || job.status || '').toUpperCase()}
                     </Badge>
                   </p>

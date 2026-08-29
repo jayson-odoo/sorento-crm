@@ -41,7 +41,6 @@ import { useOrderStatusSelectQuery } from '../../shared/hooks/use-order-status-s
 import type { Order } from '../types/order.types';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { formatDate } from '@/lib/helpers';
-import { getStatusBadgeVariant } from '@/lib/status-badge';
 import { TemplateUploadDialog } from '@/components/template/TemplateUploadDialog';
 import { bulkImportOrders, importOrderTracking, validateOrderTracking, validateDeliveryOrderDetail } from '../services/orderService';
 import { OrderTrackingUploadDialog } from './OrderTrackingUploadDialog';
@@ -236,7 +235,7 @@ export default function OrdersList() {
         cell: ({ row }) => {
           const status = row.original.order_status;
           return status ? (
-            <Badge variant={getStatusBadgeVariant(status.status_name)}>
+            <Badge status={status.status_name}>
               {status.status_name}
             </Badge>
           ) : (

@@ -36,7 +36,6 @@ import type {
 import Link from 'next/link';
 import React from 'react';
 import { allocationLocation } from '../lib/allocationLocation';
-import { getStatusBadgeVariant } from '@/lib/status-badge';
 
 type ViewMode = 'none' | 'spo_number';
 
@@ -324,7 +323,7 @@ export default function SPOAllocationsList() {
           <DataGridColumnHeader title="Status" column={column} />
         ),
         cell: ({ row }) => (
-          <Badge variant={getStatusBadgeVariant(row.original.receipt_status)} size="sm">
+          <Badge status={row.original.receipt_status} size="sm">
             {row.original.receipt_status
               ?.split('_')
               .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
@@ -708,7 +707,7 @@ export default function SPOAllocationsList() {
                                         </td>
                                         <td className="p-1.5">
                                           <Badge
-                                            variant={getStatusBadgeVariant(allocation.receipt_status)}
+                                            status={allocation.receipt_status}
                                             size="sm"
                                           >
                                             {allocation.receipt_status

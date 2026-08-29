@@ -31,7 +31,6 @@ import type { IntegrationLog } from '../types/integrationLog.types';
 import { formatDistanceToNow } from 'date-fns';
 import { toast } from 'sonner';
 import { formatDateTimeInMalaysia, parseDateTimeAsUTC } from '@/lib/helpers';
-import { getStatusBadgeVariant } from '@/lib/status-badge';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 
@@ -145,7 +144,7 @@ export default function IntegrationLogsList() {
           const status = (row.original.status || 'pending') as string;
           return (
             <Badge
-              variant={getStatusBadgeVariant(status)}
+              status={status}
               appearance="ghost"
               className="capitalize"
             >

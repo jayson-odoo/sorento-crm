@@ -27,7 +27,6 @@ import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useStockBatches } from '../hooks/useStockBatches';
-import { getStatusBadgeVariant } from '@/lib/status-badge';
 import type { StockBatch } from '../types/batch.types';
 import { formatDate } from '@/lib/helpers';
 
@@ -120,7 +119,7 @@ export default function BatchesList() {
         cell: ({ row }) => {
           const status = row.original.status;
           return (
-            <Badge variant={getStatusBadgeVariant(status)} appearance="ghost">
+            <Badge status={status} appearance="ghost">
               {status ? status.charAt(0).toUpperCase() + status.slice(1) : '-'}
             </Badge>
           );

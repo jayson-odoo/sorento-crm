@@ -23,7 +23,6 @@ import { Button } from '@/components/ui/button';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { useScheduledTasks } from '../hooks/useScheduledTasks';
 import type { ScheduledTask } from '../types/scheduledTask.types';
-import { getStatusBadgeVariant } from '@/lib/status-badge';
 import { ChevronRight } from 'lucide-react';
 
 const INTERVAL_LABELS: Record<string, string> = {
@@ -123,7 +122,7 @@ export default function ScheduledTasksList() {
         cell: ({ row }) => {
           const status = row.original.last_status || '-';
           return (
-            <Badge variant={getStatusBadgeVariant(status)}>
+            <Badge status={status}>
               {status}
             </Badge>
           );
