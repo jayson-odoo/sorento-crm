@@ -13,7 +13,7 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Paperclip, Plus, Search, Trash2, X } from 'lucide-react';
+import { FileDown, Paperclip, Plus, Search, Trash2, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -32,10 +32,13 @@ import { useComplaintResolutionsSelect } from '../../complaint-resolutions/hooks
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { getUsersSelect } from '@/services/userSelectService';
-import { useComplaints } from '../hooks/useComplaints';
+import { useComplaints, useExportComplaintPdf } from '../hooks/useComplaints';
 import { complaintStatusPillClass, complaintStatusLabel } from '@/lib/complaint-status';
 import type { Complaint } from '../types/complaint.types';
 import ComplaintBulkDeleteDialog from './ComplaintBulkDeleteDialog';
+import ComplaintDeleteDialog from './ComplaintDeleteDialog';
+import { RowActionsMenu } from '@/components/common/RowActionsMenu';
+import type { RecordAction } from '@/components/common/recordActions';
 import { EntityDownloadsButton } from '@/components/my-downloads/EntityDownloadsButton';
 import { formatDate, formatDateTimeInMalaysia } from '@/lib/helpers';
 import { buildDetailSearch } from '@/lib/listNavQuery';
@@ -69,6 +72,8 @@ export default function ComplaintsList() {
   });
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<Complaint | null>(null);
+  const exportPdfMutation = useExportComplaintPdf();
 
   useEffect(() => {
     setPagination((prev) => ({ ...prev, pageIndex: 0 }));
@@ -320,8 +325,48 @@ export default function ComplaintsList() {
         size: 110,
         meta: { headerTitle: 'Print Count', skeleton: <Skeleton className="h-4 w-12" /> },
       },
+      {
+        id: 'actions',
+        header: '',
+        size: 56,
+        enableSorting: false,
+        enableHiding: false,
+        cell: ({ row }) => {
+          /**
+           * What a ROW can run (D15). Only the two that need nothing but its id: the
+           * record's gear holds about ten, and the other eight read the fetched
+           * complaint and its live SLA tracker (escalate, extend, reassign, the two
+           * edits, close, the reply, the view link), which a list payload does not
+           * carry. Those stay on the record rather than being half-wired here.
+           */
+          const actions: RecordAction[] = [
+            {
+              key: 'complaint.export_pdf',
+              label: 'Download PDF',
+              icon: FileDown,
+              disabled: exportPdfMutation.isPending,
+              run: () => exportPdfMutation.mutate(row.original.id),
+            },
+          ];
+          // A voided complaint is kept for the audit trail, so it is not deletable -
+          // the same gate the record's gear applies.
+          if ((row.original.status ?? '').trim().toLowerCase() !== 'voided') {
+            actions.push({
+              key: 'complaint.delete',
+              label: 'Delete',
+              icon: Trash2,
+              kind: 'destructive',
+              run: () => setDeleteTarget(row.original),
+            });
+          }
+          return <RowActionsMenu actions={actions} ariaLabel="complaint" />;
+        },
+      },
     ],
-    [],
+    // The mutation OBJECT is new on every render, so depending on it would rebuild
+    // every column each time and remount the open menu out from under a click.
+    // `mutate` is stable; `isPending` is the only part that changes.
+    [exportPdfMutation.mutate, exportPdfMutation.isPending],
   );
 
   const table = useReactTable({
@@ -496,6 +541,15 @@ export default function ComplaintsList() {
           <DataGridPagination />
         </CardFooter>
       </Card>
+      {deleteTarget && (
+        <ComplaintDeleteDialog
+          open
+          closeDialog={() => setDeleteTarget(null)}
+          complaint={deleteTarget}
+          onSuccess={() => setDeleteTarget(null)}
+        />
+      )}
+
       <ComplaintBulkDeleteDialog
         open={bulkDeleteDialogOpen}
         onOpenChange={setBulkDeleteDialogOpen}
