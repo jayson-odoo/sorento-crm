@@ -32,8 +32,11 @@ export function MyDownloadsDrawer() {
 
   return (
     <Sheet open={isOpen} onOpenChange={setOpen}>
+      {/* A passive utility panel, not a lightbox: dimming the page behind it says
+          "answer me" about something the user only glanced at (D8). */}
       <SheetContent
         side="right"
+        overlay={false}
         className="p-0 gap-0 sm:w-[460px] sm:max-w-none inset-5 start-auto h-auto rounded-lg [&_[data-slot=sheet-close]]:top-4.5 [&_[data-slot=sheet-close]]:end-5"
       >
         <SheetHeader className="mb-0 flex flex-row items-center gap-2 space-y-0 px-4 py-3 pe-12 text-start border-b border-border">

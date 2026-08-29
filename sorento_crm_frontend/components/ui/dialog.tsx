@@ -5,6 +5,7 @@ import { cn } from '@/lib/utils';
 import { cva, VariantProps } from 'class-variance-authority';
 import { X } from 'lucide-react';
 import { Dialog as DialogPrimitive } from 'radix-ui';
+import { OVERLAY_CLASS } from '@/components/ui/primitive-classes';
 
 const dialogContentVariants = cva(
   // `overflow-y-auto` + a bounded `max-h` make EVERY modal scrollable - without
@@ -25,12 +26,13 @@ const dialogContentVariants = cva(
 );
 
 function Dialog({ modal, ...props }: React.ComponentProps<typeof DialogPrimitive.Root>) {
-  // Default to non-modal so the AI assistant bubble (rendered outside the
-  // dialog portal) stays scrollable / interactive while a dialog is open.
-  // Radix's modal mode wraps the tree in `react-remove-scroll` which blocks
-  // wheel/touch events on every element outside the dialog content.
-  // Callers can still opt back in by passing `modal={true}` explicitly.
-  return <DialogPrimitive.Root data-slot="dialog" modal={modal ?? false} {...props} />;
+  // A dialog is a lightbox: it owns the screen while it is open. Modal mode is
+  // what gives it the focus trap, the scroll lock and the aria-hidden page
+  // behind it; without those the page stayed tabbable and a stray wheel
+  // scrolled the list under the form. Radix inerts the AI assistant bubble
+  // along with everything else, which is correct for a modal surface.
+  // A caller with a genuinely modeless surface passes `modal={false}`.
+  return <DialogPrimitive.Root data-slot="dialog" modal={modal ?? true} {...props} />;
 }
 
 function DialogTrigger({ ...props }: React.ComponentProps<typeof DialogPrimitive.Trigger>) {
@@ -49,10 +51,7 @@ function DialogOverlay({ className, ...props }: React.ComponentProps<typeof Dial
   return (
     <DialogPrimitive.Overlay
       data-slot="dialog-overlay"
-      className={cn(
-        'fixed inset-0 z-50 bg-black/30 [backdrop-filter:blur(4px)] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0',
-        className,
-      )}
+      className={cn(OVERLAY_CLASS, className)}
       {...props}
     />
   );
@@ -92,9 +91,7 @@ function DialogContent({
   // pointer/focus event from a DropdownMenu / Popover / Select / ContextMenu
   // item that just opened this dialog - those surfaces unmount during the
   // same click cycle and their last event would otherwise land outside the
-  // freshly-opened dialog and instantly close it (`modal={false}` is
-  // intentional so the AI assistant bubble outside the portal stays
-  // interactive).
+  // freshly-opened dialog and instantly close it.
   const mountedAtRef = React.useRef<number>(0);
   const contentRefCallback = React.useCallback(
     (node: HTMLDivElement | null) => {
@@ -112,11 +109,6 @@ function DialogContent({
     const detail = (event as CustomEvent<{ originalEvent?: Event }>).detail;
     const original = detail?.originalEvent;
     const target = (original?.target ?? event.target) as Element | null;
-    // Keep the AI assistant bubble interactive while a dialog is open.
-    if (target && target.closest && target.closest('[data-ai-assistant-root]')) {
-      event.preventDefault();
-      return;
-    }
     // Ignore the trailing pointer/focus event from the Radix surface that
     // *opened* this dialog (dropdown menu / popover / select / context menu).
     // Those surfaces are unmounting during the same tick the dialog mounts;
@@ -124,11 +116,12 @@ function DialogContent({
     //
     // Also ignore interactions that land inside ANOTHER dialog stacked above
     // this one. Nested dialogs are portaled as React siblings (not DOM/React
-    // descendants), so non-modal Radix reads any click in the child dialog as
-    // "outside" the parent and would dismiss the parent - e.g. clicking Save in
-    // a child "Change attachment type" dialog closed the whole detail modal.
-    // Closing a stacked dialog must be explicit, never a side effect of the one
-    // beneath it.
+    // descendants), so Radix reads any click in the child dialog as "outside"
+    // the parent and would dismiss the parent - e.g. clicking Save in a child
+    // "Change attachment type" dialog closed the whole detail modal. Closing a
+    // stacked dialog must be explicit, never a side effect of the one beneath
+    // it. Kept until the attachment-type flow is browser-verified under the
+    // modal default (PLAN-apple-alignment 7, risk 1).
     if (
       target &&
       target.closest &&
