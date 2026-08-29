@@ -30,6 +30,10 @@ import {
   complaintsListQueryKey,
   complaintsListParamsFromUrl,
 } from '@/app/(protected)/complaint-management/complaints/hooks/useComplaints';
+import {
+  customersListQueryKey,
+  customersListParamsFromUrl,
+} from '@/app/(protected)/order-management/customers/hooks/useCustomers';
 
 /** One list state: the key the list builds, and the URL its row click emits. */
 interface ParityCase {
@@ -218,6 +222,22 @@ const CASES: ParityCase[] = [
       }),
       pagerKey: (search: URLSearchParams) =>
         complaintsListQueryKey(complaintsListParamsFromUrl(parseDetailSearch(search))),
+    };
+  })(),
+  (() => {
+    const listParams = {
+      pageIndex: 2,
+      pageSize: 50,
+      sorting: [{ id: 'created_at', desc: true }],
+      searchQuery: 'acme',
+      status: 'active',
+    };
+    return {
+      name: 'customers, status filter',
+      listKey: customersListQueryKey(listParams),
+      url: buildDetailSearch(listParams, { status: listParams.status }),
+      pagerKey: (search: URLSearchParams) =>
+        customersListQueryKey(customersListParamsFromUrl(parseDetailSearch(search))),
     };
   })(),
 ];

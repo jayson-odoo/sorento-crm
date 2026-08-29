@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { buildDataGridParams } from '@/lib/api-client';
 import {
@@ -6,6 +6,7 @@ import {
   type RecordNeighboursResult,
 } from '@/hooks/useRecordNeighbours';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
+import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
 import {
   CUSTOMER_NEIGHBOURS_PATH,
   getCustomers,
@@ -30,9 +31,47 @@ export function useCustomerNeighbours(
   return useRecordNeighbours(CUSTOMER_NEIGHBOURS_PATH, customerId, params);
 }
 
-export function useCustomers(params: DataGridApiFetchParams & { status?: string }) {
+export type CustomersListParams = DataGridApiFetchParams & { status?: string };
+
+/**
+ * The list's React Query key. The detail page's pager rebuilds the SAME key from
+ * the URL, so it reads the page the list already fetched.
+ */
+export function customersListQueryKey(params: CustomersListParams): QueryKey {
+  return [
+    'customers',
+    params.pageIndex,
+    params.pageSize,
+    params.sorting,
+    params.searchQuery,
+    params.status,
+  ];
+}
+
+/** The list query a detail URL describes, in the shape the list passes. */
+export function customersListParamsFromUrl(
+  params: ListPagerParams,
+): CustomersListParams {
+  return {
+    pageIndex: params.pageIndex,
+    pageSize: params.pageSize,
+    sorting: params.sorting,
+    searchQuery: params.searchQuery,
+    status: params.filters.status,
+  };
+}
+
+/** The pager's two hooks into the customers list. */
+export const customersPagerQuery = {
+  listQueryKey: (params: ListPagerParams): QueryKey =>
+    customersListQueryKey(customersListParamsFromUrl(params)),
+  fetchPage: (params: ListPagerParams): Promise<ListPagerPage> =>
+    getCustomers(customersListParamsFromUrl(params)),
+};
+
+export function useCustomers(params: CustomersListParams) {
   return useQuery({
-    queryKey: ['customers', params.pageIndex, params.pageSize, params.sorting, params.searchQuery, params.status],
+    queryKey: customersListQueryKey(params),
     queryFn: () => getCustomers(params),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,

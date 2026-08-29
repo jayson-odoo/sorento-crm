@@ -1,16 +1,15 @@
 'use client';
 
-import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Edit, Trash2 } from 'lucide-react';
+import { Edit } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useCustomer } from '../hooks/useCustomers';
+import { useCustomer, customersPagerQuery } from '../hooks/useCustomers';
 import { formatDate } from '@/lib/helpers';
-import CustomerDeleteDialog from './customer-delete-dialog';
-import CustomerNavigation from './CustomerNavigation';
+import DetailActions from '@/components/common/DetailActions';
+import { useCustomerActions } from '../actions';
 
 interface CustomerDetailProps {
   customerId: string;
@@ -19,7 +18,9 @@ interface CustomerDetailProps {
 export default function CustomerDetail({ customerId }: CustomerDetailProps) {
   const router = useRouter();
   const { data: customer, isLoading } = useCustomer(customerId);
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const { actions, dialogs } = useCustomerActions(customer, {
+    onDeleted: () => router.push('/order-management/customers'),
+  });
 
   if (isLoading) {
     return (
@@ -44,10 +45,10 @@ export default function CustomerDetail({ customerId }: CustomerDetailProps) {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="space-y-1">
-          <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold">{customer.customer_name}</h1>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="space-y-1 min-w-0">
+          <div className="flex flex-wrap items-center gap-3">
+            <h1 className="text-2xl font-bold break-words min-w-0">{customer.customer_name}</h1>
             <Badge variant={customer.is_active ? 'success' : 'secondary'} appearance="ghost">
               <BadgeDot />
               {customer.is_active ? 'Active' : 'Inactive'}
@@ -57,29 +58,28 @@ export default function CustomerDetail({ customerId }: CustomerDetailProps) {
             Customer Code: {customer.customer_code}
           </p>
         </div>
-        <div className="flex gap-2">
-          <CustomerNavigation customerId={customerId} />
-          <Button variant="outline" onClick={() => router.push(`/order-management/customers/${customerId}/edit`)}>
-            <Edit className="size-4" />
-            Edit
-          </Button>
-          <Button variant="destructive" onClick={() => setDeleteDialogOpen(true)}>
-            <Trash2 className="size-4" />
-            Delete
-          </Button>
-        </div>
-      </div>
-
-      {customer && (
-        <CustomerDeleteDialog
-          open={deleteDialogOpen}
-          closeDialog={() => setDeleteDialogOpen(false)}
-          customer={customer}
-          onSuccess={() => {
-            router.push('/order-management/customers');
+        <DetailActions
+          pager={{
+            ...customersPagerQuery,
+            detailPath: '/order-management/customers',
+            currentId: customerId,
+            ariaLabel: 'customer',
           }}
+          actions={actions}
+          dialogs={dialogs}
+          gearLabel="Customer options"
+          primary={
+            <Button
+              onClick={() =>
+                router.push(`/order-management/customers/${customerId}/edit`)
+              }
+            >
+              <Edit className="size-4" />
+              Edit
+            </Button>
+          }
         />
-      )}
+      </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <Card className="lg:col-span-2">
