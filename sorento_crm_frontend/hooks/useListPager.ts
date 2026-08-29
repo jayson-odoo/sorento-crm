@@ -73,6 +73,14 @@ export interface UseListPagerOptions {
   /** Detail route base, e.g. `/order-management/orders`. */
   detailPath: string;
   currentId: string;
+  /**
+   * Where a step lands, when it is not the record's detail page.
+   *
+   * The five edit forms that carry a pager (customer, product, supplier,
+   * promotion, complaint) step between EDIT screens, so they pass this rather
+   * than sending an editing user to a read-only page.
+   */
+  hrefFor?: (id: string, search: string) => string;
 }
 
 export interface UseListPagerResult {
@@ -94,6 +102,7 @@ function stepHref(
   detailPath: string,
   id: string,
   params: ListPagerParams,
+  hrefFor?: (id: string, search: string) => string,
 ): string {
   const search = buildDetailSearch(
     {
@@ -104,6 +113,7 @@ function stepHref(
     },
     params.filters,
   );
+  if (hrefFor) return hrefFor(id, search);
   return `${detailPath}/${id}${search ? `?${search}` : ''}`;
 }
 
@@ -112,6 +122,7 @@ export function useListPager({
   fetchPage,
   detailPath,
   currentId,
+  hrefFor,
 }: UseListPagerOptions): UseListPagerResult {
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -164,31 +175,31 @@ export function useListPager({
         const rows = page?.data ?? [];
         if (!rows.length) return;
         const target = edge === 'first' ? rows[0] : rows[rows.length - 1];
-        router.push(stepHref(detailPath, target.id, next));
+        router.push(stepHref(detailPath, target.id, next, hrefFor));
       } finally {
         setStepping(false);
       }
     },
-    [detailPath, fetchPage, listQueryKey, params, queryClient, router],
+    [detailPath, fetchPage, hrefFor, listQueryKey, params, queryClient, router],
   );
 
   const goPrevious = useCallback(() => {
     if (!hasPrevious) return;
     if (idx > 0) {
-      router.push(stepHref(detailPath, items[idx - 1].id, params));
+      router.push(stepHref(detailPath, items[idx - 1].id, params, hrefFor));
       return;
     }
     void stepPage(params.pageIndex - 1, 'last');
-  }, [detailPath, hasPrevious, idx, items, params, router, stepPage]);
+  }, [detailPath, hasPrevious, hrefFor, idx, items, params, router, stepPage]);
 
   const goNext = useCallback(() => {
     if (!hasNext) return;
     if (idx < items.length - 1) {
-      router.push(stepHref(detailPath, items[idx + 1].id, params));
+      router.push(stepHref(detailPath, items[idx + 1].id, params, hrefFor));
       return;
     }
     void stepPage(params.pageIndex + 1, 'first');
-  }, [detailPath, hasNext, idx, items, params, router, stepPage]);
+  }, [detailPath, hasNext, hrefFor, idx, items, params, router, stepPage]);
 
   return {
     // While the first fetch is in flight nothing is known yet, but hiding the

@@ -21,11 +21,12 @@ import { Switch } from '@/components/ui/switch';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { useCreatePromotion, useUpdatePromotion, usePromotion, usePromotions } from '../hooks/usePromotions';
+import { useCreatePromotion, useUpdatePromotion, usePromotion } from '../hooks/usePromotions';
 import { PromotionSchema, type PromotionSchemaType } from '../forms/promotion-schema';
 import type { PromotionFormData } from '../types/promotion.types';
 import PromotionAttachmentsTab from './PromotionAttachmentsTab';
-import RecordNavigation from '@/components/common/RecordNavigation';
+import ListPager from '@/components/common/ListPager';
+import { promotionsPagerQuery } from '../hooks/usePromotions';
 import { useContactAccessTypes } from '@/app/(protected)/user-management/contact-access-types/hooks/useContactAccessTypes';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { usePromotionTypes } from '@/app/(protected)/marketing-management/promotion-types/hooks/usePromotionTypes';
@@ -42,17 +43,6 @@ export default function PromotionForm({ promotionId, onSuccess }: PromotionFormP
   const { data: promotion, isLoading: isLoadingPromotion } = usePromotion(promotionId || null);
   const createMutation = useCreatePromotion();
   const updateMutation = useUpdatePromotion();
-  const navigationParams = useMemo(
-    () => ({
-      pageIndex: 0,
-      pageSize: 100,
-      sorting: [{ id: 'created_at', desc: true }],
-      searchQuery: '',
-    }),
-    [],
-  );
-  const { data: navigationData } = usePromotions(navigationParams);
-  const navigationItems = navigationData?.data ?? [];
   const { data: accessTypeOptions = [] } = useContactAccessTypes();
   // The kind of promotion decides what happens after its end date, so a
   // misclassified upload is corrected right here rather than in a support ticket.
@@ -158,10 +148,14 @@ export default function PromotionForm({ promotionId, onSuccess }: PromotionFormP
       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
         {isEditMode && promotionId && (
           <div className="flex justify-end">
-            <RecordNavigation
+            <ListPager
+              {...promotionsPagerQuery}
+              detailPath="/marketing-management/promotions"
               currentId={promotionId}
-              items={navigationItems}
-              basePath="/marketing-management/promotions"
+              ariaLabel="promotion"
+              hrefFor={(id, search) =>
+                `/marketing-management/promotions/${id}/edit${search ? `?${search}` : ''}`
+              }
             />
           </div>
         )}
