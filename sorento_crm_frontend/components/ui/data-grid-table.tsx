@@ -12,6 +12,7 @@ import { Cell, Column, flexRender, Header, HeaderGroup, Row, Table } from '@tans
 import { cva } from 'class-variance-authority';
 import { mergeColumnOrderWithLeafColumns } from '@/lib/listing-column-preferences/mergeColumnOrder';
 import { buildDetailSearch } from '@/lib/listNavQuery';
+import { toAbsoluteUrl } from '@/lib/helpers';
 import { useHorizontalOverflow } from '@/hooks/use-horizontal-overflow';
 import { cn } from '@/lib/utils';
 
@@ -46,7 +47,11 @@ function useIsUnderSm() {
  * that is where a filter the list keeps outside TanStack rides along.
  */
 function appendListState<TData>(href: string, table: Table<TData>): string {
-  const [path, ownSearch] = href.split('?');
+  // A fragment has to survive, and it sits AFTER the query string - splitting on
+  // '?' alone turns `/orders/a1#lines` into a param named `a1#lines`.
+  const hashAt = href.indexOf('#');
+  const hash = hashAt === -1 ? '' : href.slice(hashAt);
+  const [path, ownSearch] = (hashAt === -1 ? href : href.slice(0, hashAt)).split('?');
   const state = table.getState();
   const params = new URLSearchParams(
     buildDetailSearch({
@@ -59,7 +64,7 @@ function appendListState<TData>(href: string, table: Table<TData>): string {
   if (ownSearch) {
     for (const [key, value] of new URLSearchParams(ownSearch)) params.set(key, value);
   }
-  return `${path}?${params.toString()}`;
+  return `${path}?${params.toString()}${hash}`;
 }
 
 const headerCellSpacingVariants = cva('', {
@@ -353,6 +358,17 @@ function DataGridTableBodyRowSkeletonCell<TData>({ children, column }: { childre
 }
 
 /**
+ * Anything inside a row that owns its own click.
+ *
+ * A row that opens a record must not also swallow the checkbox, the action
+ * button, the inline editor or the menu item sitting in one of its cells. The
+ * alternative is every one of those remembering `stopPropagation`, and the one
+ * that forgets navigates away in the middle of an action.
+ */
+const ROW_INTERACTIVE_SELECTOR =
+  'a,button,input,select,textarea,label,[role="checkbox"],[role="menuitem"],[role="combobox"]';
+
+/**
  * The row when the list gave it a record to open.
  *
  * Split out so `useRouter` is only called by a grid that actually navigates -
@@ -371,8 +387,13 @@ function LinkableBodyRow({
   const router = useRouter();
 
   const openRecord = (newTab = false) => {
-    if (newTab) window.open(href, '_blank', 'noopener,noreferrer');
-    else router.push(href);
+    if (newTab) {
+      // `router.push` applies the deploy base path itself; `window.open` does not,
+      // so a sub-path deploy would open a 404 in the new tab.
+      window.open(toAbsoluteUrl(href), '_blank', 'noopener,noreferrer');
+    } else {
+      router.push(href);
+    }
   };
 
   return (
@@ -380,17 +401,26 @@ function LinkableBodyRow({
       {...rowProps}
       role="link"
       tabIndex={0}
-      onClick={() => openRecord()}
+      onClick={(event) => {
+        // A control in a cell keeps its own click.
+        if ((event.target as Element | null)?.closest?.(ROW_INTERACTIVE_SELECTOR)) return;
+        // Same modifiers an anchor honours, so the row behaves like the link it claims to be.
+        openRecord(event.metaKey || event.ctrlKey || event.shiftKey);
+      }}
       onAuxClick={(event) => {
         if (event.button !== 1) return;
+        if ((event.target as Element | null)?.closest?.(ROW_INTERACTIVE_SELECTOR)) return;
         event.preventDefault();
         openRecord(true);
       }}
       onKeyDown={(event) => {
+        // Only the ROW's own keystrokes: Space in a cell's text input types a
+        // space, and Space on the selection checkbox ticks the row.
+        if (event.target !== event.currentTarget) return;
         if (event.key !== 'Enter' && event.key !== ' ') return;
         // Space scrolls the page otherwise, and Enter would submit a surrounding form.
         event.preventDefault();
-        openRecord();
+        openRecord(event.metaKey || event.ctrlKey || event.shiftKey);
       }}
     >
       {children}
@@ -761,6 +791,9 @@ function DataGridTable<TData>() {
   const { table, isLoading, props } = useDataGrid();
   const pagination = table.getState().pagination;
   const isUnderSm = useIsUnderSm();
+  // `null` means "we have not pinned anything", which is NOT the same as the
+  // empty pinning state an unpinned grid starts in - `if (ref.current)` was
+  // falsy for both, so widening the window left the phone pin in place.
   const pinningBeforeNarrow = React.useRef<ReturnType<typeof table.getState>['columnPinning'] | null>(null);
 
   // On a phone the grid scrolls sideways, so the column that says WHICH row this
@@ -768,7 +801,7 @@ function DataGridTable<TData>() {
   // attach it to. The checkbox column is not that column.
   React.useEffect(() => {
     if (!isUnderSm) {
-      if (pinningBeforeNarrow.current) {
+      if (pinningBeforeNarrow.current !== null) {
         table.setColumnPinning(pinningBeforeNarrow.current);
         pinningBeforeNarrow.current = null;
       }
@@ -777,7 +810,7 @@ function DataGridTable<TData>() {
     const identifier = table.getVisibleLeafColumns().find((column) => column.id !== SELECT_COLUMN_ID);
     if (!identifier || table.getState().columnPinning?.left?.[0] === identifier.id) return;
 
-    pinningBeforeNarrow.current = table.getState().columnPinning;
+    pinningBeforeNarrow.current = table.getState().columnPinning ?? {};
     table.setColumnPinning({ left: [identifier.id], right: [] });
   }, [isUnderSm, table]);
 

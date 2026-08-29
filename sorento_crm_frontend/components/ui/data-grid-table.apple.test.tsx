@@ -43,6 +43,20 @@ const COLUMNS: ColumnDef<Row>[] = [
   buildSelectColumn<Row>(),
   { id: 'name', accessorKey: 'name', header: 'Name', size: 900 },
   { id: 'total', accessorKey: 'total', header: 'Total', size: 900 },
+  {
+    id: 'actions',
+    header: 'Actions',
+    size: 200,
+    // A real listing row is not inert text: it carries an action button and,
+    // on the expanded lists, an inline editor. Both are inside the row, so the
+    // row-as-link has to tell them apart from the row itself.
+    cell: ({ row }) => (
+      <div>
+        <button type="button">Edit {row.original.name}</button>
+        <input aria-label={`Note for ${row.original.name}`} defaultValue="" />
+      </div>
+    ),
+  },
 ];
 
 function setMatchMedia(matches: boolean) {
@@ -66,10 +80,12 @@ function Harness({
   rowHref,
   onRowClick,
   onTable,
+  tableLayout,
 }: {
   rowHref?: (row: Row) => string;
   onRowClick?: (row: Row) => void;
   onTable?: (table: Table<Row>) => void;
+  tableLayout?: React.ComponentProps<typeof DataGrid<Row>>['tableLayout'];
 }) {
   const table = useReactTable({
     data: DATA,
@@ -91,7 +107,7 @@ function Harness({
       isLoading={false}
       rowHref={rowHref}
       onRowClick={onRowClick}
-      tableLayout={{ width: 'fixed', columnsResizable: true }}
+      tableLayout={tableLayout ?? { width: 'fixed', columnsResizable: true }}
     >
       <DataGridTable />
     </DataGrid>
@@ -105,6 +121,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
 });
 
 describe('DataGrid scrolls on a phone (S1-05)', () => {
@@ -211,6 +228,65 @@ describe('A row is a link (S1-06)', () => {
     expect(push).not.toHaveBeenCalled();
   });
 
+  it('S1-06: a control inside the row keeps its own click - the row does not steal it', () => {
+    render(<Harness rowHref={(row) => `/order-management/orders/${row.id}`} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Alpha' }));
+
+    // Without this, every action button on all 79 action columns would have to
+    // remember stopPropagation, and the one that forgot would navigate away
+    // mid-action.
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it('S1-06: typing in an inline cell editor does not navigate', () => {
+    render(<Harness rowHref={(row) => `/order-management/orders/${row.id}`} />);
+    const input = screen.getByLabelText('Note for Alpha');
+
+    fireEvent.keyDown(input, { key: ' ' });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it('S1-06: Space on the row checkbox ticks it without opening the record', () => {
+    render(<Harness rowHref={(row) => `/order-management/orders/${row.id}`} />);
+    const checkbox = screen.getAllByLabelText('Select row')[0];
+
+    fireEvent.keyDown(checkbox, { key: ' ' });
+    fireEvent.click(checkbox);
+
+    // Ticking a row is not opening it. (The browser turns Space into the click;
+    // jsdom does not, so the click is fired here as well.)
+    expect(push).not.toHaveBeenCalled();
+    expect(checkbox).toHaveAttribute('data-state', 'checked');
+  });
+
+  it('S1-06: a modifier click opens a new tab instead of leaving the list', () => {
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null);
+    render(<Harness rowHref={(row) => `/order-management/orders/${row.id}`} />);
+
+    for (const modifier of [{ metaKey: true }, { ctrlKey: true }, { shiftKey: true }]) {
+      fireEvent.click(screen.getByText('Alpha'), modifier);
+    }
+
+    expect(open).toHaveBeenCalledTimes(3);
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it('S1-06: a new tab carries the deploy base path, which the router adds by itself', () => {
+    vi.stubEnv('NEXT_PUBLIC_BASE_PATH', '/crm');
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null);
+    render(<Harness rowHref={(row) => `/order-management/orders/${row.id}`} />);
+
+    fireEvent.click(screen.getByText('Alpha'), { metaKey: true });
+    expect(open.mock.calls[0][0]).toContain('/crm/order-management/orders/a1');
+
+    // ...while an in-app push must NOT carry it, or the base path lands twice.
+    fireEvent.click(screen.getByText('Alpha'));
+    expect(push.mock.calls[0][0]).not.toContain('/crm/');
+  });
+
   it('S1-06: a grid with neither rowHref nor onRowClick has no pointer cursor and no role', () => {
     render(<Harness />);
     const row = screen.getByText('Alpha').closest('tr')!;
@@ -238,8 +314,23 @@ describe('DataGrid defaults (S1-07)', () => {
     expect(table!.options.columnResizeMode).toBe('onChange');
   });
 
-  it('S1-07: the header is sticky by default', () => {
+  /*
+    S1-07's "the header is sticky by default" clause is DEFERRED to S4.
+
+    Turning it on here was inert and actively harmful. `overflow-x-auto` on the
+    new scroller makes that div the scrollport, and it never scrolls vertically,
+    so `sticky top-0` on the thead has nothing to stick against - while the 29
+    lists that DO get a sticky header today (their own bounded-height ScrollArea)
+    had a second, competing sticky context introduced above them. A sticky header
+    needs the grid to own a bounded height, which is S4's mobile/layout work.
+  */
+  it('S1-07: the header is not sticky unless the list asks (S4 defers the default)', () => {
     render(<Harness />);
+    expect(document.querySelector('thead')).not.toHaveClass('sticky');
+  });
+
+  it('S1-07: a list that asks for a sticky header still gets one', () => {
+    render(<Harness tableLayout={{ width: 'fixed', columnsResizable: true, headerSticky: true }} />);
     const head = document.querySelector('thead');
 
     expect(head).toHaveClass('sticky');

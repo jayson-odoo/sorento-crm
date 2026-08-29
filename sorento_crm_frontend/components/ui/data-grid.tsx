@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, ReactNode, useContext } from 'react';
+import { createContext, ReactNode, useContext, useEffect } from 'react';
 import { cn } from '@/lib/utils';
 import { ColumnFiltersState, RowData, SortingState, Table } from '@tanstack/react-table';
 import { useListingColumnPreferences } from '@/lib/listing-column-preferences/useListingColumnPreferences';
@@ -179,7 +179,13 @@ function DataGrid<TData extends object>({ children, table, listingKey, ...props 
       rowBorder: true,
       rowRounded: false,
       stripped: false,
-      headerSticky: true,
+      // NOT true by default (UAC S1-07's sticky clause is deferred to S4): the
+      // grid's own `overflow-x-auto` scroller is the scrollport and never scrolls
+      // vertically, so a default sticky header sticks to nothing - while the 29
+      // lists that get one today, from their own bounded-height ScrollArea, gained
+      // a competing sticky context above them. A real sticky header needs the grid
+      // to own a bounded height, which is S4's layout work.
+      headerSticky: false,
       headerBackground: true,
       headerBorder: true,
       width: 'fixed',
@@ -228,14 +234,18 @@ function DataGrid<TData extends object>({ children, table, listingKey, ...props 
     throw new Error('DataGrid requires a "table" prop');
   }
 
-  // Resizing that only lands on release reads as a dropped gesture. The handler
-  // reads this option at pointer-down time, so setting it here reaches every
-  // list, including the ~70 that never passed it. `useReactTable` re-applies the
-  // list's own options on each of ITS renders and this component renders after
-  // its parent, so the value is back to `onChange` before any pointer lands.
-  if (table.options.columnResizeMode !== 'onChange') {
-    table.setOptions((prev) => ({ ...prev, columnResizeMode: 'onChange' }));
-  }
+  // Resizing that only lands on release reads as a dropped gesture. The resize
+  // handler reads this option at pointer-down time, so setting it once here
+  // reaches every list, including the ~70 that never passed it - and it sticks:
+  // `useReactTable` merges the list's options over the PREVIOUS ones on each of
+  // its renders, and no list mentions columnResizeMode, so it is never reset.
+  // In an effect rather than the render body, because it mutates an object the
+  // caller owns.
+  useEffect(() => {
+    if (table && table.options.columnResizeMode !== 'onChange') {
+      table.setOptions((prev) => ({ ...prev, columnResizeMode: 'onChange' }));
+    }
+  }, [table]);
 
   const effectiveListingKey = listingKey ?? pathname;
 
