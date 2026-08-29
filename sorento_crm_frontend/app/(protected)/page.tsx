@@ -4,7 +4,6 @@ import dynamic from 'next/dynamic';
 import { Container } from '@/components/common/container';
 import {
   Toolbar,
-  ToolbarActions,
   ToolbarHeading,
   ToolbarTitle,
 } from '@/components/common/toolbar';
@@ -35,7 +34,6 @@ export default function Page() {
         <ToolbarHeading>
           <ToolbarTitle>Dashboard</ToolbarTitle>
         </ToolbarHeading>
-        <ToolbarActions />
       </Toolbar>
       {/* MyPendingSLAWidget carries the My Pending / My Team / Coverage tabs so the
           dashboard stays a single compact surface. */}

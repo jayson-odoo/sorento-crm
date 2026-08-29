@@ -27,7 +27,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { formatDateSafe, formatDateTimeInMalaysia, getInitials } from '@/lib/helpers';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { Badge, BadgeDot } from '@/components/ui/badge';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
@@ -51,7 +51,6 @@ import {
 } from '../lib/listQuery';
 import { useRoleSelectQuery } from '../../roles/hooks/use-role-select-query';
 import { getUserStatusProps, UserStatusProps } from '../constants/status';
-import { getStatusBadgeVariant } from '@/lib/status-badge';
 import UserInviteDialog from './user-add-dialog';
 import { toast } from 'sonner';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
@@ -313,14 +312,13 @@ const UserList = () => {
             row.original.status as UserStatus,
           );
           const isTrashed = row.original.isTrashed;
-          const variant = getStatusBadgeVariant(row.original.status);
 
           return (
             <div className="inline-flex gap-2.5">
-              <Badge variant={variant}>
-                <BadgeDot />
-                {statusProps.label}
-              </Badge>
+              {/* The pill resolves its own colour and draws its own dot from the
+                  raw status (D2); pairing the two by hand is how two lists came
+                  to disagree about a colour. */}
+              <Badge status={row.original.status}>{statusProps.label}</Badge>
               {isTrashed && (
                 <Badge variant="destructive" appearance="light">
                   Trashed

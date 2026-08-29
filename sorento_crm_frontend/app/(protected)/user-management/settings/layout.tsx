@@ -8,7 +8,8 @@ import {
   Eye,
   FileClock,
   HeartPulse,
-  Image,
+  // Aliased: bare `Image` shadows the DOM global inside this module.
+  Image as ImageIcon,
   Mail,
   MessageSquareWarning,
   Plug,
@@ -257,7 +258,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       },
       'chatbot-media': {
         title: 'Chatbot Media',
-        icon: Image,
+        icon: ImageIcon,
         path: '/user-management/settings/chatbot-media',
       },
       'stock-visibility': {
