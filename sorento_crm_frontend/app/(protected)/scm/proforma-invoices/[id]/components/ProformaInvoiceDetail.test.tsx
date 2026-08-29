@@ -37,6 +37,8 @@ if (!window.ResizeObserver) {
 }
 Element.prototype.scrollIntoView = Element.prototype.scrollIntoView ?? (() => {});
 
+vi.mock('@/components/common/ListPager', () => ({ __esModule: true, default: () => null }));
+
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
 }));
@@ -87,6 +89,11 @@ const writes = {
 };
 
 vi.mock('../../../hooks/useProformaInvoices', () => ({
+  // The pager reads the list page through the entity's shared key + fetch (S3-03).
+  proformaInvoicesPagerQuery: {
+    listQueryKey: () => ['scm-proforma-invoices'],
+    fetchPage: async () => ({ data: [], pagination: { total: 0 } }),
+  },
   useProformaInvoice: () => state,
   // The header's pager pulls the neighbour list through this hook - one row is not enough to
   // show a pager (RecordNavigation's `items.length < 2` guard), so it stays out of the way.
@@ -330,11 +337,15 @@ describe('ProformaInvoiceDetail - the record header', () => {
     expect(screen.getByRole('menuitem', { name: /delete invoice/i })).toBeInTheDocument();
   });
 
-  it('keeps Back to the list as the last thing on the row', () => {
+  it('S3-02: leaves Back to the toolbar row, so the record header ends with the primary', () => {
     state.data = detail();
     renderDetail();
 
-    expect(screen.getByRole('link', { name: /back to proforma invoices/i })).toBeInTheDocument();
+    // Back moved to the page's toolbar row (D6); the record header keeps pager,
+    // gear and the primary button only.
+    expect(
+      screen.queryByRole('link', { name: /back to proforma invoices/i }),
+    ).not.toBeInTheDocument();
   });
 
   it('offers "Convert the rest" while something is still to place', () => {

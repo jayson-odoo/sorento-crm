@@ -8,6 +8,7 @@ import {
   BreadcrumbSeparator,
 } from '@/components/ui/breadcrumb';
 import { Container } from '@/components/common/container';
+import BackToList from '@/components/common/BackToList';
 import {
   Toolbar,
   ToolbarActions,
@@ -54,7 +55,9 @@ export default async function SalesOrderDetailPage({
               </BreadcrumbList>
             </Breadcrumb>
           </ToolbarHeading>
-          <ToolbarActions />
+          <ToolbarActions>
+            <BackToList listPath="/scm/sales-orders" label="Back to sales orders" />
+          </ToolbarActions>
         </Toolbar>
       </Container>
 

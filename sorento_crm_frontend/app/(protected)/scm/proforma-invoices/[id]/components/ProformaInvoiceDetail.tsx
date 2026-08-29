@@ -6,7 +6,6 @@ import { useRouter } from 'next/navigation';
 import { ColumnDef, getCoreRowModel, useReactTable } from '@tanstack/react-table';
 import { toast } from 'sonner';
 import {
-  ArrowLeft,
   Boxes,
   Download,
   FileText,
@@ -66,10 +65,12 @@ import {
 import ConvertToPackingListDialog from '../../components/ConvertToPackingListDialog';
 import MatchToProductDialog from '../../../components/MatchToProductDialog';
 import OverCapacityDialog from '../../components/OverCapacityDialog';
-import ProformaInvoiceNavigation from '../../components/ProformaInvoiceNavigation';
+import ListPager from '@/components/common/ListPager';
+import { proformaInvoicesPagerQuery } from '../../../hooks/useProformaInvoices';
 import { MarkAsRevisionDialog } from './MarkAsRevisionDialog';
 import { ProformaRevisionsCard } from './ProformaRevisionsCard';
 import { ProformaVolumeFill } from './ProformaVolumeFill';
+import BackToList from '@/components/common/BackToList';
 
 const CONVERT_PERMISSION = 'scm.reorder.run';
 const ADJUST_PERMISSION = 'scm.proforma_invoice.upload';
@@ -958,13 +959,10 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
     enableColumnResizing: true,
   });
 
+  // Back carries the list query the row click wrote (S3-01). It lives on the
+  // toolbar row now; the empty states below keep one of their own.
   const backLink = (
-    <Button variant="outline" size="sm" asChild className="w-fit gap-1.5">
-      <Link href="/scm/proforma-invoices">
-        <ArrowLeft className="size-4" />
-        Back to proforma invoices
-      </Link>
-    </Button>
+    <BackToList listPath="/scm/proforma-invoices" label="Back to proforma invoices" />
   );
 
   if (isLoading) {
@@ -1075,7 +1073,12 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
               </div>
             ) : (
               <div className="flex shrink-0 flex-wrap items-center gap-2">
-                <ProformaInvoiceNavigation invoiceId={id} />
+                <ListPager
+                  {...proformaInvoicesPagerQuery}
+                  detailPath="/scm/proforma-invoices"
+                  currentId={id}
+                  ariaLabel="proforma invoice"
+                />
                 {/* The main action on this page, so it wears the main colour. Everything
                     else is a secondary action and lives in the menu beside it. */}
                 {showConvert ? (
@@ -1129,7 +1132,6 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
                     ) : null}
                   </DropdownMenuContent>
                 </DropdownMenu>
-                {backLink}
               </div>
             )}
           </div>

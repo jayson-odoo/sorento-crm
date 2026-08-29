@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
   bulkDeleteProformaInvoices,
@@ -17,8 +17,54 @@ import {
   type ProformaInvoiceWrite,
   type ProformaPlacement,
 } from '../services/proformaInvoiceService';
+import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
 
 const KEY = ['scm', 'proforma-invoices'] as const;
+
+/**
+ * The list's React Query key. The detail page's pager rebuilds the SAME key from
+ * the URL, so it reads the page the list already fetched.
+ *
+ * The list endpoint caps `limit` at 100, so the page size is clamped here rather
+ * than trusted from the URL: a higher value 422s the whole fetch.
+ */
+const MAX_LIMIT = 100;
+
+export function proformaInvoicesListQueryKey(
+  options: ListProformaInvoicesOptions,
+): QueryKey {
+  return [
+    ...KEY,
+    'list',
+    options.supplierId ?? null,
+    options.placement ?? 'all',
+    options.query ?? '',
+    options.limit ?? 25,
+    options.offset ?? 0,
+  ];
+}
+
+/** The list query a detail URL describes, in the shape the list passes. */
+export function proformaInvoicesListParamsFromUrl(
+  params: ListPagerParams,
+): ListProformaInvoicesOptions {
+  const limit = Math.min(params.pageSize, MAX_LIMIT);
+  return {
+    supplierId: params.filters.supplier_id || null,
+    placement: (params.filters.placement as ProformaPlacement) || null,
+    query: params.searchQuery || null,
+    limit,
+    offset: params.pageIndex * limit,
+  };
+}
+
+/** The pager's two hooks into the proforma invoice list. */
+export const proformaInvoicesPagerQuery = {
+  listQueryKey: (params: ListPagerParams): QueryKey =>
+    proformaInvoicesListQueryKey(proformaInvoicesListParamsFromUrl(params)),
+  fetchPage: (params: ListPagerParams): Promise<ListPagerPage> =>
+    listProformaInvoices(proformaInvoicesListParamsFromUrl(params)),
+};
 
 export function useProformaInvoices(
   supplierId: string | null,
@@ -32,15 +78,7 @@ export function useProformaInvoices(
 ) {
   const options: ListProformaInvoicesOptions = { supplierId, ...opts };
   return useQuery({
-    queryKey: [
-      ...KEY,
-      'list',
-      supplierId,
-      opts.placement ?? 'all',
-      opts.query ?? '',
-      opts.limit ?? 25,
-      opts.offset ?? 0,
-    ],
+    queryKey: proformaInvoicesListQueryKey(options),
     queryFn: () => listProformaInvoices(options),
     refetchOnWindowFocus: false,
   });

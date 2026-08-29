@@ -39,6 +39,8 @@ Element.prototype.scrollIntoView = vi.fn();
 // A `let`, not a literal return, so the `?edit=1` auto-open test can point it at a URL
 // carrying the param without a second mock module.
 let searchParams = new URLSearchParams();
+vi.mock('@/components/common/ListPager', () => ({ __esModule: true, default: () => null }));
+
 vi.mock('next/navigation', () => ({
   usePathname: () => '/scm/sales-orders/so-1',
   useRouter: () => ({ push: vi.fn() }),
@@ -65,6 +67,11 @@ vi.mock(
 const useSalesOrder = vi.fn();
 const updateSalesOrderMutateAsync = vi.fn();
 vi.mock('../../../hooks/useSalesOrders', () => ({
+  // The pager reads the list page through the entity's shared key + fetch (S3-03).
+  salesOrdersPagerQuery: {
+    listQueryKey: () => ['scm-sales-orders'],
+    fetchPage: async () => ({ data: [], pagination: { total: 0 } }),
+  },
   useSalesOrder: (...a: unknown[]) => useSalesOrder(...a),
   // The header's prev/next pager reads the same list the user came from. One row means no
   // neighbours, so the pager renders nothing and these tests stay about the record itself.

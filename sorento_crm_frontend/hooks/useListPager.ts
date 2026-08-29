@@ -53,10 +53,17 @@ export interface ListPagerParams {
   filters: Record<string, string>;
 }
 
-/** What every list GET in this app returns. */
+/**
+ * What a list GET returns.
+ *
+ * Two shapes exist in this app and both are read here rather than adapted at
+ * each call site: the DataGrid one (`pagination.total`) and the offset-paged SCM
+ * one (`total` at the top level, e.g. proforma invoices).
+ */
 export interface ListPagerPage {
   data: Array<{ id: string }>;
-  pagination: { total: number };
+  pagination?: { total: number };
+  total?: number;
 }
 
 export interface UseListPagerOptions {
@@ -132,7 +139,7 @@ export function useListPager({
 
   // A fresh `[]` on every render would rebuild both step callbacks every time.
   const items = useMemo(() => data?.data ?? [], [data]);
-  const total = data?.pagination.total ?? 0;
+  const total = data?.pagination?.total ?? data?.total ?? 0;
   const idx = items.findIndex((row) => row.id === currentId);
   const onPage = idx >= 0;
 

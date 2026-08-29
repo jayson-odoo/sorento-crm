@@ -797,7 +797,7 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
         emptyMessage={emptyMessage}
         // The whole row opens the order. The SO-number link stays a real anchor so
         // middle-click and copy-link still work, and stops its own click propagating.
-        onRowClick={(row) => router.push(detailHref(row))}
+        rowHref={(row) => detailHref(row)}
         tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
         listingKey={listingKey}
       >

@@ -513,7 +513,11 @@ describe('ProformaInvoicesView - the whole row opens the invoice', () => {
     state.data = { data: [invoiceRow()], total: 1 };
     renderView();
 
-    const link = screen.getByRole('link', { name: /PI-2026-001/ });
+    // The ROW is a link too now (S1-06 `rowHref`), so the anchor is the <a>
+    // among them - the PI number stays a real, copyable, middle-clickable link.
+    const link = screen
+      .getAllByRole('link', { name: /PI-2026-001/ })
+      .find((el) => el.tagName === 'A') as HTMLAnchorElement;
     expect(link.getAttribute('href')).toContain('/scm/proforma-invoices/pi-1');
 
     fireEvent.click(link);
@@ -726,7 +730,9 @@ describe('F10 - the list says which packing list an invoice went into', () => {
     state.data = { data: [placed()], total: 1 };
     renderView();
 
-    const link = await screen.findByRole('link', { name: /FSCU8103365/ });
+    // The row is a link as well (S1-06), so pick the anchor out of the matches.
+    const links = await screen.findAllByRole('link', { name: /FSCU8103365/ });
+    const link = links.find((el) => el.tagName === 'A') as HTMLAnchorElement;
     expect(link).toHaveAttribute('href', '/procurement-management/packing-lists/sh-1');
   });
 

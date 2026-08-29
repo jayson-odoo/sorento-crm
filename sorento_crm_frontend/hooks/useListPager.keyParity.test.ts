@@ -14,6 +14,7 @@ import { describe, it, expect } from 'vitest';
 import { hashKey, type QueryKey } from '@tanstack/react-query';
 
 import { buildDetailSearch, parseDetailSearch } from '@/lib/listNavQuery';
+import type { ListQueryFilterGroup } from '@/lib/list-query/listQueryService';
 import {
   usersListFilters,
   usersListQueryKey,
@@ -44,9 +45,9 @@ interface ParityCase {
   pagerKey: (search: URLSearchParams) => QueryKey;
 }
 
-const ADVANCED = {
-  op: 'and' as const,
-  children: [{ field: 'debtor_name', operator: 'contains', value: 'acme' }],
+const ADVANCED: ListQueryFilterGroup = {
+  op: 'and',
+  children: [{ field_key: 'debtor_name', op: 'contains', value: 'acme' }],
 };
 
 function usersCase(

@@ -36,7 +36,7 @@ import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import { usePurchaseOrders } from '../../hooks/usePurchaseOrders';
 import { usePurchaseOrderActions } from '../../hooks/usePurchaseOrderActions';
 import { ConfirmActionDialog } from '../../components/ConfirmActionDialog';
@@ -136,7 +136,6 @@ export default function PurchaseOrdersList() {
   // made against the delivery in hand, not a button on a list of 13,000 orders - the same
   // reason "Create DO" came off the sales-order list.
   const { confirm, bulkDelete } = usePurchaseOrderActions();
-  const router = useRouter();
 
   useEffect(() => {
     setPagination((p) => ({ ...p, pageIndex: 0 }));
@@ -419,7 +418,7 @@ export default function PurchaseOrdersList() {
         emptyMessage={emptyMessage}
         // The whole row opens the order, the same as the sales-order list. The PO-number
         // link stays a real anchor and stops its own click propagating.
-        onRowClick={(row) => router.push(detailHref(row))}
+        rowHref={(row) => detailHref(row)}
       >
         <Card>
           {documentsFilter.length ? (

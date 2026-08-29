@@ -520,7 +520,7 @@ export function ProformaInvoicesView() {
         tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
         emptyMessage={emptyMessage}
         listingKey={LISTING_KEY}
-        onRowClick={(row) => router.push(detailHref(row))}
+        rowHref={(row) => detailHref(row)}
       >
         <Card>
           <CardHeader className="block">

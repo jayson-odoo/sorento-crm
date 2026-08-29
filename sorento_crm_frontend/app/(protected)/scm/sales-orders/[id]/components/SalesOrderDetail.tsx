@@ -13,7 +13,6 @@ import {
   useReactTable,
 } from '@tanstack/react-table';
 import {
-  ArrowLeft,
   Columns3,
   FileText,
   ListOrdered,
@@ -67,7 +66,8 @@ import {
   searchProductOptions,
 } from '../../../services/scmOptionsService';
 import { useSalesAgentOptions } from '../../hooks/useSalesAgentOptions';
-import SalesOrderNavigation from '../../components/SalesOrderNavigation';
+import ListPager from '@/components/common/ListPager';
+import { salesOrdersPagerQuery } from '../../../hooks/useSalesOrders';
 import { getSalesOrderUoms, type SalesOrderPlanningChangeBatch } from '../../../services/salesOrderService';
 import { fmtDate, fmtInt } from '../../../lib/format';
 import { demandClassBadge } from '../../../lib/demandClass';
@@ -86,6 +86,7 @@ import type {
 // with the planning board rather than restated here.
 import { describe as describeSupply } from '../../../../project-sales/_shared/lib/supplyVocabulary';
 import { lateDaysOf } from '../../../../project-sales/_shared/lib/orderInquiryWorklist';
+import BackToList from '@/components/common/BackToList';
 
 /**
  * The sales-order detail, built to mirror `PurchaseOrderDetail` section for section: the
@@ -340,7 +341,6 @@ function SupplyText({
 export function SalesOrderDetail({ id }: { id: string }) {
   const { data, isLoading, isError } = useSalesOrder(id);
   const searchParams = useSearchParams();
-  const listSearch = searchParams.toString();
 
   const updateMut = useUpdateSalesOrder();
   const agentOptions = useSalesAgentOptions();
@@ -1035,13 +1035,10 @@ export function SalesOrderDetail({ id }: { id: string }) {
 
   // Back and prev/next live on the RIGHT of the record header, next to each other, the way
   // the purchase-order and users screens do it.
+  // Back carries the list query the row click wrote (S3-01). It lives on the
+  // toolbar row now; the empty states below keep one of their own.
   const backLink = (
-    <Button variant="outline" size="sm" asChild className="w-fit gap-1.5">
-      <Link href={`/scm/sales-orders${listSearch ? `?${listSearch}` : ''}`}>
-        <ArrowLeft className="size-4" />
-        Back to sales orders
-      </Link>
-    </Button>
+    <BackToList listPath="/scm/sales-orders" label="Back to sales orders" />
   );
 
   if (isLoading) {
@@ -1164,14 +1161,18 @@ export function SalesOrderDetail({ id }: { id: string }) {
               </div>
             ) : (
               <div className="flex shrink-0 flex-wrap items-center gap-2">
-                <SalesOrderNavigation salesOrderId={id} />
+                <ListPager
+                  {...salesOrdersPagerQuery}
+                  detailPath="/scm/sales-orders"
+                  currentId={id}
+                  ariaLabel="sales order"
+                />
                 {/* The main action on this page, so it wears the main colour - the same
                     filled primary button an Add is on every list. */}
                 <Button variant="primary" size="sm" className="gap-1.5" onClick={() => beginEdit(so)}>
                   <SquarePen className="size-4" />
                   Edit
                 </Button>
-                {backLink}
               </div>
             )}
           </div>

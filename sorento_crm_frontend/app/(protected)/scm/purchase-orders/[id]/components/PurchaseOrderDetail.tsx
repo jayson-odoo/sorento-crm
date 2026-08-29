@@ -1,7 +1,6 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import {
   ColumnDef,
@@ -13,7 +12,6 @@ import {
   useReactTable,
 } from '@tanstack/react-table';
 import {
-  ArrowLeft,
   Columns3,
   FileText,
   ListOrdered,
@@ -60,7 +58,8 @@ import {
   searchSupplierOptions,
 } from '../../../services/scmOptionsService';
 import { getSalesOrderUoms } from '../../../services/salesOrderService';
-import PurchaseOrderNavigation from '../../components/PurchaseOrderNavigation';
+import ListPager from '@/components/common/ListPager';
+import { purchaseOrdersPagerQuery } from '../../../hooks/usePurchaseOrders';
 import { PurchaseOrderAllocations } from './PurchaseOrderAllocations';
 import { BASE_CURRENCY, fmtDate, fmtInt } from '../../../lib/format';
 import {
@@ -69,6 +68,7 @@ import {
   purchaseOrderStatusPill,
 } from '../../../lib/purchaseOrderStatus';
 import type { PurchaseOrder, PurchaseOrderLine } from '../../../types/scm.types';
+import BackToList from '@/components/common/BackToList';
 
 /**
  * The purchase-order detail, built section for section as the twin of `SalesOrderDetail`.
@@ -239,7 +239,6 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
   const { data, isLoading, isError } = usePurchaseOrder(id);
   const searchParams = useSearchParams();
   // Back returns to the list the user actually had open, filters and page included.
-  const listSearch = searchParams.toString();
 
   const updateMut = useUpdatePurchaseOrder();
   const warehouseOptions = useWarehouseOptions();
@@ -772,13 +771,10 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
 
   // Back and prev/next live on the RIGHT of the record header, next to each other, the way
   // the sales-order and users screens do it.
+  // Back carries the list query the row click wrote (S3-01). It lives on the
+  // toolbar row now; the empty states below keep one of their own.
   const backLink = (
-    <Button variant="outline" size="sm" asChild className="w-fit gap-1.5">
-      <Link href={`/scm/purchase-orders${listSearch ? `?${listSearch}` : ''}`}>
-        <ArrowLeft className="size-4" />
-        Back to purchase orders
-      </Link>
-    </Button>
+    <BackToList listPath="/scm/purchase-orders" label="Back to purchase orders" />
   );
 
   if (isLoading) {
@@ -901,7 +897,12 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
               </div>
             ) : (
               <div className="flex shrink-0 flex-wrap items-center gap-2">
-                <PurchaseOrderNavigation purchaseOrderId={id} />
+                <ListPager
+                  {...purchaseOrdersPagerQuery}
+                  detailPath="/scm/purchase-orders"
+                  currentId={id}
+                  ariaLabel="purchase order"
+                />
                 {/* The main action on this page, so it wears the main colour - the same
                     filled primary button an Add is on every list. */}
                 <Button
@@ -913,7 +914,6 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
                   <SquarePen className="size-4" />
                   Edit
                 </Button>
-                {backLink}
               </div>
             )}
           </div>
