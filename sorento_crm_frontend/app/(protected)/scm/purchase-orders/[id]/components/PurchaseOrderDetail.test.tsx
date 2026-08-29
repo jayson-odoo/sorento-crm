@@ -60,8 +60,8 @@ vi.mock('../../../hooks/usePurchaseOrders', () => ({
     fetchPage: async () => ({ data: [], pagination: { total: 0 } }),
   },
   usePurchaseOrder: (...a: unknown[]) => usePurchaseOrder(...a),
-  // The header's prev/next pager reads the same list the user came from. One row means no
-  // neighbours, so the pager renders nothing and these tests stay about the record itself.
+  // The header's prev/next pager reads the same list the user came from. An empty page
+  // holds no record, so the pager renders nothing and these tests stay about the record.
   usePurchaseOrders: () => ({ data: { data: [], pagination: { total: 0, page: 1, limit: 25 } } }),
   useUpdatePurchaseOrder: () => ({
     mutateAsync: updatePurchaseOrderMutateAsync,

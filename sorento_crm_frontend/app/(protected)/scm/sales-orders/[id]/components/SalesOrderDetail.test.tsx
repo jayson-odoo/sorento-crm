@@ -75,8 +75,8 @@ vi.mock('../../../hooks/useSalesOrders', () => ({
   useSalesOrder: (...a: unknown[]) => useSalesOrder(...a),
   // The record's gear renders the shared action set, whose Delete needs this.
   useDeleteSalesOrder: () => ({ isPending: false, mutateAsync: vi.fn() }),
-  // The header's prev/next pager reads the same list the user came from. One row means no
-  // neighbours, so the pager renders nothing and these tests stay about the record itself.
+  // The header's prev/next pager reads the same list the user came from. An empty page
+  // holds no record, so the pager renders nothing and these tests stay about the record.
   useSalesOrders: () => ({ data: { data: [], pagination: { total: 0, page: 1, limit: 25 } } }),
   useUpdateSalesOrder: () => ({ mutateAsync: updateSalesOrderMutateAsync, isPending: false }),
 }));

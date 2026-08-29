@@ -29,8 +29,6 @@ vi.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 
-// The pager reads a backend `/neighbours` endpoint; nothing answers it here.
-
 const copyToClipboard = vi.fn();
 vi.mock('@/hooks/use-copy-to-clipboard', () => ({
   useCopyToClipboard: ({ onCopy }: { onCopy?: () => void } = {}) => ({

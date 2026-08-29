@@ -64,8 +64,6 @@ vi.mock('../../../../_shared/services/projectSalesOrderService', () => ({
   publishAmendment: vi.fn(),
   listScheduleVersions: vi.fn(async () => []),
   listPoVersions: vi.fn(async () => []),
-  salesOrderNeighboursPath: (projectId: string) =>
-    `/api/v1/project-sales/projects/${projectId}/sales-orders/neighbours`,
 }));
 
 vi.mock('../../../../_shared/services/fileDownload', () => ({

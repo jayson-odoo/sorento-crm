@@ -122,7 +122,6 @@ export default function WarehousesList() {
         size: 100,
         meta: { headerTitle: 'Status' },
       },
-
     ],
     [],
   );
@@ -143,12 +142,13 @@ export default function WarehousesList() {
     manualPagination: true,
     manualSorting: true,
     manualFiltering: true,
+    columnResizeMode: 'onChange',
   });
 
   return (
     <DataGrid table={table} recordCount={data?.pagination.total || 0} isLoading={isLoading}
       rowHref={rowHref}
-      tableLayout={{ columnsVisibility: true }}
+      tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
       standardToolbar={false}
     >
       <Card>
