@@ -253,4 +253,16 @@ describe('DataGridListToolbar', () => {
     fireEvent.click(screen.getByRole('button', { name: /clear filter: responded/i }));
     expect(onClear).toHaveBeenCalledTimes(1);
   });
+  it('S1-11: its controls wrap instead of running past the viewport edge', () => {
+    render(<Harness toolbarProps={{ exportConfig: { filename: 'x.xlsx' } }} />);
+
+    const toolbar = document.querySelector('[data-slot="data-grid-list-toolbar"]');
+    expect(toolbar).not.toBeNull();
+
+    // The row that holds the two clusters is the one that has to wrap; at 375 it
+    // is already a column, so the rule only bites at a narrow desktop width.
+    const clusterRow = toolbar!.firstElementChild;
+    expect(clusterRow).toHaveClass('flex-wrap');
+    expect(clusterRow).toHaveClass('sm:flex-row');
+  });
 });

@@ -30,7 +30,9 @@ export const OVERLAY_CLASS =
  * A 3% shrink is enough to read as a physical press at every control size, and
  * it is suppressed for anyone who asked for less motion.
  */
-export const PRESSED_CLASS = 'transition-transform active:scale-[0.97] motion-reduce:active:scale-100';
+export const PRESSED_CLASS =
+  'transition-[transform,color,background-color,border-color,box-shadow] ' +
+  'active:scale-[0.97] motion-reduce:active:scale-100';
 
 /**
  * A 44x44 touch target on a coarse pointer, without changing the rendered size.

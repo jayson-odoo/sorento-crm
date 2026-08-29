@@ -408,8 +408,11 @@ export function DataGridListToolbar<TData extends object>({
 
   return (
     <TooltipProvider>
-     <div className="flex w-full flex-col gap-2 py-5">
-      <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+     <div data-slot="data-grid-list-toolbar" className="flex w-full flex-col gap-2 py-5">
+      {/* `flex-wrap`: at a narrow desktop width the two clusters used to push each
+          other past the viewport edge instead of stacking, so Quick filters and
+          Group by went out of reach. */}
+      <div className="flex w-full flex-col flex-wrap gap-3 sm:flex-row sm:items-center sm:justify-between">
         {/* LEFT cluster - replaced by the bulk strip while rows are selected (D2/H). */}
         {bulkStripActive ? (
           <div className="flex flex-wrap items-center gap-2">
