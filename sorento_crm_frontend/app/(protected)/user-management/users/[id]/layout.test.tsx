@@ -26,6 +26,8 @@ vi.mock('@/lib/api', () => ({
 vi.mock('next/navigation', () => ({
   usePathname: () => '/user-management/users/u1',
   useRouter: () => ({ push: vi.fn() }),
+  // Back carries the list's query string, so the toolbar reads it (S3-01).
+  useSearchParams: () => new URLSearchParams(),
 }));
 
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));

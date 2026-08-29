@@ -97,8 +97,10 @@ const UserDeleteDialog = ({
         },
       );
 
-      // Update user data
+      // Update user data. The list too: the dialog now also opens from a list
+      // row's "..." menu, where a stale grid would still show the trashed user.
       queryClient.invalidateQueries({ queryKey: ['user-user'] });
+      queryClient.invalidateQueries({ queryKey: ['user-users'] });
 
       //router.push('/user-management/users/');
       closeDialog();
