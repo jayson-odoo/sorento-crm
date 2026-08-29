@@ -30,8 +30,11 @@ export function MyDownloadsDrawer() {
     if (isOpen) refetch();
   }, [isOpen, refetch]);
 
+  // Not modal: without this Radix still locks the page and inerts it, so
+  // dropping the scrim only removed the explanation for why nothing behind the
+  // panel responded.
   return (
-    <Sheet open={isOpen} onOpenChange={setOpen}>
+    <Sheet open={isOpen} onOpenChange={setOpen} modal={false}>
       {/* A passive utility panel, not a lightbox: dimming the page behind it says
           "answer me" about something the user only glanced at (D8). */}
       <SheetContent

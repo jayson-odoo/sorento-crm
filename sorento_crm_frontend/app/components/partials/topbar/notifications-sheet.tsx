@@ -190,7 +190,7 @@ export function NotificationsSheet({ trigger }: { trigger: ReactNode }) {
 
   return (
     <>
-      <Sheet open={open} onOpenChange={setOpen}>
+      <Sheet open={open} onOpenChange={setOpen} modal={false}>
         <SheetTrigger asChild>
           <span className="relative inline-flex">
             {trigger}

@@ -56,8 +56,10 @@ export function UploadActivityDrawer() {
   // changes starts counting again by itself.
   const dismissAll = () => dismissSessions(sessions.map(dismissKey));
 
+  // Not modal - see MyDownloadsDrawer: no scrim AND no lock, or the page behind
+  // is inert with nothing to say so.
   return (
-    <Sheet open={state.isDrawerOpen} onOpenChange={(o) => setDrawerOpen(o)}>
+    <Sheet open={state.isDrawerOpen} onOpenChange={(o) => setDrawerOpen(o)} modal={false}>
       {/* Passive utility panel: no scrim (D8). */}
       <SheetContent
         side="right"
