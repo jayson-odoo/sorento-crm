@@ -163,14 +163,17 @@ export default function AIUsagePage() {
         </Toolbar>
       </Container>
       <Container className="space-y-4">
-        <div className="flex items-center gap-3">
+        {/* Two w-60 controls in a no-wrap row is 480px of content in a 375px
+            viewport, and the page scrolled sideways to fit them. They wrap and
+            take the full width under sm. */}
+        <div className="flex flex-wrap items-center gap-3">
           <Popover open={datePopoverOpen} onOpenChange={setDatePopoverOpen}>
             <PopoverTrigger asChild>
               <Button
                 id="usage-date"
                 variant="outline"
                 className={cn(
-                  'w-60 justify-start font-normal',
+                  'w-full justify-start font-normal sm:w-60',
                   !dateRange && 'text-muted-foreground',
                 )}
               >
@@ -204,13 +207,13 @@ export default function AIUsagePage() {
               </div>
             </PopoverContent>
           </Popover>
-          <div data-testid="ai-usage-feature-filter">
+          <div className="w-full sm:w-auto" data-testid="ai-usage-feature-filter">
             <SearchableSelect
               value={featureFilter}
               onChange={setFeatureFilter}
               options={FEATURE_OPTIONS.map((opt) => ({ value: opt.value, label: opt.label }))}
               placeholder="All AI usage"
-              triggerClassName="w-60"
+              triggerClassName="w-full sm:w-60"
             />
           </div>
         </div>

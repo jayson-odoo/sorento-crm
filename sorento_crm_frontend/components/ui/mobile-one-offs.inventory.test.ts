@@ -98,7 +98,11 @@ describe('Mobile one-offs (S4-04)', () => {
     const src = read(
       'app/(protected)/master-data-management/product-specifications/components/CatalogueFreshness.tsx',
     );
-    expect(src).toContain('min-w-0 flex-1');
+    // Measured 0px wide and 500px tall at 375 with `flex-1` alone: a wrapping
+    // row breaks its lines on flex-BASIS, and basis 0 kept the paragraph on the
+    // badge and button's line with nothing left over.
+    expect(src).toContain('min-w-0 grow basis-full');
+    expect(src).toContain('sm:basis-0');
     expect(src).toContain('flex-wrap');
   });
 
@@ -152,6 +156,10 @@ describe('Mobile one-offs (S4-04)', () => {
       'app/(protected)/sla-management/conversation-sla-tracking/components/MyPendingSLAWidget.tsx',
     );
     expect(src).toContain('break-words text-sm font-medium');
+    // ...in a box that is allowed to have a width. `min-w-0` alone, beside a
+    // `shrink-0` sibling, measured 0px wide and 120px tall: one letter per line.
+    expect(src).not.toContain('<div className="min-w-0">');
+    expect(src).toContain('min-w-0 flex-1');
   });
 
   it('S4-04: the out-of-reach scrollers named above are still there', () => {

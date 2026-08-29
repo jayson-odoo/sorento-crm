@@ -546,8 +546,13 @@ export default function MyPendingSLAWidget() {
             highlighted ? ' ring-2 ring-primary bg-primary/5 animate-pulse' : ''
           }`}
         >
-          <div className="flex items-start justify-between gap-2">
-            <div className="min-w-0">
+          {/* Measured at 375: the due block is `shrink-0` and its "Respond by:
+              <date>" runs wider than the 309px row, so it took the whole line and
+              the title box came out 0px wide and 120px tall - one letter per
+              line. A full basis under sm gives the identifier its own line and
+              drops the due underneath; from sm up nothing moves. */}
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div className="min-w-0 flex-1 basis-full sm:basis-0">
               <p className="break-words text-sm font-medium" title={`${typeLabel}${item.reference ? ` · ${item.reference}` : ''}`}>
                 {typeLabel}
                 {item.reference ? (
@@ -874,7 +879,7 @@ export default function MyPendingSLAWidget() {
           className="takeover-flash mb-3 rounded-lg border-2 border-amber-400 bg-amber-50/70 p-3 dark:bg-amber-950/30"
         >
           <div className="flex items-start justify-between gap-2">
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <p className="text-sm font-semibold">
                 {humanizeType(banner as unknown as AnyTask)}
                 {banner.reference ? (
