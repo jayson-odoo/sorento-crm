@@ -30,6 +30,12 @@ const nextConfig = {
   // Reduce build output size
   poweredByHeader: false,
   reactStrictMode: true,
+  // Hosts (besides localhost) allowed to load /_next/* from the dev server: Tailscale name,
+  // LAN IP, etc. Comma-separated; wildcards like *.ts.net allowed. Dev only, ignored by builds.
+  allowedDevOrigins: (process.env.NEXT_DEV_ALLOWED_ORIGINS ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean),
   // Proxy API requests to FastAPI backend in development
   async rewrites() {
     // Only apply rewrites in development mode
@@ -37,7 +43,7 @@ const nextConfig = {
       return [
         {
           source: '/api/v1/:path*',
-          destination: 'http://localhost:8032/api/v1/:path*',
+          destination: `${process.env.FASTAPI_INTERNAL_URL ?? 'http://localhost:8000'}/api/v1/:path*`,
         },
       ];
     }
