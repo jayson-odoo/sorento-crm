@@ -20,7 +20,7 @@ import {
   UserRound,
   Users,
 } from 'lucide-react';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { useBackToListHref } from '@/components/common/BackToList';
 import { Button } from '@/components/ui/button';
@@ -320,8 +320,15 @@ export function LeadDetailClient({ leadId }: { leadId: string }) {
       )}
 
       {/* The shared strip rather than a hand-rolled `<nav>`: same scroller, same
-          underline, and the keyboard behaviour the buttons never had. The panels
-          stay outside `<Tabs>` - each is its own URL-keyed section. */}
+          underline, and the keyboard behaviour the buttons never had.
+
+          The sections are TabsContent inside the same `<Tabs>`, not siblings
+          after it: a trigger points `aria-controls` at its panel, and with the
+          panels outside it pointed at nothing and the sections themselves had
+          no `role="tabpanel"`. Routing is unchanged - `value` still comes from
+          the URL and `onValueChange` still writes it back, so each section is
+          reached by its own link exactly as before, and only the open one
+          mounts. */}
       <Tabs value={activeTab} onValueChange={(value) => selectTab(value as TabId)}>
         <TabsList aria-label="Lead sections">
           {TABS.map((tab) => (
@@ -331,37 +338,43 @@ export function LeadDetailClient({ leadId }: { leadId: string }) {
             </TabsTrigger>
           ))}
         </TabsList>
+
+        <TabsContent value="overview">
+          <HeardCard lead={view} />
+        </TabsContent>
+
+        <TabsContent value="informant">
+          <InformantCard
+            lead={view}
+            canEdit={lead.can_edit}
+            onEdit={() => setEditingWho(true)}
+          />
+        </TabsContent>
+
+        <TabsContent value="handover">
+          <AcceptanceCard
+            lead={view}
+            canAssign={canAssign}
+            onAssign={() => setAssigning(true)}
+          />
+        </TabsContent>
+
+        <TabsContent value="buyer">
+          <AccountPanel
+            lead={view}
+            canEdit={lead.can_edit}
+            onSetBuyer={() => setEditingWho(true)}
+          />
+        </TabsContent>
+
+        <TabsContent value="projects">
+          <QualifiedProjects lead={view} />
+        </TabsContent>
+
+        <TabsContent value="activity">
+          <LeadTimelinePanel lead={view} />
+        </TabsContent>
       </Tabs>
-
-      {activeTab === 'overview' && <HeardCard lead={view} />}
-
-      {activeTab === 'informant' && (
-        <InformantCard
-          lead={view}
-          canEdit={lead.can_edit}
-          onEdit={() => setEditingWho(true)}
-        />
-      )}
-
-      {activeTab === 'handover' && (
-        <AcceptanceCard
-          lead={view}
-          canAssign={canAssign}
-          onAssign={() => setAssigning(true)}
-        />
-      )}
-
-      {activeTab === 'buyer' && (
-        <AccountPanel
-          lead={view}
-          canEdit={lead.can_edit}
-          onSetBuyer={() => setEditingWho(true)}
-        />
-      )}
-
-      {activeTab === 'projects' && <QualifiedProjects lead={view} />}
-
-      {activeTab === 'activity' && <LeadTimelinePanel lead={view} />}
 
       {qualifying && (
         <QualifyLeadDialog lead={lead} onDone={() => setQualifying(false)} />

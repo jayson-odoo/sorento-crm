@@ -19,7 +19,7 @@ import {
   Trash2,
   Users,
 } from 'lucide-react';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { useBackToListHref } from '@/components/common/BackToList';
 import { Button } from '@/components/ui/button';
@@ -258,8 +258,14 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
 
       {/* The shared strip, not a hand-rolled `<nav>` of buttons: it already owns
           the scroller, the underline, the pressed state and the roving-focus
-          keyboard behaviour this reimplemented without. The panels stay outside
-          `<Tabs>` because each one is its own routed section keyed off the URL. */}
+          keyboard behaviour this reimplemented without.
+
+          The sections are TabsContent inside the same `<Tabs>`, not siblings
+          after it: a trigger points `aria-controls` at its panel, and with the
+          panels outside it pointed at nothing while the sections carried no
+          `role="tabpanel"`. Routing is unchanged - `value` still comes from the
+          URL and `onValueChange` still writes it back, so each section keeps
+          its own link and only the open one mounts. */}
       <Tabs value={activeTab} onValueChange={(value) => selectTab(value as TabId)}>
         <TabsList aria-label="Project sections">
           {TABS.map((tab) => (
@@ -269,109 +275,128 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
             </TabsTrigger>
           ))}
         </TabsList>
+        <TabsContent value="overview">
+          {/* Four titled sections rather than one fifteen-field grid. The old
+              single "Registration" card put the developer, the contract value
+              and the originating lead in one undifferentiated list, so finding
+              any one of them meant reading all of them, and the lead link was
+              invisible at the bottom. */}
+          <div className="grid gap-4 lg:grid-cols-3">
+            <div className="space-y-4 lg:col-span-2">
+              <Section title="The development">
+                <Fact label="Developer" value={project.developer_name} />
+                <Fact label="Registered company / SPV" value={project.registered_company_name} />
+                <Fact label="Location" value={project.location} />
+                <Fact label="Project type" value={project.type_name} />
+                <Fact label="Template" value={project.template_name} />
+                <Fact label="Filing reference" value={project.admin_ref} />
+              </Section>
+
+              <Section title="Value and timing">
+                <Fact
+                  label="Estimated sales value"
+                  value={
+                    project.estimated_sales_value
+                      ? formatMyr(project.estimated_sales_value)
+                      : null
+                  }
+                />
+                <Fact label="Launch date" value={formatDate(project.launch_date)} />
+                <Fact
+                  label="Expected delivery"
+                  value={
+                    project.expected_delivery_from || project.expected_delivery_to
+                      ? [
+                          formatDate(project.expected_delivery_from),
+                          formatDate(project.expected_delivery_to),
+                        ]
+                          .filter(Boolean)
+                          .join(' - ')
+                      : null
+                  }
+                />
+                <Fact
+                  label="Brands"
+                  value={project.brands.length ? project.brands.join(', ') : null}
+                />
+              </Section>
+
+              <Section title="Consultants">
+                <Fact label="Architect" value={project.architect_name} />
+                <Fact label="Main contractor" value={project.main_contractor_name} />
+              </Section>
+
+              <CriticalPanel project={project} />
+            </div>
+
+            <div className="space-y-4">
+              {/* AC-O10, and its own card because "which lead did this come from" is a
+                  question people ask directly. As one more Fact in a long grid it read as
+                  filing metadata and got missed. "Registered directly" is a real answer,
+                  not a missing one: a tender notice claimed the same hour never had a lead. */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-sm">Where this came from</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {project.lead_id ? (
+                    <dl className="grid gap-x-6 gap-y-3">
+                      <div className="min-w-0">
+                        <dt className="text-xs text-muted-foreground">Lead</dt>
+                        <dd className="break-words text-sm font-medium">
+                          <Link
+                            href={`/project-sales/leads/${project.lead_id}`}
+                            className="text-primary hover:underline"
+                          >
+                            {project.lead_code ?? 'View the lead'}
+                          </Link>
+                        </dd>
+                      </div>
+                      <Fact label="Lead source" value={labelise(project.lead_source)} />
+                      <Fact label="Lead raised" value={formatDate(project.lead_created_at)} />
+                    </dl>
+                  ) : (
+                    <p className="text-sm">Registered directly, with no lead before it.</p>
+                  )}
+                </CardContent>
+              </Card>
+
+              <ProjectAccessPanel project={project} />
+            </div>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="stakeholders">
+          <StakeholdersPanel project={project} />
+        </TabsContent>
+        <TabsContent value="tasks">
+          <TasksPanel project={project} />
+        </TabsContent>
+        <TabsContent value="quotations">
+          <QuotationsPanel project={project} />
+        </TabsContent>
+        <TabsContent value="samples">
+          <SamplesPanel project={project} />
+        </TabsContent>
+        <TabsContent value="sponsorships">
+          <SponsorshipsPanel project={project} />
+        </TabsContent>
+        <TabsContent value="pos">
+          <PurchaseOrdersPanel project={project} />
+        </TabsContent>
+        <TabsContent value="schedules">
+          <DeliverySchedulesPanel project={project} />
+        </TabsContent>
+        <TabsContent value="sales-orders">
+          <SalesOrdersPanel project={project} />
+        </TabsContent>
+        <TabsContent value="activity">
+          <ProjectActivityPanel project={project} />
+        </TabsContent>
+        <TabsContent value="documents">
+          <ProjectDocumentsPanel project={project} />
+        </TabsContent>
       </Tabs>
-
-      {activeTab === 'overview' && (
-        // Four titled sections rather than one fifteen-field grid. The old single
-        // "Registration" card put the developer, the contract value and the originating
-        // lead in one undifferentiated list, so finding any one of them meant reading all
-        // of them, and the lead link was invisible at the bottom.
-        <div className="grid gap-4 lg:grid-cols-3">
-          <div className="space-y-4 lg:col-span-2">
-            <Section title="The development">
-              <Fact label="Developer" value={project.developer_name} />
-              <Fact label="Registered company / SPV" value={project.registered_company_name} />
-              <Fact label="Location" value={project.location} />
-              <Fact label="Project type" value={project.type_name} />
-              <Fact label="Template" value={project.template_name} />
-              <Fact label="Filing reference" value={project.admin_ref} />
-            </Section>
-
-            <Section title="Value and timing">
-              <Fact
-                label="Estimated sales value"
-                value={
-                  project.estimated_sales_value
-                    ? formatMyr(project.estimated_sales_value)
-                    : null
-                }
-              />
-              <Fact label="Launch date" value={formatDate(project.launch_date)} />
-              <Fact
-                label="Expected delivery"
-                value={
-                  project.expected_delivery_from || project.expected_delivery_to
-                    ? [
-                        formatDate(project.expected_delivery_from),
-                        formatDate(project.expected_delivery_to),
-                      ]
-                        .filter(Boolean)
-                        .join(' - ')
-                    : null
-                }
-              />
-              <Fact
-                label="Brands"
-                value={project.brands.length ? project.brands.join(', ') : null}
-              />
-            </Section>
-
-            <Section title="Consultants">
-              <Fact label="Architect" value={project.architect_name} />
-              <Fact label="Main contractor" value={project.main_contractor_name} />
-            </Section>
-
-            <CriticalPanel project={project} />
-          </div>
-
-          <div className="space-y-4">
-            {/* AC-O10, and its own card because "which lead did this come from" is a
-                question people ask directly. As one more Fact in a long grid it read as
-                filing metadata and got missed. "Registered directly" is a real answer,
-                not a missing one: a tender notice claimed the same hour never had a lead. */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-sm">Where this came from</CardTitle>
-              </CardHeader>
-              <CardContent>
-                {project.lead_id ? (
-                  <dl className="grid gap-x-6 gap-y-3">
-                    <div className="min-w-0">
-                      <dt className="text-xs text-muted-foreground">Lead</dt>
-                      <dd className="break-words text-sm font-medium">
-                        <Link
-                          href={`/project-sales/leads/${project.lead_id}`}
-                          className="text-primary hover:underline"
-                        >
-                          {project.lead_code ?? 'View the lead'}
-                        </Link>
-                      </dd>
-                    </div>
-                    <Fact label="Lead source" value={labelise(project.lead_source)} />
-                    <Fact label="Lead raised" value={formatDate(project.lead_created_at)} />
-                  </dl>
-                ) : (
-                  <p className="text-sm">Registered directly, with no lead before it.</p>
-                )}
-              </CardContent>
-            </Card>
-
-            <ProjectAccessPanel project={project} />
-          </div>
-        </div>
-      )}
-
-      {activeTab === 'stakeholders' && <StakeholdersPanel project={project} />}
-
-      {activeTab === 'tasks' && <TasksPanel project={project} />}
-      {activeTab === 'quotations' && <QuotationsPanel project={project} />}
-      {activeTab === 'samples' && <SamplesPanel project={project} />}
-      {activeTab === 'sponsorships' && <SponsorshipsPanel project={project} />}
-      {activeTab === 'pos' && <PurchaseOrdersPanel project={project} />}
-      {activeTab === 'schedules' && <DeliverySchedulesPanel project={project} />}
-      {activeTab === 'sales-orders' && <SalesOrdersPanel project={project} />}
-      {activeTab === 'activity' && <ProjectActivityPanel project={project} />}
-      {activeTab === 'documents' && <ProjectDocumentsPanel project={project} />}
 
       <ConfirmDeleteDialog
         open={confirmDelete}
