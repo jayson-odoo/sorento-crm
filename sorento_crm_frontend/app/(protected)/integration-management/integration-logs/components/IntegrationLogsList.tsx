@@ -32,6 +32,7 @@ import { formatDistanceToNow } from 'date-fns';
 import { toast } from 'sonner';
 import { formatDateTimeInMalaysia, parseDateTimeAsUTC } from '@/lib/helpers';
 import { getStatusBadgeVariant } from '@/lib/status-badge';
+import { buildDetailSearch } from '@/lib/listNavQuery';
 
 export default function IntegrationLogsList() {
   const router = useRouter();
@@ -271,8 +272,26 @@ export default function IntegrationLogsList() {
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
       tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
-      onRowClick={(row) => {
-        router.push(`/integration-management/integration-logs/${row.id}`);
+      rowHref={(row) => {
+        // Carries the list query so the detail pager walks the same page.
+        const search = buildDetailSearch(
+          {
+            pageIndex: pagination.pageIndex,
+            pageSize: pagination.pageSize,
+            sorting,
+            searchQuery,
+          },
+          {
+            status: statusFilter !== 'all' ? statusFilter : undefined,
+            integration_channel: channelFilter !== 'all' ? channelFilter : undefined,
+            business_table: tableFilter !== 'all' ? tableFilter : undefined,
+            created_from: createdFrom || undefined,
+            created_to: createdTo || undefined,
+            status_code: statusCode || undefined,
+            error_contains: errorContains.length ? errorContains.join(',') : undefined,
+          },
+        );
+        return `/integration-management/integration-logs/${row.id}${search ? `?${search}` : ''}`;
       }}
     >
       <Card>

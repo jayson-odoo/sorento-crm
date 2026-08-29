@@ -86,6 +86,15 @@ export default function StockDetailPage({ params }: StockDetailPageProps) {
     [sortedNavigationItems],
   );
   const currentRecordId = `${productId}/${warehouseId}`;
+  // A stock record is a product AND a warehouse, so its "id" is the pair. The
+  // pager is presentational here: the walk is this in-memory balance, not a
+  // paged list URL, so there is no list query to rebuild.
+  const stockIndex = navigationItemsForRecordNav.findIndex(
+    (item) => item.id === currentRecordId,
+  );
+  const goToStock = (item: { id: string } | undefined) => {
+    if (item) router.push(`/inventory-management/stock/${item.id}`);
+  };
 
   const columns = useMemo<ColumnDef<StockLedgerEntry>[]>(
     () => [
@@ -269,10 +278,15 @@ export default function StockDetailPage({ params }: StockDetailPageProps) {
           <ToolbarActions>
             <div className="flex items-center gap-2">
               <RecordNavigation
-                basePath="/inventory-management/stock"
-                currentId={currentRecordId}
-                items={navigationItemsForRecordNav}
-                totalCount={navigationItemsForRecordNav.length}
+                index={stockIndex >= 0 ? stockIndex + 1 : null}
+                total={navigationItemsForRecordNav.length}
+                hasPrevious={stockIndex > 0}
+                hasNext={
+                  stockIndex >= 0 &&
+                  stockIndex < navigationItemsForRecordNav.length - 1
+                }
+                onPrevious={() => goToStock(navigationItemsForRecordNav[stockIndex - 1])}
+                onNext={() => goToStock(navigationItemsForRecordNav[stockIndex + 1])}
                 ariaLabel="stock"
               />
               <Button asChild variant="outline">

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo } from 'react';
+import { useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -30,8 +30,12 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from '@/components/ui/breadcrumb';
-import RecordNavigation from '@/components/common/RecordNavigation';
-import { useIntegrationLog, useIntegrationLogs, useRetryIntegrationLog } from '../hooks/useIntegrationLogs';
+import ListPager from '@/components/common/ListPager';
+import {
+  integrationLogsPagerQuery,
+  useIntegrationLog,
+  useRetryIntegrationLog,
+} from '../hooks/useIntegrationLogs';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { ArrowLeft, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
@@ -52,17 +56,6 @@ export default function IntegrationLogDetailPage() {
   const router = useRouter();
   const { data: log, isLoading } = useIntegrationLog(id);
   const retryMutation = useRetryIntegrationLog();
-  const navigationParams = useMemo(
-    () => ({
-      pageIndex: 0,
-      pageSize: 100,
-      sorting: [{ id: 'created_at', desc: true }],
-      searchQuery: '',
-    }),
-    [],
-  );
-  const { data: navigationData } = useIntegrationLogs(navigationParams);
-  const navigationItems = navigationData?.data ?? [];
 
   const form = useForm({
     defaultValues: {
@@ -181,10 +174,11 @@ export default function IntegrationLogDetailPage() {
             </Breadcrumb>
           </ToolbarHeading>
           <ToolbarActions>
-            <RecordNavigation
+            <ListPager
+              {...integrationLogsPagerQuery}
+              detailPath="/integration-management/integration-logs"
               currentId={id}
-              items={navigationItems}
-              basePath="/integration-management/integration-logs"
+              ariaLabel="integration log"
             />
             <Button variant="ghost" size="sm" onClick={() => router.back()}>
               <ArrowLeft className="size-4 mr-2" />
