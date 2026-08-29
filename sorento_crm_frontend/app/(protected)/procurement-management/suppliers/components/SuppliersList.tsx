@@ -14,7 +14,7 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { ChevronDown, ChevronRight, PencilLine, Plus, Search, X } from 'lucide-react';
+import { ChevronDown, PencilLine, Plus, Search, X } from 'lucide-react';
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -41,7 +41,8 @@ import { useSuppliers } from '../hooks/useSuppliers';
 import { bulkUpdateSuppliers } from '../services/supplierBulkUpdateService';
 import type { Supplier } from '../types/supplier.types';
 import type { ListQueryFilterGroup } from '@/lib/list-query/listQueryService';
-import { buildDetailSearch } from '@/lib/listNavQuery';
+import { buildDetailSearch, encodeAdvancedFilter } from '@/lib/listNavQuery';
+import { SupplierRowActions } from '../actions';
 
 // Whitelist of bulk-editable fields for suppliers (the safety boundary - mirrors
 // the backend registry in app/services/bulk_update_registry.py). Only these
@@ -82,19 +83,19 @@ export default function SuppliersList() {
     advancedFilter: advancedFilter ?? undefined,
   });
 
-  const handleRowClick = (row: Supplier) => {
-    const supplierId = row.id;
-    // Carry the active list query (search/sort) into the detail URL so the detail
-    // page's prev/next pager walks the same filtered+sorted set.
-    const search = buildDetailSearch({
-      pageIndex: pagination.pageIndex,
-      pageSize: pagination.pageSize,
-      sorting,
-      searchQuery,
-    });
-    router.push(
-      `/procurement-management/suppliers/${supplierId}${search ? `?${search}` : ''}`,
+  // The whole row opens the record, carrying the list query the pager rebuilds
+  // its key from.
+  const rowHref = (row: Supplier) => {
+    const search = buildDetailSearch(
+      {
+        pageIndex: pagination.pageIndex,
+        pageSize: pagination.pageSize,
+        sorting,
+        searchQuery,
+      },
+      { advFilter: encodeAdvancedFilter(advancedFilter) },
     );
+    return `/procurement-management/suppliers/${row.id}${search ? `?${search}` : ''}`;
   };
 
   const columns = useMemo<ColumnDef<Supplier>[]>(
@@ -151,7 +152,7 @@ export default function SuppliersList() {
       {
         accessorKey: 'actions',
         header: '',
-        cell: () => <ChevronRight className="text-muted-foreground/70 size-3.5" />,
+        cell: ({ row }) => <SupplierRowActions supplier={row.original} />,
         size: 40,
         enableHiding: false,
       },
@@ -197,7 +198,7 @@ export default function SuppliersList() {
       table={table}
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
-      onRowClick={handleRowClick}
+      rowHref={rowHref}
       standardToolbar={false}
       tableLayout={{ columnsVisibility: true }}
     >

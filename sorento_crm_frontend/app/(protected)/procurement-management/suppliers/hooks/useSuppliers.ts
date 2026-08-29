@@ -1,7 +1,9 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { buildDataGridParams } from '@/lib/api-client';
-import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
+import type { DataGridApiFetchParams, DataGridApiResponse } from '@/components/ui/data-grid';
+import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
+import { decodeAdvancedFilter } from '@/lib/listNavQuery';
 import {
   useRecordNeighbours,
   type RecordNeighboursResult,
@@ -33,44 +35,79 @@ export function useSupplierNeighbours(
   return useRecordNeighbours(SUPPLIER_NEIGHBOURS_PATH, supplierId, params);
 }
 
-export function useSuppliers(
-  params: DataGridApiFetchParams & {
-    country?: string;
-    city?: string;
-    payment_terms_days?: number;
-    status?: string;
-    advancedFilter?: ListQueryFilterGroup | null;
-  },
-) {
+export type SuppliersListQueryParams = DataGridApiFetchParams & {
+  country?: string;
+  city?: string;
+  payment_terms_days?: number;
+  status?: string;
+  advancedFilter?: ListQueryFilterGroup | null;
+};
+
+/**
+ * The list's React Query key. The detail page's pager rebuilds the SAME key from
+ * the URL, so it reads the page the list already fetched.
+ */
+export function suppliersListQueryKey(params: SuppliersListQueryParams): QueryKey {
+  return [
+    'suppliers',
+    params.pageIndex,
+    params.pageSize,
+    params.sorting,
+    params.searchQuery,
+    params.country,
+    params.city,
+    params.payment_terms_days,
+    params.status,
+    params.advancedFilter,
+  ];
+}
+
+/** One page of the suppliers list, advanced filter included. */
+export function fetchSuppliersPage(
+  params: SuppliersListQueryParams,
+): Promise<DataGridApiResponse<Supplier>> {
+  if (params.advancedFilter) {
+    const sortField = params.sorting?.[0]?.id || '';
+    const sortDirection = params.sorting?.[0]?.desc ? 'desc' : 'asc';
+    return postListQuerySearch<Supplier>({
+      resource: 'suppliers',
+      filter: params.advancedFilter,
+      page: params.pageIndex + 1,
+      limit: params.pageSize,
+      sort: sortField || 'created_at',
+      dir: sortDirection,
+      quick_search: params.searchQuery || undefined,
+    });
+  }
+  return getSuppliers(params);
+}
+
+/** The list query a detail URL describes, in the shape the list passes. */
+export function suppliersListParamsFromUrl(
+  params: ListPagerParams,
+): SuppliersListQueryParams {
+  return {
+    pageIndex: params.pageIndex,
+    pageSize: params.pageSize,
+    sorting: params.sorting,
+    searchQuery: params.searchQuery,
+    advancedFilter:
+      decodeAdvancedFilter<ListQueryFilterGroup>(params.filters.advFilter) ?? undefined,
+  };
+}
+
+/** The pager's two hooks into the suppliers list. */
+export const suppliersPagerQuery = {
+  listQueryKey: (params: ListPagerParams): QueryKey =>
+    suppliersListQueryKey(suppliersListParamsFromUrl(params)),
+  fetchPage: (params: ListPagerParams): Promise<ListPagerPage> =>
+    fetchSuppliersPage(suppliersListParamsFromUrl(params)),
+};
+
+export function useSuppliers(params: SuppliersListQueryParams) {
   return useQuery({
-    queryKey: [
-      'suppliers',
-      params.pageIndex,
-      params.pageSize,
-      params.sorting,
-      params.searchQuery,
-      params.country,
-      params.city,
-      params.payment_terms_days,
-      params.status,
-      params.advancedFilter,
-    ],
-    queryFn: async () => {
-      if (params.advancedFilter) {
-        const sortField = params.sorting?.[0]?.id || '';
-        const sortDirection = params.sorting?.[0]?.desc ? 'desc' : 'asc';
-        return postListQuerySearch<Supplier>({
-          resource: 'suppliers',
-          filter: params.advancedFilter,
-          page: params.pageIndex + 1,
-          limit: params.pageSize,
-          sort: sortField || 'created_at',
-          dir: sortDirection,
-          quick_search: params.searchQuery || undefined,
-        });
-      }
-      return getSuppliers(params);
-    },
+    queryKey: suppliersListQueryKey(params),
+    queryFn: () => fetchSuppliersPage(params),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,
     refetchOnWindowFocus: false,

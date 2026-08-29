@@ -1,16 +1,15 @@
 'use client';
 
-import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, Edit, Trash2 } from 'lucide-react';
+import { ArrowLeft, Edit } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useSupplier } from '../../hooks/useSuppliers';
+import { useSupplier, suppliersPagerQuery } from '../../hooks/useSuppliers';
 import { formatDate } from '@/lib/helpers';
-import SupplierDeleteDialog from '../../components/supplier-delete-dialog';
-import SupplierNavigation from '../../components/SupplierNavigation';
+import DetailActions from '@/components/common/DetailActions';
+import { useSupplierActions } from '../../actions';
 
 interface SupplierDetailProps {
   supplierId: string;
@@ -19,7 +18,9 @@ interface SupplierDetailProps {
 export default function SupplierDetail({ supplierId }: SupplierDetailProps) {
   const router = useRouter();
   const { data: supplier, isLoading } = useSupplier(supplierId);
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const { actions, dialogs } = useSupplierActions(supplier, {
+    onDeleted: () => router.push('/procurement-management/suppliers'),
+  });
 
   if (isLoading) {
     return (
@@ -56,29 +57,29 @@ export default function SupplierDetail({ supplierId }: SupplierDetailProps) {
             Supplier Code: {supplier.supplier_code}
           </p>
         </div>
-        <div className="flex gap-2">
-          <SupplierNavigation supplierId={supplierId} />
-          <Button variant="outline" onClick={() => router.push(`/procurement-management/suppliers/${supplierId}/edit`)}>
-            <Edit className="size-4" />
-            Edit
-          </Button>
-          <Button variant="destructive" onClick={() => setDeleteDialogOpen(true)}>
-            <Trash2 className="size-4" />
-            Delete
-          </Button>
-        </div>
+        <DetailActions
+          pager={{
+            ...suppliersPagerQuery,
+            detailPath: '/procurement-management/suppliers',
+            currentId: supplierId,
+            ariaLabel: 'supplier',
+          }}
+          actions={actions}
+          dialogs={dialogs}
+          gearLabel="Supplier options"
+          primary={
+            <Button
+              onClick={() =>
+                router.push(`/procurement-management/suppliers/${supplierId}/edit`)
+              }
+            >
+              <Edit className="size-4" />
+              Edit
+            </Button>
+          }
+        />
       </div>
 
-      {supplier && (
-        <SupplierDeleteDialog
-          open={deleteDialogOpen}
-          closeDialog={() => setDeleteDialogOpen(false)}
-          supplier={supplier}
-          onSuccess={() => {
-            router.push('/procurement-management/suppliers');
-          }}
-        />
-      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <Card className="lg:col-span-2">
