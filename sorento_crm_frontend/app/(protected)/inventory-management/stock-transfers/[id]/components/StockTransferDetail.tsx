@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import Link from 'next/link';
-import { ArrowLeft, FileText, History, Settings } from 'lucide-react';
+import { FileText, History, Settings } from 'lucide-react';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -34,7 +34,9 @@ import {
   type TransferAction,
 } from '../../components/StockTransferActions';
 import { TransferStatePill } from '../../components/StockTransfersPanel';
-import StockTransferNavigation from '../../components/StockTransferNavigation';
+import ListPager from '@/components/common/ListPager';
+import BackToList from '@/components/common/BackToList';
+import { stockTransfersPagerQuery } from '../../hooks/useStockTransfers';
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -58,13 +60,13 @@ export function StockTransferDetail({ id }: { id: string }) {
   const [tab, setTab] = React.useState('general');
   const [action, setAction] = React.useState<TransferAction | null>(null);
 
+  // Back carries the list query the row click wrote, so the reader returns to the
+  // page, sort and filters they left (S3-01).
   const backLink = (
-    <Button variant="outline" size="sm" asChild>
-      <Link href="/inventory-management/stock-transfers">
-        <ArrowLeft className="size-4" />
-        Back to transfers
-      </Link>
-    </Button>
+    <BackToList
+      listPath="/inventory-management/stock-transfers"
+      label="Back to transfers"
+    />
   );
 
   /** The leaf is the transfer NUMBER, never the id: no UUID reaches a screen. */
@@ -120,7 +122,10 @@ export function StockTransferDetail({ id }: { id: string }) {
 
   return (
     <div className="space-y-4">
-      {crumbs(transfer.transfer_no)}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        {crumbs(transfer.transfer_no)}
+        {backLink}
+      </div>
       <Card>
         <CardHeader className="block py-4">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -129,7 +134,12 @@ export function StockTransferDetail({ id }: { id: string }) {
               <TransferStatePill state={transfer.state} />
             </div>
             <div className="flex shrink-0 flex-wrap items-center gap-2">
-              <StockTransferNavigation transferId={transfer.id} />
+              <ListPager
+                {...stockTransfersPagerQuery}
+                detailPath="/inventory-management/stock-transfers"
+                currentId={transfer.id}
+                ariaLabel="stock transfer"
+              />
               {/* One verb on the header (the captain, 27 Aug): Approve. "Mark moved" is
                   bookkeeping nobody presses here, and Cancel sits behind the gear so the
                   header does not offer the undoing beside the doing. */}
@@ -150,7 +160,6 @@ export function StockTransferDetail({ id }: { id: string }) {
                   </DropdownMenuContent>
                 </DropdownMenu>
               ) : null}
-              {backLink}
             </div>
           </div>
         </CardHeader>

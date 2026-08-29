@@ -1,7 +1,6 @@
 'use client';
 
 import * as React from 'react';
-import { useRouter } from 'next/navigation';
 import {
   ColumnDef,
   PaginationState,
@@ -146,7 +145,6 @@ export function StockTransfersPanel({
   listingKey,
   showFilters = true,
 }: StockTransfersPanelProps) {
-  const router = useRouter();
   const [search, setSearch] = React.useState('');
   const [debounced, setDebounced] = React.useState('');
   const [state, setState] = React.useState('');
@@ -552,12 +550,10 @@ export function StockTransfersPanel({
           isLoading={list.isLoading}
           listingKey={listingKey}
           tableLayout={{ width: 'fixed', columnsResizable: true }}
-          onRowClick={(row) =>
-            router.push(
-              `/inventory-management/stock-transfers/${row.id}${
-                detailSearch ? `?${detailSearch}` : ''
-              }`,
-            )
+          rowHref={(row) =>
+            `/inventory-management/stock-transfers/${row.id}${
+              detailSearch ? `?${detailSearch}` : ''
+            }`
           }
           emptyMessage={
             <div className="px-6 py-10 text-center">
