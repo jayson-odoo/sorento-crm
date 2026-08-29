@@ -77,7 +77,8 @@ import ComplaintDeleteDialog from './ComplaintDeleteDialog';
 import ComplaintNotifiableFieldDialog from './ComplaintNotifiableFieldDialog';
 import { useComplaintRootCausesSelect } from '@/app/(protected)/complaint-management/complaint-root-causes/hooks/useComplaintRootCauses';
 import { useComplaintResolutionsSelect } from '@/app/(protected)/complaint-management/complaint-resolutions/hooks/useComplaintResolutions';
-import ComplaintNavigation from './ComplaintNavigation';
+import ListPager from '@/components/common/ListPager';
+import { complaintsPagerQuery } from '../hooks/useComplaints';
 import ComplaintManualAttachmentsSection from './ComplaintManualAttachmentsSection';
 import ComplaintConversationPanel from './ComplaintConversationPanel';
 import AuditTrail from '@/components/audit/AuditTrail';
@@ -345,6 +346,12 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
           )}
         </div>
         <div className="flex gap-2 flex-wrap items-center justify-end">
+          <ListPager
+            {...complaintsPagerQuery}
+            detailPath="/complaint-management/complaints"
+            currentId={complaintId}
+            ariaLabel="complaint"
+          />
           {/* Business CTAs hide (not disable) while the handling lock is held by
               someone else / unclaimed - keeps the header uncluttered. When the
               lock does not bite (tier 1, flag off, or I hold it) businessCtasEnabled
@@ -586,7 +593,6 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
               </DropdownMenuItem>
             )}
           </DetailActionsMenu>
-          <ComplaintNavigation complaintId={complaintId} />
         </div>
       </div>
 

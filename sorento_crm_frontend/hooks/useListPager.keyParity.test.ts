@@ -26,6 +26,10 @@ import {
   productsListQueryKey,
   productsListParamsFromUrl,
 } from '@/app/(protected)/master-data-management/products/lib/listQuery';
+import {
+  complaintsListQueryKey,
+  complaintsListParamsFromUrl,
+} from '@/app/(protected)/complaint-management/complaints/hooks/useComplaints';
 
 /** One list state: the key the list builds, and the URL its row click emits. */
 interface ParityCase {
@@ -190,6 +194,30 @@ const CASES: ParityCase[] = [
       }),
       pagerKey: (search: URLSearchParams) =>
         productsListQueryKey(productsListParamsFromUrl(parseDetailSearch(search))),
+    };
+  })(),
+  (() => {
+    // Complaints: the multi-select filters travel as comma-joined ids.
+    const listParams = {
+      pageIndex: 1,
+      pageSize: 50,
+      sorting: [{ id: 'complaint_date', desc: true }],
+      searchQuery: 'leak',
+      assigned_to: 'user-3',
+      status: 'submitted',
+      root_cause_ids: ['rc-1', 'rc-2'],
+      resolution_ids: undefined,
+    };
+    return {
+      name: 'complaints, assignee + status + root causes',
+      listKey: complaintsListQueryKey(listParams),
+      url: buildDetailSearch(listParams, {
+        assigned_to: listParams.assigned_to,
+        status: listParams.status,
+        root_cause_ids: listParams.root_cause_ids.join(','),
+      }),
+      pagerKey: (search: URLSearchParams) =>
+        complaintsListQueryKey(complaintsListParamsFromUrl(parseDetailSearch(search))),
     };
   })(),
 ];

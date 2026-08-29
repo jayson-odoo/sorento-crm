@@ -87,7 +87,8 @@ vi.mock(
   '@/app/(protected)/complaint-management/complaint-resolutions/hooks/useComplaintResolutions',
   () => ({ useComplaintResolutionsSelect: () => ({ data: [] }) }),
 );
-vi.mock('./ComplaintNavigation', () => ({ __esModule: true, default: () => null }));
+// The pager has its own tests (hooks/useListPager.test.ts); here it is noise.
+vi.mock('@/components/common/ListPager', () => ({ __esModule: true, default: () => null }));
 vi.mock('./ComplaintManualAttachmentsSection', () => ({ __esModule: true, default: () => null }));
 vi.mock('./ComplaintConversationPanel', () => ({ __esModule: true, default: () => null }));
 vi.mock('@/components/audit/AuditTrail', () => ({ __esModule: true, default: () => null }));
@@ -97,6 +98,7 @@ vi.mock('@/components/my-downloads/EntityDownloadsButton', () => ({
 
 const useComplaintMock = vi.fn();
 vi.mock('../hooks/useComplaints', () => ({
+  complaintsPagerQuery: { listQueryKey: () => ['complaints'], fetchPage: async () => ({ data: [], pagination: { total: 0 } }) },
   useComplaint: (...a: unknown[]) => useComplaintMock(...a),
   useUpdateComplaint: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useUpdateComplaintAndReply: () => ({ mutateAsync: vi.fn(), isPending: false }),

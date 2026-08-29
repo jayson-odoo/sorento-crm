@@ -14,6 +14,14 @@ export interface DetailActionsProps {
    * Secondary items first, then a separator, then Delete in red, last.
    */
   actions?: RecordAction[];
+  /**
+   * The entity's own menu, for the records whose secondary actions are a
+   * WORKFLOW rather than a record action set (complaints, purchase requests,
+   * stock inquiries, the project-sales clients): conditional groups, labels,
+   * server-driven eligibility, their own dialogs. Those menus keep their shape
+   * and only move into the gear slot; `actions` and `gear` are exclusive.
+   */
+  gear?: ReactNode;
   /** The one primary button (Edit ...). */
   primary?: ReactNode;
   /** Dialogs the actions need mounted, from `use<Entity>Actions`. */
@@ -36,6 +44,7 @@ export interface DetailActionsProps {
 export default function DetailActions({
   pager,
   actions,
+  gear,
   primary,
   dialogs,
   gearLabel = 'Actions',
@@ -47,6 +56,7 @@ export default function DetailActions({
       {actions && actions.length > 0 && (
         <DetailActionsMenu actions={actions} trigger="gear" ariaLabel={gearLabel} />
       )}
+      {!actions && gear}
       {primary}
       {dialogs}
     </div>

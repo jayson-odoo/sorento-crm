@@ -13,7 +13,7 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { ChevronRight, Paperclip, Plus, Search, Trash2, X } from 'lucide-react';
+import { Paperclip, Plus, Search, Trash2, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -99,10 +99,9 @@ export default function ComplaintsList() {
     (rootCauseFilter.length ? 1 : 0) +
     (resolutionFilter.length ? 1 : 0);
 
-  const handleRowClick = (row: Complaint) => {
-    const complaintId = row.id;
-    // Carry the active list query into the detail URL so its prev/next pager
-    // walks the same filtered+sorted set (UAC-1..5, UAC-10).
+  // The whole row opens the record, carrying the active list query so the
+  // detail page's pager walks the same filtered+sorted page.
+  const rowHref = (row: Complaint) => {
     const search = buildDetailSearch(
       {
         pageIndex: pagination.pageIndex,
@@ -126,7 +125,7 @@ export default function ComplaintsList() {
       },
     );
     const qs = search ? `?${search}` : '';
-    router.push(`/complaint-management/complaints/${complaintId}${qs}`);
+    return `/complaint-management/complaints/${row.id}${qs}`;
   };
 
   const columns = useMemo<ColumnDef<Complaint>[]>(
@@ -308,15 +307,6 @@ export default function ComplaintsList() {
         size: 110,
         meta: { headerTitle: 'Print Count', skeleton: <Skeleton className="h-4 w-12" /> },
       },
-      {
-        accessorKey: 'actions',
-        header: '',
-        cell: () => (
-          <ChevronRight className="text-muted-foreground/70 size-3.5" />
-        ),
-        size: 40,
-        enableHiding: false,
-      },
     ],
     [],
   );
@@ -344,7 +334,7 @@ export default function ComplaintsList() {
       table={table}
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
-      onRowClick={handleRowClick}
+      rowHref={rowHref}
       standardToolbar={false}
       tableLayout={{ columnsVisibility: true }}
     >
