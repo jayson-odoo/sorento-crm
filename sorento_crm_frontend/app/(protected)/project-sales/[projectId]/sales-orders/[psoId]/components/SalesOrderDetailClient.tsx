@@ -34,16 +34,16 @@ import {
 } from '@/components/ui/alert-dialog';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
-import RecordNavigation from '@/components/common/RecordNavigation';
+import ListPager from '@/components/common/ListPager';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import {
   useAcknowledgeScheduleFinding,
   useProjectSalesOrder,
-  useProjectSalesOrderNeighbours,
   useScheduleFindings,
   useSalesOrderDelete,
   useSalesOrderImportFile,
   useSalesOrderMutations,
+  projectSalesOrdersPagerQuery,
 } from '../../../../_shared/hooks/useProjectSalesOrders';
 import { SalesOrderStockLocationBulkApply } from './SalesOrderStockLocationBulkApply';
 import { useProject } from '../../../../_shared/hooks/useProjects';
@@ -100,7 +100,6 @@ export function SalesOrderDetailClient({
     salesOrder.data ? { area_group: salesOrder.data.area_group } : undefined,
   );
   // The pager's set is the project's own sales orders, in the order the tab lists them.
-  const neighbours = useProjectSalesOrderNeighbours(projectId, psoId);
   // Called above the early returns, as every hook must be. Keyed on the order's
   // `updated_at` so an ingest or a publish refetches it: this is what disables the amend
   // button, and a stale answer either blocks a clean order or lets a wrong amendment past.
@@ -345,13 +344,10 @@ export function SalesOrderDetailClient({
         <div className="flex flex-wrap items-center gap-2">
           {/* Reviewing a project's orders one after another is the normal case, so the pager
               comes first, the way it does on the user record. */}
-          <RecordNavigation
-            basePath={`/project-sales/${projectId}/sales-orders`}
-            prevId={neighbours.prevId}
-            nextId={neighbours.nextId}
-            currentIndex={neighbours.index != null ? neighbours.index - 1 : undefined}
-            totalCount={neighbours.total}
-            isLoading={neighbours.isLoading}
+          <ListPager
+            {...projectSalesOrdersPagerQuery(projectId)}
+            detailPath={`/project-sales/${projectId}/sales-orders`}
+            currentId={psoId}
             ariaLabel="sales order"
           />
           {/* ONE call to action stands in this header, and everything else is behind the

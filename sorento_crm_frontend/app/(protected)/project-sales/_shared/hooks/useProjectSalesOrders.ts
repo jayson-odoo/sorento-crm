@@ -1,6 +1,6 @@
 'use client';
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
   useRecordNeighbours,
@@ -51,6 +51,7 @@ import type {
   SalesOrderRegroupGroup,
   SalesOrderSplitBy,
 } from '../types/projectSalesOrder.types';
+import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
 
 export const SALES_ORDERS_KEY = 'project-sales-orders';
 export const SALES_ORDER_KEY = 'project-sales-order';
@@ -66,6 +67,36 @@ export const salesOrdersKey = (projectId: string, params: ProjectSalesOrderListP
   params,
 ];
 export const salesOrderKey = (psoId: string) => [SALES_ORDER_KEY, psoId];
+
+/**
+ * The list query a record URL describes, in the shape the list passes.
+ *
+ * The project sales orders list pages with 1-based `page`, so the URL's 0-based
+ * `pageIndex` is converted here rather than at each call site.
+ */
+export function projectSalesOrdersListParamsFromUrl(
+  params: ListPagerParams,
+): ProjectSalesOrderListParams {
+  return {
+    page: params.pageIndex + 1,
+    limit: params.pageSize,
+    sort: params.sorting?.[0]?.id,
+    dir: params.sorting?.[0]?.desc ? 'desc' : 'asc',
+    query: params.searchQuery || undefined,
+    status: params.filters.status,
+    purchase_order_id: params.filters.purchase_order_id,
+  };
+}
+
+/** The pager's two hooks into one project's sales orders list. */
+export function projectSalesOrdersPagerQuery(projectId: string) {
+  return {
+    listQueryKey: (params: ListPagerParams): QueryKey =>
+      salesOrdersKey(projectId, projectSalesOrdersListParamsFromUrl(params)),
+    fetchPage: (params: ListPagerParams): Promise<ListPagerPage> =>
+      listProjectSalesOrders(projectId, projectSalesOrdersListParamsFromUrl(params)),
+  };
+}
 
 export function useProjectSalesOrders(
   projectId: string | undefined,

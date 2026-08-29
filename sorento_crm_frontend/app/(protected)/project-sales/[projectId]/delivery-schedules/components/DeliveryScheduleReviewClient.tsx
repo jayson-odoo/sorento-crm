@@ -26,7 +26,7 @@ import {
   useDeliverySchedulePriorVersion,
   useDeliveryScheduleVersion,
   useDeliveryScheduleVersionMutations,
-  useDeliveryScheduleVersionNeighbours,
+  useDeliverySchedules,
 } from '../../../_shared/hooks/useDeliverySchedules';
 import { usePOVersion } from '../../../_shared/hooks/usePOIntake';
 import { resolveExtractionPhase } from '../../../_shared/types/deliverySchedule.types';
@@ -58,6 +58,7 @@ import { poProductOptions } from './DeliveryScheduleProductPicker';
 import { DeliveryScheduleReconciliationList } from './DeliveryScheduleReconciliationList';
 import { DeliveryScheduleRevisionDiff } from './DeliveryScheduleRevisionDiff';
 import { DeliveryScheduleRevisionProposals } from './DeliveryScheduleRevisionProposals';
+import { useRouter } from 'next/navigation';
 
 /**
  * Reviewing one version of a delivery schedule.
@@ -98,7 +99,25 @@ export function DeliveryScheduleReviewClient({
   /** Which proposal a request is in flight for, so only its own card shows pending. */
   const [pendingProposalIndex, setPendingProposalIndex] = React.useState<number | null>(null);
   // The demo screen has no server behind it, so it has no neighbours to ask for either.
-  const neighbours = useDeliveryScheduleVersionNeighbours(versionId, { enabled: !demo });
+  /**
+   * The walk is the project's SCHEDULES, the list this review was opened from,
+   * each stepped to at its latest version - not "every version in the project",
+   * which was never a list anybody was looking at. Opening an older version is
+   * not on that list, so the pager hides itself there (S3-05).
+   */
+  const router = useRouter();
+  const schedules = useDeliverySchedules(demo ? undefined : projectId);
+  const scheduleRows = schedules.data ?? [];
+  const scheduleIndex = scheduleRows.findIndex(
+    (row) => row.latest_version_id === versionId,
+  );
+  const goToSchedule = (row: { latest_version_id: string | null } | undefined) => {
+    if (row?.latest_version_id) {
+      router.push(
+        `/project-sales/${projectId}/delivery-schedules/${row.latest_version_id}`,
+      );
+    }
+  };
   // The version this one revises, for the was -> now diff. No-op on a version 1 or on demo.
   const priorVersion = useDeliverySchedulePriorVersion(version, { enabled: !demo });
 
@@ -426,13 +445,14 @@ export function DeliveryScheduleReviewClient({
           {/* This schedule's own revisions, walked one after another rather than through the
               project tab between each. Same pager as the user record. */}
           <RecordNavigation
-            basePath={`/project-sales/${projectId}/delivery-schedules`}
-            prevId={neighbours.prevId}
-            nextId={neighbours.nextId}
-            currentIndex={neighbours.index != null ? neighbours.index - 1 : undefined}
-            totalCount={neighbours.total}
-            isLoading={neighbours.isLoading}
-            ariaLabel="schedule version"
+            index={scheduleIndex >= 0 ? scheduleIndex + 1 : null}
+            total={scheduleRows.length}
+            hasPrevious={scheduleIndex > 0}
+            hasNext={scheduleIndex >= 0 && scheduleIndex < scheduleRows.length - 1}
+            onPrevious={() => goToSchedule(scheduleRows[scheduleIndex - 1])}
+            onNext={() => goToSchedule(scheduleRows[scheduleIndex + 1])}
+            isLoading={schedules.isLoading}
+            ariaLabel="schedule"
           />
           {/* Everything that only takes you somewhere lives behind the gear. The header used
               to carry a button per destination, and the row of them competed with Confirm,

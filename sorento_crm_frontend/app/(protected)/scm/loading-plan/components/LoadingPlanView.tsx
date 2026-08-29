@@ -46,7 +46,7 @@ import {
   ToolbarHeading,
   ToolbarTitle,
 } from '@/components/common/toolbar';
-import RecordNavigation from '@/components/common/RecordNavigation';
+import ListPager from '@/components/common/ListPager';
 import AttachmentPreviewModal, {
   type AttachmentPreviewItem,
 } from '@/components/common/AttachmentPreviewModal';
@@ -55,10 +55,10 @@ import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { ConfirmActionDialog } from '../../components/ConfirmActionDialog';
 import { EM_DASH, fmtDate } from '../../lib/format';
 import {
+  loadingPlanPagerQuery,
   useCancelLoadingPlan,
   useContainerRequestBuild,
   useDownloadContainerRequestDocument,
-  useLoadingPlanList,
   useSaveLoadingPlanEdits,
   useSendContainerRequest,
   useSupplierNotices,
@@ -150,15 +150,6 @@ export function LoadingPlanView({ planId }: { planId: string }) {
   // adding the missing products (R18), so it is also reachable from up here.
   const rematch = useRematchSupplierCodes();
 
-  // Neighbours for prev/next. The plans list is short (one supplier plans a container every
-  // few days), so the first page of the same default listing is the set to walk.
-  const neighbours = useLoadingPlanList({
-    pageIndex: 0,
-    pageSize: 100,
-    sorting: [{ id: 'started_at', desc: true }],
-    searchQuery: '',
-    status: 'active',
-  });
 
   const rows = useMemo(() => build.data?.rows ?? [], [build.data]);
   const readOnly = plan?.status === 'cancelled';
@@ -341,11 +332,24 @@ export function LoadingPlanView({ planId }: { planId: string }) {
           </p>
         </ToolbarHeading>
         <ToolbarActions>
-          <RecordNavigation
-            basePath="/scm/loading-plan"
+          <Button
+            variant="outline"
+            onClick={() => (unsaved ? setLeaveOpen(true) : goBack())}
+            data-testid="back-to-plans"
+          >
+            <ArrowLeft className="size-4" />
+            Back to loading plans
+          </Button>
+        </ToolbarActions>
+      </Toolbar>
+
+      {/* The plan's own actions: pager, gear, primary (D6). They sit under the
+          toolbar rather than on it, and wrap at 375. */}
+      <div className="mb-4 flex flex-wrap items-center justify-end gap-2">
+          <ListPager
+            {...loadingPlanPagerQuery}
+            detailPath="/scm/loading-plan"
             currentId={planId}
-            items={neighbours.data?.data ?? []}
-            totalCount={neighbours.data?.total}
             ariaLabel="loading plan"
           />
 
@@ -466,16 +470,7 @@ export function LoadingPlanView({ planId }: { planId: string }) {
             Send to supplier
           </Button>
 
-          <Button
-            variant="outline"
-            onClick={() => (unsaved ? setLeaveOpen(true) : goBack())}
-            data-testid="back-to-plans"
-          >
-            <ArrowLeft className="size-4" />
-            Back to loading plans
-          </Button>
-        </ToolbarActions>
-      </Toolbar>
+      </div>
 
       {/* The queue of codes this supplier's file names and our catalogue does not - the stock
           behind them is invisible to the plan below until somebody answers them. */}

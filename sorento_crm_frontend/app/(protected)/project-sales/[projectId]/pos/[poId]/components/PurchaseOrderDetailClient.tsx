@@ -27,7 +27,6 @@ import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
 import {
   useProject,
   usePurchaseOrderMutations,
-  usePurchaseOrderNeighbours,
   usePurchaseOrders,
 } from '../../../../_shared/hooks/useProjects';
 import type {
@@ -77,7 +76,9 @@ export function PurchaseOrderDetailClient({
   const { update, remove } = usePurchaseOrderMutations(projectId);
   const edit = usePurchaseOrderEditSession();
   // The pager's set is the project's own POs, in the order the tab lists them.
-  const neighbours = usePurchaseOrderNeighbours(projectId, poId);
+  // The project's POs are already in memory (the record itself is read out of
+  // them), so the pager is presentational rather than a second endpoint.
+  const poIndex = (purchaseOrders.data ?? []).findIndex((row) => row.id === poId);
 
   const [uploading, setUploading] = React.useState(false);
   const [confirmDelete, setConfirmDelete] = React.useState(false);
@@ -262,12 +263,21 @@ export function PurchaseOrderDetailClient({
                 discard it, and a control nobody dares press is worse than one that is absent. */}
             {!isEditing && (
               <RecordNavigation
-                basePath={`/project-sales/${projectId}/pos`}
-                prevId={neighbours.prevId}
-                nextId={neighbours.nextId}
-                currentIndex={neighbours.index != null ? neighbours.index - 1 : undefined}
-                totalCount={neighbours.total}
-                isLoading={neighbours.isLoading}
+                index={poIndex >= 0 ? poIndex + 1 : null}
+                total={(purchaseOrders.data ?? []).length}
+                hasPrevious={poIndex > 0}
+                hasNext={poIndex >= 0 && poIndex < (purchaseOrders.data ?? []).length - 1}
+                onPrevious={() =>
+                  router.push(
+                    `/project-sales/${projectId}/pos/${(purchaseOrders.data ?? [])[poIndex - 1].id}`,
+                  )
+                }
+                onNext={() =>
+                  router.push(
+                    `/project-sales/${projectId}/pos/${(purchaseOrders.data ?? [])[poIndex + 1].id}`,
+                  )
+                }
+                isLoading={purchaseOrders.isLoading}
                 ariaLabel="purchase order"
               />
             )}

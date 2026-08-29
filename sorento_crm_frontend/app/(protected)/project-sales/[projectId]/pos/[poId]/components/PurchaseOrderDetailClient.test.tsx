@@ -503,14 +503,17 @@ describe('PurchaseOrderDetailClient header', () => {
     expect(screen.queryByRole('button', { name: 'Purchase order actions' })).toBeNull();
   });
 
-  it('walks the project POs without going back to the tab', async () => {
+  it('S3-03: walks the project POs the page already holds, without a second request', async () => {
+    // The project's POs are in memory (the record is read out of them), so the
+    // pager states the position from that list rather than asking the server.
+    listPurchaseOrders.mockResolvedValue([
+      po({ id: 'po0', po_number: 'PO-9000' }),
+      po(),
+      po({ id: 'po2', po_number: 'PO-9002' }),
+    ]);
     renderPage();
 
     await screen.findByRole('heading', { name: 'PO-9001' });
-    expect(recordNeighbours).toHaveBeenCalledWith(
-      '/api/v1/project-sales/projects/p1/purchase-orders/neighbours',
-      'po1',
-    );
     expect(screen.getByText('2 / 3')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Next purchase order' }));

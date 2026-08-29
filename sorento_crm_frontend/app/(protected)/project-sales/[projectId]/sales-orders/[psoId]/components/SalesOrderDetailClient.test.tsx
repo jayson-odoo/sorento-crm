@@ -57,7 +57,13 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
 
 vi.mock('../../../../_shared/services/projectSalesOrderService', () => ({
   PROJECT_SO_MOCK: false,
-  listProjectSalesOrders: vi.fn(),
+  // The pager fetches the page the URL names through this (S3-05).
+  listProjectSalesOrders: vi.fn(async () => ({
+    data: [{ id: 'so-0' }, { id: 'so-1' }, { id: 'so-2' }],
+    total: 3,
+    page: 1,
+    limit: 25,
+  })),
   buildSalesOrders: vi.fn(),
   getProjectSalesOrder: (...args: unknown[]) => getProjectSalesOrder(...args),
   acknowledgeFinding: (...args: unknown[]) => acknowledgeFinding(...args),
@@ -827,22 +833,20 @@ describe('SalesOrderDetailClient header', () => {
     expect(items[items.length - 1]).toHaveTextContent('Delete this sales order');
   });
 
-  it('walks the project sales orders without going back to the list', async () => {
+  it('S3-03: walks the page of project sales orders the URL names', async () => {
     getProjectSalesOrder.mockResolvedValue(detail());
 
     renderDetail();
 
     await screen.findAllByText('PSO-000123');
-    // The pager reads the project's own sequence, for THIS order.
-    expect(recordNeighbours).toHaveBeenCalledWith(
-      '/api/v1/project-sales/projects/p1/sales-orders/neighbours',
-      'so-1',
-    );
-    expect(screen.getByText('2 / 3')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText('2 / 3')).toBeInTheDocument());
 
     fireEvent.click(screen.getByRole('button', { name: 'Next sales order' }));
 
-    expect(push).toHaveBeenCalledWith('/project-sales/p1/sales-orders/so-2');
+    // The step names the page the record sits on, so the walk survives it.
+    expect(push).toHaveBeenCalledWith(
+      '/project-sales/p1/sales-orders/so-2?page=1&limit=50',
+    );
   });
 
   /**

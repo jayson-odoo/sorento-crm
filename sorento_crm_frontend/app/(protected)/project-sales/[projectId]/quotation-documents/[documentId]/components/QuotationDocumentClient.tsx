@@ -108,6 +108,11 @@ export function QuotationDocumentClient({
   const quotations = useQuotations(projectId);
   // The project's OTHER quotation documents, for prev/next in the header.
   const siblingDocuments = useQuotationDocuments(projectId);
+  // The project's documents are already in memory and unpaged, so the pager is
+  // presentational: position and ends computed here.
+  const documentIndex = (siblingDocuments.data ?? []).findIndex(
+    (row) => row.id === documentId,
+  );
   const scopeVersions = useProjectQuotationVersions(quotations.data);
   const quotationMutations = useQuotationMutations(projectId);
   const bulkLines = useQuotationBulkLineMutation(projectId);
@@ -476,9 +481,27 @@ export function QuotationDocumentClient({
                 Rendered from two documents up, since with one there is nowhere to go. */}
             {!edit.isEditing && (siblingDocuments.data ?? []).length > 1 && (
               <RecordNavigation
-                basePath={`/project-sales/${projectId}/quotation-documents`}
-                currentId={documentId}
-                items={siblingDocuments.data ?? []}
+                index={documentIndex >= 0 ? documentIndex + 1 : null}
+                total={(siblingDocuments.data ?? []).length}
+                hasPrevious={documentIndex > 0}
+                hasNext={
+                  documentIndex >= 0 &&
+                  documentIndex < (siblingDocuments.data ?? []).length - 1
+                }
+                onPrevious={() =>
+                  router.push(
+                    `/project-sales/${projectId}/quotation-documents/${
+                      (siblingDocuments.data ?? [])[documentIndex - 1].id
+                    }`,
+                  )
+                }
+                onNext={() =>
+                  router.push(
+                    `/project-sales/${projectId}/quotation-documents/${
+                      (siblingDocuments.data ?? [])[documentIndex + 1].id
+                    }`,
+                  )
+                }
                 ariaLabel="quotation"
               />
             )}

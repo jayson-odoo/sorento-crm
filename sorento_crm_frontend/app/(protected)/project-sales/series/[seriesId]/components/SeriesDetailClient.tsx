@@ -61,6 +61,9 @@ export function SeriesDetailClient({ seriesId }: { seriesId: string }) {
   const router = useRouter();
   const isNew = seriesId === NEW;
   const series = useProjectSeries(true);
+  // The whole series book is in memory (it is short and unpaged), so the pager is
+  // presentational: position and ends computed here, no list query to rebuild.
+  const seriesIndex = (series.data ?? []).findIndex((item) => item.id === seriesId);
   const { create, update, remove } = useSeriesMutations();
   const brands = useBrandSelectQuery();
   const categories = useProductCategorySelectQuery();
@@ -178,9 +181,18 @@ export function SeriesDetailClient({ seriesId }: { seriesId: string }) {
               asking the server for two ids would be a round trip to learn what we hold. */}
           {!isNew && row && (series.data ?? []).length > 1 && (
             <RecordNavigation
-              basePath="/project-sales/series"
-              currentId={seriesId}
-              items={series.data ?? []}
+              index={seriesIndex >= 0 ? seriesIndex + 1 : null}
+              total={(series.data ?? []).length}
+              hasPrevious={seriesIndex > 0}
+              hasNext={
+                seriesIndex >= 0 && seriesIndex < (series.data ?? []).length - 1
+              }
+              onPrevious={() =>
+                router.push(`/project-sales/series/${(series.data ?? [])[seriesIndex - 1].id}`)
+              }
+              onNext={() =>
+                router.push(`/project-sales/series/${(series.data ?? [])[seriesIndex + 1].id}`)
+              }
               ariaLabel="series"
             />
           )}

@@ -94,7 +94,12 @@ const rejectRevisionProposal = vi.fn();
 vi.mock('../../../_shared/services/deliveryScheduleService', () => ({
   DELIVERY_SCHEDULE_VERSION_NEIGHBOURS_PATH:
     '/api/v1/project-sales/delivery-schedule-versions/neighbours',
-  listDeliverySchedules: vi.fn(),
+  // The pager walks the project's SCHEDULES now, each at its latest version.
+  listDeliverySchedules: vi.fn(async () => [
+    { id: 's0', latest_version_id: 'v-a' },
+    { id: 's1', latest_version_id: 'v2' },
+    { id: 's2', latest_version_id: 'v-c' },
+  ]),
   listDeliveryScheduleVersions: (...args: unknown[]) => listDeliveryScheduleVersions(...args),
   uploadDeliverySchedule: vi.fn(),
   getDeliveryScheduleVersion: (...args: unknown[]) => getDeliveryScheduleVersion(...args),
@@ -817,19 +822,17 @@ describe('DeliveryScheduleReviewClient', () => {
  * so a reviewer can walk the revisions without going back to the project tab.
  */
 describe('DeliveryScheduleReviewClient header', () => {
-  it('walks this schedule own revisions', async () => {
+  it('S3-03: walks the project schedules this review was opened from', async () => {
     renderReview();
     await screen.findByTestId('schedule-matrix');
 
-    expect(recordNeighbours).toHaveBeenCalledWith(
-      '/api/v1/project-sales/delivery-schedule-versions/neighbours',
-      'v2',
-    );
-    expect(screen.getByText('2 / 3')).toBeInTheDocument();
+    // The walk is the list the reviewer came from - the project's schedules, each
+    // at its latest version - not every version that ever existed in the project.
+    await waitFor(() => expect(screen.getByText('2 / 3')).toBeInTheDocument());
 
-    fireEvent.click(screen.getByRole('button', { name: 'Next schedule version' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Next schedule' }));
 
-    expect(push).toHaveBeenCalledWith('/project-sales/p1/delivery-schedules/v1');
+    expect(push).toHaveBeenCalledWith('/project-sales/p1/delivery-schedules/v-c');
   });
 
   it('keeps Confirm as the one call to action beside the pager', async () => {
@@ -838,7 +841,7 @@ describe('DeliveryScheduleReviewClient header', () => {
 
     expect(screen.getByRole('button', { name: 'Confirm' })).toBeInTheDocument();
     // The pager is chevrons, not a third and fourth thing to read.
-    expect(screen.getByRole('button', { name: 'Previous schedule version' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Previous schedule' })).toBeInTheDocument();
   });
 });
 
