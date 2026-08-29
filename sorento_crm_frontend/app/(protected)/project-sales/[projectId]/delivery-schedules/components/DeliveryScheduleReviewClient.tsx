@@ -442,8 +442,8 @@ export function DeliveryScheduleReviewClient({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {/* This schedule's own revisions, walked one after another rather than through the
-              project tab between each. Same pager as the user record. */}
+          {/* The project's schedules, each at its latest version, walked one after another
+              rather than through the project tab between each. */}
           <RecordNavigation
             index={scheduleIndex >= 0 ? scheduleIndex + 1 : null}
             total={scheduleRows.length}

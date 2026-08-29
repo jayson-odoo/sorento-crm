@@ -564,9 +564,8 @@ def list_pos(db: Session, *, project_id: str) -> List[ProjectPurchaseOrder]:
             ProjectPurchaseOrder.po_date.desc().nullslast(),
             ProjectPurchaseOrder.created_at.desc(),
             # The number breaks the tie, so two POs imported in one pass cannot come back
-            # in a different order each time - the detail pager
-            # (the record page's pager, which walks the same
-            # tie-breaker and has to walk the list it came from.
+            # in a different order each time. The record page's pager walks the same
+            # tie-breaker, so it agrees with the list it was opened from.
             ProjectPurchaseOrder.po_number.asc(),
         )
         .all()

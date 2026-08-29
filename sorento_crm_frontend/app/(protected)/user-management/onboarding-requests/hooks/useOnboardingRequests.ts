@@ -122,9 +122,6 @@ export function useOnboardingRequestMutations(requestId: string) {
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: [ONBOARDING_DETAIL_KEY, requestId] });
     queryClient.invalidateQueries({ queryKey: [ONBOARDING_LIST_KEY] });
-    // The pager is cached for 30s, so a verdict that moves this request out of
-    // the filtered set would otherwise leave prev/next walking the old one.
-    queryClient.invalidateQueries({ queryKey: ['record-neighbours'] });
   };
 
   const fail = (error: Error) => toast.error(error.message);

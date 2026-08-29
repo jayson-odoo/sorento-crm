@@ -3288,9 +3288,8 @@ class ProjectSODraftService:
         column = sortable.get(sort, ProjectSalesOrder.created_at)
         # The reference breaks the tie, and it is not decoration: one build stamps every
         # order it creates with the same `created_at` to the microsecond, so ordering on
-        # that alone lets Postgres return them in any order it likes - and the detail
-        # pager (the record page's, which walks the same
-        # tie-breaker) would then disagree with the list it is standing on.
+        # that alone lets Postgres return them in any order it likes, and the record
+        # page's pager would then disagree with the list it is standing on.
         rows = rows.order_by(
             column.desc() if direction == "desc" else column.asc(),
             ProjectSalesOrder.provisional_ref.asc(),

@@ -93,9 +93,9 @@ export default function ConversationSLATrackingDetail({
   const queryClient = useQueryClient();
   const canSlaTestOverride = useHasPermission(SLA_TEST_OVERRIDE_PERMISSION);
   const { data: tracking, isLoading } = useConversationSLATrackingDetail(trackingId);
-  // Conversation-context detail renders the IDs-mode pager (neighbours endpoint,
-  // conversation scope). The form SLA tracking page reuses this component with its
-  // own backHref; its records live in the form scope, so it gets no conversation pager.
+  // Only the conversation-context detail carries the pager. The form SLA tracking
+  // page reuses this component with its own backHref; its records live in the form
+  // scope, so the conversation list page it would walk is not the one it came from.
   const isConversationContext =
     backHref === '/sla-management/conversation-sla-tracking';
   // Delete lands where Back lands: the list page, sort, search and filters the

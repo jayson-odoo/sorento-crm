@@ -20,13 +20,6 @@ import type { ListQueryFilterGroup } from '@/lib/list-query/listQueryService';
 import { decodeAdvancedFilter } from '@/lib/listNavQuery';
 import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
 
-/** List query (search/sort + order filters) the neighbours pager walks within. */
-export type OrderNeighboursListParams = DataGridApiFetchParams & {
-  order_status_id?: string;
-  has_order_lines?: 'all' | 'yes' | 'no';
-};
-
-
 /** Everything the orders list filters by. */
 export type OrdersListParams = DataGridApiFetchParams & {
   customer_id?: string;

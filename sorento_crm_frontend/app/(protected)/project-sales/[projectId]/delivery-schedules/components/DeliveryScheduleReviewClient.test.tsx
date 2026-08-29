@@ -92,8 +92,6 @@ const listDeliveryScheduleVersions = vi.fn();
 const acceptRevisionProposal = vi.fn();
 const rejectRevisionProposal = vi.fn();
 vi.mock('../../../_shared/services/deliveryScheduleService', () => ({
-  DELIVERY_SCHEDULE_VERSION_NEIGHBOURS_PATH:
-    '/api/v1/project-sales/delivery-schedule-versions/neighbours',
   // The pager walks the project's SCHEDULES now, each at its latest version.
   listDeliverySchedules: vi.fn(async () => [
     { id: 's0', latest_version_id: 'v-a' },

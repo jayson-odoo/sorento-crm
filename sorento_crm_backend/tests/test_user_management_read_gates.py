@@ -412,11 +412,11 @@ class TestPerRouteGates:
         self.specs = _all_route_specs(db)
         # 25 routes are gated by this PR series; 24 are in this table (the
         # access-agents prev/next endpoint went with S3's page-scoped pager).
-        # `GET /settings/` is the twenty-sixth and lives in
+        # `GET /settings/` is the twenty-fifth and lives in
         # tests/test_settings_app_config_gate.py, where the settings singleton is
         # seeded with non-null sensitive values so its 200 body and its
         # /app-config sibling can be asserted together. (The structural sweep
-        # below covers 42 gated routes in total - the other 18 are the 12
+        # below covers 42 gated routes in total - the other 17 are the 12
         # users/roles/permissions reads that were already gated before this work,
         # the 3 onboarding reads, the teams member-brands read from the
         # brand-aware escalation PR (#197) and the contact media-access read from
