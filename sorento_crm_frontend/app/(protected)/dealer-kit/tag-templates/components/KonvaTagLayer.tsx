@@ -3,21 +3,18 @@
 /**
  * Renders a single TagLayer as Konva nodes.
  *
- * Each layer type maps to the appropriate Konva primitive. Selected layers
- * show a `Transformer` for resize/rotate. Locked layers are not
- * draggable/selectable.
+ * Each layer type maps to the appropriate Konva primitive. The Konva Group
+ * carries `id={layer.id}`, which is how the editor finds the node again during
+ * a drag; without it `stage.findOne('#id')` answered undefined and every canvas
+ * move was silently thrown away on Save.
+ *
+ * There is no Transformer here. ONE Transformer lives in the editor and is
+ * attached to the whole selection (D38), because a per-layer one cannot express
+ * a multi-selection and cannot propagate a group's resize to its children.
  */
 
-import { useEffect, useRef, useState } from 'react';
-import {
-  Ellipse,
-  Group,
-  Image as KonvaImage,
-  Line,
-  Rect,
-  Text,
-  Transformer,
-} from 'react-konva';
+import { useEffect, useState } from 'react';
+import { Ellipse, Group, Image as KonvaImage, Line, Rect, Text } from 'react-konva';
 import type Konva from 'konva';
 import type { TagLayer, TagLayerProps } from '@/lib/dealer-kit/tag-template-types';
 import type { PriceBadgeInput } from '@/lib/dealer-kit/price-badge';
@@ -81,12 +78,23 @@ interface KonvaTagLayerProps {
   scale: number;
   /** Live values for a bound layer. Absent = draw the layer's own content. */
   display?: TagLayerDisplay;
-  isSelected: boolean;
-  onSelect: (id: string, additive: boolean) => void;
-  onDragStart: (id: string) => void;
-  onDragMove: (id: string, x_mm: number, y_mm: number) => void;
-  onDragEnd: (id: string) => void;
-  onTransformEnd: (id: string, attrs: { x_mm: number; y_mm: number; width_mm: number; height_mm: number; rotation_deg: number }) => void;
+  /**
+   * False while the hand tool is active, and for a locked layer. Kept separate
+   * from `locked` so the tool can suspend dragging without touching the doc.
+   */
+  draggable?: boolean;
+  /**
+   * False for a group the user has entered (D37), so its outline stays visible
+   * but its children receive the pointer events. Konva hit-tests a
+   * `fill="transparent"` rect, so this - and not removing the fill - is what
+   * makes a node pass through.
+   */
+  listening?: boolean;
+  onSelect?: (id: string, additive: boolean) => void;
+  onDoubleClick?: (id: string) => void;
+  onDragStart?: (id: string) => void;
+  onDragMove?: (id: string, x_mm: number, y_mm: number) => void;
+  onDragEnd?: (id: string) => void;
 }
 
 /** Convert mm to canvas pixels. */
@@ -103,23 +111,14 @@ export function KonvaTagLayer({
   layer,
   scale,
   display,
-  isSelected,
+  draggable = true,
+  listening = true,
   onSelect,
+  onDoubleClick,
   onDragStart,
   onDragMove,
   onDragEnd,
-  onTransformEnd,
 }: KonvaTagLayerProps) {
-  const shapeRef = useRef<Konva.Group>(null);
-  const trRef = useRef<Konva.Transformer>(null);
-
-  useEffect(() => {
-    if (isSelected && trRef.current && shapeRef.current) {
-      trRef.current.nodes([shapeRef.current]);
-      trRef.current.getLayer()?.batchDraw();
-    }
-  }, [isSelected]);
-
   if (!layer.visible) return null;
 
   const x = mm2px(layer.x_mm, scale);
@@ -127,102 +126,57 @@ export function KonvaTagLayer({
   const w = mm2px(layer.width_mm, scale);
   const h = mm2px(layer.height_mm, scale);
 
-  const handleClick = (e: Konva.KonvaEventObject<MouseEvent | TouchEvent>) => {
+  // Selecting on mousedown rather than click, because a drag never produces a
+  // click: without it, dragging an unselected layer moved a layer the inspector
+  // and the toolbar still thought was not selected.
+  const handleMouseDown = (e: Konva.KonvaEventObject<MouseEvent | TouchEvent>) => {
     if (layer.locked) return;
     e.cancelBubble = true;
     const shiftKey = 'shiftKey' in e.evt ? e.evt.shiftKey : false;
-    onSelect(layer.id, shiftKey);
+    onSelect?.(layer.id, shiftKey);
+  };
+
+  const handleDoubleClick = (e: Konva.KonvaEventObject<MouseEvent | TouchEvent>) => {
+    e.cancelBubble = true;
+    onDoubleClick?.(layer.id);
   };
 
   const handleDragStart = () => {
-    onDragStart(layer.id);
+    onDragStart?.(layer.id);
   };
 
   const handleDragMove = (e: Konva.KonvaEventObject<DragEvent>) => {
     const node = e.target;
-    onDragMove(layer.id, px2mm(node.x(), scale), px2mm(node.y(), scale));
+    onDragMove?.(layer.id, px2mm(node.x(), scale), px2mm(node.y(), scale));
   };
 
   const handleDragEnd = (e: Konva.KonvaEventObject<DragEvent>) => {
     const node = e.target;
     // Snap to final position.
-    onDragMove(layer.id, px2mm(node.x(), scale), px2mm(node.y(), scale));
-    onDragEnd(layer.id);
-  };
-
-  const handleTransformEnd = () => {
-    const node = shapeRef.current;
-    if (!node) return;
-    const scaleX = node.scaleX();
-    const scaleY = node.scaleY();
-    // Reset scale to 1 and apply to width/height.
-    node.scaleX(1);
-    node.scaleY(1);
-    onTransformEnd(layer.id, {
-      x_mm: px2mm(node.x(), scale),
-      y_mm: px2mm(node.y(), scale),
-      width_mm: px2mm(node.width() * scaleX, scale),
-      height_mm: px2mm(node.height() * scaleY, scale),
-      rotation_deg: node.rotation(),
-    });
+    onDragMove?.(layer.id, px2mm(node.x(), scale), px2mm(node.y(), scale));
+    onDragEnd?.(layer.id);
   };
 
   return (
-    <>
-      <Group
-        ref={shapeRef}
-        x={x}
-        y={y}
-        width={w}
-        height={h}
-        rotation={layer.rotation_deg}
-        draggable={!layer.locked}
-        onClick={handleClick}
-        onTap={handleClick}
-        onDragStart={handleDragStart}
-        onDragMove={handleDragMove}
-        onDragEnd={handleDragEnd}
-        onTransformEnd={handleTransformEnd}
-      >
-        <LayerContent
-          props={layer.props}
-          w={w}
-          h={h}
-          scale={scale}
-          display={display}
-        />
-      </Group>
-
-      {isSelected && !layer.locked && (
-        <Transformer
-          ref={trRef}
-          rotateEnabled
-          keepRatio={false}
-          enabledAnchors={[
-            'top-left',
-            'top-right',
-            'bottom-left',
-            'bottom-right',
-            'middle-left',
-            'middle-right',
-            'top-center',
-            'bottom-center',
-          ]}
-          boundBoxFunc={(_oldBox, newBox) => {
-            // Minimum size = 2mm in pixels.
-            const minSize = mm2px(2, scale);
-            if (newBox.width < minSize || newBox.height < minSize) {
-              return {
-                ...newBox,
-                width: Math.max(newBox.width, minSize),
-                height: Math.max(newBox.height, minSize),
-              };
-            }
-            return newBox;
-          }}
-        />
-      )}
-    </>
+    <Group
+      id={layer.id}
+      x={x}
+      y={y}
+      width={w}
+      height={h}
+      rotation={layer.rotation_deg}
+      listening={listening}
+      draggable={draggable && !layer.locked}
+      onMouseDown={handleMouseDown}
+      onTouchStart={handleMouseDown}
+      onDblClick={handleDoubleClick}
+      onDblTap={handleDoubleClick}
+      onDragStart={handleDragStart}
+      onDragMove={handleDragMove}
+      onDragEnd={handleDragEnd}
+    >
+      <LayerContent props={layer.props} w={w} h={h} scale={scale} display={display} />
+    </Group>
   );
 }
 

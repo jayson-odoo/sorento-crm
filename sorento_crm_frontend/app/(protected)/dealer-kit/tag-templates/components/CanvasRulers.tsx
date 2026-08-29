@@ -1,10 +1,15 @@
 'use client';
 
 /**
- * MM rulers rendered along the top and left edges of the canvas workspace.
+ * MM rulers along the top and left edges of the canvas workspace.
  *
- * Tick marks every 5 mm, numbers every 10 mm. Uses plain DOM/CSS, not Konva,
- * so rulers stay outside the canvas bitmap.
+ * Viewport-wide strips, not artboard-wide ones (D33): the Stage now fills the
+ * workspace and the artboard sits at a pan offset inside it, so a tick belongs
+ * at `origin + mm * scale` and the strip has to be as long as the viewport or
+ * it stops before the artboard does at any pan.
+ *
+ * Tick marks every 5 mm, numbers every 10 mm. Plain DOM and CSS, not Konva, so
+ * the rulers stay outside the canvas bitmap.
  */
 
 import { useMemo } from 'react';
@@ -19,44 +24,52 @@ interface CanvasRulersProps {
   heightMm: number;
   /** Pixels per mm at the current zoom. */
   scale: number;
-  /** Horizontal scroll offset in px (for future scroll support). */
-  scrollX?: number;
-  /** Vertical scroll offset in px. */
-  scrollY?: number;
+  /** The artboard origin in stage px: where 0 mm falls along each strip. */
+  originX: number;
+  originY: number;
+  /** Size of the Stage the strips run alongside, in px. */
+  viewportWidth: number;
+  viewportHeight: number;
 }
 
 export function CanvasRulers({
   widthMm,
   heightMm,
   scale,
-  scrollX = 0,
-  scrollY = 0,
+  originX,
+  originY,
+  viewportWidth,
+  viewportHeight,
 }: CanvasRulersProps) {
   const hTicks = useMemo(() => {
     const ticks: { pos: number; mm: number; major: boolean }[] = [];
     for (let mm = 0; mm <= widthMm; mm += 5) {
-      ticks.push({ pos: mm * scale + scrollX, mm, major: mm % 10 === 0 });
+      const pos = originX + mm * scale;
+      if (pos < -20 || pos > viewportWidth + 20) continue;
+      ticks.push({ pos, mm, major: mm % 10 === 0 });
     }
     return ticks;
-  }, [widthMm, scale, scrollX]);
+  }, [widthMm, scale, originX, viewportWidth]);
 
   const vTicks = useMemo(() => {
     const ticks: { pos: number; mm: number; major: boolean }[] = [];
     for (let mm = 0; mm <= heightMm; mm += 5) {
-      ticks.push({ pos: mm * scale + scrollY, mm, major: mm % 10 === 0 });
+      const pos = originY + mm * scale;
+      if (pos < -20 || pos > viewportHeight + 20) continue;
+      ticks.push({ pos, mm, major: mm % 10 === 0 });
     }
     return ticks;
-  }, [heightMm, scale, scrollY]);
+  }, [heightMm, scale, originY, viewportHeight]);
 
   return (
     <>
       {/* Top ruler */}
       <div
-        className="absolute top-0 bg-muted border-b border-border overflow-hidden"
+        className="absolute top-0 overflow-hidden border-b border-border bg-muted"
         style={{
           left: RULER_THICKNESS,
           height: RULER_THICKNESS,
-          width: widthMm * scale,
+          width: viewportWidth,
         }}
       >
         {hTicks.map((t) => (
@@ -71,7 +84,7 @@ export function CanvasRulers({
             />
             {t.major && (
               <span
-                className="absolute bottom-[10px] text-[8px] leading-none text-muted-foreground select-none"
+                className="absolute bottom-[10px] select-none text-[8px] leading-none text-muted-foreground"
                 style={{ transform: 'translateX(-50%)' }}
               >
                 {t.mm}
@@ -83,11 +96,11 @@ export function CanvasRulers({
 
       {/* Left ruler */}
       <div
-        className="absolute left-0 bg-muted border-r border-border overflow-hidden"
+        className="absolute left-0 overflow-hidden border-r border-border bg-muted"
         style={{
           top: RULER_THICKNESS,
           width: RULER_THICKNESS,
-          height: heightMm * scale,
+          height: viewportHeight,
         }}
       >
         {vTicks.map((t) => (
@@ -102,7 +115,7 @@ export function CanvasRulers({
             />
             {t.major && (
               <span
-                className="absolute right-[10px] text-[8px] leading-none text-muted-foreground select-none"
+                className="absolute right-[10px] select-none text-[8px] leading-none text-muted-foreground"
                 style={{ transform: 'translateY(-50%)' }}
               >
                 {t.mm}
@@ -114,7 +127,7 @@ export function CanvasRulers({
 
       {/* Corner square */}
       <div
-        className="absolute top-0 left-0 bg-muted border-b border-r border-border"
+        className="absolute left-0 top-0 border-b border-r border-border bg-muted"
         style={{ width: RULER_THICKNESS, height: RULER_THICKNESS }}
       />
     </>

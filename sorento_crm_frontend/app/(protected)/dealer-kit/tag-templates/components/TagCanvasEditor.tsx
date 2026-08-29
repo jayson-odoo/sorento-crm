@@ -3,12 +3,19 @@
 /**
  * Main tag template canvas editor shell.
  *
- * Left sidebar: layers panel. Center: Konva Stage with rulers. Right sidebar:
- * inspector panel. Top: toolbar with add/undo/redo/zoom/actions.
+ * Left sidebar: layers panel. Centre: a Konva Stage that FILLS the workspace,
+ * with the artboard drawn at a pan offset inside it (D33). Right sidebar:
+ * inspector panel. Top: toolbar.
  *
- * All layer positions and sizes are in mm. The canvas converts to pixels using
- * a zoom-dependent scale factor. State is local (React state); saved on
- * explicit "Save" button click.
+ * All layer positions and sizes are in mm; the canvas converts to pixels with a
+ * zoom-dependent scale. State is local React state, saved on Save.
+ *
+ * The interaction model is Illustrator's, and the rules behind it are pure
+ * functions in `lib/dealer-kit/canvas-geometry.ts`: wheel zooms about the
+ * cursor, a select drag on empty space is a marquee, the hand tool (or held
+ * Space) pans, a click takes a group and a double-click goes inside it, and a
+ * group carries its descendants through every move, transform and clipboard
+ * action.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -41,12 +48,66 @@ import {
   PRODUCT_BLOCK_SIZE,
   SET_BLOCK_SIZE,
 } from '@/lib/dealer-kit/product-block';
+import {
+  actualSizeView,
+  ancestorsOf,
+  bandBetween,
+  cloneLayers,
+  descendantsOf,
+  fitView,
+  hitLayerAt,
+  marqueeHits,
+  moveLayers,
+  refitAncestors,
+  removeLayers,
+  reorderZ,
+  stageToMm,
+  topmostChildAt,
+  transformGroup,
+  ungroupLayers,
+  zoomAt,
+  CANVAS_MAX_ZOOM,
+  CANVAS_MIN_ZOOM,
+  CANVAS_PX_PER_MM,
+  type CanvasView,
+  type ReorderDirection,
+} from '@/lib/dealer-kit/canvas-geometry';
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuShortcut,
+  ContextMenuTrigger,
+} from '@/components/ui/context-menu';
+import {
+  ArrowDown,
+  ArrowDownToLine,
+  ArrowUp,
+  ArrowUpToLine,
+  ClipboardPaste,
+  Copy,
+  CornerLeftUp,
+  CornerRightDown,
+  Expand,
+  Eye,
+  EyeOff,
+  Group as GroupIcon,
+  Lock,
+  Percent,
+  Scissors,
+  SquareDashed,
+  Trash2,
+  Ungroup,
+  Unlock,
+} from 'lucide-react';
 import { AssetPickerDialog } from './AssetPickerDialog';
 import { FontUploadDialog } from './FontUploadDialog';
 import { ProductPickDialog, type PickMode } from './ProductPickDialog';
+import { cn } from '@/lib/utils';
 import { useKitLibrary, useTagBindings } from './useTagBindings';
 import { getProductTagData } from '../../services/tagDataService';
-import { CanvasToolbar } from './CanvasToolbar';
+import { CanvasToolbar, type CanvasTool } from './CanvasToolbar';
 import { CanvasRulers, RULER_THICKNESS } from './CanvasRulers';
 import { LayersPanel } from './LayersPanel';
 import { InspectorPanel } from './InspectorPanel';
@@ -54,7 +115,7 @@ import { useCanvasHistory } from './useCanvasHistory';
 import { useSnapGuides } from './useSnapGuides';
 
 // This component is loaded with ssr:false by the page, so direct imports are safe.
-import { Stage, Layer as KonvaLayer, Rect, Line } from 'react-konva';
+import { Stage, Layer as KonvaLayer, Rect, Line, Transformer } from 'react-konva';
 import { KonvaTagLayer } from './KonvaTagLayer';
 
 // ---------------------------------------------------------------------------
@@ -67,10 +128,14 @@ function newLayerId(): string {
   return `layer-${Date.now()}-${idCounter}`;
 }
 
-const ZOOM_STEP = 0.1;
-const MIN_ZOOM = 0.25;
-const MAX_ZOOM = 4;
-const DEFAULT_SCALE = 3; // 3 px per mm at 100% zoom
+/** One press of the toolbar's zoom buttons. The wheel uses its own factor. */
+const ZOOM_BUTTON_FACTOR = 1.25;
+/** Pixels the pointer may wander before a click counts as a marquee drag. */
+const MARQUEE_SLOP_PX = 3;
+/** How far a duplicate or a paste lands from its original, in mm. */
+const CLONE_OFFSET_MM = 5;
+
+const ZOOM_LIMITS = { min: CANVAS_MIN_ZOOM, max: CANVAS_MAX_ZOOM };
 
 // ---------------------------------------------------------------------------
 // Component
@@ -93,39 +158,115 @@ type PickerState =
   | { kind: 'add-set' }
   | { kind: 'rebind'; groupId: string; mode: PickMode }
   | { kind: 'alternatives' }
-  | { kind: 'accessories' };
+  | { kind: 'accessories' }
+  | { kind: 'preview' };
+
+/** What a drag is carrying, captured once when it starts. */
+interface DragSession {
+  anchorId: string;
+  /** The layers the user grabbed. Descendants come along but are not roots. */
+  roots: string[];
+  /** Roots plus descendants: everything whose node moves. */
+  moving: string[];
+  start: Map<string, { x: number; y: number }>;
+  dx: number;
+  dy: number;
+}
 
 export function TagCanvasEditor({ doc, onChange, promotionId }: TagCanvasEditorProps) {
   const [layers, setLayers] = useState<TagLayer[]>(doc.layers);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [zoom, setZoom] = useState(1);
-  const [clipboard, setClipboard] = useState<TagLayer[] | null>(null);
+  const [view, setView] = useState<CanvasView>({ zoom: 1, panX: 0, panY: 0 });
+  const [tool, setTool] = useState<CanvasTool>('select');
+  const [spaceHeld, setSpaceHeld] = useState(false);
+  const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
+  const [marquee, setMarquee] = useState<{
+    x_mm: number;
+    y_mm: number;
+    width_mm: number;
+    height_mm: number;
+  } | null>(null);
+  const [clipboard, setClipboard] = useState<{ layers: TagLayer[]; roots: string[] } | null>(
+    null,
+  );
+  const [menuOnEmpty, setMenuOnEmpty] = useState(true);
   const [picker, setPicker] = useState<PickerState>({ kind: 'none' });
   const [pickerBusy, setPickerBusy] = useState(false);
-  const [imagePicker, setImagePicker] = useState<
-    { layerId: string; badge: boolean } | null
-  >(null);
+  const [imagePicker, setImagePicker] = useState<{ layerId: string; badge: boolean } | null>(
+    null,
+  );
   const [fontUploadOpen, setFontUploadOpen] = useState(false);
+  /**
+   * The product the canvas is DRAWN against while previewing (D41).
+   *
+   * Editor state only. It is never written into `layers` and Save never sees
+   * it, which is the whole point: a template ships unbound so it can be reused
+   * for any product in its family, and looking at it with real data must not
+   * quietly bind it.
+   */
+  const [preview, setPreview] = useState<GroupBinding | null>(null);
 
   const bindings = useTagBindings(promotionId);
   const library = useKitLibrary();
 
   const containerRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<Konva.Stage | null>(null);
+  const transformerRef = useRef<Konva.Transformer>(null);
+  const dragRef = useRef<DragSession | null>(null);
+  const panRef = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);
+  const marqueeRef = useRef<{
+    start: { x_mm: number; y_mm: number };
+    additive: boolean;
+  } | null>(null);
+  const fittedRef = useRef(false);
 
   const history = useCanvasHistory(doc.layers);
   const { computeSnap, guides, clearGuides } = useSnapGuides();
 
-  const scale = DEFAULT_SCALE * zoom;
+  const scale = CANVAS_PX_PER_MM * view.zoom;
   const canvasWidthPx = doc.width_mm * scale;
   const canvasHeightPx = doc.height_mm * scale;
+  const stageWidth = Math.max(0, containerSize.width - RULER_THICKNESS);
+  const stageHeight = Math.max(0, containerSize.height - RULER_THICKNESS);
+  /** The hand tool, whether chosen or borrowed by holding Space (D35). */
+  const handMode = tool === 'hand' || spaceHeld;
+
+  // -- Commit ----------------------------------------------------------------
+
+  /** One state write and one history entry, so one undo reverts one action. */
+  const commit = useCallback(
+    (next: TagLayer[], nextSelection?: Set<string>) => {
+      setLayers(next);
+      history.pushState(next);
+      if (nextSelection) setSelectedIds(nextSelection);
+    },
+    [history],
+  );
 
   // -- Layer mutations -------------------------------------------------------
 
   const updateLayer = useCallback(
     (id: string, changes: Partial<TagLayer>) => {
       setLayers((prev) => {
-        const next = prev.map((l) => (l.id === id ? { ...l, ...changes } : l));
+        const layer = prev.find((l) => l.id === id);
+        const geometric = (
+          ['x_mm', 'y_mm', 'width_mm', 'height_mm', 'rotation_deg'] as const
+        ).some((key) => key in changes);
+
+        let next: TagLayer[];
+        if (layer && layer.props.kind === 'group' && geometric) {
+          // The inspector's X/Y/W/H on a group means the whole block (D38).
+          next = transformGroup(prev, id, {
+            x_mm: changes.x_mm ?? layer.x_mm,
+            y_mm: changes.y_mm ?? layer.y_mm,
+            width_mm: changes.width_mm ?? layer.width_mm,
+            height_mm: changes.height_mm ?? layer.height_mm,
+            rotation_deg: changes.rotation_deg ?? layer.rotation_deg,
+          }).map((l) => (l.id === id ? { ...l, ...changes } : l));
+        } else {
+          next = prev.map((l) => (l.id === id ? { ...l, ...changes } : l));
+          if (geometric) next = refitAncestors(next, id);
+        }
         history.pushState(next);
         return next;
       });
@@ -175,45 +316,27 @@ export function TagCanvasEditor({ doc, onChange, promotionId }: TagCanvasEditorP
     [history],
   );
 
+  /** The selected ids with no selected ancestor: one entry per grabbed block. */
+  const selectionRoots = useMemo(() => {
+    const ids = Array.from(selectedIds);
+    return ids.filter((id) => !ancestorsOf(layers, id).some((a) => selectedIds.has(a)));
+  }, [selectedIds, layers]);
+
   const deleteSelectedLayers = useCallback(() => {
-    if (selectedIds.size === 0) return;
-    setLayers((prev) => {
-      const next = prev.filter((l) => !selectedIds.has(l.id));
-      history.pushState(next);
-      return next;
-    });
-    setSelectedIds(new Set());
-  }, [selectedIds, history]);
+    if (selectionRoots.length === 0) return;
+    commit(removeLayers(layers, selectionRoots), new Set());
+  }, [selectionRoots, layers, commit]);
 
   const duplicateSelectedLayers = useCallback(() => {
-    if (selectedIds.size === 0) return;
-    setLayers((prev) => {
-      const newLayers: TagLayer[] = [];
-      const idMap = new Map<string, string>();
-
-      for (const l of prev) {
-        if (selectedIds.has(l.id)) {
-          const newId = newLayerId();
-          idMap.set(l.id, newId);
-          newLayers.push({
-            ...structuredClone(l),
-            id: newId,
-            x_mm: l.x_mm + 5,
-            y_mm: l.y_mm + 5,
-          });
-        }
-      }
-      const next = [...prev, ...newLayers];
-      history.pushState(next);
-      setSelectedIds(new Set(newLayers.map((l) => l.id)));
-      return next;
-    });
-  }, [selectedIds, history]);
+    if (selectionRoots.length === 0) return;
+    const cloned = cloneLayers(layers, selectionRoots, newLayerId, CLONE_OFFSET_MM);
+    if (cloned.layers.length === 0) return;
+    commit([...layers, ...cloned.layers], new Set(cloned.ids));
+  }, [selectionRoots, layers, commit]);
 
   const groupSelectedLayers = useCallback(() => {
-    if (selectedIds.size < 2) return;
-    const ids = Array.from(selectedIds);
-    const children = layers.filter((l) => ids.includes(l.id));
+    if (selectionRoots.length < 2) return;
+    const children = layers.filter((l) => selectionRoots.includes(l.id));
     if (children.length < 2) return;
 
     const minX = Math.min(...children.map((l) => l.x_mm));
@@ -236,37 +359,42 @@ export function TagCanvasEditor({ doc, onChange, promotionId }: TagCanvasEditorP
       visible: true,
       slot_binding: null,
       text_override: null,
-      props: { kind: 'group', children: ids },
+      props: { kind: 'group', children: children.map((l) => l.id) },
     };
 
-    setLayers((prev) => {
-      const next = [...prev, groupLayer];
-      history.pushState(next);
-      return next;
-    });
-    setSelectedIds(new Set([groupId]));
-  }, [selectedIds, layers, history]);
+    commit([...layers, groupLayer], new Set([groupId]));
+  }, [selectionRoots, layers, commit]);
 
   const ungroupSelectedLayers = useCallback(() => {
-    const groupLayers = layers.filter(
-      (l) => selectedIds.has(l.id) && l.props.kind === 'group',
-    );
-    if (groupLayers.length === 0) return;
+    const groupIds = layers
+      .filter((l) => selectedIds.has(l.id) && l.props.kind === 'group')
+      .map((l) => l.id);
+    if (groupIds.length === 0) return;
+    const result = ungroupLayers(layers, groupIds);
+    commit(result.layers, new Set(result.ids));
+  }, [selectedIds, layers, commit]);
 
-    const groupIds = new Set(groupLayers.map((l) => l.id));
-    const childIds = new Set(
-      groupLayers.flatMap((l) =>
-        l.props.kind === 'group' ? l.props.children : [],
-      ),
-    );
+  const reorderSelection = useCallback(
+    (direction: ReorderDirection) => {
+      if (selectionRoots.length === 0) return;
+      commit(reorderZ(layers, selectionRoots, direction));
+    },
+    [selectionRoots, layers, commit],
+  );
 
-    setLayers((prev) => {
-      const next = prev.filter((l) => !groupIds.has(l.id));
-      history.pushState(next);
-      setSelectedIds(childIds);
-      return next;
-    });
-  }, [selectedIds, layers, history]);
+  /** Nudge the whole selection at once, so a group and a child move once each. */
+  const nudgeSelection = useCallback(
+    (dx_mm: number, dy_mm: number) => {
+      const movable = selectionRoots.filter(
+        (id) => !layers.find((l) => l.id === id)?.locked,
+      );
+      if (movable.length === 0) return;
+      let next = moveLayers(layers, movable, dx_mm, dy_mm);
+      for (const id of movable) next = refitAncestors(next, id);
+      commit(next);
+    },
+    [selectionRoots, layers, commit],
+  );
 
   // -- Add layer factories ---------------------------------------------------
 
@@ -291,11 +419,15 @@ export function TagCanvasEditor({ doc, onChange, promotionId }: TagCanvasEditorP
 
   const bindingOf = useCallback(
     (layer: TagLayer): GroupBinding | undefined => {
+      // While previewing, EVERY layer resolves against the preview (D41): a
+      // template ships unbound on purpose, so consulting the group first would
+      // leave every slot empty and there would be nothing to look at.
+      if (preview) return preview;
       if (layer.props.kind === 'group') return layer.props.binding;
       const group = groupOfChild.get(layer.id);
       return group && group.props.kind === 'group' ? group.props.binding : undefined;
     },
-    [groupOfChild],
+    [groupOfChild, preview],
   );
 
   const dataOf = useCallback(
@@ -375,12 +507,23 @@ export function TagCanvasEditor({ doc, onChange, promotionId }: TagCanvasEditorP
     setImagePicker({ layerId: layer.id, badge: true });
   }, [addLayer, makeBaseLayer]);
 
-  // -- Bound blocks (D27) ----------------------------------------------------
+  // -- Bound blocks (D27) and preview (D41) ----------------------------------
 
   const closePicker = useCallback(() => {
     setPicker({ kind: 'none' });
     setPickerBusy(false);
   }, []);
+
+  /**
+   * Whether the template is about a SET rather than a product.
+   *
+   * Read off the layers rather than off a binding, because a template carries
+   * no binding: a `set_members` slot is the document saying what it is for.
+   */
+  const previewMode: PickMode = useMemo(
+    () => (layers.some((layer) => layer.slot_binding === 'set_members') ? 'set' : 'product'),
+    [layers],
+  );
 
   const handlePick = useCallback(
     async (ids: string[]) => {
@@ -409,6 +552,13 @@ export function TagCanvasEditor({ doc, onChange, promotionId }: TagCanvasEditorP
               z_index: maxZ,
             }),
           );
+        } else if (picker.kind === 'preview') {
+          const isSet = previewMode === 'set';
+          const loaded = isSet
+            ? await bindings.loadSet(ids[0])
+            : await bindings.loadProduct(ids[0]);
+          if (!loaded) return;
+          setPreview(isSet ? { product_set_id: ids[0] } : { product_id: ids[0] });
         } else if (picker.kind === 'alternatives') {
           const products = [];
           for (const id of ids) {
@@ -494,6 +644,7 @@ export function TagCanvasEditor({ doc, onChange, promotionId }: TagCanvasEditorP
       layers,
       history,
       promotionId,
+      previewMode,
       closePicker,
     ],
   );
@@ -582,8 +733,41 @@ export function TagCanvasEditor({ doc, onChange, promotionId }: TagCanvasEditorP
     [imagePicker, history, library],
   );
 
-  // -- Selection -------------------------------------------------------------
+  // -- Selection and group isolation (D37) -----------------------------------
 
+  /**
+   * The groups the user is inside, derived from the selection rather than
+   * stored: every ancestor of every selected layer. Nothing to keep in step
+   * with undo, redo or a Layers panel click, because there is no second copy.
+   */
+  const entered = useMemo(() => {
+    const set = new Set<string>();
+    for (const id of selectedIds) {
+      for (const ancestorId of ancestorsOf(layers, id)) set.add(ancestorId);
+    }
+    return set;
+  }, [selectedIds, layers]);
+
+  /** The innermost group being edited, which scopes a marquee (D36). */
+  const insideGroupId = useMemo(() => {
+    const first = Array.from(selectedIds)[0];
+    if (!first) return null;
+    return ancestorsOf(layers, first)[0] ?? null;
+  }, [selectedIds, layers]);
+
+  /** A raw canvas hit, answered at the level the user is working at. */
+  const resolveTarget = useCallback(
+    (rawId: string) => {
+      const chain = [...ancestorsOf(layers, rawId)].reverse();
+      for (const ancestorId of chain) {
+        if (!entered.has(ancestorId)) return ancestorId;
+      }
+      return rawId;
+    },
+    [layers, entered],
+  );
+
+  /** Layers panel and inspector: pick exactly what was asked for. */
   const handleSelect = useCallback((id: string, additive: boolean) => {
     setSelectedIds((prev) => {
       if (additive) {
@@ -596,41 +780,137 @@ export function TagCanvasEditor({ doc, onChange, promotionId }: TagCanvasEditorP
     });
   }, []);
 
-  const handleStageClick = useCallback((e: Konva.KonvaEventObject<MouseEvent | TouchEvent>) => {
-    // Deselect when clicking on the stage background.
-    if (e.target === e.target.getStage()) {
-      setSelectedIds(new Set());
+  const handleCanvasSelect = useCallback(
+    (rawId: string, additive: boolean) => {
+      const id = resolveTarget(rawId);
+      setSelectedIds((prev) => {
+        if (additive) {
+          const next = new Set(prev);
+          if (next.has(id)) next.delete(id);
+          else next.add(id);
+          return next;
+        }
+        // Grabbing something already selected keeps the multi-selection, so it
+        // can be dragged as one.
+        if (prev.has(id)) return prev;
+        return new Set([id]);
+      });
+    },
+    [resolveTarget],
+  );
+
+  const pointerMm = useCallback(() => {
+    const point = stageRef.current?.getPointerPosition();
+    return point ? stageToMm(view, point.x, point.y) : null;
+  }, [view]);
+
+  const handleLayerDoubleClick = useCallback(
+    (rawId: string) => {
+      const targetId = resolveTarget(rawId);
+      const target = layers.find((layer) => layer.id === targetId);
+      if (!target || target.props.kind !== 'group') return;
+      const point = pointerMm();
+      const childId = point
+        ? topmostChildAt(layers, targetId, point.x_mm, point.y_mm)
+        : null;
+      const fallback = target.props.children.find((id) =>
+        layers.some((layer) => layer.id === id),
+      );
+      const pick = childId ?? fallback;
+      if (pick) setSelectedIds(new Set([pick]));
+    },
+    [layers, resolveTarget, pointerMm],
+  );
+
+  /** Escape climbs one level, and deselects at the top. */
+  const selectParentGroup = useCallback(() => {
+    const first = Array.from(selectedIds)[0];
+    const parent = first ? ancestorsOf(layers, first)[0] : null;
+    setSelectedIds(parent ? new Set([parent]) : new Set());
+  }, [selectedIds, layers]);
+
+  const enterSelectedGroup = useCallback(() => {
+    const first = Array.from(selectedIds)[0];
+    const group = first ? layers.find((layer) => layer.id === first) : null;
+    if (!group || group.props.kind !== 'group') return;
+    const child = group.props.children.find((id) => layers.some((l) => l.id === id));
+    if (child) setSelectedIds(new Set([child]));
+  }, [selectedIds, layers]);
+
+  const selectAll = useCallback(() => {
+    const parented = new Set<string>();
+    for (const layer of layers) {
+      if (layer.props.kind !== 'group') continue;
+      for (const childId of layer.props.children) parented.add(childId);
     }
-  }, []);
+    setSelectedIds(
+      new Set(
+        layers
+          .filter((layer) => !parented.has(layer.id) && layer.visible && !layer.locked)
+          .map((layer) => layer.id),
+      ),
+    );
+  }, [layers]);
 
-  // -- Drag and snap ---------------------------------------------------------
+  // -- Drag and snap (D38) ---------------------------------------------------
 
-  const handleDragStart = useCallback(() => {
-    // Nothing special, snap is computed on move.
-  }, []);
+  const handleDragStart = useCallback(
+    (id: string) => {
+      const roots = selectedIds.has(id) ? selectionRoots : [id];
+      const moving = new Set<string>();
+      for (const rootId of roots) {
+        moving.add(rootId);
+        for (const childId of descendantsOf(layers, rootId)) moving.add(childId);
+      }
+      const start = new Map<string, { x: number; y: number }>();
+      for (const layer of layers) {
+        if (moving.has(layer.id)) start.set(layer.id, { x: layer.x_mm, y: layer.y_mm });
+      }
+      dragRef.current = {
+        anchorId: id,
+        roots: [...roots],
+        moving: Array.from(moving),
+        start,
+        dx: 0,
+        dy: 0,
+      };
+    },
+    [selectedIds, selectionRoots, layers],
+  );
 
   const handleDragMove = useCallback(
     (id: string, rawX: number, rawY: number) => {
+      const drag = dragRef.current;
+      if (!drag || drag.anchorId !== id) return;
+      const anchorStart = drag.start.get(id);
       const layer = layers.find((l) => l.id === id);
-      if (!layer) return;
+      if (!anchorStart || !layer) return;
+
+      // Everything travelling with the pointer is excluded from the snap
+      // targets, or a group would latch onto its own children on every pixel.
+      const movingSet = new Set(drag.moving);
       const result = computeSnap(
         id,
         rawX,
         rawY,
         layer.width_mm,
         layer.height_mm,
-        layers,
+        layers.filter((l) => !movingSet.has(l.id)),
         doc.width_mm,
         doc.height_mm,
       );
-      // Update stage node position for the snap.
-      const stageNode = stageRef.current;
-      if (stageNode) {
-        const konvaNode = stageNode.findOne(`#${id}`);
-        if (konvaNode) {
-          konvaNode.x(result.x_mm * scale);
-          konvaNode.y(result.y_mm * scale);
-        }
+      drag.dx = result.x_mm - anchorStart.x;
+      drag.dy = result.y_mm - anchorStart.y;
+
+      const stage = stageRef.current;
+      if (!stage) return;
+      for (const memberId of drag.moving) {
+        const from = drag.start.get(memberId);
+        if (!from) continue;
+        const node = stage.findOne(`#${memberId}`);
+        if (!node) continue;
+        node.x((from.x + drag.dx) * scale);
+        node.y((from.y + drag.dy) * scale);
       }
     },
     [layers, computeSnap, doc.width_mm, doc.height_mm, scale],
@@ -639,54 +919,235 @@ export function TagCanvasEditor({ doc, onChange, promotionId }: TagCanvasEditorP
   const handleDragEnd = useCallback(
     (id: string) => {
       clearGuides();
-      // Read final position from the Konva node.
-      const stageNode = stageRef.current;
-      if (stageNode) {
-        const konvaNode = stageNode.findOne(`#${id}`);
-        if (konvaNode) {
-          updateLayer(id, {
-            x_mm: konvaNode.x() / scale,
-            y_mm: konvaNode.y() / scale,
-          });
-        }
+      const drag = dragRef.current;
+      dragRef.current = null;
+      if (!drag || drag.anchorId !== id) return;
+      if (drag.dx === 0 && drag.dy === 0) return;
+
+      let next = moveLayers(layers, drag.roots, drag.dx, drag.dy);
+      for (const rootId of drag.roots) next = refitAncestors(next, rootId);
+      commit(next);
+    },
+    [clearGuides, layers, commit],
+  );
+
+  // -- Transform (D38) -------------------------------------------------------
+
+  // ONE Transformer for the whole selection. Attaching happens after render, so
+  // the nodes it is given exist and carry the ids `KonvaTagLayer` now sets.
+  useEffect(() => {
+    const transformer = transformerRef.current;
+    const stage = stageRef.current;
+    if (!transformer || !stage) return;
+    const nodes = Array.from(selectedIds)
+      .map((id) => layers.find((layer) => layer.id === id))
+      .filter((layer): layer is TagLayer => Boolean(layer) && !layer!.locked && layer!.visible)
+      .map((layer) => stage.findOne(`#${layer.id}`))
+      .filter((node): node is Konva.Node => Boolean(node));
+    transformer.nodes(nodes);
+    transformer.getLayer()?.batchDraw();
+  }, [selectedIds, layers, scale, view]);
+
+  const handleTransformEnd = useCallback(() => {
+    const transformer = transformerRef.current;
+    if (!transformer) return;
+
+    // Read and reset the Konva scale BEFORE touching state: a React updater can
+    // run twice, and a second read would see the already-reset scale and undo
+    // the resize.
+    const changes = transformer.nodes().map((node) => {
+      const scaleX = node.scaleX();
+      const scaleY = node.scaleY();
+      node.scaleX(1);
+      node.scaleY(1);
+      return {
+        id: node.id(),
+        attrs: {
+          x_mm: node.x() / scale,
+          y_mm: node.y() / scale,
+          width_mm: (node.width() * scaleX) / scale,
+          height_mm: (node.height() * scaleY) / scale,
+          rotation_deg: node.rotation(),
+        },
+      };
+    });
+
+    let next = layers;
+    for (const { id, attrs } of changes) {
+      const layer = next.find((l) => l.id === id);
+      if (!layer) continue;
+      if (layer.props.kind === 'group') {
+        next = transformGroup(next, id, attrs);
+      } else {
+        next = refitAncestors(
+          next.map((l) => (l.id === id ? { ...l, ...attrs } : l)),
+          id,
+        );
       }
+    }
+    commit(next);
+  }, [layers, scale, commit]);
+
+  // -- Viewport (D33, D34) ---------------------------------------------------
+
+  useEffect(() => {
+    const element = containerRef.current;
+    if (!element) return;
+    const observer = new ResizeObserver((entries) => {
+      const rect = entries[0].contentRect;
+      setContainerSize({ width: rect.width, height: rect.height });
+    });
+    observer.observe(element);
+    setContainerSize({ width: element.clientWidth, height: element.clientHeight });
+    return () => observer.disconnect();
+  }, []);
+
+  const handleFit = useCallback(() => {
+    if (stageWidth <= 0 || stageHeight <= 0) return;
+    setView(
+      fitView(
+        { width: stageWidth, height: stageHeight },
+        { width_mm: doc.width_mm, height_mm: doc.height_mm },
+      ),
+    );
+  }, [stageWidth, stageHeight, doc.width_mm, doc.height_mm]);
+
+  const handleZoomReset = useCallback(() => {
+    setView(
+      actualSizeView(
+        { width: stageWidth, height: stageHeight },
+        { width_mm: doc.width_mm, height_mm: doc.height_mm },
+      ),
+    );
+  }, [stageWidth, stageHeight, doc.width_mm, doc.height_mm]);
+
+  // Fit once, as soon as the container has a size to fit into.
+  useEffect(() => {
+    if (fittedRef.current || stageWidth <= 0 || stageHeight <= 0) return;
+    fittedRef.current = true;
+    handleFit();
+  }, [stageWidth, stageHeight, handleFit]);
+
+  const handleZoomIn = useCallback(() => {
+    setView((v) =>
+      zoomAt(v, { x: stageWidth / 2, y: stageHeight / 2 }, ZOOM_BUTTON_FACTOR, ZOOM_LIMITS),
+    );
+  }, [stageWidth, stageHeight]);
+
+  const handleZoomOut = useCallback(() => {
+    setView((v) =>
+      zoomAt(v, { x: stageWidth / 2, y: stageHeight / 2 }, 1 / ZOOM_BUTTON_FACTOR, ZOOM_LIMITS),
+    );
+  }, [stageWidth, stageHeight]);
+
+  // A NATIVE wheel listener with { passive: false }: React's onWheel is passive,
+  // so preventDefault there is ignored and the page scrolls instead of zooming.
+  useEffect(() => {
+    const element = containerRef.current;
+    if (!element) return;
+    const onWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      const rect = element.getBoundingClientRect();
+      const pointer = {
+        x: event.clientX - rect.left - RULER_THICKNESS,
+        y: event.clientY - rect.top - RULER_THICKNESS,
+      };
+      setView((v) => zoomAt(v, pointer, Math.pow(1.1, -event.deltaY / 100), ZOOM_LIMITS));
+    };
+    element.addEventListener('wheel', onWheel, { passive: false });
+    return () => element.removeEventListener('wheel', onWheel);
+  }, []);
+
+  // -- Stage pointer handling (D35, D36) -------------------------------------
+
+  const isBackground = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
+    const target = e.target;
+    return target === target.getStage() || target.name() === 'artboard-bg';
+  }, []);
+
+  const handleStageMouseDown = useCallback(
+    (e: Konva.KonvaEventObject<MouseEvent>) => {
+      const point = stageRef.current?.getPointerPosition();
+      if (!point) return;
+      if (handMode) {
+        panRef.current = { x: point.x, y: point.y, panX: view.panX, panY: view.panY };
+        return;
+      }
+      if (!isBackground(e)) return;
+      const start = stageToMm(view, point.x, point.y);
+      marqueeRef.current = { start, additive: e.evt.shiftKey };
+      setMarquee(bandBetween(start, start));
     },
-    [clearGuides, scale, updateLayer],
+    [handMode, view, isBackground],
   );
 
-  const handleTransformEnd = useCallback(
-    (
-      id: string,
-      attrs: {
-        x_mm: number;
-        y_mm: number;
-        width_mm: number;
-        height_mm: number;
-        rotation_deg: number;
-      },
-    ) => {
-      updateLayer(id, attrs);
+  const handleStageMouseMove = useCallback(() => {
+    const point = stageRef.current?.getPointerPosition();
+    if (!point) return;
+    const pan = panRef.current;
+    if (pan) {
+      setView((v) => ({
+        ...v,
+        panX: pan.panX + (point.x - pan.x),
+        panY: pan.panY + (point.y - pan.y),
+      }));
+      return;
+    }
+    const band = marqueeRef.current;
+    if (band) setMarquee(bandBetween(band.start, stageToMm(view, point.x, point.y)));
+  }, [view]);
+
+  const handleStageMouseUp = useCallback(() => {
+    panRef.current = null;
+    const band = marqueeRef.current;
+    marqueeRef.current = null;
+    setMarquee(null);
+    if (!band) return;
+
+    const point = stageRef.current?.getPointerPosition();
+    const end = point ? stageToMm(view, point.x, point.y) : band.start;
+    const rect = bandBetween(band.start, end);
+    const dragged =
+      rect.width_mm * scale > MARQUEE_SLOP_PX || rect.height_mm * scale > MARQUEE_SLOP_PX;
+
+    if (!dragged) {
+      // A click on empty space deselects and leaves the group (D36).
+      if (!band.additive) setSelectedIds(new Set());
+      return;
+    }
+    const hits = marqueeHits(layers, rect, { insideGroupId });
+    setSelectedIds((prev) => (band.additive ? new Set([...prev, ...hits]) : new Set(hits)));
+  }, [view, scale, layers, insideGroupId]);
+
+  // A mouseup outside the canvas would otherwise leave a band or a pan running.
+  useEffect(() => {
+    const cancel = () => {
+      panRef.current = null;
+      if (marqueeRef.current) {
+        marqueeRef.current = null;
+        setMarquee(null);
+      }
+    };
+    window.addEventListener('mouseup', cancel);
+    return () => window.removeEventListener('mouseup', cancel);
+  }, []);
+
+  const handleStageDoubleClick = useCallback(
+    (e: Konva.KonvaEventObject<MouseEvent>) => {
+      if (isBackground(e)) setSelectedIds(new Set());
     },
-    [updateLayer],
+    [isBackground],
   );
 
-  // -- Visibility and lock toggles -------------------------------------------
-
-  const handleToggleVisibility = useCallback(
-    (id: string) => {
-      const layer = layers.find((l) => l.id === id);
-      if (layer) updateLayer(id, { visible: !layer.visible });
-    },
-    [layers, updateLayer],
-  );
-
-  const handleToggleLock = useCallback(
-    (id: string) => {
-      const layer = layers.find((l) => l.id === id);
-      if (layer) updateLayer(id, { locked: !layer.locked });
-    },
-    [layers, updateLayer],
-  );
+  // Runs before the Radix trigger, being the deeper DOM node. It must NOT call
+  // preventDefault: the trigger needs this event, and the trigger is what stops
+  // the browser's own menu.
+  const handleStageContextMenu = useCallback(() => {
+    const point = pointerMm();
+    const hitId = point ? hitLayerAt(layers, point.x_mm, point.y_mm, entered) : null;
+    setMenuOnEmpty(!hitId);
+    if (hitId && !selectedIds.has(hitId)) setSelectedIds(new Set([hitId]));
+  }, [pointerMm, layers, entered, selectedIds]);
 
   // -- Undo / Redo -----------------------------------------------------------
 
@@ -706,39 +1167,75 @@ export function TagCanvasEditor({ doc, onChange, promotionId }: TagCanvasEditorP
     }
   }, [history]);
 
-  // -- Zoom ------------------------------------------------------------------
-
-  const handleZoomIn = useCallback(() => {
-    setZoom((z) => Math.min(MAX_ZOOM, z + ZOOM_STEP));
-  }, []);
-
-  const handleZoomOut = useCallback(() => {
-    setZoom((z) => Math.max(MIN_ZOOM, z - ZOOM_STEP));
-  }, []);
-
-  // -- Copy / Paste -----------------------------------------------------------
+  // -- Clipboard (D39) --------------------------------------------------------
 
   const handleCopy = useCallback(() => {
-    const sel = layers.filter((l) => selectedIds.has(l.id));
-    if (sel.length > 0) setClipboard(structuredClone(sel));
-  }, [layers, selectedIds]);
+    if (selectionRoots.length === 0) return;
+    const ids = new Set(selectionRoots);
+    for (const rootId of selectionRoots) {
+      for (const childId of descendantsOf(layers, rootId)) ids.add(childId);
+    }
+    setClipboard({
+      layers: structuredClone(layers.filter((layer) => ids.has(layer.id))),
+      roots: [...selectionRoots],
+    });
+  }, [layers, selectionRoots]);
 
   const handlePaste = useCallback(() => {
-    if (!clipboard || clipboard.length === 0) return;
-    const newLayers = clipboard.map((l) => ({
-      ...structuredClone(l),
-      id: newLayerId(),
-      x_mm: l.x_mm + 5,
-      y_mm: l.y_mm + 5,
-      z_index: maxZ,
-    }));
-    setLayers((prev) => {
-      const next = [...prev, ...newLayers];
-      history.pushState(next);
-      return next;
-    });
-    setSelectedIds(new Set(newLayers.map((l) => l.id)));
-  }, [clipboard, maxZ, history]);
+    if (!clipboard || clipboard.layers.length === 0) return;
+    const cloned = cloneLayers(
+      clipboard.layers,
+      clipboard.roots,
+      newLayerId,
+      CLONE_OFFSET_MM,
+      maxZ,
+    );
+    if (cloned.layers.length === 0) return;
+    commit([...layers, ...cloned.layers], new Set(cloned.ids));
+  }, [clipboard, layers, maxZ, commit]);
+
+  const handleCut = useCallback(() => {
+    handleCopy();
+    deleteSelectedLayers();
+  }, [handleCopy, deleteSelectedLayers]);
+
+  // -- Visibility and lock toggles -------------------------------------------
+
+  const handleToggleVisibility = useCallback(
+    (id: string) => {
+      const layer = layers.find((l) => l.id === id);
+      if (layer) updateLayer(id, { visible: !layer.visible });
+    },
+    [layers, updateLayer],
+  );
+
+  const handleToggleLock = useCallback(
+    (id: string) => {
+      const layer = layers.find((l) => l.id === id);
+      if (layer) updateLayer(id, { locked: !layer.locked });
+    },
+    [layers, updateLayer],
+  );
+
+  const selectionLocked = useMemo(
+    () =>
+      selectionRoots.length > 0 &&
+      selectionRoots.every((id) => layers.find((l) => l.id === id)?.locked),
+    [selectionRoots, layers],
+  );
+
+  const toggleSelectionLock = useCallback(() => {
+    if (selectionRoots.length === 0) return;
+    const locked = !selectionLocked;
+    const ids = new Set(selectionRoots);
+    commit(layers.map((layer) => (ids.has(layer.id) ? { ...layer, locked } : layer)));
+  }, [selectionRoots, selectionLocked, layers, commit]);
+
+  const hideSelection = useCallback(() => {
+    if (selectionRoots.length === 0) return;
+    const ids = new Set(selectionRoots);
+    commit(layers.map((layer) => (ids.has(layer.id) ? { ...layer, visible: false } : layer)));
+  }, [selectionRoots, layers, commit]);
 
   // -- Keyboard shortcuts ----------------------------------------------------
 
@@ -750,84 +1247,133 @@ export function TagCanvasEditor({ doc, onChange, promotionId }: TagCanvasEditorP
         e.target instanceof HTMLSelectElement;
       if (isInput) return;
 
+      const modifier = e.ctrlKey || e.metaKey;
+
+      if (e.key === ' ' && !modifier) {
+        e.preventDefault();
+        setSpaceHeld(true);
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        selectParentGroup();
+        return;
+      }
+      if (!modifier && (e.key === 'v' || e.key === 'V')) {
+        setTool('select');
+        return;
+      }
+      if (!modifier && (e.key === 'h' || e.key === 'H')) {
+        setTool('hand');
+        return;
+      }
+      if (modifier && e.key === '0') {
+        e.preventDefault();
+        handleFit();
+        return;
+      }
+      if (modifier && e.key === '1') {
+        e.preventDefault();
+        handleZoomReset();
+        return;
+      }
+
       if ((e.key === 'Delete' || e.key === 'Backspace') && selectedIds.size > 0) {
         e.preventDefault();
         deleteSelectedLayers();
       }
-      if (e.key === 'z' && (e.ctrlKey || e.metaKey) && !e.shiftKey) {
+      if (e.key === 'z' && modifier && !e.shiftKey) {
         e.preventDefault();
         handleUndo();
       }
-      if (e.key === 'z' && (e.ctrlKey || e.metaKey) && e.shiftKey) {
+      if (e.key === 'z' && modifier && e.shiftKey) {
         e.preventDefault();
         handleRedo();
       }
-      if (e.key === 'y' && (e.ctrlKey || e.metaKey)) {
+      if (e.key === 'y' && modifier) {
         e.preventDefault();
         handleRedo();
       }
-      if (e.key === 'd' && (e.ctrlKey || e.metaKey)) {
+      if (e.key === 'd' && modifier) {
         e.preventDefault();
         duplicateSelectedLayers();
       }
-      if (e.key === 'g' && (e.ctrlKey || e.metaKey)) {
+      if (e.key === 'g' && modifier) {
         e.preventDefault();
-        groupSelectedLayers();
+        if (e.shiftKey) ungroupSelectedLayers();
+        else groupSelectedLayers();
       }
-      if (e.key === 'c' && (e.ctrlKey || e.metaKey)) {
+      if (e.key === 'a' && modifier) {
+        e.preventDefault();
+        selectAll();
+      }
+      if (e.key === 'c' && modifier) {
         e.preventDefault();
         handleCopy();
       }
-      if (e.key === 'v' && (e.ctrlKey || e.metaKey)) {
+      if (e.key === 'x' && modifier) {
+        e.preventDefault();
+        handleCut();
+      }
+      if (e.key === 'v' && modifier) {
         e.preventDefault();
         handlePaste();
       }
+
       // Nudge with arrow keys (1mm, or 0.1mm with shift).
       const nudge = e.shiftKey ? 0.1 : 1;
       if (e.key === 'ArrowLeft' && selectedIds.size > 0) {
         e.preventDefault();
-        for (const id of selectedIds) {
-          const layer = layers.find((l) => l.id === id);
-          if (layer && !layer.locked) updateLayer(id, { x_mm: layer.x_mm - nudge });
-        }
+        nudgeSelection(-nudge, 0);
       }
       if (e.key === 'ArrowRight' && selectedIds.size > 0) {
         e.preventDefault();
-        for (const id of selectedIds) {
-          const layer = layers.find((l) => l.id === id);
-          if (layer && !layer.locked) updateLayer(id, { x_mm: layer.x_mm + nudge });
-        }
+        nudgeSelection(nudge, 0);
       }
       if (e.key === 'ArrowUp' && selectedIds.size > 0) {
         e.preventDefault();
-        for (const id of selectedIds) {
-          const layer = layers.find((l) => l.id === id);
-          if (layer && !layer.locked) updateLayer(id, { y_mm: layer.y_mm - nudge });
-        }
+        nudgeSelection(0, -nudge);
       }
       if (e.key === 'ArrowDown' && selectedIds.size > 0) {
         e.preventDefault();
-        for (const id of selectedIds) {
-          const layer = layers.find((l) => l.id === id);
-          if (layer && !layer.locked) updateLayer(id, { y_mm: layer.y_mm + nudge });
-        }
+        nudgeSelection(0, nudge);
       }
     };
 
+    const release = (e: KeyboardEvent) => {
+      if (e.key === ' ') setSpaceHeld(false);
+    };
+
     window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
+    window.addEventListener('keyup', release);
+    return () => {
+      window.removeEventListener('keydown', handler);
+      window.removeEventListener('keyup', release);
+    };
   }, [
     selectedIds,
     deleteSelectedLayers,
     duplicateSelectedLayers,
     groupSelectedLayers,
+    ungroupSelectedLayers,
+    selectParentGroup,
+    selectAll,
     handleUndo,
     handleRedo,
     handleCopy,
+    handleCut,
     handlePaste,
-    layers,
-    updateLayer,
+    handleFit,
+    handleZoomReset,
+    nudgeSelection,
   ]);
+
+  // A window that loses focus while Space is down would otherwise stay in hand.
+  useEffect(() => {
+    const clear = () => setSpaceHeld(false);
+    window.addEventListener('blur', clear);
+    return () => window.removeEventListener('blur', clear);
+  }, []);
 
   // -- Expose current doc for save ------------------------------------------
 
@@ -864,6 +1410,17 @@ export function TagCanvasEditor({ doc, onChange, promotionId }: TagCanvasEditorP
         ? `${selectedData.set.set_code} - ${selectedData.set.name}`
         : `${selectedData.line.code} - ${selectedData.line.name}`;
 
+  const previewData = preview ? bindings.get(preview) : null;
+  const previewLabel = !previewData
+    ? preview
+      ? 'loading'
+      : null
+    : previewData.kind === 'product'
+      ? `${previewData.product.code} - ${previewData.product.name}`
+      : previewData.kind === 'set'
+        ? `${previewData.set.set_code} - ${previewData.set.name}`
+        : `${previewData.line.code} - ${previewData.line.name}`;
+
   /** The bound product's photos, for the image picker's first tab. */
   const pickerProductImages = useMemo(() => {
     if (!imagePicker) return [];
@@ -879,10 +1436,16 @@ export function TagCanvasEditor({ doc, onChange, promotionId }: TagCanvasEditorP
     [layers],
   );
 
+  const hasSelection = selectedIds.size > 0;
+  const canEnterGroup = selectionIsGroup;
+  const canSelectParent = insideGroupId !== null;
+
   return (
     <div className="flex h-full flex-col">
       {/* Toolbar */}
       <CanvasToolbar
+        tool={tool}
+        onToolChange={setTool}
         onAddText={handleAddText}
         onAddShape={handleAddShape}
         onAddImage={handleAddImage}
@@ -898,16 +1461,21 @@ export function TagCanvasEditor({ doc, onChange, promotionId }: TagCanvasEditorP
         onRedo={handleRedo}
         canUndo={history.canUndo}
         canRedo={history.canRedo}
-        zoom={zoom}
+        zoom={view.zoom}
         onZoomIn={handleZoomIn}
         onZoomOut={handleZoomOut}
+        onZoomReset={handleZoomReset}
+        onFit={handleFit}
         onDeleteSelected={deleteSelectedLayers}
         onDuplicateSelected={duplicateSelectedLayers}
         onGroupSelected={groupSelectedLayers}
         onUngroupSelected={ungroupSelectedLayers}
-        hasSelection={selectedIds.size > 0}
+        hasSelection={hasSelection}
         hasMultiSelection={selectedIds.size >= 2}
         selectionIsGroup={selectionIsGroup}
+        previewLabel={previewLabel}
+        onPreview={() => setPicker({ kind: 'preview' })}
+        onClearPreview={() => setPreview(null)}
       />
 
       <div className="flex flex-1 overflow-hidden">
@@ -922,87 +1490,283 @@ export function TagCanvasEditor({ doc, onChange, promotionId }: TagCanvasEditorP
           />
         </div>
 
-        {/* Center: Canvas workspace */}
-        <div
-          ref={containerRef}
-          className="relative flex-1 overflow-auto bg-muted/50"
-        >
-          {/* Rulers */}
-          <CanvasRulers
-            widthMm={doc.width_mm}
-            heightMm={doc.height_mm}
-            scale={scale}
-          />
-
-          {/* Canvas container */}
-          <div
-            className="relative"
-            style={{
-              marginLeft: RULER_THICKNESS,
-              marginTop: RULER_THICKNESS,
-              width: canvasWidthPx,
-              height: canvasHeightPx,
-            }}
-          >
-            <Stage
-              ref={stageRef as React.RefObject<Konva.Stage>}
-              width={canvasWidthPx}
-              height={canvasHeightPx}
-              onClick={handleStageClick}
-              onTap={handleStageClick}
+        {/* Centre: canvas workspace. The Stage fills it and the artboard sits at
+            a pan offset inside (D33), so there is nothing to scroll. */}
+        <ContextMenu>
+          <ContextMenuTrigger asChild>
+            <div
+              ref={containerRef}
+              className={cn(
+                'relative flex-1 overflow-hidden bg-muted/50',
+                handMode && 'cursor-grab active:cursor-grabbing',
+              )}
             >
-              <KonvaLayer>
-                {/* White tag background */}
-                <Rect
-                  x={0}
-                  y={0}
-                  width={canvasWidthPx}
-                  height={canvasHeightPx}
-                  fill="#ffffff"
-                  stroke="#d4d4d8"
-                  strokeWidth={1}
-                />
+              <CanvasRulers
+                widthMm={doc.width_mm}
+                heightMm={doc.height_mm}
+                scale={scale}
+                originX={view.panX}
+                originY={view.panY}
+                viewportWidth={stageWidth}
+                viewportHeight={stageHeight}
+              />
 
-                {/* Layers */}
-                {sortedLayers.map((layer) => (
-                  <KonvaTagLayer
-                    key={layer.id}
-                    layer={layer}
-                    scale={scale}
-                    display={layerDisplay(layer, dataOf(layer), library.assetUrls)}
-                    isSelected={selectedIds.has(layer.id)}
-                    onSelect={handleSelect}
-                    onDragStart={handleDragStart}
-                    onDragMove={handleDragMove}
-                    onDragEnd={handleDragEnd}
-                    onTransformEnd={handleTransformEnd}
-                  />
-                ))}
+              <div
+                className="absolute"
+                style={{ left: RULER_THICKNESS, top: RULER_THICKNESS }}
+              >
+                <Stage
+                  ref={stageRef as React.RefObject<Konva.Stage>}
+                  width={stageWidth}
+                  height={stageHeight}
+                  onMouseDown={handleStageMouseDown}
+                  onMouseMove={handleStageMouseMove}
+                  onMouseUp={handleStageMouseUp}
+                  onDblClick={handleStageDoubleClick}
+                  onContextMenu={handleStageContextMenu}
+                >
+                  <KonvaLayer x={view.panX} y={view.panY}>
+                    {/* White tag background */}
+                    <Rect
+                      name="artboard-bg"
+                      x={0}
+                      y={0}
+                      width={canvasWidthPx}
+                      height={canvasHeightPx}
+                      fill="#ffffff"
+                      stroke="#d4d4d8"
+                      strokeWidth={1}
+                    />
 
-                {/* Snap guides */}
-                {guides.map((g, i) =>
-                  g.orientation === 'vertical' ? (
-                    <Line
-                      key={`guide-v-${i}`}
-                      points={[g.position_mm * scale, 0, g.position_mm * scale, canvasHeightPx]}
-                      stroke="#f43f5e"
-                      strokeWidth={0.5}
-                      dash={[4, 4]}
+                    {/* Layers */}
+                    {sortedLayers.map((layer) => (
+                      <KonvaTagLayer
+                        key={layer.id}
+                        layer={layer}
+                        scale={scale}
+                        display={layerDisplay(layer, dataOf(layer), library.assetUrls)}
+                        draggable={!handMode}
+                        listening={
+                          !handMode &&
+                          !(layer.props.kind === 'group' && entered.has(layer.id))
+                        }
+                        onSelect={handleCanvasSelect}
+                        onDoubleClick={handleLayerDoubleClick}
+                        onDragStart={handleDragStart}
+                        onDragMove={handleDragMove}
+                        onDragEnd={handleDragEnd}
+                      />
+                    ))}
+
+                    {/* Snap guides */}
+                    {guides.map((g, i) =>
+                      g.orientation === 'vertical' ? (
+                        <Line
+                          key={`guide-v-${i}`}
+                          points={[
+                            g.position_mm * scale,
+                            0,
+                            g.position_mm * scale,
+                            canvasHeightPx,
+                          ]}
+                          stroke="#f43f5e"
+                          strokeWidth={0.5}
+                          dash={[4, 4]}
+                          listening={false}
+                        />
+                      ) : (
+                        <Line
+                          key={`guide-h-${i}`}
+                          points={[
+                            0,
+                            g.position_mm * scale,
+                            canvasWidthPx,
+                            g.position_mm * scale,
+                          ]}
+                          stroke="#f43f5e"
+                          strokeWidth={0.5}
+                          dash={[4, 4]}
+                          listening={false}
+                        />
+                      ),
+                    )}
+
+                    {/* ONE Transformer, after every layer, for the selection. */}
+                    <Transformer
+                      ref={transformerRef}
+                      rotateEnabled
+                      keepRatio={false}
+                      listening={!handMode}
+                      onTransformEnd={handleTransformEnd}
+                      enabledAnchors={[
+                        'top-left',
+                        'top-right',
+                        'bottom-left',
+                        'bottom-right',
+                        'middle-left',
+                        'middle-right',
+                        'top-center',
+                        'bottom-center',
+                      ]}
+                      boundBoxFunc={(_oldBox, newBox) => {
+                        // Minimum size = 2mm in pixels.
+                        const minSize = 2 * scale;
+                        if (newBox.width < minSize || newBox.height < minSize) {
+                          return {
+                            ...newBox,
+                            width: Math.max(newBox.width, minSize),
+                            height: Math.max(newBox.height, minSize),
+                          };
+                        }
+                        return newBox;
+                      }}
                     />
-                  ) : (
-                    <Line
-                      key={`guide-h-${i}`}
-                      points={[0, g.position_mm * scale, canvasWidthPx, g.position_mm * scale]}
-                      stroke="#f43f5e"
-                      strokeWidth={0.5}
-                      dash={[4, 4]}
-                    />
-                  ),
+
+                    {/* Marquee band */}
+                    {marquee && (
+                      <Rect
+                        x={marquee.x_mm * scale}
+                        y={marquee.y_mm * scale}
+                        width={marquee.width_mm * scale}
+                        height={marquee.height_mm * scale}
+                        fill="#3b82f6"
+                        opacity={0.12}
+                        stroke="#3b82f6"
+                        strokeWidth={1}
+                        listening={false}
+                      />
+                    )}
+                  </KonvaLayer>
+                </Stage>
+              </div>
+            </div>
+          </ContextMenuTrigger>
+
+          <ContextMenuContent className="w-56">
+            {hasSelection && !menuOnEmpty ? (
+              <>
+                <ContextMenuItem onSelect={handleCut}>
+                  <Scissors />
+                  Cut
+                  <ContextMenuShortcut>Ctrl+X</ContextMenuShortcut>
+                </ContextMenuItem>
+                <ContextMenuItem onSelect={handleCopy}>
+                  <Copy />
+                  Copy
+                  <ContextMenuShortcut>Ctrl+C</ContextMenuShortcut>
+                </ContextMenuItem>
+                <ContextMenuItem onSelect={handlePaste} disabled={!clipboard}>
+                  <ClipboardPaste />
+                  Paste
+                  <ContextMenuShortcut>Ctrl+V</ContextMenuShortcut>
+                </ContextMenuItem>
+                <ContextMenuItem onSelect={duplicateSelectedLayers}>
+                  <Copy />
+                  Duplicate
+                  <ContextMenuShortcut>Ctrl+D</ContextMenuShortcut>
+                </ContextMenuItem>
+
+                <ContextMenuSeparator />
+
+                <ContextMenuItem onSelect={() => reorderSelection('front')}>
+                  <ArrowUpToLine />
+                  Bring to Front
+                </ContextMenuItem>
+                <ContextMenuItem onSelect={() => reorderSelection('forward')}>
+                  <ArrowUp />
+                  Bring Forward
+                </ContextMenuItem>
+                <ContextMenuItem onSelect={() => reorderSelection('backward')}>
+                  <ArrowDown />
+                  Send Backward
+                </ContextMenuItem>
+                <ContextMenuItem onSelect={() => reorderSelection('back')}>
+                  <ArrowDownToLine />
+                  Send to Back
+                </ContextMenuItem>
+
+                <ContextMenuSeparator />
+
+                {selectionIsGroup ? (
+                  <ContextMenuItem onSelect={ungroupSelectedLayers}>
+                    <Ungroup />
+                    Ungroup
+                  </ContextMenuItem>
+                ) : (
+                  <ContextMenuItem
+                    onSelect={groupSelectedLayers}
+                    disabled={selectionRoots.length < 2}
+                  >
+                    <GroupIcon />
+                    Group
+                    <ContextMenuShortcut>Ctrl+G</ContextMenuShortcut>
+                  </ContextMenuItem>
                 )}
-              </KonvaLayer>
-            </Stage>
-          </div>
-        </div>
+                {canEnterGroup && (
+                  <ContextMenuItem onSelect={enterSelectedGroup}>
+                    <CornerRightDown />
+                    Enter Group
+                  </ContextMenuItem>
+                )}
+                {canSelectParent && (
+                  <ContextMenuItem onSelect={selectParentGroup}>
+                    <CornerLeftUp />
+                    Select Parent Group
+                    <ContextMenuShortcut>Esc</ContextMenuShortcut>
+                  </ContextMenuItem>
+                )}
+
+                <ContextMenuSeparator />
+
+                <ContextMenuItem onSelect={toggleSelectionLock}>
+                  {selectionLocked ? <Unlock /> : <Lock />}
+                  {selectionLocked ? 'Unlock' : 'Lock'}
+                </ContextMenuItem>
+                <ContextMenuItem onSelect={hideSelection}>
+                  <EyeOff />
+                  Hide
+                </ContextMenuItem>
+
+                <ContextMenuSeparator />
+
+                <ContextMenuItem variant="destructive" onSelect={deleteSelectedLayers}>
+                  <Trash2 />
+                  Delete
+                  <ContextMenuShortcut>Del</ContextMenuShortcut>
+                </ContextMenuItem>
+              </>
+            ) : (
+              <>
+                <ContextMenuItem onSelect={handlePaste} disabled={!clipboard}>
+                  <ClipboardPaste />
+                  Paste
+                  <ContextMenuShortcut>Ctrl+V</ContextMenuShortcut>
+                </ContextMenuItem>
+                <ContextMenuItem onSelect={selectAll}>
+                  <SquareDashed />
+                  Select All
+                  <ContextMenuShortcut>Ctrl+A</ContextMenuShortcut>
+                </ContextMenuItem>
+                <ContextMenuSeparator />
+                <ContextMenuItem onSelect={handleFit}>
+                  <Expand />
+                  Fit to View
+                  <ContextMenuShortcut>Ctrl+0</ContextMenuShortcut>
+                </ContextMenuItem>
+                <ContextMenuItem onSelect={handleZoomReset}>
+                  <Percent />
+                  Zoom 100%
+                  <ContextMenuShortcut>Ctrl+1</ContextMenuShortcut>
+                </ContextMenuItem>
+                <ContextMenuSeparator />
+                <ContextMenuItem onSelect={() => setPicker({ kind: 'preview' })}>
+                  <Eye />
+                  Preview with a product
+                </ContextMenuItem>
+              </>
+            )}
+          </ContextMenuContent>
+        </ContextMenu>
 
         {/* Right sidebar: Inspector panel */}
         <div className="hidden w-60 shrink-0 lg:block">
@@ -1031,7 +1795,9 @@ export function TagCanvasEditor({ doc, onChange, promotionId }: TagCanvasEditorP
             ? 'set'
             : picker.kind === 'rebind'
               ? picker.mode
-              : 'product'
+              : picker.kind === 'preview'
+                ? previewMode
+                : 'product'
         }
         multiple={picker.kind === 'alternatives' || picker.kind === 'accessories'}
         title={
@@ -1039,13 +1805,21 @@ export function TagCanvasEditor({ doc, onChange, promotionId }: TagCanvasEditorP
             ? 'Add a product set'
             : picker.kind === 'rebind'
               ? 'Change what this block is about'
-              : picker.kind === 'alternatives'
-                ? 'Add an alternatives row'
-                : picker.kind === 'accessories'
-                  ? 'Add an accessories strip'
-                  : 'Add a product'
+              : picker.kind === 'preview'
+                ? 'Preview this template with'
+                : picker.kind === 'alternatives'
+                  ? 'Add an alternatives row'
+                  : picker.kind === 'accessories'
+                    ? 'Add an accessories strip'
+                    : 'Add a product'
         }
-        confirmLabel={picker.kind === 'rebind' ? 'Rebind' : 'Add'}
+        confirmLabel={
+          picker.kind === 'rebind'
+            ? 'Rebind'
+            : picker.kind === 'preview'
+              ? 'Preview'
+              : 'Add'
+        }
         busy={pickerBusy}
         onCancel={closePicker}
         onConfirm={(ids) => {

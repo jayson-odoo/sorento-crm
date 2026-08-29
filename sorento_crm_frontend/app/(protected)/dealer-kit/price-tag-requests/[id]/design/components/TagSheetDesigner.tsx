@@ -845,18 +845,6 @@ function TagOnCanvas({
     ? { kind: 'line', line: resolvedData }
     : null;
 
-  // Noop handlers for KonvaTagLayer (layers are read-only inside placed tags).
-  const noop = useCallback(() => {}, []);
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const noopDragMove = useCallback((_0: string, _1: number, _2: number) => {}, []);
-  const noopTransform = useCallback(
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    (_0: string, _1: { x_mm: number; y_mm: number; width_mm: number; height_mm: number; rotation_deg: number }) => {},
-    [],
-  );
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const noopSelect = useCallback((_0: string, _1: boolean) => {}, []);
-
   return (
     <Group
       x={x}
@@ -891,12 +879,11 @@ function TagOnCanvas({
             layer={layer}
             scale={scale}
             display={layerDisplay(layer, bindingData, assetUrls)}
-            isSelected={false}
-            onSelect={noopSelect}
-            onDragStart={noop}
-            onDragMove={noopDragMove}
-            onDragEnd={noop}
-            onTransformEnd={noopTransform}
+            // A placed tag is ONE object on the sheet: its layers are read-only
+            // here, so they neither drag nor swallow the click that selects the
+            // tag around them.
+            draggable={false}
+            listening={false}
           />
         ))}
 

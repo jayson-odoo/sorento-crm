@@ -167,3 +167,70 @@ Recorded here because each was invisible until a seeded template was opened.
 every dialog open. It is the shared ReUI dialog, unrelated to this slice, and
 appears throughout the app. No page errors were logged on any of the eight
 templates.
+
+---
+
+# S3c - the canvas as a drawing tool (AC-M.1 to AC-M.10)
+
+Run 2026-08-29 on the worktree dev stack (FE `next dev` :3030, BE :8030), against
+`Kitchen Sink - Ala Carte` (`8fb5c0ed-af00-4672-8dba-651909fac029`), reached by
+clicking `Dealer Kit -> Room Designer -> Tag Templates -> Kitchen Sink - Ala Carte`
+from `/`. agent-browser session `ptag-canvas`, viewport 1600 x 1000.
+
+Positions were read two ways, because a screenshot cannot show a number that did
+not change: the inspector's X/Y fields, and the DOM positions of the ruler tick
+labels (the ruler is plain DOM, so `origin + mm * scale` is measurable).
+
+The template was left exactly as it was seeded: the one save made during the run
+was reverted through the inspector and saved again (wordmark back to X 84 /
+Y 5.05), and every other edit was discarded by reloading without saving.
+
+## The nine evidence shots
+
+| File | What it shows |
+| --- | --- |
+| `interaction-1-wheel-zoom-at-cursor.png` | The canvas at 278% after a wheel zoom centred on the pointer. Before the zoom the 60 mm tick sat at x=916 and the 40 mm tick at y=576 with 62.5 px per 10 mm; after it, x=915 and y=575 with 83.3 px per 10 mm. The point under the cursor stayed under the cursor and the readout followed (AC-M.1). |
+| `interaction-2-drag-writes-inspector-xy.png` | The `Sorento` wordmark after a canvas drag: the inspector reads X 74.8 / Y 11 where it read X 84 / Y 5.05, and the single Transformer is on the selection. This is bug 7: before the fix the Konva group had no `id`, `stage.findOne('#id')` answered undefined, and the drag was never written to `layers` (AC-M.8). |
+| `interaction-3-drag-survives-save-and-reload.png` | The same layer after Save and a full page reload, still at X 74.8 / Y 11 (AC-M.8). |
+| `interaction-4-group-drag-carries-children.png` | The product block dragged by its group. Group and `product image` both went from X 5.3 / Y 21 to X 0 / Y 26.19: identical delta, one action. One Ctrl+Z put both back to 5.3 / 21 (AC-M.4). |
+| `interaction-5-double-click-enters-group.png` | A double-click on the group over the photo selected `product image`. A single click at the same place had selected `Group (6)`; a single click afterwards, over the code text, selected `code` directly, so the entered group had stopped intercepting. Escape selected `Group (6)`, Escape again cleared the selection (AC-M.3). |
+| `interaction-6-marquee-band.png` | The translucent blue band mid-drag, plus the two badges an earlier band had selected with one Transformer across both. The band shown selected the eight TOP-LEVEL layers and never the group's six children. A thin band across only two badges selected exactly those two and enabled the toolbar's Group button; dragging one of them moved both by the same 71.35 x 51.01 px while the unselected third badge did not move (AC-M.2, AC-M.5). |
+| `interaction-7-context-menu.png` | Our menu on right-click over a badge: Cut, Copy, Paste, Duplicate / Bring to Front, Bring Forward, Send Backward, Send to Back / Group / Lock, Hide / Delete. The browser's own menu never appeared. Right-clicking empty space gave Paste, Select All, Fit to View, Zoom 100%, Preview with a product (AC-M.6). |
+| `interaction-8-duplicate-group-carries-descendants.png` | Duplicate on the group took the document from 14 layers to 21, and the Layers panel nests six fresh children under the copy, so the clone's `children` points at the clones. Before this change a duplicate added ONE layer whose `children` still named the originals. Ctrl+Z returned it to 14 (AC-M.7). |
+| `interaction-9-preview-with-a-product.png` | Preview with `SRTKS2435`: the code, dimensions, spec line, `LP: RM 1,550` and the price badge all resolve, and the chip on the toolbar names the product. The Layers panel still reads `Group (6)`, not `Product (6)`, because nothing was bound. Saving with the preview active and reloading gave back the placeholder text, no chip and an unbound group (AC-M.9). |
+
+## Measurements that are not in a picture
+
+- **Fit and zoom keys.** Ctrl+1 took the readout to 100%, Ctrl+0 back to the fit
+  value of 209% for this 125.9 x 88.6 mm tag in an 852 x 783 px stage.
+- **The wheel listener is not passive.** A cancelable `wheel` event dispatched on
+  the canvas came back with `defaultPrevented === true`, which is what the
+  `{ passive: false }` registration buys; React's `onWheel` cannot do this and
+  the page would scroll instead.
+- **The hand tool pans.** Pressing `H` set the toolbar button to
+  `aria-pressed="true"` and the workspace cursor to `grab`; a drag of
+  (-100, -70) px moved the 10 mm tick from x=603 to x=503, exactly the pointer
+  delta, with no layer changing its mm position.
+- **Space held is the hand for as long as it is held.** With the Select tool
+  active the workspace cursor read `auto`; a `keydown` for `' '` without its
+  `keyup` turned it to `grab`, and the `keyup` turned it back to `auto`.
+- **A context menu item changes the document and undoes.** Right-click on the
+  leftmost badge (z 2 of 14) then Bring to Front took it to z 14, and Ctrl+Z put
+  the whole stack back (the band returned to z 0). Nothing was saved, so the
+  seeded document is untouched.
+- **Konva nodes now carry the layer id.** `stage.getLayers()[0].getChildren()`
+  lists `sink-ala-carte-band-1`, `sink-ala-carte-badge-0-3`, ... , which is the
+  fix for bug 7 stated as data rather than as a screenshot.
+
+## Not exercised in the browser, and why
+
+- **The CDP wheel.** `agent-browser mouse wheel` does not reach the page in this
+  daemon (the readout did not move for real wheel commands at any delta), so the
+  zoom was driven by a dispatched `WheelEvent` carrying the same
+  `deltaY` / `clientX` / `clientY`. It runs the identical listener; what it does
+  not prove is the browser's own scroll behaviour, which `defaultPrevented`
+  covers instead.
+- **Double-click timing.** Konva synthesises `dblclick` from two pointerups
+  inside `Konva.dblClickWindow` (400 ms), and one CLI call takes about a second,
+  so the window was widened to 30 s for that one step and put back to 400
+  immediately after. The click path itself is untouched.

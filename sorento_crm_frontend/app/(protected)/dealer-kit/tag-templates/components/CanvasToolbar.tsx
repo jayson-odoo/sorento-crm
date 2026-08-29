@@ -3,14 +3,19 @@
 /**
  * Top toolbar for the tag canvas editor.
  *
- * Add layer buttons, undo/redo, zoom, delete, duplicate, group/ungroup.
+ * Tools, add-layer buttons, undo/redo, zoom, selection actions, and the preview
+ * chip that says which product the canvas is currently drawn against (D41).
  */
 
 import {
   Banknote,
   Boxes,
   Copy,
+  Expand,
+  Eye,
   Group,
+  Hand,
+  MousePointer2,
   Package,
   Shuffle,
   Sparkles,
@@ -25,6 +30,7 @@ import {
   Type,
   Undo2,
   Ungroup,
+  X,
   DollarSign,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -35,8 +41,14 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
+import { cn } from '@/lib/utils';
+
+/** Which pointer tool is active (D35). */
+export type CanvasTool = 'select' | 'hand';
 
 interface CanvasToolbarProps {
+  tool: CanvasTool;
+  onToolChange: (tool: CanvasTool) => void;
   onAddText: () => void;
   onAddShape: () => void;
   onAddImage: () => void;
@@ -55,6 +67,8 @@ interface CanvasToolbarProps {
   zoom: number;
   onZoomIn: () => void;
   onZoomOut: () => void;
+  onZoomReset: () => void;
+  onFit: () => void;
   onDeleteSelected: () => void;
   onDuplicateSelected: () => void;
   onGroupSelected: () => void;
@@ -62,6 +76,10 @@ interface CanvasToolbarProps {
   hasSelection: boolean;
   hasMultiSelection: boolean;
   selectionIsGroup: boolean;
+  /** `CODE - name` while a preview product is set, else null. */
+  previewLabel: string | null;
+  onPreview: () => void;
+  onClearPreview: () => void;
 }
 
 function ToolbarButton({
@@ -70,12 +88,14 @@ function ToolbarButton({
   onClick,
   disabled,
   shortcut,
+  active,
 }: {
   icon: React.ComponentType<{ className?: string }>;
   label: string;
   onClick: () => void;
   disabled?: boolean;
   shortcut?: string;
+  active?: boolean;
 }) {
   return (
     <TooltipProvider delayDuration={300}>
@@ -84,9 +104,10 @@ function ToolbarButton({
           <Button
             variant="ghost"
             size="sm"
-            className="h-8 w-8 p-0"
+            className={cn('h-8 w-8 p-0', active && 'bg-accent text-accent-foreground')}
             onClick={onClick}
             disabled={disabled}
+            aria-pressed={active}
           >
             <Icon className="size-4" />
             <span className="sr-only">{label}</span>
@@ -94,9 +115,7 @@ function ToolbarButton({
         </TooltipTrigger>
         <TooltipContent side="bottom" className="text-xs">
           {label}
-          {shortcut && (
-            <span className="ml-2 text-muted-foreground">{shortcut}</span>
-          )}
+          {shortcut && <span className="ml-2 text-muted-foreground">{shortcut}</span>}
         </TooltipContent>
       </Tooltip>
     </TooltipProvider>
@@ -104,6 +123,8 @@ function ToolbarButton({
 }
 
 export function CanvasToolbar({
+  tool,
+  onToolChange,
   onAddText,
   onAddShape,
   onAddImage,
@@ -122,6 +143,8 @@ export function CanvasToolbar({
   zoom,
   onZoomIn,
   onZoomOut,
+  onZoomReset,
+  onFit,
   onDeleteSelected,
   onDuplicateSelected,
   onGroupSelected,
@@ -129,9 +152,30 @@ export function CanvasToolbar({
   hasSelection,
   hasMultiSelection,
   selectionIsGroup,
+  previewLabel,
+  onPreview,
+  onClearPreview,
 }: CanvasToolbarProps) {
   return (
     <div className="flex h-10 shrink-0 items-center gap-1 border-b bg-background px-2">
+      {/* Tools */}
+      <ToolbarButton
+        icon={MousePointer2}
+        label="Select"
+        onClick={() => onToolChange('select')}
+        active={tool === 'select'}
+        shortcut="V"
+      />
+      <ToolbarButton
+        icon={Hand}
+        label="Hand"
+        onClick={() => onToolChange('hand')}
+        active={tool === 'hand'}
+        shortcut="H"
+      />
+
+      <Separator orientation="vertical" className="mx-1 h-5" />
+
       {/* Add layer buttons */}
       <ToolbarButton icon={Type} label="Add Text" onClick={onAddText} />
       <ToolbarButton icon={Shapes} label="Add Shape" onClick={onAddShape} />
@@ -191,10 +235,16 @@ export function CanvasToolbar({
 
       {/* Zoom controls */}
       <ToolbarButton icon={Minus} label="Zoom Out" onClick={onZoomOut} />
-      <span className="min-w-[48px] text-center text-xs tabular-nums text-muted-foreground">
+      <button
+        type="button"
+        className="min-w-[48px] rounded px-1 text-center text-xs tabular-nums text-muted-foreground hover:bg-accent"
+        onClick={onZoomReset}
+        title="Zoom to 100% (Ctrl+1)"
+      >
         {Math.round(zoom * 100)}%
-      </span>
+      </button>
       <ToolbarButton icon={Plus} label="Zoom In" onClick={onZoomIn} />
+      <ToolbarButton icon={Expand} label="Fit to View" onClick={onFit} shortcut="Ctrl+0" />
 
       <Separator orientation="vertical" className="mx-1 h-5" />
 
@@ -226,6 +276,32 @@ export function CanvasToolbar({
         onClick={onUngroupSelected}
         disabled={!selectionIsGroup}
       />
+
+      {/* Preview chip (D41). Sits right so it reads as state, not as an action. */}
+      <div className="ml-auto flex items-center gap-1">
+        {previewLabel ? (
+          <div className="flex h-7 items-center gap-1 rounded-full border bg-muted/60 pl-2.5 pr-1 text-xs">
+            <button
+              type="button"
+              className="max-w-[220px] truncate hover:underline"
+              onClick={onPreview}
+              title={`Previewing: ${previewLabel}`}
+            >
+              Previewing: {previewLabel}
+            </button>
+            <button
+              type="button"
+              className="rounded-full p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+              onClick={onClearPreview}
+              title="Stop previewing"
+            >
+              <X className="size-3" />
+            </button>
+          </div>
+        ) : (
+          <ToolbarButton icon={Eye} label="Preview with a product" onClick={onPreview} />
+        )}
+      </div>
     </div>
   );
 }
