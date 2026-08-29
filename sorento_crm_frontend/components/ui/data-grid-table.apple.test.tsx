@@ -81,21 +81,26 @@ function Harness({
   onRowClick,
   onTable,
   tableLayout,
+  columns,
+  columnSizing,
 }: {
   rowHref?: (row: Row) => string;
   onRowClick?: (row: Row) => void;
   onTable?: (table: Table<Row>) => void;
   tableLayout?: React.ComponentProps<typeof DataGrid<Row>>['tableLayout'];
+  columns?: ColumnDef<Row>[];
+  columnSizing?: Record<string, number>;
 }) {
   const table = useReactTable({
     data: DATA,
-    columns: COLUMNS,
+    columns: columns ?? COLUMNS,
     getRowId: (r) => r.id,
     enableRowSelection: true,
     initialState: {
       pagination: { pageIndex: 2, pageSize: 25 },
       sorting: [{ id: 'name', desc: true }],
       globalFilter: 'alp',
+      ...(columnSizing ? { columnSizing } : {}),
     },
     getCoreRowModel: getCoreRowModel(),
   });
@@ -134,9 +139,53 @@ describe('DataGrid scrolls on a phone (S1-05)', () => {
     expect(scroller).toHaveClass('overscroll-x-contain');
   });
 
-  it('S1-05: the table may exceed the container instead of squeezing its columns', () => {
+  /*
+    The table gets a DEFINITE min-width, never `min-w-max`.
+
+    `min-width: max-content` is meaningless on a `table-layout: fixed` table -
+    fixed layout deliberately ignores content - and Chrome resolves it to its
+    "infinite" sentinel of 1,000,000px. The fixed algorithm then distributed that
+    width across the columns in proportion to their sizes, so a Products grid
+    whose columns sum to 2367px was laid out 1,000,000px wide with every column
+    scaled by 422x: measured on :3090 at 1280x800, the last header sat at
+    x=962,282 and everything but the checkbox was off-screen.
+
+    `table.getTotalSize()` is the sum of the visible leaf column sizes, which is
+    exactly the width the table wants, and as a px value it gives the browser
+    nothing to resolve.
+  */
+  it('S1-05: the table asks for a definite min-width, never max-content', () => {
     render(<Harness />);
-    expect(document.querySelector('[data-slot="data-grid-table"]')).toHaveClass('min-w-max');
+    const table = document.querySelector('[data-slot="data-grid-table"]') as HTMLElement;
+
+    expect(table).not.toHaveClass('min-w-max');
+    // 44 (select) + 900 (name) + 900 (total) + 200 (actions)
+    expect(table.style.minWidth).toBe('2044px');
+  });
+
+  it('S1-05: a column with no size of its own counts as the TanStack default', () => {
+    render(<Harness columns={[{ id: 'a', accessorKey: 'name', header: 'A' }, { id: 'b', accessorKey: 'total', header: 'B' }]} />);
+    const table = document.querySelector('[data-slot="data-grid-table"]') as HTMLElement;
+
+    // No `size` anywhere: two columns at the default 150. A column definition
+    // with no size must not read as "unbounded" - its maxSize is
+    // Number.MAX_SAFE_INTEGER and summing THAT is what a naive total would do.
+    expect(table.style.minWidth).toBe('300px');
+  });
+
+  it('S1-05: a persisted column-width preference is what the min-width follows', () => {
+    render(
+      <Harness
+        columns={[{ id: 'a', accessorKey: 'name', header: 'A' }, { id: 'b', accessorKey: 'total', header: 'B' }]}
+        columnSizing={{ a: 640, b: 210 }}
+      />,
+    );
+    const table = document.querySelector('[data-slot="data-grid-table"]') as HTMLElement;
+
+    // The user dragged a column wider and the listing-column-preferences hook
+    // restored it; the table has to be at least that wide or the restored width
+    // is silently squeezed away again.
+    expect(table.style.minWidth).toBe('850px');
   });
 
   it('S1-05: the right edge fades only while there is more to the right', () => {
@@ -152,12 +201,35 @@ describe('DataGrid scrolls on a phone (S1-05)', () => {
     setMatchMedia(true);
     render(<Harness />);
 
-    const nameHeader = screen.getByText('Name').closest('th');
+    const nameHeader = screen.getByText('Name').closest('th') as HTMLTableCellElement;
     expect(nameHeader).toHaveAttribute('data-pinned', 'left');
 
     // The checkbox column is not the identifier, so it is not the pinned one.
     const selectHeader = screen.getByLabelText('Select all rows on this page').closest('th');
     expect(selectHeader).not.toHaveAttribute('data-pinned');
+  });
+
+  it('S1-05: the pinned column is actually stuck, not merely marked', () => {
+    setMatchMedia(true);
+    render(<Harness />);
+
+    const nameHeader = screen.getByText('Name').closest('th') as HTMLTableCellElement;
+
+    // `data-pinned` is only the STATE. Column drag-and-drop (on by default) sets
+    // `position: relative` on every cell from dnd-kit's transform, and it used to
+    // be spread after the pinning styles - so the identifier column carried the
+    // attribute, the tests passed, and on a phone it scrolled away with the rest.
+    expect(nameHeader.style.position).toBe('sticky');
+    expect(nameHeader.style.left).toBe('0px');
+  });
+
+  it('S1-05: a pinned body cell is stuck too, or the column splits from its header', () => {
+    setMatchMedia(true);
+    render(<Harness />);
+
+    const cell = screen.getByText('Alpha').closest('td') as HTMLTableCellElement;
+    expect(cell.style.position).toBe('sticky');
+    expect(cell.style.left).toBe('0px');
   });
 
   it('S1-05: at desktop width nothing is pinned', () => {

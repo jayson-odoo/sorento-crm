@@ -108,18 +108,32 @@ function getPinningStyles<TData>(column: Column<TData>): CSSProperties {
 }
 
 function DataGridTableBase({ children }: { children: ReactNode }) {
-  const { props } = useDataGrid();
+  const { props, table } = useDataGrid();
+
+  // What stops a `table-fixed w-full` grid from squeezing six columns into a
+  // phone: the table is at least as wide as its columns want to be, and the
+  // scroller (data-grid-scroller, or the list's own ScrollArea) carries the
+  // overflow. Where the columns already fit, `w-full` still wins.
+  //
+  // It has to be a DEFINITE length. `min-width: max-content` is meaningless on a
+  // `table-layout: fixed` table - fixed layout ignores content by design - and
+  // Chrome resolves it to its "infinite" sentinel of 1,000,000px, then the fixed
+  // algorithm scales every column up to fill it. Measured on Products at
+  // 1280x800: columns summing to 2367px laid out 1,000,000px wide, each column
+  // 422x its size, the last header at x=962,282 and nothing but the checkbox on
+  // screen. `getTotalSize()` is the sum of the visible leaf column sizes, so it
+  // is that same width as a number the browser has nothing to resolve - and it
+  // tracks a column the user has resized, or one restored from their saved
+  // listing preferences.
+  const minWidth = table.getTotalSize();
 
   return (
     <table
       data-slot="data-grid-table"
+      style={minWidth > 0 ? { minWidth: `${minWidth}px` } : undefined}
       className={cn(
-        // `min-w-max` is what stops a `table-fixed w-full` grid from squeezing six
-        // columns into a phone: the table grows to the sum of its column widths and
-        // the scroller (data-grid-scroller) carries the overflow. Where the columns
-        // already fit, `w-full` still wins and nothing changes.
         // `tabular-nums` keeps figures aligned down a column.
-        'w-full min-w-max tabular-nums align-middle caption-bottom text-left rtl:text-right text-foreground font-normal text-sm',
+        'w-full tabular-nums align-middle caption-bottom text-left rtl:text-right text-foreground font-normal text-sm',
         !props.tableLayout?.columnsDraggable && 'border-separate border-spacing-0',
         props.tableLayout?.width === 'fixed' ? 'table-fixed' : 'table-auto',
         props.tableClassNames?.base,
@@ -233,10 +247,16 @@ function DataGridTableHeadRowCell<TData>({
         ...(props.tableLayout?.width === 'fixed' && {
           width: `${header.getSize()}px`,
         }),
+        ...(dndStyle ? dndStyle : null),
+        // LAST, so it beats the drag style. Column drag-and-drop is on by
+        // default and dnd-kit sets `position: relative` + `zIndex: 0` on every
+        // cell; spread after the pinning styles it silently turned the phone's
+        // pinned identifier column back into an ordinary one that scrolled away.
+        // The drag transform and transition survive - only the stickiness wins.
+        //
         // Driven by the pinned state itself: under `sm` the grid pins the
         // identifier column whether or not the list opted into pinning.
         ...(isPinned ? getPinningStyles(column) : null),
-        ...(dndStyle ? dndStyle : null),
       }}
       data-pinned={isPinned || undefined}
       data-last-col={isLastLeftPinned ? 'left' : isFirstRightPinned ? 'right' : undefined}
@@ -598,8 +618,9 @@ function DataGridTableBodyRowCell<TData>({
       ref={dndRef}
       {...(props.tableLayout?.columnsDraggable && !isPinned ? { cell } : {})}
       style={{
-        ...(isPinned ? getPinningStyles(column) : null),
         ...(dndStyle ? dndStyle : null),
+        // LAST, so it beats the drag style - see the head cell.
+        ...(isPinned ? getPinningStyles(column) : null),
       }}
       data-pinned={isPinned || undefined}
       data-last-col={isLastLeftPinned ? 'left' : isFirstRightPinned ? 'right' : undefined}
