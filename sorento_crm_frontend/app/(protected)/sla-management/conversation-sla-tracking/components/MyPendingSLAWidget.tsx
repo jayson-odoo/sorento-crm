@@ -552,7 +552,7 @@ export default function MyPendingSLAWidget() {
               line. A full basis under sm gives the identifier its own line and
               drops the due underneath; from sm up nothing moves. */}
           <div className="flex flex-wrap items-start justify-between gap-2">
-            <div className="min-w-0 flex-1 basis-full sm:basis-0">
+            <div className="min-w-0 grow basis-full sm:basis-0">
               <p className="break-words text-sm font-medium" title={`${typeLabel}${item.reference ? ` · ${item.reference}` : ''}`}>
                 {typeLabel}
                 {item.reference ? (

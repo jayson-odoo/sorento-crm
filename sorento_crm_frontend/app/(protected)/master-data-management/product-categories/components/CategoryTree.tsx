@@ -73,16 +73,22 @@ export default function CategoryTree({ categories, searchQuery = '', level = 0, 
        inside a 375px viewport, so nothing scrolled and the columns past
        Description were simply clipped.
 
-       `border-separate` because a sticky cell inside a collapsed table has its
-       borders painted by the TABLE, so the pinned column loses its rules and
-       lets the scrolling columns show through it. */
+       `border-separate` keeps the cell's own borders its own. Measured in the
+       browser: collapsed borders do NOT stop a cell sticking here, but they do
+       hand the cell's rules to the table, and a pinned column that loses its
+       rules reads as a gap. */
     <table className="w-auto min-w-full border-separate border-spacing-0 text-sm">
       <thead>
         <tr className="bg-muted/50">
           {/* Opaque, or the columns sliding under the pin show through it -
               the header read "onName tive" mid-scroll. Same pair the DataGrid
               uses for a pinned column. */}
-          <th className="sticky start-0 z-10 border-b border-border bg-muted backdrop-blur-xs text-left font-medium text-muted-foreground px-3 py-2.5">
+          {/* The pin needs an opaque fill or the scrolling columns show through
+              it, but painting it `bg-muted` made it a darker stripe than the
+              `bg-muted/50` row it belongs to. The `::before` is the opaque base
+              and the cell keeps the ROW's tint on top, so the composite is the
+              row's own colour. */}
+          <th className="sticky start-0 z-10 border-b border-border bg-muted/50 px-3 py-2.5 text-left font-medium text-muted-foreground before:absolute before:inset-0 before:-z-10 before:bg-card before:content-['']">
             Name
           </th>
           <th className="border-b border-border text-left font-medium text-muted-foreground px-3 py-2.5">Code</th>
@@ -99,14 +105,12 @@ export default function CategoryTree({ categories, searchQuery = '', level = 0, 
 
           return (
             // `border-separate`, so the row rule is drawn by the CELLS: a
-            // border on a `<tr>` is not painted at all in separate mode. That
-            // is the trade for a sticky cell that keeps its own background
-            // over the columns sliding under it.
+            // border on a `<tr>` is not painted at all in separate mode.
             <tr
               key={category.id}
               className="group transition-colors hover:bg-accent/50 [&>td]:border-b [&>td]:border-border/70"
             >
-              <td className="sticky start-0 z-10 bg-card px-3 py-2 align-middle group-hover:bg-accent">
+              <td className="sticky start-0 z-10 px-3 py-2 align-middle before:absolute before:inset-0 before:-z-10 before:bg-card before:content-[''] group-hover:bg-accent/50">
                 <div
                   className="flex items-center gap-1.5"
                   style={{ paddingLeft: `${rowLevel * 20}px` }}
