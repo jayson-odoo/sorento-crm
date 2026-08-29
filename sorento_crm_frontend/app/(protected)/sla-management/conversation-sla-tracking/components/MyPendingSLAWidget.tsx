@@ -548,7 +548,7 @@ export default function MyPendingSLAWidget() {
         >
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
-              <p className="truncate text-sm font-medium" title={`${typeLabel}${item.reference ? ` · ${item.reference}` : ''}`}>
+              <p className="break-words text-sm font-medium" title={`${typeLabel}${item.reference ? ` · ${item.reference}` : ''}`}>
                 {typeLabel}
                 {item.reference ? (
                   <span className="text-muted-foreground"> · {item.reference}</span>

@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { ChevronRight, ChevronDown, Folder, FolderOpen, ExternalLink, Edit, Copy, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import {
   Tooltip,
@@ -63,19 +64,18 @@ export default function CategoryTree({ categories, searchQuery = '', level = 0, 
   }
 
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full table-fixed border-collapse text-sm">
-        <colgroup>
-          <col style={{ width: '24%' }} />
-          <col style={{ width: '12%' }} />
-          <col style={{ width: '28%' }} />
-          <col style={{ width: '10%' }} />
-          <col style={{ width: '12%' }} />
-          <col style={{ width: '14%' }} />
-        </colgroup>
+    /* A fixed layout with percentage columns gave Name 24% of 375px - 90px, of
+       which the indent and two icons took 60 - so a nested category read as
+       three characters and an ellipsis. The columns size to their content now
+       and the table scrolls sideways inside its own container, with Name pinned
+       on the left exactly as the DataGrid pins its identifier. */
+    <ScrollArea>
+      <table className="w-auto min-w-full border-collapse text-sm">
         <thead>
           <tr className="border-b border-border bg-muted/50">
-            <th className="text-left font-medium text-muted-foreground px-3 py-2.5">Name</th>
+            <th className="sticky start-0 z-10 bg-muted/50 text-left font-medium text-muted-foreground px-3 py-2.5">
+              Name
+            </th>
             <th className="text-left font-medium text-muted-foreground px-3 py-2.5">Code</th>
             <th className="text-left font-medium text-muted-foreground px-3 py-2.5">Description</th>
             <th className="text-left font-medium text-muted-foreground px-3 py-2.5">Active</th>
@@ -93,9 +93,9 @@ export default function CategoryTree({ categories, searchQuery = '', level = 0, 
                 key={category.id}
                 className="border-b border-border/70 hover:bg-accent/50 transition-colors group"
               >
-                <td className="px-3 py-2 align-middle">
+                <td className="sticky start-0 z-10 bg-background px-3 py-2 align-middle group-hover:bg-accent/50">
                   <div
-                    className="flex items-center gap-1.5 min-w-0"
+                    className="flex items-center gap-1.5"
                     style={{ paddingLeft: `${rowLevel * 20}px` }}
                   >
                     {hasChildren ? (
@@ -119,11 +119,16 @@ export default function CategoryTree({ categories, searchQuery = '', level = 0, 
                     ) : (
                       <Folder className="size-4 text-muted-foreground shrink-0" />
                     )}
-                    <span className="font-medium truncate">{category.category_name}</span>
+                    <span className="font-medium whitespace-nowrap">{category.category_name}</span>
                   </div>
                 </td>
-                <td className="px-3 py-2 text-muted-foreground truncate">{category.category_code}</td>
-                <td className="px-3 py-2 text-muted-foreground truncate" title={category.description ?? undefined}>
+                <td className="px-3 py-2 text-muted-foreground whitespace-nowrap">
+                  {category.category_code}
+                </td>
+                <td
+                  className="max-w-[28rem] truncate px-3 py-2 text-muted-foreground"
+                  title={category.description ?? undefined}
+                >
                   {category.description ?? '-'}
                 </td>
                 <td className="px-3 py-2">
@@ -213,6 +218,7 @@ export default function CategoryTree({ categories, searchQuery = '', level = 0, 
           })}
         </tbody>
       </table>
-    </div>
+      <ScrollBar orientation="horizontal" />
+    </ScrollArea>
   );
 }

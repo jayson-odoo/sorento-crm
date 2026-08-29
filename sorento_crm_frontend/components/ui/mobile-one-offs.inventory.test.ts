@@ -82,7 +82,7 @@ describe('Mobile one-offs (S4-04)', () => {
     const src = read(
       'app/(protected)/master-data-management/products/[id]/components/ProductDetail.tsx',
     );
-    expect(src).toContain('grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-3');
+    expect(src).toContain('grid-cols-1 gap-x-6 gap-y-4 text-sm sm:grid-cols-3');
   });
 
   it('S4-04: the two floating buttons do not share a corner', () => {

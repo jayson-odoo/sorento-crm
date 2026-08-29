@@ -299,7 +299,7 @@ export default function TicketsList() {
                           aria-label={`Select ticket ${t.ticket_number ?? t.id}`}
                         />
                       </TableCell>
-                      <TableCell className="font-mono text-xs">
+                      <TableCell className="whitespace-nowrap font-mono text-xs">
                         {t.ticket_number ?? '-'}
                       </TableCell>
                       <TableCell className="max-w-[420px] truncate">{t.title}</TableCell>
