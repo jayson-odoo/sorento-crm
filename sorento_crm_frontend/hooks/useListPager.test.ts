@@ -7,7 +7,9 @@
  * - a step WITHIN the page costs no request (the whole point of sharing the key)
  * - a step ACROSS a page boundary fetches the neighbouring page once and lands on
  *   its near edge, with a URL that names the new page
- * - the absolute ends are disabled
+ * - the absolute ends are disabled, and so is a step already in flight
+ * - a boundary page that comes back empty kills that direction rather than
+ *   swallowing the click
  * - a deep link fetches the page named in the URL, and the pager hides when the
  *   record is not on it
  */
@@ -46,6 +48,16 @@ const listQueryKey = (params: ListPagerParams) => [
 ];
 
 const fetchPage = vi.fn(async (params: ListPagerParams) => PAGES[params.pageIndex]);
+
+/** A page fetch the test resolves by hand, to inspect the pager mid-step. */
+function deferredPage() {
+  let release!: (page: ListPagerPage) => void;
+  const promise = new Promise<ListPagerPage>((resolve) => {
+    release = resolve;
+  });
+  fetchPage.mockImplementationOnce(() => promise);
+  return release;
+}
 
 function paramsFor(pageIndex: number): ListPagerParams {
   return {
@@ -175,6 +187,69 @@ describe('useListPager', () => {
     expect(result.current.index).toBeNull();
     expect(result.current.hasPrevious).toBe(false);
     expect(result.current.hasNext).toBe(false);
+  });
+
+  it('D3: both chevrons are disabled while a boundary step is in flight', async () => {
+    seed(0);
+    const release = deferredPage();
+    const { result } = renderPager('a3');
+
+    expect(result.current.hasNext).toBe(true);
+    expect(result.current.hasPrevious).toBe(true);
+
+    act(() => result.current.goNext());
+
+    // The page it lands on decides where the ends are, so until it answers
+    // neither direction is walkable and neither click may start a second fetch.
+    await waitFor(() => expect(result.current.hasNext).toBe(false));
+    expect(result.current.hasPrevious).toBe(false);
+    expect(result.current.isLoading).toBe(true);
+
+    act(() => result.current.goNext());
+    act(() => result.current.goPrevious());
+    expect(fetchPage).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      release(PAGES[1]);
+    });
+    expect(push).toHaveBeenCalledWith('/things/b1?page=2&limit=3');
+  });
+
+  it('D3: a next page that comes back empty disables Next instead of doing nothing', async () => {
+    seed(0);
+    // `total` still promises a page 2; the fetch says there is nothing on it.
+    fetchPage.mockImplementationOnce(async () => ({
+      data: [],
+      pagination: { total: TOTAL },
+    }));
+    const { result } = renderPager('a3');
+
+    await act(async () => {
+      result.current.goNext();
+    });
+
+    expect(push).not.toHaveBeenCalled();
+    expect(result.current.hasNext).toBe(false);
+    // The other direction is untouched: page 1 row 3 still steps back to row 2.
+    expect(result.current.hasPrevious).toBe(true);
+  });
+
+  it('D3: a previous page that comes back empty disables Previous', async () => {
+    search = 'page=2&limit=3';
+    seed(1);
+    fetchPage.mockImplementationOnce(async () => ({
+      data: [],
+      pagination: { total: TOTAL },
+    }));
+    const { result } = renderPager('b1');
+
+    await act(async () => {
+      result.current.goPrevious();
+    });
+
+    expect(push).not.toHaveBeenCalled();
+    expect(result.current.hasPrevious).toBe(false);
+    expect(result.current.hasNext).toBe(true);
   });
 
   it('S3-04: a page fetched by a boundary step is cached, not fetched twice', async () => {
