@@ -12,7 +12,8 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { ChevronRight, Plus, Search, Trash2, X } from 'lucide-react';
+import { Plus, Search, Trash2, X } from 'lucide-react';
+import { FormRowActions } from '../actions';
 import { Badge } from '@/components/ui/badge';
 import LookupBoundLabel from '@/components/common/LookupBoundLabel';
 import { Button } from '@/components/ui/button';
@@ -55,10 +56,9 @@ export default function FormsList() {
     status: statusFilter !== 'all' ? statusFilter : undefined,
   });
 
-  const handleRowClick = (row: Form) => {
-    const formId = row.id;
-    // Carry the active list query into the detail URL so its prev/next pager
-    // walks the same filtered+sorted set.
+  // The whole row opens the record, carrying the list query the pager rebuilds
+  // its key from.
+  const rowHref = (row: Form) => {
     const search = buildDetailSearch(
       {
         pageIndex: pagination.pageIndex,
@@ -71,7 +71,7 @@ export default function FormsList() {
       },
     );
     const qs = search ? `?${search}` : '';
-    router.push(`/forms-management/forms/${formId}${qs}`);
+    return `/forms-management/forms/${row.id}${qs}`;
   };
 
   const columns = useMemo<ColumnDef<Form>[]>(
@@ -168,7 +168,11 @@ export default function FormsList() {
       {
         accessorKey: 'actions',
         header: '',
-        cell: () => <ChevronRight className="text-muted-foreground/70 size-3.5" />,
+        cell: ({ row }) => (
+          <FormRowActions
+            form={{ id: row.original.id, name: row.original.name, code: row.original.code }}
+          />
+        ),
         size: 40,
         enableHiding: false,
       },
@@ -201,7 +205,7 @@ export default function FormsList() {
       table={table}
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
-      onRowClick={handleRowClick}
+      rowHref={rowHref}
       standardToolbar={false}
       tableLayout={{ columnsVisibility: true, columnsResizable: true }}
     >
