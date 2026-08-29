@@ -139,6 +139,14 @@ const ProductsList = () => {
     }
   }, [searchParams, router, pathname]);
 
+
+  const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
+  const [bulkChatSearchDialogOpen, setBulkChatSearchDialogOpen] = useState(false);
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
+  const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
+  const [advancedFilter, setAdvancedFilter] = useState<ListQueryFilterGroup | null>(null);
+  const [advancedFilterDialogOpen, setAdvancedFilterDialogOpen] = useState(false);
+
   // Back hands the list its own query string back, and the pager keeps rewriting
   // it, so the list reads it (S3-01). One hook, every list.
   useListStateFromUrl(
@@ -169,13 +177,6 @@ const ProductsList = () => {
     },
     { enabled: !isReloadRef.current },
   );
-
-  const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
-  const [bulkChatSearchDialogOpen, setBulkChatSearchDialogOpen] = useState(false);
-  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
-  const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
-  const [advancedFilter, setAdvancedFilter] = useState<ListQueryFilterGroup | null>(null);
-  const [advancedFilterDialogOpen, setAdvancedFilterDialogOpen] = useState(false);
 
   const { data: categories } = useProductCategorySelectQuery();
   const { data: brands } = useBrandSelectQuery();

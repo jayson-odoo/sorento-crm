@@ -36,21 +36,6 @@ vi.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 
-/**
- * The pager's data. Mocked at the shared hook so no fetch is attempted and the arguments
- * the feature hook passes (the neighbours path, and the id) can be asserted.
- */
-const recordNeighbours = vi.fn((..._args: unknown[]) => ({
-  prevId: 'so-0',
-  nextId: 'so-2',
-  index: 2,
-  total: 3,
-  isLoading: false,
-}));
-vi.mock('@/hooks/useRecordNeighbours', () => ({
-  useRecordNeighbours: (...args: unknown[]) => recordNeighbours(...args),
-}));
-
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
 }));
@@ -265,13 +250,6 @@ beforeEach(() => {
   canEditProject = true;
   // Default: AutoCount agrees, so the amend path is open.
   listDivergences.mockResolvedValue({ data: [], total: 0, page: 1, limit: 100 });
-  recordNeighbours.mockReturnValue({
-    prevId: 'so-0',
-    nextId: 'so-2',
-    index: 2,
-    total: 3,
-    isLoading: false,
-  });
 });
 
 describe('SalesOrderDetailClient', () => {

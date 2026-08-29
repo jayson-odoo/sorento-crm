@@ -30,15 +30,6 @@ vi.mock('next/navigation', () => ({
 }));
 
 // The pager reads a backend `/neighbours` endpoint; nothing answers it here.
-vi.mock('@/hooks/useRecordNeighbours', () => ({
-  useRecordNeighbours: () => ({
-    prevId: null,
-    nextId: null,
-    index: 1,
-    total: 1,
-    isLoading: false,
-  }),
-}));
 
 const copyToClipboard = vi.fn();
 vi.mock('@/hooks/use-copy-to-clipboard', () => ({

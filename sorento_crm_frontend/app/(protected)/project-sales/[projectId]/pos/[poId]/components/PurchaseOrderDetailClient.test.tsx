@@ -39,21 +39,6 @@ vi.mock('next/navigation', () => ({
   useSearchParams: () => searchParams,
 }));
 
-/**
- * The header's prev/next pager. Mocked at the shared hook so nothing is fetched, and so the
- * arguments the feature hook passes (the neighbours path, and the id) can be asserted.
- */
-const recordNeighbours = vi.fn((..._args: unknown[]) => ({
-  prevId: 'po0',
-  nextId: 'po2',
-  index: 2,
-  total: 3,
-  isLoading: false,
-}));
-vi.mock('@/hooks/useRecordNeighbours', () => ({
-  useRecordNeighbours: (...args: unknown[]) => recordNeighbours(...args),
-}));
-
 const getProject = vi.fn();
 const listPurchaseOrders = vi.fn();
 const listPurchaseOrderLines = vi.fn();
@@ -194,13 +179,6 @@ async function openGear() {
 beforeEach(() => {
   vi.clearAllMocks();
   searchParams = new URLSearchParams();
-  recordNeighbours.mockReturnValue({
-    prevId: 'po0',
-    nextId: 'po2',
-    index: 2,
-    total: 3,
-    isLoading: false,
-  });
   getProject.mockResolvedValue(project());
   listPurchaseOrders.mockResolvedValue([po()]);
   listPurchaseOrderLines.mockResolvedValue([line()]);

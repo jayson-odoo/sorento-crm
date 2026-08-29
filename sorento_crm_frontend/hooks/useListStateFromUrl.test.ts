@@ -8,7 +8,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { renderHook } from '@testing-library/react';
+import { render, renderHook } from '@testing-library/react';
 
 import { useListStateFromUrl } from './useListStateFromUrl';
 import type { ListPagerParams } from './useListPager';
@@ -67,5 +67,39 @@ describe('useListStateFromUrl', () => {
     const { apply } = renderWithUrl('page=2&limit=50&category_id=c1', { enabled: false });
 
     expect(apply).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The list fetches from the state this hook restores. Applied in an effect, the
+   * first commit would already have fetched page 1 of the unfiltered list, and the
+   * restored page a moment later: two requests on every Back, one of them for a
+   * page nobody asked for.
+   */
+  it('R11: the restored state is in place before the list can fetch, so it fetches once', () => {
+    search = 'page=3&limit=25&query=ada';
+    const fetches: string[] = [];
+
+    function List() {
+      const [state, setState] = React.useState<ListPagerParams>({
+        pageIndex: 0,
+        pageSize: 50,
+        sorting: [],
+        searchQuery: '',
+        filters: {},
+      });
+      useListStateFromUrl((next) => setState(next));
+      // Stands in for the list's `useQuery`, which subscribes on commit: a render
+      // React throws away never issues a request.
+      React.useEffect(() => {
+        fetches.push(
+          `page=${state.pageIndex + 1}&limit=${state.pageSize}&query=${state.searchQuery}`,
+        );
+      }, [state]);
+      return null;
+    }
+
+    render(React.createElement(List));
+
+    expect(fetches).toEqual(['page=3&limit=25&query=ada']);
   });
 });

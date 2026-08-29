@@ -30,9 +30,19 @@ export function buildDetailSearch(
 }
 
 /**
+ * The largest page any list will serve, in one place.
+ *
+ * It matches the DataGrid's own page-size menu, which is capped at 1000 to stay
+ * in lockstep with the backend. The number matters here because a detail URL is
+ * hand-editable: `?limit=100000` reached the list GET unchallenged and asked the
+ * database for the whole table.
+ */
+export const MAX_LIST_PAGE_SIZE = 1000;
+
+/**
  * Parse a detail-route `URLSearchParams` back into the list query shape the
- * neighbours hook expects. Returns the DataGrid params plus a passthrough map of
- * any extra resource filters present (e.g. assigned_to, status).
+ * pager and the lists expect. Returns the DataGrid params plus a passthrough map
+ * of any extra resource filters present (e.g. assigned_to, status).
  */
 export function parseDetailSearch(searchParams: URLSearchParams): {
   pageIndex: number;
@@ -57,7 +67,10 @@ export function parseDetailSearch(searchParams: URLSearchParams): {
 
   return {
     pageIndex: Number.isFinite(page) && page > 0 ? page - 1 : 0,
-    pageSize: Number.isFinite(limit) && limit > 0 ? limit : 50,
+    pageSize:
+      Number.isFinite(limit) && limit > 0
+        ? Math.min(limit, MAX_LIST_PAGE_SIZE)
+        : 50,
     sorting,
     searchQuery,
     filters,

@@ -69,21 +69,6 @@ vi.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(''),
 }));
 
-/**
- * The header's prev/next pager, which walks this schedule's own revisions. Mocked at the
- * shared hook so nothing is fetched and the arguments the feature hook passes can be read.
- */
-const recordNeighbours = vi.fn((..._args: unknown[]) => ({
-  prevId: 'v3',
-  nextId: 'v1',
-  index: 2,
-  total: 3,
-  isLoading: false,
-}));
-vi.mock('@/hooks/useRecordNeighbours', () => ({
-  useRecordNeighbours: (...args: unknown[]) => recordNeighbours(...args),
-}));
-
 const getDeliveryScheduleVersion = vi.fn();
 const saveDeliveryScheduleCells = vi.fn();
 const resolveDeliveryScheduleProduct = vi.fn();

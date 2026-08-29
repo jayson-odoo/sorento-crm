@@ -13,9 +13,16 @@
  * the caller says what to do with the values. It fires once per distinct query
  * string, and never on an empty one: a list opened fresh from the sidebar keeps
  * its own defaults rather than being reset to the parser's.
+ *
+ * It applies DURING the render, not in an effect. An effect runs after the first
+ * commit, so the list would already have fired the query its defaults describe,
+ * and the restored one a moment later: two requests on every Back, the first of
+ * them for a page nobody asked for. Setting state during the render of the same
+ * component is React's documented way to derive state from a changing input - it
+ * re-renders before the children run, so only the restored query is ever issued.
  */
 
-import { useEffect, useMemo, useRef } from 'react';
+import { useMemo, useRef } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { parseDetailSearch } from '@/lib/listNavQuery';
 import type { ListPagerParams } from '@/hooks/useListPager';
@@ -35,13 +42,13 @@ export function useListStateFromUrl(
   const searchParams = useSearchParams();
   const searchKey = useMemo(() => searchParams.toString(), [searchParams]);
 
-  // The callback closes over the list's setters, so it changes on every render.
-  // Keeping it in a ref is what lets the effect depend on the URL alone.
-  const applyRef = useRef(apply);
-  applyRef.current = apply;
+  // The query string this list has already been restored to. A ref, not state:
+  // it must be written in the same pass that applies, or the second render would
+  // apply again and stamp on whatever the user has changed since.
+  const appliedKey = useRef<string | null>(null);
 
-  useEffect(() => {
-    if (!enabled || !searchKey) return;
-    applyRef.current(parseDetailSearch(new URLSearchParams(searchKey)));
-  }, [searchKey, enabled]);
+  if (enabled && searchKey && appliedKey.current !== searchKey) {
+    appliedKey.current = searchKey;
+    apply(parseDetailSearch(new URLSearchParams(searchKey)));
+  }
 }

@@ -72,15 +72,6 @@ vi.mock('../../../../_shared/services/projectSalesOrderService', () => ({
 
 // The header's prev/next pager. Mocked at the shared hook so nothing is fetched here; the
 // pager itself is covered in SalesOrderDetailClient.test.tsx.
-vi.mock('@/hooks/useRecordNeighbours', () => ({
-  useRecordNeighbours: () => ({
-    prevId: null,
-    nextId: null,
-    index: null,
-    total: 0,
-    isLoading: false,
-  }),
-}));
 
 vi.mock('../../../../_shared/services/soDivergenceService', () => ({
   listDivergences: vi.fn(async () => ({ data: [], total: 0, page: 1, limit: 100 })),
