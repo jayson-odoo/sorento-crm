@@ -32,6 +32,7 @@ import type { Campaign } from '../types/campaign.types';
 import { CAMPAIGN_STATUSES, campaignStatusLabel } from '../types/campaign.types';
 import { formatDate } from '@/lib/helpers';
 import { buildDetailSearch } from '@/lib/listNavQuery';
+import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 
 export default function CampaignsList() {
   const router = useRouter();
@@ -40,6 +41,15 @@ export default function CampaignsList() {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
+
+  // Back hands the list its own query string back, and the pager keeps
+  // rewriting it, so the list has to read it (S3-01).
+  useListStateFromUrl((state) => {
+    setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
+    setSorting(state.sorting);
+    setSearchQuery(state.searchQuery);
+    setStatusFilter(state.filters.status ?? 'all');
+  });
 
   useEffect(() => {
     setPagination((prev) => ({ ...prev, pageIndex: 0 }));
@@ -55,14 +65,18 @@ export default function CampaignsList() {
 
   // D3: the row opens the campaign, chevron or no chevron - the chevron was
   // decoration on a row nothing could open. The href carries the list state the
-  // detail page's Back and pager read back out of the URL.
+  // detail page's Back and pager read back out of the URL, the status filter
+  // included: it lives outside TanStack, so the grid cannot append it.
   const rowHref = (row: Campaign) => {
-    const search = buildDetailSearch({
-      pageIndex: pagination.pageIndex,
-      pageSize: pagination.pageSize,
-      sorting,
-      searchQuery,
-    });
+    const search = buildDetailSearch(
+      {
+        pageIndex: pagination.pageIndex,
+        pageSize: pagination.pageSize,
+        sorting,
+        searchQuery,
+      },
+      statusFilter !== 'all' ? { status: statusFilter } : undefined,
+    );
     return `/marketing-management/campaigns/${row.id}${search ? `?${search}` : ''}`;
   };
 

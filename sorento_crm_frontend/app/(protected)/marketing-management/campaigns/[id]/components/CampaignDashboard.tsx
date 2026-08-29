@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useCampaign } from '../../hooks/useCampaigns';
+import { useBackToListHref } from '@/components/common/BackToList';
 import { formatDate } from '@/lib/helpers';
 import BudgetTracker from './BudgetTracker';
 
@@ -16,6 +17,9 @@ interface CampaignDashboardProps {
 
 export default function CampaignDashboard({ campaignId }: CampaignDashboardProps) {
   const router = useRouter();
+  // The list wrote its page, sort, search and status into this URL when the row
+  // was clicked; Back hands the same string back rather than a fresh page 1.
+  const backHref = useBackToListHref('/marketing-management/campaigns');
   const { data: campaign, isLoading } = useCampaign(campaignId);
 
   if (isLoading) {
@@ -31,7 +35,7 @@ export default function CampaignDashboard({ campaignId }: CampaignDashboardProps
     return (
       <div className="text-center py-12">
         <p className="text-muted-foreground">Campaign not found</p>
-        <Button variant="outline" onClick={() => router.push('/marketing-management/campaigns')} className="mt-4">
+        <Button variant="outline" onClick={() => router.push(backHref)} className="mt-4">
           <ArrowLeft className="size-4" />
           Back to Campaigns
         </Button>
@@ -43,7 +47,7 @@ export default function CampaignDashboard({ campaignId }: CampaignDashboardProps
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <Button variant="ghost" size="sm" onClick={() => router.push('/marketing-management/campaigns')}>
+          <Button variant="ghost" size="sm" onClick={() => router.push(backHref)}>
             <ArrowLeft className="size-4" />
           </Button>
           <h1 className="text-2xl font-bold">{campaign.campaign_name}</h1>

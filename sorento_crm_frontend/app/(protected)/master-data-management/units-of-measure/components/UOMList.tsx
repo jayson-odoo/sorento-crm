@@ -29,6 +29,7 @@ import { useUOMs } from '../hooks/useUOM';
 import type { UnitOfMeasure } from '../types/uom.types';
 import UOMDeleteDialog from './UOMDeleteDialog';
 import { buildDetailSearch } from '@/lib/listNavQuery';
+import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 
 export default function UOMList() {
   const router = useRouter();
@@ -36,6 +37,14 @@ export default function UOMList() {
   const [sorting, setSorting] = useState<SortingState>([{ id: 'created_at', desc: true }]);
   const [searchQuery, setSearchQuery] = useState('');
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
+
+  // Back hands the list its own query string back, and the pager keeps
+  // rewriting it, so the list has to read it (S3-01).
+  useListStateFromUrl((state) => {
+    setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
+    setSorting(state.sorting);
+    setSearchQuery(state.searchQuery);
+  });
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [uomToDelete, setUomToDelete] = useState<UnitOfMeasure | null>(null);
 
