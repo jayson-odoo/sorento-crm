@@ -14,13 +14,10 @@ import {
   useReactTable,
 } from '@tanstack/react-table';
 import {
-  ChevronRight,
   Plus,
   Search,
   X,
-  Edit,
   Trash2,
-  Copy,
   Upload,
   Download,
   SlidersHorizontal,
@@ -31,11 +28,7 @@ import { Badge, BadgeDot } from '@/components/ui/badge';
 import { ProductTypeBadge } from './ProductTypeBadge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
-import {
-  DataGrid,
-  DataGridApiFetchParams,
-  DataGridApiResponse,
-} from '@/components/ui/data-grid';
+import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { buildSelectColumn, selectedRowIds } from '@/components/ui/data-grid-select-column';
@@ -49,16 +42,24 @@ import { useProductFilters } from '../hooks/useProductFilters';
 import { useProductCategorySelectQuery } from '../../shared/hooks/use-product-category-select-query';
 import { useBrandSelectQuery } from '../../shared/hooks/use-brand-select-query';
 import { CHAT_SEARCH_LABEL, chatSearchState, type ProductListItem } from '../types/product.types';
-import { getProducts, bulkImportProducts, validateProductsImport, type GetProductsParams } from '../services/productService';
-import ProductDeleteDialog from './product-delete-dialog';
+import { bulkImportProducts, validateProductsImport } from '../services/productService';
 import ProductBulkDeleteDialog from './ProductBulkDeleteDialog';
 import ProductBulkChatSearchDialog from './ProductBulkChatSearchDialog';
 import { TemplateUploadDialog } from '@/components/template/TemplateUploadDialog';
 import { useImportJobDrawer } from '@/components/upload-activity';
 import { ListQueryFilterDialog } from '@/components/list/ListQueryFilterDialog';
-import { postListQuerySearch } from '@/lib/list-query/listQueryService';
 import type { ListQueryFilterGroup } from '@/lib/list-query/listQueryService';
-import { buildDetailSearch } from '@/lib/listNavQuery';
+import {
+  buildDetailSearch,
+  decodeAdvancedFilter,
+  encodeAdvancedFilter,
+} from '@/lib/listNavQuery';
+import { ProductRowActions } from '../actions';
+import {
+  fetchProductsPage,
+  productsListQueryKey,
+  type ProductsListParams,
+} from '../lib/listQuery';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { generateExcelFile } from '@/lib/excel-utils';
@@ -109,7 +110,6 @@ const ProductsList = () => {
   >('all');
 
   const {
-    filters,
     setCategoryId,
     setBrandId,
     setStatus,
@@ -169,6 +169,16 @@ const ProductsList = () => {
       setSelectedStatus(status);
       setStatus(status === 'active' ? true : status === 'inactive' ? false : undefined);
     }
+    const variant = searchParams.get('variant_filter');
+    if (variant === 'base' || variant === 'variant') {
+      setSelectedVariantFilter(variant);
+    }
+    // The advanced filter narrows the list, so it rides in the detail URL too -
+    // without it the pager would walk a wider set than the user was looking at.
+    const advanced = decodeAdvancedFilter<ListQueryFilterGroup>(
+      searchParams.get('advFilter') ?? undefined,
+    );
+    if (advanced) setAdvancedFilter(advanced);
     if (sortField) {
       setSorting([{ id: sortField, desc: sortDir === 'desc' }]);
     }
@@ -183,8 +193,6 @@ const ProductsList = () => {
     }
   }, [searchParams, setSearch, setCategoryId, setBrandId, setStatus, router, pathname]);
 
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  const [productToDelete, setProductToDelete] = useState<ProductListItem | null>(null);
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
   const [bulkChatSearchDialogOpen, setBulkChatSearchDialogOpen] = useState(false);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
@@ -206,94 +214,40 @@ const ProductsList = () => {
   const effectiveBrandId =
     selectedBrand && selectedBrand !== 'all' ? selectedBrand : discontinuedBrandIds;
 
-  // Fetch products from the server API
-  const fetchProducts = async ({
-    pageIndex,
-    pageSize,
-    sorting,
-    searchQuery,
-    selectedCategory,
-    selectedBrand,
-    selectedStatus,
-    selectedVariantFilter,
-  }: DataGridApiFetchParams & {
-    selectedCategory: string | null;
-    selectedBrand: string | null;
-    selectedStatus: string | null;
-    selectedVariantFilter: 'base' | 'variant' | 'all';
-  }): Promise<DataGridApiResponse<ProductListItem>> => {
-    const sortField = sorting?.[0]?.id || '';
-    const sortDirection = sorting?.[0]?.desc ? 'desc' : 'asc';
-
-    const params: GetProductsParams = {
-      pageIndex,
-      pageSize,
+  // The list query, built through the shared key + fetch so the detail page's
+  // pager reads THIS cache entry instead of asking the server again.
+  const listParams = useMemo<ProductsListParams>(
+    () => ({
+      pageIndex: pagination.pageIndex,
+      pageSize: pagination.pageSize,
       sorting,
       searchQuery,
-      ...(selectedCategory && selectedCategory !== 'all'
-        ? { category_id: selectedCategory }
-        : {}),
-      ...(selectedBrand && selectedBrand !== 'all'
-        ? { brand_id: selectedBrand }
-        : {}),
-      ...(selectedStatus && selectedStatus !== 'all'
-        ? { status: selectedStatus as 'active' | 'inactive' }
-        : { status: 'all' }),
-      ...(selectedVariantFilter && selectedVariantFilter !== 'all'
-        ? { variant_filter: selectedVariantFilter }
-        : {}),
-      ...(discontinuedBatchId ? { discontinued_batch_id: discontinuedBatchId } : {}),
-    };
-
-    return getProducts(params);
-  };
-
-  // Products query
-  const { data, isLoading, isError, error } = useQuery({
-    queryKey: [
-      'products',
+      category_id:
+        selectedCategory && selectedCategory !== 'all' ? selectedCategory : undefined,
+      brand_id: effectiveBrandId,
+      status: selectedStatus ?? 'all',
+      variant_filter: selectedVariantFilter,
+      discontinued_batch_id: discontinuedBatchId,
+      discontinued_brand_ids: discontinuedBrandIds,
+      advancedFilter: advancedFilter ?? undefined,
+    }),
+    [
       pagination,
       sorting,
       searchQuery,
       selectedCategory,
-      selectedBrand,
+      effectiveBrandId,
       selectedStatus,
       selectedVariantFilter,
-      advancedFilter,
       discontinuedBatchId,
       discontinuedBrandIds,
+      advancedFilter,
     ],
-    queryFn: async () => {
-      if (advancedFilter) {
-        const sortField = sorting?.[0]?.id || '';
-        const sortDirection = sorting?.[0]?.desc ? 'desc' : 'asc';
-        return postListQuerySearch<ProductListItem>({
-          resource: 'products',
-          filter: advancedFilter,
-          page: pagination.pageIndex + 1,
-          limit: pagination.pageSize,
-          sort: sortField || 'created_at',
-          dir: sortDirection,
-          quick_search: searchQuery || undefined,
-          category_id:
-            selectedCategory && selectedCategory !== 'all' ? selectedCategory : undefined,
-          brand_id: effectiveBrandId,
-          product_status:
-            selectedStatus && selectedStatus !== 'all' ? selectedStatus : undefined,
-        });
-      }
-      return fetchProducts({
-        pageIndex: pagination.pageIndex,
-        pageSize: pagination.pageSize,
-        sorting,
-        searchQuery,
-        selectedCategory,
-        // The deep link's brand filter rides in here when the dropdown is on "all".
-        selectedBrand: effectiveBrandId ?? null,
-        selectedStatus,
-        selectedVariantFilter,
-      });
-    },
+  );
+
+  const { data, isLoading, isError, error } = useQuery({
+    queryKey: productsListQueryKey(listParams),
+    queryFn: () => fetchProductsPage(listParams),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60, // 60 minutes
     refetchOnWindowFocus: false,
@@ -351,37 +305,22 @@ const ProductsList = () => {
         searchQuery,
       },
       {
-        category_id:
-          selectedCategory && selectedCategory !== 'all' ? selectedCategory : undefined,
-        brand_id: effectiveBrandId,
-        status: selectedStatus && selectedStatus !== 'all' ? selectedStatus : undefined,
+        category_id: listParams.category_id,
+        brand_id: listParams.brand_id,
+        status:
+          listParams.status && listParams.status !== 'all' ? listParams.status : undefined,
+        variant_filter:
+          selectedVariantFilter !== 'all' ? selectedVariantFilter : undefined,
         discontinued_batch_id: discontinuedBatchId,
+        advFilter: encodeAdvancedFilter(advancedFilter),
       },
     );
     return `/master-data-management/products/${productId}${qs ? `?${qs}` : ''}`;
   };
 
-  const handleRowClick = (row: ProductListItem) => {
-    router.push(buildProductDetailUrl(row.id));
-  };
-
-  const handleEdit = (e: React.MouseEvent, row: ProductListItem) => {
-    e.stopPropagation();
-    const [path, qs] = buildProductDetailUrl(row.id).split('?');
-    router.push(`${path}/edit${qs ? `?${qs}` : ''}`);
-  };
-
-  const handleDelete = (e: React.MouseEvent, row: ProductListItem) => {
-    e.stopPropagation();
-    setProductToDelete(row);
-    setDeleteDialogOpen(true);
-  };
-
-  const handleDuplicate = (e: React.MouseEvent, row: ProductListItem) => {
-    e.stopPropagation();
-    // TODO: Implement duplicate with modal for new product code
-    console.log('Duplicate product:', row.id);
-  };
+  // The whole row opens the record; the filters the grid does not know about
+  // ride in this query string, and the pager rebuilds the list's key from both.
+  const rowHref = (row: ProductListItem) => buildProductDetailUrl(row.id);
 
   const columns = useMemo<ColumnDef<ProductListItem>[]>(
     () => [
@@ -726,42 +665,11 @@ const ProductsList = () => {
       {
         accessorKey: 'actions',
         header: '',
-        cell: ({ row }) => (
-          <div className="flex items-center gap-1">
-            <Button
-              mode="icon"
-              variant="ghost"
-              size="sm"
-              onClick={(e) => handleEdit(e, row.original)}
-              title="Edit"
-            >
-              <Edit className="size-4" />
-            </Button>
-            <Button
-              mode="icon"
-              variant="ghost"
-              size="sm"
-              onClick={(e) => handleDuplicate(e, row.original)}
-              title="Duplicate"
-            >
-              <Copy className="size-4" />
-            </Button>
-            <Button
-              mode="icon"
-              variant="ghost"
-              size="sm"
-              onClick={(e) => handleDelete(e, row.original)}
-              title="Delete"
-            >
-              <Trash2 className="size-4" />
-            </Button>
-            <ChevronRight className="text-muted-foreground/70 size-3.5" />
-          </div>
-        ),
+        cell: ({ row }) => <ProductRowActions product={row.original} />,
         meta: {
           skeleton: <Skeleton className="size-4" />,
         },
-        size: 120,
+        size: 60,
         enableSorting: false,
         enableHiding: false,
         enableResizing: false,
@@ -824,7 +732,7 @@ const ProductsList = () => {
       table={table}
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
-      onRowClick={handleRowClick}
+      rowHref={rowHref}
       tableLayout={{
         columnsResizable: true,
         columnsPinnable: true,
@@ -1005,16 +913,6 @@ const ProductsList = () => {
           <DataGridPagination />
         </CardFooter>
       </Card>
-      {productToDelete && (
-        <ProductDeleteDialog
-          open={deleteDialogOpen}
-          closeDialog={() => {
-            setDeleteDialogOpen(false);
-            setProductToDelete(null);
-          }}
-          product={productToDelete}
-        />
-      )}
       <TemplateUploadDialog
         open={uploadDialogOpen}
         onOpenChange={setUploadDialogOpen}

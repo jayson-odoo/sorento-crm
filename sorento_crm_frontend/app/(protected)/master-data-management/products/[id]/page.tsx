@@ -2,8 +2,6 @@
 
 import { use } from 'react';
 import { useSearchParams } from 'next/navigation';
-import Link from 'next/link';
-import { MoveLeft } from 'lucide-react';
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -12,7 +10,6 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from '@/components/ui/breadcrumb';
-import { Button } from '@/components/ui/button';
 import { Container } from '@/components/common/container';
 import {
   Toolbar,
@@ -20,6 +17,7 @@ import {
   ToolbarHeading,
   ToolbarTitle,
 } from '@/components/common/toolbar';
+import BackToList from '@/components/common/BackToList';
 import ProductDetail from './components/ProductDetail';
 
 const WORKLIST_PATH = '/master-data-management/spec-verification';
@@ -46,16 +44,7 @@ export default function ProductDetailPage({
 }) {
   const { id } = use(params);
   const searchParams = useSearchParams();
-  const listQueryString = searchParams.toString();
   const worklistHref = worklistBackHref(searchParams.get('back'));
-  const backHref =
-    worklistHref ??
-    (listQueryString
-      ? `/master-data-management/products?${listQueryString}`
-      : '/master-data-management/products');
-  const backLabel = worklistHref
-    ? 'Back to spec verification'
-    : 'Back to products';
 
   return (
     <>
@@ -82,11 +71,18 @@ export default function ProductDetailPage({
             </Breadcrumb>
           </ToolbarHeading>
           <ToolbarActions>
-            <Button asChild variant="outline">
-              <Link href={backHref}>
-                <MoveLeft /> {backLabel}
-              </Link>
-            </Button>
+            {worklistHref ? (
+              <BackToList
+                listPath={worklistHref}
+                label="Back to spec verification"
+                appendListState={false}
+              />
+            ) : (
+              <BackToList
+                listPath="/master-data-management/products"
+                label="Back to products"
+              />
+            )}
           </ToolbarActions>
         </Toolbar>
       </Container>
