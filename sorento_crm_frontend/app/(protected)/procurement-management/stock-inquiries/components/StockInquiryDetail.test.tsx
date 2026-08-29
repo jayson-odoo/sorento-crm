@@ -18,6 +18,9 @@ import { toast } from 'sonner';
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn() }),
+  // Back, and the delete that lands where Back lands, read the list state the
+  // row click wrote into this URL.
+  useSearchParams: () => new URLSearchParams(''),
 }));
 
 const getFormSLATrackersMock = vi.fn();

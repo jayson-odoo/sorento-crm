@@ -13,7 +13,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }) }));
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ push: vi.fn() }),
+  // Back, and the delete that lands where Back lands, read the list state the
+  // row click wrote into this URL.
+  useSearchParams: () => new URLSearchParams(''),
+}));
 
 vi.mock('@/app/(protected)/sla-management/_shared/formSLAService', () => ({
   getFormSLATrackers: vi.fn().mockResolvedValue([]),
