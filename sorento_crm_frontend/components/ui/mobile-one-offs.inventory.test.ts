@@ -50,6 +50,10 @@ const SCROLLER_OUT_OF_REACH = new Map<string, string>([
     'app/(protected)/scm/components/ProductPerspectiveGrid.tsx',
     'the totals row rides in DataGridTable belowTable, so its scroller is in another file',
   ],
+  [
+    'app/(protected)/master-data-management/product-categories/components/CategoryTree.tsx',
+    'CategoriesList wraps it in the ScrollArea; a second one here scrolled nothing',
+  ],
 ]);
 
 /**
@@ -88,10 +92,15 @@ describe('Mobile one-offs (S4-04)', () => {
     // columns into 375 and cut the category name to three characters.
     expect(src).not.toContain('<colgroup>');
     expect(src).not.toContain('table-fixed');
-    expect(src).toContain('<ScrollArea');
-    expect(src).toContain('orientation="horizontal"');
-    // The identifier stays put while the rest scrolls, as the DataGrid does.
+    // The identifier stays put while the rest scrolls, as the DataGrid does...
     expect(src).toContain('sticky start-0');
+    // ...which needs `border-separate`: a sticky cell in a COLLAPSED table has
+    // its borders painted by the table, so the pin loses its rules and the
+    // scrolling columns show through it.
+    expect(src).toContain('border-separate border-spacing-0');
+    expect(src).not.toContain('border-collapse');
+    // And an opaque pin. `bg-muted/50` read as "onName tive" mid-scroll.
+    expect(src).not.toContain('sticky start-0 z-10 border-b border-border bg-muted/50');
   });
 
   it('S4-04: the Product Specifications freshness banner wraps instead of pushing', () => {
@@ -172,6 +181,19 @@ describe('Mobile one-offs (S4-04)', () => {
 
     const grid = read('components/ui/data-grid-table.tsx');
     expect(grid).toContain('data-slot="data-grid-scroller"');
+
+    // CategoryTree's scroller is its caller's. Nesting a second ScrollArea let
+    // the inner Root size to its 774px of content inside a 341px viewport, so
+    // nothing scrolled and the last three columns were simply clipped.
+    const list = read(
+      'app/(protected)/master-data-management/product-categories/components/CategoriesList.tsx',
+    );
+    expect(list).toContain('<ScrollArea>');
+    expect(list).toContain('<CategoryTree');
+    const tree = read(
+      'app/(protected)/master-data-management/product-categories/components/CategoryTree.tsx',
+    );
+    expect(tree).not.toContain('<ScrollArea');
   });
 
   it('S4-04: every raw table sits in its own horizontal scroller', () => {
