@@ -58,6 +58,18 @@ export interface DataGridProps<TData extends object> {
   recordCount: number;
   children?: ReactNode;
   onRowClick?: (row: TData) => void;
+  /**
+   * Makes every body row a link to the record's own page.
+   *
+   * Return the bare detail path (`/order-management/orders/${row.id}`); the grid
+   * appends the list state it is showing - page, limit, sort, search - so the
+   * detail page's pager can walk the same page the user came from. A filter the
+   * list keeps outside TanStack rides along in the returned href's own query
+   * string, and wins over the grid's value.
+   *
+   * `onRowClick` stays for the lists whose record is edited in a lightbox.
+   */
+  rowHref?: (row: TData) => string;
   isLoading?: boolean;
   loadingMode?: 'skeleton' | 'spinner';
   loadingMessage?: ReactNode | string;
@@ -167,7 +179,7 @@ function DataGrid<TData extends object>({ children, table, listingKey, ...props 
       rowBorder: true,
       rowRounded: false,
       stripped: false,
-      headerSticky: false,
+      headerSticky: true,
       headerBackground: true,
       headerBorder: true,
       width: 'fixed',
@@ -214,6 +226,15 @@ function DataGrid<TData extends object>({ children, table, listingKey, ...props 
   // Ensure table is provided
   if (!table) {
     throw new Error('DataGrid requires a "table" prop');
+  }
+
+  // Resizing that only lands on release reads as a dropped gesture. The handler
+  // reads this option at pointer-down time, so setting it here reaches every
+  // list, including the ~70 that never passed it. `useReactTable` re-applies the
+  // list's own options on each of ITS renders and this component renders after
+  // its parent, so the value is back to `onChange` before any pointer lands.
+  if (table.options.columnResizeMode !== 'onChange') {
+    table.setOptions((prev) => ({ ...prev, columnResizeMode: 'onChange' }));
   }
 
   const effectiveListingKey = listingKey ?? pathname;
