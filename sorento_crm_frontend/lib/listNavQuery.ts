@@ -33,17 +33,16 @@ export function buildDetailSearch(
  * The largest page a hand-edited detail URL may ask for, in one place.
  *
  * It is the biggest entry in the DataGrid's own Rows-per-page menu
- * (`data-grid-pagination.tsx`), and nothing more: it exists because a detail URL
- * is hand-editable, and `?limit=100000` reached the list GET unchallenged and
- * asked the database for the whole table.
+ * (`DEFAULT_PAGE_SIZES` in `data-grid-pagination.tsx`), and a test holds the two
+ * equal. It exists because a detail URL is hand-editable: `?limit=100000`
+ * reached the list GET unchallenged and asked the database for the whole table.
  *
- * It is NOT the backend's cap. The list routes disagree among themselves - 80
- * take `le=MAX_PAGE_LIMIT` (1000), 18 stop at 100 and 16 at 200 - so a limit
- * this parser allows can still be refused with a 422 by the narrower ones. The
- * menu never offers a size those routes reject, so only a typed URL can reach
- * one, and a 422 is the right answer to it.
+ * 100 is the largest page EVERY list route accepts. `MAX_PAGE_LIMIT` in
+ * `app/schemas/common.py` is 1000, but the routes do not all use it: 18 declare
+ * `le=100` and 16 `le=200`, so a bigger limit is a 422 on those lists. A list
+ * whose own route takes more passes its own `sizes` to `DataGridPagination`.
  */
-export const MAX_LIST_PAGE_SIZE = 1000;
+export const MAX_LIST_PAGE_SIZE = 100;
 
 /**
  * Parse a detail-route `URLSearchParams` back into the list query shape the
