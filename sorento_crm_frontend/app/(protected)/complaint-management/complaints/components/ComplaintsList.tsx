@@ -13,7 +13,7 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { FileDown, Paperclip, Plus, Search, Trash2, X } from 'lucide-react';
+import { Paperclip, Plus, Search, Trash2, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -38,7 +38,7 @@ import type { Complaint } from '../types/complaint.types';
 import ComplaintBulkDeleteDialog from './ComplaintBulkDeleteDialog';
 import ComplaintDeleteDialog from './ComplaintDeleteDialog';
 import { RowActionsMenu } from '@/components/common/RowActionsMenu';
-import type { RecordAction } from '@/components/common/recordActions';
+import { complaintActions } from '../actions';
 import { EntityDownloadsButton } from '@/components/my-downloads/EntityDownloadsButton';
 import { formatDate, formatDateTimeInMalaysia } from '@/lib/helpers';
 import { buildDetailSearch } from '@/lib/listNavQuery';
@@ -331,36 +331,19 @@ export default function ComplaintsList() {
         size: 56,
         enableSorting: false,
         enableHiding: false,
-        cell: ({ row }) => {
-          /**
-           * What a ROW can run (D15). Only the two that need nothing but its id: the
-           * record's gear holds about ten, and the other eight read the fetched
-           * complaint and its live SLA tracker (escalate, extend, reassign, the two
-           * edits, close, the reply, the view link), which a list payload does not
-           * carry. Those stay on the record rather than being half-wired here.
-           */
-          const actions: RecordAction[] = [
-            {
-              key: 'complaint.export_pdf',
-              label: 'Download PDF',
-              icon: FileDown,
-              disabled: exportPdfMutation.isPending,
-              run: () => exportPdfMutation.mutate(row.original.id),
-            },
-          ];
-          // A voided complaint is kept for the audit trail, so it is not deletable -
-          // the same gate the record's gear applies.
-          if ((row.original.status ?? '').trim().toLowerCase() !== 'voided') {
-            actions.push({
-              key: 'complaint.delete',
-              label: 'Delete',
-              icon: Trash2,
-              kind: 'destructive',
-              run: () => setDeleteTarget(row.original),
-            });
-          }
-          return <RowActionsMenu actions={actions} ariaLabel="complaint" />;
-        },
+        cell: ({ row }) => (
+          // The entity's own set, in the row's "..." (D15). Declared once in
+          // `../actions`, so the record's gear renders the same items, in the same
+          // order, behind the same delete gate.
+          <RowActionsMenu
+            actions={complaintActions(row.original, {
+              isExporting: exportPdfMutation.isPending,
+              onExport: (id) => exportPdfMutation.mutate(id),
+              onDeleteRequested: () => setDeleteTarget(row.original),
+            })}
+            ariaLabel="complaint"
+          />
+        ),
       },
     ],
     // The mutation OBJECT is new on every render, so depending on it would rebuild
@@ -385,6 +368,7 @@ export default function ComplaintsList() {
     manualPagination: true,
     manualSorting: true,
     manualFiltering: true,
+    columnResizeMode: 'onChange',
   });
 
   return (
@@ -394,7 +378,7 @@ export default function ComplaintsList() {
       isLoading={isLoading}
       rowHref={rowHref}
       standardToolbar={false}
-      tableLayout={{ columnsVisibility: true }}
+      tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
     >
       <Card>
         <CardHeader className="block">

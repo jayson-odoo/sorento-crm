@@ -4,7 +4,7 @@ import { useState, useCallback } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Edit, Trash2, Send, Link2, ExternalLink, MessageSquare, CheckCircle2, XCircle, BadgeCheck, FileDown, ArrowUpCircle, Ban, UserRoundCog, Undo2, Printer } from 'lucide-react';
+import { Edit, Send, Link2, ExternalLink, MessageSquare, CheckCircle2, XCircle, BadgeCheck, ArrowUpCircle, Ban, UserRoundCog, Undo2, Printer } from 'lucide-react';
 import { getFormSLATrackers, escalateFormTracking } from '@/app/(protected)/sla-management/_shared/formSLAService';
 import { SlaActiveTrackerControls } from '@/app/(protected)/sla-management/_shared/SlaActiveTrackerControls';
 import { SlaExtendMenuItem, SlaExtendDialog } from '@/app/(protected)/sla-management/_shared/SlaExtendAction';
@@ -52,7 +52,6 @@ import {
   useRejectComplaint,
   useProcessComplaintByCs,
   useCloseComplaint,
-  useExportComplaintPdf,
   useNotifyComplaintRootCause,
   useNotifyComplaintResolution,
   useUploadComplaintResponseAttachments,
@@ -74,7 +73,8 @@ import {
 } from '../services/complaintService';
 import { toast } from 'sonner';
 import { formatDate, formatDateTimeInMalaysia } from '@/lib/helpers';
-import ComplaintDeleteDialog from './ComplaintDeleteDialog';
+import { recordActionItems } from '@/components/common/recordActions';
+import { useComplaintActions } from '../actions';
 import ComplaintNotifiableFieldDialog from './ComplaintNotifiableFieldDialog';
 import { useComplaintRootCausesSelect } from '@/app/(protected)/complaint-management/complaint-root-causes/hooks/useComplaintRootCauses';
 import { useComplaintResolutionsSelect } from '@/app/(protected)/complaint-management/complaint-resolutions/hooks/useComplaintResolutions';
@@ -113,7 +113,6 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
   const rejectComplaintMutation = useRejectComplaint();
   const processComplaintMutation = useProcessComplaintByCs();
   const closeComplaintMutation = useCloseComplaint();
-  const exportPdfMutation = useExportComplaintPdf();
   const notifyRootCauseMutation = useNotifyComplaintRootCause();
   const notifyResolutionMutation = useNotifyComplaintResolution();
   const canApprove = useHasPermission('complaint_management.complaints.approve');
@@ -136,7 +135,6 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
   const [closeDialogOpen, setCloseDialogOpen] = useState(false);
   const [finalizeNote, setFinalizeNote] = useState('');
   const [rejectReason, setRejectReason] = useState('');
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [downloadsOpen, setDownloadsOpen] = useState(false);
   // Escalate the active form-SLA stage from the gear menu.
   const queryClient = useQueryClient();
@@ -161,6 +159,7 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
   });
   // A voided complaint is fully read-only - suppress every business CTA.
   const isVoided = (complaint?.status ?? '').trim().toLowerCase() === 'voided';
+
   // Form-action deferral (PLAN-form-sla-undo.md). While an action is pending its grace
   // window, EVERY business CTA is suppressed - the form must commit against the state
   // the action was requested on (AC-D-10), and a second action cannot queue (AC-D-7).
@@ -171,6 +170,20 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
   });
   const businessCtasEnabled =
     handlingLock.businessCtasEnabled && !isVoided && !formAction.ctasDisabled;
+  /**
+   * The set the LIST row renders too (D15), declared once in `../actions`.
+   *
+   * The record supplies the stricter delete gate: a form action inside its grace
+   * window would be undone by a delete underneath it, and only this page knows
+   * that a window is open.
+   */
+  const { actions: sharedActions, dialogs: sharedDialogs } = useComplaintActions(
+    complaint,
+    {
+      canDelete: !formAction.ctasDisabled,
+      onDeleted: () => router.push(backHref),
+    },
+  );
   const [undoDialogOpen, setUndoDialogOpen] = useState(false);
   // The technical team response may only be written while the complaint is still
   // waiting for one (UAC O1) - the backend returns 422 outside those statuses,
@@ -361,20 +374,9 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
           }}
           gear={
             <DetailActionsMenu ariaLabel="Complaint actions">
-              {/* The PDF and the download history are actions, so they live in the gear
-                  with the rest; the record card carries the pager, the gear and the one
-                  workflow CTA cluster, and nothing else. */}
-              <DropdownMenuItem
-                disabled={exportPdfMutation.isPending}
-                data-guide-target="complaint-management.complaints.download-pdf"
-                onSelect={(e) => {
-                  e.preventDefault();
-                  exportPdfMutation.mutate(complaintId);
-                }}
-              >
-                <FileDown className="size-4" />
-                {exportPdfMutation.isPending ? 'Preparing…' : 'Download PDF'}
-              </DropdownMenuItem>
+              {/* The download history is an action, so it lives in the gear with the
+                  rest; the record card carries the pager, the gear and the one workflow
+                  CTA cluster, and nothing else. */}
               <DropdownMenuItem
                 onSelect={(e) => {
                   e.preventDefault();
@@ -535,15 +537,10 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
                   Void
                 </DropdownMenuItem>
               )}
-              {!isVoided && !formAction.ctasDisabled && (
-                <DropdownMenuItem
-                  variant="destructive"
-                  onClick={() => setDeleteDialogOpen(true)}
-                >
-                  <Trash2 className="size-4" />
-                  Delete
-                </DropdownMenuItem>
-              )}
+              {/* The set the list row renders too (D15) - Download PDF, Delete.
+                  Spliced in as an array so the menu can see the destructive one and
+                  move it last by itself, after this record's own Void. */}
+              {recordActionItems(sharedActions)}
             </DetailActionsMenu>
           }
           primary={
@@ -614,13 +611,16 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
             </>
           }
           dialogs={
-            <EntityDownloadsButton
-              entityType="complaint"
-              entityId={complaintId}
-              label={complaint.complaint_number ?? undefined}
-              open={downloadsOpen}
-              onOpenChange={setDownloadsOpen}
-            />
+            <>
+              <EntityDownloadsButton
+                entityType="complaint"
+                entityId={complaintId}
+                label={complaint.complaint_number ?? undefined}
+                open={downloadsOpen}
+                onOpenChange={setDownloadsOpen}
+              />
+              {sharedDialogs}
+            </>
           }
         />
       </div>
@@ -651,17 +651,6 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
             setUndoDialogOpen(false);
           }}
           isSubmitting={formAction.isMutating}
-        />
-      )}
-
-      {complaint && (
-        <ComplaintDeleteDialog
-          open={deleteDialogOpen}
-          closeDialog={() => setDeleteDialogOpen(false)}
-          complaint={complaint}
-          onSuccess={() => {
-            router.push(backHref);
-          }}
         />
       )}
 
