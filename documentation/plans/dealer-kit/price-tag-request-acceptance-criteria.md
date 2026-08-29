@@ -162,3 +162,16 @@ against the selling prices to catch discrepancies before print.
 - **AC-L.8** `[BE][T]` `resolve_prices_for_lines` and `/tag-templates/resolve-preview` return prices from `resolve_prices()`; the Phase 1 mock is gone.
 - **AC-L.9** `[BE][T]` `scripts/seed_tag_templates.py` inserts eight templates (sink combo, sink ala carte, art basin, mirror + mirror cabinet, shower set, WC, urinal, bathroom furniture set) and their badge assets; rerunning changes nothing.
 - **AC-L.10** `[Browser]` Each seeded template opens in the editor with live product data and is screenshotted next to its page of `Sorento Pricetag Template.pdf`; the reviewer can name no element on the PDF page that the template cannot express.
+
+### M. S3c - the tag canvas behaves like a drawing tool
+
+- **AC-M.1** `[FE][T]` The wheel over the canvas zooms about the cursor: the mm point under the pointer stays under the pointer, the `%` readout updates, and the page behind does not scroll. `Cmd/Ctrl+0` fits the artboard to the viewport, `Cmd/Ctrl+1` returns to 100%.
+- **AC-M.2** `[FE]` `V` and `H` toggle the Select and Hand tools and holding Space is Hand for as long as it is held. A hand drag pans the view. A select drag on empty space draws a marquee and selects every top-level layer the band touches; Shift adds to the selection instead of replacing it.
+- **AC-M.3** `[FE]` A click on a group selects the group. A double-click selects the child under the pointer, and from then on the group box no longer intercepts pointer events. Escape climbs one level and deselects at the top. Clicking a child in the Layers panel puts the canvas in the same state.
+- **AC-M.4** `[FE][T]` Dragging a group moves every descendant, both live and on drop. Resizing or rotating a group applies the same change to its descendants. Moving a child refits the boxes of every ancestor group. One undo reverts the whole move.
+- **AC-M.5** `[FE]` A multi-selection drags as one object and is served by a single Transformer.
+- **AC-M.6** `[FE]` Right-click anywhere on the canvas opens our context menu and never the browser's. Every listed item works, and each item that changes the document is undoable.
+- **AC-M.7** `[FE][T]` Copy, cut, duplicate and delete of a group carry its descendants; pasted groups have fresh ids and a `children` array pointing at the pasted copies.
+- **AC-M.8** `[FE]` A canvas drag persists: the inspector X/Y change as the layer moves, Save writes the moved position, and re-opening the template shows it.
+- **AC-M.9** `[FE]` Previewing with a product resolves every bound layer against it, names it in a chip on the toolbar, can be cleared, and changes nothing that Save writes: re-opening the template shows the group still unbound.
+- **AC-M.10** `[FE][T]` Nothing already shipping regresses: `TagSheetDesigner` still renders placed tags, `vitest lib/dealer-kit` is green, and `tsc --noEmit` is clean.

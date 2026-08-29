@@ -5,7 +5,8 @@
 > Governs: `PRINCIPLES.md` + `documentation/reference/ADR-PRODUCT-STANDARDS.md`.
 
 **Slug:** `price-tag-request` | **Domain:** dealer-kit (sub-feature)
-**Status:** DRAFT - grilled (30 decisions, 4 rounds), awaiting captain sign-off.
+**Status:** S0-S5 + S3b BUILT (PR #289). S3c (section 9, D33-D41) BUILT 2026-08-29 from the
+captain's test of the S3b bed.
 **UAC:** `documentation/plans/dealer-kit/price-tag-request-acceptance-criteria.md`
 **Depends on:** `feat/product-sets` branch merged to main.
 **Branch:** TBD
@@ -491,3 +492,67 @@ pytest: tag-data endpoints (gating, price via `resolve_prices`, set members), fo
 seed idempotency. vitest: `price_badge` render both variants, product block drop creates bound
 group, relink restores slot text. Browser: each seeded family opened and screenshotted next to its
 PDF page.
+
+---
+
+## 9. S3c - The tag canvas behaves like a drawing tool
+
+**Status:** BUILT 2026-08-29. Captain's test of the S3b bed on `:3030` produced seven items:
+five behaviour gaps against how Illustrator works, and two bugs. This section holds the rulings
+(D33-D41) and the shape of the fix. Frontend only: no schema, no endpoint, no migration. The
+document model is untouched, so every seeded template and every saved tag opens unchanged.
+
+### What was wrong
+
+| # | Symptom | Cause found in the code |
+|---|---------|--------------------------|
+| 1 | The wheel scrolls the workspace instead of zooming | The workspace was an `overflow-auto` div wrapping a Stage sized to the artboard. There was no viewport model at all. |
+| 2 | A child inside a group cannot be reached from the canvas | The group's outline is a `Rect` with `fill="transparent"`, which Konva still hit-tests, and the group's `z_index` puts it on top. Every click in the block landed on the group. |
+| 3 | Right-click shows the browser menu | Nothing handled `contextmenu` anywhere on the canvas. |
+| 4 | No marquee, no panning choice | Selection was click-only; the container scrolled. |
+| 5 | Moving a group leaves its children behind | Children are flat layers with ABSOLUTE positions and the group is a bounding box carrying `children: string[]`. Nothing propagated the delta. |
+| 6 | No way to see a template against a real product without binding it | Binding is the only path to data, and binding writes into `layers`. |
+| 7 | A canvas drag is silently lost on Save | `KonvaTagLayer` never set `id={layer.id}` on its Konva `Group`, so `stageRef.findOne('#id')` in `handleDragMove` / `handleDragEnd` returned `undefined`. Snap never applied and the new position was never written back to `layers`. Undo/redo then restored a document the nodes disagreed with. |
+
+### Decisions
+
+| ID | Decision |
+|----|----------|
+| D33 | **Viewport model.** The Konva Stage fills the workspace container (sized by a `ResizeObserver`) and the artboard is drawn at a pan offset inside it. This replaces `overflow-auto` scrolling. View state is `{ zoom, panX, panY }`, pan in px = the artboard origin in stage coordinates. On mount the view is fit to the container with a 32px margin, centred. Rulers become viewport-wide strips whose ticks sit at `origin + mm * scale`; `CanvasRulers` takes `originX` / `originY` and loses `scrollX` / `scrollY`. |
+| D34 | **Wheel = zoom at the cursor.** Multiplicative, factor 1.1 per 100 `deltaY`, clamped 0.1 to 8, and the mm point under the pointer stays under the pointer. The listener is a NATIVE one registered with `{ passive: false }`, because React's `onWheel` is passive and cannot `preventDefault`. `Cmd/Ctrl+0` fits, `Cmd/Ctrl+1` is 100%. The toolbar keeps `-` / `%` / `+` and gains Fit; the `%` readout is the 100% button. |
+| D35 | **Two tools.** `select` (V) and `hand` (H) as a toolbar toggle, plus Space held = hand for as long as it is held. Hand drags the view (cursor `grab` / `grabbing`). Select drags on empty space draw a marquee. Layers are not draggable while the hand is active. |
+| D36 | **Marquee.** Mousedown on the Stage or on the artboard background starts it; a translucent blue band with a 1px stroke follows the pointer; on mouseup every layer whose box INTERSECTS the band is selected (touch selects, as Illustrator does, not enclose). Scope is top-level layers, a child being represented by its outermost ancestor group, UNLESS the user is inside a group (D37), when the scope is that group's direct children. Shift is additive. A click with no movement deselects and leaves the group. |
+| D37 | **Group isolation is DERIVED, not stored.** The set of entered groups = every ancestor of the currently selected layers. A group whose id is in that set renders with `listening={false}`, so its children receive pointer events; the outline stays visible, because removing the fill is not what makes a node pass through. Double-click on a group selects its top-most visible, unlocked direct child under the pointer; a nested group counts as a child, so double-clicking again goes deeper. Double-click on empty canvas clears the selection. Escape selects the parent group of the current selection, and deselects at top level. Selecting a child in the Layers panel enters the group by the same derivation, with no code of its own. |
+| D38 | **Moving and transforming propagate.** Dragging a group moves every descendant, live during the drag (descendant nodes are positioned on each `dragmove`) and committed on `dragend` in ONE `setLayers` and ONE history push, so one undo reverts the whole move. Dragging any member of a multi-selection moves the whole selection plus descendants. Resizing or rotating a group applies the same affine change to descendants: positions relative to the group origin scale by `(newW/oldW, newH/oldH)` and rotate by the rotation delta about that origin, child sizes scale, child rotation gains the delta. When a CHILD is moved or transformed, every ancestor group's box is recomputed from its children with `boundsOf`, so the box stays honest. There is ONE `Transformer`, rendered after every layer and attached to the selected unlocked nodes; the per-layer `Transformer` inside `KonvaTagLayer` is removed. |
+| D39 | **Group semantics for the clipboard follow Illustrator.** Copy, cut, duplicate and delete apply to the group AND its descendants. Duplicate and paste clone descendants with fresh ids and remap `children`, which also repairs a latent bug: duplicate used to copy the group layer alone, leaving its `children` pointing at the ORIGINAL children. Deleting a child prunes it from its parent's `children` and refits the ancestors. Cut is copy plus delete. |
+| D40 | **Our context menu, never the browser's.** A Radix `ContextMenu` with the workspace div as `asChild` trigger. The Stage's Konva `onContextMenu` runs first, being the deeper DOM node: if the layer under the pointer is not in the selection it becomes the selection, resolved through isolation to the top-most non-entered ancestor. With a selection the items are Cut, Copy, Paste, Duplicate / Bring to Front, Bring Forward, Send Backward, Send to Back / Group (2+) or Ungroup (a group) / Enter Group (one group) or Select Parent Group (a selection inside a group) / Lock or Unlock, Hide / Delete. On empty space: Paste (disabled with an empty clipboard), Select All, Fit to View, Zoom 100%. Z reorder treats a group and its descendants as one contiguous block and renumbers `z_index` 1..n afterwards. Delete carries no confirm dialog: it is undoable and it matches the toolbar button and the Del key that already ship. |
+| D41 | **Preview with a product, binding nothing.** A toolbar action opens the existing `ProductPickDialog` (mode `set` when any layer carries the `set_members` slot, else `product`), loads through `bindings.loadProduct` / `loadSet`, and holds the result in editor state as `preview: GroupBinding \| null`. While it is set, `bindingOf(layer)` returns the preview for EVERY layer, because templates ship unbound on purpose, so slot text, product image and price badge all resolve. A chip on the toolbar's right reads `Previewing: CODE - name`, changes the product when clicked and clears on its X. The preview is never written into `layers` and Save is unaffected. |
+
+### The pure part (`lib/dealer-kit/canvas-geometry.ts`, tested first)
+
+Everything above that is arithmetic on layers lives in one module with no React and no Konva in
+it, so the rules can be tested without a canvas: `descendantsOf`, `ancestorsOf`, `topLevelOf`,
+`moveLayers`, `transformGroup`, `refitAncestors`, `removeLayers`, `ungroupLayers`, `marqueeHits`,
+`topmostChildAt`, `hitLayerAt`, `reorderZ`, `cloneLayers`, `zoomAt`, `fitView`, `stageToMm`,
+`bandBetween`. `boundsOf` is reused from `product-block.ts` rather than copied.
+
+`zoomAt` needs no px-per-mm constant: the base scale cancels out of
+`pan' = p - (p - pan) * newZoom / zoom`, which is the whole of keeping a point under the cursor.
+
+### What is deliberately NOT built
+
+- No stored isolation mode. The entered set is derived from the selection every render (D37), so
+  there is no second source of truth to keep in step with undo, redo or a Layers panel click.
+- No nested Konva groups. Children stay flat layers with absolute positions, which is what the
+  document model has always said and what the print renderer already reads. Propagation is a
+  function over the layer array, not a change of representation.
+- No preview field on the document. Preview is editor state and dies with the component (ADR
+  0008 already forbids baking resolved values into a template).
+
+### Tests
+
+vitest on `lib/dealer-kit/canvas-geometry.test.ts`: descendants through a nested group, a move
+that touches each layer exactly once, the affine propagation of a resize plus a rotation, ancestor
+refit after a child move, marquee touch-selection in both scopes, hit resolution with and without
+isolation, z reorder keeping a block contiguous, clone id remapping, zoom keeping the point under
+the cursor, fit centring the artboard. Browser: the seven items above, each shown to work.
