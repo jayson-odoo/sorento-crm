@@ -1,7 +1,6 @@
 'use client';
 
 import React, { use, useEffect, useMemo, useState } from 'react';
-import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useMutation } from '@tanstack/react-query';
 import {
@@ -13,7 +12,6 @@ import {
   Files,
   History,
   Info,
-  MoveLeft,
   Settings,
   Trash2,
   Upload,
@@ -47,7 +45,9 @@ import {
 } from '@/components/common/toolbar';
 import { formatDate } from '@/lib/helpers';
 import { downloadPackingListExport } from '@/app/(protected)/scm/services/fulfilmentService';
-import PackingListNavigation from '../components/PackingListNavigation';
+import DetailActions from '@/components/common/DetailActions';
+import BackToList from '@/components/common/BackToList';
+import { packingListsPagerQuery } from '../hooks/usePackingLists';
 import PackingListDeleteDialog from '../components/packing-list-delete-dialog';
 import ContainerStatusImportDialog from '../components/ContainerStatusImportDialog';
 import {
@@ -165,27 +165,36 @@ function PackingListToolbar({ id }: { id: string }) {
           </Breadcrumb>
         </ToolbarHeading>
         <ToolbarActions>
-          {editing ? (
-            <>
-              <Button onClick={() => void saveEdit()} disabled={saving}>
-                Save
-              </Button>
-              <Button variant="outline" onClick={cancelEdit} disabled={saving}>
-                <X className="size-4" />
-                Cancel
-              </Button>
-            </>
-          ) : (
-            <>
-              <PackingListNavigation packingListId={id} />
-              {/* The one thing this page exists to produce. */}
-              <Button
-                onClick={() => exportWorkbook.mutate()}
-                disabled={exportWorkbook.isPending || !packingList}
-              >
-                <Download className="size-4" />
-                Download packing list
-              </Button>
+          <BackToList
+            listPath="/procurement-management/packing-lists"
+            label="Back to packing lists"
+          />
+        </ToolbarActions>
+      </Toolbar>
+
+      {/* The record's own actions: pager, gear, primary (D6). They sit under the
+          toolbar rather than on it, and wrap under the title at 375. */}
+      <div className="mb-5">
+        {editing ? (
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <Button onClick={() => void saveEdit()} disabled={saving}>
+              Save
+            </Button>
+            <Button variant="outline" onClick={cancelEdit} disabled={saving}>
+              <X className="size-4" />
+              Cancel
+            </Button>
+          </div>
+        ) : (
+          <DetailActions
+            pager={{
+              ...packingListsPagerQuery,
+              detailPath: '/procurement-management/packing-lists',
+              currentId: id,
+              ariaLabel: 'packing list',
+            }}
+            gearLabel="Packing list options"
+            gear={
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button variant="outline" size="icon" aria-label="Packing list options">
@@ -211,15 +220,19 @@ function PackingListToolbar({ id }: { id: string }) {
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
-              <Button asChild variant="outline">
-                <Link href="/procurement-management/packing-lists">
-                  <MoveLeft /> Back to packing lists
-                </Link>
+            }
+            primary={
+              <Button
+                onClick={() => exportWorkbook.mutate()}
+                disabled={exportWorkbook.isPending || !packingList}
+              >
+                <Download className="size-4" />
+                Download packing list
               </Button>
-            </>
-          )}
-        </ToolbarActions>
-      </Toolbar>
+            }
+          />
+        )}
+      </div>
 
       {packingList && (
         <PackingListDeleteDialog

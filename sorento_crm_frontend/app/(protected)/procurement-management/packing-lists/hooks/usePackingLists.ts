@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { buildDataGridParams } from '@/lib/api-client';
 import {
@@ -19,6 +19,7 @@ import {
 } from '../services/packingListService';
 import { getAuditLogs } from '@/app/(protected)/system-management/audit-logs/services/auditLogService';
 import type { PackingListFormData } from '../types/packingList.types';
+import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
 
 /** `audit_logs.entity_type` for a container - `InboundShipment.__tablename__`. */
 const PACKING_LIST_ENTITY_TYPE = 'inbound_shipments';
@@ -78,17 +79,47 @@ export function usePackingListNeighbours(
   return useRecordNeighbours(PACKING_LIST_NEIGHBOURS_PATH, packingListId, params);
 }
 
+/**
+ * The list's React Query key. The detail page's pager rebuilds the SAME key from
+ * the URL, so it reads the page the list already fetched.
+ */
+export function packingListsListQueryKey(params: PackingListsListParams): QueryKey {
+  return [
+    'packing-lists',
+    params.pageIndex,
+    params.pageSize,
+    params.sorting,
+    params.searchQuery,
+    params.supplier_id,
+    params.shipment_status,
+  ];
+}
+
+/** The list query a detail URL describes, in the shape the list passes. */
+export function packingListsListParamsFromUrl(
+  params: ListPagerParams,
+): PackingListsListParams {
+  return {
+    pageIndex: params.pageIndex,
+    pageSize: params.pageSize,
+    sorting: params.sorting,
+    searchQuery: params.searchQuery,
+    supplier_id: params.filters.supplier_id,
+    shipment_status: params.filters.shipment_status,
+  };
+}
+
+/** The pager's two hooks into the packing lists list. */
+export const packingListsPagerQuery = {
+  listQueryKey: (params: ListPagerParams): QueryKey =>
+    packingListsListQueryKey(packingListsListParamsFromUrl(params)),
+  fetchPage: (params: ListPagerParams): Promise<ListPagerPage> =>
+    getPackingLists(packingListsListParamsFromUrl(params)),
+};
+
 export function usePackingLists(params: PackingListsListParams) {
   return useQuery({
-    queryKey: [
-      'packing-lists',
-      params.pageIndex,
-      params.pageSize,
-      params.sorting,
-      params.searchQuery,
-      params.supplier_id,
-      params.shipment_status,
-    ],
+    queryKey: packingListsListQueryKey(params),
     queryFn: () => getPackingLists(params),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,
