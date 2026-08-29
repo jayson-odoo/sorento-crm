@@ -38,8 +38,13 @@ export const PRESSED_CLASS =
  * A 44x44 touch target on a coarse pointer, without changing the rendered size.
  *
  * The target is an invisible centred pseudo-element, so a 20px checkbox stays a
- * 20px checkbox and still catches a thumb. `relative` is on the control itself
- * (every primitive that uses this already sets it or is added here).
+ * 20px checkbox and still catches a thumb. `relative` is on the control itself.
+ *
+ * NOT for a control in a dense cluster. The target overflows its own box, so on
+ * the pagination strip - 28px buttons 4px apart - the boxes overlap and a thumb
+ * aimed at one page lands on the next. Applied to button sizes `lg`, `md` and
+ * `icon`, and to checkbox / switch / radio, which are never packed that tightly;
+ * `sm` buttons are left alone until their spacing is fixed (S4 layout work).
  */
 export const COARSE_HIT_TARGET_CLASS =
   'relative pointer-coarse:after:absolute pointer-coarse:after:left-1/2 pointer-coarse:after:top-1/2 ' +

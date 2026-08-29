@@ -124,6 +124,19 @@ describe('Touch targets (S1-10)', () => {
     render(<Checkbox size="sm" />);
     expect(screen.getByRole('checkbox')).toHaveClass('size-4.5');
   });
+
+  it('S1-10: an icon button gets the target too', () => {
+    render(<Button size="icon" aria-label="Refresh" />);
+    expect(classOf(screen.getByRole('button'))).toContain('pointer-coarse:after:min-h-11');
+  });
+
+  it('S1-10: a small button in a dense cluster does NOT, or its target eats its neighbour', () => {
+    render(<Button size="sm">Page 3</Button>);
+    // The pagination strip is 28px buttons 4px apart: a 44px target overflows
+    // its own box and a thumb aimed at page 3 lands on page 4. Their spacing is
+    // S4 layout work; until then the smaller target is the honest one.
+    expect(classOf(screen.getByRole('button'))).not.toContain('pointer-coarse:after:min-h-11');
+  });
 });
 
 describe('Toaster (S1-12)', () => {

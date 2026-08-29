@@ -7,9 +7,7 @@ import { COARSE_HIT_TARGET_CLASS, PRESSED_CLASS } from '@/components/ui/primitiv
 
 const buttonVariants = cva(
   'cursor-pointer group whitespace-nowrap focus-visible:outline-hidden inline-flex items-center justify-center has-data-[arrow=true]:justify-between whitespace-nowrap text-sm font-medium ring-offset-background disabled:pointer-events-none disabled:opacity-60 [&_svg]:shrink-0 ' +
-    PRESSED_CLASS +
-    ' ' +
-    COARSE_HIT_TARGET_CLASS,
+    PRESSED_CLASS,
   {
     variants: {
       variant: {
@@ -40,11 +38,18 @@ const buttonVariants = cva(
         solid: '',
         dashed: '',
       },
+      // The 44x44 coarse target is on `lg`, `md` and `icon` only. `sm` is what a
+      // dense cluster uses - the pagination strip is 28px buttons 4px apart - and
+      // there a 44px target overlaps its neighbours, so a thumb aimed at page 3
+      // lands on page 4. A dense cluster needs more spacing, which is layout work,
+      // not a bigger invisible box.
       size: {
-        lg: 'h-10 rounded-md px-4 text-sm gap-1.5 [&_svg:not([class*=size-])]:size-4',
-        md: 'h-8.5 rounded-md px-3 gap-1.5 text-[0.8125rem] leading-(--text-sm--line-height) [&_svg:not([class*=size-])]:size-4',
+        lg: 'h-10 rounded-md px-4 text-sm gap-1.5 [&_svg:not([class*=size-])]:size-4 ' + COARSE_HIT_TARGET_CLASS,
+        md:
+          'h-8.5 rounded-md px-3 gap-1.5 text-[0.8125rem] leading-(--text-sm--line-height) [&_svg:not([class*=size-])]:size-4 ' +
+          COARSE_HIT_TARGET_CLASS,
         sm: 'h-7 rounded-md px-2.5 gap-1.25 text-xs [&_svg:not([class*=size-])]:size-3.5',
-        icon: 'size-8.5 rounded-md [&_svg:not([class*=size-])]:size-4 shrink-0',
+        icon: 'size-8.5 rounded-md [&_svg:not([class*=size-])]:size-4 shrink-0 ' + COARSE_HIT_TARGET_CLASS,
       },
       autoHeight: {
         true: '',
