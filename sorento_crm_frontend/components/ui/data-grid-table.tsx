@@ -352,6 +352,52 @@ function DataGridTableBodyRowSkeletonCell<TData>({ children, column }: { childre
   );
 }
 
+/**
+ * The row when the list gave it a record to open.
+ *
+ * Split out so `useRouter` is only called by a grid that actually navigates -
+ * Next throws "expected app router to be mounted" rather than returning null,
+ * and a grid whose rows are not links must not require a router to render.
+ */
+function LinkableBodyRow({
+  href,
+  rowProps,
+  children,
+}: {
+  href: string;
+  rowProps: React.ComponentProps<'tr'>;
+  children: ReactNode;
+}) {
+  const router = useRouter();
+
+  const openRecord = (newTab = false) => {
+    if (newTab) window.open(href, '_blank', 'noopener,noreferrer');
+    else router.push(href);
+  };
+
+  return (
+    <tr
+      {...rowProps}
+      role="link"
+      tabIndex={0}
+      onClick={() => openRecord()}
+      onAuxClick={(event) => {
+        if (event.button !== 1) return;
+        event.preventDefault();
+        openRecord(true);
+      }}
+      onKeyDown={(event) => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        // Space scrolls the page otherwise, and Enter would submit a surrounding form.
+        event.preventDefault();
+        openRecord();
+      }}
+    >
+      {children}
+    </tr>
+  );
+}
+
 function DataGridTableBodyRow<TData>({
   children,
   row,
@@ -368,51 +414,40 @@ function DataGridTableBodyRow<TData>({
   dndListeners?: Record<string, unknown>;
 }) {
   const { props, table } = useDataGrid();
-  const router = useRouter();
 
   // The whole row opens the record, from anywhere on it, by mouse or by keyboard.
   // 78 of 193 lists did this and 26 had a detail route with no way to reach it.
   const href = props.rowHref ? appendListState(props.rowHref(row.original), table) : undefined;
 
-  const openRecord = (newTab = false) => {
-    if (!href) return;
-    if (newTab) window.open(href, '_blank', 'noopener,noreferrer');
-    else router.push(href);
-  };
+  const rowProps: React.ComponentProps<'tr'> = {
+    ref: dndRef,
+    style: { ...(dndStyle ? dndStyle : null) },
+    'data-state': table.options.enableRowSelection && row.getIsSelected() ? 'selected' : undefined,
+    ...(dndAttributes ?? {}),
+    ...(dndListeners ?? {}),
+    className: cn(
+      'hover:bg-muted/40 data-[state=selected]:bg-muted/50',
+      (href || props.onRowClick) && 'cursor-pointer',
+      !props.tableLayout?.stripped &&
+        props.tableLayout?.rowBorder &&
+        'border-b border-border [&:not(:last-child)>td]:border-b',
+      props.tableLayout?.cellBorder && '[&_>:last-child]:border-e-0',
+      props.tableLayout?.stripped && 'odd:bg-muted/90 hover:bg-transparent odd:hover:bg-muted',
+      table.options.enableRowSelection && '[&_>:first-child]:relative',
+      props.tableClassNames?.bodyRow,
+    ),
+  } as React.ComponentProps<'tr'>;
+
+  if (href) {
+    return (
+      <LinkableBodyRow href={href} rowProps={rowProps}>
+        {children}
+      </LinkableBodyRow>
+    );
+  }
 
   return (
-    <tr
-      ref={dndRef}
-      style={{ ...(dndStyle ? dndStyle : null) }}
-      data-state={table.options.enableRowSelection && row.getIsSelected() ? 'selected' : undefined}
-      role={href ? 'link' : undefined}
-      tabIndex={href ? 0 : undefined}
-      onClick={() => (href ? openRecord() : props.onRowClick?.(row.original))}
-      onAuxClick={(event) => {
-        if (!href || event.button !== 1) return;
-        event.preventDefault();
-        openRecord(true);
-      }}
-      onKeyDown={(event) => {
-        if (!href || (event.key !== 'Enter' && event.key !== ' ')) return;
-        // Space scrolls the page otherwise, and Enter would submit a surrounding form.
-        event.preventDefault();
-        openRecord();
-      }}
-      {...(dndAttributes ?? {})}
-      {...(dndListeners ?? {})}
-      className={cn(
-        'hover:bg-muted/40 data-[state=selected]:bg-muted/50',
-        (href || props.onRowClick) && 'cursor-pointer',
-        !props.tableLayout?.stripped &&
-          props.tableLayout?.rowBorder &&
-          'border-b border-border [&:not(:last-child)>td]:border-b',
-        props.tableLayout?.cellBorder && '[&_>:last-child]:border-e-0',
-        props.tableLayout?.stripped && 'odd:bg-muted/90 hover:bg-transparent odd:hover:bg-muted',
-        table.options.enableRowSelection && '[&_>:first-child]:relative',
-        props.tableClassNames?.bodyRow,
-      )}
-    >
+    <tr {...rowProps} onClick={() => props.onRowClick?.(row.original)}>
       {children}
     </tr>
   );

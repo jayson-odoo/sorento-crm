@@ -323,6 +323,11 @@ describe('F7 - the SPO planner chooses its POs and its SOs', () => {
     });
   });
 
+  // A drill is a lightbox, and dialogs are modal since UAC S1-01: while one is
+  // open the planner behind it is inerted, so Create SPO no longer answers to a
+  // plain role query. The tests that reach for it mid-drill pass `hidden: true`,
+  // which is what "still there, underneath the lightbox" means to the
+  // accessibility tree. The real flow closes the drill first.
   const openPoDrill = async () =>
     fireEvent.click(await screen.findByTitle(/which po covers this/i));
   const openSoDrill = async () =>
@@ -366,7 +371,7 @@ describe('F7 - the SPO planner chooses its POs and its SOs', () => {
     renderTable();
     await openPoDrill();
     fireEvent.click(screen.getByRole('checkbox', { name: 'Draw from 202605-S0060' }));
-    fireEvent.click(screen.getByRole('button', { name: /create spo/i }));
+    fireEvent.click(screen.getByRole('button', { name: /create spo/i, hidden: true }));
 
     await waitFor(() => expect(state.create).toHaveBeenCalledTimes(1));
     const [, lines] = state.create.mock.calls[0];
@@ -413,7 +418,7 @@ describe('F7 - the SPO planner chooses its POs and its SOs', () => {
     renderTable();
     await openSoDrill();
     fireEvent.click(screen.getByRole('checkbox', { name: 'Cover SO-2201' }));
-    fireEvent.click(screen.getByRole('button', { name: /create spo/i }));
+    fireEvent.click(screen.getByRole('button', { name: /create spo/i, hidden: true }));
 
     await waitFor(() => expect(state.create).toHaveBeenCalledTimes(1));
     const [, lines] = state.create.mock.calls[0];
@@ -433,7 +438,7 @@ describe('F7 - the SPO planner chooses its POs and its SOs', () => {
     expect(
       await screen.findByText(/160 ticked, 100 on this container - SO-2202 partly covered/),
     ).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /create spo/i })).toBeEnabled();
+    expect(screen.getByRole('button', { name: /create spo/i, hidden: true })).toBeEnabled();
   });
 });
 
@@ -553,7 +558,7 @@ describe('F7 - the SO-covered cell and the Create banner are one arithmetic', ()
     expect(
       await screen.findByText(/SO-2202 - this container has nothing left/),
     ).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /create spo/i })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /create spo/i, hidden: true })).toBeDisabled();
   });
 
   it('splits only what it can serve, and calls the rest unassigned', async () => {
@@ -621,7 +626,7 @@ describe('F7 - unticking then re-ticking a take returns every figure', () => {
     await tick('Draw from 202606-S0099');
     await tick('Draw from 202606-S0099');
 
-    fireEvent.click(screen.getByRole('button', { name: /create spo/i }));
+    fireEvent.click(screen.getByRole('button', { name: /create spo/i, hidden: true }));
 
     await waitFor(() => expect(state.create).toHaveBeenCalledTimes(1));
     const [, lines] = state.create.mock.calls[0];

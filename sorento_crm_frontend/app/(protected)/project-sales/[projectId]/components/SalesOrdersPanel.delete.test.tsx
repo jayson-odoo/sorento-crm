@@ -336,8 +336,11 @@ describe('deleting a batch of drafts', () => {
 
     await waitFor(() => expect(bulkDeleteProjectSalesOrders).toHaveBeenCalled());
     // Un-tick the two named and retry is only possible if the selection survived.
+    // The confirmation stays open on a refusal and dialogs are modal since UAC
+    // S1-01, so the panel behind it is inerted - hence `hidden`, which is what
+    // "still there, underneath the dialog" means to the accessibility tree.
     expect(
-      await screen.findByRole('button', { name: 'Delete 2 sales orders' }),
+      await screen.findByRole('button', { name: 'Delete 2 sales orders', hidden: true }),
     ).toBeInTheDocument();
   });
 

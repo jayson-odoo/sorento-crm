@@ -187,9 +187,17 @@ function Badge({
       )}
       {...props}
     >
-      {/* Slot takes a single child, so an `asChild` badge owns its own markup. */}
-      {isStatus && !asChild ? <BadgeDot /> : null}
-      {children}
+      {/* One expression, not two: Slot runs React.Children.only, and a null dot
+          beside the children is still an ARRAY of two. An `asChild` badge owns
+          its own markup, so it never gets the dot. */}
+      {isStatus && !asChild ? (
+        <>
+          <BadgeDot />
+          {children}
+        </>
+      ) : (
+        children
+      )}
     </Comp>
   );
 }
