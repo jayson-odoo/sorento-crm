@@ -56,7 +56,6 @@ import { Switch } from '@/components/ui/switch';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { usePermissions } from '@/hooks/usePermissions';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
-import { MAX_LIST_PAGE_SIZE } from '@/lib/listNavQuery';
 import { readable, readableEntry } from '@/lib/spec-readable';
 import { statusPillClass, STATUS_PILL_BASE } from '@/lib/status-pill';
 import {
@@ -209,11 +208,11 @@ export default function SpecVerificationList() {
     );
     return {
       pageIndex: Number.isNaN(page) ? 0 : Math.max(0, page - 1),
-      // Same cap as every other list, from the one place that owns it.
+      // This worklist's own cap, not the shared one: its rows are wide and its
+      // backend route allows up to MAX_PAGE_LIMIT, so nothing forced it up to
+      // 1000 and a hundred spec rows is already a long scroll.
       pageSize:
-        Number.isNaN(limit) || limit < 1
-          ? DEFAULT_PAGE_SIZE
-          : Math.min(limit, MAX_LIST_PAGE_SIZE),
+        Number.isNaN(limit) || limit < 1 ? DEFAULT_PAGE_SIZE : Math.min(limit, 100),
     };
   });
   const [sorting, setSorting] = useState<SortingState>(() => {

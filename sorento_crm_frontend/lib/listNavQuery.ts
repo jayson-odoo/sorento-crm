@@ -30,12 +30,18 @@ export function buildDetailSearch(
 }
 
 /**
- * The largest page any list will serve, in one place.
+ * The largest page a hand-edited detail URL may ask for, in one place.
  *
- * It matches the DataGrid's own page-size menu, which is capped at 1000 to stay
- * in lockstep with the backend. The number matters here because a detail URL is
- * hand-editable: `?limit=100000` reached the list GET unchallenged and asked the
- * database for the whole table.
+ * It is the biggest entry in the DataGrid's own Rows-per-page menu
+ * (`data-grid-pagination.tsx`), and nothing more: it exists because a detail URL
+ * is hand-editable, and `?limit=100000` reached the list GET unchallenged and
+ * asked the database for the whole table.
+ *
+ * It is NOT the backend's cap. The list routes disagree among themselves - 80
+ * take `le=MAX_PAGE_LIMIT` (1000), 18 stop at 100 and 16 at 200 - so a limit
+ * this parser allows can still be refused with a 422 by the narrower ones. The
+ * menu never offers a size those routes reject, so only a typed URL can reach
+ * one, and a 422 is the right answer to it.
  */
 export const MAX_LIST_PAGE_SIZE = 1000;
 
