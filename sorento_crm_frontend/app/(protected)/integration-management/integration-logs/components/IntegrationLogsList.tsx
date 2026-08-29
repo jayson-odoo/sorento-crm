@@ -114,7 +114,7 @@ export default function IntegrationLogsList() {
         accessorKey: 'integration_channel',
         header: ({ column }) => <DataGridColumnHeader title="Channel" column={column} />,
         cell: ({ row }) => (
-          <Badge variant="secondary" appearance="ghost">
+          <Badge variant="secondary">
             {row.original.integration_channel}
           </Badge>
         ),
@@ -145,7 +145,6 @@ export default function IntegrationLogsList() {
           return (
             <Badge
               status={status}
-              appearance="ghost"
               className="capitalize"
             >
               {status.charAt(0).toUpperCase() + status.slice(1)}

@@ -126,7 +126,7 @@ export default function EmailOutboxList() {
         accessorKey: 'status',
         header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
         cell: ({ row }) => (
-          <Badge status={row.original.status} appearance="ghost">
+          <Badge status={row.original.status}>
             {row.original.status}
           </Badge>
         ),
@@ -365,7 +365,7 @@ export default function EmailOutboxList() {
                 <div>
                   <div className="text-muted-foreground">Status</div>
                   <div>
-                    <Badge status={detail.status} appearance="ghost">
+                    <Badge status={detail.status}>
                       {detail.status}
                     </Badge>
                   </div>

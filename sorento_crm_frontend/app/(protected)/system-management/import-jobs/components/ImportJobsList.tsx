@@ -76,7 +76,7 @@ export default function ImportJobsList() {
         accessorKey: 'job_type',
         header: ({ column }) => <DataGridColumnHeader title="Type" column={column} />,
         cell: ({ row }) => (
-          <Badge variant="secondary" appearance="ghost">
+          <Badge variant="secondary">
             {getJobTypeLabel(row.original.job_type)}
           </Badge>
         ),

@@ -155,7 +155,7 @@ export default function OutgoingMailsList() {
         accessorKey: 'status',
         header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
         cell: ({ row }) => (
-          <Badge status={row.original.status} appearance="ghost">
+          <Badge status={row.original.status}>
             {row.original.status}
           </Badge>
         ),

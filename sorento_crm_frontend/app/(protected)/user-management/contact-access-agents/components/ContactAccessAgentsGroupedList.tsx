@@ -388,7 +388,7 @@ export default function ContactAccessAgentsGroupedList() {
                                           <td className="p-2 text-sm">{agent.agent_code || '-'}</td>
                                           <td className="p-2 text-sm">{agent.agent_name || '-'}</td>
                                           <td className="p-2">
-                                            <Badge variant={agent.is_allowed ? 'success' : 'secondary'} appearance="ghost" size="sm">
+                                            <Badge variant={agent.is_allowed ? 'success' : 'secondary'} size="sm">
                                               {agent.is_allowed ? 'Yes' : 'No'}
                                             </Badge>
                                           </td>

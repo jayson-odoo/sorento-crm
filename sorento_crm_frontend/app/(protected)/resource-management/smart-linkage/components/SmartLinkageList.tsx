@@ -60,7 +60,7 @@ export default function SmartLinkageList() {
         accessorKey: 'integration_channel',
         header: ({ column }) => <DataGridColumnHeader title="Channel" column={column} />,
         cell: ({ row }) => (
-          <Badge variant="secondary" appearance="ghost">
+          <Badge variant="secondary">
             {row.original.integration_channel}
           </Badge>
         ),
@@ -82,7 +82,7 @@ export default function SmartLinkageList() {
         cell: ({ row }) => {
           const status = (row.original.status || 'pending') as string;
           return (
-            <Badge status={status} appearance="ghost" className="capitalize">
+            <Badge status={status} className="capitalize">
               {status.charAt(0).toUpperCase() + status.slice(1)}
             </Badge>
           );

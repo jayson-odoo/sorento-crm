@@ -1047,7 +1047,6 @@ export default function AttachmentDetailModal({
                         <p className="text-sm text-muted-foreground">Status</p>
                         <Badge
                           variant={attachment.is_deleted ? 'destructive' : 'success'}
-                          appearance="ghost"
                         >
                           <BadgeDot />
                           {attachment.is_deleted ? 'Deleted' : 'Active'}

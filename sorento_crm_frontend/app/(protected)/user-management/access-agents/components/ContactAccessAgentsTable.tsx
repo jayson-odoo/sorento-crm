@@ -70,7 +70,7 @@ export default function ContactAccessAgentsTable({ accessAgentId }: ContactAcces
         accessorKey: 'is_allowed',
         header: ({ column }) => <DataGridColumnHeader title="Allowed" column={column} />,
         cell: ({ row }) => (
-          <Badge variant={row.original.is_allowed ? 'success' : 'secondary'} appearance="ghost">
+          <Badge variant={row.original.is_allowed ? 'success' : 'secondary'}>
             {row.original.is_allowed ? 'Yes' : 'No'}
           </Badge>
         ),

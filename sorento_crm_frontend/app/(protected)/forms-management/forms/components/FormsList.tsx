@@ -128,7 +128,7 @@ export default function FormsList() {
         accessorKey: 'form_type',
         header: ({ column }) => <DataGridColumnHeader title="Type" column={column} />,
         cell: ({ row }) => (
-          <Badge variant="outline" appearance="ghost" className="font-normal">
+          <Badge variant="outline" className="font-normal">
             <LookupBoundLabel
               table="forms"
               column="form_type"
@@ -174,7 +174,7 @@ export default function FormsList() {
         accessorKey: 'is_active',
         header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
         cell: ({ row }) => (
-          <Badge variant={row.original.is_active ? 'success' : 'secondary'} appearance="ghost">
+          <Badge variant={row.original.is_active ? 'success' : 'secondary'}>
             {row.original.is_active ? 'Active' : 'Inactive'}
           </Badge>
         ),

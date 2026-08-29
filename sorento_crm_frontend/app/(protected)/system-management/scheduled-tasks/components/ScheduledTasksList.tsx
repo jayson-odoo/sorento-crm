@@ -70,7 +70,7 @@ export default function ScheduledTasksList() {
         accessorKey: 'key',
         header: ({ column }) => <DataGridColumnHeader title="Key" column={column} />,
         cell: ({ row }) => (
-          <Badge variant="secondary" appearance="ghost">
+          <Badge variant="secondary">
             {row.original.key}
           </Badge>
         ),

@@ -317,7 +317,7 @@ const UserList = () => {
 
           return (
             <div className="inline-flex gap-2.5">
-              <Badge variant={variant} appearance="ghost">
+              <Badge variant={variant}>
                 <BadgeDot />
                 {statusProps.label}
               </Badge>

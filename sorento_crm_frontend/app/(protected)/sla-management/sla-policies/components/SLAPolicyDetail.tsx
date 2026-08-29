@@ -48,7 +48,7 @@ export default function SLAPolicyDetail({ slaPolicyId }: SLAPolicyDetailProps) {
         <div className="space-y-1">
           <div className="flex items-center gap-3">
             <h1 className="text-2xl font-bold">{slaPolicy.name}</h1>
-            <Badge variant={slaPolicy.is_active ? 'success' : 'secondary'} appearance="ghost">
+            <Badge variant={slaPolicy.is_active ? 'success' : 'secondary'}>
               <BadgeDot />
               {slaPolicy.is_active ? 'Active' : 'Inactive'}
             </Badge>
@@ -86,7 +86,7 @@ export default function SLAPolicyDetail({ slaPolicyId }: SLAPolicyDetailProps) {
             </div>
             <div>
               <p className="text-sm text-muted-foreground">Status</p>
-              <Badge variant={slaPolicy.is_active ? 'success' : 'secondary'} appearance="ghost">
+              <Badge variant={slaPolicy.is_active ? 'success' : 'secondary'}>
                 <BadgeDot />
                 {slaPolicy.is_active ? 'Active' : 'Inactive'}
               </Badge>

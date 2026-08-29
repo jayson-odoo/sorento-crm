@@ -317,17 +317,17 @@ export default function ConversationSLATrackingDetail({
                 : ''}
             </h1>
             {tracking.is_resolved ? (
-              <Badge variant="success" appearance="ghost">
+              <Badge variant="success">
                 <CheckCircle className="size-3 mr-1" />
                 Resolved
               </Badge>
             ) : tracking.escalated_at ? (
-              <Badge variant="warning" appearance="ghost">
+              <Badge variant="warning">
                 <AlertCircle className="size-3 mr-1" />
                 Escalated
               </Badge>
             ) : (
-              <Badge variant="info" appearance="ghost">
+              <Badge variant="info">
                 <Clock className="size-3 mr-1" />
                 Pending
               </Badge>
@@ -951,9 +951,9 @@ export default function ConversationSLATrackingDetail({
                       <p className="text-sm text-muted-foreground">Is Responded</p>
                       <p className="font-medium">
                         {tracking.is_responded ? (
-                          <Badge variant="success" appearance="ghost">Yes</Badge>
+                          <Badge variant="success">Yes</Badge>
                         ) : (
-                          <Badge variant="secondary" appearance="ghost">No</Badge>
+                          <Badge variant="secondary">No</Badge>
                         )}
                       </p>
                     </div>
@@ -1014,9 +1014,9 @@ export default function ConversationSLATrackingDetail({
                       <p className="text-sm text-muted-foreground">Is Resolved</p>
                       <p className="font-medium">
                         {tracking.is_resolved ? (
-                          <Badge variant="success" appearance="ghost">Yes</Badge>
+                          <Badge variant="success">Yes</Badge>
                         ) : (
-                          <Badge variant="secondary" appearance="ghost">No</Badge>
+                          <Badge variant="secondary">No</Badge>
                         )}
                       </p>
                     </div>

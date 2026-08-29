@@ -242,22 +242,22 @@ export default function FormSLATrackerDetail({
               {tracking.current_tier}
             </h2>
             {tracking.is_resolved ? (
-              <Badge variant="success" appearance="ghost">
+              <Badge variant="success">
                 <CheckCircle className="mr-1 size-3" />
                 Resolved
               </Badge>
             ) : tracking.escalated_at ? (
-              <Badge variant="warning" appearance="ghost">
+              <Badge variant="warning">
                 <AlertCircle className="mr-1 size-3" />
                 Escalated
               </Badge>
             ) : tracking.is_responded ? (
-              <Badge variant="info" appearance="ghost">
+              <Badge variant="info">
                 <Clock className="mr-1 size-3" />
                 Responded
               </Badge>
             ) : (
-              <Badge variant="info" appearance="ghost">
+              <Badge variant="info">
                 <Clock className="mr-1 size-3" />
                 Pending
               </Badge>
@@ -502,11 +502,11 @@ export default function FormSLATrackerDetail({
                         <p className="text-sm text-muted-foreground">Is Responded</p>
                         <p className="font-medium">
                           {tracking.is_responded ? (
-                            <Badge variant="success" appearance="ghost">
+                            <Badge variant="success">
                               Yes
                             </Badge>
                           ) : (
-                            <Badge variant="secondary" appearance="ghost">
+                            <Badge variant="secondary">
                               No
                             </Badge>
                           )}
@@ -591,11 +591,11 @@ export default function FormSLATrackerDetail({
                         <p className="text-sm text-muted-foreground">Is Resolved</p>
                         <p className="font-medium">
                           {tracking.is_resolved ? (
-                            <Badge variant="success" appearance="ghost">
+                            <Badge variant="success">
                               Yes
                             </Badge>
                           ) : (
-                            <Badge variant="secondary" appearance="ghost">
+                            <Badge variant="secondary">
                               No
                             </Badge>
                           )}
