@@ -3,7 +3,7 @@
 import { useRouter } from 'next/navigation';
 import { Edit } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { useBackToListHref } from '@/components/common/BackToList';
+import { useBackToListHref, useHrefWithListState } from '@/components/common/BackToList';
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -19,6 +19,10 @@ interface CustomerDetailProps {
 export default function CustomerDetail({ customerId }: CustomerDetailProps) {
   const router = useRouter();
   const backHref = useBackToListHref('/order-management/customers');
+  // Edit carries the list state too: the edit screen has a pager of its own.
+  const editHref = useHrefWithListState(
+    `/order-management/customers/${customerId}/edit`,
+  );
   const { data: customer, isLoading } = useCustomer(customerId);
   const { actions, dialogs } = useCustomerActions(customer, {
     onDeleted: () => router.push(backHref),
@@ -73,7 +77,7 @@ export default function CustomerDetail({ customerId }: CustomerDetailProps) {
           primary={
             <Button
               onClick={() =>
-                router.push(`/order-management/customers/${customerId}/edit`)
+                router.push(editHref)
               }
             >
               <Edit className="size-4" />

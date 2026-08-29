@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   ColumnDef,
@@ -69,21 +69,26 @@ export default function FormsList() {
 
   // The whole row opens the record, carrying the list query the pager rebuilds
   // its key from.
-  const rowHref = (row: Form) => {
-    const search = buildDetailSearch(
-      {
-        pageIndex: pagination.pageIndex,
-        pageSize: pagination.pageSize,
-        sorting,
-        searchQuery,
-      },
-      {
-        status: statusFilter !== 'all' ? statusFilter : undefined,
-      },
-    );
-    const qs = search ? `?${search}` : '';
-    return `/forms-management/forms/${row.id}${qs}`;
-  };
+  // Memoised, and in the columns' deps: a columns memo that captured the first
+  // `rowHref` would keep linking every row to page 1 of an unfiltered list.
+  const rowHref = useCallback(
+    (row: Form) => {
+      const search = buildDetailSearch(
+        {
+          pageIndex: pagination.pageIndex,
+          pageSize: pagination.pageSize,
+          sorting,
+          searchQuery,
+        },
+        {
+          status: statusFilter !== 'all' ? statusFilter : undefined,
+        },
+      );
+      const qs = search ? `?${search}` : '';
+      return `/forms-management/forms/${row.id}${qs}`;
+    },
+    [pagination.pageIndex, pagination.pageSize, sorting, searchQuery, statusFilter],
+  );
 
   const columns = useMemo<ColumnDef<Form>[]>(
     () => [
@@ -195,7 +200,7 @@ export default function FormsList() {
         enableHiding: false,
       },
     ],
-    [],
+    [rowHref],
   );
 
   const table = useReactTable({

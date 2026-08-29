@@ -23,7 +23,7 @@ import ReassignDialog from '@/app/(protected)/sla-management/conversation-sla-tr
 import { useReassignSLATracking } from '@/app/(protected)/sla-management/conversation-sla-tracking/hooks/useTeamPendingSLA';
 import ResponseAttachmentDropzone from './ResponseAttachmentDropzone';
 import { RejectionReasonBanner } from '@/components/common/RejectionReasonBanner';
-import { useBackToListHref } from '@/components/common/BackToList';
+import { useBackToListHref, useHrefWithListState } from '@/components/common/BackToList';
 import { VoidBanner } from '@/components/common/VoidBanner';
 import { VoidDialog } from '@/components/common/VoidDialog';
 import { useFormVoid } from '@/hooks/useFormVoid';
@@ -99,6 +99,10 @@ const statusLabel = complaintStatusLabel;
 export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
   const router = useRouter();
   const backHref = useBackToListHref('/complaint-management/complaints');
+  // Edit carries the list state too: the edit screen has a pager of its own.
+  const editHref = useHrefWithListState(
+    `/complaint-management/complaints/${complaintId}/edit`,
+  );
 
   // Don't fetch if it's "new" or invalid
   const isValidId = complaintId && complaintId !== 'new' && complaintId !== 'edit';
@@ -454,7 +458,7 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
               {!isVoided && !formAction.ctasDisabled && (
                 <DropdownMenuItem
                   onClick={() =>
-                    router.push(`/complaint-management/complaints/${complaintId}/edit`)
+                    router.push(editHref)
                   }
                 >
                   <Edit className="size-4" />

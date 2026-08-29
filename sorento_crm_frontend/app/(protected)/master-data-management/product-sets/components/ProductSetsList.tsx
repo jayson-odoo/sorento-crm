@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import {
   ColumnDef,
@@ -18,6 +18,7 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
+import { buildDetailSearch } from '@/lib/listNavQuery';
 import { Input } from '@/components/ui/input';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -78,6 +79,23 @@ export default function ProductSetsList() {
   /** No rows AND no search: the difference between "none exist" and "none match". */
   const isTrulyEmpty = !isLoading && !isError && total === 0 && debouncedSearch === '';
 
+  // The whole row opens the set, carrying the list query the pager rebuilds its
+  // key from. Only the set-code link opened it before, so most of the row was dead.
+  // Memoised, and in the columns' deps: a columns memo that captured the first
+  // `rowHref` would keep linking every row to page 1 of an unfiltered list.
+  const rowHref = useCallback(
+    (row: ProductSet) => {
+      const search = buildDetailSearch({
+        pageIndex: pagination.pageIndex,
+        pageSize: pagination.pageSize,
+        sorting,
+        searchQuery: debouncedSearch,
+      });
+      return `/master-data-management/product-sets/${row.id}${search ? `?${search}` : ''}`;
+    },
+    [pagination.pageIndex, pagination.pageSize, sorting, debouncedSearch],
+  );
+
   const columns = useMemo<ColumnDef<ProductSet>[]>(
     () => [
       {
@@ -85,9 +103,10 @@ export default function ProductSetsList() {
         header: ({ column }) => <DataGridColumnHeader title="Set code" column={column} />,
         cell: ({ row }) => (
           <Link
-            href={`/master-data-management/product-sets/${row.original.id}`}
+            href={rowHref(row.original)}
             className="truncate font-medium text-primary hover:underline"
             title={row.original.set_code}
+            onClick={(event) => event.stopPropagation()}
           >
             {row.original.set_code}
           </Link>
@@ -173,7 +192,7 @@ export default function ProductSetsList() {
         meta: { headerTitle: 'Actions', cellClassName: 'text-right' },
       },
     ],
-    [],
+    [rowHref],
   );
 
   const table = useReactTable({
@@ -228,6 +247,7 @@ export default function ProductSetsList() {
           table={table}
           recordCount={total}
           isLoading={isLoading}
+          rowHref={rowHref}
           listingKey="master_data.product_sets.view"
           tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
           emptyMessage="No product sets match that search."

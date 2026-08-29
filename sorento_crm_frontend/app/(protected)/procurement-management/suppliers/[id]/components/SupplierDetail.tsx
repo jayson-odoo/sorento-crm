@@ -3,7 +3,7 @@
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, Edit } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { useBackToListHref } from '@/components/common/BackToList';
+import { useBackToListHref, useHrefWithListState } from '@/components/common/BackToList';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -19,6 +19,10 @@ interface SupplierDetailProps {
 export default function SupplierDetail({ supplierId }: SupplierDetailProps) {
   const router = useRouter();
   const backHref = useBackToListHref('/procurement-management/suppliers');
+  // Edit carries the list state too: the edit screen has a pager of its own.
+  const editHref = useHrefWithListState(
+    `/procurement-management/suppliers/${supplierId}/edit`,
+  );
   const { data: supplier, isLoading } = useSupplier(supplierId);
   const { actions, dialogs } = useSupplierActions(supplier, {
     onDeleted: () => router.push(backHref),
@@ -72,7 +76,7 @@ export default function SupplierDetail({ supplierId }: SupplierDetailProps) {
           primary={
             <Button
               onClick={() =>
-                router.push(`/procurement-management/suppliers/${supplierId}/edit`)
+                router.push(editHref)
               }
             >
               <Edit className="size-4" />

@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Edit, Trash2, Plus, ExternalLink, Search, X, Layers, ChevronDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { useBackToListHref } from '@/components/common/BackToList';
+import { useBackToListHref, useHrefWithListState } from '@/components/common/BackToList';
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -85,6 +85,10 @@ interface PromotionDetailProps {
 export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
   const router = useRouter();
   const backHref = useBackToListHref('/marketing-management/promotions');
+  // Edit carries the list state too: the edit screen has a pager of its own.
+  const editHref = useHrefWithListState(
+    `/marketing-management/promotions/${promotionId}/edit`,
+  );
   const { data: promotion, isLoading } = usePromotion(promotionId);
   const { data: accessTypeOptions = [] } = useContactAccessTypes();
   const accessLevelNameMap = useMemo(() => {
@@ -535,7 +539,7 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
           primary={
             <Button
               onClick={() =>
-                router.push(`/marketing-management/promotions/${promotionId}/edit`)
+                router.push(editHref)
               }
             >
               <Edit className="size-4" />
@@ -603,7 +607,7 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
                     Unclassified - follows the default type.
                   </p>
                   <Button variant="outline" size="sm" asChild>
-                    <Link href={`/marketing-management/promotions/${promotionId}/edit`}>
+                    <Link href={editHref}>
                       Set a type
                     </Link>
                   </Button>

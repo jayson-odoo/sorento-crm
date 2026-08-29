@@ -12,7 +12,7 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Plus, Search, X, ChevronRight, Upload, Trash2 } from 'lucide-react';
+import { Plus, Search, X, Upload, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useQueryClient } from '@tanstack/react-query';
 import { Badge } from '@/components/ui/badge';
@@ -24,6 +24,7 @@ import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { buildSelectColumn, selectedRowIds } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
+import { buildDetailSearch } from '@/lib/listNavQuery';
 import { Input } from '@/components/ui/input';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -44,6 +45,19 @@ export default function WarehousesList() {
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
+
+  // The whole row opens the record, carrying the list query the pager rebuilds
+  // its key from. Before this the only way in was a chevron button at the end of
+  // the row, which is a target the width of a thumbnail on a list of warehouses.
+  const rowHref = (row: Warehouse) => {
+    const search = buildDetailSearch({
+      pageIndex: pagination.pageIndex,
+      pageSize: pagination.pageSize,
+      sorting,
+      searchQuery,
+    });
+    return `/inventory-management/warehouses/${row.id}${search ? `?${search}` : ''}`;
+  };
 
   const handleImportUpload = async (rows: Record<string, unknown>[]) => {
     await bulkImportWarehouses(rows);
@@ -108,23 +122,9 @@ export default function WarehousesList() {
         size: 100,
         meta: { headerTitle: 'Status' },
       },
-      {
-        accessorKey: 'actions',
-        header: '',
-        cell: ({ row }) => (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => router.push(`/inventory-management/warehouses/${row.original.id}`)}
-          >
-            <ChevronRight className="text-muted-foreground/70 size-3.5" />
-          </Button>
-        ),
-        size: 40,
-        enableHiding: false,
-      },
+
     ],
-    [router],
+    [],
   );
 
   const table = useReactTable({
@@ -147,6 +147,7 @@ export default function WarehousesList() {
 
   return (
     <DataGrid table={table} recordCount={data?.pagination.total || 0} isLoading={isLoading}
+      rowHref={rowHref}
       tableLayout={{ columnsVisibility: true }}
       standardToolbar={false}
     >

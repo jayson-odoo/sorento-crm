@@ -20,19 +20,26 @@ export interface BackToListProps {
 }
 
 /**
- * The href this page's Back button points at.
+ * A path with this page's list state on the end of it.
  *
- * Deleting a record from its own page has to land where Back would have landed
- * (the page, sort, search and filters the reader left the list on), so both read
- * the same function rather than each rebuilding the string.
+ * The list wrote its page, sort, search and filters into the detail URL when the
+ * row was clicked, and every link that leads on from here has to carry it: Back,
+ * the push after a delete, and the Edit button (the edit screen has a pager of
+ * its own, and without the query it walks page 1 of an unfiltered list instead of
+ * the page the reader is on). One function, so the hrefs cannot drift apart.
  */
+export function useHrefWithListState(path: string, appendListState = true): string {
+  const searchParams = useSearchParams();
+  const search = appendListState ? searchParams.toString() : '';
+  return search ? `${path}?${search}` : path;
+}
+
+/** The href this page's Back button points at. */
 export function useBackToListHref(
   listPath: string,
   appendListState = true,
 ): string {
-  const searchParams = useSearchParams();
-  const search = appendListState ? searchParams.toString() : '';
-  return search ? `${listPath}?${search}` : listPath;
+  return useHrefWithListState(listPath, appendListState);
 }
 
 /**
