@@ -484,7 +484,10 @@ function LinkableBodyRow({
   };
 
   return (
-    <tr {...rowProps} {...rowOpenProps({ opensUrl: true, open: openRecord })}>
+    // `rowOpenProps` BEFORE the dnd listeners `rowProps` carries: a future
+    // list that is both draggable and openable would otherwise have its
+    // keyboard-drag onKeyDown replaced by this one, silently.
+    <tr {...rowOpenProps({ opensUrl: true, open: openRecord })} {...rowProps}>
       {children}
     </tr>
   );
@@ -542,8 +545,8 @@ function DataGridTableBodyRow<TData>({
     // A lightbox, not a URL: there is no second tab to open it in.
     return (
       <tr
-        {...rowProps}
         {...rowOpenProps({ opensUrl: false, open: () => props.onRowClick?.(row.original) })}
+        {...rowProps}
       >
         {children}
       </tr>
@@ -858,14 +861,7 @@ function DataGridScroller({ children }: { children: ReactNode }) {
   );
 }
 
-/**
- * `belowTable` renders INSIDE the grid's own horizontal scroller, under the
- * table. A totals row sized by `table.getTotalSize()` has to share that
- * scroller or it does not track the columns it is totalling: rendered as a
- * sibling it sat in a second, independently scrolled box, so on a phone the
- * figures drifted out from under their headings.
- */
-function DataGridTable<TData>({ belowTable }: { belowTable?: ReactNode } = {}) {
+function DataGridTable<TData>() {
   const { table, isLoading, props } = useDataGrid();
   const pagination = table.getState().pagination;
   const isUnderSm = useIsUnderSm();
@@ -922,7 +918,6 @@ function DataGridTable<TData>({ belowTable }: { belowTable?: ReactNode } = {}) {
     return (
       <DataGridScroller>
         <DataGridTableDnd<TData> handleDragEnd={handleDragEnd} />
-        {belowTable}
       </DataGridScroller>
     );
   }
@@ -1038,7 +1033,6 @@ function DataGridTable<TData>({ belowTable }: { belowTable?: ReactNode } = {}) {
           </DataGridTableFoot>
         )}
       </DataGridTableBase>
-      {belowTable}
     </DataGridScroller>
   );
 }

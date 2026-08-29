@@ -47,10 +47,6 @@ const SCROLLER_OUT_OF_REACH = new Map<string, string>([
     'DialogBody is the scroller, past the loading and empty branches',
   ],
   [
-    'app/(protected)/scm/components/ProductPerspectiveGrid.tsx',
-    'the totals row rides in DataGridTable belowTable, so its scroller is in another file',
-  ],
-  [
     'app/(protected)/master-data-management/product-categories/components/CategoryTree.tsx',
     'CategoriesList wraps it in the ScrollArea; a second one here scrolled nothing',
   ],
@@ -99,8 +95,11 @@ describe('Mobile one-offs (S4-04)', () => {
     // scrolling columns show through it.
     expect(src).toContain('border-separate border-spacing-0');
     expect(src).not.toContain('border-collapse');
-    // And an opaque pin. `bg-muted/50` read as "onName tive" mid-scroll.
-    expect(src).not.toContain('sticky start-0 z-10 border-b border-border bg-muted/50');
+    // And a pin the scrolling columns cannot be read through. It carries the
+    // ROW's tint over an opaque `::before` base, so it is the row's own colour
+    // rather than the darker stripe a flat `bg-muted` drew.
+    expect(src).toContain("before:bg-card before:content-['']");
+    expect(src).not.toContain('bg-muted backdrop-blur-xs');
   });
 
   it('S4-04: the Product Specifications freshness banner wraps instead of pushing', () => {
@@ -176,8 +175,12 @@ describe('Mobile one-offs (S4-04)', () => {
     const dialog = read('app/(protected)/scm/components/ProductListDialog.tsx');
     expect(dialog).toContain('<DialogBody className="max-h-[55dvh] overflow-auto">');
 
+    // ProductPerspectiveGrid used to be allowlisted here for a totals row in a
+    // <table> of its own. It is a real <tfoot> on the grid now, so there is no
+    // second table to place and nothing to allow.
     const perspective = read('app/(protected)/scm/components/ProductPerspectiveGrid.tsx');
-    expect(perspective).toContain('belowTable=');
+    expect(perspective).not.toMatch(/^\s*<table/m);
+    expect(perspective).toContain('footer:');
 
     const grid = read('components/ui/data-grid-table.tsx');
     expect(grid).toContain('data-slot="data-grid-scroller"');
