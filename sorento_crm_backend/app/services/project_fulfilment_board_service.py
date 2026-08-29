@@ -415,8 +415,19 @@ class _Row:
         ladder v7.1 - a location FLAGGED OUT of fulfilment planning (R17 / AC-S1-6): a bin
         that is off has no pile, no group net and no donor, so a proposal for it would be
         computed from stock the rest of the engine cannot see.
+
+        **The flag verdict applies to UNDECIDED lines only.** A line an active decision
+        covers is covered - the stock was found, promised and confirmed - and turning the
+        bin's switch off afterwards is a statement about what may be PROPOSED next, never a
+        retraction of what was already decided. Counting such a line as unplannable made a
+        settled order read `Needs a location` / `blocked`, dropped it out of the frontend's
+        `confirmLinesFor`, and had confirm refuse a verbatim re-send of the very composition
+        it had itself written. A line with no location at all is still unplannable either
+        way: there is nothing to have decided about.
         """
-        return not self.warehouse_id or bool(self.outside_planning)
+        if not self.warehouse_id:
+            return True
+        return bool(self.outside_planning) and self.decision is None
 
     @property
     def key(self) -> str:
@@ -1679,14 +1690,12 @@ class FulfilmentBoardService:
         """
         # Covered rows still count towards the STOCK reads: a cell whose only line is decided
         # still has a location, and dropping it here would blank that location's position.
-        # Since R17 a covered row can also be UNPLANNABLE (its bin is outside fulfilment
-        # planning), and it is counted just the same: no new proposal is computed for it,
-        # but the frozen decision is printed beside real figures rather than beside dashes.
+        # Since the ruling above, a COVERED row is never unplannable while it has a location
+        # - the flag verdict belongs to undecided lines - so `plannable` already carries it
+        # and there is no second list to union in.
         plannable = [row for row in served if not row.unplannable]
         proposable = [row for row in plannable if not row.covered]
-        counted = plannable + [
-            row for row in served if row.unplannable and row.covered and row.warehouse_id
-        ]
+        counted = plannable
         for row in served:
             if row.covered:
                 self._apply_frozen(row)

@@ -242,7 +242,6 @@ export default function WarehouseForm({ warehouseId, onSuccess }: WarehouseFormP
                       <FormItem className="md:col-span-2 flex flex-row items-center justify-between gap-4 rounded-lg border p-4">
                         <div className="min-w-0 space-y-0.5">
                           <FormLabel className="text-base">Fulfilment planning</FormLabel>
-                          <FormDescription>Off: outside the fulfilment plan.</FormDescription>
                         </div>
                         <FormControl>
                           <Switch checked={field.value} onCheckedChange={field.onChange} />

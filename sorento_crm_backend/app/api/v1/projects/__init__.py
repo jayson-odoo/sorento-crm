@@ -18,6 +18,7 @@ from app.api.v1.projects import (
     sales_orders,
     samples_pos,
     schedules,
+    stock_debt,
     tasks,
     types,
 )
@@ -72,6 +73,10 @@ router.include_router(order_inquiries.router, tags=["project-order-inquiry"])
 # Planning changes (PLAN-so-book-diff-replanning.md) are addressed by their own batch id,
 # never nested under a sales order, so root-mounted for the same reason order inquiry is.
 router.include_router(planning_changes.router, tags=["project-planning-changes"])
+# Stock Debt (S2) is a cross-order READ addressed by product, never nested under a project,
+# so it is root-mounted for the same reason planning changes is - and ahead of the projects
+# router, or `/project-sales/stock-debt` is captured by `/projects/{project_id}`.
+router.include_router(stock_debt.router, tags=["project-stock-debt"])
 router.include_router(parties.router, prefix="/parties", tags=["project-parties"])
 # Leads before projects for the same reason config is: /leads/{id}/qualify returns a
 # PROJECT, but the route itself lives under the leads prefix.

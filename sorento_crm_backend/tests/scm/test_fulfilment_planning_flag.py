@@ -669,3 +669,55 @@ def test_bootstrap_env_replays_the_seed_on_a_create_all_database(monkeypatch):
         "a bin turned off by hand stays off through the next bootstrap"
     )
     assert first is None  # the function logs a count, it does not return one
+
+
+def test_a_decided_line_survives_its_bin_being_flagged_off_and_confirms_again():
+    """The flag verdict applies to UNDECIDED lines only (review of S2, 30 Aug).
+
+    The live sequence: a line is planned and confirmed while its bin is IN the plan, and an
+    admin flags the bin off afterwards. The stock was found, promised and confirmed; the
+    switch says what may be PROPOSED next, not that the decision is retracted. Reading the
+    verdict off the flag alone made `_facts_for` call the line unplannable, so a verbatim
+    re-send of the composition the engine itself had written was refused 422 with a reason
+    the board no longer showed.
+    """
+    from app.schemas.project_supply import ConfirmLine, ConfirmSupplyBody
+
+    with blank_session() as db:
+        company_id, eling, project, product = _world(db)
+        group, sites = _group_sites(db)
+        own, _pool = sites["BRW"]
+        _stock(db, product, own, on_hand=1000)
+        db.commit()
+
+        order, line, _cso, _cline = _seed_line(
+            db, company_id, project, product, own, qty_ordered="40",
+        )
+        service = ProjectSupplyService(db)
+        body = ConfirmSupplyBody(
+            lines=[
+                ConfirmLine(
+                    project_line_id=str(line.id),
+                    reserve=[{"warehouse_id": str(own.id), "qty": Decimal("40")}],
+                )
+            ]
+        )
+        first = service.confirm(order, body, actor_user_id=eling)
+        assert first["lines_decided"] == 1
+
+        # The admin turns the bin off, after the fact.
+        own.fulfilment_planning = False
+        db.commit()
+
+        after = ProjectSupplyService(db)
+        facts = after._facts_for(order, after.lines_of(str(order.id)))
+        fact = facts[str(line.id)]
+        # Not the verdict: this line has been decided.
+        assert fact.unplannable_reason is None
+
+        # And the same body goes through again, rather than 422.
+        again = ProjectSupplyService(db).confirm(
+            order, body, actor_user_id=eling
+        )
+        assert again["lines_decided"] == 1
+        assert again["revision_no"] == first["revision_no"] + 1

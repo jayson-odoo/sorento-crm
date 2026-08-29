@@ -236,6 +236,52 @@ def test_todays_tba_date_is_accepted(scm_app):
     assert res.status_code == 200, res.text
 
 
+def test_a_weight_saves_over_a_stored_tba_date_that_has_since_passed(scm_app):
+    """The freshness rule is about a CHANGE, not about the value (fixed 30 Aug).
+
+    A TBA date is legal the day it is saved and historic a year later. Refusing every PUT
+    that resubmits it locked the WHOLE panel: no weight, no coverage date, no class weight
+    could be saved again until somebody also picked a new TBA date - and the panel sends the
+    stored date back with every save, so the block was permanent and had nothing to do with
+    the field being edited.
+    """
+    app, db = _client(scm_app, "purchasing")
+    stale = date.today() - timedelta(days=400)
+    db.execute(
+        text("UPDATE scm.priority_policy SET tba_date_from = :d WHERE is_active = true"),
+        {"d": stale},
+    )
+    db.flush()
+
+    body = _write(tba_date_from=stale.isoformat())
+    body["factors"] = {**body["factors"], next(iter(body["factors"])): 7.0}
+    with TestClient(app) as c:
+        put = c.put(BASE, json=body)
+    assert put.status_code == 200, put.text
+    assert put.json()["tba_date_from"] == stale.isoformat()
+    assert _active_row(db)["tba_date_from"] == stale
+
+
+def test_moving_the_tba_date_further_into_the_past_is_still_refused(scm_app):
+    """The other half: a DIFFERENT past date is the move the rule exists to stop, whatever
+    the stored one is."""
+    app, db = _client(scm_app, "purchasing")
+    stale = date.today() - timedelta(days=400)
+    db.execute(
+        text("UPDATE scm.priority_policy SET tba_date_from = :d WHERE is_active = true"),
+        {"d": stale},
+    )
+    db.flush()
+
+    with TestClient(app) as c:
+        res = c.put(
+            BASE,
+            json=_write(tba_date_from=(date.today() - timedelta(days=1)).isoformat()),
+        )
+    assert res.status_code == 422, res.text
+    assert _active_row(db)["tba_date_from"] == stale
+
+
 def test_a_stored_tba_date_in_the_past_still_reads_200(scm_app):
     """The freshness rule belongs to the WRITE body, never to the response.
 

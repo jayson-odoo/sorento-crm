@@ -1,0 +1,49 @@
+{
+  "case": "AC-S2-4b",
+  "why": [
+    "An SPO whose arrival has passed with nothing received is not supply until somebody re-dates",
+    "it (R31). It contributes NOTHING to the balance and the line it would have covered is short",
+    "- but it is returned as uncounted, because a document nobody mentions reads as a document",
+    "that is not there, and the buyer has to chase it."
+  ],
+  "as_of": "2026-09-01",
+  "tba_from": "2029-01-01",
+  "lead_days": 90,
+  "supply": [
+    {
+      "key": "spo:OLD",
+      "kind": "spo",
+      "warehouse": "BRW-BB",
+      "at": "2026-08-16",
+      "qty": 50,
+      "ref": "SPO 2026/07-0031"
+    }
+  ],
+  "demand": [
+    {
+      "key": "L",
+      "so_number": "SO400030",
+      "line_no": 1,
+      "warehouse": "BRW-BB",
+      "agent_code": "TERA",
+      "required_date": "2026-09-20",
+      "open_qty": 50
+    }
+  ],
+  "pinned": [],
+  "expect": {
+    "lines": [
+      {
+        "key": "L",
+        "status": "short",
+        "uncovered": 50,
+        "bucket": "2026-09",
+        "assigned": []
+      }
+    ],
+    "months": [{ "key": "2026-09", "balance": -50, "tone": "red" }],
+    "tba": 0,
+    "undated": 0,
+    "uncounted": [{ "key": "spo:OLD", "overdue": true }]
+  }
+}
