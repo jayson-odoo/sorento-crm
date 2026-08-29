@@ -128,7 +128,7 @@ function ProductCard({
         <span className="block truncate text-xs text-muted-foreground">{product.price}</span>
       )}
       {product.isDiscontinued && (
-        <Badge variant="warning" appearance="ghost" className="w-fit text-xs">
+        <Badge variant="warning" className="w-fit text-xs">
           Discontinued
         </Badge>
       )}

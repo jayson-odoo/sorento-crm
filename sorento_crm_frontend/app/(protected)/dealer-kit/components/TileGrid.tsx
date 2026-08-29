@@ -213,7 +213,7 @@ export function ProductTile({
           {tile.badges.map((badge) => (
             // A badge is artwork and a claim, never a link to the certificate
             // itself - that document has its own access gating (AC-E6).
-            <Badge key={badge} variant="outline" appearance="ghost" className="text-[9px]">
+            <Badge key={badge} variant="outline" className="text-[9px]">
               {badge}
             </Badge>
           ))}

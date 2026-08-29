@@ -587,7 +587,7 @@ export function PageEditor({
                   {section.name}
                 </span>
                 {section.printMode === 'breakBefore' && (
-                  <Badge variant="outline" appearance="ghost" className="shrink-0 text-xs">
+                  <Badge variant="outline" className="shrink-0 text-xs">
                     break
                   </Badge>
                 )}

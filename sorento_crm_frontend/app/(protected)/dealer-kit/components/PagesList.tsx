@@ -94,11 +94,11 @@ export function PagesList() {
         header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
         cell: ({ row }) =>
           row.original.publishedVersion === null ? (
-            <Badge variant="outline" appearance="ghost" className="font-normal">
+            <Badge variant="outline" className="font-normal">
               Not published
             </Badge>
           ) : (
-            <Badge variant="success" appearance="ghost" className="font-normal">
+            <Badge variant="success" className="font-normal">
               Live · v{row.original.publishedVersion}
             </Badge>
           ),

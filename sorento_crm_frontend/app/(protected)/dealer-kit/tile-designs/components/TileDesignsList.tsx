@@ -74,7 +74,7 @@ export function TileDesignsList() {
         cell: ({ row }) => (
           <div className="flex flex-wrap gap-1">
             {row.original.fields.map((field) => (
-              <Badge key={field} variant="outline" appearance="ghost" className="text-xs">
+              <Badge key={field} variant="outline" className="text-xs">
                 {TILE_FIELDS.find((candidate) => candidate.value === field)?.label ?? field}
               </Badge>
             ))}
