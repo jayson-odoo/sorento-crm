@@ -22,12 +22,13 @@ import { useConversationSLATrackingDetail, useConversationSLATestOverrides } fro
 import DetailActions from '@/components/common/DetailActions';
 import { useBackToListHref } from '@/components/common/BackToList';
 import { recordActionItems } from '@/components/common/recordActions';
+import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import { useConversationSlaActions } from '../actions';
 import { conversationSlaPagerQuery } from '../hooks/useConversationSLATracking';
 import { escalateConversationSLATracking, type ConversationSLATestOverridesBody } from '../services/conversationSLATrackingService';
 import { formatDateTime, formatDuration, formatDurationWithSeconds, parseDateTimeAsUTC } from '@/lib/helpers';
 import EventLogTable from './EventLogTable';
-import { CheckCircle, Clock, AlertCircle, RefreshCw, ChevronDown, ChevronRight, Info, Settings, ExternalLink, CalendarClock, UserCog, MessageSquare, TrendingUp } from 'lucide-react';
+import { CheckCircle, Clock, AlertCircle, RefreshCw, ChevronDown, ChevronRight, Info, ExternalLink, CalendarClock, UserCog, MessageSquare, TrendingUp } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import {
   Popover,
@@ -35,11 +36,8 @@ import {
   PopoverTrigger,
 } from '@/components/ui/popover';
 import {
-  DropdownMenu,
-  DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
-  DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import {
   Dialog,
@@ -356,16 +354,14 @@ export default function ConversationSLATrackingDetail({
                 }
               : undefined
           }
-          gearLabel="Conversation SLA options"
           dialogs={sharedDialogs}
           gear={
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="icon" title="Actions">
-                <Settings className="size-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
+            /* Through the shared menu, not a raw DropdownMenu: `DetailActions`
+               renders a `gear` node verbatim, so a raw one keeps whatever order
+               it was written in, and Delete sat fourth with nothing setting it
+               apart. The menu moves the destructive item last, behind a
+               separator, for every workflow gear alike (D6). */
+            <DetailActionsMenu ariaLabel="Conversation SLA actions">
               <DropdownMenuItem
                 onClick={handleRefresh}
                 disabled={isRefreshing || isLoading}
@@ -430,8 +426,7 @@ export default function ConversationSLATrackingDetail({
                   </DropdownMenuItem>
                 </>
               )}
-            </DropdownMenuContent>
-          </DropdownMenu>
+            </DetailActionsMenu>
           }
           primary={
             respondInboxUrl ? (
