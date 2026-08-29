@@ -1,18 +1,17 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import type { QueryKey } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { buildDataGridParams } from '@/lib/api-client';
 import {
   useRecordNeighbours,
   type RecordNeighboursResult,
 } from '@/hooks/useRecordNeighbours';
-import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 import { getAttachments, uploadAttachment, updateAttachment, deleteAttachment, bulkDeleteAttachments, archiveAttachment, bulkArchiveAttachments, restoreAttachment, bulkRestoreAttachments, downloadAttachment, resubmitAttachmentWebhook, reorderAttachments, bulkImportAttachments, bulkMoveAttachments, ATTACHMENT_NEIGHBOURS_PATH, type AttachmentsListParams } from '../services/attachmentService';
 import type { Attachment } from '../types/attachment.types';
 import { getDirectoryTree, createDirectory, updateDirectory, moveDirectory, deleteDirectory, restoreDirectory, permanentDeleteDirectory } from '../services/directoryService';
 import { getDriveContents, type DriveListParams } from '../services/driveService';
 import { apiFetch } from '@/lib/api';
 import type { AttachmentType } from '../../attachment-types/types/attachmentType.types';
+import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
 
 /**
  * Prev/next neighbours of an attachment within the active filtered+sorted list set.
@@ -43,10 +42,68 @@ export function useAttachmentNeighbours(
   return useRecordNeighbours(ATTACHMENT_NEIGHBOURS_PATH, attachmentId, params);
 }
 
-export function useAttachments(params: DataGridApiFetchParams & { entity_type?: string; file_type?: string; attachment_type_id?: string; upload_date_from?: string; upload_date_to?: string; uploaded_at_from?: string; uploaded_at_to?: string; uploaded_by?: string; is_deleted?: boolean; virus_status?: string; directory_id?: string | null; link_status?: 'linked' | 'unlinked'; storage_status?: 'accessible' | 'missing' | 'unchecked'; resolve_signed_urls?: boolean; access_levels?: string[]; access_levels_match?: 'any' | 'all' | 'exact' }) {
+/**
+ * The list's React Query key. The detail page's pager rebuilds the SAME key from
+ * the URL, so it reads the page the list already fetched.
+ */
+export function attachmentsListQueryKey(params: AttachmentsListParams): QueryKey {
   const accessLevelsKey = (params.access_levels ?? []).slice().sort().join(',');
+  return [
+    'attachments',
+    params.pageIndex,
+    params.pageSize,
+    params.sorting,
+    params.searchQuery,
+    params.entity_type,
+    params.file_type,
+    params.attachment_type_id,
+    params.upload_date_from,
+    params.upload_date_to,
+    params.uploaded_at_from,
+    params.uploaded_at_to,
+    params.uploaded_by,
+    params.is_deleted,
+    params.virus_status,
+    params.directory_id,
+    params.link_status,
+    params.resolve_signed_urls,
+    accessLevelsKey,
+    params.access_levels_match ?? 'any',
+    params.storage_status ?? '__all__',
+  ];
+}
+
+/** The list query a detail URL describes, in the shape the browser passes. */
+export function attachmentsListParamsFromUrl(
+  params: ListPagerParams,
+): AttachmentsListParams {
+  const f = params.filters;
+  return {
+    pageIndex: params.pageIndex,
+    pageSize: params.pageSize,
+    sorting: params.sorting,
+    searchQuery: params.searchQuery,
+    directory_id: f.directory_id,
+    is_deleted: f.is_deleted === 'true' ? true : undefined,
+    attachment_type_id: f.attachment_type_id,
+    link_status: f.link_status as 'linked' | 'unlinked' | undefined,
+    uploaded_by: f.uploaded_by,
+    uploaded_at_from: f.uploaded_at_from,
+    uploaded_at_to: f.uploaded_at_to,
+  };
+}
+
+/** The pager's two hooks into the attachments list. */
+export const attachmentsPagerQuery = {
+  listQueryKey: (params: ListPagerParams): QueryKey =>
+    attachmentsListQueryKey(attachmentsListParamsFromUrl(params)),
+  fetchPage: (params: ListPagerParams): Promise<ListPagerPage> =>
+    getAttachments(attachmentsListParamsFromUrl(params)),
+};
+
+export function useAttachments(params: AttachmentsListParams) {
   return useQuery({
-    queryKey: ['attachments', params.pageIndex, params.pageSize, params.sorting, params.searchQuery, params.entity_type, params.file_type, params.attachment_type_id, params.upload_date_from, params.upload_date_to, params.uploaded_at_from, params.uploaded_at_to, params.uploaded_by, params.is_deleted, params.virus_status, params.directory_id, params.link_status, params.resolve_signed_urls, accessLevelsKey, params.access_levels_match ?? 'any', params.storage_status ?? '__all__'],
+    queryKey: attachmentsListQueryKey(params),
     queryFn: () => getAttachments(params),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,

@@ -18,13 +18,14 @@ import { LoaderCircleIcon } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { formatDate } from '@/lib/helpers';
-import AttachmentNavigation from './AttachmentNavigation';
+import ListPager from '@/components/common/ListPager';
 import {
   useDeleteAttachment,
   useDownloadAttachment,
   useResubmitAttachmentWebhook,
   useRestoreAttachment,
   useUpdateAttachment,
+  attachmentsPagerQuery,
 } from '../hooks/useAttachments';
 import { AccessLevelsMultiSelect } from './AccessLevelsMultiSelect';
 import { getAttachmentMetadata } from '../services/attachmentService';
@@ -284,15 +285,20 @@ export default function AttachmentDetail({
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div className="space-y-1">
-          <h1 className="text-2xl font-bold">{attachment.original_filename}</h1>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="space-y-1 min-w-0">
+          <h1 className="text-2xl font-bold break-words">{attachment.original_filename}</h1>
           <p className="text-sm text-muted-foreground">
             Uploaded: {formatDate(new Date(attachment.uploaded_at))}
           </p>
         </div>
-        <div className="flex gap-2">
-          <AttachmentNavigation attachmentId={attachmentId} />
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <ListPager
+            {...attachmentsPagerQuery}
+            detailPath="/resource-management/attachments"
+            currentId={attachmentId}
+            ariaLabel="attachment"
+          />
           <Button variant="outline" onClick={() => setPreviewOpen(true)}>
             <Eye className="size-4" />
             Preview

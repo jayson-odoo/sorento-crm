@@ -1,7 +1,6 @@
 'use client';
 
 import { useCallback, useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
@@ -55,7 +54,6 @@ import AttachmentBulkDeleteDialog from './AttachmentBulkDeleteDialog';
 import EditAttachmentTypeDialog from './EditAttachmentTypeDialog';
 
 export default function AttachmentBrowser() {
-  const router = useRouter();
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [sorting, setSorting] = useState<SortingState>([{ id: 'uploaded_at', desc: true }]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -557,10 +555,8 @@ export default function AttachmentBrowser() {
         table={table}
         recordCount={data?.pagination.total || 0}
         isLoading={isLoading}
-        onRowClick={(row) =>
-          router.push(
-            `/resource-management/attachments/${row.id}${detailSearch ? `?${detailSearch}` : ''}`,
-          )
+        rowHref={(row) =>
+          `/resource-management/attachments/${row.id}${detailSearch ? `?${detailSearch}` : ''}`
         }
         tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
       >
