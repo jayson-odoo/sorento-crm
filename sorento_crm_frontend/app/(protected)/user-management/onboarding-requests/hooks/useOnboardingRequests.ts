@@ -11,7 +11,7 @@
  * person patch is the exception and says why on itself.
  */
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { buildDataGridParams } from '@/lib/api-client';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
@@ -41,20 +41,52 @@ import {
   type CreateOnboardingRequestInput,
   type OnboardingRequestListParams,
 } from '../services/onboardingService';
+import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
 
 export const ONBOARDING_LIST_KEY = 'onboarding-requests';
 export const ONBOARDING_DETAIL_KEY = 'onboarding-request';
 
+/**
+ * The list's React Query key. The detail page's pager rebuilds the SAME key from
+ * the URL, so it reads the page the list already fetched.
+ */
+export function onboardingListQueryKey(
+  params: OnboardingRequestListParams,
+): QueryKey {
+  return [
+    ONBOARDING_LIST_KEY,
+    params.pageIndex,
+    params.pageSize,
+    params.sorting,
+    params.searchQuery,
+    params.statusKey,
+  ];
+}
+
+/** The list query a detail URL describes, in the shape the list passes. */
+export function onboardingListParamsFromUrl(
+  params: ListPagerParams,
+): OnboardingRequestListParams {
+  return {
+    pageIndex: params.pageIndex,
+    pageSize: params.pageSize,
+    sorting: params.sorting,
+    searchQuery: params.searchQuery,
+    statusKey: params.filters.status_key,
+  };
+}
+
+/** The pager's two hooks into the onboarding requests list. */
+export const onboardingPagerQuery = {
+  listQueryKey: (params: ListPagerParams): QueryKey =>
+    onboardingListQueryKey(onboardingListParamsFromUrl(params)),
+  fetchPage: (params: ListPagerParams): Promise<ListPagerPage> =>
+    listOnboardingRequests(onboardingListParamsFromUrl(params)),
+};
+
 export function useOnboardingRequests(params: OnboardingRequestListParams) {
   return useQuery({
-    queryKey: [
-      ONBOARDING_LIST_KEY,
-      params.pageIndex,
-      params.pageSize,
-      params.sorting,
-      params.searchQuery,
-      params.statusKey,
-    ],
+    queryKey: onboardingListQueryKey(params),
     queryFn: () => listOnboardingRequests(params),
   });
 }

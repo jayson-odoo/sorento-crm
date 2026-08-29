@@ -9,7 +9,7 @@
  */
 
 import { useEffect, useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
+
 import {
   getCoreRowModel,
   useReactTable,
@@ -58,7 +58,6 @@ function day(value: string | null): string {
 }
 
 export function OnboardingRequestList() {
-  const router = useRouter();
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
@@ -242,9 +241,9 @@ export function OnboardingRequestList() {
           ? 'No requests match your filters.'
           : 'No onboarding requests yet. Create one to get started.'
       }
-      onRowClick={(row) => {
-        // Carry the active list query into the detail URL so its prev/next pager
-        // walks the same filtered+sorted set.
+      rowHref={(row) => {
+        // The whole row opens the record, carrying the list query the pager
+        // rebuilds its key from.
         const qs = buildDetailSearch(
           {
             pageIndex: pagination.pageIndex,
@@ -255,7 +254,7 @@ export function OnboardingRequestList() {
           { status_key: statusFilter === 'all' ? undefined : statusFilter },
         );
         const id = (row as OnboardingRequestSummary).id;
-        router.push(`/user-management/onboarding-requests/${id}${qs ? `?${qs}` : ''}`);
+        return `/user-management/onboarding-requests/${id}${qs ? `?${qs}` : ''}`;
       }}
       tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
     >

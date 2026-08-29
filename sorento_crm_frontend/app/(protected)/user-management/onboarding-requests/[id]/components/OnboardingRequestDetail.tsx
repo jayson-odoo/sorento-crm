@@ -16,9 +16,8 @@
  */
 
 import { useMemo, useState } from 'react';
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { CheckCircle2, Copy, KeyRound, Link2Off, Loader2, MoveLeft, Send, Trash2 } from 'lucide-react';
+import { CheckCircle2, Copy, KeyRound, Link2Off, Loader2, Send, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import {
@@ -63,7 +62,9 @@ import {
   useOnboardingRequest,
   useOnboardingRequestMutations,
 } from '../../hooks/useOnboardingRequests';
-import { OnboardingRequestNavigation } from './OnboardingRequestNavigation';
+import ListPager from '@/components/common/ListPager';
+import { onboardingPagerQuery } from '../../hooks/useOnboardingRequests';
+import BackToList from '@/components/common/BackToList';
 
 const BASE_PATH = '/user-management/onboarding-requests';
 
@@ -123,14 +124,9 @@ function DetailShell({ children }: { children: React.ReactNode }) {
   );
 }
 
+/** Back carries the list query the row click wrote, so the queue reopens where it was. */
 function BackToQueue() {
-  return (
-    <Button asChild variant="outline">
-      <Link href={BASE_PATH}>
-        <MoveLeft /> Back to onboarding requests
-      </Link>
-    </Button>
-  );
+  return <BackToList listPath={BASE_PATH} label="Back to onboarding requests" />;
 }
 
 export function OnboardingRequestDetail({ requestId }: { requestId: string }) {
@@ -216,7 +212,12 @@ export function OnboardingRequestDetail({ requestId }: { requestId: string }) {
     <>
       <DetailShell>
         <ToolbarActions>
-          <OnboardingRequestNavigation requestId={requestId} />
+          <ListPager
+            {...onboardingPagerQuery}
+            detailPath="/user-management/onboarding-requests"
+            currentId={requestId}
+            ariaLabel="onboarding request"
+          />
           {canStartReview ? (
             <Button
               variant="outline"
