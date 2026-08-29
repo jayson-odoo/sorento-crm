@@ -1,7 +1,7 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { buildDataGridParams } from '@/lib/api-client';
-import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
+import type { DataGridApiFetchParams, DataGridApiResponse } from '@/components/ui/data-grid';
 import {
   useRecordNeighbours,
   type RecordNeighboursResult,
@@ -22,6 +22,8 @@ import {
 import type { Order, OrderFormData, OrderLineFormData } from '../types/order.types';
 import { postListQuerySearch } from '@/lib/list-query/listQueryService';
 import type { ListQueryFilterGroup } from '@/lib/list-query/listQueryService';
+import { decodeAdvancedFilter } from '@/lib/listNavQuery';
+import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
 
 /** List query (search/sort + order filters) the neighbours pager walks within. */
 export type OrderNeighboursListParams = DataGridApiFetchParams & {
@@ -53,51 +55,92 @@ export function useOrderNeighbours(
   return useRecordNeighbours(ORDER_NEIGHBOURS_PATH, orderId, params);
 }
 
-export function useOrders(
-  params: DataGridApiFetchParams & {
-    customer_id?: string;
-    order_status_id?: string;
-    has_order_lines?: 'all' | 'yes' | 'no';
-    advancedFilter?: ListQueryFilterGroup | null;
-  },
-) {
+/** Everything the orders list filters by. */
+export type OrdersListParams = DataGridApiFetchParams & {
+  customer_id?: string;
+  order_status_id?: string;
+  has_order_lines?: 'all' | 'yes' | 'no';
+  advancedFilter?: ListQueryFilterGroup | null;
+};
+
+/**
+ * The list's React Query key. The detail page's pager builds the SAME key from
+ * the URL, so it reads the page the list already fetched instead of asking again
+ * (see `hooks/useListPager.ts`).
+ */
+export function ordersListQueryKey(params: OrdersListParams): QueryKey {
+  return [
+    'orders',
+    params.pageIndex,
+    params.pageSize,
+    params.sorting,
+    params.searchQuery,
+    params.customer_id,
+    params.order_status_id,
+    params.has_order_lines,
+    params.advancedFilter,
+  ];
+}
+
+/** One page of the orders list, quick filters and advanced filter included. */
+export function fetchOrdersPage(
+  params: OrdersListParams,
+): Promise<DataGridApiResponse<Order>> {
+  if (params.advancedFilter) {
+    const sortField = params.sorting?.[0]?.id || '';
+    const sortDirection = params.sorting?.[0]?.desc ? 'desc' : 'asc';
+    return postListQuerySearch<Order>({
+      resource: 'orders',
+      filter: params.advancedFilter,
+      page: params.pageIndex + 1,
+      limit: params.pageSize,
+      sort: sortField || 'created_at',
+      dir: sortDirection,
+      quick_search: params.searchQuery || undefined,
+      order_status_id:
+        params.order_status_id && params.order_status_id !== 'all'
+          ? params.order_status_id
+          : undefined,
+      has_order_lines:
+        params.has_order_lines && params.has_order_lines !== 'all'
+          ? params.has_order_lines
+          : undefined,
+      customer_id: params.customer_id,
+    });
+  }
+  return getOrders(params);
+}
+
+/**
+ * The list query a detail URL describes, in the exact shape `OrdersList` passes
+ * to `useOrders` - equal values, so the keys hash equal.
+ */
+export function ordersListParamsFromUrl(params: ListPagerParams): OrdersListParams {
+  const lines = params.filters.has_order_lines;
+  return {
+    pageIndex: params.pageIndex,
+    pageSize: params.pageSize,
+    sorting: params.sorting,
+    searchQuery: params.searchQuery,
+    order_status_id: params.filters.order_status_id,
+    has_order_lines: lines === 'yes' || lines === 'no' ? lines : 'all',
+    advancedFilter:
+      decodeAdvancedFilter<ListQueryFilterGroup>(params.filters.advFilter) ?? undefined,
+  };
+}
+
+/** The pager's two hooks into the orders list, ready to spread into `ListPager`. */
+export const ordersPagerQuery = {
+  listQueryKey: (params: ListPagerParams): QueryKey =>
+    ordersListQueryKey(ordersListParamsFromUrl(params)),
+  fetchPage: (params: ListPagerParams): Promise<ListPagerPage> =>
+    fetchOrdersPage(ordersListParamsFromUrl(params)),
+};
+
+export function useOrders(params: OrdersListParams) {
   return useQuery({
-    queryKey: [
-      'orders',
-      params.pageIndex,
-      params.pageSize,
-      params.sorting,
-      params.searchQuery,
-      params.customer_id,
-      params.order_status_id,
-      params.has_order_lines,
-      params.advancedFilter,
-    ],
-    queryFn: async () => {
-      if (params.advancedFilter) {
-        const sortField = params.sorting?.[0]?.id || '';
-        const sortDirection = params.sorting?.[0]?.desc ? 'desc' : 'asc';
-        return postListQuerySearch<Order>({
-          resource: 'orders',
-          filter: params.advancedFilter,
-          page: params.pageIndex + 1,
-          limit: params.pageSize,
-          sort: sortField || 'created_at',
-          dir: sortDirection,
-          quick_search: params.searchQuery || undefined,
-          order_status_id:
-            params.order_status_id && params.order_status_id !== 'all'
-              ? params.order_status_id
-              : undefined,
-          has_order_lines:
-            params.has_order_lines && params.has_order_lines !== 'all'
-              ? params.has_order_lines
-              : undefined,
-          customer_id: params.customer_id,
-        });
-      }
-      return getOrders(params);
-    },
+    queryKey: ordersListQueryKey(params),
+    queryFn: () => fetchOrdersPage(params),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,
     refetchOnWindowFocus: false,
