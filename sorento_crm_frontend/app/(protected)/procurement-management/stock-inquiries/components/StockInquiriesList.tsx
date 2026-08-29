@@ -12,7 +12,7 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Plus, Search, X, ChevronRight, Trash2, Check } from 'lucide-react';
+import { Plus, Search, X, Trash2, Check } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -100,10 +100,9 @@ export default function StockInquiriesList() {
     enabled: !isViewPrefsLoading,
   });
 
-  const handleRowClick = (row: StockInquiry) => {
-    const inquiryId = row.id;
-    // Carry the active list query into the detail URL so its prev/next pager
-    // walks the same filtered+sorted set.
+  // The whole row opens the record, carrying the list query the pager rebuilds
+  // its key from.
+  const rowHref = (row: StockInquiry) => {
     const search = buildDetailSearch(
       {
         pageIndex: pagination.pageIndex,
@@ -116,7 +115,7 @@ export default function StockInquiriesList() {
       },
     );
     const qs = search ? `?${search}` : '';
-    router.push(`/procurement-management/stock-inquiries/${inquiryId}${qs}`);
+    return `/procurement-management/stock-inquiries/${row.id}${qs}`;
   };
 
   const applyStatusFilter = (next: string[]) => {
@@ -395,15 +394,6 @@ export default function StockInquiriesList() {
           skeleton: <Skeleton className="h-4 w-12" />,
         },
       },
-      {
-        accessorKey: 'actions',
-        header: '',
-        cell: () => (
-          <ChevronRight className="text-muted-foreground/70 size-3.5" />
-        ),
-        size: 40,
-        enableHiding: false,
-      },
     ],
     [],
   );
@@ -431,7 +421,7 @@ export default function StockInquiriesList() {
       table={table}
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading || isViewPrefsLoading}
-      onRowClick={handleRowClick}
+      rowHref={rowHref}
       standardToolbar={false}
       tableLayout={{ columnsVisibility: true }}
     >

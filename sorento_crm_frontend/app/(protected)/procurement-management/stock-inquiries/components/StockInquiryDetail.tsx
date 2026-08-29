@@ -70,7 +70,8 @@ import { formatDate } from '@/lib/helpers';
 import { useHasPermission } from '@/hooks/usePermissions';
 import StockInquiryDeleteDialog from './stock-inquiry-delete-dialog';
 import AuditTrail from '@/components/audit/AuditTrail';
-import StockInquiryNavigation from './StockInquiryNavigation';
+import ListPager from '@/components/common/ListPager';
+import { stockInquiriesPagerQuery } from '../hooks/useStockInquiries';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import { EntityDownloadsButton } from '@/components/my-downloads/EntityDownloadsButton';
 import StockInquiryAttachmentsSection from './StockInquiryAttachmentsSection';
@@ -398,6 +399,12 @@ export default function StockInquiryDetail({
           )}
         </div>
         <div className="flex items-center gap-2 flex-wrap sm:justify-end">
+          <ListPager
+            {...stockInquiriesPagerQuery}
+            detailPath="/procurement-management/stock-inquiries"
+            currentId={inquiryId}
+            ariaLabel="stock inquiry"
+          />
           {/* Workflow actions: HIDDEN (not disabled) while the handling lock is held
               by someone else / unclaimed - keeps the header uncluttered. When the lock
               does not bite (tier 1, flag off, or I hold it) businessCtasEnabled is true
@@ -663,7 +670,7 @@ export default function StockInquiryDetail({
               </DropdownMenuItem>
             )}
           </DetailActionsMenu>
-          <StockInquiryNavigation inquiryId={inquiryId} />
+
         </div>
       </div>
 

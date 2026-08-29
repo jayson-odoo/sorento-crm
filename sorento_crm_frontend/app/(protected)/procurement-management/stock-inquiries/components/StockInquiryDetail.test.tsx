@@ -128,7 +128,14 @@ const updateAndReplyMutateAsync = vi.fn().mockResolvedValue({});
 const uploadResponseAttachmentsMutateAsync = vi.fn();
 const exportPdfMutate = vi.fn();
 
+vi.mock('@/components/common/ListPager', () => ({ __esModule: true, default: () => null }));
+
 vi.mock('../hooks/useStockInquiries', () => ({
+  // The pager reads the list page through the entity's shared key + fetch (S3-03).
+  stockInquiriesPagerQuery: {
+    listQueryKey: () => ['stock-inquiries'],
+    fetchPage: async () => ({ data: [], pagination: { total: 0 } }),
+  },
   useStockInquiry: (...a: unknown[]) => useStockInquiryMock(...a),
   useUpdateStockInquiry: () => ({ mutateAsync: updateInquiryMutateAsync, isPending: false }),
   useUpdateStockInquiryAndReply: () => ({ mutateAsync: updateAndReplyMutateAsync, isPending: false }),

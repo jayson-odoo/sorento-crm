@@ -84,7 +84,14 @@ vi.mock('./StockInquiryConversationPanel', () => ({ __esModule: true, default: (
 vi.mock('@/components/audit/AuditTrail', () => ({ __esModule: true, default: () => null }));
 
 const useStockInquiryMock = vi.fn();
+vi.mock('@/components/common/ListPager', () => ({ __esModule: true, default: () => null }));
+
 vi.mock('../hooks/useStockInquiries', () => ({
+  // The pager reads the list page through the entity's shared key + fetch (S3-03).
+  stockInquiriesPagerQuery: {
+    listQueryKey: () => ['stock-inquiries'],
+    fetchPage: async () => ({ data: [], pagination: { total: 0 } }),
+  },
   useStockInquiry: (...a: unknown[]) => useStockInquiryMock(...a),
   useUpdateStockInquiry: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useUpdateStockInquiryAndReply: () => ({ mutateAsync: vi.fn(), isPending: false }),
