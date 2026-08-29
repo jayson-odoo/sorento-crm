@@ -51,8 +51,22 @@ const STABLE_AGENT = {
   updated_at: '2026-01-02T00:00:00Z',
 };
 
+// The gear resolves permissions; this test has no session or query client, and
+// RBAC has its own tests.
+vi.mock('@/hooks/usePermissions', () => ({
+  useHasPermission: () => true,
+  usePermissions: () => ({ permissions: [], permissionSet: new Set(), isLoading: false }),
+}));
+
+// The pager has its own tests (hooks/useListPager.test.ts).
+vi.mock('@/components/common/ListPager', () => ({ __esModule: true, default: () => null }));
+
 vi.mock('../hooks/useAccessAgents', () => ({
   useAccessAgent: () => ({ data: STABLE_AGENT, isLoading: false }),
+  accessAgentsPagerQuery: {
+    listQueryKey: () => ['access-agents'],
+    fetchPage: async () => ({ data: [], pagination: { total: 0 } }),
+  },
   useAgentTeams: () => ({
     data: { assignments: agentTeamsAssignments },
     refetch: vi.fn(),

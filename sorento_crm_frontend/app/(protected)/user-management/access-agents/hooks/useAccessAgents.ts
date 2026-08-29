@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { useCompany } from '@/app/providers/CompanyProvider';
 import { toast } from 'sonner';
 import { buildDataGridParams } from '@/lib/api-client';
@@ -7,6 +7,7 @@ import {
   type RecordNeighboursResult,
 } from '@/hooks/useRecordNeighbours';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
+import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
 import { ACCESS_AGENT_NEIGHBOURS_PATH, getAccessAgents, getAccessAgent, createAccessAgent, updateAccessAgent, deleteAccessAgent, getContactAccessAgents, createContactAgentAccess, updateContactAgentAccess, deleteContactAgentAccess, getAgentTeams, setAgentTeams, getTeams, getAgentFieldAccess, setAgentFieldAccess } from '../services/accessAgentService';
 import type { AccessAgentFormData, ContactAgentAccessFormData } from '../types/accessAgent.types';
 
@@ -24,9 +25,47 @@ export function useAccessAgentNeighbours(
   return useRecordNeighbours(ACCESS_AGENT_NEIGHBOURS_PATH, agentId, params);
 }
 
-export function useAccessAgents(params: DataGridApiFetchParams & { status?: string }) {
+export type AccessAgentsListParams = DataGridApiFetchParams & { status?: string };
+
+/**
+ * The list's React Query key. The detail page's pager rebuilds the SAME key from
+ * the URL, so it reads the page the list already fetched.
+ */
+export function accessAgentsListQueryKey(params: AccessAgentsListParams): QueryKey {
+  return [
+    'access-agents',
+    params.pageIndex,
+    params.pageSize,
+    params.sorting,
+    params.searchQuery,
+    params.status,
+  ];
+}
+
+/** The list query a detail URL describes, in the shape the list passes. */
+export function accessAgentsListParamsFromUrl(
+  params: ListPagerParams,
+): AccessAgentsListParams {
+  return {
+    pageIndex: params.pageIndex,
+    pageSize: params.pageSize,
+    sorting: params.sorting,
+    searchQuery: params.searchQuery,
+    status: params.filters.status,
+  };
+}
+
+/** The pager's two hooks into the access agents list. */
+export const accessAgentsPagerQuery = {
+  listQueryKey: (params: ListPagerParams): QueryKey =>
+    accessAgentsListQueryKey(accessAgentsListParamsFromUrl(params)),
+  fetchPage: (params: ListPagerParams): Promise<ListPagerPage> =>
+    getAccessAgents(accessAgentsListParamsFromUrl(params)),
+};
+
+export function useAccessAgents(params: AccessAgentsListParams) {
   return useQuery({
-    queryKey: ['access-agents', params.pageIndex, params.pageSize, params.sorting, params.searchQuery, params.status],
+    queryKey: accessAgentsListQueryKey(params),
     queryFn: () => getAccessAgents(params),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,
