@@ -272,3 +272,27 @@ describe('ProductLocationsPopover - legacy presentation (AC-F10)', () => {
     ).not.toBeInTheDocument();
   });
 });
+
+
+describe('ProductLocationsPopover - the header stays put (S4-04)', () => {
+  it('the head sticks to the top of its own scroller, opaque and layered', () => {
+    renderPopover(state({ data: BLUE_LOCATIONS }));
+    openPopover();
+
+    const scroller = screen.getByTestId('location-rows');
+    // The scroller is the div, not a nested ScrollArea: nested, the inner one
+    // became the head's offset parent and scrolled away carrying it.
+    expect(scroller).toHaveClass('max-h-72');
+    expect(scroller).toHaveClass('overflow-auto');
+    expect(scroller.querySelector('[data-slot="scroll-area"]')).toBeNull();
+
+    const head = scroller.querySelector('thead')!;
+    expect(head).toHaveClass('sticky');
+    expect(head).toHaveClass('top-0');
+    // z-10 and an OPAQUE fill: `bg-muted/60` let forty rows of figures show
+    // through the header as they passed under it.
+    expect(head).toHaveClass('z-10');
+    expect(head).toHaveClass('bg-popover');
+    expect(head.className).not.toContain('bg-muted/60');
+  });
+});
