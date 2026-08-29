@@ -40,12 +40,107 @@ export interface RecordNavigationListProps {
   pageItemOffset?: number;
 }
 
-export type RecordNavigationProps = RecordNavigationIdsProps | RecordNavigationListProps;
+/**
+ * Presentational props: the caller has already worked out where prev and next go.
+ *
+ * This is the shape `ListPager` uses (S3), and the one the two legacy modes above
+ * collapse into once every detail page is on `useListPager` - they exist only to
+ * keep the ~20 `*Navigation.tsx` wrappers compiling until they are deleted.
+ */
+export interface RecordNavigationPagerProps {
+  /** 1-based position on the page, or null when it is not known yet. */
+  index: number | null;
+  /** Rows on the page the pager is walking. */
+  total: number;
+  hasPrevious: boolean;
+  hasNext: boolean;
+  onPrevious: () => void;
+  onNext: () => void;
+  isLoading?: boolean;
+  ariaLabel?: string;
+  className?: string;
+}
+
+export type RecordNavigationProps =
+  | RecordNavigationIdsProps
+  | RecordNavigationListProps
+  | RecordNavigationPagerProps;
+
+type RecordNavigationLegacyProps =
+  | RecordNavigationIdsProps
+  | RecordNavigationListProps;
+
+function isPagerProps(
+  props: RecordNavigationProps,
+): props is RecordNavigationPagerProps {
+  return 'onPrevious' in props && 'onNext' in props;
+}
 
 function isIdsProps(
-  props: RecordNavigationProps,
+  props: RecordNavigationLegacyProps,
 ): props is RecordNavigationIdsProps {
   return 'prevId' in props && 'nextId' in props;
+}
+
+/** The chevrons and the counter, and nothing else. */
+function RecordNavigationView({
+  index,
+  total,
+  hasPrevious,
+  hasNext,
+  onPrevious,
+  onNext,
+  isLoading = false,
+  ariaLabel = 'record',
+  className,
+}: RecordNavigationPagerProps) {
+  const counterLabel = isLoading && index == null
+    ? total > 0
+      ? `… / ${total}`
+      : '…'
+    : total > 0
+      ? index != null && index > 0
+        ? `${index} / ${total}`
+        : `- / ${total}`
+      : null;
+
+  return (
+    <div
+      className={['flex items-center gap-2', className].filter(Boolean).join(' ')}
+      aria-label={`${ariaLabel} navigation`}
+    >
+      <Button
+        variant="outline"
+        size="icon"
+        aria-label={`Previous ${ariaLabel}`}
+        disabled={!hasPrevious}
+        onClick={onPrevious}
+      >
+        <ChevronLeft className="size-4" />
+      </Button>
+      {counterLabel != null && (
+        <span
+          className="min-w-[3rem] text-center text-sm text-muted-foreground tabular-nums"
+          aria-label={
+            index != null && index > 0
+              ? `${index} of ${total} records`
+              : `Position unknown within ${total} records on this page`
+          }
+        >
+          {counterLabel}
+        </span>
+      )}
+      <Button
+        variant="outline"
+        size="icon"
+        aria-label={`Next ${ariaLabel}`}
+        disabled={!hasNext}
+        onClick={onNext}
+      >
+        <ChevronRight className="size-4" />
+      </Button>
+    </div>
+  );
 }
 
 /**
@@ -55,6 +150,12 @@ function isIdsProps(
  * With list mode: shows "current / total" and circular scrolling (next on last → first, previous on first → last).
  */
 export default function RecordNavigation(props: RecordNavigationProps) {
+  if (isPagerProps(props)) return <RecordNavigationView {...props} />;
+  return <LegacyRecordNavigation {...props} />;
+}
+
+/** The neighbours-id / whole-list modes. Deleted with the last `*Navigation.tsx`. */
+function LegacyRecordNavigation(props: RecordNavigationLegacyProps) {
   const router = useRouter();
   const { basePath, ariaLabel = 'record', className, onSelect } = props;
 

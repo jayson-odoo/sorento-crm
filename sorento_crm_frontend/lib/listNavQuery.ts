@@ -63,3 +63,43 @@ export function parseDetailSearch(searchParams: URLSearchParams): {
     filters,
   };
 }
+
+/**
+ * Encode the advanced (POST list-query) filter for the detail URL round-trip.
+ *
+ * A list whose advanced filter is not in the URL cannot have its page rebuilt by
+ * the detail page's pager, so the pager would walk the UNFILTERED set. Every list
+ * with an advanced filter therefore carries it as `advFilter`.
+ */
+export function encodeAdvancedFilter(
+  filter: unknown | null | undefined,
+): string | undefined {
+  if (filter == null) return undefined;
+  try {
+    return encodeURIComponent(JSON.stringify(filter));
+  } catch {
+    return undefined;
+  }
+}
+
+/** Decode the advanced filter carried back from a detail URL (invalid -> null). */
+export function decodeAdvancedFilter<T = unknown>(raw: string | undefined): T | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(decodeURIComponent(raw)) as {
+      op?: string;
+      children?: unknown;
+    };
+    if (
+      parsed &&
+      typeof parsed === 'object' &&
+      (parsed.op === 'and' || parsed.op === 'or') &&
+      Array.isArray(parsed.children)
+    ) {
+      return parsed as T;
+    }
+  } catch {
+    /* ignore malformed / oversized */
+  }
+  return null;
+}
