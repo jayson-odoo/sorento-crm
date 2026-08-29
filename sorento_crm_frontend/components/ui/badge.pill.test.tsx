@@ -69,8 +69,22 @@ describe('Badge (S1-08)', () => {
     expect(ghostClass).not.toContain('bg-transparent');
   });
 
-  it('S1-08: count badges (shape="circle") stay circular', () => {
+  it('S1-08: count badges (shape="circle") render unchanged - circular and solid', () => {
     render(<Badge shape="circle">9</Badge>);
-    expect(screen.getByText('9')).toHaveClass('rounded-full');
+    const badge = screen.getByText('9');
+
+    expect(badge).toHaveClass('rounded-full');
+    // Solid, not tinted: a tinted "9" reads as a status rather than a count.
+    expect(badge).toHaveClass('bg-primary');
+    expect(badge.className).not.toMatch(/--color-primary-soft/);
+  });
+
+  it('S1-08: a count badge that asks for a tint still gets one', () => {
+    render(
+      <Badge shape="circle" appearance="light">
+        9
+      </Badge>,
+    );
+    expect(screen.getByText('9').className).toMatch(/--color-primary-soft/);
   });
 });

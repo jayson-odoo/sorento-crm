@@ -26,6 +26,26 @@ function Harness({ variant }: { variant?: 'default' | 'button' | 'line' }) {
 }
 
 describe('Tabs (S1-04)', () => {
+  it('S1-04: the list keeps the caller its ref', () => {
+    const seen: (HTMLElement | null)[] = [];
+    render(
+      <Tabs defaultValue="a">
+        <TabsList
+          ref={(node) => {
+            seen.push(node);
+          }}
+          data-testid="list"
+        >
+          <TabsTrigger value="a">One</TabsTrigger>
+        </TabsList>
+      </Tabs>,
+    );
+
+    // The list takes a ref of its own to measure the overflow; that is not a
+    // reason to swallow the caller's.
+    expect(seen.filter(Boolean)[0]).toBe(screen.getByTestId('list'));
+  });
+
   it('S1-04: a TabsList with no variant renders the line variant', () => {
     render(<Harness />);
 
@@ -34,7 +54,9 @@ describe('Tabs (S1-04)', () => {
     expect(list).not.toHaveClass('bg-accent');
 
     // ...and its triggers are underlines, not pills.
-    expect(screen.getByRole('tab', { name: 'Overview' })).toHaveClass('border-b-2');
+    expect(screen.getByRole('tab', { name: 'Overview' })).toHaveClass(
+      'border-b-2',
+    );
   });
 
   it('S1-04: the two-option segmented switches keep pills with an explicit variant', () => {
@@ -42,7 +64,9 @@ describe('Tabs (S1-04)', () => {
 
     const list = screen.getByTestId('list');
     expect(list).toHaveClass('bg-accent');
-    expect(screen.getByRole('tab', { name: 'Overview' })).not.toHaveClass('border-b-2');
+    expect(screen.getByRole('tab', { name: 'Overview' })).not.toHaveClass(
+      'border-b-2',
+    );
   });
 
   it('S1-04: the list scrolls sideways with no visible scrollbar', () => {

@@ -37,6 +37,8 @@ const badgeVariants = cva(
       appearance: {
         light: '',
         outline: '',
+        /** The pre-pill solid fill. Count badges (`shape="circle"`) keep it. */
+        solid: '',
         /**
          * @deprecated Retired by PLAN-apple-alignment 3.1 - a dot-and-text badge
          * with no fill read as a second status language beside the tinted pill.
@@ -55,6 +57,8 @@ const badgeVariants = cva(
       },
       shape: {
         default: '',
+        // A count badge is a solid disc, not a tinted status pill - S1-08 says it
+        // renders unchanged, and the tint made "3 unread" look like a status.
         circle: 'rounded-full',
       },
     },
@@ -177,12 +181,14 @@ function Badge({
   const resolvedAppearance = appearance === 'ghost' ? 'light' : appearance;
   const isStatus = status != null && String(status).trim() !== '';
   const resolvedVariant = isStatus ? getStatusBadgeVariant(status) : variant;
+  // A count badge keeps the solid fill it had before the pill work.
+  const effectiveAppearance = shape === 'circle' && appearance === undefined ? 'solid' : resolvedAppearance;
 
   return (
     <Comp
       data-slot="badge"
       className={cn(
-        badgeVariants({ variant: resolvedVariant, size, appearance: resolvedAppearance, shape, disabled }),
+        badgeVariants({ variant: resolvedVariant, size, appearance: effectiveAppearance, shape, disabled }),
         className,
       )}
       {...props}

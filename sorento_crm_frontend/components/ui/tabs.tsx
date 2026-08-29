@@ -165,9 +165,21 @@ function TabsList({
   variant = 'line',
   shape = 'default',
   size = 'md',
+  ref: callerRef,
   ...props
 }: React.ComponentProps<typeof TabsPrimitive.List> & VariantProps<typeof tabsListVariants>) {
-  const { ref, isFading } = useHorizontalOverflow<HTMLDivElement>();
+  const { ref: scrollerRef, isFading } = useHorizontalOverflow<HTMLDivElement>();
+
+  // The list needs its own ref to measure the overflow, but it is not entitled to
+  // the caller's: placing ours after {...props} silently dropped one.
+  const mergedRef = React.useCallback(
+    (node: HTMLDivElement | null) => {
+      scrollerRef.current = node;
+      if (typeof callerRef === 'function') callerRef(node);
+      else if (callerRef) callerRef.current = node;
+    },
+    [scrollerRef, callerRef],
+  );
 
   return (
     <TabsContext.Provider value={{ variant: variant || 'line', size: size || 'md' }}>
@@ -176,7 +188,7 @@ function TabsList({
         data-fade={isFading}
         className={cn(tabsListVariants({ variant, shape, size }), className)}
         {...props}
-        ref={ref}
+        ref={mergedRef}
       />
     </TabsContext.Provider>
   );
