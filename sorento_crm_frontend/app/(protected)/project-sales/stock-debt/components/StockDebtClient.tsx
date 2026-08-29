@@ -302,8 +302,13 @@ export function StockDebtClient() {
         table={table}
         recordCount={total}
         isLoading={list.isLoading}
-        // No `listingKey`: the columns ARE the months, so a stored order or visibility
-        // would pin an axis that moves on the first of every month. Nothing to persist.
+        listingKey={null}
+        // `listingKey={null}`: the columns ARE the months, so a stored order or visibility
+        // would pin an axis that moves on the first of every month. Nothing to persist -
+        // and it has to be said out loud, because omitting the prop makes the grid persist
+        // under the PATHNAME instead. A row saved that way was re-applied against the
+        // columns that existed the moment it arrived, which walked the three no-supply
+        // columns up next to Product and left TanStack warning about months not yet built.
         // `columnsDraggable: false` is load-bearing, not tidiness. The DataGrid defaults
         // it to TRUE, and in that mode every cell gets `position: relative` as an INLINE
         // style from dnd-kit and the table drops `border-separate border-spacing-0` - so a

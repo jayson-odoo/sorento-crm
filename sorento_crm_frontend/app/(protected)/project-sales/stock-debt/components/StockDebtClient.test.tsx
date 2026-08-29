@@ -27,11 +27,17 @@ vi.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(''),
 }));
 
-// Without this the shared DataGrid sits in its column-preferences fetch forever and renders
-// skeleton rows instead of data.
-vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
-  useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
+// The real column-preferences hook runs here on purpose: the board passes
+// `listingKey={null}`, and the point of the last test below is that the hook then reads
+// nothing. The service underneath is mocked with a config a real user had saved under the
+// pathname fallback, so a board that persisted would be caught reordering itself.
+vi.mock('@/lib/listing-column-preferences/listColumnPreferencesService', () => ({
+  getUserListColumnConfig: vi.fn(),
+  upsertUserListColumnConfig: vi.fn(),
+  resetUserListColumnConfig: vi.fn(),
 }));
+
+import { getUserListColumnConfig } from '@/lib/listing-column-preferences/listColumnPreferencesService';
 
 const getStockDebtList = vi.fn();
 const getStockDebtCell = vi.fn();
@@ -85,6 +91,10 @@ beforeEach(() => {
   vi.clearAllMocks();
   getStockDebtList.mockResolvedValue(envelope());
   getStockDebtCell.mockResolvedValue({ demand: [], supply: [] });
+  vi.mocked(getUserListColumnConfig).mockResolvedValue({
+    listing_key: '/project-sales/stock-debt',
+    config: { version: 1, columnOrder: ['product', 'tba', 'undated'] },
+  });
 });
 
 describe('StockDebtClient', () => {
@@ -229,6 +239,29 @@ describe('StockDebtClient', () => {
       expect((element as HTMLElement).style.position).toBe('sticky');
       expect((element as HTMLElement).style.left).toBe('0px');
     });
+  });
+
+  it('keeps the calendar as the axis when the board arrives after the columns are built', async () => {
+    // The list resolves AFTER mount, so at mount the only columns are Product and the three
+    // that carry no supply. That snapshot is exactly what a persisted order used to be
+    // reconciled against: TBA, No date and No location walked up next to Product and stayed
+    // there, and every month column the board later built was warned about as non-existent.
+    renderBoard();
+    await screen.findByText('SRTWB242');
+
+    expect(
+      screen.getAllByRole('columnheader').map((cell) => cell.textContent?.trim()),
+    ).toEqual([
+      'Product',
+      'Aug 26',
+      'Sep 26',
+      'Oct 26',
+      '2030-01',
+      'No date',
+      'No location',
+    ]);
+    // The board is `listingKey={null}`, so there is no config to read in the first place.
+    expect(getUserListColumnConfig).not.toHaveBeenCalled();
   });
 
   it('never prints the product id, only the code and the name', async () => {
