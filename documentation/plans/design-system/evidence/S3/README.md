@@ -259,3 +259,158 @@ are recorded as product findings, not environment noise, on that stronger eviden
 
 `agent-browser@0.27.0`, session `s3-run2a`, closed cleanly at the end of this run (not
 `close --all`).
+
+## Run 3A
+
+Re-sweep after the fix round, against `apple-alignment-acceptance-criteria.md` (S3-01..S3-07, D6,
+D15) and the Run 2A findings it targets. Worktree `agent-a4fcc3bb35ba62b83`, FE `:3090`, BE
+`:8000`, agent-browser 0.27.0, headless, `--session s3-run3a`. No record created, saved or
+deleted. Environment note: the FE dev server rebuilt via Fast Refresh repeatedly through the run
+(cycles up to ~50s), so a click's effect frequently only appeared after a retry + wait; every
+"unreachable" claim below was re-confirmed via `network requests` (a real absent detail fetch),
+not just a slow `get url`.
+
+### Result table
+
+| Module | Check | Pass/Fail | Screenshot | Note |
+|---|---|---|---|---|
+| Complaints | S3-01 Back restores filter | Pass | run3a-complaints-back-liststate-1280.png | Back to complaints returns with `query=CMP2026` intact (B2 fix confirmed). |
+| Complaints | S3-02 order | **Still Fail** | run3a-complaints-toolbar-1280.png | Reads pager, primary (Download PDF), print count, **gear last** - unchanged from Run 2A. |
+| Complaints | gear contents | Pass | run3a-complaints-gear-1280.png | Secondary items, then Void/Delete red, Delete last. |
+| Complaints | row "..." parity | Unreachable (structural) | run3a-complaints-rowmenu-1280.png | List still has no row action menu, only a print-count icon; unchanged from Run 2A. |
+| Complaints | 375 wrap | Pass | run3a-complaints-detail-375.png | Wraps cleanly under identity, nothing clips. |
+| Stock Transfers | S3-02 order | **Fixed** | run3a-stocktransfers-toolbar-1280.png | Now pager, gear only (no primary shown - correct, nothing to do on an Approved transfer). |
+| Stock Transfers | gear vs row parity | **Fixed** | run3a-stocktransfers-gear-1280.png, run3a-stocktransfers-rowmenu-1280.png | Both = "Cancel transfer", red, identical. |
+| Stock Transfers | 375 wrap | Pass | run3a-stocktransfers-detail-375.png | Clean wrap. |
+| Forms | row navigation | **Improved, partial** | run3a-forms-toolbar-1280.png, run3a-forms-rowmenu-1280.png | Detail page now reachable via the Form Code cell (now a real link) and shows correct pager/gear/Edit order + single Back. Clicking elsewhere on the row still does not navigate (confirmed via network log, zero new fetch) - inconsistent with modules where the whole row is clickable. |
+| Access Agents | row navigation | **Improved, partial** | run3a-accessagents-toolbar-1280.png | Same pattern as Forms: Code-cell link works, whole-row click does not. Detail order pager/gear/Edit correct, single Back. |
+| Sponsorship Forms | S3-01 Back | **Fixed** | run3a-sponsorshipforms-toolbar-1280.png | "Back to sponsorship forms" present, restores `request_type` filter. Card keeps the flat workflow-menu exception pattern (pager, status CTA, gear, Edit, Delete standalone red last). |
+| Customers | Back restores status filter | Pass | run3a-customers-back-liststate-1280.png | Back returns with Filters badge "1" (Active) intact; detail order pager/gear/Edit correct. |
+| Suppliers | order/Back | Pass, no regression | run3a-suppliers-toolbar-1280.png | pager/gear/Edit, single Back. |
+| GRN | order/Back | Pass, no regression | run3a-grn-toolbar-1280.png | pager/gear/Edit, single Back. |
+| Promotions | detail pattern | Not comparable | run3a-promotions-lightbox-1280.png | Opens an attachments-style lightbox (Preview/Download/Resubmit/Move to Trash-red), not a `DetailActions` page - D8 territory per the Run 2A precedent for the Attachments stepper, not scored against pager/gear/primary. |
+| Purchase Requests | order/Back (exception) | Pass, no regression | run3a-purchaserequests-toolbar-1280.png | Flat workflow-menu layout unchanged; Delete standalone red last. |
+| Stock Inquiries | order/Back (exception) | Pass, no regression | - | Same flat pattern, unchanged. |
+| Packing Lists | order/Back | Pass, no regression | run3a-packinglists-toolbar-1280.png | pager/gear/primary "Download packing list", single Back. |
+| Sales Agents | 1/1 disabled chevrons | Pass, no regression | run3a-salesagents-toolbar-1280.png | Both Previous/Next `disabled` in DOM; no gear (correctly omitted). |
+
+### Ranked findings
+
+1. **Complaints record-card order is still pager, primary, gear-last** - the one Run 2A defect
+   this round did not fix. Everything else about Complaints (Back/filter restore, gear contents,
+   375 wrap) is now correct.
+2. **Forms and Access Agents are reachable again but inconsistently** - the previous "no way to
+   open a record at all" is fixed via a new Code-cell link, but a click anywhere else on the row
+   still does nothing (confirmed via network log, not just a slow click), unlike every other
+   module swept where the whole row navigates. Worth a follow-up to make the row uniformly
+   clickable rather than only the one cell.
+3. Complaints' list still has no row "..." menu at all (structural, same as Run 2A - the gear's
+   items have nothing to compare against on the list).
+
+### Fixed since Run 2A
+
+Stock Transfers order + gear/row parity, Sponsorship Forms Back button, Customers Back-restores-
+status-filter (B2), Complaints Back-restores-query, Forms/Access Agents detail reachability
+(partially).
+
+### Unreachable / not exercised
+
+- Promotions' underlying `DetailActions` page (if one still exists) was not reached - the row
+  action opens the attachments lightbox by default; not re-diagnosed further given time budget.
+- Rows-per-page combobox exercise was skipped for most modules after the Complaints attempt did
+  not fire a request reliably; search/filter was used as the primary list-state check instead.
+
+### Browser session
+
+`agent-browser@0.27.0`, session `s3-run3a`, closed cleanly at the end of this run (not
+`close --all`).
+
+## Run 3B
+
+Verified against `apple-alignment-acceptance-criteria.md` (S3-01..S3-07, D6, D15). Worktree
+`agent-a4fcc3bb35ba62b83`, FE `:3090`, BE `:8000`, agent-browser 0.27.0 headless, session
+`s3-run3b`. No record created, saved or deleted; Delete/Trash dialogs opened for inspection were
+closed with Cancel or Escape.
+
+**Environment note:** the FE dev server rebuilt continuously through the whole run (Fast Refresh
+cycles from 2s to 52s, one 52512ms), consistent with concurrent coder activity in the same
+worktree. Nearly every list-row and sidebar-link click needed a retry plus an 8-15s wait before
+the URL actually changed; `get url` read stale dozens of times. Findings below are only recorded
+as Fail after 2+ reproductions with fresh refs and full waits.
+
+### Result table
+
+| Module | Check | Pass/Fail | Screenshot | Note |
+|---|---|---|---|---|
+| Conversation SLA Tracking | toolbar/order (was: loose Refresh + standalone Delete) | **Fixed - Pass** | run3b-slatracking-detail-1280.png | Toolbar = crumbs + one Back only, href carries query=60. Card = pager (2/30), gear only (no primary, correctly none exists); Refresh now lives inside the gear, Delete tracking is red and last. |
+| Conversation SLA Tracking | S3-07 row "..." parity | **Fail** | run3b-slatracking-rowmenu-1280.png | Row menu opens (progress from Run 2B's "not a menu at all") but shows only 1 item ("Sync assignee") vs. the gear's 8 items - truncated/clipped list, not full parity. |
+| Certificates | toolbar/order (was: unconverted) | **Fixed - Pass** | run3b-certificates-detail-1280.png | Now on the shared pattern: distinct toolbar row (crumbs + one Back), record-card row = pager (2/9), gear, primary "Edit", in order. Gear = "Merge as revision of...", separator, "Delete certificate" red last. |
+| Certificates | 375, group wraps | Pass | run3b-certificates-detail-375.png | Pager/gear/Edit drop to their own row under the title block; nothing clipped. |
+| Certificates | S3-07 row "..." parity | Not verified | run3b-certificates-rowmenu-1280.png | Row now has a "certificate actions" menu (was chevron-only in Run 2B) but the actions column sits past the DataGrid's horizontal scroll edge at 1280 and time did not allow scrolling the grid to open it; not scored. |
+| Integration Logs | pager placement (was: pager on toolbar) | **Fixed - Pass** | run3b-integrationlogs-toolbar-1280.png | Toolbar now holds only crumbs + one "Back to integration logs"; pager (2/50) sits in its own row below, matching the five-page exception list. No gear/primary, correctly - a read-only log has nothing to act on; no row menu on the list either, consistent. |
+| Proforma Invoices | record-card order (was: pager, primary, gear) | **Fixed - Pass** | run3b-pi-detail-1280.png, run3b-pi-gear-1280.png | Card now reads pager (2/6), gear only - no primary shown (this revision is Superseded/Not converted, so nothing to Edit). Gear = "Export adjusted PI", separator, "Delete invoice" red last. Back restores `placement=not_converted`. |
+| SCM Sales Orders | record-card order | Pass | run3b-so-detail-1280.png | Toolbar = crumbs + one Back; card = pager (2/25), primary "Edit", no gear. List row carries an inline "Delete" button (not a gear/menu) not reachable from the detail page - an asymmetry, not a hard fail per the brief's no-secondary-action carve-out, but worth a follow-up look. |
+| SCM Purchase Orders | record-card order | Pass | run3b-po-detail-1280.png | Same shape as Sales Orders: toolbar clean, card = pager (2/25), primary "Edit", no gear. |
+| Products (list + detail) | no Edit/Duplicate icons, row "..." + gear | Pass | run3b-products-list-1280.png, run3b-products-detail-1280.png | List row shows one "product actions" control only. Detail: toolbar clean, card = pager (2/50), gear, primary "Edit" in order; gear = "Delete product" only, red. |
+| Project Sales > Series | toolbar/order (was: unconverted) | **Still Fail** | run3b-series-detail-1280.png | Opens straight into an always-editable form (Name/Brand/Categories/Description + Cancel/Save changes); toolbar is correct (crumbs + one Back) but there is no pager, no gear, no primary anywhere on the page - not on the shared pattern. Only 1 record exists so a pager may be legitimately hideable, but Run 2B's "unconverted" finding stands unchanged. |
+| Onboarding Requests | reachability + toolbar (was: unreachable) | **Reachable now, new Fail** | run3b-onboarding-detail-1280.png | Row click now navigates (was completely unreachable in Run 2B). But pager, gear ("Request actions"), and the "Back to onboarding requests" link all sit in the SAME row - no separate toolbar row for Back alone, replicating Certificates' old (now-fixed) defect. Gear itself is clean: Copy link, Revoke link, Issue a new link, separator, Delete red last. |
+| Users (Administrative Users) | toolbar/order + delete dialog | Pass | run3b-users-deletedialog-1280.png | Card = pager (2/10), gear, primary "Edit user". Gear = Impersonate user, Send invitation link, separator, Trash user (red) - matches the AC's named example exactly. "Trash user" opens a proper `AlertDialog` requiring the user's email typed to confirm, pager/gear/Edit still visible dimmed behind it; Cancel closed it with no request fired. |
+| Customer edit (pager in edit mode) | Next keeps you in edit mode | **Fail** | run3b-customer-edit-mode-1280.png, run3b-customer-edit-afternext-1280.png | Edit is a dedicated `/customers/{id}/edit` route, not an inline toggle - already a deviation from "View and Edit are the SAME layout." Clicking Next while editing did not advance to the next customer AND did not stay in edit mode: it landed back on the View page for the SAME record (still "2/50"), discarding the edit context. |
+| Warehouses | detail reachability | **Fail, reproduced 4x** | - | Row `click`, `find text`, and a second fresh-ref `click` all failed to navigate across 4 attempts with full waits; same as Run 2B's "Unreachable," now confirmed reproducible rather than environment noise. |
+| Product Sets | detail reachability | **Fail, reproduced 2x** | - | Same as Warehouses - row click never routed across 2 fresh attempts. Same as Run 2B. |
+| "Contacts" (Respond.io Contacts, System > Messaging) | detail reachability | **Fail, reproduced 4x** | run3b-tmp-contacts2.png (list only) | Could not locate a dedicated "Contacts" listing anywhere in the sidebar under that name; the in-app search maps "contacts" only to this page. Rows are plain `row [onclick]` (no `<a>`/link), and clicking never routed across 4 attempts (2 different rows, 1 `find text`) despite 5-12s waits each. If this is not the module the plan means, the actual "Contacts" route was not found this run - flagging as a discovery gap either way. |
+| Attachments (modal stepper) | not exercised | Not exercised | - | Time budget ran out after 3 navigation attempts to Resources > Files stalled on the same Fast-Refresh lag; not reached. |
+
+### Ranked failures
+
+1. **Customer edit: Next during edit mode neither advances the record nor stays in edit mode** -
+   it silently drops back to View on the same record. Directly contradicts the checked behaviour
+   ("the pager keeps you in edit mode").
+2. **Onboarding Requests, now reachable, has pager + gear + Back all crammed into one row** - the
+   exact defect Certificates just had fixed; Back is not alone in its own toolbar row.
+3. **Project Sales > Series remains fully unconverted** - no pager, no gear, no primary; unchanged
+   since Run 2B.
+4. **Conversation SLA Tracking's row "..." menu shows 1 of 8 gear items** - a menu now exists
+   (progress) but S3-07 parity is still broken, just differently than Run 2B's "not a menu" finding.
+5. **Warehouses and Product Sets detail are confirmed unreachable**, not environment flakiness -
+   reproduced 4x and 2x respectively with fresh refs and long waits.
+6. **"Contacts" could not be located/opened at all this run** - either a genuine reachability bug
+   on Respond.io Contacts (the closest match by content shape) or the intended module was never
+   found; needs the captain to confirm which page S3's "Contacts" module refers to.
+
+### Fixed since Run 2B (confirmed this run)
+
+Certificates (full toolbar/card conversion), Integration Logs (pager off the toolbar row),
+Proforma Invoices (pager/gear/primary order), Conversation SLA Tracking (Refresh into the gear,
+Delete no longer standalone), and the Back-link-restores-list-state fix (query, filter, sort all
+round-tripped correctly on SLA Tracking, Integration Logs, Proforma Invoices and Certificates).
+
+### Unreachable / not exercised
+
+- Attachments modal stepper: not reached (time).
+- Certificates row "..." menu contents: button exists but sits past the 1280px grid's horizontal
+  scroll edge; not opened.
+- SCM Sales Orders list-row inline Delete vs. detail-page gear absence: noted, not deep-dived.
+- 375 check for Contacts: skipped, detail was unreachable so there was nothing to screenshot.
+
+### Browser session
+
+`agent-browser@0.27.0`, session `s3-run3b`, closed cleanly at the end of this run (not
+`close --all`).
+
+## Run 3C - the coder's check of runs 3A/3B (round 3)
+
+`agent-browser@0.27.0`, session `s3-coder` on `:3090`, closed by name at the end.
+
+Clicks are dispatched on a named cell rather than the row's geometric centre. A `click @ref` on a
+`<tr>` lands on whatever cell happens to be under the middle of a horizontally scrolled grid, which
+in these lists is often the checkbox or the actions cell, and both of those are in
+`ROW_INTERACTIVE_SELECTOR` and deliberately do NOT open the record. That is what makes a row look
+dead when it is not.
+
+| Finding | Verdict | Evidence |
+| --- | --- | --- |
+| 5. Forms and Access Agents open only from the code link | **Not reproduced.** Clicking an inert cell navigates: `/forms-management/forms/<id>?page=1&limit=50&sort=updated_at&dir=desc` and `/user-management/access-agents/<id>?page=1&limit=50&sort=created_at&dir=desc`. Both grids already passed `rowHref`. A client-side route change writes no network entry, which is what the network log was reading. | URLs above |
+| 9. Warehouses and Product Sets never route | **Reproduced and fixed.** Neither grid passed `rowHref` at all; warehouses had a chevron button at the end of the row and product sets a link on one cell. Both now navigate from any inert cell, carrying the list query. | run3c-warehouses-rowclick-detail-1280.png |
+| 10. Promotions row click opens an attachments lightbox | **Not a row-click defect.** Every cell of a promotion row opens the promotion; the Attachments cell also holds a 14px "View details of <file>" eye button inside a 537px cell (2.6% of its width), and that button opens the flyer lightbox, which is its job. Marketing > Promotions also has a separate **Promotion Attachments** list whose rows ARE attachments. Nothing changed here. | run3c-promotions-attachment-eye-1280.png |
+| 4. Onboarding row shows only a chevron | **Fixed.** The row's "..." now reads Revoke link, Issue a new link, Delete - the record's gear minus Copy link, whose intake URL the list payload does not carry (it is a credential). | run3c-onboarding-rowmenu-1280.png |
