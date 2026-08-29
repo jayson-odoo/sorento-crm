@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { useQuery } from '@tanstack/react-query';
 import {
   ColumnDef,
   PaginationState,
@@ -35,13 +34,12 @@ import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useTenantModules } from '@/hooks/useTenantModules';
 import AttachmentDetailModal from '@/app/(protected)/resource-management/attachments/components/AttachmentDetailModal';
-import { buildDetailSearch } from '@/lib/listNavQuery';
+import { buildDetailSearch, encodeAdvancedFilter } from '@/lib/listNavQuery';
 import { PromotionRowActions } from '../actions';
-import { getPromotions } from '../services/promotionService';
-import { useCompilePromotionsPdf } from '../hooks/usePromotions';
+import { useCompilePromotionsPdf, usePromotions } from '../hooks/usePromotions';
 import type { Promotion } from '../types/promotion.types';
 import { formatPromotionBoundaryInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
-import { postListQuerySearch, type ListQueryFilterGroup } from '@/lib/list-query/listQueryService';
+import type { ListQueryFilterGroup } from '@/lib/list-query/listQueryService';
 import PromotionBulkDeleteDialog from './PromotionBulkDeleteDialog';
 import PromotionBulkAccessLevelsDialog from './PromotionBulkAccessLevelsDialog';
 import PromotionBulkResubmitDialog from './PromotionBulkResubmitDialog';
@@ -98,50 +96,23 @@ export default function PromotionsList() {
 
   const hasActiveQuickFilters = filterStatus !== 'all' || filterAccessLevel !== 'all' || filterAttachmentState !== 'all';
 
-  const { data, isLoading, refetch, isFetching } = useQuery({
-    queryKey: [
-      'promotions',
-      pagination.pageIndex,
-      pagination.pageSize,
-      sorting,
-      searchQuery,
-      filterStatus,
-      filterAccessLevel,
-      filterAttachmentState,
-      advancedFilter,
-      expiryNotifyBatchId,
-    ],
-    queryFn: async () => {
-      if (advancedFilter) {
-        const sortField = sorting?.[0]?.id || '';
-        const sortDirection = sorting?.[0]?.desc ? 'desc' : 'asc';
-        return postListQuerySearch<Promotion>({
-          resource: 'promotions',
-          filter: advancedFilter,
-          page: pagination.pageIndex + 1,
-          limit: pagination.pageSize,
-          sort: sortField || 'created_at',
-          dir: sortDirection,
-          quick_search: searchQuery || undefined,
-          promotion_status: filterStatus,
-          promotion_access_level: filterAccessLevel === 'all' ? undefined : filterAccessLevel,
-        });
-      }
-      return getPromotions({
-        pageIndex: pagination.pageIndex,
-        pageSize: pagination.pageSize,
-        sorting,
-        searchQuery,
-        status: filterStatus,
-        user_type: filterAccessLevel === 'all' ? undefined : filterAccessLevel,
-        attachment_state: filterAttachmentState === 'all' ? undefined : filterAttachmentState,
-        expiry_notify_batch_id: expiryNotifyBatchId,
-      });
-    },
-    staleTime: Infinity,
-    gcTime: 1000 * 60 * 60,
-    refetchOnWindowFocus: false,
-    retry: 1,
+  /**
+   * One query, one key, shared with the record page's pager (S3-03).
+   *
+   * This list used to hand-roll its own `useQuery` with a key of its own shape,
+   * so the pager's rebuilt key never matched: every promotion opened fired a
+   * second request and paged whatever THAT returned.
+   */
+  const { data, isLoading, refetch, isFetching } = usePromotions({
+    pageIndex: pagination.pageIndex,
+    pageSize: pagination.pageSize,
+    sorting,
+    searchQuery,
+    status: filterStatus,
+    user_type: filterAccessLevel === 'all' ? undefined : filterAccessLevel,
+    attachment_state: filterAttachmentState === 'all' ? undefined : filterAttachmentState,
+    expiry_notify_batch_id: expiryNotifyBatchId,
+    advancedFilter: advancedFilter ?? undefined,
   });
 
   useEffect(() => {
@@ -333,6 +304,10 @@ export default function PromotionsList() {
         user_type: filterAccessLevel !== 'all' ? filterAccessLevel : undefined,
         attachment_state:
           filterAttachmentState !== 'all' ? filterAttachmentState : undefined,
+        // Both narrow the set, so both have to ride along or the pager walks a
+        // wider one than the reader is looking at.
+        expiry_notify_batch_id: expiryNotifyBatchId,
+        advFilter: encodeAdvancedFilter(advancedFilter),
       },
     );
     return `/marketing-management/promotions/${row.id}${search ? `?${search}` : ''}`;

@@ -360,6 +360,8 @@ const CASES: ParityCase[] = [
       date_to: undefined,
       user_type: 'dealer',
       attachment_state: undefined,
+      expiry_notify_batch_id: undefined,
+      advancedFilter: undefined,
     };
     return {
       name: 'promotions',
@@ -367,6 +369,61 @@ const CASES: ParityCase[] = [
       url: buildDetailSearch(listParams, {
         status: listParams.status,
         user_type: listParams.user_type,
+      }),
+      pagerKey: (s: URLSearchParams) => promotionsPagerQuery.listQueryKey(parseDetailSearch(s)),
+    };
+  })(),
+
+  (() => {
+    /**
+     * The state the list OPENS in, which is the one the reader is almost always
+     * in: status "all", no other filter. It writes no `status` into the row href
+     * (an "all" is not a narrowing), so the pager has to restore the list's own
+     * default rather than the backend's - and the backend's default is active
+     * promotions only, which is a different, much smaller set.
+     */
+    const listParams = {
+      pageIndex: 0,
+      pageSize: 50,
+      sorting: SORT_DESC,
+      searchQuery: '',
+      status: 'all',
+      date_from: undefined,
+      date_to: undefined,
+      user_type: undefined,
+      attachment_state: undefined,
+      expiry_notify_batch_id: undefined,
+      advancedFilter: undefined,
+    };
+    return {
+      name: 'promotions, the default "all" state',
+      listKey: promotionsListQueryKey(listParams),
+      url: buildDetailSearch(listParams),
+      pagerKey: (s: URLSearchParams) => promotionsPagerQuery.listQueryKey(parseDetailSearch(s)),
+    };
+  })(),
+
+  (() => {
+    const listParams = {
+      pageIndex: 1,
+      pageSize: 50,
+      sorting: SORT_DESC,
+      searchQuery: '',
+      status: 'all',
+      date_from: undefined,
+      date_to: undefined,
+      user_type: undefined,
+      attachment_state: 'unlinked' as const,
+      expiry_notify_batch_id: 'batch-3',
+      advancedFilter: ADVANCED,
+    };
+    return {
+      name: 'promotions, cleanup filter + expiry batch deep link + advanced filter',
+      listKey: promotionsListQueryKey(listParams),
+      url: buildDetailSearch(listParams, {
+        attachment_state: listParams.attachment_state,
+        expiry_notify_batch_id: listParams.expiry_notify_batch_id,
+        advFilter: encodeURIComponent(JSON.stringify(ADVANCED)),
       }),
       pagerKey: (s: URLSearchParams) => promotionsPagerQuery.listQueryKey(parseDetailSearch(s)),
     };
@@ -793,6 +850,6 @@ describe('list key parity: the pager rebuilds the key the list used', () => {
     // One row per entity that ships a pager. When a new one is added, this count
     // is what makes forgetting the parity case a failing test rather than a
     // silent cache miss in production.
-    expect(CASES.length).toBe(30);
+    expect(CASES.length).toBe(32);
   });
 });
