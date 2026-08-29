@@ -414,3 +414,78 @@ dead when it is not.
 | 9. Warehouses and Product Sets never route | **Reproduced and fixed.** Neither grid passed `rowHref` at all; warehouses had a chevron button at the end of the row and product sets a link on one cell. Both now navigate from any inert cell, carrying the list query. | run3c-warehouses-rowclick-detail-1280.png |
 | 10. Promotions row click opens an attachments lightbox | **Not a row-click defect.** Every cell of a promotion row opens the promotion; the Attachments cell also holds a 14px "View details of <file>" eye button inside a 537px cell (2.6% of its width), and that button opens the flyer lightbox, which is its job. Marketing > Promotions also has a separate **Promotion Attachments** list whose rows ARE attachments. Nothing changed here. | run3c-promotions-attachment-eye-1280.png |
 | 4. Onboarding row shows only a chevron | **Fixed.** The row's "..." now reads Revoke link, Issue a new link, Delete - the record's gear minus Copy link, whose intake URL the list payload does not carry (it is a credential). | run3c-onboarding-rowmenu-1280.png |
+
+## Run 4 - targeted re-check after round 3 fixes
+
+`agent-browser@0.27.0`, session `s3-run4` on `:3090`, closed by name at the end. No record
+created, saved or deleted. Environment note: the FE dev server rebuilt continuously through the
+run (Fast Refresh cycles seen up to 34s), and most grids are wider than the 1280px viewport, so a
+`click @ref` on a row link often lands off-screen and silently no-ops; every navigation below was
+confirmed via `network requests` or a fresh `snapshot`, not a single `get url` read, and several
+needed a manual `scrollIntoView({inline:'center'})` on the target cell before the click landed.
+
+### Result table
+
+| Module | Check | Pass/Fail | Screenshot | Note |
+|---|---|---|---|---|
+| Complaints | 1. D6 order | Pass | run4-complaints-gear-1280.png | Toolbar = crumbs + one Back. Card = pager (1/50), gear only, nothing else. Gear = 7 secondary items, separator, Void + Delete both red, Delete last. |
+| Stock Inquiries | 1. D6 order | Pass | run4-stockinquiries-gear-1280.png | pager (1/44), gear, primary cluster (Approve/Reject workflow CTA - allowed). Gear separator before Void/Delete red last. |
+| Purchase Requests | 1. D6 order | Pass | run4-purchaserequests-gear-1280.png | pager (1/50), gear, primary cluster (Change to pending approval/Reject/Edit). Gear separator before Void/Delete red last. |
+| Onboarding Requests | 1. D6 order (ToolbarActions = Back only) | Pass | run4-onboarding-gear-1280.png | Toolbar has only "Back to onboarding requests", nothing else. Card = pager (5/9), gear, primary (Start review). Gear separator before Delete red last (Revoke link/Issue a new link disabled while link is active - correct). |
+| Series (Project Sales) | 1. D6 order | Pass, improved | run4-series-gear-1280.png | Was "Still Fail" in Run 3B (no pager/gear/primary at all). Now: toolbar = crumbs + Back only; action row = gear alone (no pager - only 1 series row exists, acceptable; no primary - form uses its own inline Save/Cancel). Gear = single "Delete series", red. |
+| Conversation SLA Tracking | 1. D6 order | **Fail (new)** | run4-slatracking-gear-1280.png | pager (1/31) + gear order is correct and no primary shown (correct, nothing to edit inline). But inside the gear "Delete tracking" is red yet NOT last - Portal link, Escalate, Overwrite assignee, Set current tier started at, Set initiated at, Mark as responded, Mark as resolved, Reopen for retest all sit below it. Violates "separator, then Delete last". |
+| Leads | 1. D6 order + S3-01 Back | **Fail (new)** | run4-leads-gear-1280.png | No "Back to leads" button anywhere in the toolbar (only the breadcrumb "Leads" link, which is a plain crumb, not a labelled Back button) - S3-01 violation. No pager either. Gear present with one item ("Delete lead", red). |
+| Project detail | 1. D6 order + S3-01 Back | **Fail (new)** | run4-project-gear-1280.png | Same missing-Back defect as Leads (breadcrumb only, no "Back to..." button). No pager. Order is reversed: primary ("Spec in") sits BEFORE the gear, not after - should read gear then primary. Gear itself is fine internally: Back to identified/PO received/Mark lost/Mark dormant, separator, Delete project red last. |
+| Onboarding Requests | 2. D15 row "..." parity | Pass | run4-onboarding-rowmenu-1280.png | Row = Revoke link, Issue a new link, Delete - exactly the gear's order minus Copy link (intake URL not in the list payload, documented exclusion from Run 3C). |
+| Conversation SLA Tracking | 2. D15 row "..." parity | Fail (unchanged) | run4-slatracking-rowmenu-1280.png | Row = Sync assignee, Delete tracking only (2 of the gear's 10 items). Page-bound items (Portal link, Escalate, tier timestamps, Mark as responded/resolved, Reopen) are correctly gear-only, so the gap itself is expected per the brief, but see the Delete-not-last defect above - it affects the gear both places would need to match against. |
+| Attachments (Resources > Files) | 2. D15 row "..." parity | Not comparable (structural) | - | Files have no route/gear/pager at all; clicking a row opens a modal ("2026-7-27 库存明细.xlsx", pager 1/50 inside the modal) with Preview / Download / Resubmit / Move to Trash as plain buttons, not a dropdown. No Rename affordance found anywhere in the modal. Different pattern from the shared `DetailActions`, unchanged since earlier rounds. |
+| SCM Sales Orders | 2. D15 row "..." parity | Pass | run4-so-rowmenu-1280.png, run4-so-gear-1280.png | Both = "Delete" only, red. Detail card = pager (1/25), gear, primary (Edit). |
+| Complaints | 2. D15 row "..." parity | Fail (structural, unchanged) | - | List still has no "..." menu - only a print-count "0" button per row. Nothing to compare the gear against. |
+| Forms | 3. Whole-row click | Pass | - | Clicking the description cell (after scrolling it into view - the grid is 2314px wide vs 1280 viewport) routes to `/forms-management/forms/<id>?...`. |
+| Access Agents | 3. Whole-row click | Pass | - | Clicking the "Active" status cell routes to `/user-management/access-agents/<id>?...`. Sidebar entry is labelled "AI Agents" but the route is `access-agents`. |
+| Warehouses | 3. Whole-row click | Pass | - | Clicking a cell below the fold (after `scroll down 800`) routes to `/inventory-management/warehouses/<id>?...`. |
+| Product Sets | 3. Whole-row click | Pass | - | Clicking the description cell routes to `/master-data-management/product-sets/<id>?...`. |
+| Promotions | 3. Whole-row click | Pass | - | Clicking the Start Date cell routes to `/marketing-management/promotions/<id>?...`; confirms Run 3C's finding that only the small in-cell "eye" icon on the Attachments column opens the flyer lightbox instead. |
+| Customer edit | 4. Next during edit | **Fail (unchanged)** | run4-customeredit-afternext-1280.png | From `/customers/{id}/edit` (pager showed "1 / 50"), clicking Next did not advance to the next customer's edit screen. It landed on the View page for the SAME customer (`{id}` unchanged, no `/edit` suffix, pager still "1 / 50"), silently dropping edit mode. Matches Run 3B's finding exactly - not fixed this round. |
+| Users | 5. Back single fetch | Pass (better than spec) | run4-users-back-liststate-1280.png | Set search "Jayson" + rows-per-page 10 (search needed an explicit Enter - `fill()` alone did not trigger the debounced request), opened row 2 (Jayson SK), clicked Back. Zero new requests fired to `/api/v1/user-management/users?...` after Back (served from the existing react-query cache entry) - stricter than "exactly one". List visually restored `query=Jayson`, `limit=10`, showing "1 - 3 of 3". |
+| Complaints | 6. 375 wrap | Pass | run4-complaints-detail-375.png | Pager/gear group drops to its own row under the title/status line; nothing clipped. |
+| Onboarding Requests | 6. 375 wrap | Pass | run4-onboarding-detail-375.png | Same clean wrap under the identity block. |
+
+### Ranked failures
+
+1. **Customer edit: Next during edit mode still drops back to View on the same record** - unchanged
+   since Run 3B. The one most likely to actively mislead a user (silent data-entry loss risk if
+   they had typed something first).
+2. **Leads and a Project detail have no "Back to..." button at all** - only the plain breadcrumb
+   crumb, which is not a labelled Back action and does not match every other module swept (Series,
+   Onboarding, Complaints, Stock Inquiries, Purchase Requests, SO all have one). Same root cause
+   likely explains the missing pager on both.
+3. **Project detail's primary ("Spec in") sits before the gear, not after** - the one D6 order
+   defect that is a pure ordering bug rather than a missing element.
+4. **Conversation SLA Tracking's gear does not end on Delete** - "Delete tracking" is red but eight
+   more items (four of them destructive/mutating: Overwrite assignee, Set current tier started at,
+   Set initiated at, Reopen for retest) follow it. New finding this round; Run 3B only flagged the
+   row-vs-gear item-count gap, not this internal ordering issue.
+5. **Complaints list still has no row "..." menu at all** - structural, unchanged since Run 2A/3A/3C.
+6. **Attachments (Resources > Files) remains off the shared `DetailActions`/gear pattern** -
+   modal-based with plain buttons (Preview/Download/Resubmit/Move to Trash), no Rename anywhere,
+   unchanged since earlier rounds.
+
+### Fixed since Run 3
+
+Series (Project Sales) now has a working gear with Delete, was fully unconverted before. Stock
+Inquiries, Purchase Requests, Onboarding Requests, SCM Sales Orders, Complaints (D6 order and 375
+wrap; row-menu absence is the one remaining, structural item) all confirmed Pass with no
+regression. Forms, Access Agents, Warehouses, Product Sets and Promotions all whole-row-click
+correctly - Run 3C's fixes hold. Users list Back is a clean single/zero-fetch restore.
+
+### Unreachable / not exercised
+
+- Loading Plan detail was skipped per the brief (known 500 on this dev DB from a missing column);
+  its list view was not separately re-checked this run since it was not in the requested scope.
+- Certificates row "..." menu contents (flagged unreached in Run 3B for being past the grid's
+  horizontal scroll edge) was not re-attempted; not in this run's module list.
+
+### Browser session
+
+`agent-browser@0.27.0`, session `s3-run4`, closed cleanly at the end of this run (not `close --all`).
