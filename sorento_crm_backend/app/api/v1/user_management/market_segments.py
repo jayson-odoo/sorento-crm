@@ -86,7 +86,7 @@ async def update_market_segment(
 @router.delete("/{code}", status_code=status.HTTP_200_OK)
 async def delete_market_segment(
     code: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("user_management.reference_data.manage")),
     db: Session = Depends(get_db),
 ):
     """Hard-delete a market segment. 409 when it is still assigned to a contact/member."""

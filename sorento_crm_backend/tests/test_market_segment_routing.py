@@ -317,19 +317,25 @@ def test_next_assignee_preferred_unchanged(client, db):
 # ---------------------------------------------------------------- B/C/F: assignment + catalog
 
 def test_catalog_crud(client, monkeypatch):
-    # GET /market-segments/ now requires user_management.reference_data.view, the
+    # GET /market-segments/ requires user_management.reference_data.view, the
     # deliberately low-privilege slug from Q3 of
-    # documentation/plans/security/PLAN-user-management-read-gates.md. The catalog
-    # WRITES below are out of scope for that read-gates PR and stay on
-    # get_current_user, so only the list call needs the grant. Granted here rather
-    # than in the shared `client` fixture, and scoped to exactly this slug, so it
-    # cannot mask the pre-existing external-router failures in this file.
+    # documentation/plans/security/PLAN-user-management-read-gates.md. DELETE
+    # requires the narrower .manage slug (issue #402: a view grant authorising a
+    # hard delete was wrong in principle). Create/rename stay on get_current_user,
+    # unguarded, so only the list and delete calls need a grant. Granted here
+    # rather than in the shared `client` fixture, and scoped to exactly these two
+    # slugs, so it cannot mask the pre-existing external-router failures in this
+    # file.
     from app.services.user_service import UserPermissionService
 
     monkeypatch.setattr(
         UserPermissionService,
         "check_user_has_permission",
-        lambda self, uid, slug: slug == "user_management.reference_data.view",
+        lambda self, uid, slug: slug
+        in {
+            "user_management.reference_data.view",
+            "user_management.reference_data.manage",
+        },
     )
 
     # F1 list seed
@@ -351,7 +357,14 @@ def test_catalog_crud(client, monkeypatch):
     assert r.status_code == 200
 
 
-def test_catalog_delete_blocked_when_in_use(client, db):
+def test_catalog_delete_blocked_when_in_use(client, db, monkeypatch):
+    from app.services.user_service import UserPermissionService
+
+    monkeypatch.setattr(
+        UserPermissionService,
+        "check_user_has_permission",
+        lambda self, uid, slug: slug == "user_management.reference_data.manage",
+    )
     _contact(db, "R", ["retail"])
     r = client.delete("/api/v1/user-management/market-segments/retail")
     assert r.status_code == 409  # F4 in-use guard

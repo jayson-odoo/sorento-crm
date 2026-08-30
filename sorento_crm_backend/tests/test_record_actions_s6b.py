@@ -393,6 +393,33 @@ def test_a_code_keyed_row_commits_against_its_code(client):
     )
 
 
+def test_market_segment_delete_refuses_view_only_and_accepts_manage(client, monkeypatch):
+    """Issue #402: a view grant authorising a hard delete was wrong in principle,
+    even though the immediate route it replaced had no slug at all. `.view` alone
+    must now refuse the click, and only `.manage` may start it."""
+    from app.services.user_service import UserPermissionService
+
+    c, db, _actor, _denied = client
+    segment = _segment(db)
+
+    monkeypatch.setattr(
+        UserPermissionService,
+        "check_user_has_permission",
+        lambda self, uid, slug: slug == "user_management.reference_data.view",
+    )
+    refused = _start(c, "market_segment.delete", "market_segment", segment.code)
+    assert refused.status_code == 403, refused.text
+    assert db.query(SlaFormAction).count() == 0
+
+    monkeypatch.setattr(
+        UserPermissionService,
+        "check_user_has_permission",
+        lambda self, uid, slug: slug == "user_management.reference_data.manage",
+    )
+    parked = _start(c, "market_segment.delete", "market_segment", segment.code)
+    assert parked.status_code == 202, parked.text
+
+
 def test_two_products_clear_the_same_spec_key_without_colliding(client):
     """A specification value is one product's answer for one key, so it is parked as
     `<product id>:<spec key>`.
