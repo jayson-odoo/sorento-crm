@@ -10,6 +10,7 @@ import {
 import { toast } from 'sonner';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import { registerRevisionStaleHandler } from '@/lib/revision-fence';
+import { pendingEntityStore } from '@/lib/pending-entity-store';
 
 const QueryProvider = ({ children }: { children: ReactNode }) => {
   const [queryClient] = useState(
@@ -23,6 +24,20 @@ const QueryProvider = ({ children }: { children: ReactNode }) => {
             // asked; a page-level destructive toast for one of those tells the user
             // their work is in trouble when nothing about it is.
             if (query.meta?.silent) return;
+
+            // A record the user has just watched a delete commit on is GONE, and
+            // every query still keyed on it now 404s: the detail read, its tabs,
+            // its counts. That is the answer we asked for, not a stack of red
+            // toasts (S6 feedback C). The guard on the page says "Already
+            // deleted" once and returns the reader to the list.
+            if (
+              query.queryKey.some(
+                (part) =>
+                  typeof part === 'string' && pendingEntityStore.wasDeletedId(part),
+              )
+            ) {
+              return;
+            }
 
             const message =
               error.message || 'Something went wrong. Please try again.';
@@ -79,6 +94,14 @@ const QueryProvider = ({ children }: { children: ReactNode }) => {
   // screen. A blanket invalidation is deliberate - a conflict is rare, and the
   // banner, the timeline, the list badge and the record itself all have to move
   // together, so pinning a key list here would only rot.
+  // The deferred-action follow-through invalidates lists after a window lapses
+  // with nothing mounted, so it needs the app's ONE client rather than a second
+  // one of its own (S6 feedback A).
+  useEffect(() => {
+    pendingEntityStore.registerQueryClient(queryClient);
+    return () => pendingEntityStore.registerQueryClient(null);
+  }, [queryClient]);
+
   useEffect(() => {
     registerRevisionStaleHandler(() => {
       void queryClient.invalidateQueries();

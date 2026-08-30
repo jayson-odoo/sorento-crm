@@ -10,6 +10,7 @@ import { Container } from '@/components/common/container';
 import { PageHeader } from '@/components/common/PageHeader';
 import BackToList from '@/components/common/BackToList';
 import { useHasPermission } from '@/hooks/usePermissions';
+import { useDeletedRecordGuard } from '@/hooks/useDeletedRecordGuard';
 import { UserProvider } from './components/user-context';
 import UserHero from './components/user-hero';
 
@@ -130,6 +131,14 @@ export default function UserLayout({
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     retry: 1,
+  });
+
+  // A user this tab deleted a moment ago is gone on purpose, so a stale link to
+  // them returns to the list quietly instead of reading as a fault (S6 feedback C).
+  useDeletedRecordGuard({
+    entityId: id,
+    notFound: !isLoading && !user,
+    listPath: '/user-management/users',
   });
 
   const handleTabClick = (key: string, path: string) => {

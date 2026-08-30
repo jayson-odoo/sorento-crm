@@ -40,6 +40,13 @@ export const GeneralSettingsSchema = z.object({
   defaultUomId: z.string(),
   takeoverCooldownSeconds: z.coerce.number().int().min(0).max(3600),
   formSlaGraceSeconds: z.coerce.number().int().min(0).max(600),
+  /**
+   * The two deferred-action windows (D16). Minimum ONE second, not zero: a window of
+   * zero applies the action with no way back, which is the confirmation dialog's
+   * failure mode wearing the new model's clothes.
+   */
+  deferredDeleteSeconds: z.coerce.number().int().min(1).max(600),
+  deferredActionSeconds: z.coerce.number().int().min(1).max(600),
   /** SCM front planning: the grain new plans are decided at (AC-F01). */
   planGrain: z.enum(['product', 'location']),
   purchaseRequestDefaultApproverUserId: z.string(),

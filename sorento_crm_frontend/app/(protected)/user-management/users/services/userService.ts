@@ -59,3 +59,21 @@ export async function getUsers(
     }),
   };
 }
+
+/**
+ * Trash a user (the backend's DELETE is the soft one - the account is restorable
+ * from the list's "Trashed only" filter).
+ *
+ * Called by the deferred `user.delete` action once its window lapses; nothing
+ * else deletes a user, so the confirmation the dialog used to demand is now the
+ * ten seconds the reader has to change their mind.
+ */
+export async function deleteUser(id: string): Promise<void> {
+  const response = await apiFetch(`/api/user-management/users/${id}`, {
+    method: 'DELETE',
+  });
+
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to trash the user'));
+  }
+}

@@ -16,28 +16,6 @@ import { toAbsoluteUrl } from '@/lib/helpers';
 import { useHorizontalOverflow } from '@/hooks/use-horizontal-overflow';
 import { cn } from '@/lib/utils';
 
-/** The id `buildSelectColumn` gives the row-selection column. */
-const SELECT_COLUMN_ID = 'select';
-
-/**
- * True under Tailwind's `sm` breakpoint, where a wide grid has to pin its
- * identifier column or the user scrolls away from the only thing that says
- * which row they are reading.
- */
-function useIsUnderSm() {
-  const [isUnderSm, setIsUnderSm] = React.useState(false);
-
-  React.useEffect(() => {
-    const mql = window.matchMedia('(max-width: 639px)');
-    const onChange = () => setIsUnderSm(mql.matches);
-    onChange();
-    mql.addEventListener('change', onChange);
-    return () => mql.removeEventListener('change', onChange);
-  }, []);
-
-  return isUnderSm;
-}
-
 /**
  * Appends the list state the grid is showing to a row's detail href.
  *
@@ -259,18 +237,16 @@ function DataGridTableHeadRowCell<TData>({
         }),
         // Pinning normally wins. Column drag-and-drop is on by default and
         // dnd-kit sets `position: relative` + `zIndex: 0` on every cell; spread
-        // after the pinning styles it silently turned the phone's pinned
-        // identifier column back into an ordinary one that scrolled away. The
-        // drag transform and transition survive - only the stickiness wins.
+        // after the pinning styles it silently turned a pinned column back into
+        // an ordinary one that scrolled away. The drag transform and transition
+        // survive - only the stickiness wins.
         //
-        // Driven by the pinned state itself: under `sm` the grid pins the
-        // identifier column whether or not the list opted into pinning.
+        // Driven by the pinned state itself, so it follows whatever the list
+        // pinned rather than assuming a column.
         //
         // While THIS column is the one being dragged, the order flips: sticky
         // beats dnd-kit's `position: relative`, so the transform had no effect
-        // and a pinned column could not be dragged at all. That is every column
-        // a phone user can reach, because under `sm` the grid pins the
-        // identifier column for them.
+        // and a pinned column could not be dragged at all.
         ...(dndDragging
           ? { ...(isPinned ? getPinningStyles(column) : null), ...dndStyle }
           : { ...dndStyle, ...(isPinned ? getPinningStyles(column) : null) }),
@@ -531,14 +507,20 @@ function DataGridTableBodyRow<TData>({
   // 78 of 193 lists did this and 26 had a detail route with no way to reach it.
   const href = props.rowHref ? appendListState(props.rowHref(row.original), table) : undefined;
 
+  // A record on its way out stays visible and says so, rather than vanishing
+  // before the reader can cancel (S6-07).
+  const isPending = props.rowPending?.(row.original) ?? false;
+
   const rowProps: React.ComponentProps<'tr'> = {
     ref: dndRef,
     style: { ...(dndStyle ? dndStyle : null) },
     'data-state': table.options.enableRowSelection && row.getIsSelected() ? 'selected' : undefined,
+    'data-pending': isPending ? 'true' : undefined,
     ...(dndAttributes ?? {}),
     ...(dndListeners ?? {}),
     className: cn(
       'hover:bg-muted/40 data-[state=selected]:bg-muted/50',
+      isPending && 'opacity-50',
       (href || props.onRowClick) && 'cursor-pointer',
       !props.tableLayout?.stripped &&
         props.tableLayout?.rowBorder &&
@@ -899,29 +881,11 @@ function DataGridScroller({ children }: { children: ReactNode }) {
 function DataGridTable<TData>() {
   const { table, isLoading, props } = useDataGrid();
   const pagination = table.getState().pagination;
-  const isUnderSm = useIsUnderSm();
-  // `null` means "we have not pinned anything", which is NOT the same as the
-  // empty pinning state an unpinned grid starts in - `if (ref.current)` was
-  // falsy for both, so widening the window left the phone pin in place.
-  const pinningBeforeNarrow = React.useRef<ReturnType<typeof table.getState>['columnPinning'] | null>(null);
-
-  // On a phone the grid scrolls sideways, so the column that says WHICH row this
-  // is has to stay put - otherwise the user scrolls to a number with nothing to
-  // attach it to. The checkbox column is not that column.
-  React.useEffect(() => {
-    if (!isUnderSm) {
-      if (pinningBeforeNarrow.current !== null) {
-        table.setColumnPinning(pinningBeforeNarrow.current);
-        pinningBeforeNarrow.current = null;
-      }
-      return;
-    }
-    const identifier = table.getVisibleLeafColumns().find((column) => column.id !== SELECT_COLUMN_ID);
-    if (!identifier || table.getState().columnPinning?.left?.[0] === identifier.id) return;
-
-    pinningBeforeNarrow.current = table.getState().columnPinning ?? {};
-    table.setColumnPinning({ left: [identifier.id], right: [] });
-  }, [isUnderSm, table]);
+  // A phone does NOT pin the identifier column. S1 pinned it under `sm` so the
+  // row stayed labelled while the grid scrolled sideways; the user tried it and
+  // found a column that refuses to move with the rest weirder than losing sight
+  // of the name (ruling 2026-08-30). The whole row scrolls as one. Explicit
+  // pinning still works for the lists that ask for it.
 
   if (props.tableLayout?.columnsDraggable) {
     const handleDragEnd = (event: DragEndEvent) => {

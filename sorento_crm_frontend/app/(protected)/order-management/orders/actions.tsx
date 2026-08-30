@@ -5,35 +5,68 @@
  *
  * The status changes used to be a gear on the detail page only; the list row now
  * offers the same items in the same order, and Delete is last, in red.
+ *
+ * Neither asks (D7). A status change parks for five seconds and a delete for ten,
+ * and the countdown stands where the button was - or in a toast, when the action
+ * came from a list row. A record holds one parked action at a time, so while one
+ * counts down the rest of the menu waits.
  */
 
-import { useState } from 'react';
 import { CheckCircle2, Trash2 } from 'lucide-react';
 import type { RecordAction, RecordActionSet } from '@/components/common/recordActions';
 import { RowActionsMenu } from '@/components/common/RowActionsMenu';
 import { useHasPermission } from '@/hooks/usePermissions';
-import { useUpdateOrder } from './hooks/useOrders';
+import { useDeferredAction } from '@/hooks/useDeferredAction';
 import { useOrderStatusSelectQuery } from '../shared/hooks/use-order-status-select-query';
 import type { Order } from './types/order.types';
-import OrderDeleteDialog from './components/order-delete-dialog';
 
 export interface UseOrderActionsOptions {
   /** Where to go once the record is gone (the record page returns to the list). */
   onDeleted?: () => void;
+  /**
+   * The record page shows the countdown in place of its primary button; a list
+   * row has nowhere to put one, so it travels to a toast (S6-06, S6-07).
+   */
+  surface?: 'inline' | 'toast';
 }
 
 export function useOrderActions(
   order: Order | undefined | null,
-  { onDeleted }: UseOrderActionsOptions = {},
+  { onDeleted, surface = 'inline' }: UseOrderActionsOptions = {},
 ): RecordActionSet {
-  const updateMutation = useUpdateOrder();
   const { data: orderStatuses = [] } = useOrderStatusSelectQuery();
   const canEdit = useHasPermission('order_management.orders.edit');
   const canDelete = useHasPermission('order_management.orders.delete');
-  const [deleteOpen, setDeleteOpen] = useState(false);
+  const orderId = order?.id;
+  const subject = order?.order_number ?? '';
+
+  const statusChange = useDeferredAction({
+    actionKey: 'order.set_status',
+    entityType: 'order',
+    entityId: orderId,
+    verb: 'Updating',
+    subject,
+    surface,
+    watchFromMount: surface === 'inline',
+    successMessage: 'Delivery order updated',
+    invalidateKeys: [['orders'], ['order', orderId]],
+  });
+
+  const deletion = useDeferredAction({
+    actionKey: 'order.delete',
+    entityType: 'order',
+    entityId: orderId,
+    verb: 'Deleting',
+    subject,
+    surface,
+    watchFromMount: surface === 'inline',
+    successMessage: 'Delivery order deleted',
+    invalidateKeys: [['orders']],
+    onCommitted: onDeleted,
+  });
 
   const actions: RecordAction[] = [];
-  if (!order) return { actions, dialogs: null };
+  if (!order) return { actions, dialogs: null, pending: null };
 
   // The two statuses a delivery order actually moves between; everything else
   // is reference data the list filters by.
@@ -51,13 +84,8 @@ export function useOrderActions(
         key: `order.set_status:${status.id}`,
         label: `Mark as ${status.status_name}`,
         icon: CheckCircle2,
-        disabled: updateMutation.isPending,
-        run: () => {
-          updateMutation.mutate({
-            id: order.id,
-            data: { order_status_id: status.id },
-          });
-        },
+        disabled: statusChange.isPending || statusChange.isBlocked,
+        run: () => statusChange.start({ order_status_id: status.id }),
       });
     }
   }
@@ -68,32 +96,23 @@ export function useOrderActions(
       label: 'Delete delivery order',
       icon: Trash2,
       kind: 'destructive',
-      run: () => setDeleteOpen(true),
+      disabled: deletion.isPending || deletion.isBlocked,
+      run: () => deletion.start(),
     });
   }
 
-  const dialogs = (
-    <OrderDeleteDialog
-      open={deleteOpen}
-      closeDialog={() => setDeleteOpen(false)}
-      order={order}
-      onSuccess={onDeleted}
-    />
-  );
-
-  return { actions, dialogs };
+  return {
+    actions,
+    dialogs: null,
+    pending: deletion.countdown ?? statusChange.countdown,
+  };
 }
 
 /** The list row's "..." cell - the same items the record page's gear shows. */
 export function OrderRowActions({ order }: { order: Order }) {
-  const { actions, dialogs } = useOrderActions(order);
+  const { actions } = useOrderActions(order, { surface: 'toast' });
 
   if (actions.length === 0) return null;
 
-  return (
-    <>
-      <RowActionsMenu actions={actions} ariaLabel="delivery order" />
-      {dialogs}
-    </>
-  );
+  return <RowActionsMenu actions={actions} ariaLabel="delivery order" />;
 }

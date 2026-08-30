@@ -54,6 +54,7 @@ import {
   encodeAdvancedFilter,
 } from '@/lib/listNavQuery';
 import { ProductRowActions } from '../actions';
+import { pendingEntityKey, usePendingEntityKeys } from '@/lib/pending-entity-store';
 import {
   fetchProductsPage,
   productsListQueryKey,
@@ -298,6 +299,12 @@ const ProductsList = () => {
   // The whole row opens the record; the filters the grid does not know about
   // ride in this query string, and the pager rebuilds the list's key from both.
   const rowHref = (row: ProductListItem) => buildProductDetailUrl(row.id);
+
+  // A product whose deletion is counting down stays on the list, dimmed, until the
+  // window lapses - the toast holds the Cancel, and this says which row it is for.
+  const pendingKeys = usePendingEntityKeys();
+  const rowPending = (row: ProductListItem) =>
+    pendingKeys.has(pendingEntityKey('product', row.id));
 
   const columns = useMemo<ColumnDef<ProductListItem>[]>(
     () => [
@@ -722,6 +729,7 @@ const ProductsList = () => {
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
       rowHref={rowHref}
+      rowPending={rowPending}
       tableLayout={{
         columnsResizable: true,
         columnsPinnable: true,

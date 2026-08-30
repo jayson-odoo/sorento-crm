@@ -234,3 +234,39 @@ describe('RowActionsMenu', () => {
     expect(within(container).queryByRole('button')).toBeNull();
   });
 });
+
+describe('the countdown takes the primary button\'s place (S6-06)', () => {
+  it('swaps the primary for the countdown while an action is parked, and restores it on cancel', () => {
+    const primary = <button type="button">Edit product</button>;
+    const countdown = <div data-testid="countdown-slot">Deleting in 8s</div>;
+
+    const { rerender } = render(<DetailActions actions={actionSet()} primary={primary} />);
+    expect(screen.getByRole('button', { name: 'Edit product' })).toBeInTheDocument();
+
+    // A record on its way out has one thing to offer, and it is Cancel.
+    rerender(
+      <DetailActions actions={actionSet()} primary={primary} pendingAction={countdown} />,
+    );
+    expect(screen.getByTestId('countdown-slot')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Edit product' })).toBeNull();
+
+    // Nothing was applied, so the record is exactly what it was.
+    rerender(
+      <DetailActions actions={actionSet()} primary={primary} pendingAction={null} />,
+    );
+    expect(screen.getByRole('button', { name: 'Edit product' })).toBeInTheDocument();
+    expect(screen.queryByTestId('countdown-slot')).toBeNull();
+  });
+
+  it('keeps the gear reachable while the countdown is running', () => {
+    render(
+      <DetailActions
+        actions={actionSet()}
+        primary={<button type="button">Edit product</button>}
+        pendingAction={<div data-testid="countdown-slot" />}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: 'Actions' })).toBeInTheDocument();
+  });
+});

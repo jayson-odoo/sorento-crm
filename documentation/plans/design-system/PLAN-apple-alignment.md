@@ -5,7 +5,7 @@
 > Governs: `PRINCIPLES.md` + `documentation/reference/ADR-PRODUCT-STANDARDS.md`.
 
 **Slug:** `apple-alignment` | **Domain:** design-system (cross-cutting)
-**Status:** IN PROGRESS - plan approved 2026-08-29 (lavish review + grill; D15, D16 added); S1 started 2026-08-29. S5 built 2026-08-30 (`feat/apple-S5-wayfinding`): PageHeader + the sweep of every module, GRN/SPO eyebrows, verb + noun labels, UUID titles, DataGrid `emptyAction`.
+**Status:** IN PROGRESS - plan approved 2026-08-29 (lavish review + grill; D15, D16 added); S1 started 2026-08-29. S5 built 2026-08-30 (`feat/apple-S5-wayfinding`): PageHeader + the sweep of every module, GRN/SPO eyebrows, verb + noun labels, UUID titles, DataGrid `emptyAction`. S6 built 2026-08-30 (`feat/apple-S6-deferred-actions`): Phase 1 gave the deferred-action service, hook, countdown, toast and row dimming, with Users, Products and Orders on them against an in-memory `/pending-actions`. Phase 2 replaced that mock with the real routes (`app/api/v1/system/pending_actions.py`, mounted at `/pending-actions`), four handlers in `app/services/record_actions.py` on the widened form-action registry, the two System Settings windows (migration `s6_deferred_action_windows`, UNRUN) and the tests (30 pytest, 26 vitest). S6b still owes the remaining `ConfirmDeleteDialog` importers.
 **UAC:** `documentation/plans/design-system/apple-alignment-acceptance-criteria.md`
 **Audit:** artifact `https://claude.ai/code/artifact/86a2cb9e-41e2-4008-9fbd-1f86de8bb0db` (rounds 1-3, 29 Aug 2026)
 **Supersedes:** `documentation/plans/PLAN-record-navigation-standardization.md` (D1 backend neighbours, D2 unfiltered fallback, D3 circular wrap). Reversed by the user on 29 Aug: the pager is page-scoped and client-side, boundaries page, the neighbours code is deleted.
@@ -86,7 +86,7 @@ regrowing.
 
 ### 3.8 DataGrid on a phone
 
-- `DataGridContainer` (`data-grid.tsx:248`) has zero call sites; every list renders `CardTable > ScrollArea > DataGridTable`, so S1 put the scroller (`DataGridScroller`) inside `DataGridTable`. `DataGridContainer` is dead code: S9 deletes it. Original intent, kept for reference: the wrapper gains `overflow-x-auto overscroll-x-contain` and the right-edge fade; table gets `min-w-max` when `table.getTotalSize() > containerWidth` (ResizeObserver, already needed for the fade). Under `sm` the first non-select column is pinned left through TanStack's `columnPinning` (the pinned material exists at `data-grid-table.tsx:186`). No per-list configuration.
+- `DataGridContainer` (`data-grid.tsx:248`) has zero call sites; every list renders `CardTable > ScrollArea > DataGridTable`, so S1 put the scroller (`DataGridScroller`) inside `DataGridTable`. `DataGridContainer` is dead code: S9 deletes it. Original intent, kept for reference: the wrapper gains `overflow-x-auto overscroll-x-contain` and the right-edge fade; table gets `min-w-max` when `table.getTotalSize() > containerWidth` (ResizeObserver, already needed for the fade). No per-list configuration. S1's automatic `columnPinning` of the first non-select column under `sm` was removed on 2026-08-30 at the user's call: the whole row scrolls as one. A list that pins a column deliberately still gets the pinned styles.
 - `data-grid-list-toolbar.tsx`: `flex-wrap`; Quick filters / Group by stay reachable.
 
 ### 3.9 Wayfinding (`components/common/PageHeader.tsx`)
@@ -135,7 +135,7 @@ S1, S2, S4, S7, S8, S9: the Apple-design audit (rounds 1-2). S3: the user's asks
 ## 6. Not built (deferred to `documentation/backlogs/backlog.md`)
 
 - Dark mode toggle (tokens only, D12).
-- Card-per-row mobile grid layout (D10 chose scroll + pin).
+- Card-per-row mobile grid layout (D10 chose scroll; the pin was tried and dropped).
 - Soft-delete / restore endpoints (D7 uses the pending window, not post-commit restore).
 - Deleting `drawer.tsx`/`vaul` (used by S8 instead).
 - `Reports`, `Price Tags`, After-sales screens: not in this tenant's sidebar during the sweep; they inherit the primitives.

@@ -356,6 +356,13 @@ class SystemSetting(Base):
     # every action fires immediately, i.e. today's behaviour; a stage may override it.
     form_sla_grace_seconds = Column(Integer, nullable=False, server_default="0", default=0)
 
+    # The two windows a deferred RECORD action waits out (D7/D16, S6): the product has
+    # no confirmation dialogs, so the countdown is the way back and its length is the
+    # only thing to tune. Destructive covers `<entity>.delete`; reversible covers a
+    # status change and anything else that can simply be set back.
+    deferred_delete_seconds = Column(Integer, nullable=False, server_default="10", default=10)
+    deferred_action_seconds = Column(Integer, nullable=False, server_default="5", default=5)
+
     # System-health observability (PLAN-system-health-observability):
     # daily digest + immediate watchdog alerts. Recipients = role ids (like notify_*_role_ids).
     health_digest_enabled = Column(Boolean, default=True, nullable=False, server_default="true")
