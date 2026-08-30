@@ -14,7 +14,7 @@ export default function EditSPOAllocationPage({ params }: EditSPOAllocationPageP
 
   return (
     <Container>
-      <PageHeader title="Edit Supplier PO Allocation" eyebrow="SPO" />
+      <PageHeader title="Edit SPO Allocation" />
       <Container>
         <SPOAllocationForm spoAllocationId={id} />
       </Container>

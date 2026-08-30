@@ -8,9 +8,10 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
+import DetailActions from '@/components/common/DetailActions';
+import type { RecordAction } from '@/components/common/recordActions';
 import {
   useSPOAllocation,
-  useDeleteSPOAllocation,
   useUpdateSPOAllocation,
 } from '../hooks/useSPOAllocations';
 import { toast } from 'sonner';
@@ -65,7 +66,7 @@ export default function SPOAllocationDetail({
           }
           className="mt-4"
         >
-          Back to SPO Allocations
+          Back to SPO allocations
         </Button>
       </div>
     );
@@ -73,10 +74,33 @@ export default function SPOAllocationDetail({
 
   const statusLabel = formatStatusLabel(spoAllocation.receipt_status) || '-';
 
+  // The gear, left of Edit (D15): the record's secondary action first, Delete
+  // last and in red. Edit stays the primary button and is not repeated here.
+  const actions: RecordAction[] = [];
+  if (
+    spoAllocation.receipt_status === 'received' ||
+    spoAllocation.receipt_status === 'fully_received'
+  ) {
+    actions.push({
+      key: 'spo_allocation.set_pending',
+      label: 'Set to pending',
+      icon: RotateCcw,
+      disabled: updateMutation.isPending,
+      run: handleSetToPending,
+    });
+  }
+  actions.push({
+    key: 'spo_allocation.delete',
+    label: 'Delete SPO allocation',
+    icon: Trash2,
+    kind: 'destructive',
+    run: () => setDeleteDialogOpen(true),
+  });
+
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="space-y-1">
           <div className="flex items-center gap-3">
             {/* An allocation with no SPO number is named by its product, then
@@ -95,37 +119,22 @@ export default function SPOAllocationDetail({
             {spoAllocation.warehouse?.warehouse_name || '-'}
           </p>
         </div>
-        <div className="flex gap-2">
-          {(spoAllocation.receipt_status === 'received' ||
-            spoAllocation.receipt_status === 'fully_received') && (
+        <DetailActions
+          actions={actions}
+          gearLabel="SPO allocation options"
+          primary={
             <Button
-              variant="outline"
-              onClick={handleSetToPending}
-              disabled={updateMutation.isPending}
+              onClick={() =>
+                router.push(
+                  `/procurement-management/spo-allocations/${spoAllocationId}/edit`,
+                )
+              }
             >
-              <RotateCcw className="size-4" />
-              Set to Pending
+              <Edit className="size-4" />
+              Edit
             </Button>
-          )}
-          <Button
-            variant="outline"
-            onClick={() =>
-              router.push(
-                `/procurement-management/spo-allocations/${spoAllocationId}/edit`,
-              )
-            }
-          >
-            <Edit className="size-4" />
-            Edit
-          </Button>
-          <Button
-            variant="destructive"
-            onClick={() => setDeleteDialogOpen(true)}
-          >
-            <Trash2 className="size-4" />
-            Delete
-          </Button>
-        </div>
+          }
+        />
       </div>
 
       {spoAllocation && (

@@ -13,7 +13,7 @@ export default function SPOAllocationsPage() {
   return (
     <>
       <Container>
-        <PageHeader title="Supplier PO Allocations" eyebrow="SPO" />
+        <PageHeader title="SPO Allocations" />
       </Container>
 
       <Container>

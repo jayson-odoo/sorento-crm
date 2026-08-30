@@ -7,7 +7,7 @@ import SPOAllocationForm from '../components/SPOAllocationForm';
 export default function NewSPOAllocationPage() {
   return (
     <Container>
-      <PageHeader title="Create Supplier PO Allocation" eyebrow="SPO" />
+      <PageHeader title="Create SPO Allocation" />
       <Container>
         <SPOAllocationForm />
       </Container>
