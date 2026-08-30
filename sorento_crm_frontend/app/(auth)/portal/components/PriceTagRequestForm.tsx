@@ -697,22 +697,26 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
             </p>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+              {/* `table-fixed` on purpose: a product name can run to sixty
+                  characters, and with auto layout the Item column swallowed
+                  the whole width and pushed Qty and the rest off screen.
+                  Fixed columns let the picker's trigger truncate instead, and
+                  the min-width keeps every cell usable while the wrapper
+                  scrolls on a phone, which is the Purchase Request pattern. */}
+              <table className="w-full min-w-[560px] table-fixed text-sm">
                 <thead className="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
                   <tr>
-                    <th className="w-8 px-2 py-2 text-left">#</th>
-                    <th className="min-w-[220px] px-2 py-2 text-left">Item</th>
-                    <th className="w-24 px-2 py-2 text-left">Qty (tags)</th>
-                    <th className="min-w-[200px] px-2 py-2 text-left">
+                    <th className="w-7 px-2 py-2 text-left">#</th>
+                    <th className="w-[30%] px-2 py-2 text-left">Item</th>
+                    <th className="w-[12%] px-2 py-2 text-left">Qty (tags)</th>
+                    <th className="w-[22%] px-2 py-2 text-left">
                       Alternatives
                     </th>
-                    <th className="min-w-[180px] px-2 py-2 text-left">
-                      Accessories
-                    </th>
+                    <th className="w-[20%] px-2 py-2 text-left">Accessories</th>
                     {!!promotionId && (
-                      <th className="w-28 px-2 py-2 text-left">Promo price</th>
+                      <th className="w-[10%] px-2 py-2 text-left">Promo price</th>
                     )}
-                    <th className="w-24 px-2 py-2"></th>
+                    <th className="w-[16%] px-2 py-2"></th>
                   </tr>
                 </thead>
                 <tbody>

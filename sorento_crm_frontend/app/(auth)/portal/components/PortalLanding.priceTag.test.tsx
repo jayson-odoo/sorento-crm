@@ -99,9 +99,9 @@ describe('PortalLanding - Price Tag Request in the type dropdown', () => {
     render(<PortalLanding slug="darren" />);
 
     const trigger = await screen.findByRole('combobox');
-    await waitFor(() =>
-      expect(listRequestsAsSummaries).toHaveBeenCalledTimes(1),
-    );
+    // Not a call COUNT: the landing loads on mount and again when the search
+    // debounce fires, so two is as correct as one.
+    await waitFor(() => expect(listRequestsAsSummaries).toHaveBeenCalled());
 
     trigger.click();
     const option = await screen.findByText('Price Tag Request');

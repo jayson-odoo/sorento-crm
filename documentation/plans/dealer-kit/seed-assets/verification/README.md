@@ -239,3 +239,55 @@ Y 5.05), and every other edit was discarded by reloading without saving.
   inside `Konva.dblClickWindow` (400 ms), and one CLI call takes about a second,
   so the window was widened to 30 s for that one step and put back to 400
   immediately after. The click path itself is untouched.
+
+## The portal run, 30 Aug (D45-D47)
+
+Driven with agent-browser on the `:3030` lane, as the portal contact `Ziv Beh`
+(token link) and, for the admin half, as a staff user reaching Sales Agents
+through the sidebar. **Nothing was written to the database**: the dev database is
+a copy of production, and the run ends with `price_tag_requests` still at 0 rows
+and `sales_agents.contact_id` still null on every row, which is the same query
+that framed the whole of D46.
+
+| File | What it shows |
+| --- | --- |
+| `portal-1-landing-dropdown-lists-price-tag-request.png` | The landing's type dropdown open, listing Stock Inquiry, Complaint, Purchase Request, Sponsorship Form and **Price Tag Request**, each with its count. The separate link button is gone. `/portal/me` for this contact answers `visible_form_types: ["price_tag_request", "stock_inquiry"]`, so the option is offered because the grant says so (D45, AC-M.14). |
+| `portal-2-price-tag-request-selected-empty-state.png` | Price Tag Request selected. The list area, the search box, the status filter, the star and a `New Price Tag Request` button are the same ones the other kinds get, and the empty state reads `No price tag request submissions yet.` This contact genuinely has none: the endpoint answers 200 with 0 items (AC-M.14). |
+| `portal-3-price-tag-requests-listed-as-cards.png` | The same list with two rows, served by a page-side `fetch` stub, because the database holds no price tag requests at all and creating one is a write. Each card carries the doc number as its heading, the dealer as its Customer line, a `Needed by` date and a status badge: `New` for the submitted row and `Draft` for the one still holding `portal_draft_at`. The dropdown's count reads 2 (D45, AC-M.14). |
+| `portal-4-draft-filter-keeps-only-the-draft.png` | The status filter set to Draft against the same two rows: only `PT-202608-0002` survives. This is what the new `portal_draft_at` field buys, since both rows carry `status: "new"` and without it neither would ever read as a draft (AC-M.14). |
+| `portal-5-debtor-not-linked-notice.png` | The new request form with the debtor select REPLACED by `No debtors available. Your portal account is not linked to a sales agent yet. Ask your Sorento contact to link it.` Save Draft and Submit are both disabled. `select count(*) from sales_agents where contact_id is not null` answers 0, so the empty lookup is the real state and not a stub (D46a, AC-M.15). |
+| `portal-6-lines-table-product-then-set.png` | The lines table at 1280 with two rows added by the one `Add line` button. Row 1 is the product `CBF31046`, row 2 a SET picked from the SAME dropdown (`CABANA CLOSE COUPLED WC ... Set - CWC611`); the picker labels every option `Product - CODE` or `Set - CODE`. Row 2's Alternatives cell is `disabled` and its cell title reads `A set is printed as one thing, so it carries no OR choices.`, while row 1's stays enabled. Nothing was saved: there is no portal route that deletes a price tag request, so the run stops at form state (D47, AC-M.16). |
+| `portal-7-lines-table-at-375px.png` | The same table at 375 x 812. The PAGE does not overflow (`document.scrollWidth` 375 = `clientWidth` 375); the table scrolls inside its own `overflow-x: auto` wrapper (560 in 317), which is the Purchase Request pattern (AC-M.16). |
+| `portal-8-sales-agent-linked-portal-contact-field.png` | The Sales Agents edit modal for `ACT`, reached from the sidebar (Users & Access > People > Sales Agents), now carrying `Linked portal contact` beneath Location group, reading `Not linked` (D46b, AC-M.15). |
+| `portal-9-contact-picker-name-and-masked-phone.png` | That picker searched for `Ziv`, answering `Ziv Beh ***1678`. The list is server-searched (the unfiltered open returned `Agnes ***1178`, `Ahmad Shakir Irfan ***3797`, ...), every row is a name plus the last four digits of the phone, and no id appears anywhere. Escaped without saving (D46b, AC-M.15). |
+
+### Measured, not pictured
+
+- **The merged item lookup answers with real ids.** `GET
+  /portal/lookups/price-tag-items?q=CBF` returned
+  `{kind: "product", id: "15324810-a1cd-49a7-8be6-61ad8e0418e5", code: "CBF31046"}`
+  and the unfiltered call returned `product_set` rows such as `CWC1009-RL`. Those
+  ids are the `products.id` / `product_sets.id` a line's foreign key stores; the
+  portal's older product lookup answers with a code and no id at all, which is why
+  no draft carrying a product line can ever have saved.
+- **The lines table is `table-fixed`.** With auto layout a set name of sixty
+  characters took the whole width and pushed Qty, Alternatives and Accessories off
+  screen at 1280. Fixed columns measured 28 / 176 / 70 / 129 / 117 / 94 px on both
+  rows, table 614 px inside a 614 px wrapper, so nothing is clipped and the long
+  name truncates in the picker's trigger.
+
+### Not exercised, and why
+
+- **A contact WITHOUT the grant.** Manufacturing a second contact is a database
+  write. The gating is asserted from the `/me` payload above and unit-tested in
+  `PortalLanding.priceTag.test.tsx`, which also covers the `?type=` deep link
+  falling back to Stock Inquiry for such a contact.
+- **A saved draft.** The portal has no route that deletes a price tag request, so
+  saving one would leave a row behind in a database that is a production copy. The
+  payload shape is pinned in `PriceTagRequestForm.lines.test.tsx` instead, and the
+  foreign-key half in `tests/test_price_tag_request.py::TestTagItemLookup`.
+- **Linking an agent to a contact for real.** Same reason. The modal was opened,
+  searched and escaped.
+- **The CLI `click` on elements low in the portal page** was a silent no-op behind
+  the fixed impersonation banner; those clicks were issued as DOM `click()` through
+  `eval` instead. Every assertion above is read from the rendered DOM.
