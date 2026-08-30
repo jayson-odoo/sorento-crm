@@ -56,7 +56,7 @@ export interface UseDeferredActionInput {
   /** What the handler needs at commit time. `start()` may override it per click. */
   payload?: Record<string, unknown>;
   /** Lists to refetch once the action has committed. */
-  invalidateKeys?: readonly unknown[][];
+  invalidateKeys?: readonly (readonly unknown[])[];
   /** Where to go afterwards - a record page cannot stay open on a deleted row. */
   onCommitted?: () => void;
 }

@@ -393,6 +393,14 @@ def _delete_ticket(db: Session, payload: dict):
     return delete_ticket(db, ticket_id=_entity_id(payload), current_user=_actor(payload))
 
 
+def _cancel_ticket_draft(db: Session, payload: dict):
+    from app.services.tickets_service import cancel_ticket_draft
+
+    return cancel_ticket_draft(
+        db, ticket_id=_entity_id(payload), current_user=_actor(payload)
+    )
+
+
 def _delete_workflow_definition(db: Session, payload: dict):
     from app.services.workflow_forms_service import WorkflowFormsService
 
@@ -448,6 +456,19 @@ register(
         window=WINDOW_DESTRUCTIVE,
         permission="tickets.tickets.delete",
         label="Delete ticket",
+    )
+)
+
+register(
+    FormAction(
+        key="ticket.cancel_draft",
+        entity_types=("ticket",),
+        execute=_cancel_ticket_draft,
+        # Discarding a draft hard-deletes it, so it takes the long window even
+        # though the button on screen says Cancel rather than Delete.
+        window=WINDOW_DESTRUCTIVE,
+        permission="tickets.tickets.edit",
+        label="Discard draft",
     )
 )
 

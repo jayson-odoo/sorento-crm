@@ -14,7 +14,6 @@ import { Pencil, Plus, Trash2 } from 'lucide-react';
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
-import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
@@ -22,7 +21,11 @@ import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Skeleton } from '@/components/ui/skeleton';
 import PromotionTypeFormModal from './PromotionTypeFormModal';
-import { useDeletePromotionType, usePromotionTypes } from '../hooks/usePromotionTypes';
+import { usePromotionTypes } from '../hooks/usePromotionTypes';
+import {
+  useDeferredRowAction,
+  useRowPending,
+} from '@/hooks/useDeferredRowAction';
 import type { PromotionType } from '../types/promotionType.types';
 
 /** "PP Promo · until end of year" - the rule in the words an admin set it in. */
@@ -39,10 +42,18 @@ export default function PromotionTypesList() {
   const [sorting, setSorting] = useState<SortingState>([]);
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<PromotionType | null>(null);
-  const [pendingDelete, setPendingDelete] = useState<PromotionType | null>(null);
 
   const { data, isLoading, refetch, isFetching } = usePromotionTypes();
-  const deleteMutation = useDeletePromotionType();
+  // Delete asks nothing (D7): the row dims and a toast counts down with Cancel.
+  // Promotions of a deleted type become unclassified and follow the default
+  // type, which is what the server does whichever way the delete arrives.
+  const deletion = useDeferredRowAction({
+    actionKey: 'promotion_type.delete',
+    entityType: 'promotion_type',
+    successMessage: 'Promotion type deleted',
+    invalidateKeys: [['promotion-types'], ['promotions']],
+  });
+  const rowPending = useRowPending<PromotionType>('promotion_type');
   const rows = data?.data ?? [];
 
   const columns = useMemo<ColumnDef<PromotionType>[]>(
@@ -141,7 +152,12 @@ export default function PromotionTypesList() {
               mode="icon"
               variant="ghost"
               aria-label={`Delete ${row.original.type_name}`}
-              onClick={() => setPendingDelete(row.original)}
+              onClick={() =>
+                deletion.run({
+                  id: row.original.id,
+                  subject: row.original.type_name,
+                })
+              }
             >
               <Trash2 className="size-4" />
             </Button>
@@ -151,7 +167,7 @@ export default function PromotionTypesList() {
         enableHiding: false,
       },
     ],
-    [],
+    [deletion],
   );
 
   const table = useReactTable({
@@ -187,6 +203,7 @@ export default function PromotionTypesList() {
       table={table}
       recordCount={rows.length}
       isLoading={isLoading}
+      rowPending={rowPending}
       tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
       emptyMessage="No promotion types yet. Add one to control what happens to a promotion after it ends."
       emptyAction={listPrimaryAction}
@@ -215,37 +232,6 @@ export default function PromotionTypesList() {
           if (!open) setEditing(null);
         }}
         promotionType={editing}
-      />
-
-      <ConfirmDeleteDialog
-        open={!!pendingDelete}
-        onOpenChange={(open) => {
-          if (!open) setPendingDelete(null);
-        }}
-        description={
-          <>
-            Delete promotion type &quot;{pendingDelete?.type_name}&quot;?
-            {(pendingDelete?.promotions_count ?? 0) > 0 && (
-              <>
-                {' '}
-                {pendingDelete?.promotions_count} promotion
-                {pendingDelete?.promotions_count === 1 ? '' : 's'} will become unclassified and follow
-                the default type.
-              </>
-            )}{' '}
-            This action cannot be undone.
-          </>
-        }
-        onDelete={async () => {
-          if (pendingDelete) await deleteMutation.mutateAsync(pendingDelete.id);
-        }}
-        successMessage={
-          (pendingDelete?.promotions_count ?? 0) > 0
-            ? `Promotion type deleted. ${pendingDelete?.promotions_count} promotion${
-                pendingDelete?.promotions_count === 1 ? '' : 's'
-              } now unclassified.`
-            : 'Promotion type deleted'
-        }
       />
     </DataGrid>
   );

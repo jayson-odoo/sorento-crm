@@ -13,10 +13,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Container } from '@/components/common/container';
 import { PageHeader } from '@/components/common/PageHeader';
 import DetailActions from '@/components/common/DetailActions';
+import { useDeferredAction } from '@/hooks/useDeferredAction';
 import { warehousesPagerQuery } from '../hooks/useWarehouses';
-import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { useWarehouse } from '../hooks/useWarehouses';
-import { deleteWarehouse } from '../services/warehouseService';
 import { formatDate } from '@/lib/helpers';
 
 /**
@@ -69,7 +68,23 @@ export default function WarehouseDetailPage({
   const router = useRouter();
   const backHref = useBackToListHref('/inventory-management/warehouses');
   const { data: warehouse, isLoading } = useWarehouse(id);
-  const [deleteOpen, setDeleteOpen] = useState(false);
+
+  // Delete asks nothing (D7): the countdown takes the primary button's place
+  // and Cancel is the way back.
+  const deletion = useDeferredAction({
+    actionKey: 'warehouse.delete',
+    entityType: 'warehouse',
+    entityId: id,
+    verb: 'Deleting',
+    subject: warehouse
+      ? `${warehouse.warehouse_name ?? ''} (${warehouse.warehouse_code})`.trim()
+      : '',
+    surface: 'inline',
+    watchFromMount: true,
+    successMessage: 'Warehouse deleted',
+    invalidateKeys: [['warehouses']],
+    onCommitted: () => router.push(backHref),
+  });
 
   // Same list, same order, as the listing shows, so prev/next steps through it in order.
 
@@ -154,10 +169,12 @@ export default function WarehouseDetailPage({
                   label: 'Delete warehouse',
                   icon: Trash2,
                   kind: 'destructive' as const,
-                  run: () => setDeleteOpen(true),
+                  disabled: deletion.isPending,
+                  run: deletion.start,
                 },
               ]}
               gearLabel="Warehouse options"
+              pendingAction={deletion.countdown}
               primary={
                 <Button
                   onClick={() => router.push(`/inventory-management/warehouses/${id}/edit`)}
@@ -234,21 +251,6 @@ export default function WarehouseDetailPage({
         </div>
       </Container>
 
-      <ConfirmDeleteDialog
-        open={deleteOpen}
-        onOpenChange={setDeleteOpen}
-        description={`Delete warehouse ${warehouse.warehouse_code}? This action cannot be undone.`}
-        successMessage="Warehouse deleted"
-        // The dialog wraps this in its own mutation, which owns the toast and the
-        // invalidation. Going through useDeleteWarehouse as well would report every
-        // outcome twice, in two positions (see ticket-management/tickets/[id] for the
-        // same shape).
-        onDelete={async () => {
-          await deleteWarehouse(id);
-        }}
-        onSuccess={() => router.push(backHref)}
-        queryKeysToInvalidate={[['warehouses']]}
-      />
     </>
   );
 }

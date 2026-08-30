@@ -20,9 +20,7 @@ import { FormActionBanner } from '@/app/(protected)/sla-management/_shared/FormA
 import { UndoActionDialog } from '@/app/(protected)/sla-management/_shared/UndoActionDialog';
 import { isDeferredFormAction } from '@/app/(protected)/sla-management/_shared/formAction';
 import {
-  cancelTicketDraft,
   changeTicketStatus,
-  deleteTicket,
   getTicket,
   submitTicketDraft,
   updateTicket,
@@ -31,8 +29,8 @@ import {
   updateTicketResponse,
   updateTicketResponseAndReply,
 } from '../services/ticketService';
-import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { Trash2, Undo2 } from 'lucide-react';
+import { useDeferredAction } from '@/hooks/useDeferredAction';
 import {
   TICKET_CATEGORIES,
   TICKET_PRIORITIES,
@@ -82,7 +80,33 @@ export default function TicketDetailPage({ params }: PageProps) {
   const [priorityDraft, setPriorityDraft] = useState<TicketPriority>('medium');
   const [categoryDraft, setCategoryDraft] = useState<TicketCategory>('bug');
   const [busy, setBusy] = useState(false);
-  const [deleteOpen, setDeleteOpen] = useState(false);
+  // Delete and Cancel draft both ask nothing (D7): the countdown takes the
+  // button's place and Cancel is the way back. Both hard-delete on the server,
+  // so both take the ten-second window.
+  const deletion = useDeferredAction({
+    actionKey: 'ticket.delete',
+    entityType: 'ticket',
+    entityId: id,
+    verb: 'Deleting',
+    subject: ticket?.ticket_number ?? '',
+    surface: 'inline',
+    watchFromMount: true,
+    successMessage: 'Ticket deleted',
+    invalidateKeys: [['tickets']],
+    onCommitted: () => router.push('/ticket-management/tickets'),
+  });
+  const draftCancellation = useDeferredAction({
+    actionKey: 'ticket.cancel_draft',
+    entityType: 'ticket',
+    entityId: id,
+    verb: 'Discarding',
+    subject: ticket?.ticket_number ?? '',
+    surface: 'inline',
+    watchFromMount: true,
+    successMessage: 'Draft cancelled',
+    invalidateKeys: [['tickets']],
+    onCommitted: () => router.push('/ticket-management/tickets'),
+  });
   const [undoDialogOpen, setUndoDialogOpen] = useState(false);
 
   // Form-action deferral (PLAN-form-sla-undo.md). A resolve with a grace window
@@ -186,21 +210,6 @@ export default function TicketDetailPage({ params }: PageProps) {
     }
   }
 
-  async function cancelDraft() {
-    if (!ticket) return;
-    if (!window.confirm('Cancel this draft? This cannot be undone.')) return;
-    setBusy(true);
-    try {
-      await cancelTicketDraft(ticket.id);
-      toast.success('Draft cancelled');
-      router.push('/ticket-management/tickets');
-    } catch (e) {
-      toast.error((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
   async function saveResponse(reply: boolean) {
     if (!ticket) return;
     setBusy(true);
@@ -288,14 +297,16 @@ export default function TicketDetailPage({ params }: PageProps) {
                   Undo last action
                 </Button>
               )}
-              <Button
-                variant="destructive"
-                onClick={() => setDeleteOpen(true)}
-                disabled={busy || formAction.ctasDisabled}
-              >
-                <Trash2 className="size-4" />
-                Delete
-              </Button>
+              {deletion.countdown ?? (
+                <Button
+                  variant="destructive"
+                  onClick={() => deletion.start()}
+                  disabled={busy || formAction.ctasDisabled || deletion.isPending}
+                >
+                  <Trash2 className="size-4" />
+                  Delete
+                </Button>
+              )}
             </>
           }
         />
@@ -433,9 +444,16 @@ export default function TicketDetailPage({ params }: PageProps) {
                     <strong>Cancel</strong> to discard this draft.
                   </div>
                   <div className="flex gap-2 justify-end">
-                    <Button variant="outline" size="sm" onClick={cancelDraft} disabled={busy}>
-                      Cancel
-                    </Button>
+                    {draftCancellation.countdown ?? (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => draftCancellation.start()}
+                        disabled={busy || draftCancellation.isPending}
+                      >
+                        Cancel
+                      </Button>
+                    )}
                     <Button size="sm" onClick={submitDraft} disabled={busy}>
                       Submit to IT admin
                     </Button>
@@ -634,20 +652,6 @@ export default function TicketDetailPage({ params }: PageProps) {
         </Container>
       </EntityActivitiesLayout>
 
-      <ConfirmDeleteDialog
-        open={deleteOpen}
-        onOpenChange={setDeleteOpen}
-        description={
-          <>
-            Permanently delete ticket <strong>{ticket.ticket_number ?? ticket.id}</strong>? This action cannot be undone.
-          </>
-        }
-        onDelete={async () => {
-          await deleteTicket(ticket.id);
-        }}
-        successMessage="Ticket deleted"
-        onSuccess={() => router.push('/ticket-management/tickets')}
-      />
     </>
   );
 }

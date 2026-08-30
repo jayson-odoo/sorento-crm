@@ -43,7 +43,7 @@ export interface UseDeferredRowActionInput {
   /** Said once the server has applied it. */
   successMessage: string;
   /** Lists to refetch once the action has committed. */
-  invalidateKeys?: readonly unknown[][];
+  invalidateKeys?: readonly (readonly unknown[])[];
   /** Called after the server applied it, for a caller that has to move on. */
   onCommitted?: () => void;
 }
