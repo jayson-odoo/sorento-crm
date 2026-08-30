@@ -96,7 +96,7 @@ function LinkagesTable({
   refetch: () => void;
 }) {
   const hasLinkId = type === 'product' || type === 'promotion';
-  const canUnlink = hasLinkId ? (item: LinkedEntityRef) => !!item.link_id : (item: LinkedEntityRef) => true;
+  const canUnlink = hasLinkId ? (item: LinkedEntityRef) => !!item.link_id : () => true;
   const canUnlinkPackingList = true;
   const [manageFieldLinksFor, setManageFieldLinksFor] = useState<string | null>(null);
 
@@ -224,15 +224,11 @@ function LinkagesTabs({
     onRefetch();
   };
 
-  const [unlinkPackingListPending, setUnlinkPackingListPending] = useState(false);
   const handleUnlinkPackingList = (item: LinkedEntityRef) => {
-    setUnlinkPackingListPending(true);
     const promise = item.link_id
       ? deleteAttachmentLink(item.link_id, 'inbound_shipment')
       : unlinkPackingListFromAttachment(attachment.id, item.id);
-    promise
-      .then(() => invalidate())
-      .finally(() => setUnlinkPackingListPending(false));
+    void promise.then(() => invalidate());
   };
 
   const [linkPackingListPending, setLinkPackingListPending] = useState(false);
@@ -843,11 +839,6 @@ export default function AttachmentDetailModal({
       },
     ];
   }, [attachment]);
-
-  const handleClose = () => {
-    onOpenChange(false);
-    queryClient.invalidateQueries({ queryKey: ['attachments'] });
-  };
 
   return (
     <>

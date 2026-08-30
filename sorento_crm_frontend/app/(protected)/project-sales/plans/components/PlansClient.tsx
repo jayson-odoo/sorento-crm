@@ -344,7 +344,6 @@ export function PlansClient() {
                   onChange={setSearch}
                   isSettling={debouncedSettling}
                   placeholder="Search sales order, customer or agent"
-                  aria-label="Clear the search"
                   className="w-full"
                 />
               }
