@@ -8,8 +8,9 @@ pointing at these tables are `ON DELETE SET NULL` - `sales_orders.customer_id`
 is one. A bare `DELETE` of a customer with a hundred orders therefore SUCCEEDS,
 and leaves a hundred orders belonging to nobody: the data is not gone, it is
 silently detached, and the sync reports it removed the record cleanly. So the
-catalogue is asked who points at the row first (`pg_catalog`, resolved through
-the CURRENT `search_path`), and anything pointing means the row stays.
+catalogue is asked who points at the row first (`app/services/dependent_probe.py`,
+which the document ingest asks the same question of before removing a line), and
+anything pointing means the row stays.
 
 **Staying means going out of use, not staying as it was.** A master with
 dependents is deactivated; a document with dependents is `cancelled`, since a
@@ -42,6 +43,7 @@ from app.models.order import Customer
 from app.models.procurement import Supplier
 from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.models.sales_agent import SalesAgent
+from app.services.dependent_probe import is_referenced, referrers_of, relation_name
 from app.services.document_ingest_service import CANCELLED, DOCUMENT_SPECS
 from app.services.integration_reference_service import IntegrationReferenceService
 from app.services.master_ingest_service import (
@@ -132,25 +134,6 @@ MASTER_DEACTIVATION: dict[str, tuple[str, Any]] = {
     "products": ("is_discontinued", True),
     "sales_agents": ("is_active", False),
 }
-
-# Every foreign key that points at a table, resolved under the CURRENT
-# search_path. `to_regclass` rather than a `public.`-qualified name on purpose:
-# `sales_orders`, `sales_order_lines` and their purchase twins exist a SECOND
-# time in the `projects` schema, and the test substrate runs on a scratch schema
-# entirely - hard-coding `public.` would have every probe read the REAL database.
-#
-# A composite FK contributes one row per column, so a two-column key is probed as
-# two independent single-column matches. That can only ever over-report a
-# dependent, which costs a hard delete and gives a deactivation instead; the
-# reverse mistake (deleting a row something points at) is the one that loses data.
-_REFERRERS_SQL = text(
-    """
-    SELECT c.conrelid::regclass::text AS referrer, a.attname AS col
-    FROM pg_constraint c
-    JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
-    WHERE c.contype = 'f' AND c.confrelid = to_regclass(:table)
-    """
-)
 
 
 class DeletionService:
@@ -269,23 +252,13 @@ class DeletionService:
         if not _is_company_scoped(entity_type):
             return True
         owner = self.db.execute(
-            # Unqualified on purpose - see `_REFERRERS_SQL`.
+            # Unqualified on purpose - see `app/services/dependent_probe.py`.
             text(f"SELECT company_id FROM {entity_type} WHERE id = :id"),
             {"id": str(entity_id)},
         ).scalar()
         return owner is not None and str(owner) == str(self.company_id)
 
     # ------------------------------------------------------------- the probe
-    def _referrers(self, table: str) -> list[tuple[str, str]]:
-        """(referring table, column) for every FK pointing at ``table``.
-
-        One catalogue query per record. Caching it per table would pay off at a
-        full 1,000-record batch of one entity; the trigger for adding it is a
-        deletion batch showing up in the slow-query log, not this comment.
-        """
-        rows = self.db.execute(_REFERRERS_SQL, {"table": table}).fetchall()
-        return [(row[0], row[1]) for row in rows]
-
     def _has_dependents(self, entity_type: str, entity_id: str) -> bool:
         # The entity name IS the table name on this surface, for masters and
         # documents alike (`ENTITY_SPECS`, `DOCUMENT_SPECS`), which is what makes
@@ -296,23 +269,15 @@ class DeletionService:
         # one that bare name resolves to, so `sales_order_lines` and
         # `projects.sales_order_lines` are told apart by asking the same resolver
         # the probe used. Comparing bare names would skip the module table as if
-        # it were the document's own.
-        line_relation = (
-            self.db.execute(
-                text("SELECT to_regclass(:t)::text"), {"t": line_table}
-            ).scalar()
-            if line_table is not None
-            else None
-        )
+        # it were the document's own. The document's OWN lines are part of the
+        # document, not a dependent on it: they cascade with the header, and what
+        # matters is who points at THEM, probed below.
+        line_relation = relation_name(self.db, line_table) if line_table else None
 
-        for referrer, column in self._referrers(entity_type):
-            if line_relation is not None and referrer == line_relation:
-                # The document's OWN lines are part of the document, not a
-                # dependent on it: they cascade with the header. What matters is
-                # who points at THEM, probed below.
-                continue
-            if self._exists(referrer, column, entity_type, entity_id):
-                return True
+        if is_referenced(
+            self.db, entity_type, entity_id, skip_relation=line_relation
+        ):
+            return True
 
         if spec is None:
             return False
@@ -321,7 +286,7 @@ class DeletionService:
         # the id is always bound. The join asks the same question as "load the
         # line ids, then probe each" in one statement per referrer, and it needs
         # no array binding to do it.
-        for referrer, column in self._referrers(line_table):
+        for referrer, column in referrers_of(self.db, line_table):
             found = self.db.execute(
                 text(
                     f"SELECT EXISTS (SELECT 1 FROM {referrer} r "
@@ -333,21 +298,6 @@ class DeletionService:
             if found:
                 return True
         return False
-
-    def _exists(self, referrer: str, column: str, table: str, entity_id: str) -> bool:
-        found = self.db.execute(
-            text(f'SELECT EXISTS (SELECT 1 FROM {referrer} WHERE "{column}" = :id)'),
-            {"id": str(entity_id)},
-        ).scalar()
-        if found:
-            logger.info(
-                "deletion.dependent_found table=%s id=%s referrer=%s.%s",
-                table,
-                entity_id,
-                referrer,
-                column,
-            )
-        return bool(found)
 
     # ------------------------------------------------------------- the arms
     def _hard_delete(self, entity_type: str, entity_id: str) -> None:

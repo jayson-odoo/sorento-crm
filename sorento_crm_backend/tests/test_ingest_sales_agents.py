@@ -592,6 +592,7 @@ def test_the_same_ref_under_two_companies_is_one_shared_row():
     )
     from app.models.base import set_company_scope
     from app.models.company import Company
+    from app.models.integration import Integration
     from app.models.user import User, UserRole, UserRoleAssignment
     from app.services.company_scope_resolver import apply_company_scope
     from tests._pg_fixture import blank_session
@@ -660,13 +661,24 @@ def test_the_same_ref_under_two_companies_is_one_shared_row():
                 assert first.status_code == 200, first.text
                 assert first.json()["records"][0]["outcome"] == "created"
 
-                # Company B's extract, same agent, same unqualified ref. A
-                # different integration is allowed to carry it - the ESB runs one
-                # per AutoCount database.
+                # Company B's extract, same agent, same unqualified ref, carried
+                # by a DIFFERENT integration - the ESB runs one per AutoCount
+                # database, so this is the ordinary case and not an edge one.
+                # A real row, because the half of section 7.6(b) under test is
+                # that `link()` re-points the existing mapping at whoever pushed
+                # last instead of refusing it, and `integration_id=None` on both
+                # pushes would never have exercised that.
+                second_integration = Integration(
+                    id=str(uuid.uuid4()),
+                    name=f"{MARKER} esb B {uuid.uuid4().hex[:6]}",
+                    type="esb",
+                )
+                db.add(second_integration)
+                db.flush()
                 app.dependency_overrides[get_external_api_user] = lambda: {
                     "id": user_id,
                     "email": f"{MARKER.lower()}-admin@test.com",
-                    "integration_id": None,
+                    "integration_id": str(second_integration.id),
                 }
                 second = client.post(
                     "/api/v1/external/ingest/sales_agents",
@@ -678,7 +690,6 @@ def test_the_same_ref_under_two_companies_is_one_shared_row():
                 assert second.status_code == 200, second.text
                 entry = second.json()["records"][0]
                 assert entry["outcome"] == "updated", entry
-                assert entry["outcome"] != "failed"
 
                 rows = (
                     db.execute(
@@ -694,5 +705,22 @@ def test_the_same_ref_under_two_companies_is_one_shared_row():
                 assert len(rows) == 1
                 assert rows[0]["company_id"] is None
                 assert rows[0]["description"] == "Pushed by B"
+                # One mapping, re-pointed in place at the integration that
+                # pushed last. A second row here would be the shared agent
+                # linked twice, which is the duplicate this whole path exists
+                # to prevent.
+                mapping = (
+                    db.execute(
+                        text(
+                            "SELECT integration_id FROM integration_references "
+                            "WHERE entity_type = 'sales_agents' AND entity_id = :e"
+                        ),
+                        {"e": str(rows[0]["id"])},
+                    )
+                    .mappings()
+                    .all()
+                )
+                assert len(mapping) == 1
+                assert str(mapping[0]["integration_id"]) == str(second_integration.id)
         finally:
             app.dependency_overrides.clear()

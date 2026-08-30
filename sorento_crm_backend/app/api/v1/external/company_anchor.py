@@ -40,7 +40,7 @@ _MATCH_COLUMNS = ("code", "autocount_ref")
 
 
 def _company_id_for_code(db: Session, code: str) -> Optional[str]:
-    """The active company ``code`` names, or None.
+    """The one active company ``code`` names, or None.
 
     Case-insensitive on both columns. The ESB knows a company by whatever
     AutoCount calls it and an operator types the Sorento code; neither side
@@ -49,17 +49,34 @@ def _company_id_for_code(db: Session, code: str) -> Optional[str]:
     An inactive company is not a candidate. A caller that may not write there
     gains nothing from being told the difference between "no such company" and
     "that one is closed", and both are the same fix: send a live code.
+
+    **Every match is read, not the first one.** `companies.code` is unique, but
+    `autocount_ref` has no unique index at all, so two companies can be given the
+    same AutoCount reference by hand. A `LIMIT 1` there answers with whichever
+    row the scan reached first - a coin toss that files a whole sync under the
+    wrong company and is invisible until somebody reads the numbers weeks later.
+    Two candidates is a refusal.
     """
     for column in _MATCH_COLUMNS:
-        row = db.execute(
+        rows = db.execute(
             text(
                 f"SELECT id FROM companies "
-                f"WHERE lower({column}) = lower(:v) AND is_active = true LIMIT 1"
+                f"WHERE lower({column}) = lower(:v) AND is_active = true"
             ),
             {"v": code},
-        ).first()
-        if row is not None:
-            return str(row[0])
+        ).fetchall()
+        if len(rows) > 1:
+            raise AppException(
+                status_code=422,
+                message=(
+                    f"'{code}' names {len(rows)} active companies (matched on "
+                    f"{column}). One request writes into one company, so the "
+                    "duplicate reference has to be resolved in Sorento first."
+                ),
+                code="COMPANY_ANCHOR_AMBIGUOUS",
+            )
+        if rows:
+            return str(rows[0][0])
     return None
 
 
@@ -79,11 +96,31 @@ def _binding_code(db: Session, integration_id: Optional[str]) -> Optional[str]:
     return value.strip() if isinstance(value, str) and value.strip() else None
 
 
-def _resolved(db: Session, code: Optional[str]) -> Optional[str]:
+def _resolved(db: Session, code: Optional[str], *, from_binding: bool) -> Optional[str]:
+    """The company a stated code names, refusing rather than falling back.
+
+    The two callers get DIFFERENT codes on failure, and that is the point. A body
+    code nobody recognises is the request's problem and the ESB can fix it in the
+    next push; a BINDING nobody recognises is a configuration row in Sorento
+    pointing at a company that has been renamed, deactivated or deleted, and
+    reporting it as `UNKNOWN_COMPANY` blamed the caller for a value it never
+    sent - a caller that had, in the same request, named a perfectly good company
+    of its own.
+    """
     if code is None:
         return None
     company_id = _company_id_for_code(db, code)
     if company_id is None:
+        if from_binding:
+            raise AppException(
+                status_code=422,
+                message=(
+                    f"This integration is bound to company '{code}', which is not "
+                    "an active company. Fix the binding in Sorento "
+                    "(config_json.company_code); the request itself is not at fault."
+                ),
+                code="COMPANY_BINDING_INVALID",
+            )
         raise AppException(
             status_code=422,
             message=(
@@ -107,8 +144,8 @@ def resolve_company_anchor(db: Session, payload: dict, principal: dict) -> str:
     body_code = body_code.strip() if isinstance(body_code, str) and body_code.strip() else None
     binding_code = _binding_code(db, principal.get("integration_id"))
 
-    body_company_id = _resolved(db, body_code)
-    binding_company_id = _resolved(db, binding_code)
+    body_company_id = _resolved(db, body_code, from_binding=False)
+    binding_company_id = _resolved(db, binding_code, from_binding=True)
 
     if body_company_id and binding_company_id and body_company_id != binding_company_id:
         raise AppException(

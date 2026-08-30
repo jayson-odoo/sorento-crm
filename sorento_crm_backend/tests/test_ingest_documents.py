@@ -51,7 +51,14 @@ from app.models.inventory import Warehouse
 from app.models.order import Customer, SalesOrder, SalesOrderLine
 from app.models.procurement import PurchaseOrder, PurchaseOrderLine, Supplier
 from app.models.product import Product, ProductCategory, UnitOfMeasure
+from app.models.project_so import ProjectSalesOrder
 from app.models.sales_agent import SalesAgent
+from app.models.scm import LoadingPlan, LoadingPlanLine
+from app.models.stock_transfer import (
+    TRANSFER_KIND_POOL,
+    TRANSFER_PROPOSED,
+    StockTransfer,
+)
 from app.services.company_scope import DEFAULT_COMPANY_ID
 from app.services.integration_reference_service import IntegrationReferenceService
 
@@ -195,6 +202,64 @@ class _Env:
         self.db.add(row)
         self.db.flush()
         return self._link("suppliers", row.id, "CREDITOR")
+
+    def loading_plan_line(self, po_line_id: str) -> str:
+        """A `scm.loading_plan_line` pointing at a purchase-order LINE.
+
+        `po_line_id` is ON DELETE **CASCADE** (`app/models/scm.py`), so a hard
+        delete of the line does not merely orphan this row, it destroys it - and
+        the plan a buyer sent a supplier loses the line it was built from.
+        """
+        supplier = Supplier(
+            supplier_code=unique_code(MARKER),
+            supplier_name=f"{MARKER} supplier",
+            company_id=self.company_a,
+        )
+        self.db.add(supplier)
+        self.db.flush()
+        plan = LoadingPlan(supplier_id=supplier.id, company_id=self.company_a)
+        self.db.add(plan)
+        self.db.flush()
+        row = LoadingPlanLine(
+            plan_id=plan.id, po_line_id=po_line_id, company_id=self.company_a
+        )
+        self.db.add(row)
+        self.db.flush()
+        return str(row.id)
+
+    def stock_transfer(self, so_line_id: str) -> str:
+        """A `projects.stock_transfers` row pointing at a sales-order LINE.
+
+        `so_line_id` is ON DELETE SET NULL, so a hard delete of the line SUCCEEDS
+        and silently detaches a movement of stock that has already happened.
+        """
+        mirror = ProjectSalesOrder(
+            provisional_ref=f"{MARKER}-{uuid.uuid4().hex[:8]}",
+            company_id=self.company_a,
+        )
+        self.db.add(mirror)
+        self.db.flush()
+        row = StockTransfer(
+            transfer_no=f"{MARKER}-TR-{uuid.uuid4().hex[:6]}",
+            so_line_id=so_line_id,
+            project_sales_order_id=mirror.id,
+            product_id=self.refs.resolve(
+                entity_type="products", source_ref=self.product_ref
+            ),
+            from_warehouse_id=self.refs.resolve(
+                entity_type="warehouses", source_ref=self.warehouse_ref
+            ),
+            to_warehouse_id=self.refs.resolve(
+                entity_type="warehouses", source_ref=self.link_warehouse(self.company_a)
+            ),
+            qty=1,
+            kind=TRANSFER_KIND_POOL,
+            state=TRANSFER_PROPOSED,
+            company_id=self.company_a,
+        )
+        self.db.add(row)
+        self.db.flush()
+        return str(row.id)
 
     def link_agent(self) -> str:
         row = SalesAgent(sales_agent=f"{MARKER}-{uuid.uuid4().hex[:6].upper()}")
@@ -512,9 +577,76 @@ class TestLineUpsert:
         env.post(INGEST_SO, [record])
 
         lines = env.so_lines(header["id"])
-        assert [str(l["id"]) for l in lines] != [legacy_id]
         assert legacy_id not in {str(l["id"]) for l in lines}
         assert len(lines) == 1
+
+
+    def test_a_line_a_loading_plan_points_at_is_cancelled_not_deleted(self, env):
+        """AC-A3-2, the arm that used to lose data.
+
+        `scm.loading_plan_line.po_line_id` is ON DELETE CASCADE, so deleting the
+        purchase-order line takes the plan row with it - and the first sync of an
+        ADOPTED document deletes EVERY pre-existing line, because none of them
+        carries a source_ref yet. So a line something points at is cancelled in
+        place: out of the demand, still there for whatever needs it.
+        """
+        keep = _po_line(env)
+        drop = _po_line(env, product_ref=env.product2_ref, qty_ordered=5)
+        record = _po_record(env, lines=[keep, drop])
+        env.post(INGEST_PO, [record])
+        header = env.header("purchase_orders", record["source_ref"])
+        by_ref = {l["source_ref"]: l for l in env.po_lines(header["id"])}
+        dropped_id = str(by_ref[drop["source_ref"]]["id"])
+        plan_line_id = env.loading_plan_line(dropped_id)
+
+        res = env.post(INGEST_PO, [dict(record, lines=[keep])])
+
+        assert res.json()["records"][0]["outcome"] == "updated", res.text
+        lines = {l["source_ref"]: l for l in env.po_lines(header["id"])}
+        assert set(lines) == {keep["source_ref"], drop["source_ref"]}
+        cancelled = lines[drop["source_ref"]]
+        assert str(cancelled["id"]) == dropped_id
+        assert cancelled["line_status"] == "cancelled"
+        # Untouched otherwise: this row is now the evidence the plan was built
+        # from, and restating its quantity would falsify that.
+        assert cancelled["qty_ordered"] == 5
+        # Through the ORM, so the read lands in the scratch schema the request
+        # wrote into; `scm.`-qualified raw SQL would count rows in the REAL one.
+        assert (
+            env.db.query(func.count())
+            .select_from(LoadingPlanLine)
+            .filter(LoadingPlanLine.id == plan_line_id)
+            .scalar()
+            == 1
+        )
+        assert lines[keep["source_ref"]]["line_status"] == "open"
+
+    def test_a_line_a_stock_transfer_points_at_is_cancelled_not_deleted(self, env):
+        """The SET NULL half. `stock_transfers.so_line_id` does not refuse the
+        delete - it lets it through and detaches a movement of stock that has
+        already physically happened, which no error anywhere reports."""
+        keep = _so_line(env)
+        drop = _so_line(env, product_ref=env.product2_ref, qty_ordered=5)
+        record = _so_record(env, lines=[keep, drop])
+        env.post(INGEST_SO, [record])
+        header = env.header("sales_orders", record["source_ref"])
+        by_ref = {l["source_ref"]: l for l in env.so_lines(header["id"])}
+        dropped_id = str(by_ref[drop["source_ref"]]["id"])
+        transfer_id = env.stock_transfer(dropped_id)
+
+        res = env.post(INGEST_SO, [dict(record, lines=[keep])])
+
+        assert res.json()["records"][0]["outcome"] == "updated", res.text
+        lines = {l["source_ref"]: l for l in env.so_lines(header["id"])}
+        assert set(lines) == {keep["source_ref"], drop["source_ref"]}
+        assert str(lines[drop["source_ref"]]["id"]) == dropped_id
+        assert lines[drop["source_ref"]]["line_status"] == "cancelled"
+        still_attached = (
+            env.db.query(StockTransfer.so_line_id)
+            .filter(StockTransfer.id == transfer_id)
+            .scalar()
+        )
+        assert str(still_attached) == dropped_id
 
 
 # ============================================================= adoption (AC-A3-3)
@@ -549,6 +681,86 @@ class TestAdoption:
         assert header["source_system"] == "autocount"
         assert header["source_ref"] == record["source_ref"]
         assert env.counts()["so"] == 1
+
+    def test_the_same_so_number_in_another_company_is_not_adopted(self, env):
+        """AC-A1-6 for a document. Adoption is by NUMBER, and `so_number` is
+        unique per company only (`uq_sales_orders_company_so_number`, migration
+        305) - so two companies routinely hold `SO-000123`, and an unscoped
+        adoption would hand company A's push to company B's order.
+
+        The model carried the pre-305 GLOBAL `unique=True` until this fix, so a
+        schema built from the models could not hold one number twice at all and
+        this case was untestable rather than passing.
+        """
+        number = f"{MARKER}-SO-{uuid.uuid4().hex[:8]}"
+        theirs = SalesOrder(
+            id=str(uuid.uuid4()),
+            so_number=number,
+            status="open",
+            company_id=env.company_b,
+            source_system="import",
+        )
+        env.db.add(theirs)
+        env.db.flush()
+
+        record = _so_record(env, number=number)
+        res = env.post(INGEST_SO, [record])
+
+        entry = res.json()["records"][0]
+        assert entry["outcome"] == "created", res.text
+        assert entry["entity_id"] != str(theirs.id)
+        rows = (
+            env.db.execute(
+                text(
+                    "SELECT id, company_id, source_system FROM sales_orders "
+                    "WHERE so_number = :n"
+                ),
+                {"n": number},
+            )
+            .mappings()
+            .all()
+        )
+        by_company = {str(row["company_id"]): row for row in rows}
+        assert set(by_company) == {env.company_a, env.company_b}
+        # B's row is untouched: still its own, still not AutoCount's.
+        assert str(by_company[env.company_b]["id"]) == str(theirs.id)
+        assert by_company[env.company_b]["source_system"] == "import"
+
+    def test_the_same_po_number_in_another_company_is_not_adopted(self, env):
+        """The purchase-order half, for the same reason and the same model fix
+        (`uq_purchase_orders_company_po_number`)."""
+        number = f"{MARKER}-PO-{uuid.uuid4().hex[:8]}"
+        theirs = PurchaseOrder(
+            id=str(uuid.uuid4()),
+            po_number=number,
+            status="active",
+            company_id=env.company_b,
+            source_system="import",
+        )
+        env.db.add(theirs)
+        env.db.flush()
+
+        record = _po_record(env, number=number)
+        res = env.post(INGEST_PO, [record])
+
+        entry = res.json()["records"][0]
+        assert entry["outcome"] == "created", res.text
+        assert entry["entity_id"] != str(theirs.id)
+        rows = (
+            env.db.execute(
+                text(
+                    "SELECT id, company_id, source_system FROM purchase_orders "
+                    "WHERE po_number = :n"
+                ),
+                {"n": number},
+            )
+            .mappings()
+            .all()
+        )
+        by_company = {str(row["company_id"]): row for row in rows}
+        assert set(by_company) == {env.company_a, env.company_b}
+        assert str(by_company[env.company_b]["id"]) == str(theirs.id)
+        assert by_company[env.company_b]["source_system"] == "import"
 
     def test_a_number_already_claimed_by_another_ref_is_failed(self, env):
         """AC-A3-3. Two AutoCount documents claiming one Sorento order is a

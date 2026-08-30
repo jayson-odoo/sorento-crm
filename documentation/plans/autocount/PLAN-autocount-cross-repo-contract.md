@@ -2,8 +2,11 @@
 
 **Status:** APPROVED 2026-08-30 (brief from the foundryx-shared-service session, Appendix A of
 `foundryx-shared-service/documentation/plans/sprint-4/22-autocount-db-etl.md`, ACs AC-22-25..28).
-Slices: A1-A4 DONE, review next (A1 = commit `feat(external): company-anchored ingest/read (A1)`
-on this branch; a commit cannot carry its own sha, so the hash is in the handoff).
+Slices: A1-A4 DONE, review fixes DONE
+(`fix(external): review pass on the AutoCount contract (slugs declared, dependent lines cancelled
+not deleted, anchor ambiguity)`), PR next (A1 = commit
+`feat(external): company-anchored ingest/read (A1)` on this branch; a commit cannot carry its own
+sha, so the hash is in the handoff).
 **Branch:** `feat/autocount-cross-repo-contract` off `origin/main` e1ba232ca.
 **Worktree:** `.claude/worktrees/autocount-contract` (backend only; no dev server needed).
 **UAC:** `autocount-cross-repo-contract-acceptance-criteria.md` alongside.
@@ -21,7 +24,7 @@ and is reported back to that session.
 | Integration principal | `get_external_api_user` -> `{"id", "integration_id", "integration_name", ...}`. `integrations.config_json` is JSONB (`foundryx-esb` row holds `{"base_url": ...}`). |
 | Companies | `companies.code` unique (`SRT`, `MOCHA` on dev); `companies.autocount_ref` nullable, empty today. |
 | `sales_agents` | Table exists (`app/models/sales_agent.py`), NOT `CompanyScopedMixin`: `company_id` NULL = shared row; unique index `coalesce(company_id, nil)` + `sales_agent`. Slugs `master_data.sales_agents.{view,add,edit,delete}` registered; `integration_foundryx_esb` holds view+edit, only `admin` holds delete. |
-| `public.sales_orders` / `public.purchase_orders` | `app/models/order.py:360` / `app/models/procurement.py:627`, both `CompanyScopedMixin`, headers carry `source_system`/`source_ref`/(SO) `source_doc_no`, lines carry `source_system`/`source_ref`. SO statuses in use: `open`, `partially_delivered`, `fulfilled`; PO: `draft`, `active`, `partial`, `received`, `closed`, `cancelled`. Slugs `scm.sales_orders.*` / `scm.purchase_orders.*` exist; esb holds view+edit, only admin holds delete. |
+| `public.sales_orders` / `public.purchase_orders` | `app/models/order.py:360` / `app/models/procurement.py:627`, both `CompanyScopedMixin`, headers carry `source_system`/`source_ref`/(SO) `source_doc_no`, lines carry `source_system`/`source_ref`. SO statuses in use: `open`, `partially_delivered`, `fulfilled`; PO: `draft`, `active`, `partial`, `received`, `closed`, `cancelled`. Slugs `scm.sales_orders.*` / `scm.purchase_orders.*` exist ON THE DEV COPY OF PRODUCTION ONLY (a retired migration put them there; measured in the review: they are declared nowhere in the app, and no SCM route gates on them - the screens use `scm.dashboard.view` / `scm.reorder.run`). esb holds view+edit, only admin holds delete. |
 | `IntegrationReferenceService` | `SUPPORTED_ENTITY_TYPES` allowlist did NOT contain `sales_agents` (measured in A2; section 0's original claim was wrong, and `test_integration_reference` pins the set exactly, so A2 adds it to both). Still does NOT contain `sales_orders` / `purchase_orders` (it has legacy `orders`/`order_lines`). `resolve()` returns `str`. A3 adds `sales_orders` + `purchase_orders` (and the exact-set test). |
 | Grant migration pattern | `alembic/versions/414_product_set_grant_sweep.py` (create-if-absent slug, sweep grant from a source slug, `ON CONFLICT DO NOTHING`, mirrored downgrade). Head: `444_notify_email_on_mention`. |
 | Stale branch | `sorento_crm-autocount` (PR #46, 300 commits behind main) carries an older SO/PO ingester keyed on `so_number = AC-{DocKey}` with wholesale line replacement and no company anchor. Reference only; nothing is cherry-picked. |
@@ -38,6 +41,18 @@ and is reported back to that session.
    `integration_id`, resolved the same way. A binding AND an explicit code that disagree -> 422
    `COMPANY_ANCHOR_AMBIGUOUS`.
 3. Neither -> 422 `COMPANY_ANCHOR_REQUIRED`.
+
+FOUR codes, not three. Two more came out of the review, and both were cases where the answer was
+being decided by something nobody chose:
+
+* A binding that resolves to NOTHING -> 422 `COMPANY_BINDING_INVALID`, naming the bound value and
+  `config_json.company_code`. It used to report `UNKNOWN_COMPANY` quoting a value the caller had
+  never sent, in a request whose own `companyCode` was fine - so the ESB would have gone looking
+  for the fault in the one field it had got right. The binding is still resolved even when the body
+  names a company: a stale binding is a defect to fix, not one to route around.
+* A code matching MORE THAN ONE active company -> 422 `COMPANY_ANCHOR_AMBIGUOUS` stating how many.
+  `companies.code` is unique but `autocount_ref` has no unique index, so `LIMIT 1` answered with
+  whichever row the scan reached first and filed a whole sync under an arbitrary company.
 
 The helper calls `set_company_scope(db, frozenset({company_id}))` so the ORM filter + auto-stamp
 agree with the raw SQL below, and returns the id. Inactive company -> 422 `UNKNOWN_COMPANY`.
@@ -94,6 +109,11 @@ another company reports under `not_found`.
   `scm.sales_orders.delete`, `scm.purchase_orders.delete` onto every role holding the matching
   `.edit` slug (measured: for the six existing masters the `.edit` and `.delete` holder lists are
   identical, so this is the shape the surface already has).
+- All eight `scm.sales_orders.*` / `scm.purchase_orders.*` slugs are DECLARED, in
+  `app/rbac/permission_registry.py` (`_crud`) and created-if-absent by migration 445. They existed
+  only on the dev copy of production, so on CI and on any fresh database neither the sweep's target
+  nor its SOURCE was there: the sweep was a no-op and the document push would have 403'd for ever.
+  `sync_permissions` skips a slug that exists, so the two paths cannot conflict.
 
 ## 3. A3 - Document ingest (SO + PO)
 
@@ -150,7 +170,15 @@ integration references of the respective master entity types; an unknown one rai
 
 **Lines:** upsert by `(header_id, source_ref)` on the line table's `source_ref` column
 (`source_system='autocount'`); lines of the header whose `source_ref` is not in the payload are
-DELETED (including ref-less lines an earlier extract import created - the push is authoritative).
+removed (including ref-less lines an earlier extract import created - the push is authoritative),
+**unless something else references that line**, in which case it is `line_status='cancelled'` in
+place with its id and its quantities untouched. `scm.loading_plan_line.po_line_id` is ON DELETE
+CASCADE, so a delete there destroys a loading plan's rows outright; `stock_transfers.so_line_id`,
+`scm.order_link_claim`, `projects.order_inquiry_rows.po_line_id`, `planning_change`,
+`spo_allocations.po_line_id` and `picking_lines.po_line_id` are SET NULL and would be silently
+orphaned. Worst on the FIRST sync of an adopted document, where every pre-existing line is ref-less
+and all of them are replaced at once. The question is asked by the same probe the deletion endpoint
+uses (`app/services/dependent_probe.py`, one copy, imported by both).
 `line_status` = `cancelled` when the header is cancelled, else `fulfilled` when
 `qty_delivered >= qty_ordered > 0`, else `open`. Every line row carries `company_id = anchor`.
 
@@ -245,6 +273,13 @@ the shared-service session after A1 and after A4.
    round-trips a float through a 4-dp quantity has to say so, not assume it.
 8. A document line is addressed by the line's own `source_ref` (AutoCount's DtlKey). Two lines
    carrying the same one inside a single record is a validation failure, not last-one-wins.
+9. A line absent from the payload that something else references is CANCELLED in place, not
+   removed: same id, same quantities, `line_status='cancelled'`. The sink must expect a read-back
+   to keep listing it, and must not treat its continued presence as a failed delete.
+10. Two further 422 codes on the anchor: `COMPANY_BINDING_INVALID` (the integration's binding names
+    no live company - a Sorento configuration fault, not the request's) and
+    `COMPANY_ANCHOR_AMBIGUOUS` when one `companyCode` matches two active companies, which
+    `autocount_ref` permits.
 6. `sales_agents` rows are created SHARED (`company_id NULL`). Two companies pushing the same agent
    code under different source_refs: the second push is `failed` (`ReferenceConflict`, the row is
    already linked). ACCEPTED by the shared service 2026-08-30: it mints the agent ref UNQUALIFIED

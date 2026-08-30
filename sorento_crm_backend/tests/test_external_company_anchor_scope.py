@@ -400,6 +400,69 @@ def test_the_integration_binding_anchors_and_a_disagreeing_body_code_does_not(en
     assert _warehouse_row(env, clash["code"]) is None
 
 
+def test_a_company_code_naming_two_companies_is_refused(env):
+    """AC-A1-3, the half `LIMIT 1` used to decide by scan order.
+
+    `companies.code` is unique, but `autocount_ref` carries no unique index, so
+    two companies CAN be given the same AutoCount reference by hand. Answering
+    with whichever row came back first would file an entire sync under an
+    arbitrary company, and nothing would report it.
+    """
+    shared = f"AC-{MARKER}-{uuid.uuid4().hex[:6]}"
+    env.db.execute(
+        text("UPDATE companies SET autocount_ref = :r WHERE id IN (:a, :b)"),
+        {"r": shared, "a": env.company_a, "b": env.company_b},
+    )
+    record = _wh_record()
+
+    res = env.client.post(
+        INGEST_WAREHOUSES, json={"companyCode": shared, "records": [record]}
+    )
+
+    assert res.status_code == 422, res.text
+    body = res.json()
+    assert body["code"] == "COMPANY_ANCHOR_AMBIGUOUS"
+    assert "2 active companies" in body["message"]
+    assert _warehouse_row(env, record["code"]) is None
+
+
+def test_a_binding_naming_no_live_company_blames_the_binding_not_the_caller(env):
+    """AC-A1-2. A stale binding is a Sorento configuration row pointing at a
+    company that has been renamed or deactivated. Reporting it as
+    `UNKNOWN_COMPANY` named a value the caller never sent - and did it in a
+    request whose own `companyCode` was perfectly good, so the ESB would have
+    looked for the fault in the one field it had got right."""
+    from app.dependencies import get_external_api_user
+    from app.models.integration import Integration
+
+    integration = Integration(
+        id=str(uuid.uuid4()),
+        name=f"{MARKER} stale {uuid.uuid4().hex[:6]}",
+        type="esb",
+        config_json={"company_code": f"{MARKER}-GONE"},
+    )
+    env.db.add(integration)
+    env.db.flush()
+    app.dependency_overrides[get_external_api_user] = lambda: {
+        "id": _USER_ID,
+        "email": f"{MARKER.lower()}-admin@test.com",
+        "integration_id": str(integration.id),
+    }
+    record = _wh_record()
+
+    res = env.client.post(
+        INGEST_WAREHOUSES,
+        json={"companyCode": env.company_a_code, "records": [record]},
+    )
+
+    assert res.status_code == 422, res.text
+    body = res.json()
+    assert body["code"] == "COMPANY_BINDING_INVALID"
+    assert f"{MARKER}-GONE" in body["message"]
+    assert "config_json.company_code" in body["message"]
+    assert _warehouse_row(env, record["code"]) is None
+
+
 def test_a_created_row_carries_the_anchor_company(env):
     """AC-A1-5, the NULL-company regression. ``_apply`` raw-INSERTs, so it bypasses
     the ORM auto-stamp entirely: before the anchor it wrote no ``company_id`` at

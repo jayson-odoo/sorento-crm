@@ -7,6 +7,11 @@ and nobody else, while the matching `.edit` is held by `admin` plus
 group A4 adds would 403 for exactly the principal it is built for, and read as
 "the ESB cannot delete" rather than as a missing grant.
 
+The eight `scm.sales_orders.*` / `scm.purchase_orders.*` rows are the migration's
+own as well: they exist on the dev copy of production because a since-retired
+migration put them there, so a database built any other way has neither the
+target NOR the source of the sweep, and the sweep alone would be a no-op.
+
 Driven through `apply()` / `revert()` rather than `alembic upgrade`: the local
 database is shared across worktrees and its `alembic_version` is stamped for a
 different branch, so stepping it here would move a version other checkouts are
@@ -167,6 +172,60 @@ def test_the_downgrade_takes_back_the_grant_and_leaves_the_permission(
 
     assert _grant_count(bind, role_holding_edit, TARGET) == 0
     assert _permission_id(bind, TARGET) is not None
+
+
+def test_the_scm_document_slugs_are_created_where_the_database_has_none(bind):
+    """The eight `scm.*` rows are the migration's own, not something it assumes.
+
+    They exist on the dev copy of production because a since-retired migration put
+    them there, and they are declared nowhere else - so a database built any other
+    way (CI, `scripts/bootstrap_env`, a fresh deploy) has none of them, the sweep's
+    SELECT finds no source grant to copy, and the ESB is refused for ever. Deleted
+    first inside the rolled-back transaction so this asserts the create, not the
+    incumbent rows.
+    """
+    slugs = [slug for slug, _name, _descr in mig445._SCM_PERMISSIONS]
+    assert len(slugs) == 8
+    bind.execute(
+        text("DELETE FROM user_role_permissions WHERE permission_id IN "
+             "(SELECT id FROM user_permissions WHERE slug = ANY(:s))"),
+        {"s": slugs},
+    )
+    bind.execute(text("DELETE FROM user_permissions WHERE slug = ANY(:s)"), {"s": slugs})
+    assert all(_permission_id(bind, slug) is None for slug in slugs)
+
+    mig445.apply(bind)
+
+    for slug, name, description in mig445._SCM_PERMISSIONS:
+        row = bind.execute(
+            text("SELECT name, description FROM user_permissions WHERE slug = :s"),
+            {"s": slug},
+        ).first()
+        assert row is not None, slug
+        # The names `_crud(...)` would have written, so the two paths that can
+        # create these rows cannot hand the screen two different labels.
+        assert (row[0], row[1]) == (name, description), slug
+
+
+def test_the_sweep_still_grants_delete_where_the_scm_slugs_were_absent(bind):
+    """The create and the sweep in one run, on a database that had neither.
+
+    A role holding `scm.sales_orders.edit` and nothing else still comes out of
+    `apply()` holding `.delete` - which is the whole point of the migration, and
+    the case CI and every fresh deploy actually run.
+    """
+    slugs = [slug for slug, _name, _descr in mig445._SCM_PERMISSIONS]
+    bind.execute(
+        text("DELETE FROM user_role_permissions WHERE permission_id IN "
+             "(SELECT id FROM user_permissions WHERE slug = ANY(:s))"),
+        {"s": slugs},
+    )
+    bind.execute(text("DELETE FROM user_permissions WHERE slug = ANY(:s)"), {"s": slugs})
+    role_id = _seed_role_holding(bind, SOURCE)
+
+    mig445.apply(bind)
+
+    assert _grant_count(bind, role_id, TARGET) == 1
 
 
 def test_every_swept_target_reaches_a_holder_of_its_source(bind):

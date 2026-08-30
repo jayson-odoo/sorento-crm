@@ -7,8 +7,13 @@ Companion to `PLAN-autocount-cross-repo-contract.md`. Every AC is pinned by a py
 
 - **AC-A1-1** `POST /external/ingest/{entity}` with no `companyCode` and no integration binding
   returns 422 `COMPANY_ANCHOR_REQUIRED`; nothing is written.
-- **AC-A1-2** An unknown or inactive `companyCode` returns 422 `UNKNOWN_COMPANY`.
+- **AC-A1-2** An unknown or inactive `companyCode` returns 422 `UNKNOWN_COMPANY`. An unresolvable
+  integration BINDING returns 422 `COMPANY_BINDING_INVALID` naming the bound value and pointing at
+  `config_json.company_code` - including when the body's own `companyCode` is valid, because the
+  caller must not be blamed for a Sorento configuration row it never sent.
 - **AC-A1-3** `companyCode` matches `companies.code` or `companies.autocount_ref`, case-insensitive.
+  `autocount_ref` carries no unique index, so a value naming more than one active company returns
+  422 `COMPANY_ANCHOR_AMBIGUOUS` stating how many, rather than picking one by scan order.
 - **AC-A1-4** An integration whose `config_json.company_code` is set ingests with no body code; a
   body code that disagrees with the binding returns 422 `COMPANY_ANCHOR_AMBIGUOUS`.
 - **AC-A1-5** A created master row carries `company_id` = the anchor (the NULL-company regression).
@@ -42,7 +47,10 @@ Companion to `PLAN-autocount-cross-repo-contract.md`. Every AC is pinned by a py
   `public.sales_order_lines`, all stamped with the anchor `company_id`, header linked by ref;
   `projects.sales_orders` untouched.
 - **AC-A3-2** Re-push with line 1 changed, line 2 absent, line 3 new -> line 1 updated in place
-  (same id), line 2 deleted, line 3 created; header `updated`.
+  (same id), line 2 deleted, line 3 created; header `updated`. A line absent from the payload that
+  something else references (`scm.loading_plan_line.po_line_id` is CASCADE,
+  `stock_transfers.so_line_id` is SET NULL) keeps its id and its quantities and is
+  `line_status='cancelled'` instead, and the referring row is still there afterwards.
 - **AC-A3-3** First sync with no ref but an existing `so_number` in the same company adopts it;
   an existing `so_number` already linked to another ref -> `failed`.
 - **AC-A3-4** A line whose `product_ref` is unknown makes the whole record `retryable`; no header,

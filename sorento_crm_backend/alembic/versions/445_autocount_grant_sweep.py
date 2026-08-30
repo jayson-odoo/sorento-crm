@@ -33,11 +33,18 @@ admin is indistinguishable from an endpoint that does not work.
 
 Derived from the live grants rather than a hand-written role list, so it stays
 correct on a database whose roles were customised after provisioning. Idempotent
-both ways: the permission rows are created only when absent (a fresh deploy runs
-migrations before the app's registry sync, and `scm.sales_orders.*` is not in
-`permission_registry` at all - those rows were provisioned outside it), every
-insert is SELECT-driven with `ON CONFLICT DO NOTHING`, and a database with no
-roles and no grants - CI's - is a clean no-op rather than a failure.
+both ways: the permission rows are created only when absent, every insert is
+SELECT-driven with `ON CONFLICT DO NOTHING`, and a database with no roles and no
+grants - CI's - is a clean no-op rather than a failure.
+
+**All EIGHT `scm.*` rows are created here, not just the two `.delete` ones.**
+`scm.sales_orders.*` and `scm.purchase_orders.*` were provisioned by a migration
+that has since been retired: they exist on the dev copy of production and are
+declared nowhere in the app, so a database built any other way has none of them.
+The sweep is SELECT-driven from the `.edit` slug, so on such a database it would
+find no source row, copy nothing, and leave the ESB refused. They are declared in
+`app/rbac/permission_registry.py` as well, and `sync_permissions` skips a slug
+that exists, so the two paths cannot conflict whichever runs first.
 
 The statements live in `apply()` / `revert()` so a test can run them on a
 connection it rolls back. The local Postgres is shared across worktrees and its
@@ -82,20 +89,46 @@ _SWEEP = (
     ),
 )
 
+# The two SCM document resources in full, spelled the way `_crud(...)` spells them.
+# Every action, because the source of the sweep (`.edit`) is as absent as its target on a
+# database that never ran the retired migration, and the ingest itself needs `.view` +
+# `.edit` before any deletion is ever asked for.
+_SCM_RESOURCES = (
+    ("sales_orders", "SCM Sales Orders"),
+    ("purchase_orders", "SCM Purchase Orders"),
+)
+_ACTIONS = ("view", "add", "edit", "delete")
+_SCM_PERMISSIONS = tuple(
+    (
+        f"scm.{resource}.{action}",
+        f"{action.capitalize()} {label}",
+        f"Permission to {action} {label}.",
+    )
+    for resource, label in _SCM_RESOURCES
+    for action in _ACTIONS
+)
+
+
+def _create_if_absent(bind, slug: str, name: str, description: str) -> None:
+    bind.execute(
+        sa.text(
+            """
+            INSERT INTO user_permissions (id, slug, name, description, created_at)
+            SELECT gen_random_uuid()::text, :slug, :name, :descr, now()
+            WHERE NOT EXISTS (SELECT 1 FROM user_permissions WHERE slug = :slug)
+            """
+        ),
+        {"slug": slug, "name": name, "descr": description},
+    )
+
 
 def apply(bind) -> None:
-    """Create the target slugs if absent, then grant each to its source's holders."""
+    """Create the slugs if absent, then grant each target to its source's holders."""
+    for slug, name, description in _SCM_PERMISSIONS:
+        _create_if_absent(bind, slug, name, description)
+
     for target, _source, name, description in _SWEEP:
-        bind.execute(
-            sa.text(
-                """
-                INSERT INTO user_permissions (id, slug, name, description, created_at)
-                SELECT gen_random_uuid()::text, :slug, :name, :descr, now()
-                WHERE NOT EXISTS (SELECT 1 FROM user_permissions WHERE slug = :slug)
-                """
-            ),
-            {"slug": target, "name": name, "descr": description},
-        )
+        _create_if_absent(bind, target, name, description)
 
     for target, source, _name, _descr in _SWEEP:
         bind.execute(

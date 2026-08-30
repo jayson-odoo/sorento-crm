@@ -12,6 +12,17 @@ and goes with it - including a line an earlier extract import created with no
 AutoCount sync: the same physical line would count once under the ref-less row
 and once under the pushed one.
 
+**Unless something else points at that line.** `scm.loading_plan_line.po_line_id`
+is `ON DELETE CASCADE`, so removing a purchase-order line takes loading-plan rows
+with it; `stock_transfers.so_line_id` and four more are `SET NULL` and would be
+silently orphaned - a transfer that has already physically moved stock, detached
+from the order it moved it for. The first sync of an ADOPTED document is where
+this bites hardest: every pre-existing line is ref-less, so all of them are
+replaced at once. So a line that is going away is asked the same question the
+deletion endpoint asks (`app/services/dependent_probe.py`), and one that anything
+references is `cancelled` in place instead - out of the demand, still there for
+whatever points at it.
+
 **A line keeps its id.** The upsert is by the line's own `source_ref`
 (AutoCount's DtlKey), not by position and not by wholesale replacement. Stock
 allocations, transfers and plan decisions point at a line id; replacing every
@@ -29,11 +40,13 @@ different Sorento vocabularies, and an unmapped word is `failed` rather than
 stored - `status` is what decides whether a row is still open demand, so a value
 nothing can classify would quietly leave the order out of every plan.
 
-The ORM is used for the writes here, deliberately, where the master ingest uses
-raw SQL. Both `sales_orders` and `sales_order_lines` (and their purchase-order
-twins) exist a SECOND time in the `projects` schema, and unqualified raw SQL
-resolves those names through `search_path`. The ORM models say which table they
-mean; the company anchor is still stamped by hand on top of the auto-stamp,
+The ORM is used for every read and every write here, deliberately, where the
+master ingest uses raw SQL. Both `sales_orders` and `sales_order_lines` (and
+their purchase-order twins) exist a SECOND time in the `projects` schema, and
+unqualified raw SQL resolves those names through `search_path`. The ORM models
+say which table they mean - which is also why a reference declares the MODEL it
+resolves into rather than a table name, and the entity name is read back off that
+model. The company anchor is still stamped by hand on top of the auto-stamp,
 because a document must never depend on ambient session state for the one thing
 that partitions it.
 
@@ -48,12 +61,15 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 from pydantic import BaseModel, ValidationError
-from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.models.order import SalesOrder, SalesOrderLine
-from app.models.procurement import PurchaseOrder, PurchaseOrderLine
+from app.models.inventory import Warehouse
+from app.models.order import Customer, SalesOrder, SalesOrderLine
+from app.models.procurement import PurchaseOrder, PurchaseOrderLine, Supplier
+from app.models.product import Product
+from app.models.sales_agent import SalesAgent
 from app.schemas.canonical_documents import CanonicalPurchaseOrder, CanonicalSalesOrder
+from app.services.dependent_probe import is_referenced
 from app.services.integration_reference_service import (
     IntegrationReferenceService,
     ReferenceConflict,
@@ -66,7 +82,6 @@ from app.services.master_ingest_service import (
     UnsupportedIngestEntity,
     _field_errors,
     _is_company_scoped,
-    _lookup_id,
     _value_changed,
 )
 
@@ -104,22 +119,24 @@ CANCELLED = "cancelled"
 class DocumentSpec:
     """How one canonical document maps onto a header table and its line table."""
 
-    entity_type: str
     schema: type[BaseModel]
     header_model: type
     line_model: type
     # The business number, which is what a FIRST sync adopts an existing row by.
-    number_column: str
+    # ONE name: the payload field and the column are spelled the same on both
+    # documents (`so_number`, `po_number`), and two fields holding one string
+    # could be given two values that no test would notice.
     number_field: str
     status_map: dict[str, str]
     # Only sales_orders carries `source_doc_no`; purchase_orders has no such
     # column, and writing one would be an AttributeError per record.
     doc_no_column: Optional[str]
-    # (column, payload field, master entity_type) for the header's FKs and the
-    # line's. The master entity_type is what the ref resolves through, and it is
-    # also what decides whether the resolved row has to be in the anchor company.
-    header_refs: tuple[tuple[str, str, str], ...]
-    line_refs: tuple[tuple[str, str, str], ...]
+    # (column, payload field, master MODEL) for the header's FKs and the line's.
+    # The model is what the ref resolves through - its `__tablename__` is the
+    # entity type - and it is also how the resolved row's company is read, which
+    # is a table the ORM names rather than one `search_path` chooses.
+    header_refs: tuple[tuple[str, str, type], ...]
+    line_refs: tuple[tuple[str, str, type], ...]
     # (column, payload field) for the plain values.
     header_fields: tuple[tuple[str, str], ...]
     line_fields: tuple[tuple[str, str], ...]
@@ -128,24 +145,33 @@ class DocumentSpec:
     # The FK from a line back to its header.
     line_fk: str
 
+    @property
+    def entity_type(self) -> str:
+        """The name this document is ingested, read and deleted under.
+
+        Read off the model rather than restated: the key in `DOCUMENT_SPECS`, the
+        entity type in `integration_references` and the table name are one
+        string, and a spec that could disagree with its own model about which
+        would be a mismatch nothing reports.
+        """
+        return self.header_model.__tablename__
+
 
 DOCUMENT_SPECS: dict[str, DocumentSpec] = {
     "sales_orders": DocumentSpec(
-        entity_type="sales_orders",
         schema=CanonicalSalesOrder,
         header_model=SalesOrder,
         line_model=SalesOrderLine,
-        number_column="so_number",
         number_field="so_number",
         status_map=SALES_ORDER_STATUS_MAP,
         doc_no_column="source_doc_no",
         header_refs=(
-            ("customer_id", "customer_ref", "customers"),
-            ("sales_agent_id", "sales_agent_ref", "sales_agents"),
+            ("customer_id", "customer_ref", Customer),
+            ("sales_agent_id", "sales_agent_ref", SalesAgent),
         ),
         line_refs=(
-            ("product_id", "product_ref", "products"),
-            ("warehouse_id", "warehouse_ref", "warehouses"),
+            ("product_id", "product_ref", Product),
+            ("warehouse_id", "warehouse_ref", Warehouse),
         ),
         # `debtor_code`, `demand_class`, `demand_origin`, `priority` and
         # `order_type` are absent on purpose, the same way the agent master's
@@ -172,18 +198,16 @@ DOCUMENT_SPECS: dict[str, DocumentSpec] = {
         line_fk="sales_order_id",
     ),
     "purchase_orders": DocumentSpec(
-        entity_type="purchase_orders",
         schema=CanonicalPurchaseOrder,
         header_model=PurchaseOrder,
         line_model=PurchaseOrderLine,
-        number_column="po_number",
         number_field="po_number",
         status_map=PURCHASE_ORDER_STATUS_MAP,
         doc_no_column=None,
-        header_refs=(("supplier_id", "supplier_ref", "suppliers"),),
+        header_refs=(("supplier_id", "supplier_ref", Supplier),),
         line_refs=(
-            ("product_id", "product_ref", "products"),
-            ("warehouse_id", "warehouse_ref", "warehouses"),
+            ("product_id", "product_ref", Product),
+            ("warehouse_id", "warehouse_ref", Warehouse),
         ),
         header_fields=(
             ("po_number", "po_number"),
@@ -399,15 +423,24 @@ class DocumentIngestService:
         )
         if existing_id is not None:
             self._require_same_company(
-                spec.entity_type,
+                spec.header_model,
                 existing_id,
                 f"source_ref {payload.source_ref!r}",
             )
             return self._load(spec, existing_id), IngestOutcome.UPDATED
 
-        number = getattr(payload, spec.number_field)
-        adopted = _lookup_id(
-            self.db, spec.entity_type, spec.number_column, number, self.company_id
+        # Within the company, and through the model: `so_number` is unique per
+        # company only (migration 305), and the same name in the `projects`
+        # schema is a different table that raw SQL would let `search_path`
+        # choose between.
+        adopted = (
+            self.db.query(spec.header_model.id)
+            .filter(
+                getattr(spec.header_model, spec.number_field)
+                == getattr(payload, spec.number_field),
+                spec.header_model.company_id == self.company_id,
+            )
+            .scalar()
         )
         if adopted is not None:
             if (
@@ -418,7 +451,9 @@ class DocumentIngestService:
                 # conflict a human settles; retargeting silently would move
                 # somebody else's demand.
                 raise ReferenceConflict(
-                    f"{spec.number_column}={number!r} is already linked to another source"
+                    f"{spec.number_field}="
+                    f"{getattr(payload, spec.number_field)!r} "
+                    "is already linked to another source"
                 )
             return self._load(spec, adopted), IngestOutcome.UPDATED
 
@@ -442,8 +477,8 @@ class DocumentIngestService:
             column: getattr(payload, field) for column, field in spec.header_fields
         }
         values["status"] = status
-        for column, field, entity_type in spec.header_refs:
-            values[column] = self._resolve_ref(field, getattr(payload, field), entity_type)
+        for column, field, model in spec.header_refs:
+            values[column] = self._resolve_ref(field, getattr(payload, field), model)
         # Adoption takes ownership: from here on the row is AutoCount's, and the
         # next push has to find it by reference rather than by number again.
         values["source_system"] = SOURCE_SYSTEM
@@ -458,9 +493,9 @@ class DocumentIngestService:
         values: dict[str, Any] = {
             column: getattr(line, field) for column, field in spec.line_fields
         }
-        for column, field, entity_type in spec.line_refs:
+        for column, field, model in spec.line_refs:
             values[column] = self._resolve_ref(
-                f"lines.{index}.{field}", getattr(line, field), entity_type
+                f"lines.{index}.{field}", getattr(line, field), model
             )
         # NOT NULL on both line tables, and an absent figure means none delivered.
         for column in ("qty_ordered", spec.line_delivered_field):
@@ -474,7 +509,7 @@ class DocumentIngestService:
         return values
 
     def _resolve_ref(
-        self, field: str, source_ref: Optional[str], entity_type: str
+        self, field: str, source_ref: Optional[str], model: type
     ) -> Optional[str]:
         """The local id an integration reference names, inside the anchor company.
 
@@ -486,13 +521,15 @@ class DocumentIngestService:
         """
         if source_ref is None or source_ref == "":
             return None
-        entity_id = self.refs.resolve(entity_type=entity_type, source_ref=source_ref)
+        entity_id = self.refs.resolve(
+            entity_type=model.__tablename__, source_ref=source_ref
+        )
         if entity_id is None:
             raise MissingReference(field, source_ref)
-        self._require_same_company(entity_type, entity_id, f"{field} {source_ref!r}")
+        self._require_same_company(model, entity_id, f"{field} {source_ref!r}")
         return entity_id
 
-    def _require_same_company(self, entity_type: str, entity_id: str, subject: str) -> None:
+    def _require_same_company(self, model: type, entity_id: str, subject: str) -> None:
         """Refuse a reference that resolves into another company.
 
         `integration_references` is global, so a ref finds its row whatever
@@ -501,13 +538,14 @@ class DocumentIngestService:
         ordinary re-sync. Shared masters (`sales_agents`) carry no company at all
         and are visible from either anchor, so they are exempt.
         """
-        if not _is_company_scoped(entity_type):
+        if not _is_company_scoped(model.__tablename__):
             return
-        owner = self.db.execute(
-            text(f"SELECT company_id FROM {entity_type} WHERE id = :id"),
-            {"id": str(entity_id)},
-        ).scalar()
-        if str(owner) != str(self.company_id):
+        mine = (
+            self.db.query(model.id)
+            .filter(model.id == str(entity_id), model.company_id == self.company_id)
+            .first()
+        )
+        if mine is None:
             raise ReferenceConflict(f"{subject} is linked to a record in another company")
 
     def _sync_lines(
@@ -515,11 +553,15 @@ class DocumentIngestService:
     ) -> None:
         """Make the header's lines equal to the payload's, by the line's own ref.
 
-        Three outcomes per existing row: matched (updated in place, same id),
-        unmatched (deleted), or absent from the database (inserted). The delete
-        arm is the one that needs saying out loud: a line whose `source_ref` is
-        NULL was written by the extract importer before AutoCount owned this
-        document, and leaving it would count the same physical line twice.
+        Four outcomes per existing row: matched (updated in place, same id),
+        absent from the database (inserted), unmatched and unreferenced
+        (deleted), unmatched but referenced (cancelled in place). The last two
+        are the ones that need saying out loud. A line whose `source_ref` is NULL
+        was written by the extract importer before AutoCount owned this document,
+        and leaving it counted would count the same physical line twice - but
+        deleting one a loading plan or a stock transfer points at either destroys
+        that row (CASCADE) or orphans it (SET NULL). Cancelled satisfies both:
+        the demand is gone, the row a dependent needs is still there.
         """
         existing = (
             self.db.query(spec.line_model)
@@ -546,8 +588,15 @@ class DocumentIngestService:
             for column, value in values.items():
                 setattr(row, column, value)
 
+        line_table = spec.line_model.__tablename__
         for row in [*by_ref.values(), *stale]:
-            self.db.delete(row)
+            if is_referenced(self.db, line_table, row.id):
+                # Quantities and prices are left exactly as they were: this row
+                # is now evidence of what a transfer moved or a plan was built
+                # from, and rewriting it would falsify that record.
+                row.line_status = CANCELLED
+            else:
+                self.db.delete(row)
         self.db.flush()
 
     def _diff(self, header: Any, values: dict[str, Any]) -> Optional[dict[str, dict[str, Any]]]:
@@ -606,9 +655,10 @@ class DocumentReadService:
         self.refs = IntegrationReferenceService(db)
 
     def current_state(self, entity_type: str, source_refs: list[str]) -> dict[str, Any]:
-        spec = DOCUMENT_SPECS.get(entity_type)
-        if spec is None:
-            return {"records": [], "not_found": list(source_refs)}
+        # The route 404s an unknown entity (`_entity`) and dispatches to this
+        # class only for `DOCUMENT_ENTITIES`, so a missing spec here would mean
+        # the two lists had come apart, not that a caller asked for something odd.
+        spec = DOCUMENT_SPECS[entity_type]
 
         found: list[dict[str, Any]] = []
         not_found: list[str] = []
@@ -640,8 +690,8 @@ class DocumentReadService:
         for column, field in spec.header_fields:
             record[field] = getattr(header, column)
         record["status"] = _canonical_status(spec, header.status)
-        for column, field, entity_type in spec.header_refs:
-            record[field] = self._ref_of(entity_type, getattr(header, column))
+        for column, field, model in spec.header_refs:
+            record[field] = self._ref_of(model, getattr(header, column))
         record["lines"] = [
             self._line(spec, line) for line in self._lines(spec, header)
         ]
@@ -663,14 +713,16 @@ class DocumentReadService:
             "source_ref": line.source_ref,
             "entity_id": str(line.id),
         }
-        for column, field, entity_type in spec.line_refs:
-            record[field] = self._ref_of(entity_type, getattr(line, column))
+        for column, field, model in spec.line_refs:
+            record[field] = self._ref_of(model, getattr(line, column))
         for column, field in spec.line_fields:
             record[field] = getattr(line, column)
         return record
 
-    def _ref_of(self, entity_type: str, entity_id: Optional[str]) -> Optional[str]:
+    def _ref_of(self, model: type, entity_id: Optional[str]) -> Optional[str]:
         if not entity_id:
             return None
-        origin = self.refs.origin_of(entity_type=entity_type, entity_id=str(entity_id))
+        origin = self.refs.origin_of(
+            entity_type=model.__tablename__, entity_id=str(entity_id)
+        )
         return str(origin.source_ref) if origin is not None else None
