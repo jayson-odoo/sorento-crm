@@ -22,6 +22,7 @@
 @import './components/rating.css';
 @import './components/image-input.css';
 @import './components/scrollable.css';
+@import './components/auth-backdrop.css';
 
 /* Demos */
 @import './demos/demo1.css';
