@@ -15,7 +15,8 @@ import { Card, CardHeader } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { Input } from '@/components/ui/input';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
+import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   getKeysForProduct,
@@ -49,7 +50,14 @@ export default function SpecRegistryTable() {
   const [inspecting, setInspecting] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [savedCount, setSavedCount] = useState(0);
-  const [filter, setFilter] = useState('');
+  // The box narrows the table on the keystroke, because the keys are already
+  // here; only the product-code LOOKUP waits for the debounce (S7-02).
+  const {
+    value: filter,
+    setValue: setFilter,
+    debouncedValue: probe,
+    isSettling: filterSettling,
+  } = useDebouncedSearch();
   const [expanded, setExpanded] = useState<ExpandedState>({});
   // When the filter names a real product code, the table narrows to the keys THAT
   // PRODUCT carries. "Why does this code not come back for rimless" is asked about a
@@ -77,25 +85,21 @@ export default function SpecRegistryTable() {
   // A filter that looks like a product code is looked up as one. Anything with a digit
   // is worth asking about; a word like "chrome" never reaches the server.
   useEffect(() => {
-    const candidate = filter.trim();
-    if (candidate.length < 3 || !/\d/.test(candidate)) {
+    if (probe.length < 3 || !/\d/.test(probe)) {
       setProductKeys(null);
       setMatchedCode(null);
       return;
     }
-    const timer = setTimeout(() => {
-      getKeysForProduct(candidate)
-        .then((r) => {
-          setProductKeys(r.matched_product ? r.keys : null);
-          setMatchedCode(r.matched_product?.product_code ?? null);
-        })
-        .catch(() => {
-          setProductKeys(null);
-          setMatchedCode(null);
-        });
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [filter]);
+    getKeysForProduct(probe)
+      .then((r) => {
+        setProductKeys(r.matched_product ? r.keys : null);
+        setMatchedCode(r.matched_product?.product_code ?? null);
+      })
+      .catch(() => {
+        setProductKeys(null);
+        setMatchedCode(null);
+      });
+  }, [probe]);
 
   const allSynonyms = (key: SpecRegistryKey): string[] => {
     if (key.data_type === 'boolean') {
@@ -423,12 +427,12 @@ export default function SpecRegistryTable() {
           {/* A w-72 input plus the button is 428px of no-wrap row, which is what
               pushed this page to a 465px scroll width at 375. */}
           <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
-            <Input
-              className="h-8 w-full sm:w-72"
+            <ListSearchInput
+              className="w-full sm:w-72"
               value={filter}
+              onChange={setFilter}
+              isSettling={filterSettling}
               placeholder="Find a spec, word or product code"
-              aria-label="Find a spec, word or product code"
-              onChange={(e) => setFilter(e.target.value)}
             />
             <Button variant="outline" size="sm" onClick={() => setAdding(true)} disabled={adding}>
               Add a specification

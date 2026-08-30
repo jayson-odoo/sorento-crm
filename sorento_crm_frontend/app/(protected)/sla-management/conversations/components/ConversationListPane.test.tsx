@@ -102,13 +102,14 @@ describe('ConversationListPane (AC-N1)', () => {
     expect(inboxQuery).toHaveBeenLastCalledWith('mine', '');
 
     fireEvent.change(screen.getByTestId('inbox-search'), { target: { value: 'ais' } });
+    // The window is the shared 200ms (S7-02); short of it, nothing has been asked.
     act(() => {
-      vi.advanceTimersByTime(200);
+      vi.advanceTimersByTime(150);
     });
     expect(inboxQuery).toHaveBeenLastCalledWith('mine', '');
 
     act(() => {
-      vi.advanceTimersByTime(150);
+      vi.advanceTimersByTime(100);
     });
     await waitFor(() => expect(inboxQuery).toHaveBeenLastCalledWith('mine', 'ais'));
   });

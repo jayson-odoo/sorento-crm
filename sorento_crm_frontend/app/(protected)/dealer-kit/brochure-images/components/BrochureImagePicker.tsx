@@ -42,14 +42,15 @@ import {
 
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
+import { Card, CardContent, CardFooter, CardTable } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { Input } from '@/components/ui/input';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
+import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { TriangleAlert, Check, ImageOff, Images } from 'lucide-react';
@@ -70,20 +71,18 @@ import { BrochureImageDialog } from './BrochureImageDialog';
 export function BrochureImagePicker() {
   const [promotionId, setPromotionId] = useState('');
   const [onlyUnset, setOnlyUnset] = useState(true);
-  const [searchInput, setSearchInput] = useState('');
-  const [search, setSearch] = useState('');
+  const {
+    value: searchInput,
+    setValue: setSearchInput,
+    debouncedValue: search,
+    isSettling: searchSettling,
+  } = useDebouncedSearch();
   const [pagination, setPagination] = useState<PaginationState>({
     pageIndex: 0,
     pageSize: BROCHURE_IMAGE_PAGE_SIZE,
   });
 
   const promotionOptions = useBrochureImagePromotionOptions();
-
-  // Debounced so typing a product code is one request, not one per keystroke.
-  useEffect(() => {
-    const timer = setTimeout(() => setSearch(searchInput), 300);
-    return () => clearTimeout(timer);
-  }, [searchInput]);
 
   // Any change of filter is a different worklist, so page 1 is where it starts.
   useEffect(() => {
@@ -334,11 +333,13 @@ export function BrochureImagePicker() {
               <Label htmlFor="dk-bi-search" className="text-xs text-muted-foreground">
                 Product
               </Label>
-              <Input
+              <ListSearchInput
                 id="dk-bi-search"
                 value={searchInput}
-                onChange={(event) => setSearchInput(event.target.value)}
+                onChange={setSearchInput}
+                isSettling={searchSettling}
                 placeholder="Code or name"
+                aria-label="Product code or name"
                 className="w-full sm:w-56"
               />
             </div>

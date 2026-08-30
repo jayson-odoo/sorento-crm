@@ -1,10 +1,11 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, ArrowDownLeft, ArrowUpRight, Loader2, Search } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { AlertCircle, ArrowDownLeft, ArrowUpRight, Loader2 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
+import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateTimeInMalaysia, parseDateTimeAsUTC, timeAgo } from '@/lib/helpers';
 import { stripWhatsAppMarkup } from '@/lib/whatsappText';
@@ -31,8 +32,6 @@ const EMPTY_COPY: Record<ConversationInboxTab, string> = {
   all: 'No conversations yet.',
 };
 
-/** How long a keystroke waits before it becomes a request. */
-const SEARCH_DEBOUNCE_MS = 300;
 /** Distance from the bottom that pulls the next page in. */
 const LOAD_MORE_THRESHOLD_PX = 120;
 
@@ -67,14 +66,13 @@ export default function ConversationListPane({
   onRowsLoaded,
   className,
 }: ConversationListPaneProps) {
-  const [searchText, setSearchText] = useState('');
-  const [appliedQuery, setAppliedQuery] = useState('');
+  const {
+    value: searchText,
+    setValue: setSearchText,
+    debouncedValue: appliedQuery,
+    isSettling: searchSettling,
+  } = useDebouncedSearch();
   const scrollRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const handle = setTimeout(() => setAppliedQuery(searchText.trim()), SEARCH_DEBOUNCE_MS);
-    return () => clearTimeout(handle);
-  }, [searchText]);
 
   const query = useConversationsInbox(tab, appliedQuery);
   const items = useMemo(
@@ -132,17 +130,15 @@ export default function ConversationListPane({
         ))}
       </div>
 
-      <div className="relative">
-        <Search className="pointer-events-none absolute start-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-        <Input
-          value={searchText}
-          onChange={(e) => setSearchText(e.target.value)}
-          placeholder="Search name or phone"
-          aria-label="Search conversations"
-          data-testid="inbox-search"
-          className="ps-8"
-        />
-      </div>
+      <ListSearchInput
+        value={searchText}
+        onChange={setSearchText}
+        isSettling={searchSettling}
+        placeholder="Search name or phone"
+        aria-label="Search conversations"
+        data-testid="inbox-search"
+        className="w-full"
+      />
 
       <div
         ref={scrollRef}
