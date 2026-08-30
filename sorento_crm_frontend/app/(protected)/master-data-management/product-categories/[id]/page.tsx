@@ -135,7 +135,11 @@ export default function ProductCategoryDetailPage({
   const parent = category.parent_category_id
     ? flat.find((item) => item.id === category.parent_category_id)
     : undefined;
-  const children = flat.find((item) => item.id === id)?.children ?? [];
+  const inTree = flat.find((item) => item.id === id);
+  const children = inTree?.children ?? [];
+  // The single-category endpoint does not carry a product count; the tree the
+  // list already holds does, so the number comes from whichever has it.
+  const productCount = category.product_count ?? inTree?.product_count ?? null;
 
   const startEdit = () => {
     setDraft({
@@ -352,9 +356,9 @@ export default function ProductCategoryDetailPage({
                 </Field>
 
                 <Field label="Products in this category">
-                  {category.product_count != null ? (
+                  {productCount != null ? (
                     <div className="space-y-2">
-                      <div>{category.product_count}</div>
+                      <div>{productCount}</div>
                       <div>
                         <Button variant="outline" size="sm" asChild>
                           <Link
