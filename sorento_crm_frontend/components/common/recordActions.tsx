@@ -44,6 +44,12 @@ export interface RecordActionSet {
   actions: RecordAction[];
   /** Mount this wherever the actions are rendered. */
   dialogs?: ReactNode;
+  /**
+   * The countdown of an action parked on this record (D7, S6-06), for the record
+   * page to pass to `DetailActions` as `pendingAction`. Null while nothing is
+   * parked, and null on a list row, where the countdown travels to a toast.
+   */
+  pending?: ReactNode;
 }
 
 /** Secondary items first, then a separator, then the destructive ones. */

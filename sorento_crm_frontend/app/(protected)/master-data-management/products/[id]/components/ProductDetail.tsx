@@ -93,8 +93,9 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
   const navigationBasePath = '/master-data-management/products';
   const navigationQueryString = searchParams.toString();
 
-  // Delete lives in the gear and opens the same dialog the list row opens.
-  const { actions, dialogs } = useProductActions(
+  // Delete lives in the gear, and parks a ten-second window whose countdown takes
+  // the primary button's place until it lapses (D7).
+  const { actions, dialogs, pending } = useProductActions(
     product
       ? {
           id: product.id,
@@ -159,6 +160,7 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
           }}
           actions={actions}
           dialogs={dialogs}
+          pendingAction={pending}
           gearLabel="Product options"
           primary={
             <Button
