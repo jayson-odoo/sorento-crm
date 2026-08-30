@@ -29,7 +29,6 @@ import {
   CardTitle,
   CardToolbar,
 } from '@/components/ui/card';
-import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridTable } from '@/components/ui/data-grid-table';
@@ -48,10 +47,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { getProducts } from '@/app/(protected)/master-data-management/products/services/productService';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { useContainerSizes } from '../../../hooks/useFulfilment';
-import { useForgetSupplierCodeMatch } from '../../../hooks/useSupplierCodeAliases';
 import {
   useConvertProformaInvoicesToDraftShipment,
-  useDeleteProformaInvoice,
   useProformaInvoice,
   useSaveProformaInvoice,
 } from '../../../hooks/useProformaInvoices';
@@ -66,6 +63,8 @@ import ConvertToPackingListDialog from '../../components/ConvertToPackingListDia
 import MatchToProductDialog from '../../../components/MatchToProductDialog';
 import OverCapacityDialog from '../../components/OverCapacityDialog';
 import DetailActions from '@/components/common/DetailActions';
+import { useDeferredAction } from '@/hooks/useDeferredAction';
+import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
 import { proformaInvoicesPagerQuery } from '../../../hooks/useProformaInvoices';
 import { MarkAsRevisionDialog } from './MarkAsRevisionDialog';
 import { ProformaRevisionsCard } from './ProformaRevisionsCard';
@@ -191,7 +190,29 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
   const containerSizes = useContainerSizes();
   const convertToDraftShipment = useConvertProformaInvoicesToDraftShipment();
   const saveInvoice = useSaveProformaInvoice(id);
-  const deleteInvoice = useDeleteProformaInvoice();
+  // Delete asks nothing (D7): the countdown takes the primary button's place and
+  // Cancel is the way back.
+  const deletion = useDeferredAction({
+    actionKey: 'proforma_invoice.delete',
+    entityType: 'proforma_invoice',
+    entityId: id,
+    verb: 'Deleting',
+    subject: data?.pi_number ?? 'this invoice',
+    surface: 'inline',
+    watchFromMount: true,
+    successMessage: 'Proforma invoice deleted.',
+    invalidateKeys: [['scm', 'proforma-invoices', 'list']],
+    onCommitted: () => router.push(backHref),
+  });
+  // Forgetting a ruling un-binds the rows it held, and the same ruling can be made
+  // again from this screen, so it takes the reversible window rather than the long one.
+  const matchForgetting = useDeferredRowAction({
+    actionKey: 'supplier_code_alias.forget',
+    entityType: 'supplier_code_alias',
+    verb: 'Forgetting',
+    successMessage: 'Match forgotten.',
+    invalidateKeys: [['scm', 'proforma-invoices', 'detail', id]],
+  });
 
   const [tab, setTab] = useState('general');
   const [editing, setEditing] = useState(false);
@@ -202,7 +223,6 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
   const [overrideReason, setOverrideReason] = useState('');
   const [convertOpen, setConvertOpen] = useState(false);
   const [revisionOpen, setRevisionOpen] = useState(false);
-  const [deleteOpen, setDeleteOpen] = useState(false);
   // Held so an over-capacity refusal can be re-submitted with the reason WITHOUT asking
   // the operator to re-type the split they already chose.
   const [convertArgs, setConvertArgs] = useState<{
@@ -211,8 +231,6 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
   const [saving, setSaving] = useState(false);
   /** The line whose supplier code is being answered by hand (R16). */
   const [codeToMatch, setCodeToMatch] = useState<ProformaInvoiceLine | null>(null);
-  const [matchToForget, setMatchToForget] = useState<ProformaInvoiceLine | null>(null);
-  const forgetMatch = useForgetSupplierCodeMatch();
 
   const lines = useMemo<ProformaInvoiceLine[]>(() => data?.lines ?? [], [data]);
   const superseded = data?.status === 'superseded';
@@ -899,7 +917,13 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
                     variant="ghost"
                     size="sm"
                     className="h-6 px-1.5 text-2xs"
-                    onClick={() => setMatchToForget(line)}
+                    onClick={() =>
+                      line.match_id &&
+                      matchForgetting.run({
+                        id: line.match_id,
+                        subject: `${line.item_code} means ${line.product_code ?? 'this product'}`,
+                      })
+                    }
                   >
                     Forget
                   </Button>
@@ -948,7 +972,7 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
         enableSorting: false,
       },
     ],
-    [data?.currency, editing, canAdjust, fetchProducts],
+    [data?.currency, editing, canAdjust, fetchProducts, matchForgetting],
   );
 
   const table = useReactTable({
@@ -1081,6 +1105,7 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
                   ariaLabel: 'proforma invoice',
                 }}
                 gearLabel="Proforma invoice options"
+                pendingAction={deletion.countdown}
                 gear={
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
@@ -1115,7 +1140,7 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
                           // no room for a Tooltip wrapper here, and a control that refuses
                           // without saying why reads as a defect.
                           title={deleteBlockedReason}
-                          onClick={converted ? undefined : () => setDeleteOpen(true)}
+                          onClick={converted ? undefined : () => deletion.start()}
                         >
                           <Trash2 className="size-4" />
                           Delete invoice
@@ -1408,40 +1433,6 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
         supplierCode={codeToMatch?.item_code ?? null}
         supplierLabel={codeToMatch?.description ?? null}
         onMatched={() => setCodeToMatch(null)}
-      />
-
-      {/* Forgetting a ruling is destructive - the rows bound by it are un-bound in the same
-          write - so it is asked before it is done, like every other delete here. */}
-      <ConfirmDeleteDialog
-        open={!!matchToForget}
-        onOpenChange={(o) => !o && setMatchToForget(null)}
-        title="Forget this match?"
-        description={
-          matchToForget
-            ? `Forget that ${matchToForget.item_code} means ${
-                matchToForget.product_code ?? 'this product'
-              }? Next upload will match it again by the ladder.`
-            : ''
-        }
-        confirmLabel="Forget"
-        onDelete={async () => {
-          if (matchToForget?.match_id) await forgetMatch.mutateAsync(matchToForget.match_id);
-        }}
-        successMessage="Match forgotten."
-      />
-
-      {/* Hard delete, per the CRUD standard, and only from the actions menu - it is not a
-          button sitting beside the one everybody presses. */}
-      <ConfirmDeleteDialog
-        open={deleteOpen}
-        onOpenChange={setDeleteOpen}
-        title="Confirm delete"
-        description={`This action cannot be undone. This deletes proforma invoice ${invoice.pi_number} and every line it carries.`}
-        onDelete={async () => {
-          await deleteInvoice.mutateAsync(id);
-          router.push(backHref);
-        }}
-        successMessage="Proforma invoice deleted."
       />
 
       <MarkAsRevisionDialog

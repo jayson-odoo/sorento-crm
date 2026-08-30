@@ -26,14 +26,16 @@ import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
-import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 
 import {
   useCreateMessageSnippet,
-  useDeleteMessageSnippet,
   useMessageSnippets,
   useUpdateMessageSnippet,
 } from '../hooks/useMessageSnippets';
+import {
+  useDeferredRowAction,
+  useRowPending,
+} from '@/hooks/useDeferredRowAction';
 import type {
   MessageSnippet,
   MessageSnippetFormData,
@@ -47,7 +49,6 @@ export default function MessageSnippetsList() {
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<MessageSnippet | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<MessageSnippet | null>(null);
 
   useEffect(() => {
     const handle = setTimeout(() => setDebouncedSearch(searchQuery.trim()), 300);
@@ -66,7 +67,14 @@ export default function MessageSnippetsList() {
   });
   const createSnippet = useCreateMessageSnippet();
   const updateSnippet = useUpdateMessageSnippet();
-  const deleteSnippet = useDeleteMessageSnippet();
+  // Delete asks nothing (D7): the row dims and a toast counts down with Cancel.
+  const deletion = useDeferredRowAction({
+    actionKey: 'message_snippet.delete',
+    entityType: 'message_snippet',
+    successMessage: 'Snippet deleted',
+    invalidateKeys: [['message-snippets'], ['message-snippet-options']],
+  });
+  const rowPending = useRowPending<MessageSnippet>('message_snippet');
 
   const rows = useMemo<MessageSnippet[]>(() => data?.data ?? [], [data]);
   const total = data?.pagination?.total ?? 0;
@@ -150,7 +158,9 @@ export default function MessageSnippetsList() {
               size="sm"
               aria-label={`Delete ${row.original.name}`}
               title="Delete snippet"
-              onClick={() => setDeleteTarget(row.original)}
+              onClick={() =>
+                deletion.run({ id: row.original.id, subject: row.original.name })
+              }
             >
               <Trash2 className="size-4 text-destructive" />
             </Button>
@@ -161,7 +171,7 @@ export default function MessageSnippetsList() {
         meta: { headerTitle: 'Actions', cellClassName: 'text-right' },
       },
     ],
-    [],
+    [deletion],
   );
 
   const table = useReactTable({
@@ -207,6 +217,7 @@ export default function MessageSnippetsList() {
         recordCount={total}
         isLoading={isLoading}
         tableLayout={{ width: 'fixed', columnsResizable: true }}
+        rowPending={rowPending}
         emptyMessage="No snippets yet. Add one and it appears in the ticket composer."
       >
         <Card>
@@ -267,22 +278,6 @@ export default function MessageSnippetsList() {
         isSubmitting={createSnippet.isPending || updateSnippet.isPending}
       />
 
-      <ConfirmDeleteDialog
-        open={!!deleteTarget}
-        onOpenChange={(next) => !next && setDeleteTarget(null)}
-        title="Confirm delete"
-        description={
-          <>
-            This action cannot be undone. The snippet <strong>{deleteTarget?.name}</strong> will be
-            permanently removed and will no longer appear in the composer.
-          </>
-        }
-        successMessage="Snippet deleted"
-        onDelete={async () => {
-          if (deleteTarget) await deleteSnippet.mutateAsync(deleteTarget.id);
-        }}
-        onSuccess={() => setDeleteTarget(null)}
-      />
     </div>
   );
 }

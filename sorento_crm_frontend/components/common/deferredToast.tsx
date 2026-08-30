@@ -11,6 +11,13 @@ export interface DeferredToastInput {
   /** The record the action is running on, in the reader's words. */
   subject: string;
   onCancel: () => void;
+  /**
+   * The toast's own id. Defaults to the parked action's, which is what makes a
+   * countdown dismissable by whoever learns the action ended. A BULK delete parks one
+   * action per row behind ONE countdown, so it names its own instead - the toast
+   * belongs to the batch, not to whichever member happens to settle first.
+   */
+  id?: string;
 }
 
 /**
@@ -25,7 +32,7 @@ export interface DeferredToastInput {
  * suspended long enough that nothing ever settles it.
  */
 export function deferredToast(input: DeferredToastInput): string | number {
-  const { pending, verb, subject, onCancel } = input;
+  const { pending, verb, subject, onCancel, id } = input;
 
   return toast.custom(
     () => (
@@ -38,7 +45,7 @@ export function deferredToast(input: DeferredToastInput): string | number {
       />
     ),
     {
-      id: `pending-action-${pending.id}`,
+      id: id ?? `pending-action-${pending.id}`,
       duration: pending.window_seconds * 1000 + 8000,
     },
   );

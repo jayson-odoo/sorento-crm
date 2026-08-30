@@ -12,6 +12,21 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+/* The grace window is the server's; what this file proves is that the row parks one. */
+const createPendingAction = vi.fn().mockResolvedValue({
+  id: 'pa-1',
+  action_key: 'scm_sales_order.delete',
+  entity_type: 'scm_sales_order',
+  entity_id: 'so-1',
+  commit_at: '2026-08-30T10:00:10',
+  window_seconds: 10,
+});
+vi.mock('@/services/pendingActionService', () => ({
+  createPendingAction: (...args: unknown[]) => createPendingAction(...args),
+  cancelPendingAction: vi.fn(),
+  getCurrentPendingAction: vi.fn().mockResolvedValue({ pending: null, last_outcome: null }),
+}));
+
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
@@ -34,7 +49,7 @@ if (!window.ResizeObserver) {
 }
 
 vi.mock('sonner', () => ({
-  toast: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() },
+  toast: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn(), dismiss: vi.fn() },
 }));
 
 // The row-click handler asks for the router, which is not mounted under jsdom.
@@ -197,7 +212,7 @@ describe('SalesOrdersList - the row actions', () => {
     expect(screen.queryByRole('menuitem', { name: 'Edit' })).toBeNull();
   });
 
-  it('confirms before deleting, rather than deleting on the click', async () => {
+  it('parks the delete rather than opening a dialog (S6-10)', async () => {
     stub([order()]);
     renderList();
 
@@ -205,7 +220,16 @@ describe('SalesOrdersList - the row actions', () => {
     await openRowMenu();
     fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
 
-    expect(await screen.findByText(/This action cannot be undone/i)).toBeInTheDocument();
+    // D7: the menu item IS the action, and Cancel in the countdown is the way back.
+    await waitFor(() =>
+      expect(createPendingAction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          actionKey: 'scm_sales_order.delete',
+          entityType: 'scm_sales_order',
+        }),
+      ),
+    );
+    expect(screen.queryByText(/This action cannot be undone/i)).not.toBeInTheDocument();
   });
 });
 

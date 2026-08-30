@@ -2,7 +2,6 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
   createPromotionType,
-  deletePromotionType,
   getPromotionType,
   getPromotionTypes,
   updatePromotionType,
@@ -59,15 +58,3 @@ export function useUpdatePromotionType() {
   });
 }
 
-// Delete is driven from ConfirmDeleteDialog, which owns the success/error toast.
-// Toasting here too would show the user two of each for one delete.
-export function useDeletePromotionType() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => deletePromotionType(id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['promotion-types'] });
-      queryClient.invalidateQueries({ queryKey: ['promotions'] });
-    },
-  });
-}

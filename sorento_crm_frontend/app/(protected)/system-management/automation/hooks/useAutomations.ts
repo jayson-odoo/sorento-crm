@@ -3,7 +3,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   createAutomation,
-  deleteAutomation,
   getAutomation,
   getAutomationRuns,
   getAutomations,
@@ -68,14 +67,6 @@ export function useToggleAutomation(id: string) {
       qc.invalidateQueries({ queryKey: ['automations'] });
       qc.invalidateQueries({ queryKey: ['automation', id] });
     },
-  });
-}
-
-export function useDeleteAutomation() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => deleteAutomation(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['automations'] }),
   });
 }
 

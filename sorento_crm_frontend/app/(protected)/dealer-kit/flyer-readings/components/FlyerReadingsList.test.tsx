@@ -3,8 +3,8 @@
  *
  * The list itself is thin on purpose - it carries no report, because a report
  * is a match run against 998 codes. What it owes is the four states, an empty
- * state that says what to do next, and a delete confirmation that says what
- * deleting a reading does NOT take with it.
+ * state that says what to do next, and a delete that asks nothing and parks
+ * itself on the server for its grace window instead (D7, S6-10).
  */
 import React from 'react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
@@ -12,7 +12,9 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('sonner', () => ({
-  toast: { success: vi.fn(), error: vi.fn(), custom: vi.fn() },
+  // `dismiss` too: the countdown's toast is dismissed when the row unmounts, and a
+  // stub without it throws out of an effect where no assertion can catch it.
+  toast: { success: vi.fn(), error: vi.fn(), custom: vi.fn(), dismiss: vi.fn() },
 }));
 
 const push = vi.fn();
@@ -34,6 +36,21 @@ const { listFlyerReadings, deleteFlyerReading, uploadFlyerReading } = vi.hoisted
   listFlyerReadings: vi.fn(),
   deleteFlyerReading: vi.fn(),
   uploadFlyerReading: vi.fn(),
+}));
+
+/* The grace window is the server's; what this file proves is that the row parks one. */
+const createPendingAction = vi.fn().mockResolvedValue({
+  id: 'pa-1',
+  action_key: 'dk_flyer_reading.delete',
+  entity_type: 'dk_flyer_reading',
+  entity_id: 'r-2',
+  commit_at: '2026-08-30T10:00:10',
+  window_seconds: 10,
+});
+vi.mock('@/services/pendingActionService', () => ({
+  createPendingAction: (...args: unknown[]) => createPendingAction(...args),
+  cancelPendingAction: vi.fn(),
+  getCurrentPendingAction: vi.fn().mockResolvedValue({ pending: null, last_outcome: null }),
 }));
 
 vi.mock('../../services/flyerReadingService', () => ({
@@ -152,7 +169,7 @@ describe('FlyerReadingsList', () => {
     await waitFor(() => expect(push).toHaveBeenCalledWith('/dealer-kit/flyer-readings/r-2'));
   });
 
-  it('confirms a delete, and says the brochure it seeded survives it', async () => {
+  it('parks the delete on the row that was pressed, with no dialog in the way', async () => {
     listFlyerReadings.mockResolvedValue(ROWS);
 
     renderList();
@@ -161,28 +178,21 @@ describe('FlyerReadingsList', () => {
       await screen.findByRole('button', { name: /delete kitchen-sink-promo\.pdf/i }),
     );
 
-    expect(await screen.findByText('Confirm delete')).toBeInTheDocument();
-    expect(screen.getByText(/this action cannot be undone/i)).toBeInTheDocument();
-    // "Delete" beside a flyer that produced a live catalogue reads like it takes
-    // the catalogue with it. Nothing links the two, and the copy says so.
-    expect(screen.getByText(/left exactly as it is/i)).toBeInTheDocument();
-    // Confirming is a second, deliberate act.
+    // D7: the first press IS the action, and the way back is the countdown's
+    // Cancel. The browser never calls the DELETE any more - the server does, when
+    // the window lapses - so `deleteFlyerReading` is not part of this path at all.
+    await waitFor(() =>
+      expect(createPendingAction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          actionKey: 'dk_flyer_reading.delete',
+          entityType: 'dk_flyer_reading',
+          entityId: 'r-2',
+        }),
+      ),
+    );
+    expect(createPendingAction).toHaveBeenCalledTimes(1);
     expect(deleteFlyerReading).not.toHaveBeenCalled();
-  });
-
-  it('deletes only the row that was confirmed', async () => {
-    listFlyerReadings.mockResolvedValue(ROWS);
-    deleteFlyerReading.mockResolvedValue(undefined);
-
-    renderList();
-
-    fireEvent.click(
-      await screen.findByRole('button', { name: /delete kitchen-sink-promo\.pdf/i }),
-    );
-    fireEvent.click(await screen.findByRole('button', { name: /^delete$/i }));
-
-    await waitFor(() => expect(deleteFlyerReading).toHaveBeenCalledWith('r-2'));
-    expect(deleteFlyerReading).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText('Confirm delete')).not.toBeInTheDocument();
   });
 
   it('filters on the file name rather than asking the server again', async () => {
@@ -311,10 +321,11 @@ describe('FlyerReadingsList, status pills (AC-FE.2 / AC-FE.6)', () => {
     expect(deleteButton).toBeEnabled();
     fireEvent.click(deleteButton);
 
-    expect(await screen.findByText('Confirm delete')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: /^delete$/i }));
-
-    await waitFor(() => expect(deleteFlyerReading).toHaveBeenCalledWith('r-p'));
+    await waitFor(() =>
+      expect(createPendingAction).toHaveBeenCalledWith(
+        expect.objectContaining({ entityId: 'r-p' }),
+      ),
+    );
   });
 
   it('opens the review screen from a Done row (AC-FE.4)', async () => {

@@ -43,12 +43,27 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
 }));
 
+// Undo on a dismissed code is `supplier_code_alias.forget` - the same action the proforma
+// detail parks (D7), so it counts down instead of applying on the press. The hook itself
+// is covered by `hooks/useDeferredRowAction.test.tsx`; what this file owns is that the
+// button reaches it, with the ALIAS row as the record.
+const deferred = vi.hoisted(() => ({
+  inputs: [] as Record<string, unknown>[],
+  run: vi.fn(),
+}));
+vi.mock('@/hooks/useDeferredRowAction', () => ({
+  useDeferredRowAction: (input: Record<string, unknown>) => {
+    deferred.inputs.push(input);
+    return { run: deferred.run, targetId: null, isPending: false };
+  },
+  useRowPending: () => () => false,
+}));
+
 const state = {
   rows: [] as unknown[],
   aliases: [] as unknown[],
   match: vi.fn(),
   dismiss: vi.fn(),
-  forget: vi.fn(),
   rematch: vi.fn(),
 };
 
@@ -57,7 +72,6 @@ vi.mock('../../hooks/useSupplierCodeAliases', () => ({
   useSupplierCodeAliases: () => ({ data: state.aliases, isLoading: false }),
   useMatchSupplierCode: () => ({ mutateAsync: state.match, isPending: false }),
   useDismissSupplierCode: () => ({ mutateAsync: state.dismiss, isPending: false }),
-  useForgetSupplierCodeMatch: () => ({ mutate: state.forget, isPending: false }),
   useRematchSupplierCodes: () => ({ mutate: state.rematch, isPending: false }),
 }));
 
@@ -169,8 +183,9 @@ beforeEach(() => {
     rebound_stock_rows: 1,
     rebound_invoice_lines: 0,
   });
-  state.forget = vi.fn();
   state.rematch = vi.fn();
+  deferred.inputs.length = 0;
+  deferred.run.mockClear();
   // The collapse choice is per viewer and persisted (R23), so it has to be cleared between
   // tests or the first collapse leaks into every one after it.
   window.localStorage.clear();
@@ -278,7 +293,13 @@ describe('UnmatchedSupplierCodesPanel', () => {
       within(listed.parentElement as HTMLElement).getByRole('button', { name: /undo/i }),
     );
 
-    expect(state.forget).toHaveBeenCalledWith('a-9');
+    expect(deferred.run).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'a-9', subject: 'THEIR-OWN-SPARE' }),
+    );
+    expect(deferred.inputs[0]).toMatchObject({
+      actionKey: 'supplier_code_alias.forget',
+      entityType: 'supplier_code_alias',
+    });
   });
 
   it('keeps the dismissed line when the queue itself is empty', () => {

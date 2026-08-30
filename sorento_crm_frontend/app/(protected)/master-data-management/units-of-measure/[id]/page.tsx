@@ -9,7 +9,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Container } from '@/components/common/container';
 import { PageHeader } from '@/components/common/PageHeader';
-import { useUOM, useDeleteUOM } from '../hooks/useUOM';
+import { useUOM } from '../hooks/useUOM';
+import { useDeferredAction } from '@/hooks/useDeferredAction';
 import { useBackToListHref } from '@/components/common/BackToList';
 import { formatDate } from '@/lib/helpers';
 
@@ -24,19 +25,23 @@ export default function UOMDetailPage({
   // clicked; Back hands the same string back rather than a fresh page 1.
   const backHref = useBackToListHref('/master-data-management/units-of-measure');
   const { data: uom, isLoading } = useUOM(id);
-  const deleteMutation = useDeleteUOM();
 
-  const handleDelete = async () => {
-    if (!confirm('Are you sure you want to delete this UOM?')) {
-      return;
-    }
-    try {
-      await deleteMutation.mutateAsync(id);
-      router.push(backHref);
-    } catch (error) {
-      // Error is handled by the mutation hook
-    }
-  };
+  // Delete asks nothing (D7). It parks the deletion for ten seconds and the
+  // countdown takes the Delete button's place, so the way back is Cancel.
+  const deletion = useDeferredAction({
+    actionKey: 'uom.delete',
+    entityType: 'uom',
+    entityId: id,
+    verb: 'Deleting',
+    subject: uom ? `${uom.uom_name} (${uom.uom_code})` : '',
+    surface: 'inline',
+    watchFromMount: true,
+    successMessage: 'Unit of measure deleted',
+    // The select is what every product form picks a UOM from; the immediate mutation
+    // refetched both, and only refetching the list leaves a deleted unit selectable.
+    invalidateKeys: [['uoms'], ['uom-select']],
+    onCommitted: () => router.push(backHref),
+  });
 
   if (isLoading) {
     return (
@@ -128,14 +133,16 @@ export default function UOMDetailPage({
                 <Edit className="size-4" />
                 Edit
               </Button>
-              <Button
-                variant="destructive"
-                onClick={handleDelete}
-                disabled={deleteMutation.isPending}
-              >
-                <Trash2 className="size-4" />
-                Delete
-              </Button>
+              {deletion.countdown ?? (
+                <Button
+                  variant="destructive"
+                  onClick={() => deletion.start()}
+                  disabled={deletion.isPending}
+                >
+                  <Trash2 className="size-4" />
+                  Delete
+                </Button>
+              )}
             </div>
           </div>
 

@@ -7,6 +7,25 @@ function asUtc(iso: string): string {
   return /[zZ]|[+-]\d{2}:?\d{2}$/.test(iso) ? iso : `${iso}Z`;
 }
 
+/*
+ * NOT merged into `components/common/DeferredActionButton`'s `DeferredCountdown`,
+ * and the reason is behavioural rather than tidiness (S6b, item 6).
+ *
+ * The two look alike and are not the same control. This one is a STATUS BAR: it has no
+ * Cancel, because the way back from a takeover is the banner's own button beside it; it
+ * reads mm:ss, because a takeover window is minutes and "Deleting in 437s" is not a
+ * sentence; and it calls `onExpire` so the parent can start polling, which is how the
+ * form-SLA banner learns the window closed. `DeferredCountdown` is an AFFORDANCE: it owns
+ * its Cancel, it takes a whole `PendingAction` rather than a timestamp, it names a verb
+ * and a subject, and it deliberately has no expiry callback because the hook re-reads
+ * `current` instead of trusting a local timer.
+ *
+ * Merging them means one component with a mode switch on four axes, which is more to
+ * understand than the ~40 lines each of them is. Moving this file into `components/common`
+ * unchanged would relocate the duplication rather than remove it. The trigger that would
+ * justify the merge: a THIRD countdown, or the takeover banner growing its own Cancel.
+ */
+
 /** A depleting countdown bar driven by the server's absolute `commit_at` timestamp
  *  (never a local-only counter - survives refresh). Depletes from full at mount to
  *  empty at `commit_at`, then shows "Finalizing…" until the parent refetch confirms

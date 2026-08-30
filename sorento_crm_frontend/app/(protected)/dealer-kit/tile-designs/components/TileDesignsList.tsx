@@ -15,7 +15,10 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
-import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
+import {
+  useDeferredRowAction,
+  useRowPending,
+} from '@/hooks/useDeferredRowAction';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
@@ -24,7 +27,6 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import {
   TILE_FIELDS,
-  deleteTileTemplate,
   listTileTemplates,
 } from '../../services/catalogueService';
 import { TileDesignDialog } from './TileDesignDialog';
@@ -40,7 +42,14 @@ import type { TileTemplate } from '@/lib/dealer-kit/types';
 export function TileDesignsList() {
   const [editing, setEditing] = useState<TileTemplate | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [deleting, setDeleting] = useState<TileTemplate | null>(null);
+  // Delete asks nothing (D7): the row dims and a toast counts down with Cancel.
+  const deletion = useDeferredRowAction({
+    actionKey: 'dk_tile_design.delete',
+    entityType: 'dk_tile_design',
+    successMessage: 'Tile design deleted',
+    invalidateKeys: [['dealer-kit', 'tile-templates']],
+  });
+  const rowPending = useRowPending<TileTemplate>('dk_tile_design');
   const [pagination, setPagination] = useState<PaginationState>({
     pageIndex: 0,
     pageSize: 10,
@@ -115,7 +124,9 @@ export function TileDesignsList() {
               variant="ghost"
               size="sm"
               aria-label={`Delete ${row.original.name}`}
-              onClick={() => setDeleting(row.original)}
+              onClick={() =>
+                deletion.run({ id: row.original.id, subject: row.original.name })
+              }
             >
               <Trash2 className="size-4 text-destructive" />
             </Button>
@@ -127,7 +138,7 @@ export function TileDesignsList() {
         meta: { headerTitle: 'Actions', skeleton: <Skeleton className="h-4 w-10" /> },
       },
     ],
-    [],
+    [deletion],
   );
 
   const table = useReactTable({
@@ -159,6 +170,7 @@ export function TileDesignsList() {
       table={table}
       recordCount={rows.length}
       isLoading={isLoading}
+      rowPending={rowPending}
       standardToolbar={false}
       tableLayout={{ width: 'fixed', columnsResizable: true }}
       emptyMessage={
@@ -210,22 +222,6 @@ export function TileDesignsList() {
 
       <TileDesignDialog open={dialogOpen} onOpenChange={setDialogOpen} template={editing} />
 
-      <ConfirmDeleteDialog
-        open={!!deleting}
-        onOpenChange={(open) => !open && setDeleting(null)}
-        title="Confirm delete"
-        description={
-          <>
-            Delete <strong>{deleting?.name}</strong>? Any products block using it loses its
-            design. This action cannot be undone.
-          </>
-        }
-        successMessage="Tile design deleted"
-        queryKeysToInvalidate={[['dealer-kit', 'tile-templates']]}
-        onDelete={async () => {
-          if (deleting) await deleteTileTemplate(deleting.id);
-        }}
-      />
     </DataGrid>
   );
 }

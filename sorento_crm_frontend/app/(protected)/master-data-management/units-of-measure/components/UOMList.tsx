@@ -26,7 +26,10 @@ import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useUOMs } from '../hooks/useUOM';
 import type { UnitOfMeasure } from '../types/uom.types';
-import UOMDeleteDialog from './UOMDeleteDialog';
+import {
+  useDeferredRowAction,
+  useRowPending,
+} from '@/hooks/useDeferredRowAction';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 
@@ -44,8 +47,17 @@ export default function UOMList() {
     setSorting(state.sorting);
     setSearchQuery(state.searchQuery);
   });
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  const [uomToDelete, setUomToDelete] = useState<UnitOfMeasure | null>(null);
+  // Delete asks nothing (D7): the row dims, a toast counts down, and Cancel is
+  // the way back. A unit still on a product is refused by the server, and that
+  // refusal now arrives as the toast's own error rather than as a warning
+  // nobody could act on inside the dialog.
+  const deletion = useDeferredRowAction({
+    actionKey: 'uom.delete',
+    entityType: 'uom',
+    successMessage: 'Unit of measure deleted',
+    invalidateKeys: [['uoms'], ['uom-select']],
+  });
+  const rowPending = useRowPending<UnitOfMeasure>('uom');
 
   const { data, isLoading, refetch, isFetching } = useUOMs({
     pageIndex: pagination.pageIndex,
@@ -131,8 +143,10 @@ export default function UOMList() {
               size="sm"
               onClick={(e) => {
                 e.stopPropagation();
-                setUomToDelete(row.original);
-                setDeleteDialogOpen(true);
+                deletion.run({
+                  id: row.original.id,
+                  subject: `${row.original.uom_name} (${row.original.uom_code})`,
+                });
               }}
               title="Delete"
             >
@@ -146,7 +160,7 @@ export default function UOMList() {
         enableHiding: false,
       },
     ],
-    [],
+    [deletion],
   );
 
   const table = useReactTable({
@@ -179,6 +193,7 @@ export default function UOMList() {
   return (
     <DataGrid table={table} recordCount={data?.pagination.total || 0} isLoading={isLoading}
       rowHref={rowHref}
+      rowPending={rowPending}
       tableLayout={{ columnsVisibility: true }}
       emptyAction={listPrimaryAction}
     >
@@ -220,17 +235,6 @@ export default function UOMList() {
           <DataGridPagination />
         </CardFooter>
       </Card>
-
-      {uomToDelete && (
-        <UOMDeleteDialog
-          open={deleteDialogOpen}
-          closeDialog={() => {
-            setDeleteDialogOpen(false);
-            setUomToDelete(null);
-          }}
-          uom={uomToDelete}
-        />
-      )}
     </DataGrid>
   );
 }

@@ -8,7 +8,13 @@
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('next/navigation', () => ({
@@ -18,7 +24,10 @@ vi.mock('next/navigation', () => ({
 }));
 
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
-  useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
+  useListingColumnPreferences: () => ({
+    resetToDefaults: vi.fn(),
+    isLoading: false,
+  }),
 }));
 
 const getPlanningBoard = vi.fn();
@@ -43,7 +52,8 @@ const getPlanningChangeBatch = vi.fn();
 
 vi.mock('../../_shared/services/planningChangeService', () => ({
   listPlanningChangeBatches: vi.fn(),
-  getPlanningChangeBatch: (...args: unknown[]) => getPlanningChangeBatch(...args),
+  getPlanningChangeBatch: (...args: unknown[]) =>
+    getPlanningChangeBatch(...args),
   updatePlanningChangeRow: vi.fn(),
   applyPlanningChanges: vi.fn(),
 }));
@@ -62,7 +72,11 @@ vi.mock('@/hooks/usePermissions', () => ({
 vi.mock('../../_shared/hooks/useBoardTransfers', () => ({
   // The real key, because the confirm hook invalidates it by name (D6).
   BOARD_TRANSFERS_KEY: 'board-stock-transfers',
-  useBoardTransfers: () => ({ data: { data: [] }, isLoading: false, error: undefined }),
+  useBoardTransfers: () => ({
+    data: { data: [] },
+    isLoading: false,
+    error: undefined,
+  }),
   useBoardTransferMutations: () => ({
     approve: { mutate: vi.fn(), isPending: false },
     approveAll: { mutate: vi.fn(), isPending: false },
@@ -81,7 +95,11 @@ vi.mock('@/components/common/SearchableSelect', () => ({
     options?: { value: string; label: string }[];
     id?: string;
   }) => (
-    <select aria-label={id ?? 'granularity'} value={value} onChange={(e) => onChange(e.target.value)}>
+    <select
+      aria-label={id ?? 'granularity'}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+    >
       {(options ?? []).map((option) => (
         <option key={option.value} value={option.value}>
           {option.label}
@@ -92,7 +110,10 @@ vi.mock('@/components/common/SearchableSelect', () => ({
 }));
 
 import { FulfilmentBoardPanel } from './FulfilmentBoardPanel';
-import { buildBoard, type BoardDemandLine } from '../../_shared/lib/__testsupport__/boardFixture';
+import {
+  buildBoard,
+  type BoardDemandLine,
+} from '../../_shared/lib/__testsupport__/boardFixture';
 import { MOCK_PLANNING_CHANGE_BATCH_SO_CHANGE } from '../../_shared/__mocks__/planningChanges';
 
 const TODAY = '2026-08-18';
@@ -119,11 +140,18 @@ function renderPanel(
   soNumbers: string[] = ['SO381895'],
 ) {
   const client = new QueryClient({
-    defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } },
+    defaultOptions: {
+      queries: { retry: false, gcTime: 0 },
+      mutations: { retry: false },
+    },
   });
   return render(
     <QueryClientProvider client={client}>
-      <FulfilmentBoardPanel soNumbers={soNumbers} batchId={batchId} onBack={vi.fn()} />
+      <FulfilmentBoardPanel
+        soNumbers={soNumbers}
+        batchId={batchId}
+        onBack={vi.fn()}
+      />
     </QueryClientProvider>,
   );
 }
@@ -131,9 +159,15 @@ function renderPanel(
 beforeEach(() => {
   vi.clearAllMocks();
   getPlanningBoard.mockResolvedValue(
-    buildBoard([demand()], { today: TODAY, freeStock: {}, granularity: 'week' }),
+    buildBoard([demand()], {
+      today: TODAY,
+      freeStock: {},
+      granularity: 'week',
+    }),
   );
-  getPlanningChangeBatch.mockResolvedValue(MOCK_PLANNING_CHANGE_BATCH_SO_CHANGE);
+  getPlanningChangeBatch.mockResolvedValue(
+    MOCK_PLANNING_CHANGE_BATCH_SO_CHANGE,
+  );
 });
 
 describe('the changed cell', () => {
@@ -147,7 +181,9 @@ describe('the changed cell', () => {
     expect(within(advanced).getByText('Qty')).toBeInTheDocument();
     expect(within(advanced).getByText('Date')).toBeInTheDocument();
     expect(within(advanced).getByText('Decision')).toBeInTheDocument();
-    expect(within(advanced).getByTestId('change-now-qty')).toHaveTextContent('25');
+    expect(within(advanced).getByTestId('change-now-qty')).toHaveTextContent(
+      '25',
+    );
 
     // A closed line has left the board, so it is annotated on the surviving cell of the same
     // product on the same order rather than disappearing with its own cell.
@@ -158,8 +194,12 @@ describe('the changed cell', () => {
   it('reads Closed in the Now column of a line the book closed', async () => {
     renderPanel();
     const closed = await screen.findByTestId('board-change-pcr-381895-2');
-    expect(within(closed).getByTestId('change-now-qty')).toHaveTextContent('Closed');
-    expect(within(closed).getByTestId('change-now-decision')).toHaveTextContent('Closed');
+    expect(within(closed).getByTestId('change-now-qty')).toHaveTextContent(
+      'Closed',
+    );
+    expect(within(closed).getByTestId('change-now-decision')).toHaveTextContent(
+      'Closed',
+    );
   });
 
   it('says a transfer already moved for a cancelled line, and proposes no reversal', async () => {
@@ -197,24 +237,45 @@ describe('the pre-marked decision, and Confirm', () => {
     renderPanel();
     await screen.findByTestId('board-change-pcr-381895-1');
     fireEvent.click(
-      await screen.findByRole('button', { name: /SRTWCX7405-RL-S-PJ, .* across 1 sales order/ }),
+      await screen.findByRole('button', {
+        name: /SRTWCX7405-RL-S-PJ, .* across 1 sales order/,
+      }),
     );
+
+    // The cell dialog opens on its Stock tab, so the pill lives one press away. Radix's
+    // TabsTrigger switches on MOUSE DOWN; a bare `click` leaves the old panel up.
+    const linesTab = await screen.findByRole('tab', {
+      name: /^Contributing lines/,
+    });
+    fireEvent.mouseDown(linesTab);
+    fireEvent.click(linesTab);
 
     await waitFor(() => {
       expect(
-        screen.getByTestId('decision-pill-so-381895|1|SRTWCX7405-RL-S-PJ|2026-08-17'),
+        screen.getByTestId(
+          'decision-pill-so-381895|1|SRTWCX7405-RL-S-PJ|2026-08-17',
+        ),
       ).toHaveTextContent('Approved');
     });
   });
 
   it('posts through confirmMany once Confirm is pressed, carrying the pre-marked line', async () => {
     confirmMany.mockResolvedValue({
-      results: [{ pso_id: 'pso-381895', ok: true, decision_revision: 3, inquiry_rows_created: 1 }],
+      results: [
+        {
+          pso_id: 'pso-381895',
+          ok: true,
+          decision_revision: 3,
+          inquiry_rows_created: 1,
+        },
+      ],
     });
     renderPanel();
     await screen.findByTestId('board-change-pcr-381895-1');
     await waitFor(() =>
-      expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (1)'),
+      expect(screen.getByTestId('board-confirm')).toHaveTextContent(
+        'Confirm (1)',
+      ),
     );
 
     fireEvent.click(screen.getByTestId('board-confirm'));
@@ -244,7 +305,10 @@ describe('the pre-marked decision, and Confirm', () => {
       applied_by_name: null,
       orders: MOCK_PLANNING_CHANGE_BATCH_SO_CHANGE.orders.map((order) => ({
         ...order,
-        rows: order.rows.map((row) => ({ ...row, applied_state: 'applied' as const })),
+        rows: order.rows.map((row) => ({
+          ...row,
+          applied_state: 'applied' as const,
+        })),
       })),
     });
     renderPanel();

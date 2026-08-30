@@ -42,7 +42,6 @@ import { useProductCategorySelectQuery } from '../../shared/hooks/use-product-ca
 import { useBrandSelectQuery } from '../../shared/hooks/use-brand-select-query';
 import { CHAT_SEARCH_LABEL, chatSearchState, type ProductListItem } from '../types/product.types';
 import { bulkImportProducts, validateProductsImport } from '../services/productService';
-import ProductBulkDeleteDialog from './ProductBulkDeleteDialog';
 import ProductBulkChatSearchDialog from './ProductBulkChatSearchDialog';
 import { TemplateUploadDialog } from '@/components/template/TemplateUploadDialog';
 import { useImportJobDrawer } from '@/components/upload-activity';
@@ -54,6 +53,7 @@ import {
   encodeAdvancedFilter,
 } from '@/lib/listNavQuery';
 import { ProductRowActions } from '../actions';
+import { useDeferredBulkAction } from '@/hooks/useDeferredBulkAction';
 import { pendingEntityKey, usePendingEntityKeys } from '@/lib/pending-entity-store';
 import {
   fetchProductsPage,
@@ -140,7 +140,6 @@ const ProductsList = () => {
   }, [searchParams, router, pathname]);
 
 
-  const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
   const [bulkChatSearchDialogOpen, setBulkChatSearchDialogOpen] = useState(false);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
@@ -305,6 +304,17 @@ const ProductsList = () => {
   const pendingKeys = usePendingEntityKeys();
   const rowPending = (row: ProductListItem) =>
     pendingKeys.has(pendingEntityKey('product', row.id));
+
+  // Delete selected asks nothing either (D7): one action per selected row, ONE
+  // countdown over them, one Cancel that withdraws the lot. Every selected row dims
+  // through the same `rowPending` a single delete uses.
+  const bulkDeletion = useDeferredBulkAction({
+    actionKey: 'product.delete',
+    entityType: 'product',
+    describe: (count) => `${count} product${count === 1 ? '' : 's'}`,
+    invalidateKeys: [['products']],
+    onStarted: () => setRowSelection({}),
+  });
 
   const columns = useMemo<ColumnDef<ProductListItem>[]>(
     () => [
@@ -883,7 +893,8 @@ const ProductsList = () => {
                 label: 'Delete',
                 icon: Trash2,
                 destructive: true,
-                onClick: () => setBulkDeleteDialogOpen(true),
+                onClick: () =>
+                  bulkDeletion.run(selectedRowIds(table).map((id) => ({ id }))),
               },
             ]}
           />
@@ -928,15 +939,6 @@ const ProductsList = () => {
         onOpenChange={setAdvancedFilterDialogOpen}
         initialFilter={advancedFilter}
         onApply={setAdvancedFilter}
-      />
-      <ProductBulkDeleteDialog
-        open={bulkDeleteDialogOpen}
-        onOpenChange={setBulkDeleteDialogOpen}
-        productIds={selectedRowIds(table)}
-        onSuccess={() => {
-          setRowSelection({});
-          queryClient.invalidateQueries({ queryKey: ['products'] });
-        }}
       />
       <ProductBulkChatSearchDialog
         open={bulkChatSearchDialogOpen}

@@ -65,7 +65,9 @@ const amended = line({
   key: 'amended',
   covered: true,
   proposed: {
-    components: [source({ kind: 'reserve', rung: 'pool', qty: '71', location: 'BRW' })],
+    components: [
+      source({ kind: 'reserve', rung: 'pool', qty: '71', location: 'BRW' }),
+    ],
   },
   sources: [source({ kind: 'buy', rung: 'buy', qty: '71', location: null })],
   decision: {
@@ -83,14 +85,33 @@ const untouched = line({
   covered: true,
   proposed: {
     components: [
-      source({ kind: 'reserve', rung: 'group_take', qty: '40', location: 'DC1-BB' }),
+      source({
+        kind: 'reserve',
+        rung: 'group_take',
+        qty: '40',
+        location: 'DC1-BB',
+      }),
     ],
   },
-  sources: [source({ kind: 'reserve', rung: 'group_take', qty: '40', location: 'DC1-BB' })],
+  sources: [
+    source({
+      kind: 'reserve',
+      rung: 'group_take',
+      qty: '40',
+      location: 'DC1-BB',
+    }),
+  ],
   decision: {
     revision_no: 1,
     timely_spo_qty: '0',
-    reserve: [{ warehouse_id: 'wh-dc1', location: 'DC1-BB', qty: '40', rung: 'group_take' }],
+    reserve: [
+      {
+        warehouse_id: 'wh-dc1',
+        location: 'DC1-BB',
+        qty: '40',
+        rung: 'group_take',
+      },
+    ],
     borrow: [],
     buy_qty: '0',
   },
@@ -100,9 +121,13 @@ const untouched = line({
 const undecided = line({
   key: 'undecided',
   proposed: {
-    components: [source({ kind: 'reserve', rung: 'pool', qty: '12', location: 'BRW' })],
+    components: [
+      source({ kind: 'reserve', rung: 'pool', qty: '12', location: 'BRW' }),
+    ],
   },
-  sources: [source({ kind: 'reserve', rung: 'pool', qty: '12', location: 'BRW' })],
+  sources: [
+    source({ kind: 'reserve', rung: 'pool', qty: '12', location: 'BRW' }),
+  ],
 });
 
 function card(totals: ReturnType<typeof decisionStripTotals>, kind: string) {
@@ -133,22 +158,26 @@ describe('decisionStripTotals', () => {
     });
   });
 
-  it('carries a card per kind in ladder v5 own reading order (AC-V7)', () => {
-    // The order the engine asks its questions in: our own location, the pool, borrowing
-    // from another location, borrowing from another order, then Buy. It used to lead with
-    // Buy, which put the answer in front of the questions. `incoming` trails as history -
-    // nothing composed today is that kind, and a decided pre-v5 line still totals into it.
+  it('carries a card per kind in ladder v7.1 own walk order (AC-V7)', () => {
+    // THE ORDER THE ENGINE WALKS, left = first consideration, right = last option (the
+    // captain, 30 Aug 2026): the group's floor, the group's water, a later order's on hand,
+    // the document a later order waits on, the retired cross-group borrow, the site pool,
+    // then Buy. The pool used to sit SECOND, which read as reaching for shared stock before
+    // anybody's own order; and before that the list led with Buy, which put the answer in
+    // front of the questions.
     //
-    // Fixed, and always six: what makes two boards comparable is that each kind is in the
+    // Fixed, and always seven: what makes two boards comparable is that each kind is in the
     // same place whether it is 300 or absent. A card that came and went would move every
-    // card beside it.
+    // card beside it. (`DecisionStrip` drops `borrow_other` at 0 and 0 - that is the view's
+    // call, not this arithmetic's, and every kind is totalled here.)
     expect(decisionStripTotals([], {}).map((entry) => entry.kind)).toEqual([
       'own',
-      'shared',
-      'borrow_other',
-      'borrow_order',
-      'buy',
       'incoming',
+      'borrow_order',
+      'borrow_incoming',
+      'borrow_other',
+      'shared',
+      'buy',
     ]);
   });
 
@@ -227,13 +256,23 @@ describe('cellCarriesKind', () => {
   it('follows the draft, so filtering by Buy releases a cell amended off it', () => {
     const bought = line({
       key: 'bought',
-      sources: [source({ kind: 'buy', rung: 'buy', qty: '13', location: null })],
-      proposed: { components: [source({ kind: 'buy', rung: 'buy', qty: '13', location: null })] },
+      sources: [
+        source({ kind: 'buy', rung: 'buy', qty: '13', location: null }),
+      ],
+      proposed: {
+        components: [
+          source({ kind: 'buy', rung: 'buy', qty: '13', location: null }),
+        ],
+      },
     });
 
     expect(cellCarriesKind(cell([bought]), {}, 'own')).toBe(false);
     expect(
-      cellCarriesKind(cell([bought]), { bought: { verdict: 'rejected', reason: 'no' } }, 'buy'),
+      cellCarriesKind(
+        cell([bought]),
+        { bought: { verdict: 'rejected', reason: 'no' } },
+        'buy',
+      ),
     ).toBe(true);
   });
 });
@@ -266,12 +305,23 @@ describe('contributionCarriesKind', () => {
   });
 
   it('follows the draft on both sides, so an amendment moves the filter with it', () => {
-    expect(contributionCarriesKind(undecided, { verdict: 'rejected', reason: 'no' }, 'shared'))
-      .toBe(true);
     expect(
       contributionCarriesKind(
         undecided,
-        { verdict: 'amended', reserve: [], borrow: [], buy_qty: '12', reason: 'buy it' },
+        { verdict: 'rejected', reason: 'no' },
+        'shared',
+      ),
+    ).toBe(true);
+    expect(
+      contributionCarriesKind(
+        undecided,
+        {
+          verdict: 'amended',
+          reserve: [],
+          borrow: [],
+          buy_qty: '12',
+          reason: 'buy it',
+        },
         'buy',
       ),
     ).toBe(true);

@@ -103,8 +103,21 @@ def _assert_permission(db: Session, user_id: Optional[str], slug: str) -> None:
 
     Not a route dependency, because the slug is not known until the body is read - and
     checking at commit time instead would leave the refusal with no button to appear on.
+
+    `OWN_RECORD` is the one action whose grant is ownership: its handler is scoped to
+    the requester, so being signed in IS the check (see `record_actions.OWN_RECORD`).
     """
+    from app.services.record_actions import OWN_RECORD
     from app.services.user_service import UserPermissionService
+
+    if slug == OWN_RECORD:
+        if not user_id:
+            raise AppException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                message="Sign in to do that.",
+                code="FORBIDDEN",
+            )
+        return
 
     if not user_id or not UserPermissionService(db).check_user_has_permission(
         str(user_id), slug

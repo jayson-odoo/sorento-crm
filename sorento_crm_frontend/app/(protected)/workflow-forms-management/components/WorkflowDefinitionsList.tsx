@@ -39,9 +39,13 @@ import { useTenantModules } from '@/hooks/useTenantModules';
 import type { ListQueryFilterGroup } from '@/lib/list-query/listQueryService';
 import {
   useCreateWorkflowDefinition,
-  useDeleteWorkflowDefinition,
   useWorkflowDefinitionsGridQuery,
+  wfKeys,
 } from '../hooks/useWorkflowForms';
+import {
+  useDeferredRowAction,
+  useRowPending,
+} from '@/hooks/useDeferredRowAction';
 import type { WorkflowFormDefinition } from '../types/workflowForms.types';
 
 export default function WorkflowDefinitionsList() {
@@ -66,7 +70,14 @@ export default function WorkflowDefinitionsList() {
   });
 
   const createMut = useCreateWorkflowDefinition();
-  const delMut = useDeleteWorkflowDefinition();
+  // Delete asks nothing (D7): the row dims and a toast counts down with Cancel.
+  const deletion = useDeferredRowAction({
+    actionKey: 'workflow_definition.delete',
+    entityType: 'workflow_definition',
+    successMessage: 'Workflow form deleted',
+    invalidateKeys: [wfKeys.definitions],
+  });
+  const rowPending = useRowPending<WorkflowFormDefinition>('workflow_definition');
   const canAdd = useHasPermission('workflow_forms.definitions.add');
   const canEdit = useHasPermission('workflow_forms.definitions.edit');
   const canDelete = useHasPermission('workflow_forms.definitions.delete');
@@ -154,9 +165,9 @@ export default function WorkflowDefinitionsList() {
                 size="icon"
                 variant="ghost"
                 aria-label="Delete"
-                onClick={() => {
-                  if (confirm(`Delete workflow form "${row.original.name}"?`)) delMut.mutate(row.original.id);
-                }}
+                onClick={() =>
+                  deletion.run({ id: row.original.id, subject: row.original.name })
+                }
               >
                 <Trash2 className="size-4 text-destructive" />
               </Button>
@@ -168,7 +179,7 @@ export default function WorkflowDefinitionsList() {
         enableHiding: false,
       },
     ],
-    [canEdit, canDelete, delMut],
+    [canEdit, canDelete, deletion],
   );
 
   const table = useReactTable({
@@ -199,6 +210,7 @@ export default function WorkflowDefinitionsList() {
       recordCount={data?.pagination.total ?? 0}
       isLoading={isLoading}
       onRowClick={(row) => router.push(`/workflow-forms-management/definitions/${row.id}`)}
+      rowPending={rowPending}
       tableLayout={{ columnsVisibility: true }}
       standardToolbar={false}
     >

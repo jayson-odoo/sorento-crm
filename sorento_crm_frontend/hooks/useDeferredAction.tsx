@@ -56,7 +56,7 @@ export interface UseDeferredActionInput {
   /** What the handler needs at commit time. `start()` may override it per click. */
   payload?: Record<string, unknown>;
   /** Lists to refetch once the action has committed. */
-  invalidateKeys?: readonly unknown[][];
+  invalidateKeys?: readonly (readonly unknown[])[];
   /** Where to go afterwards - a record page cannot stay open on a deleted row. */
   onCommitted?: () => void;
 }
@@ -116,13 +116,23 @@ export function useDeferredAction(
   // down the other one's window, under the wrong verb.
   const parked = data?.pending ?? null;
   const pending = parked?.action_key === actionKey ? parked : null;
-  const toastIdRef = useRef<string | number | null>(null);
-  const lastPendingIdRef = useRef<string | null>(null);
+  //: Every countdown toast THIS surface raised, by action id. A list hook is re-pointed
+  //: at another row on the next click, so there is never only one: two rows deleted in
+  //: quick succession leave two live countdowns, each with its own Cancel.
+  const toastIdsRef = useRef<Set<string | number>>(new Set());
+  //: What was parked last, and on WHICH record - the pair, because "pending went null"
+  //: means the action ended only if the record is still the same one.
+  const lastPendingRef = useRef<{ id: string; entityId: string } | null>(null);
 
   const cancelMutation = useMutation({
     mutationFn: (id: string) => cancelPendingAction(id),
-    onSuccess: () => {
+    onSuccess: (_result, id) => {
       toast.success('Cancelled. Nothing was applied.');
+      // By ACTION id, not by this hook's current record: the Cancel in a toast belongs
+      // to the row it was raised for, and this hook may already be counting down
+      // another one.
+      pendingEntityStore.releaseById(id);
+      toastIdsRef.current.delete(`pending-action-${id}`);
       queryClient.invalidateQueries({ queryKey });
     },
     onError: (error: Error) => toast.error(error.message),
@@ -156,30 +166,34 @@ export function useDeferredAction(
         invalidateKeys: invalidateKeys ?? [],
       });
       if (surface === 'toast') {
-        toastIdRef.current = deferredToast({
-          pending: action,
-          verb,
-          subject,
-          onCancel: () => cancelMutation.mutate(action.id),
-        });
+        toastIdsRef.current.add(
+          deferredToast({
+            pending: action,
+            verb,
+            subject,
+            onCancel: () => cancelMutation.mutate(action.id),
+          }),
+        );
       }
     },
     onError: (error: Error) => toast.error(error.message),
   });
 
-  /** Take back the countdown THIS surface put on screen. */
-  const dismissCountdown = useCallback(() => {
-    if (toastIdRef.current !== null) {
-      dismissDeferredToast(toastIdRef.current);
-      toastIdRef.current = null;
-    }
+  /** Take back one countdown this surface put on screen. */
+  const dismissCountdown = useCallback((actionId: string) => {
+    const id = `pending-action-${actionId}`;
+    toastIdsRef.current.delete(id);
+    dismissDeferredToast(id);
   }, []);
 
   /** The action is over: the countdown goes, and so does the row's dimming. */
-  const clearAffordances = useCallback(() => {
-    dismissCountdown();
-    if (entityId) pendingEntityStore.clear(entityType, entityId);
-  }, [dismissCountdown, entityId, entityType]);
+  const clearAffordances = useCallback(
+    (actionId: string) => {
+      dismissCountdown(actionId);
+      if (entityId) pendingEntityStore.clear(entityType, entityId);
+    },
+    [dismissCountdown, entityId, entityType],
+  );
 
   // The window closes on the SERVER. The first the client hears of it is `pending`
   // going null on the next read, and what happened next is in `last_outcome`: a
@@ -187,15 +201,22 @@ export function useDeferredAction(
   // countdown that simply disappears reads exactly like success (S6-03).
   useEffect(() => {
     const currentId = pending?.id ?? null;
-    const previousId = lastPendingIdRef.current;
-    lastPendingIdRef.current = currentId;
-    if (!previousId || currentId) return;
+    const previous = lastPendingRef.current;
+    lastPendingRef.current = currentId
+      ? { id: currentId, entityId: String(entityId) }
+      : null;
+    if (!previous || currentId) return;
+    // Re-pointed at another record, not ended. A list hook is one hook for every row,
+    // so deleting a second row while the first is still counting down empties `pending`
+    // here without anything having happened to the first: its toast, its dimming and
+    // its follow-through are the store's, and it settles them on its own timer.
+    if (previous.entityId !== String(entityId)) return;
 
-    clearAffordances();
+    clearAffordances(previous.id);
     if (!watchFromMount) setWatching(false);
 
     const outcome = data?.last_outcome;
-    if (!outcome || outcome.id !== previousId) return;
+    if (!outcome || outcome.id !== previous.id) return;
     if (outcome.action_key !== actionKey) return;
 
     if (outcome.status === 'committed') {
@@ -236,11 +257,19 @@ export function useDeferredAction(
 
   // A row that scrolls out of the grid, or a record page left mid-window, must not
   // leave a live toast behind - this surface is gone and cannot cancel anything.
+  // EVERY toast it raised, not just the last: a second row deleted while the first
+  // was counting down leaves two, and unmounting has to take both.
   // The row's dimming is NOT taken back here: the action is the server's and
   // carries on regardless (S6-08), so a user who comes back to the list mid-window
   // must still see the row on its way out. The store's timer takes it off at
   // commit.
-  useEffect(() => () => dismissCountdown(), [dismissCountdown]);
+  useEffect(() => {
+    const toastIds = toastIdsRef.current;
+    return () => {
+      for (const id of toastIds) dismissDeferredToast(id);
+      toastIds.clear();
+    };
+  }, []);
 
   const start = useCallback(
     (override?: Record<string, unknown>) => {

@@ -387,11 +387,15 @@ describe('ProformaUploadDialog - a file the verdict blocks', () => {
     pickFile();
     fireEvent.click(testButton());
 
-    await waitFor(() => expect(confirmButton()).toBeDisabled());
-    expect(confirmButton()).toHaveAttribute(
-      'title',
-      expect.stringContaining('no unit_price column'),
+    // Confirm is also disabled while the preview is still in flight, so the
+    // verdict's own reason is the signal to wait on, not the disabled state.
+    await waitFor(() =>
+      expect(confirmButton()).toHaveAttribute(
+        'title',
+        expect.stringContaining('no unit_price column'),
+      ),
     );
+    expect(confirmButton()).toBeDisabled();
   });
 
   it('refuses a priced file nothing can price, naming the invoice', async () => {

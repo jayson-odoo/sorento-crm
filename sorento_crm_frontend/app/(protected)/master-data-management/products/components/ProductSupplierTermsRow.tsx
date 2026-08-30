@@ -7,7 +7,6 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
-import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import type {
   ProductSupplier,
   ProductSupplierSourcingTerms,
@@ -93,13 +92,14 @@ export function ProductSupplierTermsRow({
   /** Currencies we hold an exchange rate for, so a saved price stays comparable. */
   currencyOptions: { value: string; label: string }[];
   onSave: (draft: SupplierTermsDraft) => void;
-  onRemove: () => Promise<void>;
+  /** Parks the detach on the server for its grace window (D7). Asks nothing first. */
+  onRemove: () => void;
   isSaving: boolean;
+  /** True while THIS row's removal is counting down, so its control stays quiet. */
   isDeleting: boolean;
 }) {
   const saved = useMemo(() => toDraft(ps), [ps]);
   const [draft, setDraft] = useState<SupplierTermsDraft>(saved);
-  const [confirmOpen, setConfirmOpen] = useState(false);
 
   // Re-sync when the server row changes (a save landing, or a refetch), so the inputs show
   // what was stored rather than what was typed.
@@ -153,7 +153,7 @@ export function ProductSupplierTermsRow({
             type="button"
             variant="ghost"
             size="sm"
-            onClick={() => setConfirmOpen(true)}
+            onClick={onRemove}
             disabled={isDeleting}
             aria-label={`Remove ${supplierName}`}
           >
@@ -242,15 +242,6 @@ export function ProductSupplierTermsRow({
           {error}
         </p>
       ) : null}
-
-      <ConfirmDeleteDialog
-        open={confirmOpen}
-        onOpenChange={setConfirmOpen}
-        onDelete={onRemove}
-        title="Confirm delete"
-        successMessage="Supplier removed"
-        description={`Remove ${supplierName} as a supplier of this product? This action cannot be undone.`}
-      />
     </div>
   );
 }

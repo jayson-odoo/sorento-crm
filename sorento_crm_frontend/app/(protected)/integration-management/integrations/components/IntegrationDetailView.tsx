@@ -5,7 +5,6 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, KeyRound, Pencil, Plug, RefreshCw, Trash2 } from 'lucide-react';
 
-import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { PageHeader } from '@/components/common/PageHeader';
@@ -13,12 +12,12 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 
 import {
-  useDeleteIntegration,
   useIntegration,
   useIssueKey,
-  useRevokeKey,
   useRotateKey,
 } from '../hooks/useIntegrations';
+import { useDeferredAction } from '@/hooks/useDeferredAction';
+import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
 import type { Integration, IssuedKey } from '../types/integration.types';
 import { IntegrationFormDialog } from './IntegrationFormDialog';
 import { IssuedKeyDialog } from './IssuedKeyDialog';
@@ -39,9 +38,16 @@ const EMPTY = <span className="text-muted-foreground"> - </span>;
 function KeysCard({ integration }: { integration: Integration }) {
   const issue = useIssueKey();
   const rotate = useRotateKey();
-  const revoke = useRevokeKey();
+  // Revoking asks nothing (D7). It parks for the destructive window because a
+  // revoked key can never be un-revoked: the plaintext was only ever shown once.
+  const revocation = useDeferredRowAction({
+    actionKey: 'integration_key.revoke',
+    entityType: 'integration_key',
+    verb: 'Revoking',
+    successMessage: 'Key revoked',
+    invalidateKeys: [['integration', integration.id], ['integrations']],
+  });
   const [issued, setIssued] = useState<IssuedKey | null>(null);
-  const [confirmRevoke, setConfirmRevoke] = useState<string | null>(null);
 
   const live = integration.keys.filter((k) => k.is_active);
   const retired = integration.keys.filter((k) => !k.is_active);
@@ -131,7 +137,16 @@ function KeysCard({ integration }: { integration: Integration }) {
                         <Button
                           size="sm"
                           variant="ghost"
-                          onClick={() => setConfirmRevoke(key.id)}
+                          onClick={() =>
+                            revocation.run({
+                              id: key.id,
+                              subject: `key ${key.key_prefix}`,
+                              payload: { integration_id: integration.id },
+                            })
+                          }
+                          disabled={
+                            revocation.targetId === key.id && revocation.isPending
+                          }
                         >
                           Revoke
                         </Button>
@@ -147,23 +162,6 @@ function KeysCard({ integration }: { integration: Integration }) {
 
       <IssuedKeyDialog issued={issued} onClose={() => setIssued(null)} />
 
-      {/* Revoking is destructive and immediate - never one click. */}
-      <ConfirmDeleteDialog
-        open={!!confirmRevoke}
-        onOpenChange={(open) => !open && setConfirmRevoke(null)}
-        title="Revoke this key?"
-        description="The key stops working immediately. Any caller still using it will fail to authenticate until it is replaced. This action cannot be undone."
-        successMessage="Key revoked"
-        onDelete={async () => {
-          if (confirmRevoke) {
-            await revoke.mutateAsync({
-              integrationId: integration.id,
-              keyId: confirmRevoke,
-            });
-          }
-        }}
-        onSuccess={() => setConfirmRevoke(null)}
-      />
     </Card>
   );
 }
@@ -171,9 +169,22 @@ function KeysCard({ integration }: { integration: Integration }) {
 export function IntegrationDetailView({ id }: { id: string }) {
   const router = useRouter();
   const { data: integration, isLoading, isError, error } = useIntegration(id);
-  const remove = useDeleteIntegration();
   const [editOpen, setEditOpen] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState(false);
+
+  // Delete asks nothing (D7): the countdown replaces the Delete button and
+  // Cancel is the way back.
+  const deletion = useDeferredAction({
+    actionKey: 'integration.delete',
+    entityType: 'integration',
+    entityId: id,
+    verb: 'Deleting',
+    subject: integration?.name ?? '',
+    surface: 'inline',
+    watchFromMount: true,
+    successMessage: 'Integration deleted',
+    invalidateKeys: [['integrations']],
+    onCommitted: () => router.push('/integration-management/integrations'),
+  });
 
   if (isLoading) {
     return <p className="p-6 text-sm text-muted-foreground">Loading integration…</p>;
@@ -207,9 +218,15 @@ export function IntegrationDetailView({ id }: { id: string }) {
             <Button variant="outline" onClick={() => setEditOpen(true)}>
               <Pencil className="size-4" /> Edit
             </Button>
-            <Button variant="outline" onClick={() => setConfirmDelete(true)}>
-              <Trash2 className="size-4" /> Delete
-            </Button>
+            {deletion.countdown ?? (
+              <Button
+                variant="outline"
+                onClick={() => deletion.start()}
+                disabled={deletion.isPending}
+              >
+                <Trash2 className="size-4" /> Delete
+              </Button>
+            )}
             <Button variant="outline" asChild>
               <Link href="/integration-management/integrations">
                 <ArrowLeft className="size-4" /> Back to integrations
@@ -291,17 +308,6 @@ export function IntegrationDetailView({ id }: { id: string }) {
         integration={integration}
       />
 
-      <ConfirmDeleteDialog
-        open={confirmDelete}
-        onOpenChange={setConfirmDelete}
-        title="Confirm delete"
-        description={`Delete "${integration.name}" and all ${integration.keys.length} of its API key(s). Any caller using them will stop authenticating immediately. This action cannot be undone.`}
-        successMessage="Integration deleted"
-        onDelete={async () => {
-          await remove.mutateAsync(integration.id);
-        }}
-        onSuccess={() => router.push('/integration-management/integrations')}
-      />
     </div>
   );
 }

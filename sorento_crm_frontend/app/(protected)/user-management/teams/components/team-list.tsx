@@ -10,14 +10,20 @@ import { Skeleton } from '@/components/ui/skeleton';
 import type { Team } from '../types/team.types';
 import { getTeams } from '../services/teamService';
 import TeamEditDialog from './team-edit-dialog';
-import TeamDeleteDialog from './team-delete-dialog';
+import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
 import TeamTree from './team-tree';
 
 export default function TeamList() {
   const [editOpen, setEditOpen] = useState(false);
-  const [deleteOpen, setDeleteOpen] = useState(false);
   const [selectedTeam, setSelectedTeam] = useState<Team | null>(null);
   const [query, setQuery] = useState('');
+  // Delete asks nothing (D7): a toast counts down with Cancel.
+  const deletion = useDeferredRowAction({
+    actionKey: 'team.delete',
+    entityType: 'team',
+    successMessage: 'Team deleted',
+    invalidateKeys: [['user-management-teams']],
+  });
 
   const { data: teams = [], isLoading } = useQuery({
     queryKey: ['user-management-teams'],
@@ -77,10 +83,7 @@ export default function TeamList() {
                 setSelectedTeam(t);
                 setEditOpen(true);
               }}
-              onDelete={(t) => {
-                setSelectedTeam(t);
-                setDeleteOpen(true);
-              }}
+              onDelete={(t) => deletion.run({ id: t.id, subject: t.name })}
             />
           )}
         </div>
@@ -93,11 +96,6 @@ export default function TeamList() {
       </Card>
 
       <TeamEditDialog open={editOpen} closeDialog={() => setEditOpen(false)} team={selectedTeam} />
-      <TeamDeleteDialog
-        open={deleteOpen}
-        closeDialog={() => setDeleteOpen(false)}
-        team={selectedTeam}
-      />
     </>
   );
 }

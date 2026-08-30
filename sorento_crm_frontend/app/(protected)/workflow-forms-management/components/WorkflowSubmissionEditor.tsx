@@ -21,10 +21,11 @@ import {
   useAllowedTransitionsQuery,
   useApplyWorkflowTransition,
   useCreateWorkflowSubmission,
-  useDeleteWorkflowSubmission,
   useUpdateWorkflowSubmission,
   useWorkflowSubmissionQuery,
+  wfKeys,
 } from '../hooks/useWorkflowForms';
+import { useDeferredAction } from '@/hooks/useDeferredAction';
 import { toast } from 'sonner';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import {
@@ -239,7 +240,20 @@ export function WorkflowSubmissionDetail({ submissionId }: { submissionId: strin
   const canEdit = useHasPermission('workflow_forms.submissions.edit');
   const canTransition = useHasPermission('workflow_forms.submissions.transition');
   const canDelete = useHasPermission('workflow_forms.submissions.delete');
-  const delMut = useDeleteWorkflowSubmission();
+  // Delete asks nothing (D7): the countdown replaces the Delete button and
+  // Cancel is the way back.
+  const deletion = useDeferredAction({
+    actionKey: 'workflow_submission.delete',
+    entityType: 'workflow_submission',
+    entityId: submissionId,
+    verb: 'Deleting',
+    subject: sub?.definition_name ?? 'this submission',
+    surface: 'inline',
+    watchFromMount: true,
+    successMessage: 'Submission deleted',
+    invalidateKeys: [wfKeys.submissions],
+    onCommitted: () => router.push(submissionsListHref),
+  });
 
   const [header, setHeader] = useState<Record<string, unknown>>({});
   const [lines, setLines] = useState<LineRow[]>([]);
@@ -329,22 +343,18 @@ export function WorkflowSubmissionDetail({ submissionId }: { submissionId: strin
           </Link>
         </Button>
         <div className="flex flex-wrap gap-2 items-center">
-          {canDelete ? (
-            <Button
-              size="sm"
-              variant="destructive"
-              disabled={delMut.isPending}
-              onClick={() => {
-                if (confirm('Delete this submission permanently?')) {
-                  delMut.mutate(submissionId, {
-                    onSuccess: () => router.push(submissionsListHref),
-                  });
-                }
-              }}
-            >
-              Delete
-            </Button>
-          ) : null}
+          {canDelete
+            ? deletion.countdown ?? (
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  disabled={deletion.isPending}
+                  onClick={() => deletion.start()}
+                >
+                  Delete
+                </Button>
+              )
+            : null}
           {canEdit && !terminal && schema ? (
             <Button size="sm" onClick={save} disabled={updateMut.isPending}>
               <Save className="size-4 mr-1" />

@@ -7,6 +7,21 @@
  * book actually prices in that have no rate, so the work is named rather than deduced.
  */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+/* The grace window is the server's; what this file proves is that the row parks one. */
+const createPendingAction = vi.fn().mockResolvedValue({
+  id: 'pa-1',
+  action_key: 'currency_rate.delete',
+  entity_type: 'currency_rate',
+  entity_id: 'USD',
+  commit_at: '2026-08-30T10:00:10',
+  window_seconds: 10,
+});
+vi.mock('@/services/pendingActionService', () => ({
+  createPendingAction: (...args: unknown[]) => createPendingAction(...args),
+  cancelPendingAction: vi.fn(),
+  getCurrentPendingAction: vi.fn().mockResolvedValue({ pending: null, last_outcome: null }),
+}));
+
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -20,7 +35,9 @@ vi.mock('../../services/currencyRateService', () => ({
   deleteCurrencyRate: (...a: unknown[]) => deleteCurrencyRate(...a),
 }));
 
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock('sonner', () => ({
+  toast: { success: vi.fn(), error: vi.fn(), custom: vi.fn(), dismiss: vi.fn() },
+}));
 
 import { CurrencyRatesPanel } from './CurrencyRatesPanel';
 
@@ -116,12 +133,22 @@ describe('CurrencyRatesPanel', () => {
     expect(screen.getByRole('button', { name: /^Save currency rate$/i })).toBeDisabled();
   });
 
-  it('confirms before removing a rate, because the plan stops funding without it', async () => {
+  it('parks the removal rather than asking first (S6-10)', async () => {
     renderPanel();
 
     fireEvent.click(await screen.findByRole('button', { name: /remove USD/i }));
 
-    expect(await screen.findByText(/cannot be undone/i)).toBeInTheDocument();
+    // D7: the press IS the action. What the plan loses without a rate is the
+    // server's consequence either way, and Cancel in the countdown is the way back.
+    await waitFor(() =>
+      expect(createPendingAction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          actionKey: 'currency_rate.delete',
+          entityType: 'currency_rate',
+          entityId: 'USD',
+        }),
+      ),
+    );
     expect(deleteCurrencyRate).not.toHaveBeenCalled();
   });
 

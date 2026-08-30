@@ -21,10 +21,14 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 const toastSuccess = vi.fn();
 const toastError = vi.fn();
+const toastDismiss = vi.fn();
 vi.mock('sonner', () => ({
   toast: {
     success: (...args: unknown[]) => toastSuccess(...args),
     error: (...args: unknown[]) => toastError(...args),
+    // The store takes a countdown toast down when its own action settles, whichever
+    // record the surface that raised it has moved on to.
+    dismiss: (...args: unknown[]) => toastDismiss(...args),
   },
 }));
 

@@ -67,18 +67,9 @@ export async function deleteOrder(id: string): Promise<void> {
   }
 }
 
-export async function bulkDeleteOrders(ids: string[]): Promise<{ message: string; deleted_count: number }> {
-  const response = await apiFetch('/api/v1/order-management/orders/bulk', {
-    method: 'DELETE',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ids }),
-  });
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: 'Failed to bulk delete delivery orders' }));
-    throw new Error(error.message);
-  }
-  return response.json();
-}
+// No bulk-delete client: the list parks one `order.delete` per selected row through
+// `/pending-actions` (D7), so this route has no frontend caller. The route itself still
+// stands for the API and n8n.
 
 /**
  * Export all orders to Excel (fetches all data by paginating through all pages)

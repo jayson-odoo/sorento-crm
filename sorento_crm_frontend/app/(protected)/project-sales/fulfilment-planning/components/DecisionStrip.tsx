@@ -18,9 +18,15 @@ import type {
 /**
  * Suggested vs decided, per kind of supply, across the whole selection (AC-D2).
  *
- * Six cards in one fixed order (`ORDER`), each carrying two figures. Numbers only: what a card
- * means is its label and its colour, both of which the legend directly above already states,
- * and a sentence under a card would be a feature explanation in the UI.
+ * THE WALK, LEFT TO RIGHT: `own`, `incoming`, `borrow_order`, `borrow_incoming`, `shared`,
+ * `buy` - ladder v7.1's own order of consideration, off `ORDER` (the captain, 30 Aug 2026:
+ * left = first consideration, right = last option). The strip used to read own, pool, borrow,
+ * borrow, buy, which offered the shared pool before anybody's own order and hid two of the
+ * walk's steps inside their neighbours.
+ *
+ * Six or seven cards in that one fixed order, each carrying two figures. Numbers only: what a
+ * card means is its label and its colour, both of which the legend directly above already
+ * states, and a sentence under a card would be a feature explanation in the UI.
  *
  * A card whose two figures disagree carries the amber dot the board already uses for "this
  * moved". Pressing a card filters BOTH views to the lines carrying that kind on either side,
@@ -31,13 +37,17 @@ import type {
  * read as a broken filter. It keeps its place, because a card that came and went would move
  * every card beside it and the strip is read by glancing at a position.
  *
- * EXCEPT `incoming`, which is HIDDEN at 0 and 0 (captain, 27 August 2026). The other five are
- * the ladder's four questions and Buy: every one of them was asked about every line, so a zero
- * there is an answer and holding its place is what makes the strip readable. `incoming` is not
- * a question - what question 1 draws off the water totals under "Use own location" with the
- * rest of that question's answer, and this card counts only the frozen `timely_spo` of
- * decisions taken under an older ladder. On a board with none, it is a card about nothing, and
- * the grid narrows from six columns to five so the five that remain fill the row.
+ * EXCEPT `borrow_other`, which is HIDDEN at 0 and 0. The other six are steps of the walk:
+ * every one of them was asked about every line, so a zero there is an answer, and that
+ * includes `borrow_incoming`, which reads 0 until S4 lands its candidates - a step nobody can
+ * see is a step nobody knows was asked. `borrow_other` is not a step: ladder v7.1 retired
+ * `cross_group_borrow` (another group's FREE stock is step 1's second half now and owes nobody
+ * anything), so nothing composed today is that kind and the card only stands for what a
+ * decision frozen under an older ladder carries. On a board with none it is a card about
+ * nothing, and the grid narrows from seven columns to six so the six that remain fill the row.
+ *
+ * The rule this replaces hid `incoming` instead, on the reading that it was history. Under
+ * v7.1 it is step 1's water half and one of the walk's live steps.
  */
 export function DecisionStrip({
   contributions,
@@ -55,7 +65,7 @@ export function DecisionStrip({
     () =>
       decisionStripTotals(contributions, draft).filter(
         (total) =>
-          total.kind !== 'incoming' ||
+          total.kind !== 'borrow_other' ||
           toMinor(total.suggested) !== 0 ||
           toMinor(total.decided) !== 0,
       ),
@@ -73,8 +83,10 @@ export function DecisionStrip({
     <div data-testid="decision-strip" className="space-y-2">
       <div
         className={cn(
-          'grid grid-cols-2 gap-2 sm:grid-cols-3',
-          totals.length > 5 ? 'lg:grid-cols-6' : 'lg:grid-cols-5',
+          // Seven cards do not fit a laptop row at `lg`, so the walk wraps to two rows of
+          // four there and straightens out at `xl` (1280, the width this board is read at).
+          'grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4',
+          totals.length > 6 ? 'xl:grid-cols-7' : 'xl:grid-cols-6',
         )}
       >
         {totals.map((total) => {

@@ -13,6 +13,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import {
@@ -260,6 +261,23 @@ export function BoardCellBreakdownDialog({
     },
     [selectedKeys, onDecide],
   );
+
+  /**
+   * The muted line under the title, in the shape the family's shell wants it (`PlanRowDialog`,
+   * `StockDebtCellDialog`): the facts about the CELL that neither tab states.
+   *
+   * The ownership GROUP leads, because it is the pile step 1 draws from and nothing else on
+   * this screen prints its name - the stock table only speaks up when there is none. The
+   * quantity follows so the description is never empty, which it would be on a cell whose
+   * group the server could not resolve, and Radix needs it to describe the dialog at all.
+   */
+  const context = [
+    cell.location_group ? `${cell.location_group} group` : null,
+    `${cell.total_qty} outstanding`,
+    `${decided} decided`,
+  ]
+    .filter(Boolean)
+    .join(' · ');
 
   const columns = React.useMemo<ColumnDef<BoardContribution>[]>(
     () => [
@@ -625,16 +643,23 @@ export function BoardCellBreakdownDialog({
        only the fourth gesture, so the three easiest ways out of the dialog lost the draft in
        silence. `requestClose` asks first and closes only once the question is answered. */
     <Dialog open onOpenChange={(next) => !next && requestClose(onClose)}>
+      {/* THE SCM FAMILY'S SHELL, copied from `scm/components/PlanRowDialog.tsx` the way
+          `project-sales/stock-debt/components/StockDebtCellDialog.tsx` copied it: same sizing,
+          same header, same scrolling body, so every lightbox in this family is one object to a
+          reader. At whichever merge lands last, the three re-point at one file. */}
       <DialogContent
         data-testid="cell-dialog-content"
         className="flex max-h-[85vh] w-full flex-col overflow-hidden p-0 sm:max-w-[95vw]"
       >
-        {/* CAPPED, and it scrolls on its own. The header holds three cards and a stock table
-            of up to eleven location rows, which at a 900px window is the whole dialog: the
-            body underneath got about 100px, and the decision panel that now lives there was
-            unreachable without scrolling a region a reader could not see. Half the dialog to
-            each is the guarantee - the same class of layout fault the footer once caused. */}
-        <DialogHeader className="max-h-[45vh] shrink-0 space-y-2 overflow-y-auto border-b p-4 sm:p-6">
+        {/* SLIM, AND IT DOES NOT SCROLL. It used to be capped at 45vh and hold three cards and
+            a stock table of up to eleven location rows - which at a 900px window is the whole
+            dialog, leaving the body about 100px and the decision panel inside it unreachable
+            without scrolling a region a reader could not see. The header states what the cell
+            IS; everything a planner reads is in the body, in one region, under tabs.
+
+            `pe-10` is the one departure from the copied shell: the close button is absolute at
+            `end-5`, and at 375px the date and the flag chips ran underneath it. */}
+        <DialogHeader className="shrink-0 space-y-1 border-b p-4 pe-10 sm:p-6 sm:pe-10">
           <div className="flex flex-wrap items-center gap-2">
             <DialogTitle className="min-w-0 break-words">
               {`${cell.item_code} · ${bucketLabel}`}
@@ -647,14 +672,31 @@ export function BoardCellBreakdownDialog({
               <ItemFlagChips contribution={flaggedContribution} idKey="cell" />
             ) : null}
           </div>
+          {/* The muted context line the family's shell carries. WHOSE PILE THIS IS, which is
+              the one fact about the cell that neither the title nor either tab states: the
+              ownership group is what step 1 draws from, and the stock table below only names
+              it when there is none. It falls back to the quantity the dialog was opened over,
+              so the accessible description is never empty. */}
+          <DialogDescription
+            data-testid="cell-dialog-context"
+            className="truncate text-xs"
+            title={context}
+          >
+            {context}
+          </DialogDescription>
+        </DialogHeader>
+
+        {/* THE ONLY SCROLLING REGION, exactly as the family's shell has it, and it holds the
+            row actions. Nothing here can be painted over: there is no footer. */}
+        <DialogBody
+          data-testid="cell-dialog-body"
+          className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4 sm:p-6"
+        >
           {/* The decision, first and in two small cards: what is being asked for, and what
               the ladder proposes to do about it. The dialog used to open on a sentence and a
               table of lines, and the planner had to read a source strip per row to work out
               what the whole cell was being asked to decide - which is the one thing they came
-              for. "across 1 line" is gone with it: the table below is the lines. */}
-          <DialogDescription className="sr-only">
-            {`${cell.total_qty} outstanding, ${decided} decided`}
-          </DialogDescription>
+              for. "across 1 line" is gone with it: the Contributing lines tab IS the lines. */}
           <div
             className={cn(
               'grid grid-cols-1 gap-3',
@@ -703,103 +745,120 @@ export function BoardCellBreakdownDialog({
           {/* NO RANKING SENTENCE. It explained the Rank column, and the Rank column is gone
               (R8), so it was a paragraph about a number nobody can see. */}
 
-          {/* What is actually AT each location, not only what is outstanding from it - the captain's
-              "where will I need to source to fulfil", answered with facts, and the dialog has to
-              carry it because a reader who opened it from a cell they can no longer see still
-              needs to know one cell can draw on several locations.
+          {/* ONE SECTION, TWO TABS, the way `StockDebtCellDialog` puts its two grids. The two
+              tables used to be stacked - the stock position in the header, the lines under it -
+              and each got about half the dialog, so a reader scrolled past one to reach the
+              other and neither was ever whole. A tab gives whichever table is being read the
+              WHOLE body, and the count sits in the trigger where it can be read without
+              pressing anything.
 
-              KEYED BY THE CELL, so the locations a reader expanded close when the dialog is
-              pointed at a different cell: an expansion left open would otherwise show the
-              previous cell's documents under the new cell's row. */}
-          <CellStockTable
-            key={`${cell.row_key ?? cell.item_code}|${cell.bucket_key}`}
-            locations={shownLocations}
-            groupNote={cell.location_group_note}
-            taken={taken}
-            lineIds={askingLineIds}
-            forLine={
-              cell.contributions.length > 1 && shownContribution
-                ? `${shownContribution.so_number} line ${shownContribution.line_no}`
-                : undefined
-            }
-          />
-        </DialogHeader>
+              STOCK LEADS, because the dialog is opened from a CELL and never from a line
+              (`FulfilmentBoardPanel` passes `onOpenCell(cell)` and nothing else): there is no
+              line context to default to the lines with. Opening a row in Contributing lines
+              re-points the stock table at that line, which is the crossing between them. */}
+          <Tabs defaultValue="stock">
+            <TabsList>
+              <TabsTrigger value="stock">Stock</TabsTrigger>
+              <TabsTrigger value="lines">
+                {`Contributing lines (${cell.contributions.length})`}
+              </TabsTrigger>
+            </TabsList>
 
-        {/* The ONLY scrolling region, and it holds the row actions. The footer below is its
-            sibling, so nothing in here can ever be painted over. */}
-        <DialogBody
-          data-testid="cell-dialog-body"
-          className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4 sm:p-6"
-        >
-          <PanelDataGrid<BoardContribution>
-            title="Contributing lines"
-            columns={columns}
-            rows={cell.contributions}
-            getRowId={(row) => row.key}
-            listingKey="projects.projects.view::project-board-cell-breakdown"
-            sortable
-            expanded={expanded}
-            onExpandedChange={setExpanded}
-            // The whole row opens its decision panel; the chevron in the first cell is only
-            // the indicator that says which way it will go.
-            onRowClick={(row) => requestRow(row.key)}
-            rowSelection={rowSelection}
-            onRowSelectionChange={setRowSelection}
-            // A covered row is not selectable either: the bulk verbs are Approve and Reject,
-            // and a bulk Reject sweeping up a confirmed line would silently un-decide it,
-            // which is the very defect the covered state exists to stop.
-            enableRowSelection={(row) =>
-              !row.original.unplannable && !row.original.covered
-            }
-            toolbar={
-              selectedKeys.length > 0 ? (
-                <div className="flex flex-wrap items-center gap-2">
-                  {/* Says exactly how many rows the verbs will act on. With a paginated cell
+            <TabsContent value="stock">
+              {/* What is actually AT each location, not only what is outstanding from it - the
+                  captain's "where will I need to source to fulfil", answered with facts, and the
+                  dialog has to carry it because a reader who opened it from a cell they can no
+                  longer see still needs to know one cell can draw on several locations.
+
+                  KEYED BY THE CELL, so the locations a reader expanded close when the dialog is
+                  pointed at a different cell: an expansion left open would otherwise show the
+                  previous cell's documents under the new cell's row. */}
+              <CellStockTable
+                key={`${cell.row_key ?? cell.item_code}|${cell.bucket_key}`}
+                locations={shownLocations}
+                groupNote={cell.location_group_note}
+                taken={taken}
+                lineIds={askingLineIds}
+                forLine={
+                  cell.contributions.length > 1 && shownContribution
+                    ? `${shownContribution.so_number} line ${shownContribution.line_no}`
+                    : undefined
+                }
+              />
+            </TabsContent>
+
+            <TabsContent value="lines">
+              <PanelDataGrid<BoardContribution>
+                title="Contributing lines"
+                columns={columns}
+                rows={cell.contributions}
+                getRowId={(row) => row.key}
+                listingKey="projects.projects.view::project-board-cell-breakdown"
+                sortable
+                expanded={expanded}
+                onExpandedChange={setExpanded}
+                // The whole row opens its decision panel; the chevron in the first cell is only
+                // the indicator that says which way it will go.
+                onRowClick={(row) => requestRow(row.key)}
+                rowSelection={rowSelection}
+                onRowSelectionChange={setRowSelection}
+                // A covered row is not selectable either: the bulk verbs are Approve and Reject,
+                // and a bulk Reject sweeping up a confirmed line would silently un-decide it,
+                // which is the very defect the covered state exists to stop.
+                enableRowSelection={(row) =>
+                  !row.original.unplannable && !row.original.covered
+                }
+                toolbar={
+                  selectedKeys.length > 0 ? (
+                    <div className="flex flex-wrap items-center gap-2">
+                      {/* Says exactly how many rows the verbs will act on. With a paginated cell
                       the header ticks this page, and this count is what was ticked - so the
                       strip never implies more than it will do. */}
-                  <Badge
-                    variant="secondary"
-                    className="h-8 gap-1 px-2.5 text-sm"
-                  >
-                    {`${selectedKeys.length} selected`}
-                  </Badge>
-                  <Button
-                    type="button"
-                    size="sm"
-                    onClick={() => decideSelected({ verdict: 'approved' })}
-                  >
-                    <Check className="size-4" aria-hidden />
-                    Approve selected
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    onClick={() =>
-                      decideSelected({
-                        verdict: 'rejected',
-                        reason: 'Rejected on the planning board.',
-                      })
-                    }
-                  >
-                    <X className="size-4" aria-hidden />
-                    Reject selected
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => setRowSelection({})}
-                  >
-                    Clear
-                  </Button>
-                </div>
-              ) : undefined
-            }
-            emptyTitle="No line contributes to this cell"
-            emptyBody="Nothing in the selection is outstanding for this product by this date."
-            pageSize={25}
-          />
+                      <Badge
+                        variant="secondary"
+                        className="h-8 gap-1 px-2.5 text-sm"
+                      >
+                        {`${selectedKeys.length} selected`}
+                      </Badge>
+                      <Button
+                        type="button"
+                        size="sm"
+                        onClick={() => decideSelected({ verdict: 'approved' })}
+                      >
+                        <Check className="size-4" aria-hidden />
+                        Approve selected
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() =>
+                          decideSelected({
+                            verdict: 'rejected',
+                            reason: 'Rejected on the planning board.',
+                          })
+                        }
+                      >
+                        <X className="size-4" aria-hidden />
+                        Reject selected
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setRowSelection({})}
+                      >
+                        Clear
+                      </Button>
+                    </div>
+                  ) : undefined
+                }
+                emptyTitle="No line contributes to this cell"
+                emptyBody="Nothing in the selection is outstanding for this product by this date."
+                pageSize={25}
+              />
+            </TabsContent>
+          </Tabs>
         </DialogBody>
 
         <UnsavedDecisionPrompt state={expansion} />
