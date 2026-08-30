@@ -31,6 +31,13 @@ export interface PageHeaderProps {
   /** The page title. One scale, one component, every page (S5-01). */
   title: ReactNode;
   /**
+   * The page's own crumb, for the pages whose title is a node rather than a
+   * string: a name with a badge beside it, a skeleton while the record loads.
+   * Without it such a page would end its trail on the sidebar entry ABOVE it,
+   * which then reads as the current page and loses its link.
+   */
+  crumbTitle?: string;
+  /**
    * The abbreviation the sidebar keeps, when the title spells it out (S5-03):
    * "GRN" over "Goods Receipt Notes".
    */
@@ -77,19 +84,28 @@ function dedupe(crumbs: PageHeaderCrumb[]): PageHeaderCrumb[] {
  * page's own title, so the last crumb is always where the user actually is.
  * When the sidebar names nothing (an account page, a portal page) the trail is
  * the root plus the title.
+ *
+ * A title that is a node rather than a string names its crumb with
+ * `crumbTitle`; only a page that offers neither ends on the sidebar entry.
  */
 export function buildCrumbTrail(
   chain: PageHeaderCrumb[],
   pathname: string,
   title: ReactNode,
   override?: PageHeaderCrumb[],
+  crumbTitle?: string,
 ): PageHeaderCrumb[] {
-  if (override) {
+  // An empty array is a page that asked for no trail below the root, not an
+  // override: falling into the branch below would drop the sidebar's own chain.
+  if (override?.length) {
     return dedupe([ROOT_CRUMB, ...override]);
   }
 
-  const ownCrumb: PageHeaderCrumb[] =
-    typeof title === 'string' && title.trim() ? [{ title: title.trim() }] : [];
+  const ownTitle =
+    typeof title === 'string' && title.trim()
+      ? title.trim()
+      : (crumbTitle?.trim() ?? '');
+  const ownCrumb: PageHeaderCrumb[] = ownTitle ? [{ title: ownTitle }] : [];
 
   if (chain.length === 0) {
     return dedupe([ROOT_CRUMB, ...ownCrumb]);
@@ -110,6 +126,7 @@ export function buildCrumbTrail(
  */
 export function PageHeader({
   title,
+  crumbTitle,
   eyebrow,
   crumbs,
   actions,
@@ -121,7 +138,7 @@ export function PageHeader({
   const chain: PageHeaderCrumb[] = getBreadcrumb(MENU_SIDEBAR)
     .filter((item) => Boolean(item.title))
     .map((item) => ({ title: item.title as string, path: item.path }));
-  const trail = buildCrumbTrail(chain, pathname, title, crumbs);
+  const trail = buildCrumbTrail(chain, pathname, title, crumbs, crumbTitle);
 
   return (
     <Toolbar>

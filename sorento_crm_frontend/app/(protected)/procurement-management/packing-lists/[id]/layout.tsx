@@ -125,6 +125,10 @@ function PackingListToolbar({ id }: { id: string }) {
     <>
       <PageHeader
         title={isLoading ? <Skeleton className="h-6 w-48" /> : title}
+        // The skeleton is a node, so the trail is told the container number
+        // separately: otherwise it ends on "Packing Lists" while the record
+        // loads and that crumb stops being a link.
+        crumbTitle={title}
         actions={
           <BackToList
             listPath="/procurement-management/packing-lists"

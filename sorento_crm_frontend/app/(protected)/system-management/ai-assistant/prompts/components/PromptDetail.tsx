@@ -211,6 +211,9 @@ export function PromptDetail({ name }: { name: string }) {
             ) : null}
           </span>
         }
+        // The title carries a badge, so the trail is told the name separately:
+        // without it the trail would end on "Prompts" and stop linking there.
+        crumbTitle={name}
         actions={
           <Button variant="outline" asChild>
             <Link href="/system-management/ai-assistant/prompts">

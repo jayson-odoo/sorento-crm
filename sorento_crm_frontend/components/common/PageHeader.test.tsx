@@ -12,7 +12,7 @@ import React from 'react';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, cleanup, within } from '@testing-library/react';
 
-import { PageHeader } from './PageHeader';
+import { PageHeader, buildCrumbTrail } from './PageHeader';
 
 let pathname = '/';
 
@@ -33,6 +33,56 @@ function trail(): string[] {
     .filter((li) => li.getAttribute('data-slot') === 'breadcrumb-item')
     .map((li) => (li.textContent ?? '').trim());
 }
+
+describe('buildCrumbTrail', () => {
+  const chain = [{ title: 'Prompts', path: '/system-management/ai-assistant/prompts' }];
+
+  it('S5-02: an empty crumbs array is not an override', () => {
+    // `crumbs={cond ? [...] : []}` is the natural way to write a conditional
+    // trail; treating [] as "the trail is just the root" would silently throw
+    // the sidebar's own chain away.
+    expect(
+      buildCrumbTrail(chain, '/system-management/ai-assistant/prompts', 'Prompts', []),
+    ).toEqual([
+      { title: 'Dashboards', path: '/' },
+      { title: 'Prompts', path: '/system-management/ai-assistant/prompts' },
+    ]);
+  });
+
+  it('S5-02: crumbTitle names the page a node title cannot', () => {
+    expect(
+      buildCrumbTrail(
+        chain,
+        '/system-management/ai-assistant/prompts/router.plan',
+        null,
+        undefined,
+        'router.plan',
+      ).at(-1),
+    ).toEqual({ title: 'router.plan' });
+  });
+
+  it('S5-02: a string title still wins over crumbTitle', () => {
+    expect(
+      buildCrumbTrail(
+        chain,
+        '/system-management/ai-assistant/prompts/router.plan',
+        'router.plan',
+        undefined,
+        'ignored',
+      ).at(-1),
+    ).toEqual({ title: 'router.plan' });
+  });
+
+  it('S5-02: neither a string title nor a crumbTitle ends on the sidebar entry', () => {
+    expect(
+      buildCrumbTrail(
+        chain,
+        '/system-management/ai-assistant/prompts/router.plan',
+        null,
+      ).at(-1),
+    ).toEqual(chain[0]);
+  });
+});
 
 describe('PageHeader', () => {
   it('S5-01: the title is the page\'s only h1, at one scale', () => {
@@ -187,6 +237,36 @@ describe('PageHeader', () => {
     ).toBe('GRN');
     // D11: the sidebar keeps the abbreviation, so the crumb does too.
     expect(trail().at(-1)).toBe('GRN');
+  });
+
+  it('S5-02: a node title names its own crumb through crumbTitle', () => {
+    // The prompt detail page: the title is a name with a Dormant badge beside
+    // it, so the trail cannot read the title and would otherwise end on
+    // "Prompts" - the entry ABOVE the page, marked as the current one.
+    pathname = '/system-management/ai-assistant/prompts/router.plan';
+    render(
+      <PageHeader
+        title={
+          <span>
+            <span>router.plan</span>
+            <span>Dormant</span>
+          </span>
+        }
+        crumbTitle="router.plan"
+      />,
+    );
+
+    expect(trail().at(-1)).toBe('router.plan');
+    expect(
+      screen.getByRole('link', { name: 'Prompts' }).getAttribute('href'),
+    ).toBe('/system-management/ai-assistant/prompts');
+  });
+
+  it('S5-02: a node title with no crumbTitle still ends on the sidebar entry', () => {
+    pathname = '/system-management/ai-assistant/prompts/router.plan';
+    render(<PageHeader title={<span>router.plan</span>} />);
+
+    expect(trail().at(-1)).toBe('Prompts');
   });
 
   it('renders the actions it is given', () => {
