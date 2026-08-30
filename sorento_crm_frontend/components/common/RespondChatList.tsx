@@ -84,9 +84,10 @@ export interface ConversationCommentRenderable {
   source?: 'crm' | 'respond';
   /**
    * Who the note tags. Respond draws its mentions as a "@Name" line above the
-   * body, and the CRM's own body does NOT carry them (they live in
-   * `mentioned_user_ids`), so without this row a mirrored note loses its
-   * addressee on screen.
+   * body. A CRM-authored note already carries "@Name" inline in its body (the
+   * composer splices it in and derives `mentioned_user_ids` from it), so the
+   * row only lists names the body does not already show - otherwise the
+   * addressee reads twice.
    */
   mentioned_names?: string[];
 }
@@ -816,6 +817,9 @@ export default function RespondChatList({
             const noteDivider =
               dKeyNote && dKeyNote !== lastDateKey ? formatDatePillLabel(entry.ms) : '';
             if (dKeyNote) lastDateKey = dKeyNote;
+            const headerMentions = (comment.mentioned_names ?? []).filter(
+              (name) => !comment.body.includes(`@${name}`),
+            );
             return (
               <div key={`note-${comment.id}`} data-testid="chat-internal-note">
                 {noteDivider && (
@@ -844,12 +848,12 @@ export default function RespondChatList({
                         {entry.ms > 0 ? formatBubbleTime(entry.ms) : ''}
                       </span>
                     </div>
-                    {comment.mentioned_names && comment.mentioned_names.length > 0 && (
+                    {headerMentions.length > 0 && (
                       <div
                         className="mb-0.5 flex flex-wrap gap-x-1.5 text-xs font-medium text-sky-700 dark:text-sky-300"
                         data-testid="chat-internal-note-mentions"
                       >
-                        {comment.mentioned_names.map((name) => (
+                        {headerMentions.map((name) => (
                           <span key={name}>@{name}</span>
                         ))}
                       </div>

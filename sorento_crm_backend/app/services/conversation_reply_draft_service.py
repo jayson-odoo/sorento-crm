@@ -109,6 +109,10 @@ def _line_for(item: dict) -> Optional[str]:
     message = item.get("message") if isinstance(item.get("message"), dict) else {}
     text = str(message.get("text") or "").strip()
     if not text:
+        # A quick_reply keeps its prose under `title`; without this the model
+        # reads "[quick_reply]" where the bot asked a question.
+        text = str(message.get("title") or "").strip()
+    if not text:
         kind = str(message.get("type") or "").strip()
         text = f"[{kind}]" if kind and kind != "text" else ""
     if not text:
