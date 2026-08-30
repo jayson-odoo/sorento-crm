@@ -140,6 +140,40 @@ describe('DataGrid scrolls on a phone (S1-05)', () => {
   });
 
   /*
+    The scroller has to be the table's IMMEDIATE parent.
+
+    S1 shipped the scroller and the min-width and lists still would not scroll:
+    161 of them wrapped the grid in a Radix `<ScrollArea>`, which puts a
+    `display: table` viewport between `data-grid-scroller` and the table. That
+    ancestor shrink-fits, so the scroller measured scrollWidth === clientWidth
+    (2178 === 2178 on Orders at 1280) and never overflowed - while still eating
+    the wheel gesture via `overscroll-x-contain`, so the one element that COULD
+    scroll never got the event.
+
+    jsdom has no layout, so what is pinned here is the containment: nothing sits
+    between the scroller and the table. The tree-wide version of the same rule
+    is `data-grid-scroller.inventory.test.ts`.
+  */
+  it('S1-05: no second scrollport sits between the scroller and the table', () => {
+    render(<Harness />);
+    const table = document.querySelector('[data-slot="data-grid-table"]') as HTMLElement;
+    const scroller = document.querySelector('[data-slot="data-grid-scroller"]') as HTMLElement;
+
+    const between: string[] = [];
+    for (let node = table.parentElement; node && node !== scroller; node = node.parentElement) {
+      between.push(node.tagName.toLowerCase());
+      // dnd-kit's context wrapper is allowed: it is a plain div with no
+      // scrolling and no layout of its own.
+      expect(node.hasAttribute('data-radix-scroll-area-viewport')).toBe(false);
+      expect(node.style.overflowX).not.toBe('scroll');
+    }
+    // The scroller is an ancestor at all: the walk terminated on it, not on the
+    // document root.
+    expect(scroller.contains(table)).toBe(true);
+    expect(between.every((tag) => tag === 'div')).toBe(true);
+  });
+
+  /*
     The table gets a DEFINITE min-width, never `min-w-max`.
 
     `min-width: max-content` is meaningless on a `table-layout: fixed` table -

@@ -1072,10 +1072,7 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
           emptyMessage="This container has no line we hold a product for."
         >
           <CardTable>
-            <ScrollArea>
-              <DataGridTable />
-              <ScrollBar orientation="horizontal" />
-            </ScrollArea>
+            <DataGridTable />
           </CardTable>
         </DataGrid>
       ) : scheduleView === 'po' ? (

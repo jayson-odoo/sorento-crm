@@ -23,7 +23,6 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { Input } from '@/components/ui/input';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import {
@@ -295,10 +294,7 @@ export default function AutomationsList() {
           />
         </CardHeader>
         <CardTable>
-          <ScrollArea className="w-full">
-            <DataGridTable />
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
+          <DataGridTable />
         </CardTable>
         <CardFooter className="flex justify-between border-t px-4 py-3">
           <DataGridPagination />

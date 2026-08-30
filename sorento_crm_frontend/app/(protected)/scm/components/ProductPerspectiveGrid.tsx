@@ -18,7 +18,6 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   Tooltip,
@@ -390,16 +389,13 @@ export function ProductPerspectiveGrid({
             />
           </CardHeader>
           <CardTable>
-            <ScrollArea>
-              {isError ? (
-                <div className="p-10 text-center text-sm text-scm-stockout">
-                  Couldn&apos;t load net position. Retry from the toolbar.
-                </div>
-              ) : (
-                <DataGridTable />
-              )}
-              <ScrollBar orientation="horizontal" />
-            </ScrollArea>
+            {isError ? (
+              <div className="p-10 text-center text-sm text-scm-stockout">
+                Couldn&apos;t load net position. Retry from the toolbar.
+              </div>
+            ) : (
+              <DataGridTable />
+            )}
           </CardTable>
           <CardFooter>
             <DataGridPagination />

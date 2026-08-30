@@ -23,7 +23,6 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
@@ -232,10 +231,7 @@ export function PagesList() {
         <CardTable>
           {/* The table is wider than a phone. It scrolls inside its own
               container so the page body never scrolls sideways. */}
-          <ScrollArea>
-            <DataGridTable />
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
+          <DataGridTable />
         </CardTable>
 
         <CardFooter>

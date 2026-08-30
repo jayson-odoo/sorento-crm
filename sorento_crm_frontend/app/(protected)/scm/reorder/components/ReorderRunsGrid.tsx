@@ -21,7 +21,6 @@ import { DataGridListToolbar, type ToolbarAction } from '@/components/ui/data-gr
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EM_DASH, fmtDate, fmtInt, fmtMoney } from '../../lib/format';
 import { runHistoryKey, todayRunKey, useReorderRuns } from '../hooks/useReorderRun';
@@ -335,10 +334,7 @@ export function ReorderRunsGrid({ autoOpenRun = false }: { autoOpenRun?: boolean
             />
           </CardHeader>
           <CardTable>
-            <ScrollArea>
-              <DataGridTable />
-              <ScrollBar orientation="horizontal" />
-            </ScrollArea>
+            <DataGridTable />
           </CardTable>
           <CardFooter>
             <DataGridPagination />

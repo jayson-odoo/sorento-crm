@@ -112,8 +112,15 @@ function DataGridTableBase({ children }: { children: ReactNode }) {
 
   // What stops a `table-fixed w-full` grid from squeezing six columns into a
   // phone: the table is at least as wide as its columns want to be, and the
-  // scroller (data-grid-scroller, or the list's own ScrollArea) carries the
-  // overflow. Where the columns already fit, `w-full` still wins.
+  // scroller (data-grid-scroller) carries the overflow. Where the columns
+  // already fit, `w-full` still wins.
+  //
+  // The grid has to be the ONLY scrollport on that axis. A list that wrapped it
+  // in a Radix `ScrollArea` gave the table a `display: table` ancestor, which
+  // shrink-fits: `data-grid-scroller` then measured scrollWidth === clientWidth,
+  // never overflowed, and still swallowed the wheel gesture through
+  // `overscroll-x-contain` - so 161 lists could not be scrolled sideways at all.
+  // Those wrappers are gone; keep it that way.
   //
   // It has to be a DEFINITE length. `min-width: max-content` is meaningless on a
   // `table-layout: fixed` table - fixed layout ignores content by design - and
@@ -840,17 +847,26 @@ export function moveColumnKeepingGroups(
  * or, where it did overflow, pushed the whole PAGE sideways. The scrollbar is
  * the only affordance a mouse user gets, so a right-edge fade marks that there
  * is more to see and disappears once the end is reached.
+ *
+ * `min-w-0` on both divs is what makes the scroller scroll at all. `CardTable`
+ * is a `grid`, `Card` is a `flex` column, and an item of either has
+ * `min-width: auto` by default, which resolves to its MIN-CONTENT width. The
+ * table asks for `min-width: 2178px`, so the item refused to be narrower than
+ * that and the track blew out with it: measured on Orders at 1280, the scroller
+ * reported clientWidth 2178 === scrollWidth 2178, i.e. "nothing to scroll",
+ * inside a 950px card. `min-width: 0` lets the item take the width it is given
+ * and the overflow lands where it belongs.
  */
 function DataGridScroller({ children }: { children: ReactNode }) {
   const { ref, isFading } = useHorizontalOverflow<HTMLDivElement>();
 
   return (
-    <div className="relative">
+    <div className="relative min-w-0">
       <div
         ref={ref}
         data-slot="data-grid-scroller"
         data-fade={isFading}
-        className="overflow-x-auto overscroll-x-contain"
+        className="min-w-0 overflow-x-auto overscroll-x-contain"
       >
         {children}
       </div>

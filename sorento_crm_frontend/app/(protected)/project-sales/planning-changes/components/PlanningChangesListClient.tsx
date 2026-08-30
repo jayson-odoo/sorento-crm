@@ -20,7 +20,6 @@ import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { usePlanningChangeBatches } from '../../_shared/hooks/usePlanningChanges';
 import {
@@ -315,10 +314,7 @@ export function PlanningChangesListClient() {
                 </p>
               </div>
             ) : (
-              <ScrollArea>
-                <DataGridTable />
-                <ScrollBar orientation="horizontal" />
-              </ScrollArea>
+              <DataGridTable />
             )}
           </CardTable>
 

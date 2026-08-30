@@ -17,7 +17,6 @@ import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardTable } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Container } from '@/components/common/container';
 import { PageHeader } from '@/components/common/PageHeader';
 import { DataGrid } from '@/components/ui/data-grid';
@@ -278,10 +277,7 @@ export default function ApiCallLogsPage() {
             }
           />
           <CardTable>
-            <ScrollArea>
-              <DataGridTable />
-              <ScrollBar orientation="horizontal" />
-            </ScrollArea>
+            <DataGridTable />
           </CardTable>
           <CardFooter>
             <DataGridPagination />

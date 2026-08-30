@@ -20,7 +20,6 @@ import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { PublicHoliday } from '../types/workCalendar.types';
 import { usePublicHolidays } from '../hooks/useWorkCalendar';
@@ -156,10 +155,7 @@ export default function PublicHolidaysList() {
             />
           </CardHeader>
           <CardTable>
-            <ScrollArea className="w-full">
-              <DataGridTable />
-              <ScrollBar orientation="horizontal" />
-            </ScrollArea>
+            <DataGridTable />
           </CardTable>
           <CardFooter>
             <DataGridPagination />

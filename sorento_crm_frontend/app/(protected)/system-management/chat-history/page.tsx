@@ -17,7 +17,6 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardFooter, CardTable } from '@/components/ui/card';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Container } from '@/components/common/container';
 import { PageHeader } from '@/components/common/PageHeader';
 import { DataGrid } from '@/components/ui/data-grid';
@@ -346,10 +345,7 @@ export default function ChatHistoryPage() {
           <Card>
             <GridToolbar />
             <CardTable>
-              <ScrollArea>
-                <DataGridTable />
-                <ScrollBar orientation="horizontal" />
-              </ScrollArea>
+              <DataGridTable />
             </CardTable>
             <CardFooter>
               <DataGridPagination />

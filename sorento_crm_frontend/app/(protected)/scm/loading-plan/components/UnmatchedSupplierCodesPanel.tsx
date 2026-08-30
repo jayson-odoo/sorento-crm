@@ -8,7 +8,6 @@ import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardHeading, CardTable, CardTitle } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import {
   aliasTargetFor,
@@ -296,10 +295,7 @@ export function UnmatchedSupplierCodesPanel({ supplierId }: { supplierId: string
           <CardTable id="unmatched-codes-body">
             {/* Five columns are wider than a phone, so the table scrolls inside its own
                 container rather than dragging the page sideways. */}
-            <ScrollArea>
-              <DataGridTable />
-              <ScrollBar orientation="horizontal" />
-            </ScrollArea>
+            <DataGridTable />
           </CardTable>
         )}
 

@@ -1,0 +1,124 @@
+/**
+ * S1-05 (repaired in S5) - the grid owns the horizontal scrollport, alone.
+ *
+ * S1 gave `DataGridTable` its own `overflow-x-auto` scroller and a definite
+ * `min-width` on the table. It still did not scroll: 161 lists wrapped the grid
+ * in a Radix `<ScrollArea>`, whose viewport puts a `display: table` element
+ * between the scroller and the table. That ancestor shrink-fits, so
+ * `data-grid-scroller` measured `scrollWidth === clientWidth` (2178 === 2178 on
+ * Orders at 1280), never overflowed, and yet still ate the wheel gesture
+ * through `overscroll-x-contain`. The only element that COULD scroll was the
+ * Radix viewport, and it never received the event. Net effect: no list scrolled
+ * sideways, the right-edge fade never appeared, and the phone pin had nothing
+ * to pin against.
+ *
+ * This is a source scan and not a render test for the same reason
+ * `PageHeader.inventory.test.ts` is: what it asserts is a property of the whole
+ * tree ("no list re-introduces a second scrollport around the grid"), and a
+ * render test can only speak for the one page it mounted. The 162nd
+ * copy-pasted `<ScrollArea><DataGridTable /></ScrollArea>` would pass every
+ * component test in the repo and fail here, which is the point.
+ *
+ * If you are adding a list: render `<DataGridTable />` bare inside `CardTable`.
+ * The grid brings its own scroller.
+ */
+import fs from 'node:fs';
+import path from 'node:path';
+import { describe, it, expect } from 'vitest';
+
+/** Roots scanned: everything a list can live in. */
+const ROOTS = ['app', 'components'];
+
+/**
+ * The files allowed to put a `ScrollArea` around a grid, each for a reason the
+ * scan must not erase.
+ */
+const EXEMPT = new Map<string, string>([
+  // A bounded-height viewport: the intake lines list is capped at
+  // `max-h-[calc(100vh-14rem)]` so the page keeps its own scroll. That is
+  // VERTICAL work the grid does not do, and the cap makes the wrapper a real
+  // scrollport rather than a shrink-fitting one.
+  [
+    'app/(protected)/project-sales/[projectId]/components/POIntakeLinesGrid.tsx',
+    'bounded-height viewport (max-h)',
+  ],
+  [
+    'app/(protected)/project-sales/[projectId]/components/POIntakeAnnotationsGrid.tsx',
+    'bounded-height viewport (max-h)',
+  ],
+  // Same: the panel is embedded in a complaint record and takes a caller-set
+  // `maxHeightClassName`.
+  [
+    'app/(protected)/complaint-management/_shared/LinkedComplaintsPanel.tsx',
+    'bounded-height viewport (maxHeightClassName)',
+  ],
+  // Not a `DataGridTable` at all: `DriveListView` composes `DataGridTableBase`
+  // itself and therefore never gets the grid's scroller. Its `ScrollArea` IS
+  // the scrollport, so removing it would leave the drive with none.
+  [
+    'app/(protected)/resource-management/attachment-directories/components/AttachmentsInFolderPanel.tsx',
+    'DriveListView composes DataGridTableBase, so it has no grid scroller of its own',
+  ],
+]);
+
+/** Every `.tsx` under the scanned roots, tests excluded. */
+function sourceFiles(): string[] {
+  const out: string[] = [];
+  const walk = (dir: string) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name === 'node_modules' || entry.name === '.next') continue;
+        walk(full);
+      } else if (entry.name.endsWith('.tsx') && !entry.name.includes('.test.')) {
+        out.push(full);
+      }
+    }
+  };
+  for (const root of ROOTS) walk(root);
+  return out;
+}
+
+/**
+ * A `ScrollArea` open tag through to its close, non-greedy, so a file with
+ * several of them is read one at a time.
+ */
+const SCROLL_AREA_BLOCK = /<ScrollArea(?:\s[^>]*?)?>([\s\S]*?)<\/ScrollArea>/g;
+
+/**
+ * The grid components that bring the scroller with them. `DataGridTableBase`
+ * is deliberately absent: it is the bare `<table>`, and a caller composing it
+ * has to supply its own scrollport.
+ */
+const SCROLLER_OWNERS = /<DataGridTable[\s/>]/;
+
+describe('The grid is the only horizontal scrollport (S1-05)', () => {
+  it('no list wraps DataGridTable in a ScrollArea', () => {
+    const offenders: string[] = [];
+    for (const file of sourceFiles()) {
+      const src = fs.readFileSync(file, 'utf8');
+      if (!src.includes('<ScrollArea')) continue;
+      SCROLL_AREA_BLOCK.lastIndex = 0;
+      for (const match of src.matchAll(SCROLL_AREA_BLOCK)) {
+        if (!SCROLLER_OWNERS.test(match[1])) continue;
+        if (EXEMPT.has(file)) continue;
+        offenders.push(file);
+      }
+    }
+    expect([...new Set(offenders)]).toEqual([]);
+  });
+
+  it('every exemption still exists, so a stale reason cannot hide a new offender', () => {
+    const missing = [...EXEMPT.keys()].filter((file) => !fs.existsSync(file));
+    expect(missing).toEqual([]);
+  });
+
+  it('every exemption still needs its wrapper', () => {
+    // A file that lost its `ScrollArea` has to lose its exemption too,
+    // otherwise the next list that copies the file's name inherits a pass.
+    const stale = [...EXEMPT.keys()].filter(
+      (file) => !fs.readFileSync(file, 'utf8').includes('<ScrollArea'),
+    );
+    expect(stale).toEqual([]);
+  });
+});

@@ -13,7 +13,6 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardHeader, CardTable } from '@/components/ui/card';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
@@ -193,10 +192,7 @@ export default function CompaniesList() {
             />
           </CardHeader>
           <CardTable>
-            <ScrollArea>
-              <DataGridTable />
-              <ScrollBar orientation="horizontal" />
-            </ScrollArea>
+            <DataGridTable />
           </CardTable>
         </Card>
       </DataGrid>

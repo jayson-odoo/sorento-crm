@@ -24,7 +24,6 @@ import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
@@ -302,10 +301,7 @@ export default function StockDetailPage({ params }: StockDetailPageProps) {
                 <div className="text-lg font-semibold">Stock Ledger</div>
               </CardHeader>
               <CardTable>
-                <ScrollArea>
-                  <DataGridTable />
-                  <ScrollBar orientation="horizontal" />
-                </ScrollArea>
+                <DataGridTable />
               </CardTable>
               <CardFooter>
                 <DataGridPagination />

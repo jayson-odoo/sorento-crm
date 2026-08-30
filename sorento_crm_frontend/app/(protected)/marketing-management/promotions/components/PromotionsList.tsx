@@ -29,7 +29,6 @@ import {
   PopoverTrigger,
 } from '@/components/ui/popover';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useTenantModules } from '@/hooks/useTenantModules';
@@ -559,10 +558,7 @@ export default function PromotionsList() {
           />
         </CardHeader>
         <CardTable>
-          <ScrollArea>
-            <DataGridTable />
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
+          <DataGridTable />
         </CardTable>
         <CardFooter>
           <DataGridPagination />

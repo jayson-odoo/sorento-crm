@@ -15,7 +15,7 @@
  *                row said.
  *
  * One rendering, at every width: the embedded-grid idiom (DataGrid > Card >
- * CardTable > ScrollArea) that every other detail-page grid uses, scrolling
+ * CardTable > DataGridTable) that every other detail-page grid uses, scrolling
  * horizontally inside its own card on a phone. A second, hand-rolled card
  * layout for small screens used to live here; two renderings of one row model
  * is exactly how the two views start disagreeing.
@@ -42,7 +42,6 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
@@ -696,10 +695,7 @@ export function PeopleGrid({
             {actions ? <CardToolbar>{actions}</CardToolbar> : null}
           </CardHeader>
           <CardTable>
-            <ScrollArea>
-              <DataGridTable />
-              <ScrollBar orientation="horizontal" />
-            </ScrollArea>
+            <DataGridTable />
           </CardTable>
         </Card>
       </DataGrid>

@@ -29,7 +29,6 @@ import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { useComplaintRootCausesSelect } from '../../complaint-root-causes/hooks/useComplaintRootCauses';
 import { useComplaintResolutionsSelect } from '../../complaint-resolutions/hooks/useComplaintResolutions';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { getUsersSelect } from '@/services/userSelectService';
 import { useComplaints, useExportComplaintPdf } from '../hooks/useComplaints';
@@ -521,10 +520,7 @@ export default function ComplaintsList() {
           />
         </CardHeader>
         <CardTable>
-          <ScrollArea>
-            <DataGridTable />
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
+          <DataGridTable />
         </CardTable>
         <CardFooter>
           <DataGridPagination />

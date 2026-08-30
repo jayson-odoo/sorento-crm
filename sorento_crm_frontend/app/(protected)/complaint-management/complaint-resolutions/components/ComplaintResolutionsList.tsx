@@ -13,7 +13,6 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Card, CardHeader, CardTable } from '@/components/ui/card';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
@@ -229,10 +228,7 @@ export default function ComplaintResolutionsList() {
                 Loading resolutions...
               </div>
             ) : (
-              <ScrollArea>
-                <ComplaintResolutionTable isEmpty={filtered.length === 0} />
-                <ScrollBar orientation="horizontal" />
-              </ScrollArea>
+              <ComplaintResolutionTable isEmpty={filtered.length === 0} />
             )}
           </CardTable>
         </Card>
