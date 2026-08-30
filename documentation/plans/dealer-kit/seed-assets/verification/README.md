@@ -462,3 +462,46 @@ every toolbar button.
 
 **Known noise, not introduced here.** Radix's missing-`Description` warning fires for
 `InsertFieldDialog` exactly as it does for every other dialog on this page.
+
+---
+
+## Round 8, 30 Aug: arrange works inside a group (D60, AC-M.25)
+
+Run on the `:3030` lane, navigated from `/` through the sidebar: Dealer Kit -> Room Designer ->
+Tag Templates -> `Kitchen Sink - Combo`. Nothing was saved at any point, and the reload at the end
+of the run brought the seeded z order back unchanged, which is the proof that the server copy was
+never written.
+
+| File | What it shows |
+| --- | --- |
+| `interaction-19-send-to-back-inside-group.png` | The state the reorder was fired from. A double-click on the canvas over the NANO GRAIN badge entered the main product block and selected the badge itself, not the block: the Transformer sits on the 9 x 4.4 mm caption over the sink photo and the Inspector reads `Z-Index 8`. Right-clicking here opened OUR context menu, with Cut / Copy / Paste / Duplicate, Bring to Front / Bring Forward / Send Backward / Send to Back, Group / Select Parent Group, Lock / Hide / Delete, and no browser menu behind it. |
+
+Read off the canvas either side of Send to Back, by the ids the Konva nodes carry:
+
+| | Draw order, bottom to top, around the block |
+| --- | --- |
+| Before | `... badge-3`, **`hero`**, `callout`, **`callout-caption`**, `code`, `dimensions`, `spec-lines`, `list-price-label`, `list-price`, `price`, `product` (the group) |
+| After Send to Back | `... badge-3`, `list-price-label`, **`callout-caption`**, **`hero`**, `callout`, `code`, `dimensions`, `spec-lines`, `list-price`, `price`, `product` (the group) |
+
+That is the bug fixed: the badge went to the bottom OF ITS BLOCK, under the sink photo, and the
+block did not move relative to anything outside it. The block is still contiguous with its group
+layer directly above its own subtree. `list-price-label` is a TOP-LEVEL layer that the seed had
+interleaved inside the block's z range; the renumbering to 1..n moves it out below the block,
+which is D40's rule about blocks being contiguous and predates this round. The badge's own
+`Z-Index` reads 8 before AND after by coincidence, because that layer moving out is worth exactly
+the one place the badge lost, which is why the ordering above is the measurement and the single
+field is not.
+
+The Layers panel tree confirms the shape the ruling turns on: `NANO GRAIN`, `Image` (the callout
+disc) and `product image` (the sink photo) are all DIRECT children of the same 8-child product
+block, so the badge and the photo are siblings and Illustrator's answer is to arrange between
+them.
+
+**Left undone, with the reason.** The screenshot of the after state, the Bring to Front half and
+the `Ctrl+Z` back to the seeded order were not captured: mid-run the lane's dev server began
+answering every route with `Internal Server Error`, logging
+`EPERM: operation not permitted, scandir '.../app/(protected)/ticket-management'` on each request.
+The process (pid 60055) is still listening on :3030 but can no longer read the repo, and the
+worktree on :3090 went the same way at the same time, so this is not something this branch caused
+and not something a page reload clears. Restarting that server is the captain's call, not a
+coder's; the run picks up from the double-click in one minute once it is back.
