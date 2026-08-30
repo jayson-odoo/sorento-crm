@@ -1,16 +1,14 @@
 'use client';
 
-import { useState } from 'react';
 import { LoaderCircleIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
+import { useDeferredAction } from '@/hooks/useDeferredAction';
 import { FileDropzone } from '@/components/common/FileDropzone';
 import { useSettings } from './settings-context';
 import { useSigninBackgroundMutations } from '../hooks/useSigninBackgroundMutations';
 import {
-  removeSigninBackground,
   SIGNIN_BACKGROUND_ACCEPT,
   SIGNIN_BACKGROUND_MAX_MB,
 } from '../services/signinBackgroundService';
@@ -26,10 +24,27 @@ import {
  * Removing falls back to the designed default background, which is a finished screen rather than
  * a blank one, so the empty state here is a resting state and not a to-do.
  */
+/** One background, one pending action: the id the record actions registry keys it on. */
+const SIGNIN_BACKGROUND_ENTITY_ID = 'signin-background';
+
 export function SigninBackgroundCard() {
   const { settings } = useSettings();
   const { upload } = useSigninBackgroundMutations();
-  const [confirmRemoveOpen, setConfirmRemoveOpen] = useState(false);
+
+  // Remove asks nothing (D7). There is one background, not a row, so the action
+  // is parked against the constant below rather than an id the reader never
+  // sees; the countdown takes the button's place and Cancel is the way back.
+  const removal = useDeferredAction({
+    actionKey: 'signin_background.remove',
+    entityType: 'signin_background',
+    entityId: SIGNIN_BACKGROUND_ENTITY_ID,
+    verb: 'Removing',
+    subject: 'the sign-in background',
+    surface: 'inline',
+    watchFromMount: true,
+    successMessage: 'Sign-in background removed',
+    invalidateKeys: [['system-settings']],
+  });
 
   const current = settings?.signinBackground ?? null;
   const busy = upload.isPending;
@@ -86,31 +101,21 @@ export function SigninBackgroundCard() {
 
           {current ? (
             <div className="flex justify-end">
-              <Button
-                type="button"
-                variant="outline"
-                disabled={busy}
-                onClick={() => setConfirmRemoveOpen(true)}
-              >
-                Remove
-              </Button>
+              {removal.countdown ?? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={busy || removal.isPending}
+                  onClick={() => removal.start()}
+                >
+                  Remove
+                </Button>
+              )}
             </div>
           ) : null}
         </div>
       </CardContent>
 
-      <ConfirmDeleteDialog
-        open={confirmRemoveOpen}
-        onOpenChange={setConfirmRemoveOpen}
-        title="Remove sign-in background"
-        description="The sign-in page goes back to its default background. The image is deleted."
-        confirmLabel="Remove"
-        successMessage="Sign-in background removed"
-        queryKeysToInvalidate={[['system-settings']]}
-        onDelete={async () => {
-          await removeSigninBackground();
-        }}
-      />
     </Card>
   );
 }

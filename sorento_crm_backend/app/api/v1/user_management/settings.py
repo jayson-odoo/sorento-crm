@@ -726,12 +726,11 @@ async def update_signin_background(
     action = (raw_action if isinstance(raw_action, str) else str(raw_action or "")).strip()
 
     if action == "remove":
-        # setattr, like every other write on this router: the legacy SQLAlchemy mapping
-        # types a column attribute as Column[str], so a direct assignment reads as an
-        # error to the type checker while behaving identically at runtime.
-        setattr(settings, "signin_background", None)
-        setattr(settings, "signin_background_storage_provider", None)
-        db.commit()
+        # Shared with the deferred `signin_background.remove` record action, so the two
+        # paths cannot drift about which columns "removed" means.
+        from app.services.signin_background import clear_signin_background
+
+        clear_signin_background(db)
         return SigninBackgroundResponse(signin_background_url=None)
 
     if action != "save":

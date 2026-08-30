@@ -33,3 +33,25 @@ def resolve_signin_background_url(settings: Optional[Any]) -> Optional[str]:
         expires_in=SIGNIN_BACKGROUND_URL_TTL_SECONDS,
         strict=True,
     )
+
+
+def clear_signin_background(db) -> None:
+    """Drop the configured background so the sign-in page draws its default wash.
+
+    Two callers need exactly this, which is why it is here rather than inline in the
+    route: `POST /settings/signin-background` with `backgroundAction=remove`, and the
+    deferred `signin_background.remove` record action (D7, S6b). The object itself is
+    left in storage; what is removed is the setting that points at it.
+    """
+    from app.models.user import SystemSetting
+    from app.services.error_handler import handle_not_found
+
+    settings = db.query(SystemSetting).first()
+    if not settings:
+        raise handle_not_found("Settings", "current")
+    # setattr, like every other write on the settings router: the legacy SQLAlchemy
+    # mapping types a column attribute as Column[str], so a direct assignment reads as
+    # an error to the type checker while behaving identically at runtime.
+    setattr(settings, "signin_background", None)
+    setattr(settings, "signin_background_storage_provider", None)
+    db.commit()

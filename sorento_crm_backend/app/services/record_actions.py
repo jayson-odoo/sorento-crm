@@ -155,9 +155,25 @@ register(
 )
 
 
-def _actor(payload: dict) -> dict:
-    """The click's actor, in the shape a service that re-checks a grant expects."""
-    return {"id": payload.get("requested_by_id")}
+def _actor(db: Session, payload: dict) -> dict:
+    """The click's actor, in the shape a service expects `current_user` to be.
+
+    The row is read back rather than passed through, because a service may re-check a
+    grant against the id AND write the email into provenance ("cleared by ...").
+    A dict with only an id would leave that reading "a person" ten seconds after
+    somebody with a name pressed the button.
+    """
+    uid = payload.get("requested_by_id")
+    if not uid:
+        return {"id": None}
+    from app.models.user import User
+
+    row = db.query(User).filter(User.id == str(uid)).first()
+    return {
+        "id": str(uid),
+        "email": getattr(row, "email", None),
+        "name": getattr(row, "name", None),
+    }
 
 
 # ----- Master data ---------------------------------------------------------------------
@@ -390,14 +406,14 @@ def _revoke_integration_key(db: Session, payload: dict):
 def _delete_ticket(db: Session, payload: dict):
     from app.services.tickets_service import delete_ticket
 
-    return delete_ticket(db, ticket_id=_entity_id(payload), current_user=_actor(payload))
+    return delete_ticket(db, ticket_id=_entity_id(payload), current_user=_actor(db, payload))
 
 
 def _cancel_ticket_draft(db: Session, payload: dict):
     from app.services.tickets_service import cancel_ticket_draft
 
     return cancel_ticket_draft(
-        db, ticket_id=_entity_id(payload), current_user=_actor(payload)
+        db, ticket_id=_entity_id(payload), current_user=_actor(db, payload)
     )
 
 
@@ -540,6 +556,43 @@ def _delete_access_agent(db: Session, payload: dict):
     return AccessAgentService(db).delete_agent(_entity_id(payload))
 
 
+def _clear_product_spec_value(db: Session, payload: dict):
+    from app.models.product import Product
+    from app.services.error_handler import handle_not_found
+    from app.services.product_spec_write import apply_spec_values
+
+    # `spec.values` may only be written through this one service (hard-fail rule), so
+    # the handler goes through it exactly as the route does.
+    product_id = str(payload["product_id"])
+    product = db.query(Product).filter(Product.id == product_id).first()
+    if product is None:
+        raise handle_not_found("Product", product_id)
+    mode = "absent" if payload.get("mode") == "absent" else "revert"
+    return apply_spec_values(
+        db,
+        product.product_code,
+        [{"spec_key": _entity_id(payload), "op": mode}],
+        actor=_actor(db, payload),
+    )
+
+
+def _remove_stock_visibility_policy(db: Session, payload: dict):
+    from app.services.stock_visibility import delete_policy
+
+    # The scope is the entity: a contact override or an access-type policy. The kind
+    # travels in the payload because the two are different columns, not different ids.
+    scope_kind = str(payload.get("scope_kind") or "")
+    if scope_kind == "contact":
+        return delete_policy(db, contact_id=_entity_id(payload))
+    return delete_policy(db, access_type_code=_entity_id(payload))
+
+
+def _remove_signin_background(db: Session, payload: dict):
+    from app.services.signin_background import clear_signin_background
+
+    return clear_signin_background(db)
+
+
 def _delete_market_segment(db: Session, payload: dict):
     from app.services.market_segment_service import MarketSegmentService
 
@@ -630,6 +683,50 @@ register(
         window=WINDOW_DESTRUCTIVE,
         permission="user_management.access_agents.delete",
         label="Delete access agent",
+    )
+)
+
+register(
+    FormAction(
+        key="product_spec_value.clear",
+        # The record is the VALUE on one product, so the entity id is the spec key and
+        # the product travels in the payload beside it.
+        entity_types=("product_spec_value",),
+        execute=_clear_product_spec_value,
+        # `revert` hands the key back to derivation and `absent` writes a tombstone.
+        # The tombstone is the irreversible one, so both take the long window rather
+        # than the screen having to pick a different countdown per menu item.
+        window=WINDOW_DESTRUCTIVE,
+        permission="master_data.products.edit",
+        label="Clear specification",
+    )
+)
+
+register(
+    FormAction(
+        key="stock_visibility_policy.remove",
+        entity_types=("stock_visibility_policy",),
+        execute=_remove_stock_visibility_policy,
+        # Reversible: the tier falls back to the policy above it and the card can
+        # write the override again from what is still on screen.
+        window=WINDOW_REVERSIBLE,
+        permission="inventory.stock.edit",
+        label="Remove stock visibility",
+    )
+)
+
+register(
+    FormAction(
+        key="signin_background.remove",
+        # A singleton setting, not a row: the frontend parks it against the constant
+        # `signin-background`, because there is one of it and the reader never sees an id.
+        entity_types=("signin_background",),
+        execute=_remove_signin_background,
+        # Reversible: the sign-in page falls back to its designed default and the admin
+        # still holds the file they uploaded, so putting it back is one drop away.
+        window=WINDOW_REVERSIBLE,
+        permission="user_management.settings.edit",
+        label="Remove sign-in background",
     )
 )
 
