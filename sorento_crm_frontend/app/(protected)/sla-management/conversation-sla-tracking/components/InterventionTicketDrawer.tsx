@@ -131,7 +131,7 @@ export default function InterventionTicketDrawer({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
         side="right"
-        className="flex w-full flex-col gap-3 overflow-y-auto p-4 sm:max-w-xl sm:p-6"
+        className="flex w-full flex-col gap-3 overflow-y-auto p-4 sm:max-w-2xl sm:p-6 lg:max-w-4xl"
       >
         <SheetHeader className="pe-8">
           <div className="flex flex-wrap items-center gap-2">
@@ -323,7 +323,7 @@ export default function InterventionTicketDrawer({
           <TicketConversationPanel
             ticketId={ticketId}
             enabled={open}
-            maxHeightClass="max-h-[45vh]"
+            maxHeightClass="max-h-[65vh]"
             jumpRequest={jumpRequest}
             onSent={onSent}
           />

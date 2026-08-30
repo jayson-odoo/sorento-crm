@@ -89,6 +89,20 @@ describe('InternalCommentComposer', () => {
     expect(screen.queryByTestId('internal-comment-input')).not.toBeInTheDocument();
   });
 
+  it('more matches than the window shows draw a keep-typing footer', async () => {
+    (getUsersSelect as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      Array.from({ length: 12 }, (_, i) => ({
+        id: `u${i}`,
+        name: `User ${String.fromCharCode(65 + i)}`,
+        email: `u${i}@x.com`,
+      })),
+    );
+    renderComposer();
+    type('@');
+    const more = await screen.findByTestId('mention-typeahead-more');
+    expect(more).toHaveTextContent('4 more. Keep typing to narrow.');
+  });
+
   it('typing "@" opens the typeahead over the SHARED user select service', async () => {
     renderComposer();
     type('@Te');
