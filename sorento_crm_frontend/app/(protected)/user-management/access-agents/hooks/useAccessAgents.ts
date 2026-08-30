@@ -92,17 +92,6 @@ export function useUpdateAccessAgent() {
   });
 }
 
-export function useDeleteAccessAgent() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => deleteAccessAgent(id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['access-agents'] });
-    },
-    onError: (error: Error) => toast.error(error.message || 'Failed to delete access agent'),
-  });
-}
-
 // Contact Agent Access hooks
 export function useContactAccessAgents(agentId: string | null) {
   return useQuery({

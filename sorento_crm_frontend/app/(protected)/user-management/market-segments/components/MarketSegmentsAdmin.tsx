@@ -28,9 +28,9 @@ import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { toast } from 'sonner';
-import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
+import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
 import { useMarketSegments, useMarketSegmentMutations } from '../hooks/useMarketSegments';
-import { deleteMarketSegment, type MarketSegment } from '../services/marketSegmentService';
+import { type MarketSegment } from '../services/marketSegmentService';
 
 export default function MarketSegmentsAdmin() {
   const { data: segments = [], isLoading, isError } = useMarketSegments();
@@ -38,7 +38,16 @@ export default function MarketSegmentsAdmin() {
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<MarketSegment | null>(null);
-  const [deleteCode, setDeleteCode] = useState<string | null>(null);
+  // Delete asks nothing (D7): a toast counts down with Cancel. A segment still
+  // assigned to a contact or a team member is refused by the server, and that
+  // refusal now arrives as the toast's error rather than as a warning in a
+  // dialog nobody could act on.
+  const deletion = useDeferredRowAction({
+    actionKey: 'market_segment.delete',
+    entityType: 'market_segment',
+    successMessage: 'Market segment deleted',
+    invalidateKeys: [['market-segments']],
+  });
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [form, setForm] = useState({
     code: '',
@@ -225,7 +234,12 @@ export default function MarketSegmentsAdmin() {
             <Button
               variant="ghost"
               size="icon"
-              onClick={() => setDeleteCode(row.original.code)}
+              onClick={() =>
+                deletion.run({
+                  id: row.original.code,
+                  subject: row.original.name || row.original.code,
+                })
+              }
               aria-label="Delete"
             >
               <Trash2 className="size-4 text-destructive" />
@@ -390,24 +404,6 @@ export default function MarketSegmentsAdmin() {
         </DialogContent>
       </Dialog>
 
-      {/* Delete confirmation */}
-      <ConfirmDeleteDialog
-        open={!!deleteCode}
-        onOpenChange={(open) => !open && setDeleteCode(null)}
-        title="Confirm delete"
-        description={
-          <>
-            Delete the market segment &quot;{deleteCode}&quot;? This action cannot be undone. A segment
-            still assigned to any contact or team member cannot be deleted.
-          </>
-        }
-        onDelete={async () => {
-          if (deleteCode) await deleteMarketSegment(deleteCode);
-        }}
-        queryKeysToInvalidate={[['market-segments']]}
-        successMessage="Market segment deleted"
-        onSuccess={() => setDeleteCode(null)}
-      />
     </div>
   );
 }

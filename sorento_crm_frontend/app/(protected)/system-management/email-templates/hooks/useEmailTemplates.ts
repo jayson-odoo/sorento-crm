@@ -3,7 +3,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   createEmailTemplate,
-  deleteEmailTemplate,
   getEmailTemplate,
   getEmailTemplates,
   getTemplateVariableCatalog,
@@ -55,14 +54,6 @@ export function useUpdateEmailTemplate(id: string) {
       qc.invalidateQueries({ queryKey: ['email-templates'] });
       qc.invalidateQueries({ queryKey: ['email-template', id] });
     },
-  });
-}
-
-export function useDeleteEmailTemplate() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => deleteEmailTemplate(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['email-templates'] }),
   });
 }
 

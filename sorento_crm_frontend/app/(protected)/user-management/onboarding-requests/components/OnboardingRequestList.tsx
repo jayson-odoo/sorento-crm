@@ -65,13 +65,8 @@ function day(value: string | null): string {
  * component because the action set is a hook.
  */
 function OnboardingRowActions({ request }: { request: OnboardingRequestSummary }) {
-  const { actions, dialogs } = useOnboardingRequestActions(request);
-  return (
-    <>
-      <RowActionsMenu ariaLabel="onboarding request" actions={actions} />
-      {dialogs}
-    </>
-  );
+  const { actions } = useOnboardingRequestActions(request, { surface: 'toast' });
+  return <RowActionsMenu ariaLabel="onboarding request" actions={actions} />;
 }
 
 export function OnboardingRequestList() {

@@ -540,6 +540,14 @@ def _delete_access_agent(db: Session, payload: dict):
     return AccessAgentService(db).delete_agent(_entity_id(payload))
 
 
+def _delete_market_segment(db: Session, payload: dict):
+    from app.services.market_segment_service import MarketSegmentService
+
+    # Keyed by CODE, not a uuid - that is what the table's primary key is and what
+    # `DELETE /market-segments/{code}` takes.
+    return MarketSegmentService(db).delete_segment(_entity_id(payload))
+
+
 def _delete_onboarding_request(db: Session, payload: dict):
     from app.services import onboarding_service
 
@@ -622,6 +630,20 @@ register(
         window=WINDOW_DESTRUCTIVE,
         permission="user_management.access_agents.delete",
         label="Delete access agent",
+    )
+)
+
+register(
+    FormAction(
+        key="market_segment.delete",
+        entity_types=("market_segment",),
+        execute=_delete_market_segment,
+        window=WINDOW_DESTRUCTIVE,
+        # The route itself has no slug, so this names the grant the SCREEN is
+        # gated on in `menu.config`. Anyone who can reach the button already
+        # holds it; nobody who could delete a segment before loses the ability.
+        permission="user_management.reference_data.view",
+        label="Delete market segment",
     )
 )
 

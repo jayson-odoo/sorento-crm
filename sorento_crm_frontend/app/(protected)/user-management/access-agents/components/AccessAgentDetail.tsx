@@ -121,7 +121,7 @@ export default function AccessAgentDetail({ accessAgentId }: AccessAgentDetailPr
   } = useAgentTeams(accessAgentId);
   const { data: teamsList = [] } = useTeams();
   const { activeCompany } = useCompany();
-  const { actions, dialogs } = useAccessAgentActions(accessAgent, {
+  const { actions, pending } = useAccessAgentActions(accessAgent, {
     onDeleted: () => router.push(backHref),
   });
   const [editModalOpen, setEditModalOpen] = useState(false);
@@ -207,7 +207,7 @@ export default function AccessAgentDetail({ accessAgentId }: AccessAgentDetailPr
             ariaLabel: 'access agent',
           }}
           actions={actions}
-          dialogs={dialogs}
+          pendingAction={pending}
           gearLabel="Access agent options"
           primary={
             <Button onClick={() => setEditModalOpen(true)}>

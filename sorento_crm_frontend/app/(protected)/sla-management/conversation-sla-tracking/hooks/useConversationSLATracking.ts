@@ -7,7 +7,6 @@ import {
   getConversationSLATracking,
   getConversationSLATrackingDetail,
   getSLATrackingDashboardMetrics,
-  deleteConversationSLATracking,
   deleteConversationSLAEventLog,
   getConversationSLAEventLogs,
   syncAssigneeFromRespond,
@@ -115,17 +114,6 @@ export function useSLATrackingDashboardMetrics() {
     gcTime: 1000 * 60 * 60,
     refetchOnWindowFocus: false,
     retry: 1,
-  });
-}
-
-export function useDeleteConversationSLATracking() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: deleteConversationSLATracking,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['conversation-sla-tracking'] });
-      queryClient.invalidateQueries({ queryKey: ['sla-tracking-dashboard-metrics'] });
-    },
   });
 }
 

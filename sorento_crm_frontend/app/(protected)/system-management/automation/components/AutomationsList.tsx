@@ -23,11 +23,13 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { Input } from '@/components/ui/input';
-import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
+import {
+  useDeferredRowAction,
+  useRowPending,
+} from '@/hooks/useDeferredRowAction';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import {
   useAutomations,
-  useDeleteAutomation,
   useRunAutomationNow,
   useToggleAutomation,
 } from '../hooks/useAutomations';
@@ -74,7 +76,6 @@ export default function AutomationsList() {
   const [query, setQuery] = useState('');
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<Automation | null>(null);
-  const [deleting, setDeleting] = useState<Automation | null>(null);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
   const params = useMemo(
@@ -89,7 +90,14 @@ export default function AutomationsList() {
   const { data, isLoading, isFetching, refetch } = useAutomations(params);
   const rows = data?.data ?? [];
   const total = data?.pagination?.total ?? 0;
-  const deleteMut = useDeleteAutomation();
+  // Delete asks nothing (D7): the row dims and a toast counts down with Cancel.
+  const deletion = useDeferredRowAction({
+    actionKey: 'automation.delete',
+    entityType: 'automation',
+    successMessage: 'Automation deleted',
+    invalidateKeys: [['automations']],
+  });
+  const rowPending = useRowPending<Automation>('automation');
 
   const columns = useMemo<ColumnDef<Automation>[]>(
     () => [
@@ -193,7 +201,7 @@ export default function AutomationsList() {
               className="h-8 w-8 p-0 text-destructive"
               onClick={(e) => {
                 e.stopPropagation();
-                setDeleting(row.original);
+                deletion.run({ id: row.original.id, subject: row.original.name });
               }}
               aria-label="Delete"
             >
@@ -257,6 +265,7 @@ export default function AutomationsList() {
       isLoading={isLoading}
       onRowClick={(t) => t?.id && router.push(`/system-management/automation/${t.id}`)}
       tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
+      rowPending={rowPending}
       emptyAction={listPrimaryAction}
     >
       <Card>
@@ -308,22 +317,6 @@ export default function AutomationsList() {
           if (!o) setEditing(null);
         }}
         automation={editing}
-      />
-
-      <ConfirmDeleteDialog
-        open={!!deleting}
-        onOpenChange={(o) => !o && setDeleting(null)}
-        title="Confirm delete"
-        description={
-          <>
-            Delete automation <strong>{deleting?.name}</strong>? This action cannot be undone.
-          </>
-        }
-        successMessage="Automation deleted"
-        queryKeysToInvalidate={[['automations']]}
-        onDelete={async () => {
-          if (deleting) await deleteMut.mutateAsync(deleting.id);
-        }}
       />
     </DataGrid>
   );
