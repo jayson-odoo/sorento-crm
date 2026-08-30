@@ -6,7 +6,15 @@ import AttachmentPreviewModal, {
 } from '@/components/common/AttachmentPreviewModal';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { ExternalLink, Eye } from 'lucide-react';
+import {
+  BadgeCheck,
+  Boxes,
+  ClipboardList,
+  ExternalLink,
+  Eye,
+  Megaphone,
+  Package,
+} from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Badge, BadgeDot } from '@/components/ui/badge';
@@ -118,21 +126,28 @@ function LinkagesTabs({ attachment }: { attachment: Attachment }) {
 
   return (
     <Tabs defaultValue="products" className="w-full">
-      <TabsList variant="default" className="grid h-auto w-full grid-cols-2 gap-1 sm:grid-cols-3 lg:grid-cols-5">
+      {/* Five link kinds wrapped onto three rows of squeezed pills at 375; the
+          line strip scrolls on one row and the icon survives the scroll. */}
+      <TabsList className="mb-1">
         <TabsTrigger value="products">
-          Products {products.length > 0 && `(${products.length})`}
+          <Package />
+          <span>Products {products.length > 0 && `(${products.length})`}</span>
         </TabsTrigger>
         <TabsTrigger value="promotions">
-          Promotions {promotions.length > 0 && `(${promotions.length})`}
+          <Megaphone />
+          <span>Promotions {promotions.length > 0 && `(${promotions.length})`}</span>
         </TabsTrigger>
         <TabsTrigger value="forms">
-          Forms {form ? '(1)' : ''}
+          <ClipboardList />
+          <span>Forms {form ? '(1)' : ''}</span>
         </TabsTrigger>
         <TabsTrigger value="packing_lists">
-          Packing Lists {packingLists.length > 0 && `(${packingLists.length})`}
+          <Boxes />
+          <span>Packing Lists {packingLists.length > 0 && `(${packingLists.length})`}</span>
         </TabsTrigger>
         <TabsTrigger value="certificates">
-          Certificates {certificates.length > 0 && `(${certificates.length})`}
+          <BadgeCheck />
+          <span>Certificates {certificates.length > 0 && `(${certificates.length})`}</span>
         </TabsTrigger>
       </TabsList>
       <TabsContent value="products" className="mt-4">
@@ -340,7 +355,6 @@ export default function AttachmentDetail({
               <p className="text-sm text-muted-foreground">Status</p>
               <Badge
                 variant={attachment.is_deleted ? 'destructive' : 'success'}
-                appearance="ghost"
               >
                 <BadgeDot />
                 {attachment.is_deleted ? 'Deleted' : 'Active'}

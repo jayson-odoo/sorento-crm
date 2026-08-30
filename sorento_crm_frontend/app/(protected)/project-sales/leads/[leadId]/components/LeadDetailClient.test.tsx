@@ -212,7 +212,11 @@ function renderDetail() {
   );
 }
 
-/** Tabs are plain buttons, exactly as on the project detail page. */
+/**
+ * Tabs are the shared `Tabs` strip since S4, exactly as on the project detail
+ * page: `role="tablist"` / `role="tab"`, and the open one is `aria-selected`
+ * rather than the `aria-current="page"` the hand-rolled `<nav>` set.
+ */
 /** Secondary actions live behind the gear now. Radix opens on pointerdown, not click. */
 function openGearMenu() {
   fireEvent.pointerDown(screen.getByRole('button', { name: 'Lead actions' }), {
@@ -222,7 +226,12 @@ function openGearMenu() {
 }
 
 async function openTab(name: string) {
-  fireEvent.click(await screen.findByRole('button', { name }));
+  // Radix activates a tab on mousedown, which jsdom does not synthesize
+  // from a click.
+  fireEvent.mouseDown(await screen.findByRole('tab', { name }), {
+    button: 0,
+    ctrlKey: false,
+  });
 }
 
 beforeEach(() => {
@@ -274,7 +283,7 @@ describe('LeadDetailClient tabs', () => {
   it('offers one tab per concern and opens on Overview', async () => {
     renderDetail();
 
-    const strip = within(await screen.findByRole('navigation', { name: 'Lead sections' }));
+    const strip = within(await screen.findByRole('tablist', { name: 'Lead sections' }));
     for (const label of [
       'Overview',
       'Who told us',
@@ -283,12 +292,12 @@ describe('LeadDetailClient tabs', () => {
       'Projects',
       'Activity',
     ]) {
-      expect(strip.getByRole('button', { name: label })).toBeInTheDocument();
+      expect(strip.getByRole('tab', { name: label })).toBeInTheDocument();
     }
 
-    expect(strip.getByRole('button', { name: 'Overview' })).toHaveAttribute(
-      'aria-current',
-      'page',
+    expect(strip.getByRole('tab', { name: 'Overview' })).toHaveAttribute(
+      'aria-selected',
+      'true',
     );
     expect(screen.getByText('What we heard')).toBeInTheDocument();
   });
@@ -315,10 +324,10 @@ describe('LeadDetailClient tabs', () => {
     expect(routerReplace).toHaveBeenCalledWith('/project-sales/leads/l1?tab=projects', {
       scroll: false,
     });
-    const strip = within(screen.getByRole('navigation', { name: 'Lead sections' }));
-    expect(strip.getByRole('button', { name: 'Projects' })).toHaveAttribute(
-      'aria-current',
-      'page',
+    const strip = within(screen.getByRole('tablist', { name: 'Lead sections' }));
+    expect(strip.getByRole('tab', { name: 'Projects' })).toHaveAttribute(
+      'aria-selected',
+      'true',
     );
   });
 

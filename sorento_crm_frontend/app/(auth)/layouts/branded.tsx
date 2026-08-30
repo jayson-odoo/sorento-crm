@@ -3,6 +3,16 @@
 import { ReactNode } from 'react';
 import { usePathname } from 'next/navigation';
 import { Card, CardContent } from '@/components/ui/card';
+import { cn } from '@/lib/utils';
+
+/** The credential pages: one column of fields, so one column's worth of card. */
+const NARROW_ROUTES = [
+  '/signin',
+  '/signup',
+  '/reset-password',
+  '/change-password',
+  '/verify-email',
+];
 
 export function BrandedLayout({ children }: { children: ReactNode }) {
   const pathname = usePathname() ?? '';
@@ -24,9 +34,27 @@ export function BrandedLayout({ children }: { children: ReactNode }) {
       </div>
     );
   }
+  // Credential pages are one narrow column of fields. The card grew to 1152px at
+  // xl anyway, so at 1280 a 320px form sat left-aligned inside a band four times
+  // its width and read as a rendering fault. It keeps its own width here; the
+  // wide framing stays for the pages that print a table (approval, onboarding,
+  // the read-only views).
+  const narrow = NARROW_ROUTES.some(
+    (route) => pathname === route || pathname.startsWith(`${route}/`),
+  );
   return (
-    <div className="flex grow justify-center items-start overflow-y-auto min-h-0 pt-6 pb-6 px-4 sm:px-6 w-full">
-      <Card className="w-full max-w-md sm:max-w-2xl lg:max-w-4xl xl:max-w-6xl shrink-0">
+    <div
+      className={cn(
+        'flex grow justify-center overflow-y-auto min-h-0 pt-6 pb-6 px-4 sm:px-6 w-full',
+        narrow ? 'items-center' : 'items-start',
+      )}
+    >
+      <Card
+        className={cn(
+          'w-full shrink-0',
+          narrow ? 'max-w-md' : 'max-w-md sm:max-w-2xl lg:max-w-4xl xl:max-w-6xl',
+        )}
+      >
         <CardContent className="p-6">{children}</CardContent>
       </Card>
     </div>

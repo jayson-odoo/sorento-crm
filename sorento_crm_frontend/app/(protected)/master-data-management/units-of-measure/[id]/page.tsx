@@ -23,6 +23,7 @@ import {
   ToolbarTitle,
 } from '@/components/common/toolbar';
 import { useUOM, useDeleteUOM } from '../hooks/useUOM';
+import { useBackToListHref } from '@/components/common/BackToList';
 import { formatDate } from '@/lib/helpers';
 
 export default function UOMDetailPage({
@@ -32,6 +33,9 @@ export default function UOMDetailPage({
 }) {
   const { id } = use(params);
   const router = useRouter();
+  // The list wrote its page, sort and search into this URL when the row was
+  // clicked; Back hands the same string back rather than a fresh page 1.
+  const backHref = useBackToListHref('/master-data-management/units-of-measure');
   const { data: uom, isLoading } = useUOM(id);
   const deleteMutation = useDeleteUOM();
 
@@ -41,7 +45,7 @@ export default function UOMDetailPage({
     }
     try {
       await deleteMutation.mutateAsync(id);
-      router.push('/master-data-management/units-of-measure');
+      router.push(backHref);
     } catch (error) {
       // Error is handled by the mutation hook
     }
@@ -74,7 +78,7 @@ export default function UOMDetailPage({
             </ToolbarHeading>
             <ToolbarActions>
               <Button asChild variant="outline">
-                <Link href="/master-data-management/units-of-measure">
+                <Link href={backHref}>
                   <MoveLeft /> Back to UOMs
                 </Link>
               </Button>
@@ -118,7 +122,7 @@ export default function UOMDetailPage({
             </ToolbarHeading>
             <ToolbarActions>
               <Button asChild variant="outline">
-                <Link href="/master-data-management/units-of-measure">
+                <Link href={backHref}>
                   <MoveLeft /> Back to UOMs
                 </Link>
               </Button>
@@ -130,7 +134,7 @@ export default function UOMDetailPage({
             <p className="text-muted-foreground">UOM not found</p>
             <Button
               variant="outline"
-              onClick={() => router.push('/master-data-management/units-of-measure')}
+              onClick={() => router.push(backHref)}
               className="mt-4"
             >
               <MoveLeft className="size-4" />
@@ -168,7 +172,7 @@ export default function UOMDetailPage({
           </ToolbarHeading>
           <ToolbarActions>
             <Button asChild variant="outline">
-              <Link href="/master-data-management/units-of-measure">
+              <Link href={backHref}>
                 <MoveLeft /> Back to UOMs
               </Link>
             </Button>

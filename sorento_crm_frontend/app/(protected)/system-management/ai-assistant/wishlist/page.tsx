@@ -16,6 +16,7 @@ import {
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { useWishlist } from '../hooks/useAIUsage';
+import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 
 const PERMISSION = 'system.ai_assistant_settings.view';
 
@@ -88,38 +89,41 @@ export default function AIWishlistPage() {
             ) : items.length === 0 ? (
               <p className="text-sm text-muted-foreground">No unanswered queries yet.</p>
             ) : (
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b text-xs text-muted-foreground">
-                    <th className="py-2 text-left font-medium">Representative question</th>
-                    <th className="py-2 text-left font-medium">Category</th>
-                    <th className="py-2 text-right font-medium">Count</th>
-                    <th className="py-2 text-left font-medium">Last seen</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {items.map((c) => (
-                    <tr key={c.id} className="border-b align-top last:border-0">
-                      <td className="py-2 pe-3" title={c.representative_question}>
-                        {c.representative_question}
-                      </td>
-                      <td className="py-2 pe-3">
-                        {c.category ? (
-                          <Badge variant="secondary" className="text-xs">
-                            {c.category}
-                          </Badge>
-                        ) : (
-                          <span className="text-xs text-muted-foreground"> - </span>
-                        )}
-                      </td>
-                      <td className="py-2 pe-3 text-right tabular-nums">{c.count}</td>
-                      <td className="py-2 text-xs text-muted-foreground">
-                        {formatLastSeen(c.last_seen_at)}
-                      </td>
+              <ScrollArea>
+                <table className="w-auto min-w-full text-sm">
+                  <thead>
+                    <tr className="border-b text-xs text-muted-foreground">
+                      <th className="py-2 text-left font-medium">Representative question</th>
+                      <th className="py-2 text-left font-medium">Category</th>
+                      <th className="py-2 text-right font-medium">Count</th>
+                      <th className="py-2 text-left font-medium">Last seen</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {items.map((c) => (
+                      <tr key={c.id} className="border-b align-top last:border-0">
+                        <td className="py-2 pe-3" title={c.representative_question}>
+                          {c.representative_question}
+                        </td>
+                        <td className="py-2 pe-3">
+                          {c.category ? (
+                            <Badge variant="secondary" className="text-xs">
+                              {c.category}
+                            </Badge>
+                          ) : (
+                            <span className="text-xs text-muted-foreground"> - </span>
+                          )}
+                        </td>
+                        <td className="py-2 pe-3 text-right tabular-nums">{c.count}</td>
+                        <td className="py-2 text-xs text-muted-foreground">
+                          {formatLastSeen(c.last_seen_at)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <ScrollBar orientation="horizontal" />
+              </ScrollArea>
             )}
           </CardContent>
         </Card>

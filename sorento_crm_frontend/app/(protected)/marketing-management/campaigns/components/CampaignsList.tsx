@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   ColumnDef,
@@ -31,7 +31,8 @@ import { useCampaigns } from '../hooks/useCampaigns';
 import type { Campaign } from '../types/campaign.types';
 import { CAMPAIGN_STATUSES, campaignStatusLabel } from '../types/campaign.types';
 import { formatDate } from '@/lib/helpers';
-import { getStatusBadgeVariant } from '@/lib/status-badge';
+import { buildDetailSearch } from '@/lib/listNavQuery';
+import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 
 export default function CampaignsList() {
   const router = useRouter();
@@ -41,7 +42,25 @@ export default function CampaignsList() {
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
+  // Back hands the list its own query string back, and the pager keeps
+  // rewriting it, so the list has to read it (S3-01).
+  useListStateFromUrl((state) => {
+    setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
+    setSorting(state.sorting);
+    setSearchQuery(state.searchQuery);
+    setStatusFilter(state.filters.status ?? 'all');
+  });
+
+  // Skip the first run. A filter CHANGE should send the reader back to page 1,
+  // but on mount this effect fires anyway and stamps pageIndex 0 over the page
+  // `useListStateFromUrl` just restored, so Back from page 3 landed on page 1
+  // and the whole round trip was silently undone.
+  const filtersMounted = useRef(false);
   useEffect(() => {
+    if (!filtersMounted.current) {
+      filtersMounted.current = true;
+      return;
+    }
     setPagination((prev) => ({ ...prev, pageIndex: 0 }));
   }, [statusFilter]);
 
@@ -52,6 +71,23 @@ export default function CampaignsList() {
     searchQuery,
     status: statusFilter !== 'all' ? statusFilter : undefined,
   });
+
+  // D3: the row opens the campaign, chevron or no chevron - the chevron was
+  // decoration on a row nothing could open. The href carries the list state the
+  // detail page's Back and pager read back out of the URL, the status filter
+  // included: it lives outside TanStack, so the grid cannot append it.
+  const rowHref = (row: Campaign) => {
+    const search = buildDetailSearch(
+      {
+        pageIndex: pagination.pageIndex,
+        pageSize: pagination.pageSize,
+        sorting,
+        searchQuery,
+      },
+      statusFilter !== 'all' ? { status: statusFilter } : undefined,
+    );
+    return `/marketing-management/campaigns/${row.id}${search ? `?${search}` : ''}`;
+  };
 
   const columns = useMemo<ColumnDef<Campaign>[]>(
     () => [
@@ -115,7 +151,7 @@ export default function CampaignsList() {
         cell: ({ row }) => {
           const status = row.original.status;
           return (
-            <Badge variant={getStatusBadgeVariant(status)} appearance="ghost">
+            <Badge status={status}>
               {campaignStatusLabel(status)}
             </Badge>
           );
@@ -157,6 +193,7 @@ export default function CampaignsList() {
       table={table}
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
+      rowHref={rowHref}
       standardToolbar={false}
       tableLayout={{ columnsVisibility: true }}
     >

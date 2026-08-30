@@ -151,7 +151,6 @@ export default function SuppliersList() {
           return (
             <Badge
               variant={isActive ? 'success' : 'secondary'}
-              appearance="ghost"
             >
               <BadgeDot />
               {isActive ? 'Active' : 'Inactive'}

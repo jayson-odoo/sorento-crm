@@ -36,7 +36,6 @@ import type {
 import Link from 'next/link';
 import React from 'react';
 import { allocationLocation } from '../lib/allocationLocation';
-import { getStatusBadgeVariant } from '@/lib/status-badge';
 
 type ViewMode = 'none' | 'spo_number';
 
@@ -324,7 +323,7 @@ export default function SPOAllocationsList() {
           <DataGridColumnHeader title="Status" column={column} />
         ),
         cell: ({ row }) => (
-          <Badge variant={getStatusBadgeVariant(row.original.receipt_status)} size="sm">
+          <Badge status={row.original.receipt_status} size="sm">
             {row.original.receipt_status
               ?.split('_')
               .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
@@ -587,144 +586,147 @@ export default function SPOAllocationsList() {
                               <div className="mb-2 text-xs font-medium text-muted-foreground">
                                 Allocations for SPO {group.spo_number}
                               </div>
-                              <table className="w-full border-collapse text-xs">
-                                <thead>
-                                  <tr className="border-b">
-                                    <th className="text-left p-1.5 font-medium text-muted-foreground w-8">
-                                      <Checkbox
-                                        checked={
-                                          group.spo_allocations.length === 0
-                                            ? false
-                                            : group.spo_allocations.every((a) =>
-                                                selectedAllocationIds.has(a.id),
-                                              )
-                                            ? true
-                                            : group.spo_allocations.some((a) =>
-                                                selectedAllocationIds.has(a.id),
-                                              )
-                                              ? 'indeterminate'
-                                              : false
-                                        }
-                                        onCheckedChange={() =>
-                                          toggleSelectAllInGroup(group)
-                                        }
-                                        aria-label="Select all in this SPO"
-                                      />
-                                    </th>
-                                    <th className="text-left p-1.5 font-medium text-muted-foreground min-w-[120px]">
-                                      Product
-                                    </th>
-                                    <th className="text-left p-1.5 font-medium text-muted-foreground w-[80px]">
-                                      Location
-                                    </th>
-                                    <th className="text-left p-1.5 font-medium text-muted-foreground w-[70px]">
-                                      Allocated
-                                    </th>
-                                    <th className="text-left p-1.5 font-medium text-muted-foreground w-[70px]">
-                                      Received
-                                    </th>
-                                    <th className="text-left p-1.5 font-medium text-muted-foreground min-w-[140px]">
-                                      Packing List
-                                    </th>
-                                    <th className="text-left p-1.5 font-medium text-muted-foreground w-[90px]">
-                                      Status
-                                    </th>
-                                    <th className="w-6" />
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {(() => {
-                                    // Group allocations by product so shipped qty is shown once per product
-                                    const byProduct = new Map<string, SPOAllocationWithShipped[]>();
-                                    for (const a of group.spo_allocations) {
-                                      const key = a.product_id ?? a.product?.id ?? a.id;
-                                      if (!byProduct.has(key)) byProduct.set(key, []);
-                                      byProduct.get(key)!.push(a);
-                                    }
-                                    return Array.from(byProduct.entries()).flatMap(([, allocations]) => {
-                                      const first = allocations[0];
-                                      const qtyShipped = first.quantity_shipped ?? null;
-                                      const productLabel = first.product?.product_code ?? '-';
-                                      const productName = first.product?.product_name;
-                                      const fullLabel = productName && productName !== productLabel
-                                        ? `${productLabel} - ${productName}`
-                                        : productLabel;
-                                      return allocations.map((allocation, idx) => (
-                                        <tr
-                                          key={allocation.id}
-                                          className="border-b hover:bg-background cursor-pointer"
-                                          onClick={() => handleAllocationClick(allocation)}
-                                        >
-                                          <td className="p-1.5" onClick={(e) => e.stopPropagation()}>
-                                            <Checkbox
-                                              checked={selectedAllocationIds.has(allocation.id)}
-                                              onCheckedChange={() => toggleAllocationSelection(allocation.id)}
-                                            />
-                                          </td>
-                                          <td className="p-1.5">
-                                            {idx === 0 ? (
-                                              <span className="font-medium">
-                                                {fullLabel}
-                                                {qtyShipped != null && (
-                                                  <span className="text-muted-foreground font-normal ms-1">
-                                                    ({qtyShipped} shipped)
+                              <ScrollArea>
+                                <table className="w-auto min-w-full border-collapse text-xs">
+                                  <thead>
+                                    <tr className="border-b">
+                                      <th className="text-left p-1.5 font-medium text-muted-foreground w-8">
+                                        <Checkbox
+                                          checked={
+                                            group.spo_allocations.length === 0
+                                              ? false
+                                              : group.spo_allocations.every((a) =>
+                                                  selectedAllocationIds.has(a.id),
+                                                )
+                                              ? true
+                                              : group.spo_allocations.some((a) =>
+                                                  selectedAllocationIds.has(a.id),
+                                                )
+                                                ? 'indeterminate'
+                                                : false
+                                          }
+                                          onCheckedChange={() =>
+                                            toggleSelectAllInGroup(group)
+                                          }
+                                          aria-label="Select all in this SPO"
+                                        />
+                                      </th>
+                                      <th className="text-left p-1.5 font-medium text-muted-foreground min-w-[120px]">
+                                        Product
+                                      </th>
+                                      <th className="text-left p-1.5 font-medium text-muted-foreground w-[80px]">
+                                        Location
+                                      </th>
+                                      <th className="text-left p-1.5 font-medium text-muted-foreground w-[70px]">
+                                        Allocated
+                                      </th>
+                                      <th className="text-left p-1.5 font-medium text-muted-foreground w-[70px]">
+                                        Received
+                                      </th>
+                                      <th className="text-left p-1.5 font-medium text-muted-foreground min-w-[140px]">
+                                        Packing List
+                                      </th>
+                                      <th className="text-left p-1.5 font-medium text-muted-foreground w-[90px]">
+                                        Status
+                                      </th>
+                                      <th className="w-6" />
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {(() => {
+                                      // Group allocations by product so shipped qty is shown once per product
+                                      const byProduct = new Map<string, SPOAllocationWithShipped[]>();
+                                      for (const a of group.spo_allocations) {
+                                        const key = a.product_id ?? a.product?.id ?? a.id;
+                                        if (!byProduct.has(key)) byProduct.set(key, []);
+                                        byProduct.get(key)!.push(a);
+                                      }
+                                      return Array.from(byProduct.entries()).flatMap(([, allocations]) => {
+                                        const first = allocations[0];
+                                        const qtyShipped = first.quantity_shipped ?? null;
+                                        const productLabel = first.product?.product_code ?? '-';
+                                        const productName = first.product?.product_name;
+                                        const fullLabel = productName && productName !== productLabel
+                                          ? `${productLabel} - ${productName}`
+                                          : productLabel;
+                                        return allocations.map((allocation, idx) => (
+                                          <tr
+                                            key={allocation.id}
+                                            className="border-b hover:bg-background cursor-pointer"
+                                            onClick={() => handleAllocationClick(allocation)}
+                                          >
+                                            <td className="p-1.5" onClick={(e) => e.stopPropagation()}>
+                                              <Checkbox
+                                                checked={selectedAllocationIds.has(allocation.id)}
+                                                onCheckedChange={() => toggleAllocationSelection(allocation.id)}
+                                              />
+                                            </td>
+                                            <td className="p-1.5">
+                                              {idx === 0 ? (
+                                                <span className="font-medium">
+                                                  {fullLabel}
+                                                  {qtyShipped != null && (
+                                                    <span className="text-muted-foreground font-normal ms-1">
+                                                      ({qtyShipped} shipped)
+                                                    </span>
+                                                  )}
+                                                </span>
+                                              ) : (
+                                                <span className="text-muted-foreground/70">↳</span>
+                                              )}
+                                            </td>
+                                            <td className="p-1.5">
+                                              {allocationLocation(allocation)}
+                                            </td>
+                                            <td className="p-1.5">
+                                              {allocation.allocated_quantity}
+                                            </td>
+                                        <td className="p-1.5">
+                                          {allocation.quantity_received}
+                                        </td>
+                                        <td className="p-1.5">
+                                          {allocation.inbound_shipment ? (
+                                            <Link
+                                              href={`/procurement-management/packing-lists/${allocation.inbound_shipment.id}`}
+                                              className="text-primary hover:underline"
+                                              onClick={(e) => e.stopPropagation()}
+                                            >
+                                              <span className="flex items-center gap-1">
+                                                <LinkIcon className="size-3" />
+                                                {allocation.inbound_shipment.shipment_number}
+                                                {allocation.inbound_shipment.shipping_container_number && (
+                                                  <span className="text-muted-foreground">
+                                                    ({allocation.inbound_shipment.shipping_container_number})
                                                   </span>
                                                 )}
                                               </span>
-                                            ) : (
-                                              <span className="text-muted-foreground/70">↳</span>
-                                            )}
-                                          </td>
-                                          <td className="p-1.5">
-                                            {allocationLocation(allocation)}
-                                          </td>
-                                          <td className="p-1.5">
-                                            {allocation.allocated_quantity}
-                                          </td>
-                                      <td className="p-1.5">
-                                        {allocation.quantity_received}
-                                      </td>
-                                      <td className="p-1.5">
-                                        {allocation.inbound_shipment ? (
-                                          <Link
-                                            href={`/procurement-management/packing-lists/${allocation.inbound_shipment.id}`}
-                                            className="text-primary hover:underline"
-                                            onClick={(e) => e.stopPropagation()}
+                                            </Link>
+                                          ) : (
+                                            '-'
+                                          )}
+                                        </td>
+                                        <td className="p-1.5">
+                                          <Badge
+                                            status={allocation.receipt_status}
+                                            size="sm"
                                           >
-                                            <span className="flex items-center gap-1">
-                                              <LinkIcon className="size-3" />
-                                              {allocation.inbound_shipment.shipment_number}
-                                              {allocation.inbound_shipment.shipping_container_number && (
-                                                <span className="text-muted-foreground">
-                                                  ({allocation.inbound_shipment.shipping_container_number})
-                                                </span>
-                                              )}
-                                            </span>
-                                          </Link>
-                                        ) : (
-                                          '-'
-                                        )}
-                                      </td>
-                                      <td className="p-1.5">
-                                        <Badge
-                                          variant={getStatusBadgeVariant(allocation.receipt_status)}
-                                          size="sm"
-                                        >
-                                          {allocation.receipt_status
-                                            ?.split('_')
-                                            .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-                                            .join(' ') ?? '-'}
-                                        </Badge>
-                                      </td>
-                                      <td className="p-1.5">
-                                        <ChevronRight className="text-muted-foreground/70 size-3" />
-                                      </td>
-                                    </tr>
-                                      ));
-                                    });
-                                  })()}
-                                </tbody>
-                              </table>
+                                            {allocation.receipt_status
+                                              ?.split('_')
+                                              .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+                                              .join(' ') ?? '-'}
+                                          </Badge>
+                                        </td>
+                                        <td className="p-1.5">
+                                          <ChevronRight className="text-muted-foreground/70 size-3" />
+                                        </td>
+                                      </tr>
+                                        ));
+                                      });
+                                    })()}
+                                  </tbody>
+                                </table>
+                                <ScrollBar orientation="horizontal" />
+                              </ScrollArea>
                             </div>
                           </td>
                         </tr>

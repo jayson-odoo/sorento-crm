@@ -38,6 +38,7 @@ import {
   useUsageByDay,
   useUsageSummary,
 } from '../hooks/useAIUsage';
+import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 
 const FEATURE_ALL = 'all';
 const FEATURE_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
@@ -162,14 +163,17 @@ export default function AIUsagePage() {
         </Toolbar>
       </Container>
       <Container className="space-y-4">
-        <div className="flex items-center gap-3">
+        {/* Two w-60 controls in a no-wrap row is 480px of content in a 375px
+            viewport, and the page scrolled sideways to fit them. They wrap and
+            take the full width under sm. */}
+        <div className="flex flex-wrap items-center gap-3">
           <Popover open={datePopoverOpen} onOpenChange={setDatePopoverOpen}>
             <PopoverTrigger asChild>
               <Button
                 id="usage-date"
                 variant="outline"
                 className={cn(
-                  'w-60 justify-start font-normal',
+                  'w-full justify-start font-normal sm:w-60',
                   !dateRange && 'text-muted-foreground',
                 )}
               >
@@ -203,13 +207,13 @@ export default function AIUsagePage() {
               </div>
             </PopoverContent>
           </Popover>
-          <div data-testid="ai-usage-feature-filter">
+          <div className="w-full sm:w-auto" data-testid="ai-usage-feature-filter">
             <SearchableSelect
               value={featureFilter}
               onChange={setFeatureFilter}
               options={FEATURE_OPTIONS.map((opt) => ({ value: opt.value, label: opt.label }))}
               placeholder="All AI usage"
-              triggerClassName="w-60"
+              triggerClassName="w-full sm:w-60"
             />
           </div>
         </div>
@@ -293,26 +297,29 @@ export default function AIUsagePage() {
               ) : (topUsersQuery.data || []).length === 0 ? (
                 <p className="text-sm text-muted-foreground">No user activity yet.</p>
               ) : (
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b text-xs text-muted-foreground">
-                      <th className="py-2 text-left font-medium">#</th>
-                      <th className="py-2 text-left font-medium">Name</th>
-                      <th className="py-2 text-right font-medium">Messages</th>
-                      <th className="py-2 text-right font-medium">Tokens</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(topUsersQuery.data || []).map((u, i) => (
-                      <tr key={u.user_id} className="border-b last:border-0">
-                        <td className="py-2 text-muted-foreground">{i + 1}</td>
-                        <td className="py-2">{u.name || u.user_id}</td>
-                        <td className="py-2 text-right tabular-nums">{formatNumber(u.messages)}</td>
-                        <td className="py-2 text-right tabular-nums">{formatNumber(u.tokens)}</td>
+                <ScrollArea>
+                  <table className="w-auto min-w-full text-sm">
+                    <thead>
+                      <tr className="border-b text-xs text-muted-foreground">
+                        <th className="py-2 text-left font-medium">#</th>
+                        <th className="py-2 text-left font-medium">Name</th>
+                        <th className="py-2 text-right font-medium">Messages</th>
+                        <th className="py-2 text-right font-medium">Tokens</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {(topUsersQuery.data || []).map((u, i) => (
+                        <tr key={u.user_id} className="border-b last:border-0">
+                          <td className="py-2 text-muted-foreground">{i + 1}</td>
+                          <td className="py-2">{u.name || u.user_id}</td>
+                          <td className="py-2 text-right tabular-nums">{formatNumber(u.messages)}</td>
+                          <td className="py-2 text-right tabular-nums">{formatNumber(u.tokens)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  <ScrollBar orientation="horizontal" />
+                </ScrollArea>
               )}
             </CardContent>
           </Card>
@@ -335,28 +342,31 @@ export default function AIUsagePage() {
                   No portal contact activity in range.
                 </p>
               ) : (
-                <table className="w-full text-sm" data-testid="ai-usage-top-contacts">
-                  <thead>
-                    <tr className="border-b text-xs text-muted-foreground">
-                      <th className="py-2 text-left font-medium">#</th>
-                      <th className="py-2 text-left font-medium">Phone</th>
-                      <th className="py-2 text-left font-medium">Name</th>
-                      <th className="py-2 text-right font-medium">Calls</th>
-                      <th className="py-2 text-right font-medium">Tokens</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(topContactsQuery.data || []).map((c, i) => (
-                      <tr key={c.contact_id} className="border-b last:border-0">
-                        <td className="py-2 text-muted-foreground">{i + 1}</td>
-                        <td className="py-2 font-mono text-xs">{c.phone_number || '-'}</td>
-                        <td className="py-2">{c.name || <span className="text-muted-foreground italic">unknown</span>}</td>
-                        <td className="py-2 text-right tabular-nums">{formatNumber(c.messages)}</td>
-                        <td className="py-2 text-right tabular-nums">{formatNumber(c.tokens)}</td>
+                <ScrollArea>
+                  <table className="w-auto min-w-full text-sm" data-testid="ai-usage-top-contacts">
+                    <thead>
+                      <tr className="border-b text-xs text-muted-foreground">
+                        <th className="py-2 text-left font-medium">#</th>
+                        <th className="py-2 text-left font-medium">Phone</th>
+                        <th className="py-2 text-left font-medium">Name</th>
+                        <th className="py-2 text-right font-medium">Calls</th>
+                        <th className="py-2 text-right font-medium">Tokens</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {(topContactsQuery.data || []).map((c, i) => (
+                        <tr key={c.contact_id} className="border-b last:border-0">
+                          <td className="py-2 text-muted-foreground">{i + 1}</td>
+                          <td className="py-2 font-mono text-xs">{c.phone_number || '-'}</td>
+                          <td className="py-2">{c.name || <span className="text-muted-foreground italic">unknown</span>}</td>
+                          <td className="py-2 text-right tabular-nums">{formatNumber(c.messages)}</td>
+                          <td className="py-2 text-right tabular-nums">{formatNumber(c.tokens)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  <ScrollBar orientation="horizontal" />
+                </ScrollArea>
               )}
             </CardContent>
           </Card>
@@ -378,7 +388,8 @@ export default function AIUsagePage() {
               ) : (recentQueriesQuery.data || []).length === 0 ? (
                 <p className="text-sm text-muted-foreground">No recent queries in range.</p>
               ) : (
-                <div className="max-h-[420px] overflow-y-auto">
+                <div className="max-h-[420px] overflow-auto">
+                  {/* One scroller, both axes: a nested one broke the sticky head. */}
                   <table className="w-full text-sm">
                     <thead className="sticky top-0 bg-background">
                       <tr className="border-b text-xs text-muted-foreground">

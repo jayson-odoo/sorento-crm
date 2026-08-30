@@ -314,7 +314,7 @@ export default function ContactAccessAgentsGroupedList() {
           </CardHeader>
           <CardTable>
             <ScrollArea>
-              <table className="w-full border-collapse">
+              <table className="w-auto min-w-full border-collapse">
                 <thead>
                   <tr className="border-b">
                     {table.getHeaderGroups()[0]?.headers.map((header) => (
@@ -369,44 +369,47 @@ export default function ContactAccessAgentsGroupedList() {
                             <td colSpan={columns.length} className="p-0 bg-muted/30">
                               <div className="p-4">
                                 <div className="mb-3 font-medium text-sm">Access Agents for {group.respond_contact_phone}</div>
-                                <table className="w-full border-collapse">
-                                  <thead>
-                                    <tr className="border-b">
-                                      <th className="text-left p-2 text-xs font-medium text-muted-foreground">Agent Code</th>
-                                      <th className="text-left p-2 text-xs font-medium text-muted-foreground">Agent Name</th>
-                                      <th className="text-left p-2 text-xs font-medium text-muted-foreground">Allowed</th>
-                                      <th className="text-left p-2 text-xs font-medium text-muted-foreground">Valid From</th>
-                                      <th className="text-left p-2 text-xs font-medium text-muted-foreground">Valid To</th>
-                                      <th className="text-left p-2 text-xs font-medium text-muted-foreground">Created At</th>
-                                      <th className="text-left p-2 text-xs font-medium text-muted-foreground">Actions</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {group.accessAgents.map((agent) => (
-                                      <tr key={agent.id} className="border-b hover:bg-background">
-                                        <td className="p-2 text-sm">{agent.agent_code || '-'}</td>
-                                        <td className="p-2 text-sm">{agent.agent_name || '-'}</td>
-                                        <td className="p-2">
-                                          <Badge variant={agent.is_allowed ? 'success' : 'secondary'} appearance="ghost" size="sm">
-                                            {agent.is_allowed ? 'Yes' : 'No'}
-                                          </Badge>
-                                        </td>
-                                        <td className="p-2 text-sm">{agent.valid_from ? formatDate(new Date(agent.valid_from)) : '-'}</td>
-                                        <td className="p-2 text-sm">{agent.valid_to ? formatDate(new Date(agent.valid_to)) : '-'}</td>
-                                        <td className="p-2 text-sm">{formatDate(new Date(agent.created_at))}</td>
-                                        <td className="p-2">
-                                          <Button
-                                            variant="ghost"
-                                            size="sm"
-                                            onClick={() => handleEditAccessAgent(agent)}
-                                          >
-                                            Edit
-                                          </Button>
-                                        </td>
+                                <ScrollArea>
+                                  <table className="w-auto min-w-full border-collapse">
+                                    <thead>
+                                      <tr className="border-b">
+                                        <th className="text-left p-2 text-xs font-medium text-muted-foreground">Agent Code</th>
+                                        <th className="text-left p-2 text-xs font-medium text-muted-foreground">Agent Name</th>
+                                        <th className="text-left p-2 text-xs font-medium text-muted-foreground">Allowed</th>
+                                        <th className="text-left p-2 text-xs font-medium text-muted-foreground">Valid From</th>
+                                        <th className="text-left p-2 text-xs font-medium text-muted-foreground">Valid To</th>
+                                        <th className="text-left p-2 text-xs font-medium text-muted-foreground">Created At</th>
+                                        <th className="text-left p-2 text-xs font-medium text-muted-foreground">Actions</th>
                                       </tr>
-                                    ))}
-                                  </tbody>
-                                </table>
+                                    </thead>
+                                    <tbody>
+                                      {group.accessAgents.map((agent) => (
+                                        <tr key={agent.id} className="border-b hover:bg-background">
+                                          <td className="p-2 text-sm">{agent.agent_code || '-'}</td>
+                                          <td className="p-2 text-sm">{agent.agent_name || '-'}</td>
+                                          <td className="p-2">
+                                            <Badge variant={agent.is_allowed ? 'success' : 'secondary'} size="sm">
+                                              {agent.is_allowed ? 'Yes' : 'No'}
+                                            </Badge>
+                                          </td>
+                                          <td className="p-2 text-sm">{agent.valid_from ? formatDate(new Date(agent.valid_from)) : '-'}</td>
+                                          <td className="p-2 text-sm">{agent.valid_to ? formatDate(new Date(agent.valid_to)) : '-'}</td>
+                                          <td className="p-2 text-sm">{formatDate(new Date(agent.created_at))}</td>
+                                          <td className="p-2">
+                                            <Button
+                                              variant="ghost"
+                                              size="sm"
+                                              onClick={() => handleEditAccessAgent(agent)}
+                                            >
+                                              Edit
+                                            </Button>
+                                          </td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                  <ScrollBar orientation="horizontal" />
+                                </ScrollArea>
                               </div>
                             </td>
                           </tr>

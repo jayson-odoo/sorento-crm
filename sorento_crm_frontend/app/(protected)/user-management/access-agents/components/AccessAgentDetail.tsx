@@ -190,7 +190,7 @@ export default function AccessAgentDetail({ accessAgentId }: AccessAgentDetailPr
         <div className="space-y-1">
           <div className="flex items-center gap-3">
             <h1 className="text-2xl font-bold">{accessAgent.name}</h1>
-            <Badge variant={accessAgent.is_active ? 'success' : 'secondary'} appearance="ghost">
+            <Badge variant={accessAgent.is_active ? 'success' : 'secondary'}>
               <BadgeDot />
               {accessAgent.is_active ? 'Active' : 'Inactive'}
             </Badge>
@@ -235,7 +235,7 @@ export default function AccessAgentDetail({ accessAgentId }: AccessAgentDetailPr
             </div>
             <div>
               <p className="text-sm text-muted-foreground">Status</p>
-              <Badge variant={accessAgent.is_active ? 'success' : 'secondary'} appearance="ghost">
+              <Badge variant={accessAgent.is_active ? 'success' : 'secondary'}>
                 <BadgeDot />
                 {accessAgent.is_active ? 'Active' : 'Inactive'}
               </Badge>
@@ -359,7 +359,6 @@ export default function AccessAgentDetail({ accessAgentId }: AccessAgentDetailPr
                                         ? 'secondary'
                                         : 'primary'
                                     }
-                                    appearance="ghost"
                                     className="text-xs font-normal"
                                   >
                                     {(a as AgentTeamAssignment).notify_on_extension === false

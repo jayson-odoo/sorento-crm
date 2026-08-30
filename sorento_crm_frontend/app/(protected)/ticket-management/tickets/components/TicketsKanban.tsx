@@ -170,7 +170,7 @@ export default function TicketsKanban({ filters }: Props) {
                       }}
                     >
                       <div className="flex items-center gap-2 mb-1">
-                        <span className="font-mono text-[10px] text-muted-foreground">
+                        <span className="whitespace-nowrap font-mono text-[10px] text-muted-foreground">
                           {t.ticket_number ?? '-'}
                         </span>
                         <span className="ms-auto">

@@ -55,7 +55,7 @@ export default function SupplierDetail({ supplierId }: SupplierDetailProps) {
         <div className="space-y-1">
           <div className="flex items-center gap-3">
             <h1 className="text-2xl font-bold">{supplier.supplier_name}</h1>
-            <Badge variant={supplier.is_active ? 'success' : 'secondary'} appearance="ghost">
+            <Badge variant={supplier.is_active ? 'success' : 'secondary'}>
               {supplier.is_active ? 'Active' : 'Inactive'}
             </Badge>
           </div>
@@ -143,7 +143,7 @@ export default function SupplierDetail({ supplierId }: SupplierDetailProps) {
             </div>
             <div>
               <p className="text-sm text-muted-foreground">Status</p>
-              <Badge variant={supplier.is_active ? 'success' : 'secondary'} appearance="ghost">
+              <Badge variant={supplier.is_active ? 'success' : 'secondary'}>
                 {supplier.is_active ? 'Active' : 'Inactive'}
               </Badge>
             </div>

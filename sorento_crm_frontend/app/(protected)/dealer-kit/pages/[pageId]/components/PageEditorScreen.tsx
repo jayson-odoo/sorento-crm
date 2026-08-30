@@ -140,16 +140,16 @@ export function PageEditorScreen({ pageId }: { pageId: string }) {
           <div className="flex min-w-0 flex-wrap items-center gap-2">
             <span className="truncate font-medium">{page.name}</span>
             {publishedVersion ? (
-              <Badge variant="success" appearance="ghost" className="font-normal">
+              <Badge variant="success" className="font-normal">
                 Live · v{publishedVersion.version}
               </Badge>
             ) : (
-              <Badge variant="outline" appearance="ghost" className="font-normal">
+              <Badge variant="outline" className="font-normal">
                 Not published
               </Badge>
             )}
             {dirty && (
-              <Badge variant="warning" appearance="ghost" className="font-normal">
+              <Badge variant="warning" className="font-normal">
                 Unsaved changes
               </Badge>
             )}

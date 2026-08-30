@@ -89,7 +89,7 @@ export default function OrderStatusesList() {
         accessorKey: 'is_final_status',
         header: ({ column }) => <DataGridColumnHeader title="Final Status" column={column} />,
         cell: ({ row }) => (
-          <Badge variant={row.original.is_final_status ? 'success' : 'secondary'} appearance="ghost">
+          <Badge variant={row.original.is_final_status ? 'success' : 'secondary'}>
             {row.original.is_final_status ? 'Yes' : 'No'}
           </Badge>
         ),

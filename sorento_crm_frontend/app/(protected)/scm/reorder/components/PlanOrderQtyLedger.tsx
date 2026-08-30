@@ -42,6 +42,7 @@ import {
 } from '../lib/orderQtyLedger';
 import type { TrajectoryEntry } from '../lib/trajectory';
 import type { ReorderRecommendation } from '../types/reorder.types';
+import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 
 /**
  * The order-qty ledger, behind the "Explain order qty" trigger on the Suggested-qty column.
@@ -389,38 +390,41 @@ function DemandBlock({
   }
   return (
     <div className="px-3 py-2">
-      <table className="w-full text-2xs">
-        <thead>
-          <tr className="text-muted-foreground/70">
-            <th className="pb-0.5 text-left font-normal">Order</th>
-            <th className="pb-0.5 text-left font-normal">Customer</th>
-            <th className="pb-0.5 text-right font-normal">Needed</th>
-            <th className="pb-0.5 text-right font-normal">Qty</th>
-            {showLinked ? <th className="pb-0.5 text-right font-normal">Linked</th> : null}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r) => (
-            <tr key={r.key}>
-              <td className="max-w-24 truncate py-0.5" title={r.soNumber}>
-                {r.soNumber}
-              </td>
-              <td className="max-w-28 truncate py-0.5 text-muted-foreground" title={r.customer}>
-                {r.customer}
-              </td>
-              <td className="py-0.5 text-right tabular-nums text-muted-foreground">
-                {r.deliveryDate ? fmtDate(r.deliveryDate) : 'no date'}
-              </td>
-              <td className="py-0.5 text-right tabular-nums">{fmtInt(r.qty)}</td>
-              {showLinked ? (
-                <td className="py-0.5 text-right tabular-nums text-muted-foreground">
-                  {r.linked === null ? EM_DASH : fmtInt(r.linked)}
-                </td>
-              ) : null}
+      <ScrollArea>
+        <table className="w-auto min-w-full text-2xs">
+          <thead>
+            <tr className="text-muted-foreground/70">
+              <th className="pb-0.5 text-left font-normal">Order</th>
+              <th className="pb-0.5 text-left font-normal">Customer</th>
+              <th className="pb-0.5 text-right font-normal">Needed</th>
+              <th className="pb-0.5 text-right font-normal">Qty</th>
+              {showLinked ? <th className="pb-0.5 text-right font-normal">Linked</th> : null}
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.key}>
+                <td className="max-w-24 truncate py-0.5" title={r.soNumber}>
+                  {r.soNumber}
+                </td>
+                <td className="max-w-28 truncate py-0.5 text-muted-foreground" title={r.customer}>
+                  {r.customer}
+                </td>
+                <td className="py-0.5 text-right tabular-nums text-muted-foreground">
+                  {r.deliveryDate ? fmtDate(r.deliveryDate) : 'no date'}
+                </td>
+                <td className="py-0.5 text-right tabular-nums">{fmtInt(r.qty)}</td>
+                {showLinked ? (
+                  <td className="py-0.5 text-right tabular-nums text-muted-foreground">
+                    {r.linked === null ? EM_DASH : fmtInt(r.linked)}
+                  </td>
+                ) : null}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <ScrollBar orientation="horizontal" />
+      </ScrollArea>
       {total > rows.length ? (
         <p className="mt-1 text-2xs text-muted-foreground">
           {`Showing ${fmtInt(rows.length)} of ${fmtInt(total)} orders`}

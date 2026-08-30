@@ -88,7 +88,7 @@ export default function PortalRevisionsSettingsPage() {
         minSize: 90,
         enableSorting: false,
         cell: ({ row }) => (
-          <Badge variant={row.original.is_enabled ? 'success' : 'secondary'} appearance="ghost">
+          <Badge variant={row.original.is_enabled ? 'success' : 'secondary'}>
             {row.original.is_enabled ? 'On' : 'Off'}
           </Badge>
         ),

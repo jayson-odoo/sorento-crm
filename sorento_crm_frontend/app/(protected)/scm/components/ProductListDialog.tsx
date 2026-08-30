@@ -425,6 +425,7 @@ export function ProductListDialog({
               </div>
             </div>
           ) : (
+            // DialogBody is already the scroller, on both axes.
             <table className={cn('w-full text-sm', isLowDrill ? 'min-w-[980px]' : 'min-w-[880px]')}>
               <thead className="sticky top-0 z-10 bg-background">
                 <tr className="text-2xs text-muted-foreground">

@@ -3,6 +3,19 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
+import {
+  Bell,
+  Eye,
+  FileClock,
+  HeartPulse,
+  // Aliased: bare `Image` shadows the DOM global inside this module.
+  Image as ImageIcon,
+  Mail,
+  MessageSquareWarning,
+  Plug,
+  Settings,
+  Share2,
+} from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Container } from '@/components/common/container';
@@ -20,6 +33,8 @@ type NavRoutes = Record<
   string,
   {
     title: string;
+    /** Beside the label in the strip, so a scrolled tab is still identifiable. */
+    icon: React.FC<React.SVGProps<SVGSVGElement>>;
     path: string;
   }
 >;
@@ -223,42 +238,52 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     () => ({
       general: {
         title: 'General',
+        icon: Settings,
         path: '/user-management/settings',
       },
       notifications: {
         title: 'Notifications',
+        icon: Bell,
         path: '/user-management/settings/notifications',
       },
       complaints: {
         title: 'Complaints',
+        icon: MessageSquareWarning,
         path: '/user-management/settings/complaints',
       },
       'portal-revisions': {
         title: 'Portal Revisions',
+        icon: FileClock,
         path: '/user-management/settings/portal-revisions',
       },
       'chatbot-media': {
         title: 'Chatbot Media',
+        icon: ImageIcon,
         path: '/user-management/settings/chatbot-media',
       },
       'stock-visibility': {
         title: 'Stock Visibility',
+        icon: Eye,
         path: '/user-management/settings/stock-visibility',
       },
       'system-health': {
         title: 'System Health',
+        icon: HeartPulse,
         path: '/user-management/settings/system-health',
       },
       smtp: {
         title: 'SMTP',
+        icon: Mail,
         path: '/user-management/settings/smtp',
       },
       social: {
         title: 'Social',
+        icon: Share2,
         path: '/user-management/settings/social',
       },
       integrations: {
         title: 'Integrations',
+        icon: Plug,
         path: '/user-management/settings/integrations',
       },
     }),
@@ -303,16 +328,18 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       </Container>
       <Container>
         <Tabs defaultValue={activeTab} value={activeTab} className="space-y-5">
-          <TabsList variant="line">
-            {Object.entries(navRoutes).map(([key, { title, path }]) => (
+          {/* Ten tabs: at 375 seven of them were off-screen with nothing saying
+              so. The strip scrolls now (S1) and each tab reads as the Users one. */}
+          <TabsList>
+            {Object.entries(navRoutes).map(([key, { title, icon: Icon, path }]) => (
               <TabsTrigger
                 key={key}
                 value={key}
                 disabled={isLoading}
                 onClick={() => handleTabClick(key, path)}
-                className="justify-start"
               >
-                {title}
+                <Icon />
+                <span>{title}</span>
               </TabsTrigger>
             ))}
           </TabsList>

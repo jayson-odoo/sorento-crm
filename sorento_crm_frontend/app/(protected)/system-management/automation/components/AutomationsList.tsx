@@ -117,7 +117,7 @@ export default function AutomationsList() {
         accessorKey: 'trigger_type',
         header: ({ column }) => <DataGridColumnHeader title="Trigger" column={column} />,
         cell: ({ row }) => (
-          <Badge variant="secondary" appearance="ghost">
+          <Badge variant="secondary">
             {row.original.trigger_type}
           </Badge>
         ),

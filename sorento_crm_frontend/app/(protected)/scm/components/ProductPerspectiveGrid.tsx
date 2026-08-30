@@ -1,10 +1,11 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ColumnDef,
   PaginationState,
   SortingState,
+  type Table as TanstackTable,
   getCoreRowModel,
   getExpandedRowModel,
   useReactTable,
@@ -110,6 +111,28 @@ export function ProductPerspectiveGrid({
   const recordCount = serverTotal;
   const pageCount = Math.ceil(serverTotal / pagination.pageSize);
 
+  /**
+   * The page total for one column, as the grid's own `<tfoot>`.
+   *
+   * A second `<table>` mirroring `getTotalSize()` and every column width was
+   * one more thing to keep in step with resize, visibility and pinning, and it
+   * scrolled in a box of its own. A footer on the column definition is the
+   * mechanism the grid already has: same table, same cell, aligned by
+   * construction.
+   *
+   * The rows come from the table rather than the closure, so the total follows
+   * the page without the memo having to depend on the data.
+   */
+  const pageTotal = useCallback(
+    (read: (row: M2Row) => number | null | undefined, format: (n: number) => string) =>
+      function Total({ table }: { table: TanstackTable<M2Row> }) {
+        const loaded = table.getRowModel().rows;
+        if (loaded.length === 0) return null;
+        return <>{format(loaded.reduce((acc, r) => acc + (read(r.original) ?? 0), 0))}</>;
+      },
+    [],
+  );
+
   const columns = useMemo<ColumnDef<M2Row>[]>(
     () => [
       {
@@ -154,6 +177,7 @@ export function ProductPerspectiveGrid({
       },
       {
         accessorKey: 'sku',
+        footer: ({ table }) => (table.getRowModel().rows.length ? 'Page total' : null),
         header: ({ column }) => <DataGridColumnHeader title="SKU" column={column} />,
         cell: ({ row }) => {
           const r = row.original;
@@ -199,6 +223,7 @@ export function ProductPerspectiveGrid({
       },
       {
         accessorKey: 'net_position',
+        footer: pageTotal((r) => r.net_position, fmtSigned),
         header: ({ column }) => (
           <div className="inline-flex items-center justify-end gap-1">
             <DataGridColumnHeader title="Net position" column={column} />
@@ -217,6 +242,7 @@ export function ProductPerspectiveGrid({
       },
       {
         accessorKey: 'on_hand',
+        footer: pageTotal((r) => r.on_hand, fmtInt),
         header: ({ column }) => <DataGridColumnHeader title="On hand" column={column} />,
         cell: ({ row }) => fmtInt(row.original.on_hand),
         size: 100,
@@ -224,6 +250,7 @@ export function ProductPerspectiveGrid({
       },
       {
         accessorKey: 'on_order',
+        footer: pageTotal((r) => r.on_order, fmtInt),
         header: ({ column }) => <DataGridColumnHeader title="On order" column={column} />,
         cell: ({ row }) => fmtInt(row.original.on_order),
         size: 100,
@@ -231,6 +258,7 @@ export function ProductPerspectiveGrid({
       },
       {
         accessorKey: 'committed',
+        footer: pageTotal((r) => r.committed, fmtInt),
         header: ({ column }) => <DataGridColumnHeader title="Committed" column={column} />,
         cell: ({ row }) => fmtInt(row.original.committed),
         size: 100,
@@ -238,6 +266,7 @@ export function ProductPerspectiveGrid({
       },
       {
         accessorKey: 'stock_valuation',
+        footer: pageTotal((r) => r.stock_valuation, fmtMoney),
         header: ({ column }) => <DataGridColumnHeader title="Stock valuation" column={column} />,
         cell: ({ row }) => (
           <span className="text-muted-foreground">
@@ -259,6 +288,7 @@ export function ProductPerspectiveGrid({
       },
       {
         id: 'avg_daily_demand',
+        footer: () => <span className="font-normal text-muted-foreground">{EM_DASH}</span>,
         header: ({ column }) => <DataGridColumnHeader title="Avg daily demand" column={column} />,
         cell: ({ row }) => (
           <span className="text-muted-foreground">{fmtDecimal(row.original.avg_daily_demand)}</span>
@@ -268,6 +298,7 @@ export function ProductPerspectiveGrid({
       },
       {
         id: 'days_of_cover',
+        footer: () => <span className="font-normal text-muted-foreground">{EM_DASH}</span>,
         header: ({ column }) => (
           <div className="inline-flex items-center justify-end gap-1">
             <DataGridColumnHeader title="Runway" column={column} />
@@ -286,6 +317,7 @@ export function ProductPerspectiveGrid({
         // Column header is plain-language "Value"; the underlying field stays
         // `abc_class` (A/B/C) - see lib/health display maps.
         id: 'abc_class',
+        footer: () => <span className="font-normal text-muted-foreground">{EM_DASH}</span>,
         header: ({ column }) => <DataGridColumnHeader title="Value" column={column} />,
         cell: ({ row }) => (
           <div className="flex justify-center">
@@ -300,6 +332,7 @@ export function ProductPerspectiveGrid({
         // Column header is plain-language "Demand"; underlying field stays
         // `xyz_class` (X/Y/Z) - see lib/health display maps.
         id: 'xyz_class',
+        footer: () => <span className="font-normal text-muted-foreground">{EM_DASH}</span>,
         header: ({ column }) => <DataGridColumnHeader title="Demand" column={column} />,
         cell: ({ row }) => (
           <div className="flex justify-center">
@@ -312,6 +345,7 @@ export function ProductPerspectiveGrid({
       },
       {
         id: 'reorder_point',
+        footer: () => <span className="font-normal text-muted-foreground">{EM_DASH}</span>,
         header: ({ column }) => <DataGridColumnHeader title="Reorder point" column={column} />,
         cell: () => <DeferredCell />,
         size: 120,
@@ -319,7 +353,7 @@ export function ProductPerspectiveGrid({
         meta: { headerTitle: 'Reorder point', ...NUM },
       },
     ],
-    [],
+    [pageTotal],
   );
 
   const table = useReactTable({
@@ -362,12 +396,7 @@ export function ProductPerspectiveGrid({
                   Couldn&apos;t load net position. Retry from the toolbar.
                 </div>
               ) : (
-                <>
-                  <DataGridTable />
-                  {!isLoading && rows.length > 0 ? (
-                    <ProductTotalsRow table={table} rows={rows} />
-                  ) : null}
-                </>
+                <DataGridTable />
               )}
               <ScrollBar orientation="horizontal" />
             </ScrollArea>
@@ -386,81 +415,3 @@ export function ProductPerspectiveGrid({
   );
 }
 
-/**
- * Totals footer aligned to the grid's numeric columns. Rendered as a sibling
- * fixed-layout table sharing the grid's visible column order + widths + total
- * size, so it lines up exactly (and follows column resize / visibility toggles).
- * Sums the currently loaded rows; Phase 2 returns server-side grand totals.
- */
-function ProductTotalsRow({
-  table,
-  rows,
-}: {
-  table: ReturnType<typeof useReactTable<M2Row>>;
-  rows: M2Row[];
-}) {
-  const cols = table.getVisibleLeafColumns();
-  const sum = (key: 'net_position' | 'on_hand' | 'on_order' | 'committed') =>
-    rows.reduce((acc, r) => acc + (r[key] ?? 0), 0);
-  const valuation = rows.reduce((acc, r) => acc + (r.stock_valuation ?? 0), 0);
-
-  const cellFor = (id: string) => {
-    switch (id) {
-      case 'sku':
-        return { content: 'Page total', align: 'left' as const, muted: false };
-      case 'net_position':
-        return { content: fmtSigned(sum('net_position')), align: 'right' as const, muted: false };
-      case 'on_hand':
-        return { content: fmtInt(sum('on_hand')), align: 'right' as const, muted: false };
-      case 'on_order':
-        return { content: fmtInt(sum('on_order')), align: 'right' as const, muted: false };
-      case 'committed':
-        return { content: fmtInt(sum('committed')), align: 'right' as const, muted: false };
-      case 'stock_valuation':
-        return { content: fmtMoney(valuation), align: 'right' as const, muted: false };
-      case 'avg_daily_demand':
-      case 'days_of_cover':
-      case 'reorder_point':
-        return { content: EM_DASH, align: 'right' as const, muted: true };
-      case 'abc_class':
-      case 'xyz_class':
-        return { content: EM_DASH, align: 'center' as const, muted: true };
-      default:
-        return null;
-    }
-  };
-
-  return (
-    <table
-      className="w-full table-fixed border-t border-border bg-muted/30 text-sm font-semibold"
-      style={{ width: table.getTotalSize() }}
-      aria-label="Column totals"
-    >
-      <colgroup>
-        {cols.map((c) => (
-          <col key={c.id} style={{ width: c.getSize() }} />
-        ))}
-      </colgroup>
-      <tbody>
-        <tr>
-          {cols.map((c) => {
-            const cell = cellFor(c.id);
-            return (
-              <td
-                key={c.id}
-                className={cn(
-                  'truncate px-4 py-3',
-                  cell?.align === 'right' && 'text-right tabular-nums',
-                  cell?.align === 'center' && 'text-center',
-                  cell?.muted && 'font-normal text-muted-foreground',
-                )}
-              >
-                {cell?.content ?? ''}
-              </td>
-            );
-          })}
-        </tr>
-      </tbody>
-    </table>
-  );
-}

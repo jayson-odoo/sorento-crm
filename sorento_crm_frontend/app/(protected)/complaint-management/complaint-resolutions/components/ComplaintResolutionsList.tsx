@@ -102,7 +102,6 @@ export default function ComplaintResolutionsList() {
           <Badge
             variant={row.original.is_active ? 'success' : 'secondary'}
             size="sm"
-            appearance="ghost"
             className="shrink-0"
           >
             <BadgeDot />

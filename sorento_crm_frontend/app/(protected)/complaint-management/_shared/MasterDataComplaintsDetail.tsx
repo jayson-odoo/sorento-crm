@@ -87,7 +87,6 @@ export function MasterDataComplaintsDetail({
             <Badge
               variant={record.is_active ? 'success' : 'secondary'}
               size="sm"
-              appearance="ghost"
             >
               <BadgeDot />
               {record.is_active ? 'Active' : 'Inactive'}

@@ -164,7 +164,7 @@ export function MatchReportSections({
                 <span className="font-mono">{suggestion.productCode}</span>
                 {named && <span className="text-muted-foreground"> {named}</span>}
               </span>
-              <Badge variant="outline" appearance="ghost" className="shrink-0 font-normal">
+              <Badge variant="outline" className="shrink-0 font-normal">
                 {Math.round(suggestion.similarity * 100)}% alike
               </Badge>
             </div>

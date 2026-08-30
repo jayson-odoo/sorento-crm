@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { Edit, Copy, Trash2, ChevronRight, ExternalLink } from 'lucide-react';
+import { Edit, Copy, Trash2, ExternalLink } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import {
@@ -76,7 +76,6 @@ export function buildBrandColumns(handlers: {
         <Badge
           variant={row.original.is_active ? 'success' : 'secondary'}
           size="sm"
-          appearance="ghost"
           className="shrink-0"
         >
           <BadgeDot />
@@ -166,7 +165,6 @@ export function buildBrandColumns(handlers: {
           >
             <Trash2 className="size-4" />
           </Button>
-          <ChevronRight className="text-muted-foreground/70 size-3.5 shrink-0" />
         </div>
       ),
     },

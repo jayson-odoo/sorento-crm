@@ -199,7 +199,7 @@ export default function AutomationDetailPage() {
                       automation.schedule_type === 'daily' ? (
                         <Badge variant="secondary">Daily</Badge>
                       ) : (
-                        <Badge variant="secondary" appearance="ghost">
+                        <Badge variant="secondary">
                           Manual only
                         </Badge>
                       )

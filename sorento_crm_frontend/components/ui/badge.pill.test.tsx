@@ -60,15 +60,6 @@ describe('Badge (S1-08)', () => {
     expect(container.querySelector('[data-slot="badge-dot"]')).toBeNull();
   });
 
-  it('S1-08: the ghost appearance no longer exists - it renders as light', () => {
-    const { container: ghost } = render(<Badge appearance="ghost">X</Badge>);
-    const { container: light } = render(<Badge appearance="light">X</Badge>);
-
-    const ghostClass = ghost.firstElementChild!.className;
-    expect(ghostClass).toBe(light.firstElementChild!.className);
-    expect(ghostClass).not.toContain('bg-transparent');
-  });
-
   it('S1-08: count badges (shape="circle") render unchanged - circular and solid', () => {
     render(<Badge shape="circle">9</Badge>);
     const badge = screen.getByText('9');

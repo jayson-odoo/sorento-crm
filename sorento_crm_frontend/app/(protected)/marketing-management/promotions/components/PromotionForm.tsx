@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { useRouter } from 'next/navigation';
-import { LoaderCircleIcon, Save } from 'lucide-react';
+import { Info, LoaderCircleIcon, Paperclip, Save } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Form,
@@ -160,10 +160,16 @@ export default function PromotionForm({ promotionId, onSuccess }: PromotionFormP
           </div>
         )}
         <Tabs defaultValue="basic" className="w-full">
-          <TabsList variant="default">
-            <TabsTrigger value="basic">Basic Information</TabsTrigger>
+          <TabsList className="mb-5">
+            <TabsTrigger value="basic">
+              <Info />
+              <span>Basic Information</span>
+            </TabsTrigger>
             {isEditMode && (
-              <TabsTrigger value="attachments">Attachments</TabsTrigger>
+              <TabsTrigger value="attachments">
+                <Paperclip />
+                <span>Attachments</span>
+              </TabsTrigger>
             )}
           </TabsList>
 

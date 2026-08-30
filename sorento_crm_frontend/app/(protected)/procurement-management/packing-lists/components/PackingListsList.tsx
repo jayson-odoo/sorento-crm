@@ -33,7 +33,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { usePackingLists } from '../hooks/usePackingLists';
 import type { PackingList } from '../types/packingList.types';
 import { formatDate, formatDateTimeInMalaysia } from '@/lib/helpers';
-import { formatStatusLabel, getStatusBadgeVariant } from '@/lib/status-badge';
+import { formatStatusLabel } from '@/lib/status-badge';
 import PackingListDeleteDialog from './packing-list-delete-dialog';
 import PackingListBulkDeleteDialog from './PackingListBulkDeleteDialog';
 import ContainerStatusImportDialog from './ContainerStatusImportDialog';
@@ -260,7 +260,7 @@ export default function PackingListsList() {
         cell: ({ row }) => {
           const status = row.original.shipment_status;
           return (
-            <Badge variant={getStatusBadgeVariant(status)}>
+            <Badge status={status}>
               {formatStatusLabel(status)}
             </Badge>
           );

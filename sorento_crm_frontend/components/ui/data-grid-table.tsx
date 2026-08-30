@@ -389,6 +389,73 @@ const ROW_INTERACTIVE_SELECTOR =
   'a,button,input,select,textarea,label,[role="checkbox"],[role="menuitem"],[role="combobox"]';
 
 /**
+ * Click, middle-click and keyboard handling for a row that opens something.
+ *
+ * Shared by BOTH row branches on purpose. The `rowHref` branch had all of this
+ * and the `onRowClick` branch had a bare `onClick` on the `<tr>`, so a Brands
+ * row carrying a "View products" link navigated to products AND set the edit
+ * lightbox's state on the way out - which is why the row read as doing nothing.
+ * The same hole put the row's open action out of reach of the keyboard and left
+ * it with no role for assistive tech to announce.
+ *
+ * `opensUrl` is what separates the two: a row that opens a URL honours the
+ * modifiers an anchor honours and can go to a new tab; a row that opens a
+ * lightbox has no second tab, so a modified click just opens it here.
+ *
+ * No `role` on the `<tr>`. S1 put `role="link"` there and it looked right, but
+ * an explicit role REPLACES the implicit one, so the row stopped being a `row`
+ * to assistive tech and the table lost its grid semantics with it. The
+ * fulfilment board's own tests caught it - `getAllByRole('row')` returned
+ * nothing. `tabIndex` plus Enter and Space is what S1-06 and D3 actually ask
+ * for ("the whole row is the target, keyboard included"), and it costs the
+ * table nothing.
+ */
+function rowOpenProps({
+  opensUrl,
+  open,
+}: {
+  opensUrl: boolean;
+  open: (newTab: boolean) => void;
+}): React.ComponentProps<'tr'> {
+  const fromOwnControl = (target: EventTarget | null) =>
+    Boolean((target as Element | null)?.closest?.(ROW_INTERACTIVE_SELECTOR));
+
+  return {
+    tabIndex: 0,
+    onClick: (event) => {
+      // The PRIMARY button only. A real middle click fires auxclick alone, but a
+      // synthetic dispatch, assistive tech and Firefox autoscroll also deliver a
+      // `click` carrying button 1 - and React's onClick does not filter by
+      // button. Without this the row opened the record in a new tab from
+      // auxclick AND pushed the current tab to the same record from the click,
+      // so the user lost the list they were reading. Opening on both would be
+      // no better: two tabs. auxclick owns the new tab, click owns this one.
+      if (event.button !== 0) return;
+      // A control in a cell keeps its own click.
+      if (fromOwnControl(event.target)) return;
+      // Same modifiers an anchor honours, so the row behaves like the link it claims to be.
+      open(opensUrl && (event.metaKey || event.ctrlKey || event.shiftKey));
+    },
+    onAuxClick: (event) => {
+      if (!opensUrl) return;
+      if (event.button !== 1) return;
+      if (fromOwnControl(event.target)) return;
+      event.preventDefault();
+      open(true);
+    },
+    onKeyDown: (event) => {
+      // Only the ROW's own keystrokes: Space in a cell's text input types a
+      // space, and Space on the selection checkbox ticks the row.
+      if (event.target !== event.currentTarget) return;
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      // Space scrolls the page otherwise, and Enter would submit a surrounding form.
+      event.preventDefault();
+      open(opensUrl && (event.metaKey || event.ctrlKey || event.shiftKey));
+    },
+  };
+}
+
+/**
  * The row when the list gave it a record to open.
  *
  * Split out so `useRouter` is only called by a grid that actually navigates -
@@ -417,40 +484,10 @@ function LinkableBodyRow({
   };
 
   return (
-    <tr
-      {...rowProps}
-      role="link"
-      tabIndex={0}
-      onClick={(event) => {
-        // The PRIMARY button only. A real middle click fires auxclick alone, but a
-        // synthetic dispatch, assistive tech and Firefox autoscroll also deliver a
-        // `click` carrying button 1 - and React's onClick does not filter by
-        // button. Without this the row opened the record in a new tab from
-        // auxclick AND pushed the current tab to the same record from the click,
-        // so the user lost the list they were reading. Opening on both would be
-        // no better: two tabs. auxclick owns the new tab, click owns this one.
-        if (event.button !== 0) return;
-        // A control in a cell keeps its own click.
-        if ((event.target as Element | null)?.closest?.(ROW_INTERACTIVE_SELECTOR)) return;
-        // Same modifiers an anchor honours, so the row behaves like the link it claims to be.
-        openRecord(event.metaKey || event.ctrlKey || event.shiftKey);
-      }}
-      onAuxClick={(event) => {
-        if (event.button !== 1) return;
-        if ((event.target as Element | null)?.closest?.(ROW_INTERACTIVE_SELECTOR)) return;
-        event.preventDefault();
-        openRecord(true);
-      }}
-      onKeyDown={(event) => {
-        // Only the ROW's own keystrokes: Space in a cell's text input types a
-        // space, and Space on the selection checkbox ticks the row.
-        if (event.target !== event.currentTarget) return;
-        if (event.key !== 'Enter' && event.key !== ' ') return;
-        // Space scrolls the page otherwise, and Enter would submit a surrounding form.
-        event.preventDefault();
-        openRecord(event.metaKey || event.ctrlKey || event.shiftKey);
-      }}
-    >
+    // `rowOpenProps` BEFORE the dnd listeners `rowProps` carries: a future
+    // list that is both draggable and openable would otherwise have its
+    // keyboard-drag onKeyDown replaced by this one, silently.
+    <tr {...rowOpenProps({ opensUrl: true, open: openRecord })} {...rowProps}>
       {children}
     </tr>
   );
@@ -504,11 +541,19 @@ function DataGridTableBodyRow<TData>({
     );
   }
 
-  return (
-    <tr {...rowProps} onClick={() => props.onRowClick?.(row.original)}>
-      {children}
-    </tr>
-  );
+  if (props.onRowClick) {
+    // A lightbox, not a URL: there is no second tab to open it in.
+    return (
+      <tr
+        {...rowOpenProps({ opensUrl: false, open: () => props.onRowClick?.(row.original) })}
+        {...rowProps}
+      >
+        {children}
+      </tr>
+    );
+  }
+
+  return <tr {...rowProps}>{children}</tr>;
 }
 
 /**

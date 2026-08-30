@@ -520,7 +520,7 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
         <div className="space-y-1 min-w-0">
           <div className="flex flex-wrap items-center gap-3">
             <h1 className="text-2xl font-bold break-words min-w-0">{promotion.description?.trim() || `Promotion ${promotion.id.slice(0, 8)}`}</h1>
-            <Badge variant={promotion.is_active ? 'success' : 'secondary'} appearance="ghost">
+            <Badge variant={promotion.is_active ? 'success' : 'secondary'}>
               <BadgeDot />
               {promotion.is_active ? 'Active' : 'Inactive'}
             </Badge>

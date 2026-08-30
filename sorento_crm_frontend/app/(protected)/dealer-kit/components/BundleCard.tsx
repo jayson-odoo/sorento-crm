@@ -67,7 +67,7 @@ export function BundleCard({ bundle }: { bundle: ResolvedBundle }) {
 
             <div className="flex shrink-0 items-center gap-2">
               {!component.available && (
-                <Badge variant="warning" appearance="ghost" className="text-[9px]">
+                <Badge variant="warning" className="text-[9px]">
                   Discontinued
                 </Badge>
               )}

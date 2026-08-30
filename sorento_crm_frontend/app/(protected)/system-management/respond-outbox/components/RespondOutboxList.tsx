@@ -31,7 +31,6 @@ import {
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { Eye, Search, X } from 'lucide-react';
-import { getStatusBadgeVariant } from '@/lib/status-badge';
 import { useRespondOutbox } from '../hooks/useRespondOutbox';
 import type { RespondOutboxRow } from '../types/respondOutbox.types';
 
@@ -145,7 +144,7 @@ export default function RespondOutboxList() {
         header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
         cell: ({ row }) => (
           <div className="flex items-center gap-1">
-            <Badge variant={getStatusBadgeVariant(row.original.status)}>{row.original.status}</Badge>
+            <Badge status={row.original.status}>{row.original.status}</Badge>
             {row.original.status_code ? (
               <span className="text-xs text-muted-foreground">{row.original.status_code}</span>
             ) : null}

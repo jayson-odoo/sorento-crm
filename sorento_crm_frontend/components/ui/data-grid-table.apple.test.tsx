@@ -276,7 +276,10 @@ describe('A row is a link (S1-06)', () => {
     render(<Harness rowHref={(row) => `/order-management/orders/${row.id}`} />);
     const row = screen.getByText('Alpha').closest('tr')!;
 
-    expect(row).toHaveAttribute('role', 'link');
+    // No role override: an explicit one REPLACES the implicit `row`, and the
+    // table stops being a table to assistive tech. tabIndex plus Enter and
+    // Space is what S1-06 asks for and costs the grid nothing.
+    expect(row).not.toHaveAttribute('role');
     expect(row).toHaveAttribute('tabindex', '0');
 
     fireEvent.keyDown(row, { key: 'Enter' });
@@ -395,7 +398,8 @@ describe('A row is a link (S1-06)', () => {
     const row = screen.getByText('Alpha').closest('tr')!;
 
     expect(row).not.toHaveClass('cursor-pointer');
-    expect(row).not.toHaveAttribute('role', 'link');
+    expect(row).not.toHaveAttribute('role');
+    expect(row).not.toHaveAttribute('tabindex');
   });
 
   it('S1-06: onRowClick still works for lists that edit in a lightbox', () => {
@@ -406,6 +410,72 @@ describe('A row is a link (S1-06)', () => {
 
     expect(onRowClick).toHaveBeenCalledWith(DATA[0]);
     expect(push).not.toHaveBeenCalled();
+  });
+
+  it('S4-03: a lightbox row announces itself and answers the keyboard', () => {
+    // It had neither. The href branch carried role, tabIndex and Enter/Space
+    // and the onRowClick branch carried a bare onClick, so a Brands row could
+    // not be opened without a mouse and read as plain text to a screen reader.
+    const onRowClick = vi.fn();
+    render(<Harness onRowClick={onRowClick} />);
+    const row = screen.getByText('Alpha').closest('tr')!;
+
+    expect(row).toHaveAttribute('tabindex', '0');
+
+    fireEvent.keyDown(row, { key: 'Enter' });
+    expect(onRowClick).toHaveBeenCalledWith(DATA[0]);
+
+    fireEvent.keyDown(row, { key: ' ' });
+    expect(onRowClick).toHaveBeenCalledTimes(2);
+  });
+
+  it('S4-03: an openable row is still a table row', () => {
+    // `role="link"` on the <tr> replaced the implicit `row`, so the grid was no
+    // longer a table to assistive tech and `getAllByRole('row')` found nothing
+    // - which is how the fulfilment board's own tests reported it.
+    const { unmount } = render(<Harness onRowClick={vi.fn()} />);
+    expect(screen.getAllByRole('row').length).toBeGreaterThan(DATA.length);
+    unmount();
+
+    render(<Harness rowHref={(row) => `/order-management/orders/${row.id}`} />);
+    expect(screen.getAllByRole('row').length).toBeGreaterThan(DATA.length);
+  });
+
+  it('S4-03: a control inside a lightbox row keeps its own click', () => {
+    // The bug this closes: a Brands row carries a "View products" link, and
+    // clicking it navigated AND set the edit lightbox's state on the way out,
+    // so the row looked like it did nothing at all.
+    const onRowClick = vi.fn();
+    render(<Harness onRowClick={onRowClick} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Alpha' }));
+    expect(onRowClick).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByLabelText('Note for Alpha'));
+    expect(onRowClick).not.toHaveBeenCalled();
+
+    // ...and the row itself still opens.
+    fireEvent.click(screen.getByText('Alpha'));
+    expect(onRowClick).toHaveBeenCalledWith(DATA[0]);
+  });
+
+  it('S4-03: a lightbox row has no new tab to open in', () => {
+    // `role="button"`, not `"link"`: a middle click or a cmd-click has nowhere
+    // to go, so it must not try, and must not swallow the plain open either.
+    const onRowClick = vi.fn();
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null);
+    render(<Harness onRowClick={onRowClick} />);
+    const row = screen.getByText('Alpha').closest('tr')!;
+
+    fireEvent(row, new MouseEvent('auxclick', { bubbles: true, cancelable: true, button: 1 }));
+    expect(onRowClick).not.toHaveBeenCalled();
+    expect(open).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByText('Alpha'), { metaKey: true });
+    expect(onRowClick).toHaveBeenCalledWith(DATA[0]);
+    expect(open).not.toHaveBeenCalled();
+
+    open.mockRestore();
   });
 });
 

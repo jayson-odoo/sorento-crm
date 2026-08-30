@@ -33,7 +33,6 @@ import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { Eye, Search, X } from 'lucide-react';
 import { useOutgoingMails } from '../hooks/useOutgoingMails';
 import type { OutgoingMail } from '../types/outgoingMail.types';
-import { getStatusBadgeVariant } from '@/lib/status-badge';
 
 function stripHtml(html: string): string {
   return html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
@@ -156,7 +155,7 @@ export default function OutgoingMailsList() {
         accessorKey: 'status',
         header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
         cell: ({ row }) => (
-          <Badge variant={getStatusBadgeVariant(row.original.status)} appearance="ghost">
+          <Badge status={row.original.status}>
             {row.original.status}
           </Badge>
         ),

@@ -34,7 +34,6 @@ import { ScheduledTaskForm } from '../components/ScheduledTaskForm';
 import { RunLogsTable } from '../components/RunLogsTable';
 import type { FormValues } from '../components/ScheduledTaskForm';
 import { mapFormToUpdateBody } from '../lib/mapFormToUpdateBody';
-import { getStatusBadgeVariant } from '@/lib/status-badge';
 
 type DetailPageProps = {
   params: Promise<{ id: string }>;
@@ -182,7 +181,7 @@ export default function ScheduledTaskDetailPage({ params }: DetailPageProps) {
             <CardHeader>
               <div className="flex items-center justify-between">
                 <CardTitle>Task config</CardTitle>
-                <Badge variant={getStatusBadgeVariant(task.last_status ?? '')}>
+                <Badge status={task.last_status ?? ''}>
                   {task.last_status ?? '-'}
                 </Badge>
               </div>

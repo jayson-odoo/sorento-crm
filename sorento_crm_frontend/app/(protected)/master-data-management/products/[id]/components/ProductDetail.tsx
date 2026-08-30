@@ -142,7 +142,6 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
             <h1 className="text-2xl font-bold break-words min-w-0">{product.product_name}</h1>
             <Badge
               variant={product.is_active ? 'success' : 'secondary'}
-              appearance="ghost"
             >
               {product.is_active ? 'Active' : 'Inactive'}
             </Badge>
@@ -209,7 +208,6 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
                 <p className="text-sm text-muted-foreground">Status</p>
                 <Badge
                   variant={product.is_active ? 'success' : 'secondary'}
-                  appearance="ghost"
                 >
                   {product.is_active ? 'Active' : 'Inactive'}
                 </Badge>
@@ -351,7 +349,7 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
 
                   <div>
                     <h3 className="font-semibold mb-2">Pricing Summary</h3>
-                    <div className="grid grid-cols-3 gap-4 text-sm">
+                    <div className="grid grid-cols-1 gap-x-6 gap-y-4 text-sm sm:grid-cols-3">
                       <div>
                         <p className="text-muted-foreground">List Price</p>
                         <p className="font-medium text-lg">

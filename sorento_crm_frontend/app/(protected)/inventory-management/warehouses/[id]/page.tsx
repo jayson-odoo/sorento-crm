@@ -3,7 +3,7 @@
 import { use, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { MoveLeft, Edit, Trash2 } from 'lucide-react';
+import { CalendarRange, Edit, Info, MoveLeft, Trash2 } from 'lucide-react';
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -158,7 +158,7 @@ export default function WarehouseDetailPage({
                 <h1 className="text-2xl font-bold break-words">
                   {warehouse.warehouse_name || warehouse.warehouse_code}
                 </h1>
-                <Badge variant={warehouse.is_active ? 'success' : 'secondary'} appearance="ghost">
+                <Badge variant={warehouse.is_active ? 'success' : 'secondary'}>
                   {warehouse.is_active ? 'Active' : 'Inactive'}
                 </Badge>
               </div>
@@ -205,9 +205,15 @@ export default function WarehouseDetailPage({
               field that spans both columns there must span both here, or it lands in a
               different row and column between the two views. */}
           <Tabs defaultValue="basic">
-            <TabsList variant="default">
-              <TabsTrigger value="basic">Basic Information</TabsTrigger>
-              <TabsTrigger value="planning">Planning</TabsTrigger>
+            <TabsList>
+              <TabsTrigger value="basic">
+                <Info />
+                <span>Basic Information</span>
+              </TabsTrigger>
+              <TabsTrigger value="planning">
+                <CalendarRange />
+                <span>Planning</span>
+              </TabsTrigger>
             </TabsList>
 
             <TabsContent value="basic" className="mt-6">
@@ -221,7 +227,7 @@ export default function WarehouseDetailPage({
                     {warehouse.location || '-'}
                   </Field>
                   <Field label="Active Status" className="md:col-span-2">
-                    <Badge variant={warehouse.is_active ? 'success' : 'secondary'} appearance="ghost">
+                    <Badge variant={warehouse.is_active ? 'success' : 'secondary'}>
                       {warehouse.is_active ? 'Active' : 'Inactive'}
                     </Badge>
                   </Field>
@@ -235,16 +241,12 @@ export default function WarehouseDetailPage({
                   <Field label="Available for planning" className="md:col-span-2">
                     <Badge
                       variant={warehouse.counts_as_available === false ? 'secondary' : 'success'}
-                      appearance="ghost"
                     >
                       {warehouse.counts_as_available === false ? 'Excluded' : 'Counted'}
                     </Badge>
                   </Field>
                   <Field label="Fulfilment planning" className="md:col-span-2">
-                    <Badge
-                      variant={warehouse.fulfilment_planning ? 'success' : 'secondary'}
-                      appearance="ghost"
-                    >
+                    <Badge variant={warehouse.fulfilment_planning ? 'success' : 'secondary'}>
                       {warehouse.fulfilment_planning ? 'On' : 'Off'}
                     </Badge>
                   </Field>

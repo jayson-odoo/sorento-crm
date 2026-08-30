@@ -196,7 +196,7 @@ const UserProfile = ({
               <dt>Status:</dt>
               <dd>
                 <div className="inline-flex gap-2.5">
-                  <Badge variant={statusVariant} appearance="ghost">
+                  <Badge variant={statusVariant}>
                     <BadgeDot />
                     {statusPros.label}
                   </Badge>

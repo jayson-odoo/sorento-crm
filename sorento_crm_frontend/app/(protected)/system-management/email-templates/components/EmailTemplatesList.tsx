@@ -61,7 +61,7 @@ export default function EmailTemplatesList() {
         accessorKey: 'code',
         header: ({ column }) => <DataGridColumnHeader title="Code" column={column} />,
         cell: ({ row }) => (
-          <Badge variant="secondary" appearance="ghost">
+          <Badge variant="secondary">
             {row.original.code}
           </Badge>
         ),

@@ -200,11 +200,11 @@ function ModalityPanel({
         <div className="min-w-0">
           <p className="font-medium">{label}</p>
           {item.is_allowed ? (
-            <Badge variant="success" appearance="ghost" className="mt-1 font-normal">
+            <Badge variant="success" className="mt-1 font-normal">
               Enabled
             </Badge>
           ) : (
-            <Badge variant="secondary" appearance="ghost" className="mt-1 font-normal">
+            <Badge variant="secondary" className="mt-1 font-normal">
               Not enabled
             </Badge>
           )}

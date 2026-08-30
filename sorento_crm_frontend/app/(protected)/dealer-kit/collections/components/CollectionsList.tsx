@@ -88,7 +88,7 @@ export function CollectionsList() {
         accessorKey: 'memberCount',
         header: ({ column }) => <DataGridColumnHeader title="Products" column={column} />,
         cell: ({ row }) => (
-          <Badge variant="outline" appearance="ghost" className="font-normal">
+          <Badge variant="outline" className="font-normal">
             {row.original.memberCount}
           </Badge>
         ),

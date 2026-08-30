@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import {
   ColumnDef,
@@ -115,7 +115,16 @@ export default function PromotionsList() {
     advancedFilter: advancedFilter ?? undefined,
   });
 
+  // Skip the first run. A filter CHANGE should send the reader back to page 1,
+  // but on mount this effect fires anyway and stamps pageIndex 0 over the page
+  // `useListStateFromUrl` just restored, so Back from page 3 landed on page 1
+  // and the whole round trip was silently undone.
+  const filtersMounted = useRef(false);
   useEffect(() => {
+    if (!filtersMounted.current) {
+      filtersMounted.current = true;
+      return;
+    }
     setPagination((p) => ({ ...p, pageIndex: 0 }));
   }, [advancedFilter, filterStatus, filterAccessLevel, filterAttachmentState, expiryNotifyBatchId]);
 
@@ -245,7 +254,7 @@ export default function PromotionsList() {
         accessorKey: 'is_active',
         header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
         cell: ({ row }) => (
-          <Badge variant={row.original.is_active ? 'success' : 'secondary'} appearance="ghost">
+          <Badge variant={row.original.is_active ? 'success' : 'secondary'}>
             <BadgeDot />
             {row.original.is_active ? 'Active' : 'Inactive'}
           </Badge>

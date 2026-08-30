@@ -1,7 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { Edit } from 'lucide-react';
+import { Banknote, Edit, Info, Truck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -11,7 +11,6 @@ import DetailActions from '@/components/common/DetailActions';
 import { useOrder, ordersPagerQuery } from '../hooks/useOrders';
 import { useOrderActions } from '../actions';
 import { formatDate } from '@/lib/helpers';
-import { getStatusBadgeVariant } from '@/lib/status-badge';
 import OrderLinesCard from './OrderLinesCard';
 import OrderFulfilledComplaintsCard from './OrderFulfilledComplaintsCard';
 
@@ -62,7 +61,7 @@ export default function OrderDetail({ orderId, listSearch }: OrderDetailProps) {
           <div className="flex flex-wrap items-center gap-3">
             <h1 className="text-2xl font-bold break-words min-w-0">{order.order_number}</h1>
             {order.order_status && (
-              <Badge variant={getStatusBadgeVariant(order.order_status.status_name)}>
+              <Badge status={order.order_status.status_name}>
                 {order.order_status.status_name}
               </Badge>
             )}
@@ -95,10 +94,21 @@ export default function OrderDetail({ orderId, listSearch }: OrderDetailProps) {
       </div>
 
       <Tabs defaultValue="information" className="w-full">
-        <TabsList variant="line" className="mb-4 w-full justify-start overflow-x-auto">
-          <TabsTrigger value="information">Delivery order information</TabsTrigger>
-          <TabsTrigger value="financial">Financial summary</TabsTrigger>
-          <TabsTrigger value="delivery">Delivery &amp; tracking</TabsTrigger>
+        {/* `overflow-x-auto` is the list's own since S1; the icons are what make
+            a scrolled strip readable when a label is half off the edge. */}
+        <TabsList className="mb-4">
+          <TabsTrigger value="information">
+            <Info />
+            <span>Delivery order information</span>
+          </TabsTrigger>
+          <TabsTrigger value="financial">
+            <Banknote />
+            <span>Financial summary</span>
+          </TabsTrigger>
+          <TabsTrigger value="delivery">
+            <Truck />
+            <span>Delivery &amp; tracking</span>
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="information" className="mt-0 space-y-6 focus-visible:outline-none">
@@ -144,7 +154,7 @@ export default function OrderDetail({ orderId, listSearch }: OrderDetailProps) {
                   <p className="text-sm text-muted-foreground">Delivery Order Status</p>
                   <p className="font-medium">
                     {order.order_status ? (
-                      <Badge variant={getStatusBadgeVariant(order.order_status.status_name)}>{order.order_status.status_name}</Badge>
+                      <Badge status={order.order_status.status_name}>{order.order_status.status_name}</Badge>
                     ) : (
                       '-'
                     )}

@@ -17,7 +17,6 @@ import { Badge } from '@/components/ui/badge';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { useScheduledTaskRuns } from '../hooks/useScheduledTasks';
 import type { ScheduledTaskRun as RunType } from '../types/scheduledTask.types';
-import { getStatusBadgeVariant } from '@/lib/status-badge';
 
 interface RunLogsTableProps {
   taskId: string;
@@ -52,7 +51,7 @@ export function RunLogsTable({ taskId }: RunLogsTableProps) {
         accessorKey: 'status',
         header: 'Status',
         cell: ({ row }) => (
-          <Badge variant={getStatusBadgeVariant(row.original.status)}>
+          <Badge status={row.original.status}>
             {row.original.status}
           </Badge>
         ),
