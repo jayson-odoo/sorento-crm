@@ -126,6 +126,7 @@ export function buildCompanyColumns(handlers: {
               onEdit?.(row.original);
             }}
             title="Edit"
+            aria-label="Edit"
           >
             <Edit className="size-4" />
           </Button>
@@ -138,6 +139,7 @@ export function buildCompanyColumns(handlers: {
               onManageAccess?.(row.original);
             }}
             title="Manage access"
+            aria-label="View members"
           >
             <Users className="size-4" />
           </Button>
@@ -150,6 +152,7 @@ export function buildCompanyColumns(handlers: {
               onDelete?.(row.original);
             }}
             title="Delete"
+            aria-label="Delete"
           >
             <Trash2 className="size-4" />
           </Button>

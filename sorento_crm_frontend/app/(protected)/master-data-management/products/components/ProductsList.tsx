@@ -784,6 +784,7 @@ const ProductsList = () => {
                       setSearchInput('');
                       setSearch(undefined);
                     }}
+                    aria-label="Clear search"
                   >
                     <X />
                   </Button>

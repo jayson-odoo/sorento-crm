@@ -175,6 +175,7 @@ export default function StatusGraphsClient() {
                             size="sm"
                             title="Edit"
                             onClick={() => { setEditingStatus(status); setStatusFormOpen(true); }}
+                            aria-label="Edit"
                           >
                             <Edit className="size-4" />
                           </Button>
@@ -183,6 +184,7 @@ export default function StatusGraphsClient() {
                             variant="ghost"
                             size="sm"
                             title={status.is_system ? 'System statuses cannot be deleted' : 'Delete'}
+                            aria-label={status.is_system ? 'System statuses cannot be deleted' : 'Delete status'}
                             disabled={status.is_system}
                             onClick={() => setDeletingStatus(status)}
                           >
@@ -283,6 +285,7 @@ export default function StatusGraphsClient() {
                               variant="ghost"
                               size="sm"
                               title={isAuto ? 'Automatic transitions are configured in code' : 'Edit'}
+                              aria-label={isAuto ? 'Automatic transitions are configured in code' : 'Edit transition'}
                               disabled={isAuto}
                               onClick={() => {
                                 setEditingTransition(transition);
@@ -296,6 +299,7 @@ export default function StatusGraphsClient() {
                               variant="ghost"
                               size="sm"
                               title={isAuto ? 'Automatic transitions are configured in code' : 'Delete'}
+                              aria-label={isAuto ? 'Automatic transitions are configured in code' : 'Delete transition'}
                               disabled={isAuto}
                               onClick={() => setDeletingTransition(transition)}
                             >

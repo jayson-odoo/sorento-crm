@@ -680,6 +680,7 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
                     variant="dim"
                     className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
                     onClick={() => setProductCodeSearch('')}
+                    aria-label="Clear search"
                   >
                     <X className="size-4" />
                   </Button>

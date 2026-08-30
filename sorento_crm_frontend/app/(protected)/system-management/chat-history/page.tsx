@@ -225,6 +225,7 @@ export default function ChatHistoryPage() {
                     setSearchQuery('');
                     resetPage();
                   }}
+                  aria-label="Clear search"
                 >
                   <X />
                 </Button>

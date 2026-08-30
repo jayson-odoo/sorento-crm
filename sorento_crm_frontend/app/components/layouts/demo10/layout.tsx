@@ -52,7 +52,7 @@ const Demo10Layout = ({ children }: { children: ReactNode }) => {
 
           <div className="flex flex-col grow lg:rounded-s-xl bg-background border border-input lg:ms-(--sidebar-width)">
             <div className="flex flex-col grow kt-scrollable-y-auto lg:[scrollbar-width:auto] pt-5">
-              <main className="grow" role="content">
+              <main className="grow">
                 {!pathname.includes('/user-management') && (
                   <Toolbar>
                     <ToolbarHeading />

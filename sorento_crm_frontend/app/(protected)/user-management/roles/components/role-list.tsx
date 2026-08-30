@@ -227,7 +227,7 @@ const RoleList = () => {
         cell: ({ row }) => (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button className="h-7 w-7" mode="icon" variant="ghost">
+              <Button className="h-7 w-7" mode="icon" variant="ghost" aria-label="More actions">
                 <Ellipsis />
               </Button>
             </DropdownMenuTrigger>
@@ -352,6 +352,7 @@ const RoleList = () => {
                       variant="dim"
                       className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
                       onClick={() => handleSearchChange('')}
+                      aria-label="Clear search"
                     >
                       <X />
                     </Button>

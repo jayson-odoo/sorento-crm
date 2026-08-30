@@ -232,7 +232,7 @@ export default function AttachmentPreviewModal({
                       }
                     }}
                     aria-label="Zoom percentage"
-                    className="w-8 bg-transparent text-right text-xs tabular-nums text-muted-foreground outline-none"
+                    className="w-8 bg-transparent text-right text-xs tabular-nums text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
                   />
                   <span className="pr-1 text-xs text-muted-foreground">%</span>
                 </div>

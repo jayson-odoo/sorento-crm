@@ -47,7 +47,7 @@ export function Demo9Layout({ children }: { children: ReactNode }) {
 
         {!isMobile && <Navbar />}
 
-        <main className="flex flex-col grow pt-7" role="content">
+        <main className="flex flex-col grow pt-7">
           {!pathname.includes('/public-profile/') &&
             !pathname.includes('/user-management') &&
             !pathname.includes('/store-client') && (

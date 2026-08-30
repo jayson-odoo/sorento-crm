@@ -57,6 +57,7 @@ function Code({
           variant="ghost"
           className="h-4 w-4 p-0 opacity-60 hover:opacity-100"
           onClick={() => copyToClipboard(textToCopy)}
+          aria-label="Copy to clipboard"
         >
           {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
         </Button>

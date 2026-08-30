@@ -169,6 +169,7 @@ export default function SLAPoliciesList() {
                     variant="dim"
                     className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
                     onClick={() => setSearchQuery('')}
+                    aria-label="Clear search"
                   >
                     <X />
                   </Button>

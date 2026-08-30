@@ -140,6 +140,7 @@ export default function OutgoingMailsList() {
                     setContentMail(mail);
                   }}
                   title="View full content"
+                  aria-label="View full content"
                 >
                   <Eye className="size-4" />
                 </Button>
@@ -221,6 +222,7 @@ export default function OutgoingMailsList() {
                     variant="dim"
                     className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
                     onClick={() => setQuery('')}
+                    aria-label="Clear search"
                   >
                     <X />
                   </Button>

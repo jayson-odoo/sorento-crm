@@ -44,7 +44,7 @@ export function Demo3Layout({ children }: { children: ReactNode }) {
 
           <div className="flex grow rounded-b-xl bg-background border-x border-b border-border lg:mt-(--navbar-height) mx-5 lg:ms-(--sidebar-width) mb-5">
             <div className="flex flex-col grow kt-scrollable-y lg:[scrollbar-width:auto] pt-7 lg:[&_[data-slot=container]]:pe-2">
-              <main className="grow" role="content">
+              <main className="grow">
                 {pathname !== '/' &&
                   !pathname.includes('/user-management') &&
                   !pathname.includes('/store-client') && (

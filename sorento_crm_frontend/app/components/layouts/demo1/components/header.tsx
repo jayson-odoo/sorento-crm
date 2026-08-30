@@ -87,7 +87,7 @@ export function Header() {
                 onOpenChange={setIsSidebarSheetOpen}
               >
                 <SheetTrigger asChild>
-                  <Button variant="ghost" mode="icon">
+                  <Button variant="ghost" mode="icon" aria-label="Toggle sidebar">
                     <Menu className="text-muted-foreground/70" />
                   </Button>
                 </SheetTrigger>
@@ -151,6 +151,7 @@ export function Header() {
                     mode="icon"
                     shape="circle"
                     className="size-9 hover:bg-primary/10 hover:[&_svg]:text-primary"
+                    aria-label="Notifications"
                   >
                     <Bell className="size-4.5!" />
                   </Button>
@@ -164,6 +165,7 @@ export function Header() {
                       mode="icon"
                       shape="circle"
                       className="size-9 hover:bg-primary/10 hover:[&_svg]:text-primary"
+                      aria-label="Switch layout"
                     >
                       <LayoutGrid className="size-4.5!" />
                     </Button>

@@ -187,6 +187,7 @@ export default function AccessAgentsList() {
                       setSearchQuery('');
                       setPagination((p) => ({ ...p, pageIndex: 0 }));
                     }}
+                    aria-label="Clear search"
                   >
                     <X />
                   </Button>

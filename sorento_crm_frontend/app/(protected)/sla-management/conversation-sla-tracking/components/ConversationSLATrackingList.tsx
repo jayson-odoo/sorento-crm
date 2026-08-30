@@ -568,6 +568,7 @@ export default function ConversationSLATrackingList() {
                       setSearchQuery('');
                       setPagination((prev) => ({ ...prev, pageIndex: 0 }));
                     }}
+                    aria-label="Clear search"
                   >
                     <X />
                   </Button>

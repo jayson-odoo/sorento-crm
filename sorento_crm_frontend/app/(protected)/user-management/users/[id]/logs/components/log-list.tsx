@@ -284,6 +284,7 @@ const LogList = () => {
                       setSearchInput('');
                       setSearchQuery('');
                     }}
+                    aria-label="Clear search"
                   >
                     <X />
                   </Button>

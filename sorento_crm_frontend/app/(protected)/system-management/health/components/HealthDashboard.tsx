@@ -200,7 +200,7 @@ function ScheduledTasksCard({ data }: { data: ScheduledTasksHealth | null }) {
                 <Link
                   href="/system-management/scheduled-tasks"
                   data-testid="health-scheduled-overdue-link"
-                  className="w-fit cursor-pointer text-2xl font-semibold text-destructive underline-offset-4 hover:underline focus-visible:underline focus-visible:outline-none"
+                  className="w-fit cursor-pointer text-2xl font-semibold text-destructive underline-offset-4 hover:underline focus-visible:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
                 >
                   {data.overdue}
                 </Link>
@@ -214,7 +214,7 @@ function ScheduledTasksCard({ data }: { data: ScheduledTasksHealth | null }) {
                 <Link
                   href="/system-management/scheduled-tasks"
                   data-testid="health-scheduled-failed-link"
-                  className="w-fit cursor-pointer text-2xl font-semibold text-destructive underline-offset-4 hover:underline focus-visible:underline focus-visible:outline-none"
+                  className="w-fit cursor-pointer text-2xl font-semibold text-destructive underline-offset-4 hover:underline focus-visible:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
                 >
                   {data.last_run_failed}
                 </Link>
@@ -282,7 +282,7 @@ function IntegrationsCard({
                         <Link
                           href={integrationFailedHref(c.channel, range)}
                           data-testid={`health-integration-failed-link-${c.channel}`}
-                          className="cursor-pointer font-medium text-destructive underline-offset-2 hover:underline focus-visible:underline focus-visible:outline-none"
+                          className="cursor-pointer font-medium text-destructive underline-offset-2 hover:underline focus-visible:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
                           title={`View ${c.failed} failed ${c.channel} log(s) in the selected window`}
                         >
                           {c.failed}
@@ -318,7 +318,7 @@ function IntegrationsCard({
                                 href={failureCauseHref(c.channel, f, range)}
                                 data-testid={`health-integration-failure-link-${c.channel}-${f.status_code ?? 'none'}`}
                                 title={`View the ${f.count} log(s) for this cause\n\n${f.sample_message}`}
-                                className="flex items-start gap-2 rounded px-1 py-0.5 text-xs text-muted-foreground hover:bg-muted focus-visible:bg-muted focus-visible:outline-none"
+                                className="flex items-start gap-2 rounded px-1 py-0.5 text-xs text-muted-foreground hover:bg-muted focus-visible:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                               >
                                 <Badge variant="destructive" appearance="light" size="sm">
                                   {f.count}×

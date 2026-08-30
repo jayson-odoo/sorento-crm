@@ -576,7 +576,12 @@ export function RichTextEditor({
   if (!editor) return null;
 
   return (
-    <div className={cn('rounded-md border bg-background', className)}>
+    <div
+      className={cn(
+        'rounded-md border bg-background focus-within:ring-2 focus-within:ring-ring',
+        className,
+      )}
+    >
       <Toolbar editor={editor} />
       <EditorContent editor={editor} />
     </div>

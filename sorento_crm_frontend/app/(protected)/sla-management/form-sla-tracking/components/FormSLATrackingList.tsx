@@ -421,6 +421,7 @@ export default function FormSLATrackingList() {
                       setSearchQuery('');
                       setPagination((prev) => ({ ...prev, pageIndex: 0 }));
                     }}
+                    aria-label="Clear search"
                   >
                     <X />
                   </Button>

@@ -334,6 +334,7 @@ export default function AccessAgentFormModal({
                                   className="text-destructive hover:text-destructive"
                                   disabled={isLoading}
                                   onClick={() => setAssignmentGroups(assignmentGroups.filter((_, i) => i !== groupIdx))}
+                                  aria-label="Remove agent"
                                 >
                                   <Trash2 className="size-4" />
                                 </Button>
@@ -425,6 +426,7 @@ export default function AccessAgentFormModal({
                                         next[groupIdx].rows = next[groupIdx].rows.filter((_, i) => i !== rowIdx);
                                         setAssignmentGroups(next);
                                       }}
+                                      aria-label="Remove agent"
                                     >
                                       <Trash2 className="size-4" />
                                     </Button>

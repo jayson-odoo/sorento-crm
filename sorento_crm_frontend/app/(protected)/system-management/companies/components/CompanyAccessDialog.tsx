@@ -103,7 +103,7 @@ function ConfirmRemoveButton({
   return (
     <AlertDialog open={open} onOpenChange={setOpen}>
       <AlertDialogTrigger asChild>
-        <Button mode="icon" variant="ghost" size="sm" title="Remove" disabled={disabled}>
+        <Button mode="icon" variant="ghost" size="sm" title="Remove" disabled={disabled} aria-label="Remove">
           <Trash2 className="size-4" />
         </Button>
       </AlertDialogTrigger>

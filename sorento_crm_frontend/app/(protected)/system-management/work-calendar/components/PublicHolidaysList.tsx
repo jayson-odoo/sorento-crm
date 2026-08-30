@@ -77,6 +77,7 @@ export default function PublicHolidaysList() {
                 setSelectedHoliday(row.original);
                 setIsFormOpen(true);
               }}
+              aria-label="Edit"
             >
               <Edit2 className="size-4" />
             </Button>
@@ -89,6 +90,7 @@ export default function PublicHolidaysList() {
                 setSelectedHoliday(row.original);
                 setIsDeleteOpen(true);
               }}
+              aria-label="Delete holiday"
             >
               <Trash2 className="size-4 text-destructive" />
             </Button>

@@ -140,6 +140,7 @@ export default function SmartLinkageList() {
                   });
                 }}
                 disabled={retryMutation.isPending}
+                aria-label="Refresh"
               >
                 <RefreshCw className="size-4" />
               </Button>
@@ -203,6 +204,7 @@ export default function SmartLinkageList() {
                     variant="dim"
                     className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
                     onClick={() => setSearchQuery('')}
+                    aria-label="Clear search"
                   >
                     <X />
                   </Button>

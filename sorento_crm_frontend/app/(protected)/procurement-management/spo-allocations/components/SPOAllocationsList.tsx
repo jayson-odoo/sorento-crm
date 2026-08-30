@@ -396,6 +396,7 @@ export default function SPOAllocationsList() {
                       variant="dim"
                       className="absolute end-1 top-1/2 -translate-y-1/2 h-6 w-6"
                       onClick={() => setSearchQuery('')}
+                      aria-label="Clear search"
                     >
                       <X className="size-3.5" />
                     </Button>
@@ -418,6 +419,7 @@ export default function SPOAllocationsList() {
                       onClick={expandAll}
                       disabled={groupedData.length === 0}
                       title="Expand all"
+                      aria-label="Expand row"
                     >
                       <ChevronsUpDown className="size-4" />
                     </Button>
@@ -428,6 +430,7 @@ export default function SPOAllocationsList() {
                       onClick={collapseAll}
                       disabled={expandedGroups.size === 0}
                       title="Collapse all"
+                      aria-label="Collapse row"
                     >
                       <ChevronsDownUp className="size-4" />
                     </Button>
