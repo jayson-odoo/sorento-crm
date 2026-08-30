@@ -790,7 +790,7 @@ export default function RespondChatList({
   let lastDateKey = '';
 
   return (
-    <div className="relative flex flex-col">
+    <div className="relative flex min-h-0 flex-1 flex-col">
       <div className="flex items-center gap-3 rounded-t-md border border-b-0 bg-[#f0f2f5] dark:bg-[#202c33] px-3 py-2">
         <div className="flex size-9 items-center justify-center rounded-full bg-emerald-600 text-sm font-semibold text-white">
           {contactInitial}

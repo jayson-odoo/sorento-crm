@@ -67,6 +67,25 @@ export function activeMentionFragment(
   return { start: at, query };
 }
 
+/**
+ * The suggestion's name with the typed fragment in bold. "zhi" legitimately
+ * matches both "Chong Zhi Xiu" and "Tay Zhi Yang"; showing WHERE it matched is
+ * what tells the reader to keep typing rather than pick the first row.
+ */
+function MatchedName({ name, query }: { name: string; query: string }) {
+  const q = query.trim();
+  if (!q) return <>{name}</>;
+  const at = name.toLowerCase().indexOf(q.toLowerCase());
+  if (at < 0) return <>{name}</>;
+  return (
+    <>
+      {name.slice(0, at)}
+      <strong className="font-semibold">{name.slice(at, at + q.length)}</strong>
+      {name.slice(at + q.length)}
+    </>
+  );
+}
+
 export default function InternalCommentComposer({
   onSubmit,
   disabled = false,
@@ -273,7 +292,7 @@ export default function InternalCommentComposer({
                 }`}
                 title={displayNameOf(user)}
               >
-                {displayNameOf(user)}
+                <MatchedName name={displayNameOf(user)} query={debouncedQuery ?? ''} />
               </button>
             ))}
             {hiddenCount > 0 && (
