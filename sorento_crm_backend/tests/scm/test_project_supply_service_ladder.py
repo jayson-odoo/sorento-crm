@@ -1596,6 +1596,16 @@ def test_a_late_spo_is_inside_the_groups_net_and_outside_what_the_line_may_draw(
 
     Before this ruling the same fixture proposed `group_take 40` off water arriving five
     days late, which is a promise the goods cannot keep.
+
+    WHAT LADDER V7.1 STEP 3 DOES WITH IT INSTEAD (S4 fix pass, 30 Aug 2026). Question 1
+    still offers nothing - that half of the ruling is untouched - but the document does not
+    then vanish: step 3 takes it WHOLE and says so, because arriving 5 days late beats a
+    fresh purchase landing 60 days late (R32, the captain on AC-S4-2b: "if buy, it is going
+    to arrive even later"). It reaches step 3 through the term this fixture is the smallest
+    case of - what the walk has ALREADY GIVEN THIS ASKER on the document, which is the whole
+    40 here and nobody else's to lend. Counting only `free` read 0 and bought the lot, which
+    is the SO414244 defect. The component names the document, no donor and no order-back:
+    the line is taking what it already had.
     """
     with blank_session() as db:
         company_id, _eling, project, product = _world(db)
@@ -1614,9 +1624,14 @@ def test_a_late_spo_is_inside_the_groups_net_and_outside_what_the_line_may_draw(
 
     # The net counts the water: 40 coming against this line's own 40 owed.
     assert net == Decimal("0")
-    # And not a unit of it is drawn, because it lands after the required date.
-    assert [c["rung"] for c in components] == ["buy"]
-    assert components[0]["qty"] == "40"
+    # Question 1 draws not a unit of it, because it lands after the required date...
+    assert "group_take" not in [c["rung"] for c in components]
+    # ...and step 3 takes the whole document rather than buying against a later date (R32).
+    assert [(c["kind"], c["rung"], c["qty"]) for c in components] == [
+        ("borrow", "supply_borrow", "40")
+    ]
+    assert components[0]["arrival_date"] == REQUIRED_DATE + timedelta(days=5)
+    assert components[0]["donor_so_number"] is None, "nobody is owed it back"
 
 
 def test_a_past_dated_promise_is_still_inside_the_groups_net():

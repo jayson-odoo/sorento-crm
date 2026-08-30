@@ -7,6 +7,10 @@ Two directions on one surface:
   a batch is not a transaction (AC-AC-15), so a non-2xx would tell the ESB
   nothing about which of 10,000 records landed.
 
+* **Delete** (`POST /external/ingest/{entity}/deletions`) - the ESB says a
+  record is gone upstream. A record something still points at is taken out of
+  use rather than removed; see ``deletion_service``.
+
 * **Read** (`POST /external/read/{entity}`) - the ESB fetches current values to
   render before/after diffs for human approval (AC-AC-19). POST rather than GET
   because the request carries a batch of source references, and a few hundred
@@ -16,6 +20,13 @@ Permissions reuse the existing per-entity slugs. Writing a warehouse through
 the ESB is the same act as writing one through the UI, so it is the same
 permission -- an integration that may not edit warehouses must not gain the
 ability by coming through a different door.
+
+Both calls are **company-anchored** (group A1): a top-level ``companyCode``, or
+the calling integration's binding, names the one company the request writes,
+adopts and reads inside. The guard runs after the body has parsed and after the
+batch cap, because a caller cannot supply an anchor for a request that never
+parsed, and telling it about the anchor before telling it the batch is too big
+would cost it a second round trip. See ``company_anchor.py``.
 """
 from __future__ import annotations
 
@@ -24,11 +35,18 @@ import logging
 from fastapi import APIRouter, Body, Depends, Path, Query, status
 from sqlalchemy.orm import Session
 
+from app.api.v1.external.company_anchor import resolve_company_anchor
 from app.api.v1.external.permissions import require_external_permission_for_path
 from app.dependencies import get_external_api_user
 from app.database import get_db
 from app.schemas.common import MAX_PAGE_LIMIT
 from app.services.error_handler import AppException
+from app.services.deletion_service import DeletionService
+from app.services.document_ingest_service import (
+    DOCUMENT_ENTITIES,
+    DocumentIngestService,
+    DocumentReadService,
+)
 from app.services.master_ingest_service import (
     ENTITY_SPECS,
     MasterIngestService,
@@ -49,6 +67,11 @@ INGEST_PERMISSIONS = {
     "suppliers": "procurement.suppliers.edit",
     "customers": "order_management.customers.edit",
     "products": "master_data.products.edit",
+    "sales_agents": "master_data.sales_agents.edit",
+    # Documents (group A3). Pushing an order through the ESB is the same act as
+    # editing one on the SCM screen, so it is the same slug.
+    "sales_orders": "scm.sales_orders.edit",
+    "purchase_orders": "scm.purchase_orders.edit",
 }
 READ_PERMISSIONS = {
     "product_categories": "master_data.product_categories.view",
@@ -57,6 +80,25 @@ READ_PERMISSIONS = {
     "suppliers": "procurement.suppliers.view",
     "customers": "order_management.customers.view",
     "products": "master_data.products.view",
+    "sales_agents": "master_data.sales_agents.view",
+    "sales_orders": "scm.sales_orders.view",
+    "purchase_orders": "scm.purchase_orders.view",
+}
+# Deleting through the ESB is its own act, so it takes its own slug on top of the
+# ingest guard the router already carries (group A4 mounts the route). Declared
+# here rather than there because this is the one file that says what an entity
+# name means on this surface, and three maps that can disagree about the entity
+# list is how a hole opens.
+DELETE_PERMISSIONS = {
+    "product_categories": "master_data.product_categories.delete",
+    "units_of_measure": "master_data.units_of_measure.delete",
+    "warehouses": "inventory.warehouses.delete",
+    "suppliers": "procurement.suppliers.delete",
+    "customers": "order_management.customers.delete",
+    "products": "master_data.products.delete",
+    "sales_agents": "master_data.sales_agents.delete",
+    "sales_orders": "scm.sales_orders.delete",
+    "purchase_orders": "scm.purchase_orders.delete",
 }
 
 # A batch cap the ESB can design against. Exceeding it errors rather than
@@ -65,13 +107,19 @@ READ_PERMISSIONS = {
 MAX_BATCH = 1000
 
 
+# Masters and documents on one surface. The set is built from both registries
+# rather than written out, so an entity that exists in only one of them cannot
+# become reachable here by being spelled correctly in this file.
+SUPPORTED_ENTITIES = set(ENTITY_SPECS) | set(DOCUMENT_ENTITIES)
+
+
 def _entity(entity: str) -> str:
-    if entity not in ENTITY_SPECS:
+    if entity not in SUPPORTED_ENTITIES:
         raise AppException(
             status_code=404,
             message=(
                 f"Unsupported entity '{entity}'. "
-                f"Expected one of: {', '.join(sorted(ENTITY_SPECS))}"
+                f"Expected one of: {', '.join(sorted(SUPPORTED_ENTITIES))}"
             ),
             code="UNKNOWN_ENTITY",
         )
@@ -124,7 +172,18 @@ async def ingest_masters(
             code="BATCH_TOO_LARGE",
         )
 
-    service = MasterIngestService(db, integration_id=current_user.get("integration_id"))
+    company_id = resolve_company_anchor(db, payload, current_user)
+
+    # One endpoint, two services. A document owns its lines and points at five
+    # masters, which is a different write shape from a master row - but the
+    # envelope, the batch cap, the verdicts and the dry-run rollback are the
+    # caller's contract and must not fork, so the branch is here and nowhere else.
+    ingester = DocumentIngestService if entity in DOCUMENT_ENTITIES else MasterIngestService
+    service = ingester(
+        db,
+        integration_id=current_user.get("integration_id"),
+        company_id=company_id,
+    )
     try:
         result = service.ingest(entity, records, dry_run=dry_run)
     except UnsupportedIngestEntity as exc:
@@ -141,14 +200,102 @@ async def ingest_masters(
         db.commit()
 
     logger.info(
-        "ingest.batch entity=%s integration=%s dry_run=%s created=%d updated=%d failed=%d retryable=%d",
+        "ingest.batch entity=%s integration=%s company=%s dry_run=%s "
+        "created=%d updated=%d failed=%d retryable=%d",
         entity,
         current_user.get("integration_name"),
+        company_id,
         dry_run,
         result.created,
         result.updated,
         result.failed,
         result.retryable,
+    )
+    return result.as_dict()
+
+
+@ingest_router.post(
+    "/{entity}/deletions",
+    # TWO guards, both entity-resolved. The router already carries the ingest
+    # guard (`.edit`), and this adds `.delete` on top: removing a record through
+    # the ESB is a different act from syncing one, and an integration trusted to
+    # keep masters up to date must not gain the ability to empty them.
+    dependencies=[Depends(require_external_permission_for_path(DELETE_PERMISSIONS))],
+)
+async def delete_records(
+    entity: str = Path(...),
+    payload: dict = Body(...),
+    dry_run: bool = Query(
+        False,
+        description=(
+            "Preview only. Resolves every reference, probes its dependents and "
+            "reports the verdict each one would receive - deleted, deactivated, "
+            "not found or failed - then writes nothing."
+        ),
+    ),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_external_api_user),
+):
+    """Delete a batch of records the source system says are gone (group A4).
+
+    Always `200` with a per-reference verdict, for the reason the ingest is: a
+    batch is not a transaction, and a non-2xx would tell the caller nothing about
+    which of its references landed.
+
+    A record something still points at is NOT removed - it is taken out of use
+    (`deactivated`) and keeps its reference. See ``deletion_service`` for why
+    that is not left to the database to decide.
+    """
+    entity = _entity(entity)
+
+    source_refs = payload.get("source_refs")
+    if not isinstance(source_refs, list):
+        raise AppException(
+            status_code=422,
+            message="Body must contain a 'source_refs' array",
+            code="INVALID_BODY",
+        )
+    if len(source_refs) > MAX_BATCH:
+        raise AppException(
+            status_code=413,
+            message=(
+                f"Batch of {len(source_refs)} exceeds the maximum of {MAX_BATCH}. "
+                "Split it; the response is never silently truncated."
+            ),
+            code="BATCH_TOO_LARGE",
+        )
+
+    company_id = resolve_company_anchor(db, payload, current_user)
+
+    service = DeletionService(
+        db,
+        integration_id=current_user.get("integration_id"),
+        company_id=company_id,
+    )
+    try:
+        result = service.delete(entity, source_refs, dry_run=dry_run)
+    except UnsupportedIngestEntity as exc:
+        raise AppException(status_code=404, message=str(exc), code="UNKNOWN_ENTITY")
+
+    if dry_run:
+        # The service has already rolled back; this is the second of two locks on
+        # the same door, exactly as on the ingest.
+        db.rollback()
+    else:
+        db.commit()
+
+    summary = result.as_dict()["summary"]
+    logger.info(
+        "deletion.batch entity=%s integration=%s company=%s dry_run=%s "
+        "deleted=%d deactivated=%d not_found=%d failed=%d",
+        entity,
+        current_user.get("integration_name"),
+        company_id,
+        dry_run,
+        summary["deleted"],
+        summary["deactivated"],
+        summary["not_found"],
+        summary["failed"],
     )
     return result.as_dict()
 
@@ -184,4 +331,7 @@ async def read_current_state(
             code="BATCH_TOO_LARGE",
         )
 
-    return MasterReadService(db).current_state(entity, source_refs)
+    company_id = resolve_company_anchor(db, payload, current_user)
+
+    reader = DocumentReadService if entity in DOCUMENT_ENTITIES else MasterReadService
+    return reader(db, company_id=company_id).current_state(entity, source_refs)

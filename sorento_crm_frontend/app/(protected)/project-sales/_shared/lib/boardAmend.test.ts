@@ -16,6 +16,7 @@ import {
   amendDraftFrom,
   amendSummary,
   borrowCandidatesOf,
+  confirmLineFrom,
   decisionFromAmendDraft,
   suggestionDraftFrom,
 } from './boardAmend';
@@ -529,10 +530,51 @@ describe('decisionFromAmendDraft: what the draft carries away', () => {
           donor_agent_code: null,
           same_agent: false,
           donor_required_date: null,
+          // Ladder v7.1 step 3 (S4): a plain free-stock borrow names no document, and the
+          // keys are still stated - the mapper is one spread now, and a partial one is how
+          // `supply_key` came to reach the seeders and not Save.
+          supply_key: null,
+          supply_document: null,
+          arrival_date: null,
         },
       ],
       buy_qty: '70',
       reason: 'Holding the rest for the late site.',
+    });
+  });
+
+  it('carries the document a step-3 borrow names, all the way to the confirm body', () => {
+    const draft = amendDraftFrom(contributionOf({}));
+    const borrow = {
+      key: 'borrow-1',
+      source: 'other_location' as const,
+      warehouse_code: 'DC1-IR',
+      warehouse_id: 'wh-ir',
+      donor_project_ref: null,
+      donor_project_id: null,
+      qty: '40',
+      reason: 'Taking the container.',
+      donor_impact: { free_before: '0', free_after_full_borrow: '0', committed_qty: '0' },
+      supply_key: 'spo:alloc-1',
+      supply_document: 'SPO 202607-S0105',
+      arrival_date: '2026-09-15',
+    };
+
+    const decision = decisionFromAmendDraft({ ...draft, borrow: [borrow] }, 'Taking it.');
+    const confirm = confirmLineFrom('line-1', decision);
+
+    // Both hops: Save writes the decision the board holds, Confirm posts it. Either one
+    // dropping the address turns a document borrow into a free-stock borrow at a bin the
+    // container has not reached, which the server then refuses.
+    expect(decision.borrow?.[0]).toMatchObject({
+      supply_key: 'spo:alloc-1',
+      supply_document: 'SPO 202607-S0105',
+      arrival_date: '2026-09-15',
+    });
+    expect(confirm.borrow[0]).toMatchObject({
+      supply_key: 'spo:alloc-1',
+      supply_document: 'SPO 202607-S0105',
+      arrival_date: '2026-09-15',
     });
   });
 

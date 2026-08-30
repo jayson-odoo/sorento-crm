@@ -307,6 +307,31 @@ Reference docs this file defers to, so nothing is stated twice:
 | `CONTEXT-MAP.md` | Which glossary covers which domain. |
 
 
+### Subagent model routing (standing rule, 2026-08-30)
+
+The main session (Fable) plans and briefs; execution subagents run on **Sonnet** by default -
+`coder` and `tester` declare `model: sonnet` in `.claude/agents/`; `reviewer` and `planner` stay
+`model: opus` (the review is the quality gate before a PR, and it has caught merge-blocking
+defects the cheaper pass would risk missing - captain's call, 30 Aug 2026). The captain's
+job is to make the brief precise enough that Sonnet can execute it mechanically: measured facts,
+exact file paths, the test list, the contract shapes. A vague brief is the captain's defect, not
+a reason to upgrade the model.
+
+Escalate a SINGLE spawn to Opus (pass `model: "opus"` on the Agent call; do not edit the agent
+files) only for:
+
+- **Complex architecture / tangled refactors** - deeply interdependent state machines or
+  cross-cutting refactors that a mechanical brief cannot fully pin down (`planner` stays
+  `model: opus` for the same reason).
+- **Hard debugging** - a bug that survived a Sonnet diagnosis pass or has a non-obvious cause.
+- **Critical security reviews** - auth boundaries, permission gating, external ingest surfaces,
+  anything `/security-review`-shaped.
+- **Drift control** - a Sonnet coder that rewrote the plan, ignored the UAC, or drifted from the
+  brief: rerun that slice on Opus rather than iterating with the drifting agent.
+
+Never spawn subagents on Fable. Escalation is per-invocation and should be named in the brief
+("on Opus because ...") so the reason is auditable.
+
 ### Delivery pipeline
 
 Non-trivial feature work runs through **`/feature`** (`.claude/skills/feature/SKILL.md`), which

@@ -175,6 +175,20 @@ describe('rowOf reads the rung, never the warehouse code', () => {
     ).toBe('borrow_order');
   });
 
+  it('reads a FREE step-3 document as a borrow all the same (S4)', () => {
+    // A document nobody was waiting on names no donor, and the unrunged fallback would
+    // read that as 'borrow_other' - "Borrow other location", which is a location this
+    // line never borrows from. The RUNG decides, as it does everywhere else here.
+    expect(
+      rowOf({
+        kind: 'borrow',
+        rung: 'supply_borrow',
+        qty: '32',
+        location: 'BRW-BB',
+      }),
+    ).toBe('borrow_incoming');
+  });
+
   it('gives every kind a label and a colour, both a swatch and a text token', () => {
     for (const kind of [
       'buy',

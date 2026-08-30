@@ -129,6 +129,17 @@ class TestEntityTypeAllowlist:
             "warehouses",
             "suppliers",
             "customers",
+            # Group A2: the salesperson master joined the ingest surface, so its
+            # refs need somewhere to live. `sales_agents` is also a real table
+            # name, which the allowlist's own SQL interpolation depends on.
+            "sales_agents",
+            # Group A3: the documents joined the ingest surface, so their headers
+            # need a mapping to be idempotent by. Both are real PUBLIC table
+            # names, which the allowlist's SQL interpolation depends on - the
+            # `projects` schema holds tables of the same two names and they are
+            # NOT these.
+            "sales_orders",
+            "purchase_orders",
             "picking_headers",
             "picking_lines",
             "orders",

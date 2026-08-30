@@ -65,6 +65,17 @@ class SupplyComponent(BaseModel):
     #: order-back Order Inquiry row's urgency is the donor's, not this line's own.
     #: `None` outside `group_borrow`.
     donor_required_date: Optional[date] = None
+    #: STEP 3 (`supply_borrow`, S4): WHICH incoming document this quantity comes off, by
+    #: ADDRESS - `spo:<allocation id>` or `po:<purchase order line id>`, the assignment's own
+    #: event key. Never rendered; it is what the Confirm moves the placement link onto
+    #: (PLAN 3.3). `None` on every other rung.
+    supply_key: Optional[str] = None
+    #: The same document as a person names it - `SPO 202607-S0105`, `PO 202607-P0031 line 3`.
+    #: The SERVER's spelling, so the sentence and the Stock Debt drill cannot name one
+    #: document two ways.
+    supply_document: Optional[str] = None
+    #: The day it lands: an SPO's arrival, a PO line's `issue_date + lead time` (R29).
+    arrival_date: Optional[date] = None
 
 
 class SupplySpoRef(BaseModel):
@@ -305,6 +316,25 @@ class ConfirmBorrowComponent(BaseModel):
     #: The donor's own required date, for the order-back Order Inquiry row's urgency
     #: (section E.4: "urgency = the donor's required date").
     donor_required_date: Optional[date] = None
+    #: STEP 3 (`supply_borrow`, S4): WHICH incoming document this quantity comes off, by
+    #: ADDRESS - `spo:<allocation id>` or `po:<purchase order line id>`, the assignment's own
+    #: event key. Never rendered; it is what the Confirm moves the placement link onto
+    #: (PLAN 3.3). `None` on every other rung.
+    supply_key: Optional[str] = None
+    #: The same document as a person names it - `SPO 202607-S0105`, `PO 202607-P0031 line 3`.
+    #: The SERVER's spelling, so the sentence and the Stock Debt drill cannot name one
+    #: document two ways.
+    supply_document: Optional[str] = None
+    #: The day it lands: an SPO's arrival, a PO line's `issue_date + lead time` (R29).
+    arrival_date: Optional[date] = None
+
+    #: LADDER V7.1 STEP 3 IS A BORROW COMPONENT WHETHER OR NOT ANYBODY IS WAITING ON THE
+    #: DOCUMENT, and that is a deviation from PLAN 3.2's "kind `reserve` when the document
+    #: is free", recorded here because this schema is why. A Reserve component is
+    #: `(warehouse_id, qty)` and nothing else - it is a hold on STOCK at a bin - so a free
+    #: document posted as one would be re-checked against on-hand capacity at a bin that
+    #: does not hold it and refused. The free-ness is said where it belongs: no donor is
+    #: named, no order-back is raised, and the sentence reads "Take" rather than "Borrow".
 
 
 class ConfirmLine(BaseModel):

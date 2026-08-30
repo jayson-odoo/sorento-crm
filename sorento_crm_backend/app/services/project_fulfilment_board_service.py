@@ -1532,7 +1532,11 @@ class FulfilmentBoardService:
             "warehouse_id": component.get("source_warehouse_id"),
             "reason": (reason[:1].upper() + reason[1:] + ".") if reason else "",
             "spo_number": None,
-            "arrival_date": None,
+            # Step 3 (S4): the document, named and dated. A `timely_spo` source states its
+            # arrival too, and every other kind has none - so this is read off the component
+            # rather than blanked, or a confirmed step-3 line came back documentless and
+            # re-posted `supply_key: null`.
+            "arrival_date": _parse_iso_date(component.get("arrival_date")),
             "rung": component.get("rung"),
             #: The ladder the SNAPSHOT was written under, carried through rather than
             #: restamped: this is history, and re-stamping it with today's version would
@@ -1544,6 +1548,8 @@ class FulfilmentBoardService:
             "same_agent": bool(component.get("same_agent", False)),
             "donor_core_line_id": component.get("donor_core_line_id"),
             "donor_required_date": _parse_iso_date(component.get("donor_required_date")),
+            "supply_key": component.get("supply_key"),
+            "supply_document": component.get("supply_document"),
         }
 
     def _line_decision(
@@ -1623,6 +1629,14 @@ class FulfilmentBoardService:
                     "donor_core_line_id": c.get("donor_core_line_id"),
                     "donor_required_date": _parse_iso_date(c.get("donor_required_date")),
                     "order_back_qty": c.get("order_back_qty"),
+                    # LADDER v7.1 STEP 3 (S4): which document, how it is named and when it
+                    # lands. Dropped here, amending a confirmed step-3 line re-posted it as
+                    # a free-stock borrow - the placement link came down and the Confirm
+                    # re-checked the quantity against on-hand capacity at a bin holding a
+                    # container that has not landed.
+                    "supply_key": c.get("supply_key"),
+                    "supply_document": c.get("supply_document"),
+                    "arrival_date": _parse_iso_date(c.get("arrival_date")),
                 }
                 for c in components
                 if c.get("kind") == BORROW
@@ -2022,6 +2036,7 @@ class FulfilmentBoardService:
             # afterwards would state what was left instead.
             (
                 components, pool_open, borrow_open, net_open, options, other_group_open,
+                supply_open,
             ) = composed[row.key]
             row.options = [_option_row(option) for option in options]
             # Ladder v2's group take / group borrow / cross-group borrow rungs name a
@@ -2070,7 +2085,7 @@ class FulfilmentBoardService:
             # (AC-V4: the note must never offer what the proof has refused).
             row.trail, offerable = self._trail(
                 row, fact, components, pool_open, borrow_open, net_open, as_of=as_of,
-                other_group_open=other_group_open,
+                other_group_open=other_group_open, supply_open=supply_open,
             )
             row.sources = [
                 self._source(component, row, offerable) for component in components
@@ -2298,7 +2313,10 @@ class FulfilmentBoardService:
                         component.get("reason"),
                     ),
                     "spo_number": None,
-                    "arrival_date": None,
+                    # Step 3 (S4): the DOCUMENT this borrow comes off. `arrival_date` is
+                    # the component's own - a step-3 source has one and every other borrow
+                    # does not, so the None above is the fallback and not the rule.
+                    "arrival_date": component.get("arrival_date"),
                     "rung": component.get("rung"),
                     "donor_so_number": component.get("donor_so_number"),
                     "donor_line_no": component.get("donor_line_no"),
@@ -2306,6 +2324,8 @@ class FulfilmentBoardService:
                     "same_agent": bool(component.get("same_agent", False)),
                     "donor_core_line_id": component.get("donor_core_line_id"),
                     "donor_required_date": component.get("donor_required_date"),
+                    "supply_key": component.get("supply_key"),
+                    "supply_document": component.get("supply_document"),
                 }
                 for component in decision.get("borrow") or []
             ),
@@ -2357,6 +2377,7 @@ class FulfilmentBoardService:
         net_open: Optional[Decimal] = None,
         as_of: Optional[date] = None,
         other_group_open: Optional[MutableMapping[str, Decimal]] = None,
+        supply_open: Optional[MutableMapping[str, Decimal]] = None,
     ) -> Tuple[List[Dict[str, Any]], List[str]]:
         """The four questions ladder v5 asks about this line, and Buy (section 1e).
 
@@ -2626,19 +2647,34 @@ class FulfilmentBoardService:
 
         # --------------------- 3. Can we borrow incoming from a later order?
         #
-        # S4 builds this step. It is ASKED all the same (AC-S3-14): a step the server left
-        # out reads as a step nobody walked, and "nothing was offered" is an answer.
+        # ONE document, whole (R33), so the candidates are the rows of the single document
+        # the step chose - and `supply_open` is the walk's own ledger as this unit found it,
+        # passed for the reason `borrow_open` is: the proof has to be the answer the engine
+        # actually got, not a fresh read of a document an earlier unit has already spent.
+        #
+        # THE UNIT'S need, not the row's: "whole unit or nothing" is measured against what
+        # the walk asked about (R10), and this trail is built per row. Asked with the row's
+        # own smaller quantity, the proof offered a document the walk had refused.
+        supply_borrow_candidates = (
+            []
+            if outside_window
+            else self.supply.supply_borrow_candidates_for(
+                fact, as_of=as_of, supply_left=supply_open, need=row.unit_qty
+            )
+        )
         add(
             RUNG_SUPPLY_BORROW,
             "Can we borrow incoming from a later order?",
             taken=took_at(RUNG_SUPPLY_BORROW),
+            offered=sum((_dec(c.get("qty")) for c in supply_borrow_candidates), _ZERO),
             sources=drawn_at(RUNG_SUPPLY_BORROW),
             eligible=not outside_window,
-            why=lambda _outcome: (
+            note=self._supply_borrow_note(supply_borrow_candidates),
+            why=lambda outcome: (
                 _RESERVE_WINDOW_RUNG_WHY
                 if outside_window
-                else (
-                    "No incoming document held by a later order was offered for this unit."
+                else self._supply_borrow_why(
+                    outcome, supply_borrow_candidates, components, window=window
                 )
             ),
         )
@@ -2761,6 +2797,54 @@ class FulfilmentBoardService:
         )
         more = len(donors) - 3
         return f"{shown} (+{more} more)" if more > 0 else shown
+
+    @staticmethod
+    def _supply_borrow_note(candidates: Sequence[Dict[str, Any]]) -> Optional[str]:
+        """The DOCUMENT on the table, named once with its arrival.
+
+        Every candidate row here belongs to one document (R33), so this is one phrase and
+        not a list: naming the same SPO three times because three orders hold parts of it
+        reads as three documents.
+        """
+        if not candidates:
+            return None
+        first = candidates[0]
+        when = first.get("arrival_date")
+        total = sum((_dec(c.get("qty")) for c in candidates), _ZERO)
+        arriving = f", arriving {_date_words(when)}" if when else ""
+        return f"{first.get('supply_document') or 'One document'} {qty_text(total)}{arriving}"
+
+    def _supply_borrow_why(
+        self,
+        outcome: str,
+        candidates: Sequence[Dict[str, Any]],
+        components: Sequence[Any],
+        *,
+        window: Optional[date] = None,
+    ) -> str:
+        """Step 3's sentence (AC-S4-1, AC-S4-5).
+
+        On a YES it is the component's own sentence - the document, the arrival, the donor
+        and the debt month - because a second wording of one fact is a second fact. On a NO
+        it says which of the two refusals fired: no document covers the whole unit (R33),
+        or there is no eligible document at all.
+        """
+        drawn = [
+            component
+            for component in components
+            if getattr(component, "rung", None) == RUNG_SUPPLY_BORROW
+        ]
+        if drawn:
+            return " ".join(component.reason for component in drawn)
+        if outcome == "none_needed":
+            return "This unit was already covered before a document was needed."
+        when = f" dated on or after {_date_words(window)}" if window else ""
+        return (
+            "No single incoming document covers the whole of this unit, so none is "
+            f"proposed: a document has to cover it whole (never half of one and half of "
+            f"another), and it lends only where it is free or where a later order{when} "
+            "holds it."
+        )
 
     def _order_borrow_why(
         self,
@@ -3390,7 +3474,13 @@ class FulfilmentBoardService:
             # arrives on 2027-03-01"), which is what the cell shows. Parsing them back out of
             # it to fill two more fields would be a second source of the same fact.
             "spo_number": None,
-            "arrival_date": None,
+            # STEP 3's arrival IS a field, and it is not the same case: the drill row prints
+            # "SPO 202607-S0105, arriving 15 Sep 2026" beside the quantity (AC-S4-5), and
+            # the alternative to a field is the client parsing the sentence, which is the
+            # one thing the "the server writes the words" rule forbids.
+            "arrival_date": getattr(component, "arrival_date", None),
+            "supply_key": getattr(component, "supply_key", None),
+            "supply_document": getattr(component, "supply_document", None),
             "rung": getattr(component, "rung", None),
             #: WHICH LADDER wrote this. A LIVE suggestion is today's by definition, so it
             #: carries today's version; a FROZEN one carries whatever was stamped when it

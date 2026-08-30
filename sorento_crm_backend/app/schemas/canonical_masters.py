@@ -96,6 +96,31 @@ class CanonicalCustomer(_Canonical):
     is_active: bool = True
 
 
+class CanonicalSalesAgent(_Canonical):
+    """The salesperson master, and the only shape here whose row is SHARED.
+
+    `code` is the agent code as a document states it (`SEAN I`, `LCL`); it is
+    stored upper-cased and trimmed, because that is how `sales_agent_service`
+    stores and matches it and a second spelling would become a second agent with
+    its own demand class.
+
+    `person_label` is who the codes belong to - reporting metadata, never
+    identity: `SEAN I` and `SEAN III` are two agents, not one person with two
+    codes.
+
+    Deliberately NOT here: `internal_note`, `follow_up`, `demand_class` and
+    `location_group`. Those are the captain's annotations, made on the master
+    screen, and AutoCount holds no opinion about any of them - so they are
+    unknown fields, and `extra="forbid"` refuses them rather than letting a
+    weekly re-sync restate a classification nobody upstream owns.
+    """
+
+    code: str = Field(..., min_length=1, max_length=100)
+    description: Optional[str] = Field(None, max_length=255)
+    is_active: bool = True
+    person_label: Optional[str] = Field(None, max_length=100)
+
+
 class CanonicalProduct(_Canonical):
     code: str = Field(..., min_length=1, max_length=100)
     name: str = Field(..., min_length=1, max_length=255)

@@ -22,8 +22,9 @@ not it is taken:
 2. **order_borrow** - ON HAND held by a LATER order (R3, R4, R9, R12, R19, R25). The donor
    receives an order-back at its OWN required date, and a decided donor's decision falls
    with it, inside the same Confirm;
-3. **supply_borrow** (S4) - the DOCUMENT a later order is waiting on, one document whole
-   (R27, R32, R33);
+3. **supply_borrow** - the DOCUMENT a later order is waiting on, ONE document whole
+   (R27, R32, R33): eligible when it arrives by the asker's date or before a fresh buy
+   would land, SPO before PO, and the donor receives an order-back at its own date;
 4. **pool** - the site pools' own book: its free pile, then a later POOL order's on hand,
    which does raise an order-back (R34). The dealer hot-selling gate refuses the whole step;
 5. **buy** - the whole unit at ``as_of + lead``.
@@ -285,6 +286,21 @@ class Component:
     #: `None` outside `group_borrow`, and on a donor whose own required date is unset
     #: (the order-back then falls back to the borrowing line's own date).
     donor_required_date: Optional[date] = None
+    #: STEP 3 (`supply_borrow`, S4): WHICH DOCUMENT this quantity comes off, by ADDRESS -
+    #: `supply_assignment`'s own event key, `spo:<allocation id>` or `po:<purchase order
+    #: line id>`. PLAN 3.2 step 3 writes it `spo:<n> | po:<n>/<line>`; the id is the
+    #: spelling of `<n>` that survives a re-import of the document, which the number is
+    #: not. Addressing only, never rendered: the Confirm moves the placement link onto
+    #: exactly this row (3.3) without a second lookup.
+    supply_key: Optional[str] = None
+    #: The same document as a PERSON names it - `SPO 202607-S0105`, `PO 202607-P0031
+    #: line 3`. The SERVER's spelling, taken off the assignment event's own `ref`, so the
+    #: sentence here and the row the Stock Debt drill prints cannot come to name one
+    #: document two ways.
+    supply_document: Optional[str] = None
+    #: The day it lands: the SPO's arrival, or a PO line's `issue_date + lead time` (R29).
+    #: This is the option's `fulfil_date` for step 3 and the date inside its sentence.
+    arrival_date: Optional[date] = None
 
     @property
     def stated(self) -> str:
@@ -527,6 +543,23 @@ def order_borrow_reason(
     is ON HAND (not a promise), where it physically is, whose order gives it up, and the
     column of the Stock Debt view it will appear in.
     """
+    return f"Borrow {qty_text(qty)} on hand at {location}" + _donor_clause(
+        donor_so_number, donor_line_no, donor_agent_code, donor_required_date
+    )
+
+
+def _donor_clause(
+    donor_so_number: Optional[str],
+    donor_line_no: Optional[int],
+    donor_agent_code: Optional[str],
+    donor_required_date: Optional[date],
+) -> str:
+    """" from SO414285 line 4 (JEREMY, due 12 Nov 2026); its debt lands in Nov 2026".
+
+    The tail both borrow steps put on their own sentence, spelled ONCE: who gives the
+    quantity up, when they are due, and the Stock Debt column the debt appears in. Two
+    copies of it agreed by coincidence until step 3 needed a different opening clause.
+    """
     who = donor_so_number or "an unnamed sales order"
     line_text = f" line {donor_line_no}" if donor_line_no is not None else ""
     inside: List[str] = []
@@ -540,8 +573,45 @@ def order_borrow_reason(
         if donor_required_date is not None
         else "; its debt lands in the month it is due"
     )
-    return (
-        f"Borrow {qty_text(qty)} on hand at {location} from {who}{line_text}{named}{debt}"
+    return f" from {who}{line_text}{named}{debt}"
+
+
+def supply_borrow_reason(
+    qty: Decimal,
+    *,
+    kind: str,
+    document: Optional[str],
+    arrival_date: Optional[date],
+    donor_so_number: Optional[str] = None,
+    donor_line_no: Optional[int] = None,
+    donor_agent_code: Optional[str] = None,
+    donor_required_date: Optional[date] = None,
+) -> str:
+    """Step 3's sentence (AC-S4-1, R27, R29, R30).
+
+    `Borrow 50 arriving 15 Sep 2026 (SPO 202607-S0105) from SO414285 line 4 (JEREMY, due
+    12 Nov 2026); its debt lands in Nov 2026` for a shipping order, and `Borrow 20 on order
+    (PO 202607-P0031 line 3, arriving about 20 Oct 2026) from ...` for a purchase-order
+    line. Two openings because they are two different things and a planner acts on the
+    difference: an SPO is ARRIVING - cut from a purchase order and put on a shipment - while
+    a PO is still ON ORDER, and its date is computed (`issue + lead`, R29) rather than
+    promised, which is what "about" says.
+
+    **TAKE, not Borrow, when nobody is waiting on the document.** A free document is owed to
+    nobody, so there is no donor to name and no debt to state, and calling that a Borrow
+    would put a debt month on a screen where none exists.
+    """
+    verb = "Borrow" if donor_so_number else "Take"
+    named = document or "an unnamed document"
+    when = date_text(arrival_date) if arrival_date else "an unstated date"
+    if kind == "po":
+        head = f"{verb} {qty_text(qty)} on order ({named}, arriving about {when})"
+    else:
+        head = f"{verb} {qty_text(qty)} arriving {when} ({named})"
+    if not donor_so_number:
+        return head
+    return head + _donor_clause(
+        donor_so_number, donor_line_no, donor_agent_code, donor_required_date
     )
 
 
@@ -630,8 +700,10 @@ def walk_line(
        windowed and ordered by the caller: same agent, latest date, same group, same
        warehouse). Several donors may combine for one unit (R35). Every take raises an
        order-back at the DONOR's own required date;
-    3. **supply_borrow** (S4): the DOCUMENT a later order is waiting on. `S3 offers none`,
-       and the step is still reported, answering "nothing offered";
+    3. **supply_borrow**: the DOCUMENT a later order is waiting on
+       (`supply_borrow_candidates`, already narrowed by the caller to the ONE document
+       that covers the whole unit - SPO before PO, R27/R33/R35). A row with no donor is
+       free supply and is taken rather than borrowed;
     4. **pool**: the site pools' own book - its free pile (`pools`/`pools_net`, the dealer
        hot-selling gate in front of the whole step), then a later POOL order's on hand
        (`pool_borrow_candidates`), which does raise an order-back (R34);
@@ -694,9 +766,11 @@ def walk_line(
         order_borrow_candidates, open_amount, RUNG_ORDER_BORROW
     )
 
-    # 3. supply_borrow - S4. The step is reported, and in S3 it is always empty.
-    offers[STEP_SUPPLY_BORROW] = _draw_order_borrow(
-        supply_borrow_candidates, open_amount, RUNG_SUPPLY_BORROW
+    # 3. supply_borrow - the DOCUMENT a later order is waiting on, ONE document whole
+    #    (R33). The caller has already chosen which document that is and refused every
+    #    combination of two, so this walks one document's rows and nothing else.
+    offers[STEP_SUPPLY_BORROW] = _draw_supply_borrow(
+        supply_borrow_candidates, open_amount
     )
 
     # 4. pool ------------------------------------------------------------------------------
@@ -922,6 +996,68 @@ def _draw_order_borrow(
                 order_back_qty=take,
                 donor_core_line_id=candidate.get("donor_core_line_id"),
                 donor_required_date=donor_date,
+            ),
+            arrival=arrival,
+        )
+    return offer
+
+
+def _draw_supply_borrow(
+    candidates: Optional[Sequence[Mapping[str, Any]]],
+    need: Decimal,
+) -> "_Offer":
+    """Step 3: ONE document, whole (R33), in the rows the caller chose it as.
+
+    Every row here belongs to the SAME document - the caller picks it (nearest arriving
+    SPO, then a PO only where no single SPO covers, R35) and returns nothing at all when no
+    single document covers the unit. So this never has to decide between two of them, which
+    is the point: half a promise off one document and half off another is two arrival dates
+    for one delivery.
+
+    A row with no donor is FREE - nobody is waiting on that part of the document - so it is
+    taken rather than borrowed, and it carries no order-back: free supply is owed to nobody,
+    exactly as step 1's free pile is.
+    """
+    offer = _Offer()
+    for candidate in candidates or []:
+        left = need - offer.qty
+        if left <= ZERO:
+            break
+        capacity = max(_dec(candidate.get("qty")), ZERO)
+        if capacity <= ZERO:
+            continue
+        take = min(left, capacity)
+        arrival = candidate.get("arrival_date")
+        donor_so_number = candidate.get("donor_so_number")
+        donor_date = candidate.get("donor_required_date")
+        location = candidate.get("location")
+        offer.add(
+            Component(
+                kind=BORROW,
+                qty=take,
+                reason=supply_borrow_reason(
+                    take,
+                    kind=str(candidate.get("supply_kind") or "spo"),
+                    document=candidate.get("supply_document"),
+                    arrival_date=arrival,
+                    donor_so_number=donor_so_number,
+                    donor_line_no=candidate.get("donor_line_no"),
+                    donor_agent_code=candidate.get("donor_agent_code"),
+                    donor_required_date=donor_date,
+                ),
+                source_location=str(location) if location else None,
+                rung=RUNG_SUPPLY_BORROW,
+                donor_so_number=donor_so_number,
+                donor_line_no=candidate.get("donor_line_no"),
+                donor_agent_code=candidate.get("donor_agent_code"),
+                same_agent=bool(candidate.get("same_agent")),
+                # Only what a DONOR gives up is owed back. A free document owes nobody.
+                order_back_qty=take if donor_so_number else None,
+                donor_core_line_id=candidate.get("donor_core_line_id"),
+                donor_required_date=donor_date,
+                supply_key=candidate.get("supply_key"),
+                supply_document=candidate.get("supply_document"),
+                arrival_date=arrival,
             ),
             arrival=arrival,
         )

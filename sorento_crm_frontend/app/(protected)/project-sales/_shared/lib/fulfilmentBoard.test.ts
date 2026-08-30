@@ -1125,6 +1125,43 @@ describe('confirmLinesFor reads the engine’s numbers', () => {
     expect(lines[0].buy_qty).toBe('30');
   });
 
+  it('posts the DOCUMENT a step-3 borrow names, on an approved line', () => {
+    // The approval path never goes through the editor: it maps the source strip straight
+    // into the confirm body. Dropping the address here turned a document borrow into a
+    // free-stock borrow at a bin the container has not reached, which the server refuses.
+    const withBorrow = [
+      {
+        ...base,
+        qty_proposed_reserve: '0',
+        qty_proposed_incoming: '0',
+        qty_proposed_buy: '0',
+        sources: [
+          {
+            kind: 'borrow' as const,
+            qty: '100',
+            location: 'DC1-IR',
+            warehouse_id: 'wh-ir',
+            reason: 'Take 100 arriving 15 Sep 2026 (SPO 202607-S0105).',
+            rung: 'supply_borrow',
+            supply_key: 'spo:alloc-1',
+            supply_document: 'SPO 202607-S0105',
+            arrival_date: '2026-09-15',
+          },
+        ],
+      },
+    ];
+    const lines = confirmLinesFor(withBorrow, 'so-a', {
+      [base.key]: { verdict: 'approved' },
+    });
+    expect(lines[0].borrow[0]).toMatchObject({
+      warehouse_id: 'wh-ir',
+      qty: '100',
+      supply_key: 'spo:alloc-1',
+      supply_document: 'SPO 202607-S0105',
+      arrival_date: '2026-09-15',
+    });
+  });
+
   it('still moves an amendment’s difference into the Buy', () => {
     const withProposal = [
       { ...base, qty_proposed_reserve: '60', qty_proposed_incoming: '10', qty_proposed_buy: '30' },
@@ -1274,6 +1311,12 @@ describe('confirmLinesFor and a composed amendment', () => {
           donor_agent_code: null,
           same_agent: false,
           donor_required_date: null,
+          // Ladder v7.1 step 3 (S4): this borrow names no document, and the keys are still
+          // stated - the mapper is one spread now (`borrowPassThrough`), and a partial one
+          // is how `supply_key` reached the seeders and not Save.
+          supply_key: null,
+          supply_document: null,
+          arrival_date: null,
         },
       ],
       buy_qty: '70',

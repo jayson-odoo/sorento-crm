@@ -344,6 +344,10 @@ describe('SupplyCompositionSection', () => {
   });
 
   it('blocks the Confirm while a borrow on any line has no reason (AC-B09)', async () => {
+    // The engine's own borrow OPENS with the engine's sentence in the box (the board has
+    // always seeded it that way), so an untouched proposal confirms without anybody
+    // retyping it. AC-B09 is still pinned, on the case it is actually about: a borrow left
+    // with no reason at all cannot be written.
     getSupply.mockResolvedValue(
       proposal({
         lines: [
@@ -365,12 +369,20 @@ describe('SupplyCompositionSection', () => {
     renderSection();
     await screen.findByText('Line 1 · CB6633');
 
-    expect(confirmButton()).toBeDisabled();
+    const reason = screen.getByLabelText(/^Reason/) as HTMLTextAreaElement;
+    expect(reason.value).toBe(
+      'Free stock at HQ, outside the reserve pool for this location.',
+    );
+    expect(confirmButton()).toBeEnabled();
+
+    fireEvent.change(reason, { target: { value: '   ' } });
+
+    await waitFor(() => expect(confirmButton()).toBeDisabled());
     expect(
       screen.getAllByText('Line 1, CB6633: the borrow from HQ needs a reason.').length,
     ).toBeGreaterThan(0);
 
-    fireEvent.change(screen.getByLabelText(/^Reason/), {
+    fireEvent.change(reason, {
       target: { value: 'HQ has no delivery booked before October.' },
     });
 

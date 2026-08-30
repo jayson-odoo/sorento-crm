@@ -452,9 +452,12 @@ def ingest_db():
 def test_ingest_carries_decimal_places_onto_the_created_row(ingest_db):
     from sqlalchemy import text
 
+    from app.services.company_scope import DEFAULT_COMPANY_ID
     from app.services.master_ingest_service import MasterIngestService
 
-    svc = MasterIngestService(ingest_db, integration_id=None)
+    svc = MasterIngestService(
+        ingest_db, integration_id=None, company_id=DEFAULT_COMPANY_ID
+    )
     # units_of_measure.uom_code is varchar(20) on the live (prod-copy) schema this fixture
     # runs against - stay short, unlike the blank-schema tests above.
     code = f"ZZTU{uuid.uuid4().hex[:12]}"
@@ -474,9 +477,12 @@ def test_ingest_carries_decimal_places_onto_the_created_row(ingest_db):
 def test_ingest_without_decimal_places_defaults_to_zero(ingest_db):
     from sqlalchemy import text
 
+    from app.services.company_scope import DEFAULT_COMPANY_ID
     from app.services.master_ingest_service import MasterIngestService
 
-    svc = MasterIngestService(ingest_db, integration_id=None)
+    svc = MasterIngestService(
+        ingest_db, integration_id=None, company_id=DEFAULT_COMPANY_ID
+    )
     code = f"ZZTU{uuid.uuid4().hex[:12]}"
     result = svc.ingest(
         "units_of_measure",
