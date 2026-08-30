@@ -101,8 +101,11 @@ def _seed_role_holding(bind, source_slug: str) -> str:
     suffix = uuid.uuid4().hex[:8]
     bind.execute(
         text(
-            "INSERT INTO user_roles (id, slug, name, description, is_protected, is_default) "
-            "VALUES (:i, :s, :n, :d, false, false)"
+            # is_trashed carries only a Python-side default on the model, so a raw INSERT
+            # must state it: CI's migration-built schema makes it NOT NULL with no
+            # server default (the shared dev copy forgives the omission).
+            "INSERT INTO user_roles (id, slug, name, description, is_protected, is_default, is_trashed) "
+            "VALUES (:i, :s, :n, :d, false, false, false)"
         ),
         {
             "i": role_id,
