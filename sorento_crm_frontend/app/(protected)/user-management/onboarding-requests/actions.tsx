@@ -15,7 +15,6 @@
 
 import { Copy, KeyRound, Link2Off, Trash2 } from 'lucide-react';
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard';
-import { toast } from 'sonner';
 
 import { useDeferredAction } from '@/hooks/useDeferredAction';
 import type { RecordAction, RecordActionSet } from '@/components/common/recordActions';
@@ -49,9 +48,7 @@ export function useOnboardingRequestActions(
   { onDeleted, surface = 'inline' }: UseOnboardingRequestActionsOptions = {},
 ): RecordActionSet {
   const { revoke, regenerate } = useOnboardingRequestMutations(request?.id ?? '');
-  const { copyToClipboard } = useCopyToClipboard({
-    onCopy: () => toast.success('Link copied'),
-  });
+  const { copyToClipboard } = useCopyToClipboard();
   // Delete asks nothing (D7): the countdown takes the record's primary slot, or
   // the toast on a list row, and its people go with the request either way.
   const deletion = useDeferredAction({

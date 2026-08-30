@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect, useRef } from 'react';
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -13,7 +13,7 @@ import {
   SortingState,
   useReactTable,
 } from '@tanstack/react-table';
-import { LoaderCircleIcon, Mail, Plus, Search, Trash2, UserCheck, UserX, X } from 'lucide-react';
+import { LoaderCircleIcon, Mail, Plus, Trash2, UserCheck, UserX } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import {
   AlertDialog,
@@ -36,12 +36,13 @@ import { DataGridListToolbar, type ToolbarAction } from '@/components/ui/data-gr
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { User, UserStatus } from '@/app/models/user';
 import { buildDetailSearch } from '@/lib/listNavQuery';
+import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { UserRowActions } from '../actions';
 import { pendingEntityKey, usePendingEntityKeys } from '@/lib/pending-entity-store';
 import {
@@ -68,7 +69,13 @@ const UserList = () => {
   ]);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [inviteDialogOpen, setInviteDialogOpen] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
+  const {
+    value: searchInput,
+    setValue: setSearchInput,
+    debouncedValue: searchQuery,
+    isSettling: searchSettling,
+    reset: resetSearch,
+  } = useDebouncedSearch();
   const [selectedRole, setSelectedRole] = useState<string | null>(null);
   const [selectedStatus, setSelectedStatus] = useState<string | null>('all');
   const [selectedTrashed, setSelectedTrashed] = useState<string>('exclude');
@@ -84,11 +91,20 @@ const UserList = () => {
   useListStateFromUrl((state) => {
     setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
     setSorting(state.sorting);
-    setSearchQuery(state.searchQuery);
+    resetSearch(state.searchQuery);
     setSelectedRole(state.filters.roleId ?? 'all');
     setSelectedStatus(state.filters.status ?? 'all');
     setSelectedTrashed(state.filters.trashed ?? 'exclude');
   });
+
+  const searchMounted = useRef(false);
+  useEffect(() => {
+    if (!searchMounted.current) {
+      searchMounted.current = true;
+      return;
+    }
+    setPagination((prev) => ({ ...prev, pageIndex: 0 }));
+  }, [searchQuery]);
 
   /**
    * The daily-summary switch. Optimistic (S7-01): it moves on press and goes
@@ -481,7 +497,6 @@ const UserList = () => {
   );
 
   const DataGridToolbar = () => {
-    const [inputValue, setInputValue] = useState(searchQuery);
     type UserFilterField = 'role' | 'status' | 'trashed';
     type UserFilterCondition = { id: string; field: UserFilterField; value: string };
 
@@ -526,11 +541,6 @@ const UserList = () => {
       setSelectedStatus(status);
       setSelectedTrashed(trashed);
       setPagination((prev) => ({ ...prev, pageIndex: 0 }));
-    };
-
-    const handleSearch = () => {
-      setSearchQuery(inputValue);
-      setPagination({ ...pagination, pageIndex: 0 });
     };
 
     const filtersActiveCount =
@@ -587,27 +597,14 @@ const UserList = () => {
         <DataGridListToolbar
           table={table}
           searchSlot={
-            <div className="relative">
-              <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
-              <Input
-                placeholder="Search users"
-                value={inputValue}
-                onChange={(e) => setInputValue(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-                disabled={isLoading}
-                className="ps-9 w-full sm:40 md:w-64"
-              />
-              {searchQuery.length > 0 && (
-                <Button
-                  mode="icon"
-                  variant="dim"
-                  className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
-                  onClick={() => setSearchQuery('')}
-                >
-                  <X />
-                </Button>
-              )}
-            </div>
+            <ListSearchInput
+              value={searchInput}
+              onChange={setSearchInput}
+              isSettling={searchSettling}
+              onSubmit={() => resetSearch(searchInput)}
+              placeholder="Search users"
+              className="w-full sm:w-40 md:w-64"
+            />
           }
           filters={{
             kind: 'custom',
