@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { Edit, Copy, Trash2, ExternalLink } from 'lucide-react';
+import { Copy, Trash2, ExternalLink } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import {
@@ -10,6 +10,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { RowActionsMenu } from '@/components/common/RowActionsMenu';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import type { ColumnDef } from '@tanstack/react-table';
 import type { Brand } from '../types/brand.types';
@@ -20,11 +21,10 @@ import type { Brand } from '../types/brand.types';
  * uniformly from react-table.
  */
 export function buildBrandColumns(handlers: {
-  onEdit?: (brand: Brand) => void;
   onDuplicate?: (brand: Brand) => void;
   onDelete?: (brand: Brand) => void;
 }): ColumnDef<Brand>[] {
-  const { onEdit, onDuplicate, onDelete } = handlers;
+  const { onDuplicate, onDelete } = handlers;
   return [
     buildSelectColumn<Brand>(),
     {
@@ -122,50 +122,40 @@ export function buildBrandColumns(handlers: {
     {
       id: 'actions',
       header: '',
-      size: 180,
+      size: 70,
       enableSorting: false,
       enableHiding: false,
       enableResizing: false,
-      meta: { headerTitle: 'Actions' },
+      meta: { headerTitle: 'Actions', cellClassName: 'text-right' },
+      // The row opens the brand record, where Edit happens in place, so the
+      // cell carries only what is left: Duplicate, then Delete in red (D15).
       cell: ({ row }) => (
-        <div className="flex items-center gap-1">
-          <Button
-            mode="icon"
-            variant="ghost"
-            size="sm"
-            onClick={(e) => {
-              e.stopPropagation();
-              onEdit?.(row.original);
-            }}
-            title="Edit"
-          >
-            <Edit className="size-4" />
-          </Button>
-          <Button
-            mode="icon"
-            variant="ghost"
-            size="sm"
-            onClick={(e) => {
-              e.stopPropagation();
-              onDuplicate?.(row.original);
-            }}
-            title="Duplicate"
-          >
-            <Copy className="size-4" />
-          </Button>
-          <Button
-            mode="icon"
-            variant="ghost"
-            size="sm"
-            onClick={(e) => {
-              e.stopPropagation();
-              onDelete?.(row.original);
-            }}
-            title="Delete"
-          >
-            <Trash2 className="size-4" />
-          </Button>
-        </div>
+        <RowActionsMenu
+          ariaLabel={`brand ${row.original.brand_code}`}
+          actions={[
+            ...(onDuplicate
+              ? [
+                  {
+                    key: 'brand.duplicate',
+                    label: 'Duplicate brand',
+                    icon: Copy,
+                    run: () => onDuplicate(row.original),
+                  },
+                ]
+              : []),
+            ...(onDelete
+              ? [
+                  {
+                    key: 'brand.delete',
+                    label: 'Delete brand',
+                    icon: Trash2,
+                    kind: 'destructive' as const,
+                    run: () => onDelete(row.original),
+                  },
+                ]
+              : []),
+          ]}
+        />
       ),
     },
   ];

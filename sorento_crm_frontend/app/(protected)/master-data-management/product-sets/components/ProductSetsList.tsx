@@ -12,6 +12,7 @@ import {
 import { Layers, Plus, Search, Sparkles, Trash2, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { RowActionsMenu } from '@/components/common/RowActionsMenu';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
@@ -172,18 +173,22 @@ export default function ProductSetsList() {
       {
         id: 'actions',
         header: '',
+        // The row opens the record, so the cell carries only the secondary and
+        // destructive actions, in the "..." menu the record page's gear mirrors
+        // (D15).
         cell: ({ row }) => (
-          <div className="flex justify-end">
-            <Button
-              mode="icon"
-              variant="ghost"
-              title="Delete set"
-              aria-label={`Delete ${row.original.set_code}`}
-              onClick={() => setDeleting(row.original)}
-            >
-              <Trash2 className="size-4" />
-            </Button>
-          </div>
+          <RowActionsMenu
+            ariaLabel={`product set ${row.original.set_code}`}
+            actions={[
+              {
+                key: 'product_set.delete',
+                label: 'Delete product set',
+                icon: Trash2,
+                kind: 'destructive',
+                run: () => setDeleting(row.original),
+              },
+            ]}
+          />
         ),
         size: 70,
         enableSorting: false,

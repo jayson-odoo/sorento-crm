@@ -1,5 +1,6 @@
 import { Container } from '@/components/common/container';
 import { PageHeader } from '@/components/common/PageHeader';
+import BackToList from '@/components/common/BackToList';
 import ProductSetDetail from '../components/ProductSetDetail';
 
 export default async function ProductSetDetailPage({
@@ -11,7 +12,15 @@ export default async function ProductSetDetailPage({
   return (
     <>
       <Container>
-        <PageHeader title="Product Set" />
+        <PageHeader
+          title="Product Set"
+          actions={
+            <BackToList
+              listPath="/master-data-management/product-sets"
+              label="Back to product sets"
+            />
+          }
+        />
       </Container>
 
       <Container>

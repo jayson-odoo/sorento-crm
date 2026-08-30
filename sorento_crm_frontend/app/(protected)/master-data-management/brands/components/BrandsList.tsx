@@ -37,12 +37,6 @@ export default function BrandsList() {
     sorting: [{ id: 'brand_name', desc: false }],
     searchQuery: '',
   });
-  const handleEdit = (brand: Brand) => {
-    setCopyFromBrand(null);
-    setEditingBrandId(brand.id);
-    setFormOpen(true);
-  };
-
   const handleDuplicate = (brand: Brand) => {
     setEditingBrandId(undefined);
     setCopyFromBrand(brand);
@@ -79,7 +73,7 @@ export default function BrandsList() {
   }, [data, searchQuery, statusFilter]);
 
   const columns = useMemo(
-    () => buildBrandColumns({ onEdit: handleEdit, onDuplicate: handleDuplicate, onDelete: handleDelete }),
+    () => buildBrandColumns({ onDuplicate: handleDuplicate, onDelete: handleDelete }),
     [],
   );
 
@@ -112,14 +106,14 @@ export default function BrandsList() {
 
   return (
     <>
-      {/* A brand is edited in a lightbox, so the row opens that rather than a page
-          (D3, second clause) - the trailing chevron promised a page there is no
-          route to from here. */}
+      {/* The row opens the brand's record, where view and edit are the same
+          layout (ADR product standards). Add stays a lightbox - a brand is five
+          fields and does not need a page of its own to be created. */}
       <DataGrid
         table={table}
         recordCount={filteredBrands.length}
         isLoading={isLoading}
-        onRowClick={handleEdit}
+        rowHref={(row) => `/master-data-management/brands/${row.id}`}
         tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
         emptyAction={listPrimaryAction}
       >

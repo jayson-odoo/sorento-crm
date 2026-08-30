@@ -10,6 +10,7 @@ import {
   type RowSelectionState,
 } from '@tanstack/react-table';
 import { Button } from '@/components/ui/button';
+import { RowActionsMenu } from '@/components/common/RowActionsMenu';
 import { Input } from '@/components/ui/input';
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Card, CardHeader, CardTable } from '@/components/ui/card';
@@ -132,32 +133,28 @@ export default function ComplaintResolutionsList() {
         enableHiding: false,
         enableResizing: false,
         meta: { headerTitle: 'Actions' },
+        // The row opens the record; the cell carries the rest, in the same "..."
+        // menu the record page's gear mirrors (D15).
         cell: ({ row }) => (
-          <div className="flex items-center gap-1">
-            <Button
-              mode="icon"
-              variant="ghost"
-              size="sm"
-              onClick={(e) => {
-                e.stopPropagation();
-                handleEdit(row.original);
-              }}
-              title="Edit"
-            >
-              <Edit className="size-4" />
-            </Button>
-            <Button
-              mode="icon"
-              variant="ghost"
-              size="sm"
-              onClick={(e) => {
-                e.stopPropagation();
-                handleDelete(row.original);
-              }}
-              title="Delete"
-            >
-              <Trash2 className="size-4" />
-            </Button>
+          <div className="flex items-center justify-end gap-1">
+            <RowActionsMenu
+              ariaLabel="resolution"
+              actions={[
+                {
+                  key: 'complaint_resolution.edit',
+                  label: 'Edit resolution',
+                  icon: Edit,
+                  run: () => handleEdit(row.original),
+                },
+                {
+                  key: 'complaint_resolution.delete',
+                  label: 'Delete resolution',
+                  icon: Trash2,
+                  kind: 'destructive',
+                  run: () => handleDelete(row.original),
+                },
+              ]}
+            />
             <ChevronRight className="text-muted-foreground/70 size-3.5 shrink-0" />
           </div>
         ),
