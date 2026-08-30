@@ -234,6 +234,8 @@ export default function Page() {
         : NO_DEFAULT_UOM_VALUE,
     takeoverCooldownSeconds: settings?.takeoverCooldownSeconds ?? 60,
     formSlaGraceSeconds: settings?.formSlaGraceSeconds ?? 0,
+    deferredDeleteSeconds: settings?.deferredDeleteSeconds ?? 10,
+    deferredActionSeconds: settings?.deferredActionSeconds ?? 5,
     // The rollout default (plan 5.1) when the blob carries no value yet.
     planGrain: settings?.planGrain ?? 'product',
     purchaseRequestDefaultApproverUserId:
@@ -290,6 +292,8 @@ export default function Page() {
           : NO_DEFAULT_UOM_VALUE,
       takeoverCooldownSeconds: settings.takeoverCooldownSeconds ?? 60,
       formSlaGraceSeconds: settings.formSlaGraceSeconds ?? 0,
+      deferredDeleteSeconds: settings.deferredDeleteSeconds ?? 10,
+      deferredActionSeconds: settings.deferredActionSeconds ?? 5,
       planGrain: settings.planGrain ?? 'product',
       purchaseRequestDefaultApproverUserId:
         settings.purchaseRequestDefaultApproverUserId &&
@@ -327,6 +331,8 @@ export default function Page() {
           values.defaultUomId === NO_DEFAULT_UOM_VALUE ? null : values.defaultUomId,
         takeover_cooldown_seconds: values.takeoverCooldownSeconds,
         form_sla_grace_seconds: values.formSlaGraceSeconds,
+        deferred_delete_seconds: values.deferredDeleteSeconds,
+        deferred_action_seconds: values.deferredActionSeconds,
         plan_grain: values.planGrain,
         purchase_request_default_approver_user_id:
           values.purchaseRequestDefaultApproverUserId === NO_DEFAULT_APPROVER_VALUE
@@ -913,6 +919,64 @@ export default function Page() {
                     does not set its own. During the wait nothing is written and nobody is
                     notified, so the person who clicked can take it back. 0 disables the wait
                     everywhere except stages that override it.
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="deferredDeleteSeconds"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Delete countdown (seconds)</FormLabel>
+                  <FormControl>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={600}
+                      value={field.value}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        if (v === '') return;
+                        const n = parseInt(v, 10);
+                        if (!Number.isNaN(n)) field.onChange(n);
+                      }}
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    How long a delete counts down before it applies. Nothing is removed
+                    during the wait, so the person who clicked can cancel it.
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="deferredActionSeconds"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Change countdown (seconds)</FormLabel>
+                  <FormControl>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={600}
+                      value={field.value}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        if (v === '') return;
+                        const n = parseInt(v, 10);
+                        if (!Number.isNaN(n)) field.onChange(n);
+                      }}
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    The same wait for a change that can be set back again, such as
+                    marking a delivery order as delivered.
                   </FormDescription>
                   <FormMessage />
                 </FormItem>

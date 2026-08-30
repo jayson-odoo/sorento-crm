@@ -51,6 +51,16 @@ export interface SystemSetting {
   formSlaGraceSeconds?: number;
 
   /**
+   * The two grace windows a deferred record action waits out (D16).
+   *
+   * The product asks for no confirmation: a delete or a status change parks on the
+   * server and the countdown is the way back, so its LENGTH is the only thing left
+   * to tune. Destructive covers every `<entity>.delete`; reversible covers the rest.
+   */
+  deferredDeleteSeconds?: number;
+  deferredActionSeconds?: number;
+
+  /**
    * SCM front planning: which grain new plans are DECIDED at (AC-F01).
    *
    * Admin policy, not a per-run selector. It is stamped onto each run when the run

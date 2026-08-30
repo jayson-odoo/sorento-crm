@@ -66,6 +66,11 @@ function mapSettingsFromApi(raw: Record<string, unknown> | null): SystemSetting 
     formSlaGraceSeconds:
       typeof raw.form_sla_grace_seconds === 'number' ? raw.form_sla_grace_seconds : 0,
     // A new settings column reaches the FE only if it is in this manual mapper too.
+    deferredDeleteSeconds:
+      typeof raw.deferred_delete_seconds === 'number' ? raw.deferred_delete_seconds : 10,
+    deferredActionSeconds:
+      typeof raw.deferred_action_seconds === 'number' ? raw.deferred_action_seconds : 5,
+    // A new settings column reaches the FE only if it is in this manual mapper too.
     planGrain: raw.plan_grain === 'location' ? 'location' : 'product',
     purchaseRequestDefaultApproverUserId:
       (raw.purchase_request_default_approver_user_id as string | null) ?? null,
@@ -166,6 +171,8 @@ function createDefaultSettings(): SystemSetting {
     defaultUomCode: null,
     takeoverCooldownSeconds: 60,
     formSlaGraceSeconds: 0,
+    deferredDeleteSeconds: 10,
+    deferredActionSeconds: 5,
     planGrain: 'product',
     purchaseRequestDefaultApproverUserId: null,
     purchaseRequestDefaultApproverName: null,
