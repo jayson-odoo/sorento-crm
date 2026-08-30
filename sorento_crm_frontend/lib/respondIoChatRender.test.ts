@@ -211,6 +211,26 @@ describe('describeQuotedContext', () => {
     ).toBe('line one line two');
   });
 
+  it('a quoted quick_reply reads its prose off `title`, never "[quick_reply]"', () => {
+    expect(
+      describeQuotedContext({
+        replyTo: {
+          messageId: 7,
+          traffic: 'outgoing',
+          message: { type: 'quick_reply', title: 'Escalate this?', replies: ['Yes escalate', 'No'] },
+        },
+      }),
+    ).toEqual({ messageId: '7', excerpt: 'Escalate this?', sender: 'agent' });
+  });
+
+  it('a quoted quick_reply with no title shows its options', () => {
+    expect(
+      describeQuotedContext({
+        replyTo: { messageId: 7, message: { type: 'quick_reply', replies: ['Yes escalate', 'No'] } },
+      })?.excerpt,
+    ).toBe('Yes escalate | No');
+  });
+
   it('falls back to a typed placeholder for a quoted media message', () => {
     expect(
       describeQuotedContext({ replyTo: { messageId: 5, message: { type: 'image' } } }),

@@ -12,6 +12,8 @@ scm→scm FKs are schema-qualified (``ForeignKey("scm.reorder_run.id")``).
 Per AC-M0.3 every table carries ``source_system`` + ``source_ref`` (``'seed'`` for demo
 rows, ``'manual'`` for future UI rows).
 """
+from datetime import date
+
 from sqlalchemy import (
     CheckConstraint,
     Column,
@@ -722,14 +724,20 @@ class PriorityPolicy(Base):
     # today". A line required AFTER this date is proposed as `Buy now`, untouched - no
     # reservation, no borrow attempted. NULL means no coverage limit is set.
     reorder_coverage_until = Column(Date, nullable=True)
-    # A cross-OWNERSHIP-GROUP borrow (e.g. a BB line borrowing from an HP location) is only
-    # proposed under a small-quantity cap - either absolute qty or a percentage of the line,
-    # whichever the ladder decides to apply. Both are stored; which one gates is the ladder's
-    # call, not this row's.
-    cross_group_borrow_max_qty = Column(Integer, nullable=False, default=50,
-                                        server_default=text("50"))
-    cross_group_borrow_max_pct = Column(Numeric(6, 2), nullable=False, default=10,
-                                        server_default=text("10"))
+    # The other end of the same idea (borrow ladder v7.1, R20, migration 443). Demand dated
+    # ON or AFTER this date is TBA: it takes no supply, is never covered, and never donates.
+    # This client books "no date agreed yet" as 2030-01-01, so the default sits just before
+    # it; the next client's convention is a different date, which is exactly why it is a
+    # policy field and not a constant in the engine. NOT NULL - "no TBA date" would mean a
+    # placeholder line competing with real promises for real stock.
+    #
+    # `cross_group_borrow_max_qty` / `cross_group_borrow_max_pct` used to sit here and were
+    # dropped by the same migration (R5): any ownership group may donate now, so there is
+    # nothing left for a cap to cap.
+    tba_date_from = Column(
+        Date, nullable=False, default=date(2029, 1, 1),
+        server_default=text("'2029-01-01'::date"),
+    )
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(
         DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False

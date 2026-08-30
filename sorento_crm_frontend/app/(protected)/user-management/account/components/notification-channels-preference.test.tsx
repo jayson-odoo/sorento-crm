@@ -51,6 +51,7 @@ describe('NotificationChannelsPreference (TCK-31 UX1)', () => {
 
     expect(screen.getByLabelText('Email on escalation')).toBeChecked();
     expect(screen.getByLabelText('Email on deadline extended')).toBeChecked();
+    expect(screen.getByLabelText('Email on mention in a note')).toBeChecked();
     expect(screen.getByLabelText('WhatsApp on assignment')).not.toBeChecked();
     expect(screen.getByLabelText('WhatsApp daily SLA summary')).not.toBeChecked();
   });
@@ -87,6 +88,33 @@ describe('NotificationChannelsPreference (TCK-31 UX1)', () => {
       });
     });
     expect(toast.success).toHaveBeenCalled();
+  });
+
+  it('PATCHes notify_email_on_mention when the mention row is toggled', async () => {
+    // Mention is email-only: there is no WhatsApp twin for this event, so the
+    // single row owns the whole opt-in.
+    (apiFetch as any).mockImplementation((_url: string, init?: RequestInit) =>
+      Promise.resolve(
+        init?.method === 'PATCH' ? res(true, {}) : res(true, { notify_email_on_mention: true }),
+      ),
+    );
+    render(<NotificationChannelsPreference />);
+
+    const mention = await screen.findByLabelText('Email on mention in a note');
+    await waitFor(() => expect(mention).toBeEnabled());
+    expect(mention).toBeChecked();
+    fireEvent.click(mention);
+
+    await waitFor(() => {
+      const patch = (apiFetch as any).mock.calls.find(
+        (c: unknown[]) => (c[1] as RequestInit | undefined)?.method === 'PATCH',
+      );
+      expect(patch).toBeTruthy();
+      expect(JSON.parse((patch[1] as RequestInit).body as string)).toEqual({
+        notify_email_on_mention: false,
+      });
+    });
+    expect(screen.queryByLabelText('WhatsApp on mention in a note')).toBeNull();
   });
 
   it('reverts the switch on PATCH failure', async () => {

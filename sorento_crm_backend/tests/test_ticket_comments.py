@@ -7,7 +7,7 @@ mirroring tests/test_intervention_ticket_detail_route.py:
   GET  /{tracking_id}/comments - list, oldest first
 
 Covered here: happy path, auth denial, out-of-scope viewer (404, never 403),
-validation (empty body, unknown mentioned user), the in-app mention
+validation (empty body, unknown mentioned user), the mention
 notification, contact-scoped (Respond-ingested) comments showing in every open
 ticket for that contact, and the hard rule that a comment NEVER reaches the
 contact.
@@ -275,7 +275,11 @@ def test_mentioned_user_gets_an_in_app_notification_with_a_deep_link(client, db)
         .all()
     }
     assert "in_app" in channels
-    assert "email" not in channels, "AC-L1 is the in-app lane only"
+    # Email joined the lane with notify_email_on_mention (default on); the seeded
+    # user leaves it at the default. tests/test_ticket_comment_mention_email.py owns
+    # the opt-in. WhatsApp has no twin for this event and must stay out.
+    assert "email" in channels
+    assert "whatsapp" not in channels
 
 
 def test_mentioning_yourself_notifies_nobody(client, db):

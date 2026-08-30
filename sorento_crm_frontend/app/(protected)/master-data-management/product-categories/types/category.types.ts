@@ -13,5 +13,6 @@ export interface CategoryFormData {
   description?: string;
   parent_category_id?: string;
   is_active: boolean;
+  is_searchable: boolean;
   display_order: number;
 }

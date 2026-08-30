@@ -625,8 +625,6 @@ class BorrowCandidate(BaseModel):
     donor_core_line_id: Optional[str] = None
     lower_ranked: bool = False
     same_agent: bool = False
-    over_cap: bool = False
-    cap_reason: Optional[str] = None
 
 
 class StockDetailSalesOrder(BaseModel):

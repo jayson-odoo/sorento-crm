@@ -303,9 +303,9 @@ export function borrowCandidatesOf(contribution: BoardContribution): BorrowCandi
         free_after_full_borrow: '0',
         committed_qty: '0',
       },
-      // Section 1b/1c: the group-aware donor facts - which rung this row is,
-      // the donor SO line it names, whether it is ranked below this line or shares this
-      // line's agent, and whether it sits outside the cross-group cap.
+      // Section 1b/1c: the group-aware donor facts - which rung this row is, the donor
+      // SO line it names, and whether it is ranked below this line or shares this line's
+      // agent. No cap verdict since v7.1 (R5): any ownership group may donate.
       rung: candidate.rung ?? null,
       donor_so_number: candidate.donor_so_number ?? null,
       donor_line_no: candidate.donor_line_no ?? null,
@@ -313,8 +313,6 @@ export function borrowCandidatesOf(contribution: BoardContribution): BorrowCandi
       donor_core_line_id: candidate.donor_core_line_id ?? null,
       lower_ranked: Boolean(candidate.lower_ranked),
       same_agent: Boolean(candidate.same_agent),
-      over_cap: Boolean(candidate.over_cap),
-      cap_reason: candidate.cap_reason ?? null,
     }));
 }
 

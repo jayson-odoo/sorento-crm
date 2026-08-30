@@ -133,6 +133,7 @@ export default function UserLayout({
         notifyWhatsappOnDeadlineExtended: data.notify_whatsapp_on_deadline_extended ?? data.notifyWhatsappOnDeadlineExtended ?? false,
         notifyEmailOnHandling: data.notify_email_on_handling ?? data.notifyEmailOnHandling ?? true,
         notifyWhatsappOnHandling: data.notify_whatsapp_on_handling ?? data.notifyWhatsappOnHandling ?? false,
+        notifyEmailOnMention: data.notify_email_on_mention ?? data.notifyEmailOnMention ?? true,
         notifyEmailOnProductDiscontinued: data.notify_email_on_product_discontinued ?? data.notifyEmailOnProductDiscontinued ?? false,
         notifyWhatsappOnProductDiscontinued: data.notify_whatsapp_on_product_discontinued ?? data.notifyWhatsappOnProductDiscontinued ?? false,
         productDiscontinuedScopes: data.product_discontinued_scopes ?? data.productDiscontinuedScopes ?? [],

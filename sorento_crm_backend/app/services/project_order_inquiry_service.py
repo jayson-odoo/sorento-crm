@@ -2918,10 +2918,18 @@ class ProjectOrderInquiryService:
 
         Rebuilt when a product it has not seen turns up, so a caller that primes it with
         the whole batch (the cascade does) pays for ONE three-query read and a single-row
-        caller pays for one too. It is the same `group_netting` the fulfilment ladder nets
-        through, which is the point: the board refusing to promise a group's stock and
+        caller pays for one too. It is the same `group_netting` reader the fulfilment ladder
+        uses, which is the point: the board refusing to promise a group's stock and
         purchasing linking a row to that group's purchase order would be two answers to one
         question.
+
+        **The same READER, over a WIDER span** (AC-S1-5b, corrected 30 Aug). This call is
+        not `planning_only`, so its ownership-group index covers every ACTIVE bin, while the
+        board's proposal reads only the bins flagged into fulfilment planning (R17). That is
+        deliberate and it is the boundary the AC draws: the flag narrows what a PROPOSAL may
+        draw, never what a non-planning consumer may see, so the deficit gate here still
+        sees a group's real negative net. The two therefore agree about the ARITHMETIC and
+        can legitimately differ about the SPAN.
         """
         wanted = {str(pid) for pid in product_ids if pid}
         if self._netting_value is None or wanted - self._netted_products:

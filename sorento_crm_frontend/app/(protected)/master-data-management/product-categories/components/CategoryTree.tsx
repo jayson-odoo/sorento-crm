@@ -66,12 +66,13 @@ export default function CategoryTree({ categories, searchQuery = '', level = 0, 
     <div className="overflow-x-auto">
       <table className="w-full table-fixed border-collapse text-sm">
         <colgroup>
-          <col style={{ width: '24%' }} />
+          <col style={{ width: '22%' }} />
           <col style={{ width: '12%' }} />
-          <col style={{ width: '28%' }} />
+          <col style={{ width: '22%' }} />
           <col style={{ width: '10%' }} />
           <col style={{ width: '12%' }} />
-          <col style={{ width: '14%' }} />
+          <col style={{ width: '10%' }} />
+          <col style={{ width: '12%' }} />
         </colgroup>
         <thead>
           <tr className="border-b border-border bg-muted/50">
@@ -79,6 +80,7 @@ export default function CategoryTree({ categories, searchQuery = '', level = 0, 
             <th className="text-left font-medium text-muted-foreground px-3 py-2.5">Code</th>
             <th className="text-left font-medium text-muted-foreground px-3 py-2.5">Description</th>
             <th className="text-left font-medium text-muted-foreground px-3 py-2.5">Active</th>
+            <th className="text-left font-medium text-muted-foreground px-3 py-2.5">Chat</th>
             <th className="text-left font-medium text-muted-foreground px-3 py-2.5">Products</th>
             <th className="text-left font-medium text-muted-foreground px-3 py-2.5">Actions</th>
           </tr>
@@ -135,6 +137,17 @@ export default function CategoryTree({ categories, searchQuery = '', level = 0, 
                   >
                     <BadgeDot />
                     {category.is_active ? 'Active' : 'Inactive'}
+                  </Badge>
+                </td>
+                <td className="px-3 py-2">
+                  <Badge
+                    variant={category.is_searchable === false ? 'secondary' : 'success'}
+                    size="sm"
+                    appearance="ghost"
+                    className="shrink-0"
+                  >
+                    <BadgeDot />
+                    {category.is_searchable === false ? 'Hidden' : 'Searchable'}
                   </Badge>
                 </td>
                 <td className="px-3 py-2">
