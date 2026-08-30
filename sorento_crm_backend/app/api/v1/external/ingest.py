@@ -7,6 +7,10 @@ Two directions on one surface:
   a batch is not a transaction (AC-AC-15), so a non-2xx would tell the ESB
   nothing about which of 10,000 records landed.
 
+* **Delete** (`POST /external/ingest/{entity}/deletions`) - the ESB says a
+  record is gone upstream. A record something still points at is taken out of
+  use rather than removed; see ``deletion_service``.
+
 * **Read** (`POST /external/read/{entity}`) - the ESB fetches current values to
   render before/after diffs for human approval (AC-AC-19). POST rather than GET
   because the request carries a batch of source references, and a few hundred
@@ -37,6 +41,7 @@ from app.dependencies import get_external_api_user
 from app.database import get_db
 from app.schemas.common import MAX_PAGE_LIMIT
 from app.services.error_handler import AppException
+from app.services.deletion_service import DeletionService
 from app.services.document_ingest_service import (
     DOCUMENT_ENTITIES,
     DocumentIngestService,
@@ -205,6 +210,92 @@ async def ingest_masters(
         result.updated,
         result.failed,
         result.retryable,
+    )
+    return result.as_dict()
+
+
+@ingest_router.post(
+    "/{entity}/deletions",
+    # TWO guards, both entity-resolved. The router already carries the ingest
+    # guard (`.edit`), and this adds `.delete` on top: removing a record through
+    # the ESB is a different act from syncing one, and an integration trusted to
+    # keep masters up to date must not gain the ability to empty them.
+    dependencies=[Depends(require_external_permission_for_path(DELETE_PERMISSIONS))],
+)
+async def delete_records(
+    entity: str = Path(...),
+    payload: dict = Body(...),
+    dry_run: bool = Query(
+        False,
+        description=(
+            "Preview only. Resolves every reference, probes its dependents and "
+            "reports the verdict each one would receive - deleted, deactivated, "
+            "not found or failed - then writes nothing."
+        ),
+    ),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_external_api_user),
+):
+    """Delete a batch of records the source system says are gone (group A4).
+
+    Always `200` with a per-reference verdict, for the reason the ingest is: a
+    batch is not a transaction, and a non-2xx would tell the caller nothing about
+    which of its references landed.
+
+    A record something still points at is NOT removed - it is taken out of use
+    (`deactivated`) and keeps its reference. See ``deletion_service`` for why
+    that is not left to the database to decide.
+    """
+    entity = _entity(entity)
+
+    source_refs = payload.get("source_refs")
+    if not isinstance(source_refs, list):
+        raise AppException(
+            status_code=422,
+            message="Body must contain a 'source_refs' array",
+            code="INVALID_BODY",
+        )
+    if len(source_refs) > MAX_BATCH:
+        raise AppException(
+            status_code=413,
+            message=(
+                f"Batch of {len(source_refs)} exceeds the maximum of {MAX_BATCH}. "
+                "Split it; the response is never silently truncated."
+            ),
+            code="BATCH_TOO_LARGE",
+        )
+
+    company_id = resolve_company_anchor(db, payload, current_user)
+
+    service = DeletionService(
+        db,
+        integration_id=current_user.get("integration_id"),
+        company_id=company_id,
+    )
+    try:
+        result = service.delete(entity, source_refs, dry_run=dry_run)
+    except UnsupportedIngestEntity as exc:
+        raise AppException(status_code=404, message=str(exc), code="UNKNOWN_ENTITY")
+
+    if dry_run:
+        # The service has already rolled back; this is the second of two locks on
+        # the same door, exactly as on the ingest.
+        db.rollback()
+    else:
+        db.commit()
+
+    summary = result.as_dict()["summary"]
+    logger.info(
+        "deletion.batch entity=%s integration=%s company=%s dry_run=%s "
+        "deleted=%d deactivated=%d not_found=%d failed=%d",
+        entity,
+        current_user.get("integration_name"),
+        company_id,
+        dry_run,
+        summary["deleted"],
+        summary["deactivated"],
+        summary["not_found"],
+        summary["failed"],
     )
     return result.as_dict()
 

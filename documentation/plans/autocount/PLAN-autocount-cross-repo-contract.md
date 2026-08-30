@@ -2,8 +2,8 @@
 
 **Status:** APPROVED 2026-08-30 (brief from the foundryx-shared-service session, Appendix A of
 `foundryx-shared-service/documentation/plans/sprint-4/22-autocount-db-etl.md`, ACs AC-22-25..28).
-Slices: A1 DONE (commit `feat(external): company-anchored ingest/read (A1)` on this branch; a
-commit cannot carry its own sha, so the hash is in the handoff), A2 DONE, A3 DONE, A4 next.
+Slices: A1-A4 DONE, review next (A1 = commit `feat(external): company-anchored ingest/read (A1)`
+on this branch; a commit cannot carry its own sha, so the hash is in the handoff).
 **Branch:** `feat/autocount-cross-repo-contract` off `origin/main` e1ba232ca.
 **Worktree:** `.claude/worktrees/autocount-contract` (backend only; no dev server needed).
 **UAC:** `autocount-cross-repo-contract-acceptance-criteria.md` alongside.
@@ -197,6 +197,25 @@ Per ref, inside its own SAVEPOINT:
 
 Response: `{"dry_run": bool, "summary": {"total","deleted","deactivated","not_found","failed"},
 "records": [{"source_ref","outcome","entity_id", "errors"?}]}`.
+
+**As built.** `DeletionService` (`app/services/deletion_service.py`) takes the SAME constructor as
+the two ingest services and is mounted on `ingest_router` as `POST /{entity}/deletions`, so the
+router's `.edit` guard applies and the route adds its own `.delete` one. `/{entity}` matches a
+single path segment, so the two routes cannot shadow each other - pinned by a test that ingests a
+warehouse after the deletion route exists. Body guards, batch cap and anchor resolution run in the
+same order as the ingest, for the same reason.
+
+Three details the section above did not fix:
+
+* A reference resolving into ANOTHER company reads as `not_found`, not as a failure. It is not this
+  caller's row, and distinguishing the two would confirm that a record exists somewhere it may not
+  look.
+* The document line probe is ONE query per referrer, joining the referrer to the line table on the
+  header's FK, rather than loading the line ids and probing each. Same question, no array binding,
+  and it does not grow with the line count.
+* The referrer list is NOT cached. One catalogue query per record is cheap at this batch size; the
+  trigger for caching is a deletion batch appearing in the slow-query log, and it is written down in
+  the service rather than built now.
 
 ## 5. Order of work
 
