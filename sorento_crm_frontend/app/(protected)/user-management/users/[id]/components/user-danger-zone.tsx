@@ -19,7 +19,6 @@ import DeferredActionButton from '@/components/common/DeferredActionButton';
 import { User } from '@/app/models/user';
 import { useForceLogoutUserMutation } from '@/hooks/useSessions';
 import { useDeferredAction } from '@/hooks/useDeferredAction';
-import { deleteUser } from '../../services/userService';
 import UserRestoreDialog from './user-restore-dialog';
 import UserPermanentDeleteDialog from './user-permanent-delete-dialog';
 
@@ -46,7 +45,6 @@ const UserDangerZone = ({
     watchFromMount: true,
     successMessage: 'User moved to the trash',
     invalidateKeys: [['user-users'], ['user-user', user?.id]],
-    commit: user ? () => deleteUser(user.id) : undefined,
   });
 
   // Render skeleton when loading

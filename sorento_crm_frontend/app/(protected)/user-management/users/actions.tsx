@@ -36,7 +36,6 @@ import { useHasPermission } from '@/hooks/usePermissions';
 import { useImpersonation } from '@/hooks/useImpersonation';
 import { useDeferredAction } from '@/hooks/useDeferredAction';
 import { User, UserStatus } from '@/app/models/user';
-import { deleteUser } from './services/userService';
 
 export interface UseUserActionsOptions {
   /** Where to go once the record is gone (the record page returns to the list). */
@@ -73,9 +72,6 @@ export function useUserActions(
     successMessage: 'User moved to the trash',
     invalidateKeys: [['user-users'], ['user-user', user?.id]],
     onCommitted: onDeleted,
-    // PHASE 1: the server has no `user.delete` handler yet, so the window lapsing
-    // runs the trash from here. Phase 2 registers it and drops this.
-    commit: user ? () => deleteUser(user.id) : undefined,
   });
 
   const sendInvitationLink = async () => {

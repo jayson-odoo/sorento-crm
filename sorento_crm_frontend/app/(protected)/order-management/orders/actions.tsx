@@ -18,7 +18,6 @@ import { RowActionsMenu } from '@/components/common/RowActionsMenu';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { useDeferredAction } from '@/hooks/useDeferredAction';
 import { useOrderStatusSelectQuery } from '../shared/hooks/use-order-status-select-query';
-import { deleteOrder, updateOrder } from './services/orderService';
 import type { Order } from './types/order.types';
 
 export interface UseOrderActionsOptions {
@@ -51,14 +50,6 @@ export function useOrderActions(
     watchFromMount: surface === 'inline',
     successMessage: 'Delivery order updated',
     invalidateKeys: [['orders'], ['order', orderId]],
-    // PHASE 1: the server has no `order.set_status` handler yet, so the window
-    // lapsing runs the update from here. Phase 2 registers it and drops this.
-    commit: orderId
-      ? (payload) =>
-          updateOrder(orderId, {
-            order_status_id: payload.order_status_id as string,
-          })
-      : undefined,
   });
 
   const deletion = useDeferredAction({
@@ -72,7 +63,6 @@ export function useOrderActions(
     successMessage: 'Delivery order deleted',
     invalidateKeys: [['orders']],
     onCommitted: onDeleted,
-    commit: orderId ? () => deleteOrder(orderId) : undefined,
   });
 
   const actions: RecordAction[] = [];

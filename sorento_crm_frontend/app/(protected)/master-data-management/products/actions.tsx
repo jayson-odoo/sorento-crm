@@ -18,7 +18,6 @@ import { RowActionsMenu } from '@/components/common/RowActionsMenu';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { useDeferredAction } from '@/hooks/useDeferredAction';
 import type { ProductListItem } from './types/product.types';
-import { deleteProduct } from './services/productService';
 
 export interface UseProductActionsOptions {
   /** Where to go once the record is gone (the record page returns to the list). */
@@ -47,9 +46,6 @@ export function useProductActions(
     successMessage: 'Product deleted',
     invalidateKeys: [['products']],
     onCommitted: onDeleted,
-    // PHASE 1: the server has no `product.delete` handler yet, so the window
-    // lapsing runs the delete from here. Phase 2 registers it and drops this.
-    commit: product ? () => deleteProduct(product.id) : undefined,
   });
 
   const actions: RecordAction[] = [];

@@ -59,12 +59,6 @@ export interface UseDeferredActionInput {
   invalidateKeys?: readonly unknown[][];
   /** Where to go afterwards - a record page cannot stay open on a deleted row. */
   onCommitted?: () => void;
-  /**
-   * PHASE 1 ONLY: applies the effect when the mocked window lapses (the very
-   * delete the confirmation dialog used to run). Phase 2 registers the handler on
-   * the server and deletes this argument at every call site.
-   */
-  commit?: (payload: Record<string, unknown>) => Promise<unknown>;
 }
 
 export interface UseDeferredActionResult {
@@ -101,7 +95,6 @@ export function useDeferredAction(
     payload,
     invalidateKeys,
     onCommitted,
-    commit,
   } = input;
 
   const queryClient = useQueryClient();
@@ -142,7 +135,6 @@ export function useDeferredAction(
         entityType,
         entityId: entityId as string,
         payload: override ?? payload,
-        commit: commit && ((): Promise<unknown> => commit(override ?? payload ?? {})),
       }),
     onSuccess: (action) => {
       setWatching(true);

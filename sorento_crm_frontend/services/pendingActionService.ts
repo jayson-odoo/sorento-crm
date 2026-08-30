@@ -24,16 +24,10 @@
  *     countdown, and a commit that FAILED can say so (S6-03, S6-05).
  *
  * `commit_at` is naive UTC, as every backend timestamp is.
- *
- * PHASE 1: the routes do not exist yet. `USE_PENDING_ACTION_MOCK` sends all three
- * calls to an in-memory stand-in (`pendingActionMock.ts`). Phase 2 flips that flag
- * to false, deletes the mock module and the `commit` field below, and nothing else
- * in the frontend changes - this file is the seam.
  */
 
 import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
-import { USE_PENDING_ACTION_MOCK, pendingActionMock } from './pendingActionMock';
 
 const PENDING_ACTIONS = '/api/v1/pending-actions';
 
@@ -71,13 +65,6 @@ export interface CreatePendingActionInput {
   entityId: string;
   /** Whatever the handler needs at commit time (a status id, a target row). */
   payload?: Record<string, unknown>;
-  /**
-   * PHASE 1 ONLY. The server has no handler registered yet, so the mock applies
-   * the effect from the browser when the window lapses - by calling the delete
-   * the confirmation dialog used to call. The real route neither receives nor
-   * serialises this; Phase 2 deletes the field and its callers' argument.
-   */
-  commit?: () => Promise<unknown>;
 }
 
 /**
@@ -96,8 +83,6 @@ export async function createPendingAction(
     payload: input.payload ?? {},
   };
 
-  if (USE_PENDING_ACTION_MOCK) return pendingActionMock.create(body, input.commit);
-
   const response = await apiFetch(PENDING_ACTIONS, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -110,13 +95,21 @@ export async function createPendingAction(
     PendingAction,
     'id' | 'commit_at' | 'window_seconds'
   >;
-  return { ...body, ...created };
+  // The route answers with the three fields the countdown needs; the entity and the
+  // key are echoed from the request so callers hold one whole `PendingAction`. The
+  // payload is NOT one of its fields - it is the handler's, not the countdown's.
+  return {
+    id: created.id,
+    action_key: body.action_key,
+    entity_type: body.entity_type,
+    entity_id: body.entity_id,
+    commit_at: created.commit_at,
+    window_seconds: created.window_seconds,
+  };
 }
 
 /** Withdraw a parked action before it commits. Nothing ran, so nobody is told. */
 export async function cancelPendingAction(id: string): Promise<void> {
-  if (USE_PENDING_ACTION_MOCK) return pendingActionMock.cancel(id);
-
   const response = await apiFetch(`${PENDING_ACTIONS}/${id}/cancel`, {
     method: 'POST',
   });
@@ -130,8 +123,6 @@ export async function getCurrentPendingAction(
   entityType: string,
   entityId: string,
 ): Promise<CurrentPendingActionResponse> {
-  if (USE_PENDING_ACTION_MOCK) return pendingActionMock.current(entityType, entityId);
-
   const params = new URLSearchParams({
     entity_type: entityType,
     entity_id: entityId,
