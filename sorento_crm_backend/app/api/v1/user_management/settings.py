@@ -72,6 +72,11 @@ class SystemSettingUpdate(BaseModel):
     # Global default grace window for form-SLA actions. 0 = nothing defers, which is
     # what ships; a stage may override it (form_sla_configs.grace_seconds).
     form_sla_grace_seconds: Optional[int] = Field(None, ge=0, le=600)
+    # The two deferred-action windows (D16). `ge=1`, not `ge=0`: zero would apply a
+    # delete with no way back, which is the confirmation dialog's failure mode wearing
+    # the new model's clothes. Both must appear here AND in the GET dict below.
+    deferred_delete_seconds: Optional[int] = Field(None, ge=1, le=600)
+    deferred_action_seconds: Optional[int] = Field(None, ge=1, le=600)
     n8n_attachment_webhook_url: Optional[str] = None
     n8n_crm_chat_outbound_webhook_url: Optional[str] = None
     n8n_stock_inquiry_revise_webhook_url: Optional[str] = None
@@ -221,6 +226,19 @@ async def get_settings(
                 "default_uom_code": default_uom.uom_code if default_uom else None,
                 "form_sla_grace_seconds": (
                     getattr(settings, "form_sla_grace_seconds", 0) if settings else 0
+                ),
+                # The two deferred-action windows (D16). Defaults stated here as well as
+                # on the column, so a settings row that predates the migration still
+                # renders 10 and 5 rather than an empty field.
+                "deferred_delete_seconds": (
+                    getattr(settings, "deferred_delete_seconds", 10) or 10
+                    if settings
+                    else 10
+                ),
+                "deferred_action_seconds": (
+                    getattr(settings, "deferred_action_seconds", 5) or 5
+                    if settings
+                    else 5
                 ),
                 "takeover_cooldown_seconds": (
                     getattr(settings, "takeover_cooldown_seconds", 60) if settings else None

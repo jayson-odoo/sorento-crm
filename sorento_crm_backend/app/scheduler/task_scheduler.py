@@ -242,12 +242,15 @@ def _handler_takeover_request_commit(db, task):
 
 
 def _handler_form_action_commit(db, task):
-    """Execute form-SLA actions whose grace window has closed.
+    """Execute deferred actions whose grace window has closed.
 
-    The lazy commit on read (GET /form-actions/current) covers anyone looking at the
-    form; this sweep covers the ones nobody is looking at. See PLAN-form-sla-undo."""
+    Two families ride this one sweep, because they share one table: form-SLA actions
+    (PLAN-form-sla-undo) and the record actions that replaced the confirmation dialog
+    (D7, S6). The lazy commit on read covers anyone watching the form or the record;
+    this sweep is what makes "closing the tab still commits" true."""
     from app.services.form_action_service import FormActionService
-    import app.services.form_actions  # noqa: F401  (registers the actions)
+    import app.services.form_actions  # noqa: F401  (registers the form actions)
+    import app.services.record_actions  # noqa: F401  (registers the record actions)
 
     return FormActionService(db).commit_due()
 
