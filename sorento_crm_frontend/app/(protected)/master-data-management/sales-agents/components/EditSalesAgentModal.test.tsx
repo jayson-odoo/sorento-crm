@@ -33,19 +33,22 @@ vi.mock('@/components/common/SearchableSelect', () => ({
     id?: string;
     value: string;
     onChange: (v: string) => void;
-    options: { value: string; label: string }[];
+    options?: { value: string; label: string }[];
     placeholder?: string;
     clearable?: boolean;
   }) => {
-    selectProps.current = props as unknown as Record<string, unknown>;
+    // Two selects live in this modal now: the static demand class, and the
+    // contact picker, which is server-searched and so has no `options` at all.
+    const isStatic = Array.isArray(props.options);
+    if (isStatic) selectProps.current = props as unknown as Record<string, unknown>;
     return (
       <select
-        aria-label="Demand class"
+        aria-label={isStatic ? 'Demand class' : 'Linked portal contact'}
         value={props.value}
         onChange={(e) => props.onChange(e.target.value)}
       >
         <option value="">{props.placeholder ?? ''}</option>
-        {props.options.map((o) => (
+        {(props.options ?? []).map((o) => (
           <option key={o.value} value={o.value}>
             {o.label}
           </option>
@@ -68,6 +71,8 @@ const AGENT: SalesAgent = {
   person_label: 'Sean',
   demand_class: 'project',
   location_group: 'BB',
+  contact_id: null,
+  contact_name: null,
   source: 'import',
   created_at: '2026-08-01T00:00:00',
   updated_at: null,
@@ -123,6 +128,7 @@ describe('EditSalesAgentModal', () => {
         person_label: 'Sean Lim',
         demand_class: 'retail',
         location_group: 'HP',
+        contact_id: null,
       }),
     );
   });
@@ -138,6 +144,7 @@ describe('EditSalesAgentModal', () => {
         person_label: 'Sean',
         demand_class: null,
         location_group: 'BB',
+        contact_id: null,
       }),
     );
   });
@@ -153,6 +160,7 @@ describe('EditSalesAgentModal', () => {
         person_label: 'Sean',
         demand_class: 'project',
         location_group: null,
+        contact_id: null,
       }),
     );
   });
@@ -170,6 +178,7 @@ describe('EditSalesAgentModal', () => {
         person_label: null,
         demand_class: null,
         location_group: null,
+        contact_id: null,
       }),
     );
   });

@@ -9,7 +9,7 @@
  *           gated `master_data.sales_agents.view`; `query` matches the agent code.
  *   PATCH /api/v1/master-data/sales-agents/{id}/annotation
  *           body: partial { person_label, demand_class, location_group, internal_note,
- *           follow_up } -> SalesAgent    gated `master_data.sales_agents.edit`
+ *           follow_up, contact_id } -> SalesAgent    gated `master_data.sales_agents.edit`
  *           An omitted key is left alone; `null` unsets. An unknown key is a 422, and a
  *           demand class outside the vocabulary is a 400 naming the allowed words.
  *
@@ -19,9 +19,14 @@
 import { apiFetch } from '@/lib/api';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 import type { DataGridApiFetchParams, DataGridApiResponse } from '@/components/ui/data-grid';
-import type { MirrorAnnotationPayload, SalesAgent } from '../types/salesAgent.types';
+import type {
+  ContactSelectOption,
+  MirrorAnnotationPayload,
+  SalesAgent,
+} from '../types/salesAgent.types';
 
 const BASE = '/api/v1/master-data/sales-agents';
+const CONTACTS = '/api/v1/user-management/contacts';
 
 export async function getSalesAgents(
   params: DataGridApiFetchParams,
@@ -60,4 +65,52 @@ export async function annotateSalesAgent(
     throw new Error(await extractApiError(response, 'Failed to save sales agent'));
   }
   return response.json();
+}
+
+/**
+ * Contacts for the "Linked portal contact" picker, searched on the server.
+ *
+ * Reuses the contacts list rather than adding a second search route for the same
+ * table: `query` already spans name, first/last name and phone, which is exactly what
+ * "find the salesperson" needs. It is gated on `user_management.contacts.view`, so a
+ * role holding only the master-data grants gets an empty list; the modal says so
+ * rather than showing a silently blank dropdown, which is the failure this whole
+ * slice exists to remove. A second consumer promotes this to a shared
+ * `services/contactSelectService.ts`; one does not.
+ *
+ * The phone is masked here, on the way in, because the only reason it is on screen is
+ * to tell two people with the same name apart.
+ */
+export async function getContactSelect(
+  query: string,
+  limit = 20,
+): Promise<ContactSelectOption[]> {
+  const search = new URLSearchParams({
+    limit: String(limit),
+    sort: 'name',
+    dir: 'asc',
+  });
+  if (query.trim()) search.set('query', query.trim());
+
+  const response = await apiFetch(`${CONTACTS}/?${search.toString()}`);
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to load contacts'));
+  }
+  const body: {
+    data?: { id: string; name?: string | null; phone_number?: string | null }[];
+  } = await response.json();
+
+  return (body.data ?? []).map((c) => ({
+    id: c.id,
+    name: (c.name ?? '').trim() || maskPhone(c.phone_number) || 'Unnamed contact',
+    masked_phone: maskPhone(c.phone_number),
+  }));
+}
+
+/** Last four digits only: enough to disambiguate, not enough to dial. */
+function maskPhone(phone: string | null | undefined): string | null {
+  const digits = (phone ?? '').replace(/\D/g, '');
+  if (!digits) return null;
+  if (digits.length <= 4) return digits;
+  return `***${digits.slice(-4)}`;
 }

@@ -64,6 +64,12 @@ class MirrorAnnotationUpdate(BaseModel):
     #: vocabulary the way `demand_class` is, because a new group is a warehouse suffix
     #: someone starts using, not a word the fulfilment policy has to already know.
     location_group: Optional[str] = Field(None, max_length=16)
+    #: The portal contact this agent IS. It decides which debtors that salesperson can
+    #: pick from on the price tag request form, and until D46b nothing could write it,
+    #: so every portal debtor dropdown was empty. `null` unlinks. Declared here because
+    #: the body forbids extras, and a key the body refuses is a field the screen cannot
+    #: save. Free-form text, not a UUID: `respond_contacts.id` is a Text column.
+    contact_id: Optional[str] = None
 
 
 class _MirrorBase(BaseModel):
@@ -83,3 +89,9 @@ class SalesAgentResponse(_MirrorBase):
     person_label: Optional[str] = None
     demand_class: Optional[str] = None
     location_group: Optional[str] = None
+    contact_id: Optional[str] = None
+    #: Read-only, resolved from the linked contact by `SalesAgent.contact_name`. Without
+    #: it the edit modal could only re-open on a uuid, which is never what a person
+    #: picked - and `response_model` drops a field a schema does not name, so declaring
+    #: it is what makes it reach the screen at all.
+    contact_name: Optional[str] = None

@@ -159,6 +159,9 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
 
   // ---- Lookup data ----
   const [debtors, setDebtors] = useState<DebtorOption[]>([]);
+  /** True once the debtor lookup has ANSWERED. An empty list before it has is
+   *  just "not back yet", and must not read as "you are not linked". */
+  const [debtorsLoaded, setDebtorsLoaded] = useState(false);
   const [promotions, setPromotions] = useState<PromotionOption[]>([]);
   const [products, setProducts] = useState<ProductOption[]>([]);
   const [productSets, setProductSets] = useState<ProductSetOption[]>([]);
@@ -180,7 +183,19 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
 
   // ---- Load lookups ----
   useEffect(() => {
-    lookupDebtors().then(setDebtors);
+    // The debtor list is scoped to the sales agent this portal account is linked
+    // to, so an EMPTY answer means "nobody has linked it" and is a state the form
+    // has to explain (D46a). A FAILED call is a different thing and keeps the
+    // toast, or the notice would blame the account for a network fault.
+    lookupDebtors()
+      .then((d) => {
+        setDebtors(d);
+        setDebtorsLoaded(true);
+      })
+      .catch(() => {
+        setDebtorsLoaded(false);
+        toast.error('Failed to load debtors');
+      });
     lookupPromotions().then(setPromotions);
     lookupProducts().then(setProducts);
     lookupProductSets().then(setProductSets);
@@ -597,13 +612,23 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       {/* Debtor */}
       <div className="space-y-1.5">
         <Label htmlFor="debtor">Debtor *</Label>
-        <SearchableSelect
-          id="debtor"
-          value={debtorCode}
-          onChange={setDebtorCode}
-          options={debtorOptions}
-          placeholder="Select a dealer..."
-        />
+        {debtorsLoaded && debtorOptions.length === 0 ? (
+          <p
+            className="text-sm rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200"
+            data-testid="no-debtors-notice"
+          >
+            No debtors available. Your portal account is not linked to a sales
+            agent yet. Ask your Sorento contact to link it.
+          </p>
+        ) : (
+          <SearchableSelect
+            id="debtor"
+            value={debtorCode}
+            onChange={setDebtorCode}
+            options={debtorOptions}
+            placeholder="Select a dealer..."
+          />
+        )}
       </div>
 
       {/* Promotion */}

@@ -42,15 +42,15 @@ vi.mock('@/components/common/SearchableSelect', () => ({
   SearchableSelect: (props: {
     value: string;
     onChange: (v: string) => void;
-    options: { value: string; label: string }[];
+    options?: { value: string; label: string }[];
   }) => (
     <select
-      aria-label="Demand class"
+      aria-label={Array.isArray(props.options) ? 'Demand class' : 'Linked portal contact'}
       value={props.value}
       onChange={(e) => props.onChange(e.target.value)}
     >
       <option value="">Not set</option>
-      {props.options.map((o) => (
+      {(props.options ?? []).map((o) => (
         <option key={o.value} value={o.value}>
           {o.label}
         </option>
@@ -79,6 +79,8 @@ function agent(over: Partial<SalesAgent> = {}): SalesAgent {
     person_label: 'Sean',
     demand_class: 'project',
     location_group: 'BB',
+    contact_id: null,
+    contact_name: null,
     source: 'import',
     created_at: '2026-08-01T00:00:00',
     updated_at: null,
@@ -181,7 +183,12 @@ describe('SalesAgentsList editing', () => {
     await waitFor(() =>
       expect(mutateAsync).toHaveBeenCalledWith({
         id: 'agent-1',
-        data: { person_label: 'Sean Lim', demand_class: 'project', location_group: 'BB' },
+        data: {
+          person_label: 'Sean Lim',
+          demand_class: 'project',
+          location_group: 'BB',
+          contact_id: null,
+        },
       }),
     );
   });

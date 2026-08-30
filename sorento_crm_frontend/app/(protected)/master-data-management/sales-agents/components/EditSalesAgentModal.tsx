@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -12,8 +12,12 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import {
+  SearchableSelect,
+  type SearchableSelectOption,
+} from '@/components/common/SearchableSelect';
 import { DEMAND_CLASS_OPTIONS } from '../lib/demandClass';
+import { getContactSelect } from '../services/salesAgentService';
 import type { SalesAgent, SalesAgentAnnotationPayload } from '../types/salesAgent.types';
 
 interface EditSalesAgentModalProps {
@@ -44,13 +48,31 @@ export function EditSalesAgentModal({
   const [personLabel, setPersonLabel] = useState('');
   const [demandClass, setDemandClass] = useState('');
   const [locationGroup, setLocationGroup] = useState('');
+  const [contactId, setContactId] = useState('');
 
   useEffect(() => {
     if (!open) return;
     setPersonLabel(agent?.person_label ?? '');
     setDemandClass(agent?.demand_class ?? '');
     setLocationGroup(agent?.location_group ?? '');
+    setContactId(agent?.contact_id ?? '');
   }, [open, agent]);
+
+  // The row already carries the linked person's name, so the trigger reads it without
+  // a round trip and keeps reading it while the search shows some other page.
+  const selectedContact: SearchableSelectOption | undefined =
+    agent?.contact_id && agent.contact_id === contactId
+      ? { value: agent.contact_id, label: agent.contact_name ?? 'Linked contact' }
+      : undefined;
+
+  const fetchContacts = useCallback(async (query: string) => {
+    const items = await getContactSelect(query);
+    return items.map((c) => ({
+      value: c.id,
+      label: c.name,
+      description: c.masked_phone ?? undefined,
+    }));
+  }, []);
 
   const submit = async () => {
     const trimmed = personLabel.trim();
@@ -59,6 +81,7 @@ export function EditSalesAgentModal({
       person_label: trimmed ? trimmed : null,
       demand_class: demandClass ? demandClass : null,
       location_group: trimmedGroup ? trimmedGroup.toUpperCase() : null,
+      contact_id: contactId ? contactId : null,
     });
   };
 
@@ -110,6 +133,22 @@ export function EditSalesAgentModal({
               onChange={(e) => setLocationGroup(e.target.value)}
               maxLength={16}
               placeholder="Not set"
+            />
+          </div>
+
+          <div>
+            <Label htmlFor="sales-agent-contact" className="mb-1 block">
+              Linked portal contact
+            </Label>
+            <SearchableSelect
+              id="sales-agent-contact"
+              value={contactId}
+              onChange={setContactId}
+              fetchOptions={fetchContacts}
+              selectedOption={selectedContact}
+              clearable
+              placeholder="Not linked"
+              emptyMessage="No contacts match."
             />
           </div>
         </DialogBody>

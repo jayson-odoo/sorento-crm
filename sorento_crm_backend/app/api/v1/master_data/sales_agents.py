@@ -86,6 +86,8 @@ async def annotate_sales_agent(
             demand_class=payload.demand_class, write_demand_class="demand_class" in fields,
             location_group=payload.location_group,
             write_location_group="location_group" in fields,
+            contact_id=payload.contact_id,
+            write_contact_id="contact_id" in fields,
         )
         return service.annotate(
             SalesAgent, sales_agent_id, resource=_RESOURCE,
