@@ -36,6 +36,7 @@ from app.main import app  # noqa: E402
 
 from app.models.access import MarketSegment, Team
 from app.models.product import Brand, Product, ProductCategory, UnitOfMeasure
+from app.models.product_set import ProductSet, ProductSetMember
 from app.models.procurement import ProductSupplier, Supplier
 from app.models.sla import FORM_ACTION_CANCELLED, FORM_ACTION_COMMITTED, SlaFormAction
 from app.models.user import SystemSetting, User
@@ -407,6 +408,43 @@ def test_two_products_clear_the_same_spec_key_without_colliding(client):
         .all()
     }
     assert parked_ids == {f"{first.id}:width", f"{second.id}:width"}
+
+
+def test_a_delete_blocked_by_a_foreign_key_says_so_without_showing_the_sql(client):
+    """`error_text` is rendered straight into the reader's toast.
+
+    A psycopg2 IntegrityError stringifies to the failing statement, the constraint name
+    and the bound parameters, so before this the answer to "why did that not delete" was
+    a DELETE FROM with the row's own values in it. The reason has to be a sentence, and
+    the exception belongs in the log."""
+    c, db, _actor, _denied = client
+    product = _product(db)
+    # RESTRICT on the member's product: a set must never hold a dangling member, so the
+    # database refuses the delete and the service does not pre-check it.
+    product_set = ProductSet(id=_uid(), set_code=f"{MARKER}-{_uid()[:8]}", name=f"{MARKER} set")
+    db.add(product_set)
+    db.flush()
+    db.add(
+        ProductSetMember(
+            id=_uid(), product_set_id=product_set.id, product_id=product.id, quantity=1
+        )
+    )
+    db.commit()
+
+    parked = _start(c, "product.delete", "product", product.id)
+    assert parked.status_code == 202, parked.text
+
+    body = _commit_now(c, db, "product", product.id, parked.json()["id"]).json()
+
+    assert body["last_outcome"]["status"] == "failed", body["last_outcome"]
+    said = body["last_outcome"]["error_text"]
+    assert said == "Cannot delete this product: other records still reference it."
+    lowered = said.lower()
+    for leak in ("delete from", "insert into", "select ", "psycopg2", "violates", "constraint", "sqlalchemy"):
+        assert leak not in lowered, f"error_text leaks {leak!r}: {said}"
+    # And the record is still standing - a failed commit changes nothing.
+    db.expire_all()
+    assert db.query(Product).filter(Product.id == product.id).first() is not None
 
 
 def test_a_spec_value_parked_without_its_product_does_not_apply(client):

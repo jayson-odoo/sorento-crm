@@ -1102,7 +1102,12 @@ def test_immediate_failure_records_a_failed_row_not_a_pending_one(db, monkeypatc
         .all()
     )
     assert [r.status for r in rows] == ["failed"]
-    assert "exploded" in rows[0].error_text
+    # A sentence, not the exception: `error_text` is shown to the user, and an
+    # exception that escaped a handler is a defect whose message may carry SQL.
+    assert rows[0].error_text == (
+        "This purchase request could not be updated. Nothing was changed."
+    )
+    assert "exploded" not in rows[0].error_text
 
 
 def test_failed_undo_releases_the_claim_so_a_retry_can_succeed(db, monkeypatch):
