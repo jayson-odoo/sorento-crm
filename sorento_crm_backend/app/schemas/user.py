@@ -466,13 +466,13 @@ def _validate_portal_form_types(value: Optional[List[str]]) -> Optional[List[str
     """
     if value is None:
         return value
-    from app.services.portal_service import SUPPORTED_TYPES
+    from app.services.portal_service import GRANTABLE_PORTAL_FORM_TYPES
 
-    unknown = [v for v in value if v not in SUPPORTED_TYPES]
+    unknown = [v for v in value if v not in GRANTABLE_PORTAL_FORM_TYPES]
     if unknown:
         raise ValueError(
             f"Unknown portal form type(s): {', '.join(unknown)}. "
-            f"Allowed: {', '.join(SUPPORTED_TYPES)}."
+            f"Allowed: {', '.join(GRANTABLE_PORTAL_FORM_TYPES)}."
         )
     return value
 

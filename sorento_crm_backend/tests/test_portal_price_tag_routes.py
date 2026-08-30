@@ -388,6 +388,67 @@ def _revoke_the_grant(db: Session, contact_id: str) -> None:
     db.flush()
 
 
+class TestTheGenericPortalDoesNotServeThisKind:
+    """Two different questions were being answered by one tuple.
+
+    ``SUPPORTED_TYPES`` says which kinds the GENERIC portal machinery serves -
+    the submission CRUD, the neighbours, the revision policy rows. A price tag
+    request is served by none of them: it has its own routes, its own service
+    and no revision policy at all. Adding it to that tuple made the generic
+    listing answer ``200 []`` instead of refusing, offered a revision-config row
+    that configures nothing, and left the router include ORDER load-bearing -
+    the only thing keeping the generic handler off the real price tag writes.
+
+    Being GRANTABLE on an access type is the other question, and it has its own
+    tuple now.
+    """
+
+    def test_the_generic_listing_refuses_the_kind(self, client):
+        c, _db, _contact_id = client
+
+        res = c.get(
+            "/api/v1/public/portal/submissions",
+            params={"type": "price_tag_request"},
+        )
+
+        assert res.status_code == 400, res.text
+        assert "price_tag_request" in res.text
+
+    def test_the_generic_neighbours_route_refuses_the_kind(self, client):
+        c, _db, _contact_id = client
+
+        res = c.get(
+            f"/api/v1/public/portal/submissions/price_tag_request/{uuid.uuid4()}/neighbours"
+        )
+
+        assert res.status_code == 400, res.text
+        assert "Unsupported submission type" in res.text
+
+    def test_the_kind_is_still_grantable_on_an_access_type(self):
+        """The grant schema asks the OTHER question and must still say yes."""
+        from app.schemas.user import ContactAccessTypeUpdate
+
+        updated = ContactAccessTypeUpdate(
+            code="zzt-dealer",
+            name="ZZT Dealer",
+            portal_form_types=["stock_inquiry", "price_tag_request"],
+        )
+
+        assert "price_tag_request" in (updated.portal_form_types or [])
+
+    def test_an_unknown_kind_is_still_refused_by_the_grant_schema(self):
+        from pydantic import ValidationError
+
+        from app.schemas.user import ContactAccessTypeUpdate
+
+        with pytest.raises(ValidationError):
+            ContactAccessTypeUpdate(
+                code="zzt-dealer",
+                name="ZZT Dealer",
+                portal_form_types=["not_a_form"],
+            )
+
+
 class TestTheListTheSalespersonReads:
     def test_a_row_carries_the_line_count_the_card_prints(self, client):
         """The portal card prints "N lines" and N was ``undefined``.
