@@ -3,23 +3,10 @@
 import React, { use, useEffect, useMemo, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { KeyRound, MessageSquare, Route, UserPen } from 'lucide-react';
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Container } from '@/components/common/container';
-import {
-  Toolbar,
-  ToolbarActions,
-  ToolbarHeading,
-  ToolbarTitle,
-} from '@/components/common/toolbar';
+import { PageHeader } from '@/components/common/PageHeader';
 import DetailActions from '@/components/common/DetailActions';
 import BackToList, { useBackToListHref } from '@/components/common/BackToList';
 import { contactsPagerQuery } from '../lib/listQuery';
@@ -109,31 +96,12 @@ export default function ContactLayout({
   return (
     <ContactProvider contact={contact} isLoading={isLoading} contactId={id}>
       <Container>
-        <Toolbar>
-          <ToolbarHeading>
-            <ToolbarTitle>Contact Details</ToolbarTitle>
-            <Breadcrumb>
-              <BreadcrumbList>
-                <BreadcrumbItem>
-                  <BreadcrumbLink href="/">Home</BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbLink href="/user-management/contacts">
-                    User Management
-                  </BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbPage>Contacts</BreadcrumbPage>
-                </BreadcrumbItem>
-              </BreadcrumbList>
-            </Breadcrumb>
-          </ToolbarHeading>
-          <ToolbarActions>
+        <PageHeader
+          title="Contact Details"
+          actions={
             <BackToList listPath="/user-management/contacts" label="Back to contacts" />
-          </ToolbarActions>
-        </Toolbar>
+          }
+        />
 
         {notFound ? (
           <div className="text-center py-12">

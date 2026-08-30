@@ -20,12 +20,7 @@ import { apiFetch } from '@/lib/api';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Container } from '@/components/common/container';
 import { ContentLoader } from '@/components/common/content-loader';
-import {
-  Toolbar,
-  ToolbarActions,
-  ToolbarHeading,
-  ToolbarTitle,
-} from '@/components/common/toolbar';
+import { PageHeader } from '@/components/common/PageHeader';
 import { SystemSetting } from '@/app/models/system';
 import { SettingsProvider } from './components/settings-context';
 
@@ -319,12 +314,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   return (
     <SettingsProvider settings={settings} roles={roles}>
       <Container>
-        <Toolbar>
-          <ToolbarHeading>
-            <ToolbarTitle>Settings</ToolbarTitle>
-          </ToolbarHeading>
-          <ToolbarActions />
-        </Toolbar>
+        <PageHeader title="Settings" />
       </Container>
       <Container>
         <Tabs defaultValue={activeTab} value={activeTab} className="space-y-5">
