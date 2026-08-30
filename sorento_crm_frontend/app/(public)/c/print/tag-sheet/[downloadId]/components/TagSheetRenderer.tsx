@@ -15,13 +15,15 @@ import type { CSSProperties } from 'react';
 import type {
   ImpositionConfig,
   PlacedTag,
+  TagBindingData,
   TagImage,
   TagLayer,
   TagSheetDoc,
   TagSheet,
+  TagSpecValue,
 } from '@/lib/dealer-kit/tag-template-types';
 import { imageSourceOf } from '@/lib/dealer-kit/tag-template-types';
-import { slotImageAttachmentId } from '@/lib/dealer-kit/product-block';
+import { layerText, slotImageAttachmentId } from '@/lib/dealer-kit/product-block';
 import { priceBadgeParts } from '@/lib/dealer-kit/price-badge';
 
 // ---------------------------------------------------------------------------
@@ -41,6 +43,11 @@ export interface ResolvedLineData {
   quantity: number;
   /** One line per member, already formatted, for a set line. */
   set_members?: string;
+  /**
+   * The line's reviewed specs, key by key, so `{{spec.<key>}}` resolves in the
+   * PDF exactly as it did on the canvas (D58).
+   */
+  specs?: TagSpecValue[];
   /**
    * The line's photos, primary first, as the payload resolved them.
    *
@@ -86,34 +93,34 @@ function formatPrice(amount: number): string {
 // Layer renderers (pure DOM)
 // ---------------------------------------------------------------------------
 
+/**
+ * The payload's line as a binding, so the print page can ask the SAME question
+ * the canvas asks.
+ *
+ * `ResolvedLineData` is `LineTagData` with two fields the payload may omit, so
+ * this is an adaptation rather than a second model. It is what lets a text
+ * layer resolve through `layerText` here: this file used to carry its own
+ * switch over `slot_binding`, which is exactly the kind of second copy that
+ * eventually prints a different word than the proof showed.
+ */
+function bindingOf(resolved: ResolvedLineData | null): TagBindingData | null {
+  if (!resolved) return null;
+  return {
+    kind: 'line',
+    line: {
+      ...resolved,
+      set_members: resolved.set_members ?? '',
+      specs: resolved.specs ?? [],
+      images: resolved.images ?? [],
+    },
+  };
+}
+
 function renderTextLayer(layer: TagLayer, resolved: ResolvedLineData | null) {
   const props = layer.props;
   if (props.kind !== 'text') return null;
 
-  // Resolve slot binding.
-  let text = layer.text_override ?? props.text;
-  if (!layer.text_override && layer.slot_binding && resolved) {
-    switch (layer.slot_binding) {
-      case 'code':
-        text = resolved.code;
-        break;
-      case 'name':
-        text = resolved.name;
-        break;
-      case 'dimensions':
-        text = resolved.dimensions;
-        break;
-      case 'spec_lines':
-        text = resolved.spec_lines;
-        break;
-      case 'included_accessories':
-        text = resolved.included_accessories;
-        break;
-      case 'set_members':
-        text = resolved.set_members ?? '';
-        break;
-    }
-  }
+  const text = layerText(layer, bindingOf(resolved), 'print');
 
   return (
     <div

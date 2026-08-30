@@ -37,6 +37,8 @@ import {
 } from './tag-template-types';
 import type { PriceBadgeInput } from './price-badge';
 import { formatTagPrice } from './price-badge';
+import type { MergeFieldMode } from './merge-fields';
+import { hasMergeField, renderMergeFields } from './merge-fields';
 
 // ---------------------------------------------------------------------------
 // Reading a bound value
@@ -167,23 +169,52 @@ export function slotImageAttachmentId(
   return bound ? primaryImageOf(images)?.attachment_id ?? null : null;
 }
 
-/** Whether a layer is bound to a slot but showing typed text instead. */
-export function isUnlinked(layer: Pick<TagLayer, 'slot_binding' | 'text_override'>): boolean {
-  return Boolean(layer.slot_binding) && layer.text_override != null;
+/**
+ * Whether a layer holds a merge field, in its override or in its own text.
+ *
+ * Its own text counts: an unbound layer reading `Made of {{spec.material}}` is
+ * following the product exactly as a bound one does, and the Layers panel has
+ * to say so (D57).
+ */
+export function isDynamic(
+  layer: Pick<TagLayer, 'text_override' | 'props'>,
+): boolean {
+  if (hasMergeField(layer.text_override)) return true;
+  return layer.props.kind === 'text' && hasMergeField(layer.props.text);
+}
+
+/**
+ * Whether a layer is bound to a slot but showing typed text instead.
+ *
+ * An override holding a merge field is NOT unlinked (D57): it still draws from
+ * the product, so the amber broken-link marker would be a lie and Relink-all
+ * would delete a sentence that is doing its job.
+ */
+export function isUnlinked(
+  layer: Pick<TagLayer, 'slot_binding' | 'text_override' | 'props'>,
+): boolean {
+  if (!layer.slot_binding || layer.text_override == null) return false;
+  return !hasMergeField(layer.text_override);
 }
 
 /**
  * What a text layer actually shows: the override if somebody typed one, then
- * the resolved slot value, then the layer's own text.
+ * the resolved slot value, then the layer's own text - and in every one of
+ * those, any `{{path}}` replaced by what the data says (D55).
+ *
+ * The resolved slot value never carries a token (it IS data), so running it
+ * through the resolver costs nothing and keeps the one call site honest.
  */
 export function layerText(
   layer: TagLayer,
   data: TagBindingData | null | undefined,
+  mode: MergeFieldMode = 'editor',
 ): string {
-  if (layer.text_override != null) return layer.text_override;
-  const resolved = resolveSlotText(layer, data);
-  if (resolved != null) return resolved;
-  return layer.props.kind === 'text' ? layer.props.text : '';
+  const raw =
+    layer.text_override ??
+    resolveSlotText(layer, data) ??
+    (layer.props.kind === 'text' ? layer.props.text : '');
+  return renderMergeFields(raw, data, mode);
 }
 
 /** The two figures a price badge draws, taken off whichever thing is bound. */

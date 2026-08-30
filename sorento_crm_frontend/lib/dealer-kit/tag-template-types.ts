@@ -319,6 +319,20 @@ export interface TagImage {
 }
 
 /**
+ * One reviewed spec of the bound product, as `{{spec.<key>}}` draws it (D58).
+ *
+ * `value` arrives already displayable and `unit` comes from the registry rather
+ * than from the stored value, so a tag prints `407 mm` without the canvas
+ * deciding what a millimetre is called.
+ */
+export interface TagSpecValue {
+  key: string;
+  label: string;
+  value: string;
+  unit: string | null;
+}
+
+/**
  * Everything a product block draws, resolved by the backend at the moment the
  * block is dropped or re-bound.
  *
@@ -333,6 +347,8 @@ export interface ProductTagData {
   name: string;
   dimensions: string;
   spec_lines: string[];
+  /** The same specs key by key, for merge fields (D58). */
+  specs: TagSpecValue[];
   images: TagImage[];
   list_price: number | null;
   offer_price: number | null;
@@ -372,6 +388,8 @@ export interface LineTagData {
   dimensions: string;
   /** Already joined with newlines, as the backend resolved it. */
   spec_lines: string;
+  /** The same specs key by key, for merge fields (D58). Empty for a set line. */
+  specs: TagSpecValue[];
   /** One line per set member, already formatted. Empty for a product line. */
   set_members: string;
   images: TagImage[];

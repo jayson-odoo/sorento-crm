@@ -50,7 +50,7 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { cn } from '@/lib/utils';
 import type { TagLayer, TagLayerType } from '@/lib/dealer-kit/tag-template-types';
-import { isUnlinked, layerDisplayName } from '@/lib/dealer-kit/product-block';
+import { isDynamic, isUnlinked, layerDisplayName } from '@/lib/dealer-kit/product-block';
 import {
   panelDropTarget,
   panelRows,
@@ -322,6 +322,19 @@ function LayerRow({
             title="Unlinked from product data - showing typed text"
           >
             <Link2Off className="size-3" />
+          </span>
+        )}
+
+        {/* Dynamic marker: the content holds a merge field, so this layer is
+            still drawing from the product even though somebody typed it
+            (D57). It is deliberately NOT the amber unlinked icon, which would
+            say the opposite of what is happening. */}
+        {isDynamic(layer) && (
+          <span
+            className="shrink-0 font-mono text-[10px] leading-none text-sky-600"
+            title="Draws from product data through merge fields"
+          >
+            {'{}'}
           </span>
         )}
 

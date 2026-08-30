@@ -48,6 +48,7 @@ import {
   buildAlternativesRow,
   buildProductBlock,
   buildSetBlock,
+  isDynamic,
   layerDisplay,
   rebindImageLayers,
   resolveSlotText,
@@ -837,7 +838,10 @@ export function TagCanvasEditor({
       const childIds = new Set(group.props.children);
       setLayers((prev) => {
         const next = prev.map((layer) =>
-          childIds.has(layer.id) && layer.slot_binding
+          // A dynamic layer is skipped (D57): its override holds merge fields,
+          // so it already draws from the product, and clearing it would delete
+          // the sentence somebody wrote rather than repair a broken link.
+          childIds.has(layer.id) && layer.slot_binding && !isDynamic(layer)
             ? { ...layer, text_override: null }
             : layer,
         );

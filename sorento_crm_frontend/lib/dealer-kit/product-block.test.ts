@@ -39,6 +39,7 @@ function product(overrides: Partial<ProductTagData> = {}): ProductTagData {
     name: 'Kitchen Sink',
     dimensions: '800 x 500 x 220 mm',
     spec_lines: ['Stainless steel', 'Overflow included'],
+    specs: [],
     images: [
       { attachment_id: 'att-primary', url: 'https://cdn/1.jpg', is_primary: true },
       { attachment_id: 'att-other', url: 'https://cdn/2.jpg', is_primary: false },
@@ -451,6 +452,7 @@ describe('layerDisplay', () => {
         name: 'Kitchen Sink',
         dimensions: '800 x 500 x 220 mm',
         spec_lines: 'Stainless steel',
+        specs: [],
         set_members: '',
         images: IMAGES,
         list_price: 1599,
