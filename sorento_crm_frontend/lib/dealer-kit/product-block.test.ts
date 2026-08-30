@@ -21,9 +21,12 @@ import {
   buildSetBlock,
   formatSetMemberLine,
   isUnlinked,
+  layerDisplay,
   layerText,
   priceBadgeInput,
+  primaryImageOf,
   resolveSlotText,
+  slotImageAttachmentId,
 } from './product-block';
 
 let seq = 0;
@@ -312,5 +315,171 @@ describe('buildAccessoriesStrip', () => {
     const layers = buildAccessoriesStrip([], { ...OPTS, title: 'Free Gifts' });
 
     expect((layers[0].props as { text: string }).text).toBe('Free Gifts');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A product-photo slot follows the bound product (D42, AC-M.11)
+// ---------------------------------------------------------------------------
+
+function imageLayer(overrides: Partial<TagLayer> = {}): TagLayer {
+  return {
+    id: 'img',
+    type: 'image',
+    x_mm: 0,
+    y_mm: 0,
+    width_mm: 38,
+    height_mm: 38,
+    rotation_deg: 0,
+    z_index: 1,
+    locked: false,
+    visible: true,
+    slot_binding: 'product_image',
+    text_override: null,
+    props: { kind: 'image', source: null, fit: 'contain', maskShape: 'none' },
+    ...overrides,
+  } as TagLayer;
+}
+
+function slotLayer(fieldKey: string): TagLayer {
+  return {
+    ...imageLayer(),
+    id: 'slot',
+    type: 'product_slot',
+    slot_binding: null,
+    props: { kind: 'product_slot', fieldKey },
+  } as TagLayer;
+}
+
+const IMAGES = product().images;
+
+describe('primaryImageOf', () => {
+  it('takes the primary photo, or the first when none is marked', () => {
+    expect(primaryImageOf(IMAGES)?.attachment_id).toBe('att-primary');
+    expect(
+      primaryImageOf([{ attachment_id: 'att-other', url: 'u', is_primary: false }])
+        ?.attachment_id,
+    ).toBe('att-other');
+    expect(primaryImageOf([])).toBeUndefined();
+  });
+});
+
+describe('slotImageAttachmentId', () => {
+  it('lets the designer pinned photo win', () => {
+    const layer = imageLayer({
+      props: {
+        kind: 'image',
+        source: { type: 'product_attachment', attachmentId: 'att-other' },
+        fit: 'contain',
+      },
+    });
+
+    expect(slotImageAttachmentId(layer, IMAGES)).toBe('att-other');
+  });
+
+  it('follows the primary photo when the template pinned nothing', () => {
+    expect(slotImageAttachmentId(imageLayer(), IMAGES)).toBe('att-primary');
+  });
+
+  it('falls back to the primary when the pinned photo is another product\'s', () => {
+    const layer = imageLayer({
+      props: {
+        kind: 'image',
+        source: { type: 'product_attachment', attachmentId: 'att-gone' },
+        fit: 'contain',
+      },
+    });
+
+    expect(slotImageAttachmentId(layer, IMAGES)).toBe('att-primary');
+  });
+
+  it('leaves a decorative image layer empty', () => {
+    expect(slotImageAttachmentId(imageLayer({ slot_binding: null }), IMAGES)).toBeNull();
+  });
+
+  it('leaves an asset source to the asset map', () => {
+    const layer = imageLayer({
+      props: { kind: 'image', source: { type: 'asset', assetId: 'a1' }, fit: 'contain' },
+    });
+
+    expect(slotImageAttachmentId(layer, IMAGES)).toBeNull();
+  });
+
+  it('answers for a product_slot layer that holds the photo', () => {
+    expect(slotImageAttachmentId(slotLayer('product_image'), IMAGES)).toBe('att-primary');
+    expect(slotImageAttachmentId(slotLayer('code'), IMAGES)).toBeNull();
+  });
+});
+
+describe('layerDisplay', () => {
+  const data = { kind: 'product' as const, product: product() };
+
+  it('draws the primary photo for a slot-bound image layer with no source', () => {
+    expect(layerDisplay(imageLayer(), data, {})).toEqual({
+      imageUrl: 'https://cdn/1.jpg',
+    });
+  });
+
+  it('draws the pinned photo when the designer chose one', () => {
+    const layer = imageLayer({
+      props: {
+        kind: 'image',
+        source: { type: 'product_attachment', attachmentId: 'att-other' },
+        fit: 'contain',
+      },
+    });
+
+    expect(layerDisplay(layer, data, {})).toEqual({ imageUrl: 'https://cdn/2.jpg' });
+  });
+
+  it('shows nothing while no product is bound', () => {
+    expect(layerDisplay(imageLayer(), null, {})).toEqual({ imageUrl: null });
+  });
+
+  it('shows nothing for an image layer bound to no slot', () => {
+    expect(layerDisplay(imageLayer({ slot_binding: null }), data, {})).toEqual({
+      imageUrl: null,
+    });
+  });
+
+  it('resolves a line the same way a product resolves', () => {
+    const line = {
+      kind: 'line' as const,
+      line: {
+        line_id: 'l1',
+        code: 'SK-1234',
+        name: 'Kitchen Sink',
+        dimensions: '800 x 500 x 220 mm',
+        spec_lines: 'Stainless steel',
+        set_members: '',
+        images: IMAGES,
+        list_price: 1599,
+        sell_price: 599,
+        show_promo_price: true,
+        included_accessories: '',
+        quantity: 1,
+      },
+    };
+
+    expect(layerDisplay(imageLayer(), line, {})).toEqual({
+      imageUrl: 'https://cdn/1.jpg',
+    });
+  });
+
+  it('draws the photo for a product_slot layer, and the text for its other keys', () => {
+    expect(layerDisplay(slotLayer('product_image'), data, {})).toEqual({
+      imageUrl: 'https://cdn/1.jpg',
+    });
+    expect(layerDisplay(slotLayer('code'), data, {})).toEqual({ text: 'SK-1234' });
+    expect(layerDisplay(slotLayer('dimensions'), data, {})).toEqual({
+      text: '800 x 500 x 220 mm',
+    });
+  });
+
+  it('leaves a product_slot layer on its placeholder while nothing is bound', () => {
+    expect(layerDisplay(slotLayer('code'), null, {})).toBeUndefined();
+    expect(layerDisplay(slotLayer('product_image'), null, {})).toEqual({
+      imageUrl: null,
+    });
   });
 });

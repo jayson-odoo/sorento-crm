@@ -22,7 +22,9 @@ import type {
   ProductSetMemberTagData,
   ProductSetTagData,
   ProductTagData,
+  SlotBinding,
   TagBindingData,
+  TagImage,
   TagLayer,
   TagLayerType,
   TextLayerProps,
@@ -117,6 +119,52 @@ export function resolveSlotText(
     default:
       return null;
   }
+}
+
+/** The photo a product leads with: the one marked primary, else the first. */
+export function primaryImageOf(images: TagImage[]): TagImage | undefined {
+  return images.find((image) => image.is_primary) ?? images[0];
+}
+
+/**
+ * Which of the bound product's photos a product-photo slot draws (D42).
+ *
+ * A layer that is ABOUT the product photo follows the product, because that is
+ * what "product image" means; the designer's explicit pick only wins while it
+ * is still one of THIS product's photos. Templates ship unbound, so their hero
+ * layer holds `source: null` and would otherwise draw nothing at all - which is
+ * the "No image" a preview used to show against a product with three photos.
+ *
+ * Returns an attachment id rather than a URL, because the two callers hold
+ * different maps: the canvas has the bound data's signed URLs, the print page
+ * has the payload's. An `asset` source answers null, being the caller's own
+ * business, and so does an image layer bound to no slot: a picture nobody chose
+ * is decoration, not the product.
+ */
+export function slotImageAttachmentId(
+  layer: Pick<TagLayer, 'slot_binding' | 'props'>,
+  images: TagImage[],
+): string | null {
+  if (layer.props.kind === 'product_slot') {
+    return layer.props.fieldKey === 'product_image'
+      ? primaryImageOf(images)?.attachment_id ?? null
+      : null;
+  }
+  if (layer.props.kind !== 'image') return null;
+
+  const source = imageSourceOf(layer.props);
+  if (source?.type === 'asset') return null;
+
+  const bound = layer.slot_binding === 'product_image';
+  if (source) {
+    const pinned = images.some((image) => image.attachment_id === source.attachmentId);
+    if (pinned || !bound) return source.attachmentId;
+    // Pinned to a photo this product does not have: the block was re-bound, and
+    // the old product's picture under the new product's name is the one failure
+    // on a price tag that a customer acts on.
+    return primaryImageOf(images)?.attachment_id ?? null;
+  }
+  return bound ? primaryImageOf(images)?.attachment_id ?? null : null;
 }
 
 /** Whether a layer is bound to a slot but showing typed text instead. */
@@ -257,7 +305,7 @@ export function buildProductBlock(
   product: ProductTagData,
   opts: BuildOptions,
 ): TagLayer[] {
-  const primary = product.images.find((i) => i.is_primary) ?? product.images[0];
+  const primary = primaryImageOf(product.images);
   const promo = product.offer_price != null;
 
   const children = materialise(
@@ -449,7 +497,7 @@ export function buildAlternativesRow(
   products.forEach((product, index) => {
     if (index > 0) connector('OR');
 
-    const primary = product.images.find((i) => i.is_primary) ?? product.images[0];
+    const primary = primaryImageOf(product.images);
     const promo = product.offer_price != null;
     const block = materialise(
       [
@@ -607,26 +655,47 @@ export function layerDisplay(
 
     case 'image': {
       const source = imageSourceOf(layer.props);
-      if (!source) return { imageUrl: null };
-      if (source.type === 'asset') {
+      if (source?.type === 'asset') {
         return { imageUrl: assetUrls[source.assetId] ?? null };
       }
-      const images =
-        data?.kind === 'product'
-          ? data.product.images
-          : data?.kind === 'line'
-            ? data.line.images
-            : [];
-      return {
-        imageUrl:
-          images.find((image) => image.attachment_id === source.attachmentId)?.url ??
-          null,
-      };
+      return { imageUrl: boundImageUrl(layer, data) };
+    }
+
+    case 'product_slot': {
+      if (layer.props.fieldKey === 'product_image') {
+        return { imageUrl: boundImageUrl(layer, data) };
+      }
+      // The other field keys are the same slots a text layer binds to, so they
+      // resolve through the same function; nothing resolved means the layer
+      // keeps its dashed placeholder rather than drawing an empty box.
+      const text = resolveSlotText(
+        { slot_binding: layer.props.fieldKey as SlotBinding },
+        data,
+      );
+      return text == null ? undefined : { text };
     }
 
     default:
       return undefined;
   }
+}
+
+/** The photos of whatever is bound. A set has none of its own. */
+function imagesOf(data: TagBindingData | null | undefined): TagImage[] {
+  if (data?.kind === 'product') return data.product.images;
+  if (data?.kind === 'line') return data.line.images;
+  return [];
+}
+
+/** The URL a product-photo slot draws, resolved by D42 against the bound data. */
+function boundImageUrl(
+  layer: Pick<TagLayer, 'slot_binding' | 'props'>,
+  data: TagBindingData | null | undefined,
+): string | null {
+  const images = imagesOf(data);
+  const attachmentId = slotImageAttachmentId(layer, images);
+  if (!attachmentId) return null;
+  return images.find((image) => image.attachment_id === attachmentId)?.url ?? null;
 }
 
 /**
@@ -643,9 +712,7 @@ export function rebindImageLayers(
   data: TagBindingData,
 ): TagLayer[] {
   const primary =
-    data.kind === 'product'
-      ? data.product.images.find((image) => image.is_primary) ?? data.product.images[0]
-      : undefined;
+    data.kind === 'product' ? primaryImageOf(data.product.images) : undefined;
 
   return layers.map((layer) => {
     if (!childIds.has(layer.id) || layer.props.kind !== 'image') return layer;

@@ -237,6 +237,65 @@ describe('bound text and pictures on the print page', () => {
     );
   });
 
+  it('draws the primary photo for a slot-bound image layer the template left unset', () => {
+    const { container } = render(
+      <TagSheetRenderer
+        doc={docWith([
+          layer({
+            id: 'img',
+            type: 'image',
+            slot_binding: 'product_image',
+            props: { kind: 'image', source: null, fit: 'contain' },
+          }),
+        ])}
+        resolvedData={{
+          [LINE_ID]: resolved({
+            images: [
+              { attachment_id: 'att-1', url: 'https://cdn.test/other.jpg', is_primary: false },
+              { attachment_id: 'att-2', url: 'https://cdn.test/primary.jpg', is_primary: true },
+            ],
+          }),
+        }}
+        images={{
+          'att-1': 'https://cdn.test/other.jpg',
+          'att-2': 'https://cdn.test/primary.jpg',
+        }}
+      />,
+    );
+
+    expect(container.querySelector('img')).toHaveAttribute(
+      'src',
+      'https://cdn.test/primary.jpg',
+    );
+  });
+
+  it('draws the primary photo for a product_slot layer that holds the photo', () => {
+    const { container } = render(
+      <TagSheetRenderer
+        doc={docWith([
+          layer({
+            id: 'slot',
+            type: 'product_slot',
+            props: { kind: 'product_slot', fieldKey: 'product_image' },
+          }),
+        ])}
+        resolvedData={{
+          [LINE_ID]: resolved({
+            images: [
+              { attachment_id: 'att-2', url: 'https://cdn.test/primary.jpg', is_primary: true },
+            ],
+          }),
+        }}
+        images={{ 'att-2': 'https://cdn.test/primary.jpg' }}
+      />,
+    );
+
+    expect(container.querySelector('img')).toHaveAttribute(
+      'src',
+      'https://cdn.test/primary.jpg',
+    );
+  });
+
   it('still draws an image layer saved before the source discriminator existed', () => {
     const { container } = render(
       <TagSheetRenderer

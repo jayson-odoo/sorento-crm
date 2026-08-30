@@ -15,11 +15,13 @@ import type { CSSProperties } from 'react';
 import type {
   ImpositionConfig,
   PlacedTag,
+  TagImage,
   TagLayer,
   TagSheetDoc,
   TagSheet,
 } from '@/lib/dealer-kit/tag-template-types';
 import { imageSourceOf } from '@/lib/dealer-kit/tag-template-types';
+import { slotImageAttachmentId } from '@/lib/dealer-kit/product-block';
 import { priceBadgeParts } from '@/lib/dealer-kit/price-badge';
 
 // ---------------------------------------------------------------------------
@@ -39,6 +41,15 @@ export interface ResolvedLineData {
   quantity: number;
   /** One line per member, already formatted, for a set line. */
   set_members?: string;
+  /**
+   * The line's photos, primary first, as the payload resolved them.
+   *
+   * Carried beside the text because a product-photo slot follows the PRODUCT
+   * (D42), and a template ships with `source: null`: without the list there is
+   * no way to know which attachment is the primary one, and the tag prints an
+   * empty box where the picture goes.
+   */
+  images?: TagImage[];
 }
 
 /**
@@ -165,21 +176,37 @@ function renderShapeLayer(layer: TagLayer) {
   );
 }
 
-/** The URL an image layer prints, or null when nothing could be signed for it. */
-function imageUrlFor(layer: TagLayer, media: TagSheetMedia): string | null {
+/**
+ * The URL a layer prints, or null when nothing could be signed for it.
+ *
+ * `slotImageAttachmentId` is the SAME rule the canvas resolves a product photo
+ * by (D42), so the proof on screen and the PDF cannot pick different pictures.
+ */
+function imageUrlFor(
+  layer: TagLayer,
+  media: TagSheetMedia,
+  resolved: ResolvedLineData | null,
+): string | null {
   const props = layer.props;
-  if (props.kind !== 'image') return null;
-  const source = imageSourceOf(props);
-  if (!source) return null;
-  if (source.type === 'asset') return media.assets?.[source.assetId] ?? null;
-  return media.images?.[source.attachmentId] ?? null;
+  if (props.kind === 'image') {
+    const source = imageSourceOf(props);
+    if (source?.type === 'asset') return media.assets?.[source.assetId] ?? null;
+  } else if (props.kind !== 'product_slot') {
+    return null;
+  }
+  const attachmentId = slotImageAttachmentId(layer, resolved?.images ?? []);
+  return attachmentId ? media.images?.[attachmentId] ?? null : null;
 }
 
-function renderImageLayer(layer: TagLayer, media: TagSheetMedia) {
+function renderImageLayer(
+  layer: TagLayer,
+  media: TagSheetMedia,
+  resolved: ResolvedLineData | null,
+) {
   const props = layer.props;
   if (props.kind !== 'image') return null;
 
-  const url = imageUrlFor(layer, media);
+  const url = imageUrlFor(layer, media, resolved);
   const circle = props.maskShape === 'circle';
 
   return (
@@ -304,6 +331,7 @@ function renderPriceBadgeLayer(layer: TagLayer, resolved: ResolvedLineData | nul
 function renderProductSlotLayer(
   layer: TagLayer,
   resolved: ResolvedLineData | null,
+  media: TagSheetMedia,
 ) {
   const props = layer.props;
   if (props.kind !== 'product_slot') return null;
@@ -323,8 +351,9 @@ function renderProductSlotLayer(
       case 'spec_lines':
         content = resolved.spec_lines;
         break;
-      case 'product_image':
-        // Would render an image; placeholder for now.
+      case 'product_image': {
+        // The product's photo, by the same rule the canvas draws it with (D42).
+        const url = imageUrlFor(layer, media, resolved);
         return (
           <div
             style={{
@@ -337,20 +366,29 @@ function renderProductSlotLayer(
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              backgroundColor: '#f0f0f0',
+              backgroundColor: url ? 'transparent' : '#f0f0f0',
             }}
           >
-            <span
-              style={{
-                color: '#999',
-                fontSize: '8pt',
-                fontFamily: 'sans-serif',
-              }}
-            >
-              {resolved.code || 'Image'}
-            </span>
+            {url ? (
+              <img
+                src={url}
+                alt=""
+                style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+              />
+            ) : (
+              <span
+                style={{
+                  color: '#999',
+                  fontSize: '8pt',
+                  fontFamily: 'sans-serif',
+                }}
+              >
+                {resolved.code || 'Image'}
+              </span>
+            )}
           </div>
         );
+      }
     }
   }
 
@@ -538,9 +576,9 @@ function TagRenderer({
         <div key={layer.id}>
           {layer.type === 'text' && renderTextLayer(layer, resolved)}
           {layer.type === 'shape' && renderShapeLayer(layer)}
-          {layer.type === 'image' && renderImageLayer(layer, media)}
+          {layer.type === 'image' && renderImageLayer(layer, media, resolved)}
           {layer.type === 'product_slot' &&
-            renderProductSlotLayer(layer, resolved)}
+            renderProductSlotLayer(layer, resolved, media)}
           {layer.type === 'price_field' &&
             renderPriceFieldLayer(layer, resolved)}
           {layer.type === 'price_badge' && renderPriceBadgeLayer(layer, resolved)}

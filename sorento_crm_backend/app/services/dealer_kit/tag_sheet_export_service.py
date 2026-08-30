@@ -286,6 +286,10 @@ def resolve_tag_sheet_print_payload(db: Session, download_id: str) -> dict:
                 "show_promo_price": row["show_promo_price"],
                 "included_accessories": row["included_accessories"],
                 "quantity": row["quantity"],
+                # The photos themselves, not just their ids: a product-photo
+                # slot follows the product's PRIMARY photo when the template
+                # pinned none (D42), and only this list says which that is.
+                "images": row["images"],
             }
 
     return {
