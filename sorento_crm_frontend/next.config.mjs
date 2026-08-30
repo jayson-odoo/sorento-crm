@@ -35,9 +35,15 @@ const nextConfig = {
     // Only apply rewrites in development mode
     if (process.env.NODE_ENV === 'development') {
       return [
+        // The rewrite param drops a trailing slash, and FastAPI 307s a list route without
+        // one, so '/x/' must be forwarded as '/x/' or the two loop.
+        {
+          source: '/api/v1/:path*/',
+          destination: `${process.env.FASTAPI_INTERNAL_URL ?? 'http://localhost:8000'}/api/v1/:path*/`,
+        },
         {
           source: '/api/v1/:path*',
-          destination: 'http://localhost:8032/api/v1/:path*',
+          destination: `${process.env.FASTAPI_INTERNAL_URL ?? 'http://localhost:8000'}/api/v1/:path*`,
         },
       ];
     }
