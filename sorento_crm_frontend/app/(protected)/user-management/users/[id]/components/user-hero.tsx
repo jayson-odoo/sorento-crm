@@ -41,7 +41,7 @@ const UserHero = ({ user, isLoading }: UserProfileProps) => {
 
   const Content = () => {
     const [isEditDialogOpen, setEditDialogOpen] = useState(false);
-    const { actions, dialogs } = useUserActions(user, {
+    const { actions, dialogs, pending } = useUserActions(user, {
       // Deleted from the record: land where Back would have landed, on the page
       // and filters the reader left the list on.
       onDeleted: () => router.push(backHref),
@@ -84,6 +84,7 @@ const UserHero = ({ user, isLoading }: UserProfileProps) => {
               />
             </>
           }
+          pendingAction={pending}
           gearLabel="User options"
           primary={
             <Button onClick={() => setEditDialogOpen(true)}>Edit user</Button>

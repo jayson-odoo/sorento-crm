@@ -7,6 +7,10 @@
  * gear both render this array, in this order, so Impersonate is no longer
  * list-only and Delete is no longer record-only. Permissions are resolved here,
  * once: an action the user may not run is not in the array.
+ *
+ * Trashing asks nothing (D7): it parks `user.delete` for ten seconds and the
+ * countdown takes the primary button's place, or goes to a toast when the action
+ * came from a list row. The email the old dialog made you retype is gone with it.
  */
 
 import { useState } from 'react';
@@ -30,17 +34,23 @@ import type { RecordAction, RecordActionSet } from '@/components/common/recordAc
 import { RowActionsMenu } from '@/components/common/RowActionsMenu';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { useImpersonation } from '@/hooks/useImpersonation';
+import { useDeferredAction } from '@/hooks/useDeferredAction';
 import { User, UserStatus } from '@/app/models/user';
-import UserDeleteDialog from './[id]/components/user-delete-dialog';
+import { deleteUser } from './services/userService';
 
 export interface UseUserActionsOptions {
   /** Where to go once the record is gone (the record page returns to the list). */
   onDeleted?: () => void;
+  /**
+   * The record page shows the countdown in place of its primary button; a list
+   * row has nowhere to put one, so it travels to a toast (S6-06, S6-07).
+   */
+  surface?: 'inline' | 'toast';
 }
 
 export function useUserActions(
   user: User | undefined | null,
-  { onDeleted }: UseUserActionsOptions = {},
+  { onDeleted, surface = 'inline' }: UseUserActionsOptions = {},
 ): RecordActionSet {
   const queryClient = useQueryClient();
   const { data: nextAuthSession } = useSession();
@@ -50,8 +60,23 @@ export function useUserActions(
   const canDelete = useHasPermission('user_management.users.delete');
 
   const [impersonateOpen, setImpersonateOpen] = useState(false);
-  const [deleteOpen, setDeleteOpen] = useState(false);
   const [invitePending, setInvitePending] = useState(false);
+
+  const deletion = useDeferredAction({
+    actionKey: 'user.delete',
+    entityType: 'user',
+    entityId: user?.id,
+    verb: 'Trashing',
+    subject: user?.name || user?.email || '',
+    surface,
+    watchFromMount: surface === 'inline',
+    successMessage: 'User moved to the trash',
+    invalidateKeys: [['user-users'], ['user-user', user?.id]],
+    onCommitted: onDeleted,
+    // PHASE 1: the server has no `user.delete` handler yet, so the window lapsing
+    // runs the trash from here. Phase 2 registers it and drops this.
+    commit: user ? () => deleteUser(user.id) : undefined,
+  });
 
   const sendInvitationLink = async () => {
     if (!user) return;
@@ -76,7 +101,7 @@ export function useUserActions(
   };
 
   const actions: RecordAction[] = [];
-  if (!user) return { actions, dialogs: null };
+  if (!user) return { actions, dialogs: null, pending: null };
 
   // Impersonating yourself is a no-op, a deactivated account has nothing to
   // browse, and a protected account is off limits (the server enforces all three).
@@ -112,8 +137,8 @@ export function useUserActions(
       label: 'Trash user',
       icon: Trash2,
       kind: 'destructive',
-      disabled: user.role?.isProtected,
-      run: () => setDeleteOpen(true),
+      disabled: user.role?.isProtected || deletion.isPending || deletion.isBlocked,
+      run: () => deletion.start(),
     });
   }
 
@@ -163,17 +188,10 @@ export function useUserActions(
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-
-      <UserDeleteDialog
-        open={deleteOpen}
-        closeDialog={() => setDeleteOpen(false)}
-        user={user}
-        onSuccess={onDeleted}
-      />
     </>
   );
 
-  return { actions, dialogs };
+  return { actions, dialogs, pending: deletion.countdown };
 }
 
 /**
@@ -184,7 +202,7 @@ export function useUserActions(
  * of its own to live in.
  */
 export function UserRowActions({ user }: { user: User }) {
-  const { actions, dialogs } = useUserActions(user);
+  const { actions, dialogs } = useUserActions(user, { surface: 'toast' });
 
   if (actions.length === 0) return null;
 

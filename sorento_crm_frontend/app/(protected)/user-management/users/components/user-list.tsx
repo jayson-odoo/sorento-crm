@@ -43,6 +43,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { User, UserStatus } from '@/app/models/user';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import { UserRowActions } from '../actions';
+import { pendingEntityKey, usePendingEntityKeys } from '@/lib/pending-entity-store';
 import {
   fetchUsersListPage,
   usersListFilters,
@@ -147,6 +148,11 @@ const UserList = () => {
     const search = buildDetailSearch(listParams, listParams.filters);
     return `/user-management/users/${row.id}${search ? `?${search}` : ''}`;
   };
+
+  // A user whose trashing is counting down stays on the list, dimmed, until the
+  // window lapses - the toast holds the Cancel, this says which row it is for.
+  const pendingKeys = usePendingEntityKeys();
+  const rowPending = (row: User) => pendingKeys.has(pendingEntityKey('user', row.id));
 
   const selectedRowIds = useMemo(() => Object.keys(rowSelection), [rowSelection]);
 
@@ -716,6 +722,7 @@ const UserList = () => {
         recordCount={data?.pagination.total || 0}
         isLoading={isLoading}
         rowHref={rowHref}
+        rowPending={rowPending}
         standardToolbar={false}
         tableLayout={{
           columnsResizable: true,
