@@ -39,9 +39,9 @@ def test_the_literal_select_path_is_registered_before_the_parameterised_one():
 def test_every_literal_customer_subpath_is_registered_before_the_id_route():
     """The rule, not just the one case that broke.
 
-    `/customers/neighbours` sits under the same prefix and would fail the same way. Asserting
-    the rule means the next literal subpath somebody adds is covered without remembering to
-    add a test for it.
+    Any other literal subpath under the same prefix would fail the same way. Asserting the
+    rule means the next one somebody adds is covered without remembering to add a test for
+    it.
     """
     paths = _paths_in_order()
     prefix = "/api/v1/order-management/customers/"

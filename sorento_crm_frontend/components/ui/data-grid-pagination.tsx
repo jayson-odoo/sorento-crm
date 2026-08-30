@@ -19,14 +19,26 @@ interface DataGridPaginationProps {
   className?: string;
 }
 
+/**
+ * The Rows-per-page menu every list gets unless it says otherwise.
+ *
+ * It stops at 100 because the BACKEND does: `MAX_PAGE_LIMIT` is 1000, but the
+ * list routes do not agree with it - 18 declare `le=100` and 16 `le=200`, so the
+ * menu's old 250/500/1000 returned a 422 from the UI on those lists. 100 is the
+ * largest size every list route accepts. A list whose route genuinely takes more
+ * passes its own `sizes` (proforma invoices does), and larger pulls than that
+ * belong to bulk export, not to an in-browser grid.
+ *
+ * `MAX_LIST_PAGE_SIZE` in `lib/listNavQuery.ts` is the same decision seen from
+ * the URL side, and a test holds the two together.
+ */
+export const DEFAULT_PAGE_SIZES = [25, 50, 100];
+
 function DataGridPagination(props: DataGridPaginationProps) {
   const { table, recordCount, isLoading } = useDataGrid();
 
   const defaultProps: Partial<DataGridPaginationProps> = {
-    // Viewing page sizes. Capped at 1000 to stay in lockstep with the backend
-    // MAX_PAGE_LIMIT (app/schemas/common.py); larger pulls belong to bulk export,
-    // not the in-browser grid. Picking a size above the backend cap 422s the list.
-    sizes: [25, 50, 100, 250, 500, 1000],
+    sizes: DEFAULT_PAGE_SIZES,
     sizesLabel: 'Show',
     sizesDescription: 'per page',
     sizesSkeleton: <Skeleton className="h-8 w-44" />,

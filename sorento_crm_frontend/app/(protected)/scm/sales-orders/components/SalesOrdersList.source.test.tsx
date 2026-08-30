@@ -173,17 +173,28 @@ describe('SalesOrdersList - location is a line-level fact, not a header one', ()
 });
 
 describe('SalesOrdersList - the row actions', () => {
+  /** Radix opens on pointerdown, not click. */
+  async function openRowMenu() {
+    const trigger = await screen.findByRole('button', { name: 'sales order actions' });
+    fireEvent.pointerDown(
+      trigger,
+      new MouseEvent('pointerdown', { bubbles: true, button: 0 }),
+    );
+  }
+
   it('offers delete only - the row itself is the way into the order', async () => {
     // Create DO and the pencil both went: the whole row already opens the detail page, where
     // editing happens in place, and raising a delivery is a delivery decision rather than a
-    // list one.
+    // list one. What is left is the set the record's gear renders (D15), behind one "...".
     stub([order()]);
     renderList();
 
     await waitFor(() => expect(screen.getByText('SO900001')).toBeInTheDocument());
-    expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Create DO/i })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
+    await openRowMenu();
+
+    expect(screen.getByRole('menuitem', { name: 'Delete' })).toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: /Create DO/i })).toBeNull();
+    expect(screen.queryByRole('menuitem', { name: 'Edit' })).toBeNull();
   });
 
   it('confirms before deleting, rather than deleting on the click', async () => {
@@ -191,7 +202,8 @@ describe('SalesOrdersList - the row actions', () => {
     renderList();
 
     await waitFor(() => expect(screen.getByText('SO900001')).toBeInTheDocument());
-    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    await openRowMenu();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
 
     expect(await screen.findByText(/This action cannot be undone/i)).toBeInTheDocument();
   });

@@ -512,54 +512,6 @@ def test_searching_narrows_the_total_not_only_the_page(client, db):
     assert body["pagination"]["total"] == 1
 
 
-# --- admin: prev/next within the queue ----------------------------------------
-
-
-def test_neighbours_walk_the_filtered_set(client, db):
-    marker = unique_code("batch")
-    made = _make_requests(db, [f"{marker} a", f"{marker} b", f"{marker} c"])
-    ids = {r.title: str(r.id) for r in made}
-    _as(_make_user(db, slugs=ALL_SLUGS), db)
-
-    body = client.get(
-        f"{ADMIN}/requests/neighbours",
-        params={
-            "id": ids[f"{marker} b"],
-            "query": marker,
-            "sort": "title",
-            "dir": "asc",
-        },
-    ).json()
-    assert body["total"] == 3
-    assert body["index"] == 2
-    assert body["prev_id"] == ids[f"{marker} a"]
-    assert body["next_id"] == ids[f"{marker} c"]
-
-
-def test_neighbours_fall_back_rather_than_going_dead(client, db):
-    """A request filtered out of the set still gets a working pager."""
-    marker = unique_code("batch")
-    made = _make_requests(db, [f"{marker} a", f"{marker} b"])
-    _as(_make_user(db, slugs=ALL_SLUGS), db)
-
-    body = client.get(
-        f"{ADMIN}/requests/neighbours",
-        params={"id": str(made[0].id), "query": unique_code("matches-nothing")},
-    ).json()
-    assert body["index"] is not None
-    assert body["total"] >= 2
-
-
-def test_neighbours_need_the_view_permission(client, db, sent_request):
-    _as(_make_user(db), db)
-    assert (
-        client.get(
-            f"{ADMIN}/requests/neighbours", params={"id": str(sent_request.id)}
-        ).status_code
-        == 403
-    )
-
-
 def test_a_page_boundary_neither_drops_nor_repeats_a_row(client, db):
     """Identical `created_at` values must still order deterministically.
 

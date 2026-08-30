@@ -208,10 +208,11 @@ export default function SpecVerificationList() {
     );
     return {
       pageIndex: Number.isNaN(page) ? 0 : Math.max(0, page - 1),
+      // This worklist's own cap, not the shared one: its rows are wide and its
+      // backend route allows up to MAX_PAGE_LIMIT, so nothing forced it up to
+      // 1000 and a hundred spec rows is already a long scroll.
       pageSize:
-        Number.isNaN(limit) || limit < 1
-          ? DEFAULT_PAGE_SIZE
-          : Math.min(limit, 100),
+        Number.isNaN(limit) || limit < 1 ? DEFAULT_PAGE_SIZE : Math.min(limit, 100),
     };
   });
   const [sorting, setSorting] = useState<SortingState>(() => {

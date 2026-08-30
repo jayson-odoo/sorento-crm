@@ -32,6 +32,8 @@ import { formatDistanceToNow } from 'date-fns';
 import { toast } from 'sonner';
 import { formatDateTimeInMalaysia, parseDateTimeAsUTC } from '@/lib/helpers';
 import { getStatusBadgeVariant } from '@/lib/status-badge';
+import { buildDetailSearch } from '@/lib/listNavQuery';
+import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 
 export default function IntegrationLogsList() {
   const router = useRouter();
@@ -55,6 +57,19 @@ export default function IntegrationLogsList() {
   const [createdTo, setCreatedTo] = useState<string>(
     () => searchParams.get('created_to') ?? '',
   );
+
+  // Back hands the list its own query string back, and the pager keeps
+  // rewriting it, so the list reads it (S3-01). One hook, every list.
+  useListStateFromUrl((state) => {
+    setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
+    setSorting(state.sorting);
+    setSearchQuery(state.searchQuery);
+    setStatusFilter(state.filters.status ?? 'all');
+    setChannelFilter(state.filters.integration_channel ?? 'all');
+    setTableFilter(state.filters.business_table ?? 'all');
+    setCreatedFrom(state.filters.created_from ?? '');
+    setCreatedTo(state.filters.created_to ?? '');
+  });
   // A failure-cause drill-down from System Health. These have no control in the
   // filter panel - they are set by the link and cleared as a unit, so the banner
   // below is the only place they are visible. Without it the list would look
@@ -271,8 +286,26 @@ export default function IntegrationLogsList() {
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
       tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
-      onRowClick={(row) => {
-        router.push(`/integration-management/integration-logs/${row.id}`);
+      rowHref={(row) => {
+        // Carries the list query so the detail pager walks the same page.
+        const search = buildDetailSearch(
+          {
+            pageIndex: pagination.pageIndex,
+            pageSize: pagination.pageSize,
+            sorting,
+            searchQuery,
+          },
+          {
+            status: statusFilter !== 'all' ? statusFilter : undefined,
+            integration_channel: channelFilter !== 'all' ? channelFilter : undefined,
+            business_table: tableFilter !== 'all' ? tableFilter : undefined,
+            created_from: createdFrom || undefined,
+            created_to: createdTo || undefined,
+            status_code: statusCode || undefined,
+            error_contains: errorContains.length ? errorContains.join(',') : undefined,
+          },
+        );
+        return `/integration-management/integration-logs/${row.id}${search ? `?${search}` : ''}`;
       }}
     >
       <Card>

@@ -4,7 +4,7 @@ import { useState, useCallback } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Edit, Trash2, Send, Link2, ExternalLink, MessageSquare, CheckCircle2, XCircle, BadgeCheck, FileDown, ArrowUpCircle, Ban, UserRoundCog, Undo2 } from 'lucide-react';
+import { Edit, Send, Link2, ExternalLink, MessageSquare, CheckCircle2, XCircle, BadgeCheck, ArrowUpCircle, Ban, UserRoundCog, Undo2, Printer } from 'lucide-react';
 import { getFormSLATrackers, escalateFormTracking } from '@/app/(protected)/sla-management/_shared/formSLAService';
 import { SlaActiveTrackerControls } from '@/app/(protected)/sla-management/_shared/SlaActiveTrackerControls';
 import { SlaExtendMenuItem, SlaExtendDialog } from '@/app/(protected)/sla-management/_shared/SlaExtendAction';
@@ -23,6 +23,7 @@ import ReassignDialog from '@/app/(protected)/sla-management/conversation-sla-tr
 import { useReassignSLATracking } from '@/app/(protected)/sla-management/conversation-sla-tracking/hooks/useTeamPendingSLA';
 import ResponseAttachmentDropzone from './ResponseAttachmentDropzone';
 import { RejectionReasonBanner } from '@/components/common/RejectionReasonBanner';
+import { useBackToListHref, useHrefWithListState } from '@/components/common/BackToList';
 import { VoidBanner } from '@/components/common/VoidBanner';
 import { VoidDialog } from '@/components/common/VoidDialog';
 import { useFormVoid } from '@/hooks/useFormVoid';
@@ -51,7 +52,6 @@ import {
   useRejectComplaint,
   useProcessComplaintByCs,
   useCloseComplaint,
-  useExportComplaintPdf,
   useNotifyComplaintRootCause,
   useNotifyComplaintResolution,
   useUploadComplaintResponseAttachments,
@@ -73,15 +73,17 @@ import {
 } from '../services/complaintService';
 import { toast } from 'sonner';
 import { formatDate, formatDateTimeInMalaysia } from '@/lib/helpers';
-import ComplaintDeleteDialog from './ComplaintDeleteDialog';
+import { recordActionItems } from '@/components/common/recordActions';
+import { useComplaintActions } from '../actions';
 import ComplaintNotifiableFieldDialog from './ComplaintNotifiableFieldDialog';
 import { useComplaintRootCausesSelect } from '@/app/(protected)/complaint-management/complaint-root-causes/hooks/useComplaintRootCauses';
 import { useComplaintResolutionsSelect } from '@/app/(protected)/complaint-management/complaint-resolutions/hooks/useComplaintResolutions';
-import ComplaintNavigation from './ComplaintNavigation';
+import { complaintsPagerQuery } from '../hooks/useComplaints';
 import ComplaintManualAttachmentsSection from './ComplaintManualAttachmentsSection';
 import ComplaintConversationPanel from './ComplaintConversationPanel';
 import AuditTrail from '@/components/audit/AuditTrail';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
+import DetailActions from '@/components/common/DetailActions';
 import { EntityDownloadsButton } from '@/components/my-downloads/EntityDownloadsButton';
 import { usePublicViewLinksEnabled } from '@/hooks/usePublicViewLinksEnabled';
 
@@ -96,6 +98,11 @@ const statusLabel = complaintStatusLabel;
 
 export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
   const router = useRouter();
+  const backHref = useBackToListHref('/complaint-management/complaints');
+  // Edit carries the list state too: the edit screen has a pager of its own.
+  const editHref = useHrefWithListState(
+    `/complaint-management/complaints/${complaintId}/edit`,
+  );
 
   // Don't fetch if it's "new" or invalid
   const isValidId = complaintId && complaintId !== 'new' && complaintId !== 'edit';
@@ -106,7 +113,6 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
   const rejectComplaintMutation = useRejectComplaint();
   const processComplaintMutation = useProcessComplaintByCs();
   const closeComplaintMutation = useCloseComplaint();
-  const exportPdfMutation = useExportComplaintPdf();
   const notifyRootCauseMutation = useNotifyComplaintRootCause();
   const notifyResolutionMutation = useNotifyComplaintResolution();
   const canApprove = useHasPermission('complaint_management.complaints.approve');
@@ -129,7 +135,7 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
   const [closeDialogOpen, setCloseDialogOpen] = useState(false);
   const [finalizeNote, setFinalizeNote] = useState('');
   const [rejectReason, setRejectReason] = useState('');
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [downloadsOpen, setDownloadsOpen] = useState(false);
   // Escalate the active form-SLA stage from the gear menu.
   const queryClient = useQueryClient();
   const [escalateOpen, setEscalateOpen] = useState(false);
@@ -153,6 +159,7 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
   });
   // A voided complaint is fully read-only - suppress every business CTA.
   const isVoided = (complaint?.status ?? '').trim().toLowerCase() === 'voided';
+
   // Form-action deferral (PLAN-form-sla-undo.md). While an action is pending its grace
   // window, EVERY business CTA is suppressed - the form must commit against the state
   // the action was requested on (AC-D-10), and a second action cannot queue (AC-D-7).
@@ -163,6 +170,20 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
   });
   const businessCtasEnabled =
     handlingLock.businessCtasEnabled && !isVoided && !formAction.ctasDisabled;
+  /**
+   * The set the LIST row renders too (D15), declared once in `../actions`.
+   *
+   * The record supplies the stricter delete gate: a form action inside its grace
+   * window would be undone by a delete underneath it, and only this page knows
+   * that a window is open.
+   */
+  const { actions: sharedActions, dialogs: sharedDialogs } = useComplaintActions(
+    complaint,
+    {
+      canDelete: !formAction.ctasDisabled,
+      onDeleted: () => router.push(backHref),
+    },
+  );
   const [undoDialogOpen, setUndoDialogOpen] = useState(false);
   // The technical team response may only be written while the complaint is still
   // waiting for one (UAC O1) - the backend returns 422 outside those statuses,
@@ -344,250 +365,264 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
             </p>
           )}
         </div>
-        <div className="flex gap-2 flex-wrap items-center justify-end">
-          {/* Business CTAs hide (not disable) while the handling lock is held by
-              someone else / unclaimed - keeps the header uncluttered. When the
-              lock does not bite (tier 1, flag off, or I hold it) businessCtasEnabled
-              is true and they render on their normal status+permission gates. */}
-          {businessCtasEnabled && responseWritable && (
-            <Button
-              // Submitted = the technical team's response is the next action, so make
-              // it the primary CTA; otherwise it's a secondary edit.
-              variant={complaint.status === 'submitted' ? 'primary' : 'outline'}
-              size="sm"
-              data-guide-target="complaint-management.complaints.tech-team.edit-response"
-              onClick={() => {
-                setEditTechnicalResponseValue(
-                  displayComplaintTechnicalResponse(complaint.technical_team_response ?? ''),
-                );
-                setEditTechnicalResponseOpen(true);
-              }}
-            >
-              <Edit className="size-4 mr-1" />
-              Edit technical team response
-            </Button>
-          )}
-          {businessCtasEnabled && complaint.status === 'responded' && canApprove && (
-            <Button
-              size="sm"
-              data-guide-target="complaint-management.complaints.tech-team.approve"
-              disabled={approveComplaintMutation.isPending}
-              onClick={() => setApproveDialogOpen(true)}
-            >
-              <CheckCircle2 className="size-4 mr-1" />
-              Approve
-            </Button>
-          )}
-          {businessCtasEnabled && complaint.status === 'responded' && canReject && (
-            <Button
-              variant="outline"
-              size="sm"
-              data-guide-target="complaint-management.complaints.tech-team.reject"
-              disabled={rejectComplaintMutation.isPending}
-              onClick={() => {
-                setRejectReason('');
-                setRejectDialogOpen(true);
-              }}
-              className="text-destructive border-destructive/40 hover:bg-destructive/10"
-            >
-              <XCircle className="size-4 mr-1" />
-              Reject
-            </Button>
-          )}
-          {businessCtasEnabled && complaint.status === 'approved' && canProcess && (
-            <Button
-              size="sm"
-              disabled={processComplaintMutation.isPending}
-              onClick={() => {
-                setFinalizeNote('');
-                setProcessDialogOpen(true);
-              }}
-              className="bg-emerald-600 text-white hover:bg-emerald-700"
-            >
-              <BadgeCheck className="size-4 mr-1" />
-              Processed by CS
-            </Button>
-          )}
-          <Button
-            variant="outline"
-            size="sm"
-            data-guide-target="complaint-management.complaints.download-pdf"
-            disabled={exportPdfMutation.isPending}
-            onClick={() => exportPdfMutation.mutate(complaintId)}
-          >
-            <FileDown className="size-4 mr-1" />
-            {exportPdfMutation.isPending ? 'Preparing…' : 'Download PDF'}
-          </Button>
-          <EntityDownloadsButton
-            entityType="complaint"
-            entityId={complaintId}
-            label={complaint.complaint_number ?? undefined}
-            className="h-8 border border-border"
-          />
-          <DetailActionsMenu ariaLabel="Complaint actions">
-            {/* Post-grace Undo. Rendered only when the server says the last committed
-                action is reversible - eligibility is a server read, never a client
-                guess, and it is re-checked at execute time (AC-PG-6/7). */}
-            {formAction.view.kind === 'undoable' && (
+        <DetailActions
+          pager={{
+            ...complaintsPagerQuery,
+            detailPath: '/complaint-management/complaints',
+            currentId: complaintId,
+            ariaLabel: 'complaint',
+          }}
+          gear={
+            <DetailActionsMenu ariaLabel="Complaint actions">
+              {/* The download history is an action, so it lives in the gear with the
+                  rest; the record card carries the pager, the gear and the one workflow
+                  CTA cluster, and nothing else. */}
               <DropdownMenuItem
                 onSelect={(e) => {
                   e.preventDefault();
-                  setUndoDialogOpen(true);
-                }}
-                data-testid="undo-action-menu-item"
-              >
-                <Undo2 className="size-4" />
-                Undo last action
-              </DropdownMenuItem>
-            )}
-            {activeTracker && (
-              <DropdownMenuItem
-                onSelect={(e) => {
-                  e.preventDefault();
-                  setEscalateReason('');
-                  setEscalateOpen(true);
+                  setDownloadsOpen(true);
                 }}
               >
-                <ArrowUpCircle className="size-4" />
-                Escalate SLA
+                <Printer className="size-4" />
+                Download history
               </DropdownMenuItem>
-            )}
-            <SlaExtendMenuItem
-              activeTracker={activeTracker}
-              onSelect={() => setExtendOpen(true)}
-            />
-            {canReassign && activeTracker && !isVoided && (
-              <DropdownMenuItem
-                onSelect={(e) => {
-                  e.preventDefault();
-                  setReassignOpen(true);
+              {/* Post-grace Undo. Rendered only when the server says the last committed
+                  action is reversible - eligibility is a server read, never a client
+                  guess, and it is re-checked at execute time (AC-PG-6/7). */}
+              {formAction.view.kind === 'undoable' && (
+                <DropdownMenuItem
+                  onSelect={(e) => {
+                    e.preventDefault();
+                    setUndoDialogOpen(true);
+                  }}
+                  data-testid="undo-action-menu-item"
+                >
+                  <Undo2 className="size-4" />
+                  Undo last action
+                </DropdownMenuItem>
+              )}
+              {activeTracker && (
+                <DropdownMenuItem
+                  onSelect={(e) => {
+                    e.preventDefault();
+                    setEscalateReason('');
+                    setEscalateOpen(true);
+                  }}
+                >
+                  <ArrowUpCircle className="size-4" />
+                  Escalate SLA
+                </DropdownMenuItem>
+              )}
+              <SlaExtendMenuItem
+                activeTracker={activeTracker}
+                onSelect={() => setExtendOpen(true)}
+              />
+              {canReassign && activeTracker && !isVoided && (
+                <DropdownMenuItem
+                  onSelect={(e) => {
+                    e.preventDefault();
+                    setReassignOpen(true);
+                  }}
+                >
+                  <UserRoundCog className="size-4" />
+                  Reassign
+                </DropdownMenuItem>
+              )}
+              <HandlingLockReleaseMenuItem
+                state={handlingLock.state}
+                onRelease={handlingLock.release}
+              />
+              <FormSkipMenuItem skip={formSkip} onSelect={() => setSkipDialogOpen(true)} />
+              {businessCtasEnabled && complaint.status === 'approved' && canClose && (
+                <DropdownMenuItem
+                  disabled={closeComplaintMutation.isPending}
+                  onClick={() => {
+                    setFinalizeNote('');
+                    setCloseDialogOpen(true);
+                  }}
+                >
+                  <XCircle className="size-4" />
+                  Mark as closed
+                </DropdownMenuItem>
+              )}
+              {businessCtasEnabled && (
+                <DropdownMenuItem onClick={() => setEditRootCauseOpen(true)}>
+                  <Edit className="size-4" />
+                  Edit root cause
+                </DropdownMenuItem>
+              )}
+              {businessCtasEnabled && (
+                <DropdownMenuItem onClick={() => setEditResolutionOpen(true)}>
+                  <Edit className="size-4" />
+                  Edit resolution
+                </DropdownMenuItem>
+              )}
+              {!isVoided && !formAction.ctasDisabled && (
+                <DropdownMenuItem
+                  onClick={() =>
+                    router.push(editHref)
+                  }
+                >
+                  <Edit className="size-4" />
+                  Edit
+                </DropdownMenuItem>
+              )}
+              {canUseRespondChat && (
+                <DropdownMenuItem onClick={() => setConversationSheetOpen(true)}>
+                  <MessageSquare className="size-4" />
+                  Chat records
+                </DropdownMenuItem>
+              )}
+              {publicViewLinksEnabled && (
+                <DropdownMenuItem
+                  disabled={viewLinkCopying}
+                  onClick={async () => {
+                    try {
+                      setViewLinkCopying(true);
+                      const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
+                      const { view_url } = await getOrCreateComplaintViewLink(complaintId, baseUrl);
+                      await navigator.clipboard.writeText(view_url);
+                      toast.success('View link copied to clipboard');
+                    } catch {
+                      toast.error('Failed to copy view link');
+                    } finally {
+                      setViewLinkCopying(false);
+                    }
+                  }}
+                >
+                  <Link2 className="size-4" />
+                  {viewLinkCopying ? 'Copying…' : 'Copy view link'}
+                </DropdownMenuItem>
+              )}
+              {publicViewLinksEnabled && (
+                <DropdownMenuItem
+                  onClick={async () => {
+                    try {
+                      const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
+                      const { view_url } = await getOrCreateComplaintViewLink(complaintId, baseUrl);
+                      window.open(view_url, '_blank');
+                    } catch {
+                      toast.error('Failed to open view link');
+                    }
+                  }}
+                >
+                  <ExternalLink className="size-4" />
+                  View in system
+                </DropdownMenuItem>
+              )}
+              {canUseRespondChat && !isVoided && responseWritable && (
+                <DropdownMenuItem
+                  disabled={openingReplySheet || updateComplaintAndReplyMutation.isPending}
+                  onClick={async () => {
+                    setOpeningReplySheet(true);
+                    try {
+                      await sendComplaintUpdateAndReplyFromSavedRecord();
+                    } finally {
+                      setOpeningReplySheet(false);
+                    }
+                  }}
+                >
+                  <Send className="size-4" />
+                  {openingReplySheet || updateComplaintAndReplyMutation.isPending
+                    ? 'Sending…'
+                    : 'Update & Reply'}
+                </DropdownMenuItem>
+              )}
+              {canVoid && !isVoided && !formAction.ctasDisabled && (
+                <DropdownMenuItem
+                  variant="destructive"
+                  onClick={() => setVoidDialogOpen(true)}
+                >
+                  <Ban className="size-4" />
+                  Void
+                </DropdownMenuItem>
+              )}
+              {/* The set the list row renders too (D15) - Download PDF, Delete.
+                  Spliced in as an array so the menu can see the destructive one and
+                  move it last by itself, after this record's own Void. */}
+              {recordActionItems(sharedActions)}
+            </DetailActionsMenu>
+          }
+          primary={
+            <>
+            {/* Business CTAs hide (not disable) while the handling lock is held by
+                someone else / unclaimed - keeps the header uncluttered. When the
+                lock does not bite (tier 1, flag off, or I hold it) businessCtasEnabled
+                is true and they render on their normal status+permission gates. */}
+            {businessCtasEnabled && responseWritable && (
+              <Button
+                // Submitted = the technical team's response is the next action, so make
+                // it the primary CTA; otherwise it's a secondary edit.
+                variant={complaint.status === 'submitted' ? 'primary' : 'outline'}
+                size="sm"
+                data-guide-target="complaint-management.complaints.tech-team.edit-response"
+                onClick={() => {
+                  setEditTechnicalResponseValue(
+                    displayComplaintTechnicalResponse(complaint.technical_team_response ?? ''),
+                  );
+                  setEditTechnicalResponseOpen(true);
                 }}
               >
-                <UserRoundCog className="size-4" />
-                Reassign
-              </DropdownMenuItem>
+                <Edit className="size-4 mr-1" />
+                Edit technical team response
+              </Button>
             )}
-            <HandlingLockReleaseMenuItem
-              state={handlingLock.state}
-              onRelease={handlingLock.release}
-            />
-            <FormSkipMenuItem skip={formSkip} onSelect={() => setSkipDialogOpen(true)} />
-            {businessCtasEnabled && complaint.status === 'approved' && canClose && (
-              <DropdownMenuItem
-                disabled={closeComplaintMutation.isPending}
+            {businessCtasEnabled && complaint.status === 'responded' && canApprove && (
+              <Button
+                size="sm"
+                data-guide-target="complaint-management.complaints.tech-team.approve"
+                disabled={approveComplaintMutation.isPending}
+                onClick={() => setApproveDialogOpen(true)}
+              >
+                <CheckCircle2 className="size-4 mr-1" />
+                Approve
+              </Button>
+            )}
+            {businessCtasEnabled && complaint.status === 'responded' && canReject && (
+              <Button
+                variant="outline"
+                size="sm"
+                data-guide-target="complaint-management.complaints.tech-team.reject"
+                disabled={rejectComplaintMutation.isPending}
+                onClick={() => {
+                  setRejectReason('');
+                  setRejectDialogOpen(true);
+                }}
+                className="text-destructive border-destructive/40 hover:bg-destructive/10"
+              >
+                <XCircle className="size-4 mr-1" />
+                Reject
+              </Button>
+            )}
+            {businessCtasEnabled && complaint.status === 'approved' && canProcess && (
+              <Button
+                size="sm"
+                disabled={processComplaintMutation.isPending}
                 onClick={() => {
                   setFinalizeNote('');
-                  setCloseDialogOpen(true);
+                  setProcessDialogOpen(true);
                 }}
+                className="bg-emerald-600 text-white hover:bg-emerald-700"
               >
-                <XCircle className="size-4" />
-                Mark as closed
-              </DropdownMenuItem>
+                <BadgeCheck className="size-4 mr-1" />
+                Processed by CS
+              </Button>
             )}
-            {businessCtasEnabled && (
-              <DropdownMenuItem onClick={() => setEditRootCauseOpen(true)}>
-                <Edit className="size-4" />
-                Edit root cause
-              </DropdownMenuItem>
-            )}
-            {businessCtasEnabled && (
-              <DropdownMenuItem onClick={() => setEditResolutionOpen(true)}>
-                <Edit className="size-4" />
-                Edit resolution
-              </DropdownMenuItem>
-            )}
-            {!isVoided && !formAction.ctasDisabled && (
-              <DropdownMenuItem
-                onClick={() =>
-                  router.push(`/complaint-management/complaints/${complaintId}/edit`)
-                }
-              >
-                <Edit className="size-4" />
-                Edit
-              </DropdownMenuItem>
-            )}
-            {canUseRespondChat && (
-              <DropdownMenuItem onClick={() => setConversationSheetOpen(true)}>
-                <MessageSquare className="size-4" />
-                Chat records
-              </DropdownMenuItem>
-            )}
-            {publicViewLinksEnabled && (
-              <DropdownMenuItem
-                disabled={viewLinkCopying}
-                onClick={async () => {
-                  try {
-                    setViewLinkCopying(true);
-                    const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
-                    const { view_url } = await getOrCreateComplaintViewLink(complaintId, baseUrl);
-                    await navigator.clipboard.writeText(view_url);
-                    toast.success('View link copied to clipboard');
-                  } catch {
-                    toast.error('Failed to copy view link');
-                  } finally {
-                    setViewLinkCopying(false);
-                  }
-                }}
-              >
-                <Link2 className="size-4" />
-                {viewLinkCopying ? 'Copying…' : 'Copy view link'}
-              </DropdownMenuItem>
-            )}
-            {publicViewLinksEnabled && (
-              <DropdownMenuItem
-                onClick={async () => {
-                  try {
-                    const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
-                    const { view_url } = await getOrCreateComplaintViewLink(complaintId, baseUrl);
-                    window.open(view_url, '_blank');
-                  } catch {
-                    toast.error('Failed to open view link');
-                  }
-                }}
-              >
-                <ExternalLink className="size-4" />
-                View in system
-              </DropdownMenuItem>
-            )}
-            {canUseRespondChat && !isVoided && responseWritable && (
-              <DropdownMenuItem
-                disabled={openingReplySheet || updateComplaintAndReplyMutation.isPending}
-                onClick={async () => {
-                  setOpeningReplySheet(true);
-                  try {
-                    await sendComplaintUpdateAndReplyFromSavedRecord();
-                  } finally {
-                    setOpeningReplySheet(false);
-                  }
-                }}
-              >
-                <Send className="size-4" />
-                {openingReplySheet || updateComplaintAndReplyMutation.isPending
-                  ? 'Sending…'
-                  : 'Update & Reply'}
-              </DropdownMenuItem>
-            )}
-            {canVoid && !isVoided && !formAction.ctasDisabled && (
-              <DropdownMenuItem
-                className="text-destructive focus:text-destructive"
-                onClick={() => setVoidDialogOpen(true)}
-              >
-                <Ban className="size-4" />
-                Void
-              </DropdownMenuItem>
-            )}
-            {!isVoided && !formAction.ctasDisabled && (
-              <DropdownMenuItem
-                className="text-destructive focus:text-destructive"
-                onClick={() => setDeleteDialogOpen(true)}
-              >
-                <Trash2 className="size-4" />
-                Delete
-              </DropdownMenuItem>
-            )}
-          </DetailActionsMenu>
-          <ComplaintNavigation complaintId={complaintId} />
-        </div>
+            </>
+          }
+          dialogs={
+            <>
+              <EntityDownloadsButton
+                entityType="complaint"
+                entityId={complaintId}
+                label={complaint.complaint_number ?? undefined}
+                open={downloadsOpen}
+                onOpenChange={setDownloadsOpen}
+              />
+              {sharedDialogs}
+            </>
+          }
+        />
       </div>
 
       <HandlingLockBanner
@@ -616,17 +651,6 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
             setUndoDialogOpen(false);
           }}
           isSubmitting={formAction.isMutating}
-        />
-      )}
-
-      {complaint && (
-        <ComplaintDeleteDialog
-          open={deleteDialogOpen}
-          closeDialog={() => setDeleteDialogOpen(false)}
-          complaint={complaint}
-          onSuccess={() => {
-            router.push('/complaint-management/complaints');
-          }}
         />
       )}
 

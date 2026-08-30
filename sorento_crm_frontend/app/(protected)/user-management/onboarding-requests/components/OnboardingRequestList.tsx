@@ -9,7 +9,7 @@
  */
 
 import { useEffect, useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
+
 import {
   getCoreRowModel,
   useReactTable,
@@ -18,7 +18,9 @@ import {
   type RowSelectionState,
   type SortingState,
 } from '@tanstack/react-table';
-import { ChevronRight, Search, X } from 'lucide-react';
+import { Search, X } from 'lucide-react';
+import { RowActionsMenu } from '@/components/common/RowActionsMenu';
+import { useOnboardingRequestActions } from '../actions';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
@@ -43,6 +45,7 @@ import {
 } from '@/components/common/onboarding/types';
 import { statusPillClass, STATUS_PILL_BASE } from '@/lib/status-pill';
 import { useOnboardingRequests } from '../hooks/useOnboardingRequests';
+import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 
 const STATUS_OPTIONS = [
   { value: 'all', label: 'All statuses' },
@@ -57,12 +60,35 @@ function day(value: string | null): string {
   return value ? formatDateInMalaysia(value) : '-';
 }
 
+/**
+ * The row's "..." (D15): the same set the record's gear renders, so a captain can
+ * revoke a link that is already out without opening the request first. Its own
+ * component because the action set is a hook.
+ */
+function OnboardingRowActions({ request }: { request: OnboardingRequestSummary }) {
+  const { actions, dialogs } = useOnboardingRequestActions(request);
+  return (
+    <>
+      <RowActionsMenu ariaLabel="onboarding request" actions={actions} />
+      {dialogs}
+    </>
+  );
+}
+
 export function OnboardingRequestList() {
-  const router = useRouter();
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [sorting, setSorting] = useState<SortingState>([{ id: 'created_at', desc: true }]);
+
+  // Back hands the list its own query string back, and the pager keeps
+  // rewriting it, so the list reads it (S3-01). One hook, every list.
+  useListStateFromUrl((state) => {
+    setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
+    setSorting(state.sorting);
+    setSearchQuery(state.searchQuery);
+    setStatusFilter(state.filters.status_key ?? 'all');
+  });
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
   const firstPage = () => setPagination((p) => ({ ...p, pageIndex: 0 }));
@@ -193,11 +219,11 @@ export function OnboardingRequestList() {
       },
       {
         id: 'actions',
-        header: '',
-        size: 40,
+        header: () => <span className="sr-only">Actions</span>,
+        size: 60,
         enableHiding: false,
         enableSorting: false,
-        cell: () => <ChevronRight className="text-muted-foreground/70 size-3.5" />,
+        cell: ({ row }) => <OnboardingRowActions request={row.original} />,
       },
     ],
     [],
@@ -242,9 +268,9 @@ export function OnboardingRequestList() {
           ? 'No requests match your filters.'
           : 'No onboarding requests yet. Create one to get started.'
       }
-      onRowClick={(row) => {
-        // Carry the active list query into the detail URL so its prev/next pager
-        // walks the same filtered+sorted set.
+      rowHref={(row) => {
+        // The whole row opens the record, carrying the list query the pager
+        // rebuilds its key from.
         const qs = buildDetailSearch(
           {
             pageIndex: pagination.pageIndex,
@@ -255,7 +281,7 @@ export function OnboardingRequestList() {
           { status_key: statusFilter === 'all' ? undefined : statusFilter },
         );
         const id = (row as OnboardingRequestSummary).id;
-        router.push(`/user-management/onboarding-requests/${id}${qs ? `?${qs}` : ''}`);
+        return `/user-management/onboarding-requests/${id}${qs ? `?${qs}` : ''}`;
       }}
       tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
     >

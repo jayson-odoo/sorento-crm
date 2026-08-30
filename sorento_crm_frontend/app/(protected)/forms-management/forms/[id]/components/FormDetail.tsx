@@ -2,22 +2,17 @@
 
 import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Edit, Download, Eye, Trash2 } from 'lucide-react';
+import { Edit, Download, Eye } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { useBackToListHref } from '@/components/common/BackToList';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
-import FormNavigation from './FormNavigation';
+import DetailActions from '@/components/common/DetailActions';
+import { useFormActions } from '../../actions';
+import { formsPagerQuery } from '../../hooks/useForms';
 import LookupBoundLabel from '@/components/common/LookupBoundLabel';
-import { useForm, useDeleteForm } from '../../hooks/useForms';
+import { useForm } from '../../hooks/useForms';
 import { useContactAccessTypes } from '@/app/(protected)/user-management/contact-access-types/hooks/useContactAccessTypes';
 import { formatDate } from '@/lib/helpers';
 import { useDownloadAttachment } from '@/app/(protected)/resource-management/attachments/hooks/useAttachments';
@@ -31,9 +26,9 @@ interface FormDetailProps {
 
 export default function FormDetail({ formId }: FormDetailProps) {
   const router = useRouter();
+  const backHref = useBackToListHref('/forms-management/forms');
   const { data: form, isLoading } = useForm(formId);
   const downloadMutation = useDownloadAttachment();
-  const deleteMutation = useDeleteForm();
   const { data: accessTypeOptions = [] } = useContactAccessTypes();
   const accessLevelNameMap = useMemo(() => {
     const m = new Map<string, string>();
@@ -41,7 +36,10 @@ export default function FormDetail({ formId }: FormDetailProps) {
     return m;
   }, [accessTypeOptions]);
   const [isDownloading, setIsDownloading] = useState(false);
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const { actions, dialogs } = useFormActions(
+    form ? { id: form.id, name: form.name, code: form.code } : null,
+    { onDeleted: () => router.push(backHref) },
+  );
 
   // Fetch attachment metadata if attachment_id exists
   const { data: attachment } = useQuery({
@@ -90,15 +88,6 @@ export default function FormDetail({ formId }: FormDetailProps) {
     }
   };
 
-  const handleDelete = () => {
-    deleteMutation.mutate(formId, {
-      onSuccess: () => {
-        setDeleteDialogOpen(false);
-        router.push('/forms-management/forms');
-      },
-    });
-  };
-
   if (isLoading) {
     return (
       <div className="space-y-6">
@@ -122,10 +111,10 @@ export default function FormDetail({ formId }: FormDetailProps) {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="space-y-1">
-          <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold">{form.name}</h1>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="space-y-1 min-w-0">
+          <div className="flex flex-wrap items-center gap-3">
+            <h1 className="text-2xl font-bold break-words min-w-0">{form.name}</h1>
             <Badge variant={form.is_active ? 'success' : 'secondary'} appearance="ghost">
               {form.is_active ? 'Active' : 'Inactive'}
             </Badge>
@@ -140,21 +129,25 @@ export default function FormDetail({ formId }: FormDetailProps) {
             {' '}• Version: {form.version} • Language: {form.language.toUpperCase()}
           </p>
         </div>
-        <div className="flex gap-2">
-          <FormNavigation formId={formId} />
-          <Button variant="outline" onClick={() => router.push(`/forms-management/forms/${formId}/edit`)}>
-            <Edit className="size-4 mr-2" />
-            Edit
-          </Button>
-          <Button
-            variant="outline"
-            className="text-destructive hover:text-destructive hover:bg-destructive/10"
-            onClick={() => setDeleteDialogOpen(true)}
-          >
-            <Trash2 className="size-4 mr-2" />
-            Delete
-          </Button>
-        </div>
+        <DetailActions
+          pager={{
+            ...formsPagerQuery,
+            detailPath: '/forms-management/forms',
+            currentId: formId,
+            ariaLabel: 'form',
+          }}
+          actions={actions}
+          dialogs={dialogs}
+          gearLabel="Form options"
+          primary={
+            <Button
+              onClick={() => router.push(`/forms-management/forms/${formId}/edit`)}
+            >
+              <Edit className="size-4 mr-2" />
+              Edit
+            </Button>
+          }
+        />
       </div>
 
       {/* Form Information */}
@@ -281,28 +274,6 @@ export default function FormDetail({ formId }: FormDetailProps) {
         </Card>
       </div>
 
-      <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Delete form</DialogTitle>
-            <DialogDescription>
-              Are you sure you want to delete <strong>{form?.name}</strong> ({form?.code})? This action cannot be undone.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDeleteDialogOpen(false)}>
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={handleDelete}
-              disabled={deleteMutation.isPending}
-            >
-              {deleteMutation.isPending ? 'Deleting...' : 'Delete'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

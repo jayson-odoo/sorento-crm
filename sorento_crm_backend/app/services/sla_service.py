@@ -849,57 +849,6 @@ class ConversationSLATrackingService:
             primary = ConversationSLATracking.created_at.desc()
         return q.order_by(primary, ConversationSLATracking.id.asc())
 
-    def neighbours(
-        self,
-        tracking_id: str,
-        policy_id: Optional[str] = None,
-        query: Optional[str] = None,
-        sort_field: str = "created_at",
-        sort_dir: str = "desc",
-        assigned_to: Optional[str] = None,
-        tracking_ids: Optional[list[str]] = None,
-        contact: Optional[str] = None,
-        is_resolved: Optional[bool] = None,
-        resolved_by: Optional[str] = None,
-    ) -> dict:
-        """Resolve prev/next neighbours for ``tracking_id`` within the active
-        conversation-SLA list query.
-
-        Selects only the ordered ids (not full rows) for efficiency, then defers the
-        position/wrap math to the pure ``compute_neighbours`` helper. Stays in the
-        conversation scope (never form SLA rows). If the record is not in the filtered
-        set (deep link, or filtered out after an edit), falls back to the unfiltered,
-        default-sorted conversation set so the pager is never dead (D2).
-        """
-        from app.services.record_navigation import compute_neighbours
-
-        def _ordered_ids(q) -> list[str]:
-            ids_q = q.with_entities(ConversationSLATracking.id)
-            return [str(row[0]) for row in ids_q.all()]
-
-        filtered_q = self._build_conversation_list_query(
-            self.db.query(ConversationSLATracking),
-            policy_id=policy_id,
-            query=query,
-            sort_field=sort_field,
-            sort_dir=sort_dir,
-            assigned_to=assigned_to,
-            tracking_ids=tracking_ids,
-            contact=contact,
-            is_resolved=is_resolved,
-            resolved_by=resolved_by,
-        )
-        result = compute_neighbours(_ordered_ids(filtered_q), tracking_id)
-        if result["index"] is not None:
-            return result
-
-        # D2: current record not in the filtered conversation set -> fall back to the
-        # unfiltered, default-sorted conversation set so prev/next still works.
-        unfiltered_q = self._build_conversation_list_query(
-            self.db.query(ConversationSLATracking)
-        )
-        return compute_neighbours(_ordered_ids(unfiltered_q), tracking_id)
-
     def list_tracking(
         self,
         page: int = 1,

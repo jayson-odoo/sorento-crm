@@ -18,12 +18,17 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { useConversationSLATrackingDetail, useDeleteConversationSLATracking, useSyncAssigneeFromRespond, useConversationSLATestOverrides } from '../hooks/useConversationSLATracking';
-import ConversationSLATrackingNavigation from './ConversationSLATrackingNavigation';
+import { useConversationSLATrackingDetail, useConversationSLATestOverrides } from '../hooks/useConversationSLATracking';
+import DetailActions from '@/components/common/DetailActions';
+import { useBackToListHref } from '@/components/common/BackToList';
+import { recordActionItems } from '@/components/common/recordActions';
+import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
+import { useConversationSlaActions } from '../actions';
+import { conversationSlaPagerQuery } from '../hooks/useConversationSLATracking';
 import { escalateConversationSLATracking, type ConversationSLATestOverridesBody } from '../services/conversationSLATrackingService';
 import { formatDateTime, formatDuration, formatDurationWithSeconds, parseDateTimeAsUTC } from '@/lib/helpers';
 import EventLogTable from './EventLogTable';
-import { CheckCircle, Clock, AlertCircle, RefreshCw, Trash2, ChevronDown, ChevronRight, UserRound, Info, Settings, ExternalLink, CalendarClock, UserCog, MessageSquare, TrendingUp } from 'lucide-react';
+import { CheckCircle, Clock, AlertCircle, RefreshCw, ChevronDown, ChevronRight, Info, ExternalLink, CalendarClock, UserCog, MessageSquare, TrendingUp } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import {
   Popover,
@@ -31,11 +36,8 @@ import {
   PopoverTrigger,
 } from '@/components/ui/popover';
 import {
-  DropdownMenu,
-  DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
-  DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import {
   Dialog,
@@ -91,18 +93,24 @@ export default function ConversationSLATrackingDetail({
   const queryClient = useQueryClient();
   const canSlaTestOverride = useHasPermission(SLA_TEST_OVERRIDE_PERMISSION);
   const { data: tracking, isLoading } = useConversationSLATrackingDetail(trackingId);
-  // Conversation-context detail renders the IDs-mode pager (neighbours endpoint,
-  // conversation scope). The form SLA tracking page reuses this component with its
-  // own backHref; its records live in the form scope, so it gets no conversation pager.
+  // Only the conversation-context detail carries the pager. The form SLA tracking
+  // page reuses this component with its own backHref; its records live in the form
+  // scope, so the conversation list page it would walk is not the one it came from.
   const isConversationContext =
     backHref === '/sla-management/conversation-sla-tracking';
+  // Delete lands where Back lands: the list page, sort, search and filters the
+  // reader left, which the row click wrote into this URL.
+  const backListHref = useBackToListHref(backHref);
+  // Everything a list row can do too, declared once (D15). Delete brings its own
+  // confirmation dialog, mounted with the actions below.
+  const { actions: sharedActions, dialogs: sharedDialogs } = useConversationSlaActions(
+    tracking,
+    { onDeleted: () => router.push(backListHref) },
+  );
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [trackingOpen, setTrackingOpen] = useState(false);
   const [responseOpen, setResponseOpen] = useState(false);
   const [resolutionOpen, setResolutionOpen] = useState(false);
-  const deleteMutation = useDeleteConversationSLATracking();
-  const syncAssigneeMutation = useSyncAssigneeFromRespond();
   const testOverrideMutation = useConversationSLATestOverrides(trackingId);
   const escalateMutation = useMutation({
     mutationFn: (reason: string) => escalateConversationSLATracking(trackingId, reason),
@@ -193,14 +201,6 @@ export default function ConversationSLATrackingDetail({
     }
   };
 
-  const handleDelete = () => {
-    deleteMutation.mutate(trackingId, {
-      onSuccess: () => {
-        router.push(backHref);
-      },
-    });
-  };
-
   if (isLoading) {
     return (
       <div className="space-y-6">
@@ -214,7 +214,7 @@ export default function ConversationSLATrackingDetail({
     return (
       <div className="text-center py-12">
         <p className="text-muted-foreground">SLA tracking not found</p>
-        <Button variant="outline" onClick={() => router.push(backHref)} className="mt-4">
+        <Button variant="outline" onClick={() => router.push(backListHref)} className="mt-4">
           Back to {backLabel}
         </Button>
       </div>
@@ -343,49 +343,36 @@ export default function ConversationSLATrackingDetail({
             </span>
           </p>
         </div>
-        <div className="flex gap-2">
-          {isConversationContext && (
-            <ConversationSLATrackingNavigation trackingId={trackingId} />
-          )}
-          {respondInboxUrl && (
-            <Button
-              variant="outline"
-              onClick={() => setConversationSheetOpen(true)}
-            >
-              <MessageSquare className="size-4 mr-2" />
-              Chat Records
-            </Button>
-          )}
-          <Button
-            variant="outline"
-            onClick={handleRefresh}
-            disabled={isRefreshing || isLoading}
-          >
-            <RefreshCw className={`size-4 mr-2 ${isRefreshing ? 'animate-spin' : ''}`} />
-            Refresh
-          </Button>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="icon" title="Actions">
-                <Settings className="size-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
+        <DetailActions
+          pager={
+            isConversationContext
+              ? {
+                  ...conversationSlaPagerQuery,
+                  detailPath: '/sla-management/conversation-sla-tracking',
+                  currentId: trackingId,
+                  ariaLabel: 'conversation',
+                }
+              : undefined
+          }
+          dialogs={sharedDialogs}
+          gear={
+            /* Through the shared menu, not a raw DropdownMenu: `DetailActions`
+               renders a `gear` node verbatim, so a raw one keeps whatever order
+               it was written in, and Delete sat fourth with nothing setting it
+               apart. The menu moves the destructive item last, behind a
+               separator, for every workflow gear alike (D6). */
+            <DetailActionsMenu ariaLabel="Conversation SLA actions">
               <DropdownMenuItem
-                onClick={() => syncAssigneeMutation.mutate(trackingId)}
-                disabled={syncAssigneeMutation.isPending}
+                onClick={handleRefresh}
+                disabled={isRefreshing || isLoading}
               >
-                <UserRound className={`size-4 mr-2 ${syncAssigneeMutation.isPending ? 'animate-pulse' : ''}`} />
-                Sync assignee
+                <RefreshCw className={`size-4 mr-2 ${isRefreshing ? 'animate-spin' : ''}`} />
+                Refresh
               </DropdownMenuItem>
-              {respondInboxUrl && (
-                <DropdownMenuItem
-                  onSelect={() => window.open(respondInboxUrl, '_blank', 'noopener,noreferrer')}
-                >
-                  <ExternalLink className="size-4 mr-2" />
-                  Open conversation
-                </DropdownMenuItem>
-              )}
+              {/* The set the list row renders too (D15) - Sync assignee, Open
+                  conversation, Delete tracking. Spliced in as an array so the menu
+                  can see the destructive one and move it last by itself. */}
+              {recordActionItems(sharedActions)}
               {contactId && (
                 <PortalLinkButton
                   contactId={contactId}
@@ -439,17 +426,17 @@ export default function ConversationSLATrackingDetail({
                   </DropdownMenuItem>
                 </>
               )}
-            </DropdownMenuContent>
-          </DropdownMenu>
-          <Button
-            variant="destructive"
-            onClick={() => setDeleteDialogOpen(true)}
-            disabled={deleteMutation.isPending}
-          >
-            <Trash2 className="size-4 mr-2" />
-            Delete
-          </Button>
-        </div>
+            </DetailActionsMenu>
+          }
+          primary={
+            respondInboxUrl ? (
+              <Button onClick={() => setConversationSheetOpen(true)}>
+                <MessageSquare className="size-4 mr-2" />
+                Chat Records
+              </Button>
+            ) : null
+          }
+        />
       </div>
 
       <Dialog open={assigneeDialogOpen} onOpenChange={setAssigneeDialogOpen}>
@@ -763,25 +750,6 @@ export default function ConversationSLATrackingDetail({
         </AlertDialogContent>
       </AlertDialog>
 
-      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete Conversation SLA Tracking</AlertDialogTitle>
-            <AlertDialogDescription>
-              Are you sure you want to delete this conversation SLA tracking record? This action cannot be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleDelete}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              Delete
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
 
       <Tabs defaultValue="overview" className="w-full">
         <TabsList variant="default">

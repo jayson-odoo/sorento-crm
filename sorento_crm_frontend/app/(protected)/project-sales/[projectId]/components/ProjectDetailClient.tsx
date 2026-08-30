@@ -5,14 +5,17 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Clock, Flame, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { useBackToListHref } from '@/components/common/BackToList';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
+import DetailActions from '@/components/common/DetailActions';
 import { useStatusGraph } from '@/app/(protected)/system-management/status-graphs/hooks/useStatusGraphs';
 import {
+  projectsPagerQuery,
   useChangeProjectStatus,
   useDeleteProject,
   useProject,
@@ -66,6 +69,7 @@ type TabId = (typeof TABS)[number]['id'];
 
 export function ProjectDetailClient({ projectId }: { projectId: string }) {
   const router = useRouter();
+  const backHref = useBackToListHref('/project-sales/pipeline');
   const searchParams = useSearchParams();
   const requestedTab = searchParams.get('tab') as TabId | null;
   const activeTab: TabId =
@@ -171,44 +175,53 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
           </p>
         </div>
 
-        {/* One primary action, and everything else behind the overflow. Delete used to
-            sit here in full, weighing the same as the step the person came to take. */}
-        <div
+        {/* Pager, gear, primary (D6). One primary action, and everything else behind
+            the gear: Delete used to sit here in full, weighing the same as the step
+            the person came to take. */}
+        <DetailActions
           data-testid="project-header-actions"
-          className="flex flex-wrap items-center gap-2"
-        >
-          <ProjectStatusAction
-            moves={moves}
-            isPending={move.isPending}
-            onMove={(toStatusId) =>
-              move.mutate({ projectId: project.id, toStatusId })
-            }
-          />
-          {project.can_edit && (
-            <DetailActionsMenu ariaLabel="Project actions">
-              {/* Exits and side moves. Deliberately not in the header: marking a pursuit
-                  lost should never sit one careless click from advancing it. */}
-              {secondaryMoves.map((option) => (
+          pager={{
+            ...projectsPagerQuery,
+            detailPath: '/project-sales',
+            currentId: project.id,
+            ariaLabel: 'project',
+          }}
+          gear={
+            project.can_edit && (
+              <DetailActionsMenu ariaLabel="Project actions">
+                {/* Exits and side moves. Deliberately not in the header: marking a
+                    pursuit lost should never sit one careless click from advancing it. */}
+                {secondaryMoves.map((option) => (
+                  <DropdownMenuItem
+                    key={option.transitionId}
+                    disabled={move.isPending}
+                    onSelect={() =>
+                      move.mutate({ projectId: project.id, toStatusId: option.toStatusId })
+                    }
+                  >
+                    {option.label}
+                  </DropdownMenuItem>
+                ))}
                 <DropdownMenuItem
-                  key={option.transitionId}
-                  disabled={move.isPending}
-                  onSelect={() =>
-                    move.mutate({ projectId: project.id, toStatusId: option.toStatusId })
-                  }
+                  variant="destructive"
+                  onSelect={() => setConfirmDelete(true)}
                 >
-                  {option.label}
+                  <Trash2 className="size-4" aria-hidden />
+                  Delete project
                 </DropdownMenuItem>
-              ))}
-              <DropdownMenuItem
-                variant="destructive"
-                onSelect={() => setConfirmDelete(true)}
-              >
-                <Trash2 className="size-4" aria-hidden />
-                Delete project
-              </DropdownMenuItem>
-            </DetailActionsMenu>
-          )}
-        </div>
+              </DetailActionsMenu>
+            )
+          }
+          primary={
+            <ProjectStatusAction
+              moves={moves}
+              isPending={move.isPending}
+              onMove={(toStatusId) =>
+                move.mutate({ projectId: project.id, toStatusId })
+              }
+            />
+          }
+        />
       </header>
 
       {/* The ladder says its own reason and its own consequence (AC-H6). A badge alone
@@ -360,7 +373,7 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
         onDelete={async () => {
           await remove.mutateAsync(project.id);
         }}
-        onSuccess={() => router.push('/project-sales/pipeline')}
+        onSuccess={() => router.push(backHref)}
         successMessage="Project deleted"
       />
     </div>

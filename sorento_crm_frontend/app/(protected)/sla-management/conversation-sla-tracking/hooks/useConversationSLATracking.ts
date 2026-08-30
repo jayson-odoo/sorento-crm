@@ -1,11 +1,7 @@
 import { useCallback } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { buildDataGridParams } from '@/lib/api-client';
-import {
-  useRecordNeighbours,
-  type RecordNeighboursResult,
-} from '@/hooks/useRecordNeighbours';
+
 import type { ConversationSLATrackingDetail } from '../types/conversationSLATracking.types';
 import {
   getConversationSLATracking,
@@ -21,57 +17,67 @@ import {
   getSlaTrackingConversationPage,
   searchSlaTrackingConversation,
   postSlaTrackingConversationReply,
-  CONVERSATION_SLA_TRACKING_NEIGHBOURS_PATH,
   type ConversationSLATestOverridesBody,
   type ConversationSLATrackingListParams,
 } from '../services/conversationSLATrackingService';
 import type { ConversationSLAEventLogsParams } from '../services/conversationSLATrackingService';
+import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
+
 
 /**
- * Prev/next neighbours of a conversation SLA tracking row within the active
- * filtered+sorted list set. Serializes the list query (search/sort/policy/assignee)
- * with `buildDataGridParams` - the same serialization the list page uses - so the
- * backend honours filters identically. `page`/`limit` are sent but ignored by the
- * neighbours endpoint; `scope` is fixed to conversation server-side.
+ * The list's React Query key. The detail page's pager rebuilds the SAME key from
+ * the URL, so it reads the page the list already fetched.
  */
-export function useConversationSLATrackingNeighbours(
-  trackingId: string | null,
-  listParams: ConversationSLATrackingListParams,
-): RecordNeighboursResult {
-  const params = buildDataGridParams(listParams, {
-    policy_id: listParams.policy_id,
-    assigned_to: listParams.assigned_to,
-    // AC-M2: the pager must walk the same pre-filtered history set the user
-    // landed on, or "next" silently leaves it.
-    contact: listParams.contact,
-    is_resolved:
-      listParams.is_resolved === undefined ? undefined : String(listParams.is_resolved),
-    resolved_by: listParams.resolved_by,
-  });
-  return useRecordNeighbours(
-    CONVERSATION_SLA_TRACKING_NEIGHBOURS_PATH,
-    trackingId,
-    params,
-  );
+export function conversationSlaListQueryKey(
+  params: ConversationSLATrackingListParams,
+): QueryKey {
+  return [
+    'conversation-sla-tracking',
+    params.pageIndex,
+    params.pageSize,
+    params.sorting,
+    params.searchQuery,
+    params.policy_id,
+    params.status,
+    params.assigned_to,
+    // AC-M2 deep-link filters: part of the key, or a "View history" landing
+    // renders the previously cached unfiltered page.
+    params.contact,
+    params.is_resolved,
+    params.resolved_by,
+  ];
 }
+
+/** The list query a detail URL describes, in the shape the list passes. */
+export function conversationSlaListParamsFromUrl(
+  params: ListPagerParams,
+): ConversationSLATrackingListParams {
+  const f = params.filters;
+  return {
+    pageIndex: params.pageIndex,
+    pageSize: params.pageSize,
+    sorting: params.sorting,
+    searchQuery: params.searchQuery,
+    policy_id: f.policy_id,
+    status: f.status,
+    assigned_to: f.assigned_to,
+    contact: f.contact,
+    is_resolved: f.is_resolved === 'true' ? true : f.is_resolved === 'false' ? false : undefined,
+    resolved_by: f.resolved_by,
+  };
+}
+
+/** The pager's two hooks into the conversation SLA list. */
+export const conversationSlaPagerQuery = {
+  listQueryKey: (params: ListPagerParams): QueryKey =>
+    conversationSlaListQueryKey(conversationSlaListParamsFromUrl(params)),
+  fetchPage: (params: ListPagerParams): Promise<ListPagerPage> =>
+    getConversationSLATracking(conversationSlaListParamsFromUrl(params)),
+};
 
 export function useConversationSLATracking(params: ConversationSLATrackingListParams) {
   return useQuery({
-    queryKey: [
-      'conversation-sla-tracking',
-      params.pageIndex,
-      params.pageSize,
-      params.sorting,
-      params.searchQuery,
-      params.policy_id,
-      params.status,
-      params.assigned_to,
-      // AC-M2 deep-link filters: part of the key, or a "View history" landing
-      // renders the previously cached unfiltered page.
-      params.contact,
-      params.is_resolved,
-      params.resolved_by,
-    ],
+    queryKey: conversationSlaListQueryKey(params),
     queryFn: () => getConversationSLATracking(params),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,

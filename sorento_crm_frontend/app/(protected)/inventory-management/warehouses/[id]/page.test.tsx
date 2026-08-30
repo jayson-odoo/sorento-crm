@@ -177,9 +177,13 @@ async function renderDetail(id: string = CURRENT_ID) {
   return { client, invalidate };
 }
 
-/** Open the confirmation dialog from the header, then confirm inside it. */
+/** Open the confirmation dialog from the header's gear, then confirm inside it. */
 async function confirmDelete() {
-  fireEvent.click(screen.getAllByRole('button', { name: /^delete$/i })[0]);
+  // Delete lives in the gear now, red and last (D6), not as a standing button.
+  const gear = screen.getByRole('button', { name: /warehouse options/i });
+  gear.focus();
+  fireEvent.keyDown(gear, { key: 'ArrowDown', code: 'ArrowDown' });
+  fireEvent.click(await screen.findByRole('menuitem', { name: /^delete warehouse$/i }));
   const dialog = await screen.findByRole('dialog');
   await act(async () => {
     fireEvent.click(within(dialog).getByRole('button', { name: /^delete$/i }));

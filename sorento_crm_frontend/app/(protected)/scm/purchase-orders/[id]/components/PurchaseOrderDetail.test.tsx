@@ -39,6 +39,8 @@ Element.prototype.scrollIntoView = vi.fn();
 // A `let`, not a literal return, so the `?edit=1` auto-open test can point it at a URL
 // carrying the param without a second mock module.
 let searchParams = new URLSearchParams();
+vi.mock('@/components/common/ListPager', () => ({ __esModule: true, default: () => null }));
+
 vi.mock('next/navigation', () => ({
   usePathname: () => '/scm/purchase-orders/po-1',
   useRouter: () => ({ push: vi.fn() }),
@@ -52,9 +54,14 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
 const usePurchaseOrder = vi.fn();
 const updatePurchaseOrderMutateAsync = vi.fn();
 vi.mock('../../../hooks/usePurchaseOrders', () => ({
+  // The pager reads the list page through the entity's shared key + fetch (S3-03).
+  purchaseOrdersPagerQuery: {
+    listQueryKey: () => ['scm-purchase-orders'],
+    fetchPage: async () => ({ data: [], pagination: { total: 0 } }),
+  },
   usePurchaseOrder: (...a: unknown[]) => usePurchaseOrder(...a),
-  // The header's prev/next pager reads the same list the user came from. One row means no
-  // neighbours, so the pager renders nothing and these tests stay about the record itself.
+  // The header's prev/next pager reads the same list the user came from. An empty page
+  // holds no record, so the pager renders nothing and these tests stay about the record.
   usePurchaseOrders: () => ({ data: { data: [], pagination: { total: 0, page: 1, limit: 25 } } }),
   useUpdatePurchaseOrder: () => ({
     mutateAsync: updatePurchaseOrderMutateAsync,

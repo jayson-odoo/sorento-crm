@@ -14,7 +14,7 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { BarChart3, ChevronRight, Plus, Search, Trash2, X } from 'lucide-react';
+import { BarChart3, Plus, Search, Trash2, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -41,6 +41,7 @@ import { revisionBadgeLabel, withRevisionSuffix } from '@/lib/document-number';
 import PurchaseRequestBulkDeleteDialog from './PurchaseRequestBulkDeleteDialog';
 import { statusPillClass, STATUS_PILL_BASE } from '@/lib/status-pill';
 import { purchaseRequestNumberFieldLabel } from '../lib/purchase-request-field-labels';
+import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 
 const REQUEST_TYPE_LABELS: Record<string, string> = {
   purchase_request: 'Purchase Request',
@@ -157,6 +158,16 @@ export default function PurchaseRequestsList({
   );
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [assignedToFilter, setAssignedToFilter] = useState<string>('__all__');
+
+  // Back hands the list its own query string back, and the pager keeps
+  // rewriting it, so the list reads it (S3-01). One hook, every list.
+  useListStateFromUrl((state) => {
+    setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
+    setSorting(state.sorting);
+    setSearchQuery(state.searchQuery);
+    setStatusFilter(state.filters.approval_status ?? 'all');
+    setAssignedToFilter(state.filters.assigned_to ?? '__all__');
+  });
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
   const { data: assigneeOptions = [] } = useQuery({
@@ -186,10 +197,9 @@ export default function PurchaseRequestsList({
     setPagination((prev) => ({ ...prev, pageIndex: 0 }));
   }, [statusFilter, assignedToFilter]);
 
-  const handleRowClick = (row: PurchaseRequest) => {
-    // Carry the active list query into the detail URL so its prev/next pager walks
-    // the same filtered+sorted set. request_type is included so PR nav stays in PRs
-    // and SF nav in SFs.
+  // The whole row opens the record, carrying the list query the pager rebuilds its
+  // key from. request_type rides along so a PR pager stays in PRs and an SF one in SFs.
+  const rowHref = (row: PurchaseRequest) => {
     const search = buildDetailSearch(
       {
         pageIndex: pagination.pageIndex,
@@ -207,7 +217,7 @@ export default function PurchaseRequestsList({
       },
     );
     const qs = search ? `?${search}` : '';
-    router.push(`${basePath}/${row.id}${qs}`);
+    return `${basePath}/${row.id}${qs}`;
   };
 
   const bulkDeleteEntityLabel =
@@ -408,9 +418,7 @@ export default function PurchaseRequestsList({
       {
         accessorKey: 'actions',
         header: '',
-        cell: () => (
-          <ChevronRight className="text-muted-foreground/70 size-3.5" />
-        ),
+        cell: () => null,
         size: 40,
         enableHiding: false,
       },
@@ -444,7 +452,7 @@ export default function PurchaseRequestsList({
       table={table}
       recordCount={data?.pagination?.total ?? 0}
       isLoading={isLoading}
-      onRowClick={handleRowClick}
+      rowHref={rowHref}
       standardToolbar={false}
       tableLayout={{ columnsVisibility: true }}
     >

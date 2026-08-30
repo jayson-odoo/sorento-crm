@@ -29,17 +29,6 @@ vi.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 
-// The pager reads a backend `/neighbours` endpoint; nothing answers it here.
-vi.mock('@/hooks/useRecordNeighbours', () => ({
-  useRecordNeighbours: () => ({
-    prevId: null,
-    nextId: null,
-    index: 1,
-    total: 1,
-    isLoading: false,
-  }),
-}));
-
 const copyToClipboard = vi.fn();
 vi.mock('@/hooks/use-copy-to-clipboard', () => ({
   useCopyToClipboard: ({ onCopy }: { onCopy?: () => void } = {}) => ({
@@ -63,7 +52,6 @@ const regenerateOnboardingToken = vi.fn();
 const sendOnboardingRequest = vi.fn();
 
 vi.mock('../../services/onboardingService', () => ({
-  ONBOARDING_NEIGHBOURS_PATH: '/api/user-management/onboarding/requests/neighbours',
   getOnboardingRequest: (...a: unknown[]) => getOnboardingRequest(...a),
   listOnboardingRequests: vi.fn(),
   createOnboardingRequest: vi.fn(),

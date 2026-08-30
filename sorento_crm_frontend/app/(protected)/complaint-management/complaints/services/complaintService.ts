@@ -21,22 +21,6 @@ export type ComplaintsListParams = DataGridApiFetchParams & {
   resolution_ids?: string[];
 };
 
-/**
- * Path of the complaints neighbours endpoint. Consumed by `useComplaintNeighbours`
- * via the generic `useRecordNeighbours` hook.
- *
- * Contract (see documentation/plans/PLAN-record-navigation-standardization.md §7):
- *   GET /api/v1/complaints-management/complaints/neighbours
- *   Query params: id=<uuid> + the SAME params the list GET accepts
- *                 (query, assigned_to, status, sort, dir). page/limit are ignored.
- *   Auth: same dependency + module guard as the list GET.
- *   200:  { total: number, index: number|null, prev_id: string|null, next_id: string|null }
- *       - index is 1-based; null when the record is not in the filtered set
- *           (the backend then falls back to the unfiltered, default-sorted set).
- *       - prev_id/next_id wrap circularly; null only when total <= 1.
- */
-export const COMPLAINT_NEIGHBOURS_PATH =
-  '/api/v1/complaints-management/complaints/neighbours';
 
 /** Serialize the list filters the same way for the list GET and the neighbours GET,
  *  so the backend can never see a different filter set for the two. */

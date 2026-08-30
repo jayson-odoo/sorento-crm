@@ -36,6 +36,9 @@ if (!window.ResizeObserver) {
 }
 
 const push = vi.fn();
+// The pager has its own tests (hooks/useListPager.test.ts).
+vi.mock('@/components/common/ListPager', () => ({ __esModule: true, default: () => null }));
+
 vi.mock('next/navigation', () => ({
   usePathname: () => '/scm/loading-plan/plan-1',
   useRouter: () => ({ push, replace: vi.fn() }),
@@ -151,6 +154,11 @@ const changeCutOff = vi.fn();
 const refetchBuild = vi.fn();
 
 vi.mock('../../hooks/useFulfilment', () => ({
+  // The pager reads the list page through the entity's shared key + fetch (S3-03).
+  loadingPlanPagerQuery: {
+    listQueryKey: () => ['scm-loading-plans'],
+    fetchPage: async () => ({ data: [], pagination: { total: 0 } }),
+  },
   useContainerRequestBuild: () => ({
     data: { plan: state.plan, rows: state.rows, supplier_id: 'sup-1' },
     isLoading: false,

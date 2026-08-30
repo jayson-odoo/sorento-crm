@@ -112,7 +112,9 @@ function stub(rows: SalesOrder[]) {
 }
 
 async function openActions() {
-  const trigger = await screen.findByRole('button', { name: /Actions/i });
+  // The toolbar's gear, not a row's "..." - both answer to /Actions/ now that the
+  // rows carry the shared menu.
+  const trigger = await screen.findByRole('button', { name: 'Actions' });
   fireEvent.keyDown(trigger, { key: 'Enter' });
 }
 

@@ -8,6 +8,8 @@ import type { RespondContact } from '../../types/contact.types';
 interface ContactHeroProps {
   contact: RespondContact | undefined;
   isLoading: boolean;
+  /** The record's actions: pager, gear, primary (D6). */
+  actions?: React.ReactNode;
 }
 
 function MetaItem({ label, children }: { label: string; children: React.ReactNode }) {
@@ -29,7 +31,7 @@ const Empty = () => <span className="text-muted-foreground font-normal">Not set<
  * strip carries ONLY the values with no edit counterpart - Respond.io ID, Created At,
  * Updated At - so the read view and the edit dialog never disagree about a field.
  */
-export default function ContactHero({ contact, isLoading }: ContactHeroProps) {
+export default function ContactHero({ contact, isLoading, actions }: ContactHeroProps) {
   if (isLoading || !contact) {
     return (
       <div className="flex items-center gap-5 mb-5">
@@ -59,7 +61,9 @@ export default function ContactHero({ contact, isLoading }: ContactHeroProps) {
           </div>
         </div>
       </div>
-      <div className="grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-3">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:gap-6">
+        {actions}
+        <div className="grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-3">
         <MetaItem label="Respond.io ID">
           {contact.respond_io_id ? (
             <span className="font-mono">{contact.respond_io_id}</span>
@@ -68,7 +72,8 @@ export default function ContactHero({ contact, isLoading }: ContactHeroProps) {
           )}
         </MetaItem>
         <MetaItem label="Created At">{formatDateTimeInMalaysia(contact.created_at)}</MetaItem>
-        <MetaItem label="Updated At">{formatDateTimeInMalaysia(contact.updated_at)}</MetaItem>
+          <MetaItem label="Updated At">{formatDateTimeInMalaysia(contact.updated_at)}</MetaItem>
+        </div>
       </div>
     </div>
   );

@@ -1,7 +1,6 @@
 'use client';
 
 import * as React from 'react';
-import { useRouter } from 'next/navigation';
 import {
   ColumnDef,
   PaginationState,
@@ -11,7 +10,7 @@ import {
   getPaginationRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { Check, MoreHorizontal, Search, Truck, X } from 'lucide-react';
+import { Check, Search, Truck, X } from 'lucide-react';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -31,12 +30,7 @@ import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
+
 import { Input } from '@/components/ui/input';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
@@ -57,6 +51,9 @@ import {
   availableActions,
   type TransferAction,
 } from './StockTransferActions';
+import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
+import { RowActionsMenu } from '@/components/common/RowActionsMenu';
+import { stockTransferActions } from '../actions';
 
 // Both option lists are derived from the label maps rather than retyped, so a word can only
 // ever be changed in one place. The filter and the badge cannot say `moved` two ways.
@@ -146,7 +143,6 @@ export function StockTransfersPanel({
   listingKey,
   showFilters = true,
 }: StockTransfersPanelProps) {
-  const router = useRouter();
   const [search, setSearch] = React.useState('');
   const [debounced, setDebounced] = React.useState('');
   const [state, setState] = React.useState('');
@@ -154,12 +150,32 @@ export function StockTransfersPanel({
   const [fromWarehouseId, setFromWarehouseId] = React.useState('');
   const [toWarehouseId, setToWarehouseId] = React.useState('');
   const [productId, setProductId] = React.useState('');
+
   const [sorting, setSorting] = React.useState<SortingState>([
     { id: 'proposed_at', desc: true },
   ]);
   const [pagination, setPagination] = React.useState<PaginationState>({
     pageIndex: 0,
     pageSize: 25,
+  });
+
+  // Back hands the list its own query string back, and the pager keeps
+  // rewriting it, so the list reads it (S3-01). One hook, every list.
+  //
+  // Below the state it writes, not above it: the hook applies DURING the render,
+  // and a `const` read before its own line throws rather than reading undefined.
+  // Declared first, this threw on every arrival from a record and never from the
+  // sidebar, where the query string is empty and the callback never runs.
+  useListStateFromUrl((urlState) => {
+    setPagination({ pageIndex: urlState.pageIndex, pageSize: urlState.pageSize });
+    setSorting(urlState.sorting);
+    setSearch(urlState.searchQuery);
+    setDebounced(urlState.searchQuery);
+    setState(urlState.filters.state ?? '');
+    setKind(urlState.filters.kind ?? '');
+    setFromWarehouseId(urlState.filters.from_warehouse_id ?? '');
+    setToWarehouseId(urlState.filters.to_warehouse_id ?? '');
+    setProductId(urlState.filters.product_id ?? '');
   });
   const [rowSelection, setRowSelection] = React.useState<RowSelectionState>({});
   const [acting, setActing] = React.useState<{
@@ -420,40 +436,14 @@ export function StockTransfersPanel({
         enableSorting: false,
         enableHiding: false,
         cell: ({ row }) => {
-          const can = availableActions(row.original.state);
-          if (!can.approve && !can.markMoved && !can.cancel) return null;
-          return (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="ghost"
-                  mode="icon"
-                  size="sm"
-                  aria-label={`Actions for ${row.original.transfer_no}`}
-                  onClick={(event) => event.stopPropagation()}
-                >
-                  <MoreHorizontal className="size-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                {can.approve ? (
-                  <DropdownMenuItem
-                    onSelect={() => setActing({ transfer: row.original, action: 'approve' })}
-                  >
-                    Approve
-                  </DropdownMenuItem>
-                ) : null}
-                {can.cancel ? (
-                  <DropdownMenuItem
-                    variant="destructive"
-                    onSelect={() => setActing({ transfer: row.original, action: 'cancel' })}
-                  >
-                    Cancel
-                  </DropdownMenuItem>
-                ) : null}
-              </DropdownMenuContent>
-            </DropdownMenu>
+          // The record's own set, in the row's "..." (D15). A row has no primary
+          // slot, so Approve leads the menu here and is a button on the record.
+          const set = stockTransferActions(row.original, (action) =>
+            setActing({ transfer: row.original, action }),
           );
+          const actions = [...(set.approve ? [set.approve] : []), ...set.actions];
+          if (actions.length === 0) return null;
+          return <RowActionsMenu actions={actions} ariaLabel="stock transfer" />;
         },
       },
     );
@@ -552,12 +542,10 @@ export function StockTransfersPanel({
           isLoading={list.isLoading}
           listingKey={listingKey}
           tableLayout={{ width: 'fixed', columnsResizable: true }}
-          onRowClick={(row) =>
-            router.push(
-              `/inventory-management/stock-transfers/${row.id}${
-                detailSearch ? `?${detailSearch}` : ''
-              }`,
-            )
+          rowHref={(row) =>
+            `/inventory-management/stock-transfers/${row.id}${
+              detailSearch ? `?${detailSearch}` : ''
+            }`
           }
           emptyMessage={
             <div className="px-6 py-10 text-center">

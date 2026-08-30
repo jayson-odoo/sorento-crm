@@ -1,9 +1,7 @@
 'use client';
 
 import { use } from 'react';
-import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
-import { MoveLeft } from 'lucide-react';
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -12,9 +10,9 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from '@/components/ui/breadcrumb';
-import { Button } from '@/components/ui/button';
 import { Container } from '@/components/common/container';
 import { Toolbar, ToolbarActions, ToolbarHeading, ToolbarTitle } from '@/components/common/toolbar';
+import BackToList from '@/components/common/BackToList';
 import OrderDetail from '../components/OrderDetail';
 
 export default function OrderDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -46,11 +44,10 @@ export default function OrderDetailPage({ params }: { params: Promise<{ id: stri
             </Breadcrumb>
           </ToolbarHeading>
           <ToolbarActions>
-            <Button asChild variant="outline">
-              <Link href={ordersListHref}>
-                <MoveLeft /> Back to delivery orders
-              </Link>
-            </Button>
+            <BackToList
+              listPath="/order-management/orders"
+              label="Back to delivery orders"
+            />
           </ToolbarActions>
         </Toolbar>
       </Container>

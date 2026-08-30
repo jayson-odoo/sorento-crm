@@ -17,7 +17,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }) }));
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ push: vi.fn() }),
+  // Back, and the delete that lands where Back lands, read the list state the
+  // row click wrote into this URL.
+  useSearchParams: () => new URLSearchParams(''),
+}));
 
 vi.mock('@/app/(protected)/sla-management/_shared/formSLAService', () => ({
   getFormSLATrackers: vi.fn().mockResolvedValue([]),
@@ -84,7 +89,14 @@ vi.mock('./StockInquiryConversationPanel', () => ({ __esModule: true, default: (
 vi.mock('@/components/audit/AuditTrail', () => ({ __esModule: true, default: () => null }));
 
 const useStockInquiryMock = vi.fn();
+vi.mock('@/components/common/ListPager', () => ({ __esModule: true, default: () => null }));
+
 vi.mock('../hooks/useStockInquiries', () => ({
+  // The pager reads the list page through the entity's shared key + fetch (S3-03).
+  stockInquiriesPagerQuery: {
+    listQueryKey: () => ['stock-inquiries'],
+    fetchPage: async () => ({ data: [], pagination: { total: 0 } }),
+  },
   useStockInquiry: (...a: unknown[]) => useStockInquiryMock(...a),
   useUpdateStockInquiry: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useUpdateStockInquiryAndReply: () => ({ mutateAsync: vi.fn(), isPending: false }),

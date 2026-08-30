@@ -32,7 +32,6 @@ vi.mock('../services/promotionService', () => ({
   updatePromotionGroup: vi.fn(),
   deletePromotionGroup: vi.fn(),
   compilePromotionsPdf: vi.fn(),
-  PROMOTION_NEIGHBOURS_PATH: '/promotions/neighbours',
 }));
 
 import { toast } from 'sonner';

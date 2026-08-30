@@ -1,6 +1,6 @@
 'use client';
 
-import { use, useMemo, useState } from 'react';
+import { use, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { MoveLeft, Edit, Trash2 } from 'lucide-react';
@@ -13,12 +13,14 @@ import {
   BreadcrumbSeparator,
 } from '@/components/ui/breadcrumb';
 import { Button } from '@/components/ui/button';
+import { useBackToListHref } from '@/components/common/BackToList';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Container } from '@/components/common/container';
-import RecordNavigation from '@/components/common/RecordNavigation';
+import DetailActions from '@/components/common/DetailActions';
+import { warehousesPagerQuery } from '../hooks/useWarehouses';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import {
   Toolbar,
@@ -26,7 +28,7 @@ import {
   ToolbarHeading,
   ToolbarTitle,
 } from '@/components/common/toolbar';
-import { useWarehouse, useWarehouses } from '../hooks/useWarehouses';
+import { useWarehouse } from '../hooks/useWarehouses';
 import { deleteWarehouse } from '../services/warehouseService';
 import { formatDate } from '@/lib/helpers';
 
@@ -97,21 +99,11 @@ export default function WarehouseDetailPage({
 }) {
   const { id } = use(params);
   const router = useRouter();
+  const backHref = useBackToListHref('/inventory-management/warehouses');
   const { data: warehouse, isLoading } = useWarehouse(id);
   const [deleteOpen, setDeleteOpen] = useState(false);
 
   // Same list, same order, as the listing shows, so prev/next steps through it in order.
-  const listParams = useMemo(
-    () => ({
-      pageIndex: 0,
-      pageSize: 1000,
-      sorting: [{ id: 'created_at', desc: true }],
-      searchQuery: '',
-    }),
-    [],
-  );
-  const { data: warehouseList } = useWarehouses(listParams);
-  const navigationItems = warehouseList?.data ?? [];
 
   if (isLoading) {
     return (
@@ -181,26 +173,32 @@ export default function WarehouseDetailPage({
                 </span>
               </div>
             </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <RecordNavigation
-                basePath="/inventory-management/warehouses"
-                currentId={id}
-                items={navigationItems}
-                totalCount={warehouseList?.pagination?.total}
-                ariaLabel="warehouse"
-              />
-              <Button
-                variant="outline"
-                onClick={() => router.push(`/inventory-management/warehouses/${id}/edit`)}
-              >
-                <Edit className="size-4" />
-                Edit
-              </Button>
-              <Button variant="destructive" onClick={() => setDeleteOpen(true)}>
-                <Trash2 className="size-4" />
-                Delete
-              </Button>
-            </div>
+            <DetailActions
+              pager={{
+                ...warehousesPagerQuery,
+                detailPath: '/inventory-management/warehouses',
+                currentId: id,
+                ariaLabel: 'warehouse',
+              }}
+              actions={[
+                {
+                  key: 'warehouse.delete',
+                  label: 'Delete warehouse',
+                  icon: Trash2,
+                  kind: 'destructive' as const,
+                  run: () => setDeleteOpen(true),
+                },
+              ]}
+              gearLabel="Warehouse options"
+              primary={
+                <Button
+                  onClick={() => router.push(`/inventory-management/warehouses/${id}/edit`)}
+                >
+                  <Edit className="size-4" />
+                  Edit
+                </Button>
+              }
+            />
           </div>
 
           {/* Same tab set, same field order, and the same grid spans as the edit view: a
@@ -275,7 +273,7 @@ export default function WarehouseDetailPage({
         onDelete={async () => {
           await deleteWarehouse(id);
         }}
-        onSuccess={() => router.push('/inventory-management/warehouses')}
+        onSuccess={() => router.push(backHref)}
         queryKeysToInvalidate={[['warehouses']]}
       />
     </>

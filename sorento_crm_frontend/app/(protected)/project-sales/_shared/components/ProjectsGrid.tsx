@@ -52,6 +52,7 @@ export function ProjectsGrid({
   filters,
   listingKey,
   emptyMessage = 'No projects match these filters.',
+  rowHref,
 }: {
   projects: Project[];
   total: number;
@@ -71,6 +72,12 @@ export function ProjectsGrid({
    */
   listingKey: string;
   emptyMessage?: React.ReactNode;
+  /**
+   * The record's URL, with this page, sort, search and filters on the end of it
+   * (D5). The project page's pager reads them back and walks THIS page. The flat
+   * projects list passes none and keeps its plain row click.
+   */
+  rowHref?: (project: Project) => string;
 }) {
   const [columnVisibility, setColumnVisibility] = useState({});
 
@@ -283,7 +290,8 @@ export function ProjectsGrid({
       // A row IS the record, so clicking it opens the record. Every list in this
       // product behaves this way, and a table whose rows do nothing teaches people to
       // hunt for the one cell that happens to be a link.
-      onRowClick={(row) => router.push(`/project-sales/${row.id}`)}
+      rowHref={rowHref}
+      onRowClick={rowHref ? undefined : (row) => router.push(`/project-sales/${row.id}`)}
       recordCount={total}
       isLoading={isLoading}
       listingKey={listingKey}

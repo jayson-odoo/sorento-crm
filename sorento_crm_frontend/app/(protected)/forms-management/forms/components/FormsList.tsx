@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   ColumnDef,
@@ -12,7 +12,8 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { ChevronRight, Plus, Search, Trash2, X } from 'lucide-react';
+import { Plus, Search, Trash2, X } from 'lucide-react';
+import { FormRowActions } from '../actions';
 import { Badge } from '@/components/ui/badge';
 import LookupBoundLabel from '@/components/common/LookupBoundLabel';
 import { Button } from '@/components/ui/button';
@@ -33,6 +34,8 @@ import type { Form } from '../types/form.types';
 import { formatDate } from '@/lib/helpers';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import FormBulkDeleteDialog from './FormBulkDeleteDialog';
+import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
+import Link from 'next/link';
 
 export default function FormsList() {
   const router = useRouter();
@@ -40,6 +43,15 @@ export default function FormsList() {
   const [sorting, setSorting] = useState<SortingState>([{ id: 'updated_at', desc: true }]);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
+
+  // Back hands the list its own query string back, and the pager keeps
+  // rewriting it, so the list reads it (S3-01). One hook, every list.
+  useListStateFromUrl((state) => {
+    setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
+    setSorting(state.sorting);
+    setSearchQuery(state.searchQuery);
+    setStatusFilter(state.filters.status ?? 'all');
+  });
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
 
@@ -55,24 +67,28 @@ export default function FormsList() {
     status: statusFilter !== 'all' ? statusFilter : undefined,
   });
 
-  const handleRowClick = (row: Form) => {
-    const formId = row.id;
-    // Carry the active list query into the detail URL so its prev/next pager
-    // walks the same filtered+sorted set.
-    const search = buildDetailSearch(
-      {
-        pageIndex: pagination.pageIndex,
-        pageSize: pagination.pageSize,
-        sorting,
-        searchQuery,
-      },
-      {
-        status: statusFilter !== 'all' ? statusFilter : undefined,
-      },
-    );
-    const qs = search ? `?${search}` : '';
-    router.push(`/forms-management/forms/${formId}${qs}`);
-  };
+  // The whole row opens the record, carrying the list query the pager rebuilds
+  // its key from.
+  // Memoised, and in the columns' deps: a columns memo that captured the first
+  // `rowHref` would keep linking every row to page 1 of an unfiltered list.
+  const rowHref = useCallback(
+    (row: Form) => {
+      const search = buildDetailSearch(
+        {
+          pageIndex: pagination.pageIndex,
+          pageSize: pagination.pageSize,
+          sorting,
+          searchQuery,
+        },
+        {
+          status: statusFilter !== 'all' ? statusFilter : undefined,
+        },
+      );
+      const qs = search ? `?${search}` : '';
+      return `/forms-management/forms/${row.id}${qs}`;
+    },
+    [pagination.pageIndex, pagination.pageSize, sorting, searchQuery, statusFilter],
+  );
 
   const columns = useMemo<ColumnDef<Form>[]>(
     () => [
@@ -81,9 +97,16 @@ export default function FormsList() {
         accessorKey: 'code',
         header: ({ column }) => <DataGridColumnHeader title="Form Code" column={column} />,
         cell: ({ row }) => (
-          <div className="truncate" title={row.original.code}>
+          // The row opens the form, and the code is the same link said out loud:
+          // copyable, middle-clickable, and visibly the way in.
+          <Link
+            href={rowHref(row.original)}
+            className="truncate font-medium text-primary hover:underline"
+            title={row.original.code}
+            onClick={(event) => event.stopPropagation()}
+          >
             {row.original.code}
-          </div>
+          </Link>
         ),
         size: 180,
         minSize: 120,
@@ -168,12 +191,16 @@ export default function FormsList() {
       {
         accessorKey: 'actions',
         header: '',
-        cell: () => <ChevronRight className="text-muted-foreground/70 size-3.5" />,
+        cell: ({ row }) => (
+          <FormRowActions
+            form={{ id: row.original.id, name: row.original.name, code: row.original.code }}
+          />
+        ),
         size: 40,
         enableHiding: false,
       },
     ],
-    [],
+    [rowHref],
   );
 
   const table = useReactTable({
@@ -201,7 +228,7 @@ export default function FormsList() {
       table={table}
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
-      onRowClick={handleRowClick}
+      rowHref={rowHref}
       standardToolbar={false}
       tableLayout={{ columnsVisibility: true, columnsResizable: true }}
     >

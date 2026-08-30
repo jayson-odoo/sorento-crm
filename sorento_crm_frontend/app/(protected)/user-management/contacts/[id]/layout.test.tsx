@@ -187,8 +187,14 @@ describe('Contact detail shell - record navigation', () => {
   it('keeps the current tab when stepping to the next record', async () => {
     await renderLayout(`/user-management/contacts/${CURRENT_ID}/chat`);
 
+    // The pager fetches the page the URL names before it can step (S3-05).
+    await waitFor(() => expect(screen.getByLabelText(/^Next /i)).toBeEnabled());
     fireEvent.click(screen.getByLabelText(/^Next /i));
 
-    expect(h.push).toHaveBeenCalledWith(`/user-management/contacts/${NEXT_ID}/chat`);
+    // The step keeps the tab AND names the page the record sits on, so the walk
+    // survives it (S3-04).
+    expect(h.push).toHaveBeenCalledWith(
+      `/user-management/contacts/${NEXT_ID}/chat?page=1&limit=50`,
+    );
   });
 });

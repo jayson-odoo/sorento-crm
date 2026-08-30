@@ -6,7 +6,6 @@ import { useRouter } from 'next/navigation';
 import { ColumnDef, getCoreRowModel, useReactTable } from '@tanstack/react-table';
 import { toast } from 'sonner';
 import {
-  ArrowLeft,
   Boxes,
   Download,
   FileText,
@@ -38,6 +37,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
@@ -66,10 +66,12 @@ import {
 import ConvertToPackingListDialog from '../../components/ConvertToPackingListDialog';
 import MatchToProductDialog from '../../../components/MatchToProductDialog';
 import OverCapacityDialog from '../../components/OverCapacityDialog';
-import ProformaInvoiceNavigation from '../../components/ProformaInvoiceNavigation';
+import DetailActions from '@/components/common/DetailActions';
+import { proformaInvoicesPagerQuery } from '../../../hooks/useProformaInvoices';
 import { MarkAsRevisionDialog } from './MarkAsRevisionDialog';
 import { ProformaRevisionsCard } from './ProformaRevisionsCard';
 import { ProformaVolumeFill } from './ProformaVolumeFill';
+import BackToList, { useBackToListHref } from '@/components/common/BackToList';
 
 const CONVERT_PERMISSION = 'scm.reorder.run';
 const ADJUST_PERMISSION = 'scm.proforma_invoice.upload';
@@ -183,6 +185,7 @@ function perUnitCbm(row: DraftLine): number | null {
 
 export function ProformaInvoiceDetail({ id }: { id: string }) {
   const router = useRouter();
+  const backHref = useBackToListHref('/scm/proforma-invoices');
   const canConvert = useHasPermission(CONVERT_PERMISSION);
   const canAdjust = useHasPermission(ADJUST_PERMISSION);
   const { data, isLoading, isError } = useProformaInvoice(id);
@@ -958,13 +961,10 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
     enableColumnResizing: true,
   });
 
+  // Back carries the list query the row click wrote (S3-01). It lives on the
+  // toolbar row now; the empty states below keep one of their own.
   const backLink = (
-    <Button variant="outline" size="sm" asChild className="w-fit gap-1.5">
-      <Link href="/scm/proforma-invoices">
-        <ArrowLeft className="size-4" />
-        Back to proforma invoices
-      </Link>
-    </Button>
+    <BackToList listPath="/scm/proforma-invoices" label="Back to proforma invoices" />
   );
 
   if (isLoading) {
@@ -1074,22 +1074,15 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
                 </Button>
               </div>
             ) : (
-              <div className="flex shrink-0 flex-wrap items-center gap-2">
-                <ProformaInvoiceNavigation invoiceId={id} />
-                {/* The main action on this page, so it wears the main colour. Everything
-                    else is a secondary action and lives in the menu beside it. */}
-                {showConvert ? (
-                  <Button
-                    variant="primary"
-                    size="sm"
-                    className="gap-1.5"
-                    onClick={() => setConvertOpen(true)}
-                    disabled={convertToDraftShipment.isPending}
-                  >
-                    <Boxes className="size-4" />
-                    {convertLabel}
-                  </Button>
-                ) : null}
+              <DetailActions
+                pager={{
+                  ...proformaInvoicesPagerQuery,
+                  detailPath: '/scm/proforma-invoices',
+                  currentId: id,
+                  ariaLabel: 'proforma invoice',
+                }}
+                gearLabel="Proforma invoice options"
+                gear={
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button variant="outline" size="icon" aria-label="More actions">
@@ -1114,23 +1107,44 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
                       </DropdownMenuItem>
                     ) : null}
                     {canAdjust ? (
-                      <DropdownMenuItem
-                        className="text-destructive"
-                        disabled={converted}
-                        // A disabled item's reason travels as a native `title` - Radix has no
-                        // room for a Tooltip wrapper here, and a control that refuses without
-                        // saying why reads as a defect.
-                        title={deleteBlockedReason}
-                        onClick={converted ? undefined : () => setDeleteOpen(true)}
-                      >
-                        <Trash2 className="size-4" />
-                        Delete invoice
-                      </DropdownMenuItem>
+                      <>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem
+                          className="text-destructive"
+                          disabled={converted}
+                          // A disabled item's reason travels as a native `title` - Radix has
+                          // no room for a Tooltip wrapper here, and a control that refuses
+                          // without saying why reads as a defect.
+                          title={deleteBlockedReason}
+                          onClick={converted ? undefined : () => setDeleteOpen(true)}
+                        >
+                          <Trash2 className="size-4" />
+                          Delete invoice
+                        </DropdownMenuItem>
+                      </>
                     ) : null}
                   </DropdownMenuContent>
                 </DropdownMenu>
-                {backLink}
-              </div>
+                }
+                primary={
+                  <>
+                {/* The main action on this page, so it wears the main colour. Everything
+                    else is a secondary action and lives in the menu beside it. */}
+                {showConvert ? (
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    className="gap-1.5"
+                    onClick={() => setConvertOpen(true)}
+                    disabled={convertToDraftShipment.isPending}
+                  >
+                    <Boxes className="size-4" />
+                    {convertLabel}
+                  </Button>
+                ) : null}
+                  </>
+                }
+              />
             )}
           </div>
         </CardHeader>
@@ -1429,7 +1443,7 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
         description={`This action cannot be undone. This deletes proforma invoice ${invoice.pi_number} and every line it carries.`}
         onDelete={async () => {
           await deleteInvoice.mutateAsync(id);
-          router.push('/scm/proforma-invoices');
+          router.push(backHref);
         }}
         successMessage="Proforma invoice deleted."
       />
