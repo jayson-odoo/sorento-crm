@@ -7,15 +7,12 @@ import { AlertCircle, Package, Plus, Trash2 } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
-import {
-  useDeferredRowAction,
-  useRowPending,
-} from '@/hooks/useDeferredRowAction';
+// Cards, not a DataGrid, so there is no `rowPending` to hand a grid here.
+import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
 import { Skeleton } from '@/components/ui/skeleton';
 import { BundleCard } from '../../components/BundleCard';
 import { listBundles } from '../../services/catalogueService';
 import { BundleDialog } from './BundleDialog';
-import type { ResolvedBundle } from '@/lib/dealer-kit/types';
 
 /**
  * Bundles, shown as the cards they render as.
@@ -38,7 +35,6 @@ export function BundlesList() {
     successMessage: 'Bundle deleted',
     invalidateKeys: [['dealer-kit', 'bundles']],
   });
-  const rowPending = useRowPending<ResolvedBundle>('dk_bundle');
 
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ['dealer-kit', 'bundles'],

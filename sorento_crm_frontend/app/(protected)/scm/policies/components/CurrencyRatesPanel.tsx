@@ -26,7 +26,6 @@ import { fmtDate } from '../../lib/format';
 import {
   getCurrencyRates,
   saveCurrencyRate,
-  type CurrencyRate,
 } from '../../services/currencyRateService';
 
 /**

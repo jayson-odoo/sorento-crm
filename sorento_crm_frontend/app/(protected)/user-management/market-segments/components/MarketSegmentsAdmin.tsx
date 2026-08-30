@@ -248,7 +248,7 @@ export default function MarketSegmentsAdmin() {
         ),
       },
     ],
-    [],
+    [deletion],
   );
 
   const table = useReactTable({

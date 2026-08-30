@@ -225,7 +225,7 @@ export default function AutomationsList() {
         enableHiding: false,
       },
     ],
-    [router],
+    [router, deletion],
   );
 
   const table = useReactTable({

@@ -7,7 +7,7 @@ import {
   updateCategory,
   moveCategory,
 } from '../services/categoryService';
-import type { CategoryFormData, CategoryTreeItem } from '../types/category.types';
+import type { CategoryFormData } from '../types/category.types';
 
 export function useCategoriesTree() {
   return useQuery({

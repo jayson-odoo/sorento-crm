@@ -169,7 +169,7 @@ export default function EmailTemplatesList() {
         size: 140,
       },
     ],
-    [router],
+    [router, deletion],
   );
 
   const table = useReactTable({

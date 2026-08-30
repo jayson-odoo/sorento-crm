@@ -256,7 +256,7 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
       setPromotionPrice('');
       setAddProductGroupId('');
       setAddProductDealerDiscount('');
-    } catch (error) {
+    } catch {
       // Error is handled by the mutation hook
     }
   };
@@ -307,7 +307,7 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
       setPromotionPrice('');
       setDealerDiscountInput('');
       setListPriceInput('');
-    } catch (error) {
+    } catch {
       // Error is handled by the mutation hook
     }
   };

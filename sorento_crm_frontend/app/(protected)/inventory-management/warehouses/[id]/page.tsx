@@ -1,6 +1,6 @@
 'use client';
 
-import { use, useState } from 'react';
+import { use } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { CalendarRange, Edit, Info, MoveLeft, Trash2 } from 'lucide-react';

@@ -171,7 +171,7 @@ export default function MessageSnippetsList() {
         meta: { headerTitle: 'Actions', cellClassName: 'text-right' },
       },
     ],
-    [],
+    [deletion],
   );
 
   const table = useReactTable({

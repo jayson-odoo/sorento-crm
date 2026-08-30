@@ -972,7 +972,7 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
         enableSorting: false,
       },
     ],
-    [data?.currency, editing, canAdjust, fetchProducts],
+    [data?.currency, editing, canAdjust, fetchProducts, matchForgetting],
   );
 
   const table = useReactTable({
