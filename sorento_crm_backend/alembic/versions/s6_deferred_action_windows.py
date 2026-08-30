@@ -8,7 +8,7 @@ General without a deploy - which is the whole of D16.
 NOT NULL with the defaults as server_default, so the existing singleton row is
 backfilled by the DDL itself and no separate data migration is needed.
 
-Chained onto `443_signin_background`, which the S5 branch this one sits on carries.
+Chained onto `445_signin_background`, which the S5 branch this one sits on carries.
 That file is not in this worktree yet - it arrives when S5's commits land underneath -
 so `alembic upgrade` cannot resolve the chain here, and the tests do not need it to
 (they build the schema from the models via `tests/_pg_fixture.py`). Re-check
@@ -16,14 +16,14 @@ so `alembic upgrade` cannot resolve the chain here, and the tests do not need it
 forks into two heads.
 
 Revision ID: s6_deferred_action_windows
-Revises: 443_signin_background
+Revises: 445_signin_background
 """
 from alembic import op
 import sqlalchemy as sa
 
 
 revision = "s6_deferred_action_windows"
-down_revision = "443_signin_background"
+down_revision = "445_signin_background"
 branch_labels = None
 depends_on = None
 
