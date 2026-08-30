@@ -50,7 +50,7 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { cn } from '@/lib/utils';
 import type { TagLayer, TagLayerType } from '@/lib/dealer-kit/tag-template-types';
-import { isUnlinked } from '@/lib/dealer-kit/product-block';
+import { isUnlinked, layerDisplayName } from '@/lib/dealer-kit/product-block';
 import {
   panelDropTarget,
   panelRows,
@@ -76,37 +76,6 @@ function layerIcon(type: TagLayerType) {
       return <Tag className="size-3.5" />;
     case 'group':
       return <Layers className="size-3.5" />;
-  }
-}
-
-function layerDisplayName(layer: TagLayer): string {
-  if (layer.slot_binding) {
-    return layer.slot_binding.replace(/_/g, ' ');
-  }
-  switch (layer.props.kind) {
-    case 'text':
-      return layer.props.text.slice(0, 24) || 'Text';
-    case 'shape':
-      return layer.props.shape.replace(/_/g, ' ');
-    case 'image':
-      return 'Image';
-    case 'product_slot':
-      return `Slot: ${layer.props.fieldKey}`;
-    case 'price_field':
-      return `Price (${layer.props.priceType})`;
-    case 'price_badge':
-      return layer.props.variant === 'promo' ? 'Price (promo)' : 'Price (list)';
-    case 'badge':
-      return 'Badge';
-    case 'group': {
-      const binding = layer.props.binding;
-      const what = binding?.product_set_id
-        ? 'Set'
-        : binding?.product_id
-          ? 'Product'
-          : 'Group';
-      return `${what} (${layer.props.children.length})`;
-    }
   }
 }
 

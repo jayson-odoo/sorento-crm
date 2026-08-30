@@ -632,6 +632,45 @@ export interface TagLayerDisplay {
 }
 
 /**
+ * What a layer is CALLED on screen: the Layers panel row, and anywhere else a
+ * person has to pick one layer out of several.
+ *
+ * Deliberately not the id and not the type alone. A designer recognises "code"
+ * and "Price (promo)"; `layer-1756...-7` tells them nothing, and `Text` five
+ * times over tells them no more.
+ */
+export function layerDisplayName(layer: TagLayer): string {
+  if (layer.slot_binding) {
+    return layer.slot_binding.replace(/_/g, ' ');
+  }
+  switch (layer.props.kind) {
+    case 'text':
+      return layer.props.text.slice(0, 24) || 'Text';
+    case 'shape':
+      return layer.props.shape.replace(/_/g, ' ');
+    case 'image':
+      return 'Image';
+    case 'product_slot':
+      return `Slot: ${layer.props.fieldKey}`;
+    case 'price_field':
+      return `Price (${layer.props.priceType})`;
+    case 'price_badge':
+      return layer.props.variant === 'promo' ? 'Price (promo)' : 'Price (list)';
+    case 'badge':
+      return 'Badge';
+    case 'group': {
+      const binding = layer.props.binding;
+      const what = binding?.product_set_id
+        ? 'Set'
+        : binding?.product_id
+          ? 'Product'
+          : 'Group';
+      return `${what} (${layer.props.children.length})`;
+    }
+  }
+}
+
+/**
  * Everything a layer needs in order to draw itself against live data.
  *
  * `assetUrls` are library artwork, signed; the product's own photos come off
