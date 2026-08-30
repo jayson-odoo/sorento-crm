@@ -18,8 +18,11 @@ const nextConfig = {
   typescript: {
     ignoreBuildErrors: false, // Keep this false to catch real TS errors
   },
-  // Build optimizations for faster Docker builds
-  swcMinify: true, // Use SWC minifier (faster than Terser)
+  // lucide-react is on Next's built-in optimizePackageImports list; @remixicon/react is not,
+  // so its barrel imports would otherwise pull the whole icon set into every dev compile.
+  experimental: {
+    optimizePackageImports: ['@remixicon/react'],
+  },
   compiler: {
     removeConsole: process.env.NODE_ENV === 'production' ? {
       exclude: ['error', 'warn'], // Keep errors and warnings in production
