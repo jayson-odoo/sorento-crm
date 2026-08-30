@@ -98,6 +98,10 @@ export default function ContactLayout({
       <Container>
         <PageHeader
           title="Contact Details"
+          crumbs={[
+            { title: 'Internal Users', path: '/user-management/contacts' },
+            { title: 'Contact Details' },
+          ]}
           actions={
             <BackToList listPath="/user-management/contacts" label="Back to contacts" />
           }

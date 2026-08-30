@@ -266,6 +266,12 @@ export default function TicketDetailPage({ params }: PageProps) {
       <Container>
         <PageHeader
           title={ticket.ticket_number ?? 'Ticket'}
+          // The sidebar does not name Tickets, so the list is named here: a Back
+          // button is not a trail, and the crumb is what says where this sits.
+          crumbs={[
+            { title: 'Tickets', path: '/ticket-management/tickets' },
+            { title: ticket.ticket_number ?? 'Ticket' },
+          ]}
           titleClassName="whitespace-nowrap"
           actions={
             <>

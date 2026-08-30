@@ -1,12 +1,16 @@
 'use client';
 
 import { PageHeader } from '@/components/common/PageHeader';
+import { projectCrumbs } from '@/app/(protected)/project-sales/_shared/lib/crumbs';
 import { useQuotationDocument } from '../../../../_shared/hooks/useQuotationDocuments';
 
 /**
  * The page title is the document NUMBER, not the id in the URL (no UUIDs in the
- * UI), and the trail below it ends on that same number because PageHeader takes
- * its last crumb from the title.
+ * UI), and the trail below it ends on that same number.
+ *
+ * The trail is passed rather than derived: the sidebar stops at Pipeline, so on
+ * its own it would read "Dashboards > <number>" and offer no way back to the
+ * project the document belongs to.
  *
  * It reads the same cached query the screen below it uses, so naming the page
  * costs no extra request; "Quotation Document" stands in only for the moment
@@ -23,5 +27,11 @@ export function QuotationDocumentPageHeader({
   documentId: string;
 }) {
   const document = useQuotationDocument(projectId, documentId);
-  return <PageHeader title={document.data?.document_no ?? 'Quotation Document'} />;
+  const title = document.data?.document_no ?? 'Quotation Document';
+  return (
+    <PageHeader
+      title={title}
+      crumbs={projectCrumbs(projectId, { title })}
+    />
+  );
 }

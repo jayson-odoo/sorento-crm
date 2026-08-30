@@ -1,6 +1,7 @@
 import { Metadata } from 'next';
 import { Container } from '@/components/common/container';
 import { PageHeader } from '@/components/common/PageHeader';
+import { projectCrumbs } from '@/app/(protected)/project-sales/_shared/lib/crumbs';
 import RequireAccess from '@/app/components/common/RequireAccess';
 import { POIntakeConfirmClient } from '../../components/POIntakeConfirmClient';
 
@@ -22,7 +23,10 @@ export default async function PurchaseOrderVersionPage({
   return (
     <RequireAccess permission="projects.projects.view">
       <Container className="space-y-6">
-        <PageHeader title="Purchase Order Version" />
+        <PageHeader
+          title="Purchase Order Version"
+          crumbs={projectCrumbs(projectId, { title: 'Purchase Order Version' })}
+        />
         <POIntakeConfirmClient projectId={projectId} versionId={versionId} />
       </Container>
     </RequireAccess>

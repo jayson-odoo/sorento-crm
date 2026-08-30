@@ -1,6 +1,7 @@
 import { Metadata } from 'next';
 import { Container } from '@/components/common/container';
 import { PageHeader } from '@/components/common/PageHeader';
+import { projectCrumbs } from '@/app/(protected)/project-sales/_shared/lib/crumbs';
 import RequireAccess from '@/app/components/common/RequireAccess';
 import { DivergenceReviewClient } from './components/DivergenceReviewClient';
 
@@ -19,7 +20,14 @@ export default async function ProjectSalesOrderDivergencePage({
   return (
     <RequireAccess permission="projects.projects.view">
       <Container className="space-y-6">
-        <PageHeader title="AutoCount Comparison" />
+        <PageHeader
+          title="AutoCount Comparison"
+          crumbs={projectCrumbs(
+            projectId,
+            { title: 'Sales Order', path: `/project-sales/${projectId}/sales-orders/${psoId}` },
+            { title: 'AutoCount Comparison' },
+          )}
+        />
         <DivergenceReviewClient projectId={projectId} psoId={psoId} />
       </Container>
     </RequireAccess>

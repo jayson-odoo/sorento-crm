@@ -1,6 +1,7 @@
 import { Metadata } from 'next';
 import { Container } from '@/components/common/container';
 import { PageHeader } from '@/components/common/PageHeader';
+import { projectCrumbs } from '@/app/(protected)/project-sales/_shared/lib/crumbs';
 import RequireAccess from '@/app/components/common/RequireAccess';
 import BackToList from '@/components/common/BackToList';
 import { ProjectDetailClient } from './components/ProjectDetailClient';
@@ -23,6 +24,7 @@ export default async function ProjectDetailPage({
             query string, so it returns to the page the reader left. */}
         <PageHeader
           title="Project"
+          crumbs={projectCrumbs(projectId)}
           actions={
             <BackToList listPath="/project-sales/pipeline" label="Back to pipeline" />
           }

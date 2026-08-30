@@ -1,6 +1,7 @@
 import { Metadata } from 'next';
 import { Container } from '@/components/common/container';
 import { PageHeader } from '@/components/common/PageHeader';
+import { projectCrumbs } from '@/app/(protected)/project-sales/_shared/lib/crumbs';
 import RequireAccess from '@/app/components/common/RequireAccess';
 import { DeliveryScheduleReviewClient } from '../components/DeliveryScheduleReviewClient';
 
@@ -24,7 +25,10 @@ export default async function DeliveryScheduleReviewPage({
   return (
     <RequireAccess permission="projects.projects.view">
       <Container className="space-y-6">
-        <PageHeader title="Delivery Schedule" />
+        <PageHeader
+          title="Delivery Schedule"
+          crumbs={projectCrumbs(projectId, { title: 'Delivery Schedule' })}
+        />
         <DeliveryScheduleReviewClient projectId={projectId} versionId={versionId} />
       </Container>
     </RequireAccess>

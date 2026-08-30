@@ -17,7 +17,13 @@ export default async function NewWorkflowSubmissionPage({
   return (
     <>
       <Container>
-        <PageHeader title="New submission" />
+        <PageHeader
+          title="New submission"
+          crumbs={[
+            { title: 'Workflow submissions', path: '/workflow-forms-management/submissions' },
+            { title: 'New submission' },
+          ]}
+        />
       </Container>
       <Container>
         <Suspense fallback={<p className="text-muted-foreground p-2">Loading…</p>}>

@@ -12,7 +12,15 @@ export default async function WorkflowSubmissionPage({ params }: { params: Promi
   return (
     <>
       <Container>
-        <PageHeader title="Submission" />
+        <PageHeader
+          title="Submission"
+          // The sidebar stops at Definitions, so the list this record came from
+          // has to be named here or the trail loses its only way back.
+          crumbs={[
+            { title: 'Workflow submissions', path: '/workflow-forms-management/submissions' },
+            { title: 'Submission' },
+          ]}
+        />
       </Container>
       <Container>
         <WorkflowSubmissionDetail submissionId={id} />

@@ -1,6 +1,7 @@
 import { Metadata } from 'next';
 import { Container } from '@/components/common/container';
 import { PageHeader } from '@/components/common/PageHeader';
+import { projectCrumbs } from '@/app/(protected)/project-sales/_shared/lib/crumbs';
 import RequireAccess from '@/app/components/common/RequireAccess';
 import { SalesOrderDetailClient } from './components/SalesOrderDetailClient';
 
@@ -18,7 +19,10 @@ export default async function ProjectSalesOrderPage({
   return (
     <RequireAccess permission="projects.projects.view">
       <Container className="space-y-6">
-        <PageHeader title="Sales Order" />
+        <PageHeader
+          title="Sales Order"
+          crumbs={projectCrumbs(projectId, { title: 'Sales Order' })}
+        />
         <SalesOrderDetailClient projectId={projectId} psoId={psoId} />
       </Container>
     </RequireAccess>

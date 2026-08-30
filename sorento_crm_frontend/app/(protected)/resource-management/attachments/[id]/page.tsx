@@ -28,6 +28,21 @@ export default async function AttachmentDetailPage({
     <Container>
       <PageHeader
         title="Attachment"
+        // The sidebar names Files but not the flat Attachments list, so the
+        // trail is passed: it has to name whichever of the two the reader came
+        // from, the same one Back returns to.
+        crumbs={
+          fromDirectories
+            ? [
+                { title: 'Resources' },
+                { title: 'Files', path: backUrl },
+                { title: 'Attachment' },
+              ]
+            : [
+                { title: 'Attachments', path: '/resource-management/attachments' },
+                { title: 'Attachment' },
+              ]
+        }
         actions={
           <BackToList
             listPath={backUrl}

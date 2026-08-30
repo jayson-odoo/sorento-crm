@@ -83,7 +83,13 @@ export default function NewTicketPage() {
   return (
     <>
       <Container>
-        <PageHeader title="Create ticket" />
+        <PageHeader
+          title="Create ticket"
+          crumbs={[
+            { title: 'Tickets', path: '/ticket-management/tickets' },
+            { title: 'Create ticket' },
+          ]}
+        />
       </Container>
 
       <Container>
