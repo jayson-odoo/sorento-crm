@@ -152,6 +152,8 @@ function agent(over: Partial<SalesAgent> = {}): SalesAgent {
     person_label: 'Sean',
     demand_class: 'project',
     location_group: 'BB',
+    contact_id: null,
+    contact_name: null,
     source: 'import',
     created_at: '2026-08-01T00:00:00',
     updated_at: null,
@@ -345,6 +347,7 @@ describe('SalesAgentDetail - view and edit are the same layout', () => {
       'Person',
       'Demand class',
       'Location group',
+      'Linked portal contact',
       'Source',
       'Active',
       'Follow up',
@@ -403,6 +406,9 @@ describe('SalesAgentDetail - saving', () => {
           is_active: true,
           follow_up: false,
           internal_note: 'Watch this one',
+          // Nobody is linked yet, and an unlinked agent has to SAY so rather than
+          // leaving the field out: the PATCH treats an omitted key as "leave it alone".
+          contact_id: null,
         },
       }),
     );

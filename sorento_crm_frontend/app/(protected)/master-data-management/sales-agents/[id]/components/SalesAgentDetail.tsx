@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { FileText, ListOrdered, LoaderCircleIcon, Move, SquarePen } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
@@ -17,8 +17,12 @@ import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { StockTransfersPanel } from '@/app/(protected)/inventory-management/stock-transfers/components/StockTransfersPanel';
 import { Textarea } from '@/components/ui/textarea';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import {
+  SearchableSelect,
+  type SearchableSelectOption,
+} from '@/components/common/SearchableSelect';
 import SalesOrdersGrid from '@/app/(protected)/scm/sales-orders/components/SalesOrdersGrid';
+import { getContactSelect } from '../../services/salesAgentService';
 import { useAnnotateSalesAgent, useSalesAgent } from '../../hooks/useSalesAgents';
 import { DEMAND_CLASS_OPTIONS, demandClassLabel } from '../../lib/demandClass';
 import { salesAgentSourceLabel } from '../../lib/salesAgentSource';
@@ -39,7 +43,7 @@ import type { SalesAgent } from '../../types/salesAgent.types';
  *
  * VIEW AND EDIT ARE THE SAME SCREEN. Editing swaps a read-only value for an input IN PLACE -
  * same tabs, same cards, same fields, same order. Editable: Person, Demand class, Location
- * group, Active, Follow up, Internal note. The agent CODE is not: it is what the documents
+ * group, Linked portal contact, Active, Follow up, Internal note. The agent CODE is not: it is what the documents
  * state, and changing it would strand every order that names it. Source is not either: it is
  * a record of how the row got here.
  *
@@ -85,7 +89,19 @@ export function SalesAgentDetail({ id }: { id: string }) {
   const [isActive, setIsActive] = useState(true);
   const [followUp, setFollowUp] = useState(false);
   const [internalNote, setInternalNote] = useState('');
+  const [contactId, setContactId] = useState('');
   const [tab, setTab] = useState('general');
+
+  // Contacts, searched on the server rather than capped at a page: the book runs to
+  // thousands of people and the salesperson being linked is rarely in the first 20.
+  const fetchContacts = useCallback(async (query: string) => {
+    const items = await getContactSelect(query);
+    return items.map((c) => ({
+      value: c.id,
+      label: c.name,
+      description: c.masked_phone ?? undefined,
+    }));
+  }, []);
 
   const beginEdit = (agent: SalesAgent) => {
     setPersonLabel(agent.person_label ?? '');
@@ -94,6 +110,7 @@ export function SalesAgentDetail({ id }: { id: string }) {
     setIsActive(agent.is_active);
     setFollowUp(agent.follow_up);
     setInternalNote(agent.internal_note ?? '');
+    setContactId(agent.contact_id ?? '');
     setIsEditing(true);
   };
 
@@ -145,6 +162,11 @@ export function SalesAgentDetail({ id }: { id: string }) {
 
   const agent = data;
 
+  const selectedContact: SearchableSelectOption | undefined =
+    agent.contact_id && agent.contact_id === contactId
+      ? { value: agent.contact_id, label: agent.contact_name ?? 'Linked contact' }
+      : undefined;
+
   const handleSave = async () => {
     const trimmedLabel = personLabel.trim();
     const trimmedGroup = locationGroup.trim();
@@ -161,6 +183,8 @@ export function SalesAgentDetail({ id }: { id: string }) {
           is_active: isActive,
           follow_up: followUp,
           internal_note: trimmedNote ? trimmedNote : null,
+          // Which debtors this salesperson may pick from on a price tag request.
+          contact_id: contactId ? contactId : null,
         },
       });
       setIsEditing(false);
@@ -324,6 +348,31 @@ export function SalesAgentDetail({ id }: { id: string }) {
                   </Badge>
                 ) : (
                   <span className="text-muted-foreground">Not set</span>
+                )}
+              </Field>
+              <Field
+                label="Linked portal contact"
+                htmlFor={isEditing ? 'sa-edit-contact' : undefined}
+              >
+                {isEditing ? (
+                  <SearchableSelect
+                    id="sa-edit-contact"
+                    value={contactId}
+                    onChange={setContactId}
+                    fetchOptions={fetchContacts}
+                    // The row already carries the linked person's NAME, so the trigger
+                    // reads it without a round trip and keeps reading it while the search
+                    // is showing some other page.
+                    selectedOption={selectedContact}
+                    clearable
+                    placeholder="Not linked"
+                    emptyMessage="No contacts match."
+                    size="sm"
+                  />
+                ) : (
+                  agent.contact_name || (
+                    <span className="text-muted-foreground">Not linked</span>
+                  )
                 )}
               </Field>
               {/* How the row got here. A record of what happened, so it reads the same in
