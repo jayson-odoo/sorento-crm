@@ -26,6 +26,7 @@ from app.schemas.price_tag import (
     ProductSetSearchItem,
     ProductSetTagData,
     ProductTagData,
+    SpecKeyItem,
 )
 from app.services.dealer_kit import tag_data_service
 from app.services.error_handler import AppException
@@ -101,3 +102,24 @@ def get_product_set_tag_data(
             db, product_set, tag_data_service.staff_viewer(), promotion_id
         )
     )
+
+
+@router.get("/spec-keys", response_model=list[SpecKeyItem])
+def list_spec_keys(
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_VIEW),
+):
+    """The spec vocabulary, for the Insert field dialog's Specs group (D58).
+
+    Read here rather than from ``/master-data/spec-registry`` because that route
+    is gated on ``master_data.products.view``, which the marketing role that
+    designs a tag has no reason to hold. Same rows, same service, the gate the
+    rest of the editor already uses. A key added to the registry therefore shows
+    up in the dialog with no code change.
+    """
+    from app.services.product_spec_registry import active_registry
+
+    return [
+        SpecKeyItem(key=row.spec_key, label=row.label, unit=row.unit)
+        for row in active_registry(db)
+    ]

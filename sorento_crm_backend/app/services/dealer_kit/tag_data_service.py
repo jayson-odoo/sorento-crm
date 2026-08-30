@@ -213,6 +213,64 @@ def spec_lines(db: Session, product: Product, spec_row=None) -> list[str]:
     return _clean_lines((product.description or "").splitlines())
 
 
+def _spec_display_value(raw) -> str:
+    """One reviewed spec value, as a person reads it.
+
+    `True` prints as `Yes` because a tag that said `True` under "Overflow"
+    would be reading a database out loud. A whole number prints without the
+    `.0` JSON gives a float, for the same reason `format_dimensions_mm`
+    normalises a Decimal: the flyer says `407 mm`, never `407.0 mm`.
+    """
+    if isinstance(raw, bool):
+        return "Yes" if raw else "No"
+    if isinstance(raw, float) and raw.is_integer():
+        return str(int(raw))
+    return str(raw)
+
+
+def product_specs(db: Session, product: Product, spec_row=None) -> list[dict]:
+    """The product's reviewed specs, key by key, for `{{spec.<key>}}` (D58).
+
+    `spec_lines` has always carried the rendered spec SENTENCE, which is one
+    block of text: a tag could print all of it or none of it. A merge field
+    asks for one value, so this joins the two halves that answer that - the
+    registry, which says which keys exist and what each is called, and the
+    product's reviewed row, which says which of them this product carries.
+
+    Only keys the product actually has are returned, so a token naming
+    anything else resolves to nothing rather than to an empty labelled row.
+    The unit comes from the REGISTRY rather than from the stored value: the
+    registry is what the master-data screen edits, and a row written before a
+    unit was set would otherwise print without one forever.
+    """
+    from app.services.product_spec_registry import active_registry
+
+    row = spec_row if spec_row is not None else _spec_row(db, product)
+    values = row.values if row is not None and isinstance(row.values, dict) else {}
+    if not values:
+        return []
+
+    specs: list[dict] = []
+    for key in active_registry(db):
+        if key.spec_key not in values:
+            continue
+        stored = values[key.spec_key]
+        # A value is stored bare or wrapped as {"value": ...}; `dimensions_text`
+        # already reads both, and the catalogue holds both shapes.
+        raw = stored.get("value") if isinstance(stored, dict) else stored
+        if raw is None:
+            continue
+        specs.append(
+            {
+                "key": key.spec_key,
+                "label": key.label,
+                "value": _spec_display_value(raw),
+                "unit": key.unit,
+            }
+        )
+    return specs
+
+
 def dimensions_text(product: Product, spec_row=None) -> str:
     """Dimensions from the reviewed spec values, else from the product master.
 
@@ -263,6 +321,9 @@ def product_tag_data(
         "name": product.product_name or "",
         "dimensions": dimensions_text(product, spec_row),
         "spec_lines": spec_lines(db, product, spec_row),
+        # Key by key, beside the rendered sentence: `{{spec.material}}` asks a
+        # question `spec_lines` cannot answer (D58).
+        "specs": product_specs(db, product, spec_row),
         "images": gallery_images(db, product, viewer) if with_images else [],
         "list_price": prices.list_price if prices else None,
         "offer_price": prices.offer_price if prices else None,
@@ -381,7 +442,9 @@ def resolve_request_line_data(db: Session, request) -> list[dict]:
             data = product_set_tag_data(db, product_set, viewer, promotion_id)
             set_members = _set_member_text(data["members"])
             code, name = data["set_code"], data["name"]
-            dimensions, specs, images = "", "", []
+            # A set has no spec row of its own: the specs belong to its members,
+            # and a set tag lists the members rather than their materials.
+            dimensions, specs, images, spec_values = "", "", [], []
         elif line.product_id:
             product = get_product(db, line.product_id)
             if product is None:
@@ -391,6 +454,7 @@ def resolve_request_line_data(db: Session, request) -> list[dict]:
             dimensions = data["dimensions"]
             specs = "\n".join(data["spec_lines"])
             images = data["images"]
+            spec_values = data["specs"]
         else:
             continue
 
@@ -405,6 +469,7 @@ def resolve_request_line_data(db: Session, request) -> list[dict]:
                 "name": name,
                 "dimensions": dimensions,
                 "spec_lines": specs,
+                "specs": spec_values,
                 "set_members": set_members,
                 "images": images,
                 "list_price": data["list_price"],
@@ -425,6 +490,7 @@ __all__ = [
     "get_product",
     "get_product_set",
     "product_set_tag_data",
+    "product_specs",
     "product_tag_data",
     "resolve_request_line_data",
     "search_products",

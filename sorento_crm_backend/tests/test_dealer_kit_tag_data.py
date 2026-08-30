@@ -582,3 +582,174 @@ class TestResolveLines:
         assert first.product_code in row["set_members"]
         assert second.product_code in row["set_members"]
         assert row["list_price"] == Decimal("1200.00")
+
+
+# ---------------------------------------------------------------------------
+# The specs a merge field draws on, key by key (D58, AC-M.24)
+# ---------------------------------------------------------------------------
+
+
+def _registry_key(db, spec_key, label, *, unit=None, is_active=True):
+    from app.models.product_spec import ProductSpecRegistry
+
+    row = ProductSpecRegistry(
+        id=str(uuid.uuid4()),
+        spec_key=spec_key,
+        label=label,
+        data_type="enum",
+        unit=unit,
+        is_active=is_active,
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def _spec_values(db, product, values):
+    from app.models.product_spec import ProductSpecifications
+
+    db.add(
+        ProductSpecifications(
+            id=str(uuid.uuid4()),
+            product_id=product.id,
+            values=values,
+            provenance={},
+            rendered_text="ZZT rendered",
+        )
+    )
+    db.flush()
+
+
+class TestProductSpecs:
+    """``{{spec.<key>}}`` needs the product's specs key by key.
+
+    ``spec_lines`` is the rendered SENTENCE and has always been there; nothing
+    on a tag has ever been able to reach one value on its own. These pin the
+    join: the registry says which keys exist and what they are called, the
+    product's reviewed row says which of them it carries.
+    """
+
+    def test_specs_join_the_registry_to_the_reviewed_values(self, db):
+        from app.services.dealer_kit import tag_data_service
+
+        stem = unique_code("zztk").lower()
+        _registry_key(db, f"{stem}_diameter", "Diameter", unit="mm")
+        _registry_key(db, f"{stem}_material", "Material")
+        # A key the registry knows and this product does not carry.
+        _registry_key(db, f"{stem}_finish", "Finish")
+
+        product = _product(db)
+        _spec_values(
+            db,
+            product,
+            {
+                f"{stem}_diameter": {"value": 407, "unit": "mm"},
+                # Stored bare rather than wrapped, which the catalogue does.
+                f"{stem}_material": "ceramic",
+                # A value whose key is not in the registry at all.
+                "zzt_not_a_registry_key": {"value": "ignored"},
+            },
+        )
+
+        specs = tag_data_service.product_tag_data(
+            db, product, tag_data_service.staff_viewer()
+        )["specs"]
+
+        mine = [row for row in specs if row["key"].startswith(stem)]
+        assert mine == [
+            {
+                "key": f"{stem}_diameter",
+                "label": "Diameter",
+                "value": "407",
+                "unit": "mm",
+            },
+            {
+                "key": f"{stem}_material",
+                "label": "Material",
+                "value": "ceramic",
+                "unit": None,
+            },
+        ]
+        assert all(row["key"] != "zzt_not_a_registry_key" for row in specs)
+
+    def test_a_product_with_no_reviewed_specs_carries_none(self, db):
+        from app.services.dealer_kit import tag_data_service
+
+        product = _product(db)
+
+        assert (
+            tag_data_service.product_tag_data(
+                db, product, tag_data_service.staff_viewer()
+            )["specs"]
+            == []
+        )
+
+    def test_an_inactive_registry_key_is_not_offered(self, db):
+        from app.services.dealer_kit import tag_data_service
+
+        stem = unique_code("zztin").lower()
+        _registry_key(db, f"{stem}_retired", "Retired", is_active=False)
+
+        product = _product(db)
+        _spec_values(db, product, {f"{stem}_retired": {"value": "yes"}})
+
+        specs = tag_data_service.product_tag_data(
+            db, product, tag_data_service.staff_viewer()
+        )["specs"]
+        assert [row for row in specs if row["key"].startswith(stem)] == []
+
+
+class TestLineSpecs:
+    def test_a_product_line_carries_its_specs(self, db):
+        from app.services.dealer_kit import tag_data_service
+
+        stem = unique_code("zztl").lower()
+        _registry_key(db, f"{stem}_material", "Material")
+
+        product = _product(db)
+        _spec_values(db, product, {f"{stem}_material": {"value": "granite"}})
+        request = TestResolveLines()._request_with_line(db, product)
+
+        row = tag_data_service.resolve_request_line_data(db, request)[0]
+
+        assert {
+            "key": f"{stem}_material",
+            "label": "Material",
+            "value": "granite",
+            "unit": None,
+        } in row["specs"]
+
+    def test_a_set_line_carries_no_specs_of_its_own(self, db):
+        from app.models.access import RespondContact
+        from app.services.dealer_kit import tag_data_service
+        from app.services.price_tag_request_service import PriceTagRequestService
+
+        first = _product(db, list_price="1000.00")
+        product_set = _product_set(db, [(first, 1, True)])
+
+        contact = RespondContact(
+            id=str(uuid.uuid4()),
+            phone_number=f"+60{uuid.uuid4().hex[:9]}",
+            name=unique_code("contact"),
+        )
+        db.add(contact)
+        db.flush()
+
+        request = PriceTagRequestService.create_request(
+            db,
+            contact_id=contact.id,
+            company_id=SORENTO,
+            data={
+                "debtor_name": "ZZT Dealer",
+                "lines": [
+                    {
+                        "line_type": "product_set",
+                        "product_set_id": product_set.id,
+                        "quantity": 1,
+                    }
+                ],
+            },
+        )
+        db.flush()
+
+        assert tag_data_service.resolve_request_line_data(db, request)[0]["specs"] == []

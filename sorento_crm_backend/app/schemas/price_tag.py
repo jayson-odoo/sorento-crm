@@ -496,6 +496,23 @@ class TagImage(BaseModel):
     is_primary: bool
 
 
+class SpecValue(BaseModel):
+    """One reviewed spec of a product, as `{{spec.<key>}}` draws it (D58)."""
+
+    key: str
+    label: str
+    value: str
+    unit: Optional[str] = None
+
+
+class SpecKeyItem(BaseModel):
+    """One key the merge-field catalogue offers under Specs."""
+
+    key: str
+    label: str
+    unit: Optional[str] = None
+
+
 class ProductTagData(BaseModel):
     """Everything a product block draws. Resolved per request, never stored."""
 
@@ -504,6 +521,7 @@ class ProductTagData(BaseModel):
     name: str
     dimensions: str
     spec_lines: list[str] = []
+    specs: list[SpecValue] = []
     images: list[TagImage] = []
     list_price: Optional[float] = None
     offer_price: Optional[float] = None
@@ -554,6 +572,7 @@ class ResolvedLineData(BaseModel):
     name: str
     dimensions: str
     spec_lines: str
+    specs: list[SpecValue] = []
     set_members: str = ""
     images: list[TagImage] = []
     list_price: Optional[float] = None

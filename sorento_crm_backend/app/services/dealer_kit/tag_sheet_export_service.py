@@ -278,6 +278,9 @@ def resolve_tag_sheet_print_payload(db: Session, download_id: str) -> dict:
                 "name": row["name"],
                 "dimensions": row["dimensions"],
                 "spec_lines": row["spec_lines"],
+                # Key by key, so a `{{spec.<key>}}` in a saved tag resolves in
+                # the PDF exactly as it did on the canvas (D58).
+                "specs": row["specs"],
                 "set_members": row["set_members"],
                 # Money leaves as a number the browser can format. The Decimal
                 # arithmetic already happened, in the pricing engine.

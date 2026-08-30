@@ -353,6 +353,7 @@ def test_product_tag_data_keeps_every_field(api):
         "name",
         "dimensions",
         "spec_lines",
+        "specs",
         "images",
         "list_price",
         "offer_price",
@@ -783,3 +784,185 @@ def test_print_payload_lines_carry_their_photos(api):
     assert row["images"][0]["url"].startswith("https://")
     # And the same photo is in the signed map the page preloads.
     assert photo.id in payload["images"]
+
+
+# ---------------------------------------------------------------------------
+# Merge fields: the specs on the wire, and the key catalogue (D58, AC-M.24)
+# ---------------------------------------------------------------------------
+
+
+def _registry_key(db, spec_key, label, *, unit=None, is_active=True):
+    from app.models.product_spec import ProductSpecRegistry
+
+    row = ProductSpecRegistry(
+        id=str(uuid.uuid4()),
+        spec_key=spec_key,
+        label=label,
+        data_type="enum",
+        unit=unit,
+        is_active=is_active,
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def _spec_values(db, product, values):
+    from app.models.product_spec import ProductSpecifications
+
+    db.add(
+        ProductSpecifications(
+            id=str(uuid.uuid4()),
+            product_id=product.id,
+            values=values,
+            provenance={},
+            rendered_text="ZZT rendered",
+        )
+    )
+    db.flush()
+
+
+def test_product_tag_data_carries_specs_on_the_wire(api):
+    """``response_model`` drops what it does not declare, and a product with no
+    specs looks exactly like one whose specs were dropped. Asserted on the
+    wire for that reason."""
+    db, _as = api
+
+    stem = unique_code("zztw").lower()
+    _registry_key(db, f"{stem}_diameter", "Diameter", unit="mm")
+    product = _product(db)
+    _spec_values(db, product, {f"{stem}_diameter": {"value": 407}})
+    db.commit()
+
+    with TestClient(app) as client:
+        res = client.get(f"/api/v1/dealer-kit/products/{product.id}/tag-data")
+
+    assert res.status_code == 200, res.text
+    specs = res.json()["specs"]
+    assert {
+        "key": f"{stem}_diameter",
+        "label": "Diameter",
+        "value": "407",
+        "unit": "mm",
+    } in specs
+
+
+def test_spec_keys_are_listed_for_the_merge_field_catalogue(api):
+    """The Insert field dialog's spec group. Behind the editor's own
+    permission, not the master-data one, so a marketing role that may design a
+    tag can read it."""
+    db, _as = api
+
+    stem = unique_code("zztc").lower()
+    _registry_key(db, f"{stem}_material", "Material")
+    _registry_key(db, f"{stem}_retired", "Retired", is_active=False)
+    db.commit()
+
+    with TestClient(app) as client:
+        res = client.get("/api/v1/dealer-kit/spec-keys")
+
+    assert res.status_code == 200, res.text
+    keys = {row["key"]: row for row in res.json()}
+    assert keys[f"{stem}_material"]["label"] == "Material"
+    assert f"{stem}_retired" not in keys
+
+
+def test_spec_keys_refuse_a_user_without_the_editor_permission(api):
+    db, _as = api
+    db.commit()
+    _as(_OUTSIDER_ID)
+
+    with TestClient(app) as client:
+        res = client.get("/api/v1/dealer-kit/spec-keys")
+
+    assert res.status_code == 403, res.text
+
+
+def test_print_payload_lines_carry_their_specs(api):
+    """A ``{{spec.<key>}}`` in a saved tag has to resolve in the PDF too, and
+    the payload is a plain dict with no schema to keep the key alive."""
+    db, _as = api
+    from app.models.access import RespondContact
+    from app.models.dealer_kit import ExportRequest, Page, PageVersion
+    from app.models.download import DownloadStatus, UserDownload
+    from app.services.dealer_kit.tag_sheet_export_service import (
+        resolve_tag_sheet_print_payload,
+    )
+    from app.services.price_tag_request_service import PriceTagRequestService
+
+    stem = unique_code("zztp").lower()
+    _registry_key(db, f"{stem}_material", "Material")
+    product = _product(db)
+    _spec_values(db, product, {f"{stem}_material": {"value": "ceramic"}})
+
+    contact = RespondContact(
+        id=str(uuid.uuid4()),
+        phone_number=f"+60{uuid.uuid4().hex[:9]}",
+        name=unique_code("contact"),
+    )
+    db.add(contact)
+    db.flush()
+
+    request = PriceTagRequestService.create_request(
+        db,
+        contact_id=contact.id,
+        company_id=SORENTO,
+        data={
+            "debtor_name": "ZZT Dealer",
+            "needed_by_date": date.today() + timedelta(days=7),
+            "lines": [
+                {"line_type": "product", "product_id": product.id, "quantity": 1}
+            ],
+        },
+    )
+    db.flush()
+    line_id = request.lines[0].id
+
+    slug = unique_code("zztspec").lower()
+    page = Page(
+        name=f"ZZT tags {slug}",
+        slug=f"zzt-tags-{slug}",
+        kind="tag_sheet",
+        company_id=SORENTO,
+    )
+    db.add(page)
+    db.flush()
+    version = PageVersion(
+        page_id=page.id,
+        version=1,
+        doc={"kind": "tag_sheet", "imposition": {}, "sheets": []},
+    )
+    db.add(version)
+    db.flush()
+    request.page_id = page.id
+
+    download = UserDownload(
+        user_id=_DESIGNER_ID,
+        kind="dealer_kit_tag_sheet_pdf",
+        source_entity_type="price_tag_request",
+        source_entity_id=request.id,
+        status=DownloadStatus.PENDING.value,
+        filename="zzt-tags.pdf",
+    )
+    db.add(download)
+    db.flush()
+    db.add(
+        ExportRequest(
+            download_id=download.id,
+            page_id=page.id,
+            page_version_id=version.id,
+            audience="staff",
+            show_invoice_price=False,
+            requested_by=_DESIGNER_ID,
+        )
+    )
+    db.commit()
+
+    payload = resolve_tag_sheet_print_payload(db, download.id)
+
+    assert {
+        "key": f"{stem}_material",
+        "label": "Material",
+        "value": "ceramic",
+        "unit": None,
+    } in payload["resolvedData"][line_id]["specs"]
