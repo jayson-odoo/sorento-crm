@@ -770,3 +770,195 @@ class TestTagItemLookup:
 
         codes = [i["code"] for i in PriceTagRequestService.lookup_tag_items(db, "ZZTFINDME")]
         assert codes == ["ZZTFINDME-P"]
+
+
+# ---------------------------------------------------------------------------
+# 8. A draft saves with nothing in it; SUBMIT is where completeness is enforced
+#    (D48a, AC-M.17 / AC-M.18)
+#
+# The salesperson types a form over several sittings. Refusing to store what is
+# there so far is what pushed them into pressing Submit to find out what was
+# missing, which is the round this suite grew out of.
+# ---------------------------------------------------------------------------
+
+
+class TestDraftWithoutRequiredFields:
+    def test_draft_with_nothing_but_one_line(self, db: Session):
+        """No debtor, no date: the row stores both as NULL and keeps the line."""
+        contact = _make_contact(db)
+        product = _make_product(db, class_label="Kitchen Sink")
+
+        req = PriceTagRequestService.create_request(
+            db,
+            contact_id=contact.id,
+            company_id=_SORENTO_COMPANY_ID,
+            data={
+                "lines": [{"line_type": "product", "product_id": product.id}],
+            },
+        )
+        db.flush()
+
+        assert req.debtor_name is None
+        assert req.needed_by_date is None
+        assert req.portal_draft_at is not None
+        assert len(req.lines) == 1
+
+    def test_draft_with_nothing_but_a_debtor(self, db: Session):
+        contact = _make_contact(db)
+
+        req = PriceTagRequestService.create_request(
+            db,
+            contact_id=contact.id,
+            company_id=_SORENTO_COMPANY_ID,
+            data={"debtor_name": "ZZT Half A Form"},
+        )
+        db.flush()
+
+        assert req.debtor_name == "ZZT Half A Form"
+        assert req.needed_by_date is None
+        assert req.lines == []
+
+    def test_a_saved_draft_still_lists(self, db: Session):
+        """A null debtor must not break the list the landing reads."""
+        contact = _make_contact(db)
+        PriceTagRequestService.create_request(
+            db,
+            contact_id=contact.id,
+            company_id=_SORENTO_COMPANY_ID,
+            data={},
+        )
+        db.flush()
+
+        rows = PriceTagRequestService.list_requests(db, contact_id=contact.id)
+        assert len(rows) == 1
+        assert rows[0].debtor_name is None
+
+
+class TestSubmitCompleteness:
+    def test_submit_names_every_missing_field(self, db: Session):
+        contact = _make_contact(db)
+        req = PriceTagRequestService.create_request(
+            db,
+            contact_id=contact.id,
+            company_id=_SORENTO_COMPANY_ID,
+            data={},
+        )
+        db.flush()
+
+        with pytest.raises(Exception) as exc_info:
+            PriceTagRequestService.validate_submittable(req)
+
+        err = exc_info.value
+        assert err.status_code == 422
+        assert err.detail["code"] == "SUBMIT_INCOMPLETE"
+        # The FE routes each key to the field it belongs to, so all three are named.
+        assert err.detail["detail"] == "debtor_name,needed_by_date,lines"
+        assert "dealer" in err.detail["message"]
+
+    def test_submit_names_only_what_is_missing(self, db: Session):
+        contact = _make_contact(db)
+        product = _make_product(db, class_label="Kitchen Sink")
+        req = PriceTagRequestService.create_request(
+            db,
+            contact_id=contact.id,
+            company_id=_SORENTO_COMPANY_ID,
+            data={
+                "debtor_name": "ZZT Dealer",
+                "lines": [{"line_type": "product", "product_id": product.id}],
+            },
+        )
+        db.flush()
+
+        with pytest.raises(Exception) as exc_info:
+            PriceTagRequestService.validate_submittable(req)
+
+        assert exc_info.value.detail["detail"] == "needed_by_date"
+
+    def test_submit_refuses_a_request_with_no_lines(self, db: Session):
+        contact = _make_contact(db)
+        req = PriceTagRequestService.create_request(
+            db,
+            contact_id=contact.id,
+            company_id=_SORENTO_COMPANY_ID,
+            data={
+                "debtor_name": "ZZT Dealer",
+                "needed_by_date": date.today() + timedelta(days=7),
+            },
+        )
+        db.flush()
+
+        with pytest.raises(Exception) as exc_info:
+            PriceTagRequestService.validate_submittable(req)
+
+        assert exc_info.value.detail["detail"] == "lines"
+
+    def test_a_complete_request_passes(self, db: Session):
+        contact = _make_contact(db)
+        product = _make_product(db, class_label="Kitchen Sink")
+        req = PriceTagRequestService.create_request(
+            db,
+            contact_id=contact.id,
+            company_id=_SORENTO_COMPANY_ID,
+            data={
+                "debtor_name": "ZZT Dealer",
+                "needed_by_date": date.today() + timedelta(days=7),
+                "lines": [{"line_type": "product", "product_id": product.id}],
+            },
+        )
+        db.flush()
+
+        # No exception is the assertion.
+        PriceTagRequestService.validate_submittable(req)
+
+    def test_the_set_guard_names_the_line_it_refused(self, db: Session):
+        """The message goes on the ROW, so the refusal has to say which row."""
+        contact = _make_contact(db)
+        ok_product = _make_product(db, class_label="Kitchen Sink")
+        bad_product = _make_product(db, class_label="Bathroom Furniture")
+        req = PriceTagRequestService.create_request(
+            db,
+            contact_id=contact.id,
+            company_id=_SORENTO_COMPANY_ID,
+            data={
+                "debtor_name": "ZZT Dealer",
+                "needed_by_date": date.today() + timedelta(days=7),
+                "lines": [
+                    {"line_type": "product", "product_id": ok_product.id},
+                    {"line_type": "product", "product_id": bad_product.id},
+                ],
+            },
+        )
+        db.flush()
+
+        with pytest.raises(Exception) as exc_info:
+            PriceTagRequestService.validate_set_guard(db, req)
+
+        err = exc_info.value
+        assert err.status_code == 422
+        assert err.detail["code"] == "SET_GUARD_VIOLATION"
+        assert err.detail["detail"] == "line:1"
+        assert bad_product.product_code in err.detail["message"]
+
+    def test_the_set_guard_names_every_line_it_refused(self, db: Session):
+        contact = _make_contact(db)
+        first = _make_product(db, class_label="Bathroom Furniture")
+        second = _make_product(db, class_label="Bathroom Furniture")
+        req = PriceTagRequestService.create_request(
+            db,
+            contact_id=contact.id,
+            company_id=_SORENTO_COMPANY_ID,
+            data={
+                "debtor_name": "ZZT Dealer",
+                "needed_by_date": date.today() + timedelta(days=7),
+                "lines": [
+                    {"line_type": "product", "product_id": first.id},
+                    {"line_type": "product", "product_id": second.id},
+                ],
+            },
+        )
+        db.flush()
+
+        with pytest.raises(Exception) as exc_info:
+            PriceTagRequestService.validate_set_guard(db, req)
+
+        assert exc_info.value.detail["detail"] == "line:0,line:1"

@@ -102,7 +102,10 @@ class PriceTagRequestService:
         """Create a price tag request with its lines.
 
         ``data`` keys: debtor_code, debtor_name, promotion_id, needed_by_date,
-        notes, lines (list of line dicts).
+        notes, lines (list of line dicts). EVERY one of them is optional (D48a):
+        Save Draft validates nothing, so a form with one line and no dealer is a
+        request this has to be able to store. Completeness is checked on submit by
+        ``validate_submittable``.
 
         Sets ``portal_draft_at`` on creation (the request starts as a draft).
         """
@@ -112,9 +115,9 @@ class PriceTagRequestService:
             contact_id=contact_id,
             company_id=company_id,
             debtor_code=data.get("debtor_code"),
-            debtor_name=data["debtor_name"],
+            debtor_name=data.get("debtor_name"),
             promotion_id=data.get("promotion_id"),
-            needed_by_date=data["needed_by_date"],
+            needed_by_date=data.get("needed_by_date"),
             notes=data.get("notes"),
             doc_number=doc_number,
             portal_draft_at=datetime.utcnow(),
@@ -122,22 +125,40 @@ class PriceTagRequestService:
         db.add(request)
         db.flush()  # get the id
 
-        for idx, line_data in enumerate(data.get("lines", [])):
-            line = PriceTagRequestLine(
-                request_id=request.id,
-                line_type=line_data["line_type"],
-                product_id=line_data.get("product_id"),
-                product_set_id=line_data.get("product_set_id"),
-                show_promo_price=line_data.get("show_promo_price", True),
-                quantity=line_data.get("quantity", 1),
-                alternatives=line_data.get("alternatives", []),
-                included_accessories=line_data.get("included_accessories"),
-                sort_order=line_data.get("sort_order", idx),
-            )
-            db.add(line)
-
+        PriceTagRequestService._add_lines(db, request, data.get("lines") or [])
         db.flush()
         return request
+
+    @staticmethod
+    def _add_lines(db: Session, request: PriceTagRequest, lines: list[dict]) -> None:
+        for idx, line_data in enumerate(lines):
+            db.add(
+                PriceTagRequestLine(
+                    request_id=request.id,
+                    line_type=line_data["line_type"],
+                    product_id=line_data.get("product_id"),
+                    product_set_id=line_data.get("product_set_id"),
+                    show_promo_price=line_data.get("show_promo_price", True),
+                    quantity=line_data.get("quantity", 1),
+                    alternatives=line_data.get("alternatives", []),
+                    included_accessories=line_data.get("included_accessories"),
+                    sort_order=line_data.get("sort_order", idx),
+                )
+            )
+
+    @staticmethod
+    def replace_lines(db: Session, request: PriceTagRequest, lines: list[dict]) -> None:
+        """Swap a draft's lines for the ones the form just posted.
+
+        A re-save sends the whole table, not a diff: the rows are unsaved form
+        state on the client and carry no stable identity there. Deleting through
+        the relationship keeps ``delete-orphan`` in charge, so nothing is left
+        pointing at the request.
+        """
+        request.lines.clear()
+        db.flush()
+        PriceTagRequestService._add_lines(db, request, lines)
+        db.flush()
 
     @staticmethod
     def submit_request(
@@ -152,39 +173,15 @@ class PriceTagRequestService:
         cannot be submitted ala carte (must come as a product_set line).
         Raises ``AppException`` (422) on guard violation.
         """
-        from app.models.product import Product, ProductCategory
-
-        lines = data.get("lines", [])
-        # Validate set guard for product lines with Bathroom Furniture class.
-        for line_data in lines:
-            if line_data.get("line_type") != "product":
-                continue
-            product_id = line_data.get("product_id")
-            if not product_id:
-                continue
-            product = (
-                db.query(Product)
-                .filter(Product.id == product_id)
-                .first()
+        offenders: list[tuple[int, str]] = []
+        for index, line_data in enumerate(data.get("lines") or []):
+            code = PriceTagRequestService._ala_carte_offender(
+                db, line_data.get("line_type"), line_data.get("product_id")
             )
-            if not product:
-                continue
-            category = (
-                db.query(ProductCategory)
-                .filter(ProductCategory.id == product.category_id)
-                .first()
-            )
-            if category and category.class_label == _BATHROOM_FURNITURE_CLASS:
-                raise AppException(
-                    status_code=422,
-                    message=(
-                        f"Product '{product.product_code}' is classified as "
-                        f"'{_BATHROOM_FURNITURE_CLASS}' and cannot be submitted "
-                        f"as an individual product. Please submit it as part of "
-                        f"a product set."
-                    ),
-                    code="SET_GUARD_VIOLATION",
-                )
+            if code:
+                offenders.append((index, code))
+        if offenders:
+            raise PriceTagRequestService._set_guard_refusal(offenders)
 
         request = PriceTagRequestService.create_request(
             db, contact_id, company_id, data
@@ -232,38 +229,100 @@ class PriceTagRequestService:
         return request
 
     @staticmethod
+    def validate_submittable(request: PriceTagRequest) -> None:
+        """What a request needs before it may be submitted (D48a).
+
+        A draft can be sloppy; a submitted request cannot. Every missing field is
+        named at once, in ``detail`` as a comma-separated list of keys the form
+        knows how to place, so the portal can put each message under the field it
+        belongs to instead of showing one sentence in a toast.
+
+        A line with neither a product nor a set cannot exist here: the table's
+        ``ck_price_tag_request_lines_one_ref`` refuses it on insert. The form
+        catches that one on the client, where the empty row actually is.
+        """
+        missing: list[tuple[str, str]] = []
+        if not (request.debtor_name or "").strip():
+            missing.append(("debtor_name", "a dealer"))
+        if request.needed_by_date is None:
+            missing.append(("needed_by_date", "a needed by date"))
+        if not request.lines:
+            missing.append(("lines", "at least one line"))
+        if not missing:
+            return
+
+        labels = [label for _, label in missing]
+        wanted = (
+            labels[0]
+            if len(labels) == 1
+            else ", ".join(labels[:-1]) + " and " + labels[-1]
+        )
+        raise AppException(
+            status_code=422,
+            message=f"This request needs {wanted} before it can be submitted.",
+            detail=",".join(key for key, _ in missing),
+            code="SUBMIT_INCOMPLETE",
+        )
+
+    @staticmethod
     def validate_set_guard(db: Session, request: PriceTagRequest) -> None:
         """Validate the set guard on an existing request's lines.
 
         Products with class ``Bathroom Furniture`` cannot be submitted ala carte.
-        Raises ``AppException`` (422) on violation.
+        Raises ``AppException`` (422) on violation, naming EVERY line it refused:
+        the message belongs on the row, and a refusal that named only the first
+        offender would send the salesperson round the loop once per bad line.
         """
+        offenders: list[tuple[int, str]] = []
+        for index, line in enumerate(request.lines):
+            code = PriceTagRequestService._ala_carte_offender(
+                db, line.line_type, line.product_id
+            )
+            if code:
+                offenders.append((index, code))
+        if offenders:
+            raise PriceTagRequestService._set_guard_refusal(offenders)
+
+    @staticmethod
+    def _ala_carte_offender(
+        db: Session, line_type: str | None, product_id: str | None
+    ) -> str | None:
+        """The product code, if this line is a Bathroom Furniture product on its own."""
         from app.models.product import Product, ProductCategory
 
-        for line in request.lines:
-            if line.line_type != "product":
-                continue
-            if not line.product_id:
-                continue
-            product = db.query(Product).filter(Product.id == line.product_id).first()
-            if not product:
-                continue
-            category = (
-                db.query(ProductCategory)
-                .filter(ProductCategory.id == product.category_id)
-                .first()
-            )
-            if category and category.class_label == _BATHROOM_FURNITURE_CLASS:
-                raise AppException(
-                    status_code=422,
-                    message=(
-                        f"Product '{product.product_code}' is classified as "
-                        f"'{_BATHROOM_FURNITURE_CLASS}' and cannot be submitted "
-                        f"as an individual product. Please submit it as part of "
-                        f"a product set."
-                    ),
-                    code="SET_GUARD_VIOLATION",
-                )
+        if line_type != "product" or not product_id:
+            return None
+        product = db.query(Product).filter(Product.id == product_id).first()
+        if not product:
+            return None
+        category = (
+            db.query(ProductCategory)
+            .filter(ProductCategory.id == product.category_id)
+            .first()
+        )
+        if category and category.class_label == _BATHROOM_FURNITURE_CLASS:
+            return product.product_code
+        return None
+
+    @staticmethod
+    def _set_guard_refusal(offenders: list[tuple[int, str]]) -> AppException:
+        """One refusal for every ala carte line, addressed to the rows by position.
+
+        ``detail`` is ``line:<sort_order>`` per offender, which is how the portal
+        form finds the row to put the message on.
+        """
+        codes = ", ".join(f"'{code}'" for _, code in offenders)
+        plural = "s" if len(offenders) > 1 else ""
+        return AppException(
+            status_code=422,
+            message=(
+                f"Product{plural} {codes} {'are' if plural else 'is'} classified as "
+                f"'{_BATHROOM_FURNITURE_CLASS}' and cannot be submitted as an "
+                f"individual product. Please submit as part of a product set."
+            ),
+            detail=",".join(f"line:{index}" for index, _ in offenders),
+            code="SET_GUARD_VIOLATION",
+        )
 
     @staticmethod
     def get_request(db: Session, request_id: str) -> PriceTagRequest | None:
@@ -273,6 +332,44 @@ class PriceTagRequestService:
             .filter(PriceTagRequest.id == request_id)
             .first()
         )
+
+    @staticmethod
+    def response_with_resolved_lines(db: Session, request: PriceTagRequest):
+        """The request, with each line carrying what a person can read off it.
+
+        A line row holds a product id, a quantity and an override; the code, the
+        name and both prices live in the product master and the pricing engine.
+        Resolved through ``tag_data_service`` - the SAME call the designer and the
+        print payload use - so no reader can quote a different price from the tag
+        it is about to print.
+
+        A line the resolver skipped (its product has been removed) keeps its blank
+        defaults rather than vanishing: a request that silently lists fewer lines
+        than were submitted is the worse failure.
+
+        Lives here, not in a route module, because the CRM detail route and the
+        portal detail route both answer with it (D49).
+        """
+        from app.schemas.price_tag import PriceTagRequestResponse
+        from app.services.dealer_kit import tag_data_service
+
+        response = PriceTagRequestResponse.model_validate(request)
+        resolved = {
+            row["line_id"]: row
+            for row in tag_data_service.resolve_request_line_data(db, request)
+        }
+        for line in response.lines:
+            row = resolved.get(line.id)
+            if not row:
+                continue
+            line.code = row["code"]
+            line.name = row["name"]
+            # float() here rather than trusting the annotation: assigning to a
+            # pydantic field does NOT validate, so a Decimal set on a `float` field
+            # is serialised as a JSON STRING and the page's `.toFixed(2)` throws.
+            line.list_price = None if row["list_price"] is None else float(row["list_price"])
+            line.sell_price = None if row["sell_price"] is None else float(row["sell_price"])
+        return response
 
     @staticmethod
     def list_requests(

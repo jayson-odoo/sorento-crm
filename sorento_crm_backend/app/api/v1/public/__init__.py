@@ -17,6 +17,17 @@ from app.api.v1.public import (
 router = APIRouter()
 router.include_router(approval.router, prefix="/approval", tags=["public-approval"])
 router.include_router(view.router, prefix="/view", tags=["public-view"])
+# BEFORE portal.router, and that ordering is the fix, not a preference (D49).
+# Both are mounted at /portal and Starlette serves the FIRST route whose path
+# matches. portal.py declares POST/PUT/GET/DELETE `/submissions/{kind}...`, and
+# `price_tag_request` is in SUPPORTED_TYPES, so every price tag write was being
+# answered by the generic handler: a 422 about `body.fields`, a key belonging to
+# another form's schema, which is what the salesperson saw when Submit "did
+# nothing". This router declares only literal price tag paths, so going first
+# captures exactly the requests meant for it and leaves the legacy kinds alone.
+router.include_router(
+    portal_price_tag.router, prefix="/portal", tags=["public-portal-price-tag"]
+)
 router.include_router(portal.router, prefix="/portal", tags=["public-portal"])
 router.include_router(
     quotation_sign.router, prefix="/quotation-sign", tags=["public-quotation-sign"]
@@ -26,9 +37,6 @@ router.include_router(
     onboarding.router, prefix="/onboarding", tags=["public-onboarding"]
 )
 router.include_router(ai_extract.router, prefix="/portal", tags=["public-portal-ai-extract"])
-router.include_router(
-    portal_price_tag.router, prefix="/portal", tags=["public-portal-price-tag"]
-)
 router.include_router(
     ticket_drafts.router, prefix="/ticket-drafts", tags=["public-ticket-drafts"]
 )

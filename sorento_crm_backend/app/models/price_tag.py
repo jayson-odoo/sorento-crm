@@ -93,13 +93,16 @@ class PriceTagRequest(Base, CompanyScopedMixin):
         nullable=False,
     )
     debtor_code = Column(String(100), nullable=True)
-    debtor_name = Column(String(255), nullable=False)
+    # Nullable since D48a: Save Draft validates nothing, so a half-typed request
+    # has to be storable. Completeness is enforced on SUBMIT, in the service, where
+    # the refusal can name the field that is missing.
+    debtor_name = Column(String(255), nullable=True)
     promotion_id = Column(
         UUID(as_uuid=False),
         ForeignKey("promotions.id", ondelete="SET NULL"),
         nullable=True,
     )
-    needed_by_date = Column(Date, nullable=False)
+    needed_by_date = Column(Date, nullable=True)  # nullable since D48a, see debtor_name
     notes = Column(Text, nullable=True)
     status = Column(String(30), nullable=False, server_default="new")
     doc_number = Column(String(30), nullable=False, unique=True)

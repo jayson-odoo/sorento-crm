@@ -69,20 +69,33 @@ class PriceTagRequestLineResponse(BaseModel):
 
 
 class PriceTagRequestCreate(BaseModel):
-    debtor_code: Optional[str] = None
-    debtor_name: str
-    promotion_id: Optional[str] = None
-    needed_by_date: date
-    notes: Optional[str] = None
-    lines: list[PriceTagRequestLineCreate] = Field(default_factory=list)
+    """What the portal posts when it saves a draft (D48a).
 
+    Nothing is required. A draft is a form in progress, and the salesperson types
+    it over several sittings; SUBMIT is where completeness is enforced, by
+    ``PriceTagRequestService.validate_submittable``, which can name what is
+    missing. Both nullable fields match columns that are nullable for the same
+    reason.
+    """
 
-class PriceTagRequestUpdate(BaseModel):
     debtor_code: Optional[str] = None
     debtor_name: Optional[str] = None
     promotion_id: Optional[str] = None
     needed_by_date: Optional[date] = None
     notes: Optional[str] = None
+    lines: list[PriceTagRequestLineCreate] = Field(default_factory=list)
+
+
+class PriceTagRequestUpdate(BaseModel):
+    """A draft edit. ``lines`` omitted leaves the lines alone; ``lines`` given
+    replaces them, which is what the form does when it re-saves a draft."""
+
+    debtor_code: Optional[str] = None
+    debtor_name: Optional[str] = None
+    promotion_id: Optional[str] = None
+    needed_by_date: Optional[date] = None
+    notes: Optional[str] = None
+    lines: Optional[list[PriceTagRequestLineCreate]] = None
 
 
 class PriceTagRequestResponse(BaseModel):
@@ -92,9 +105,11 @@ class PriceTagRequestResponse(BaseModel):
     contact_id: str
     company_id: Optional[str] = None
     debtor_code: Optional[str] = None
-    debtor_name: str
+    # Optional since D48a: a draft may carry neither, and a non-optional field
+    # refuses to serialise a None even though the schema declared it.
+    debtor_name: Optional[str] = None
     promotion_id: Optional[str] = None
-    needed_by_date: date
+    needed_by_date: Optional[date] = None
     notes: Optional[str] = None
     status: str
     doc_number: str
@@ -112,10 +127,10 @@ class PriceTagRequestListItem(BaseModel):
     id: str
     contact_id: str
     debtor_code: Optional[str] = None
-    debtor_name: str
+    debtor_name: Optional[str] = None
     status: str
     doc_number: str
-    needed_by_date: date
+    needed_by_date: Optional[date] = None
     created_at: datetime
     # A request that was saved and never submitted still carries status "new",
     # so this is the only thing that tells a draft from a submitted request. The

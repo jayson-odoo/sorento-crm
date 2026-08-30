@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Body, Depends, Query
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -35,7 +35,6 @@ from app.services.price_tag_request_service import (
     STATUS_APPROVED,
     STATUS_CHANGES_REQUESTED,
     STATUS_NEW,
-    STATUS_PROOF_READY,
 )
 
 logger = logging.getLogger(__name__)
@@ -97,7 +96,27 @@ def portal_create_price_tag_request(
         data=payload.model_dump(),
     )
     db.commit()
-    return PriceTagRequestResponse.model_validate(req)
+    return _detail_body(db, req)
+
+
+# ---------------------------------------------------------------------------
+# Detail
+# ---------------------------------------------------------------------------
+
+
+@router.get("/submissions/price_tag_request/{request_id}")
+def portal_get_price_tag_request(
+    request_id: str,
+    token: PortalToken = Depends(get_portal_token),
+    db: Session = Depends(get_db),
+):
+    """One request, in the shape the portal form reopens a draft from.
+
+    Answers the same body as the CRM detail route (lines resolved to code, name
+    and both prices), plus the attachments key the form reads unconditionally.
+    """
+    _assert_visible(db, token.contact_id)
+    return _detail_body(db, _require_own_request(db, token, request_id))
 
 
 # ---------------------------------------------------------------------------
@@ -114,27 +133,46 @@ def portal_update_price_tag_request(
 ):
     """Update a draft price tag request."""
     _assert_visible(db, token.contact_id)
-    req = PriceTagRequestService.get_request(db, request_id)
-    if not req or req.contact_id != token.contact_id:
-        raise AppException(
-            status_code=404,
-            message="Price tag request not found.",
-            code="NOT_FOUND",
-        )
-    if req.portal_draft_at is None and req.status != STATUS_NEW:
-        raise AppException(
-            status_code=409,
-            message="Only draft requests can be updated.",
-            code="NOT_DRAFT",
-        )
+    req = _require_own_request(db, token, request_id)
+    _require_draft(req, "Only draft requests can be updated.")
 
     update_data = payload.model_dump(exclude_unset=True)
+    # `lines` is a relationship, not a column: given, it REPLACES the draft's
+    # lines; omitted, it leaves them alone. Re-saving a draft posts the whole
+    # table, which is why the form no longer creates a second request each time.
+    lines = update_data.pop("lines", None)
     for key, value in update_data.items():
         setattr(req, key, value)
+    if lines is not None:
+        PriceTagRequestService.replace_lines(db, req, lines)
 
     db.flush()
     db.commit()
-    return PriceTagRequestResponse.model_validate(req)
+    return _detail_body(db, req)
+
+
+# ---------------------------------------------------------------------------
+# Delete (draft)
+# ---------------------------------------------------------------------------
+
+
+@router.delete("/submissions/price_tag_request/{request_id}", status_code=204)
+def portal_delete_price_tag_request(
+    request_id: str,
+    token: PortalToken = Depends(get_portal_token),
+    db: Session = Depends(get_db),
+):
+    """Hard-delete a draft, lines and all, the way the legacy kinds delete theirs.
+
+    Draft only: once submitted the request is marketing's work, and taking it back
+    is a status change (void), not a delete.
+    """
+    _assert_visible(db, token.contact_id)
+    req = _require_own_request(db, token, request_id)
+    _require_draft(req, "Only a draft can be deleted.")
+    db.delete(req)
+    db.commit()
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -151,21 +189,13 @@ def portal_submit_price_tag_request(
     """Submit a draft price tag request: clears portal_draft_at, runs set guard,
     and fires the form SLA."""
     _assert_visible(db, token.contact_id)
-    req = PriceTagRequestService.get_request(db, request_id)
-    if not req or req.contact_id != token.contact_id:
-        raise AppException(
-            status_code=404,
-            message="Price tag request not found.",
-            code="NOT_FOUND",
-        )
-    if req.portal_draft_at is None and req.status != STATUS_NEW:
-        raise AppException(
-            status_code=409,
-            message="This request has already been submitted.",
-            code="ALREADY_SUBMITTED",
-        )
+    req = _require_own_request(db, token, request_id)
+    _require_draft(req, "This request has already been submitted.", code="ALREADY_SUBMITTED")
 
-    # Run set guard validation on the existing lines.
+    # A draft may be sloppy; a submitted request may not (D48a). Completeness
+    # first, because "you have no dealer" is more use than a guard message about
+    # a line on a request that was never going to be accepted anyway.
+    PriceTagRequestService.validate_submittable(req)
     PriceTagRequestService.validate_set_guard(db, req)
 
     # Clear draft and set status to new (ready for marketing).
@@ -309,6 +339,45 @@ def portal_lookup_tag_items(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _require_own_request(db: Session, token: PortalToken, request_id: str):
+    """The contact's own request, or a 404. Another contact's is not theirs to see."""
+    req = PriceTagRequestService.get_request(db, request_id)
+    if not req or req.contact_id != token.contact_id:
+        raise AppException(
+            status_code=404,
+            message="Price tag request not found.",
+            code="NOT_FOUND",
+        )
+    return req
+
+
+def _require_draft(req, message: str, code: str = "NOT_DRAFT") -> None:
+    """A draft is ``portal_draft_at``, and nothing else (D48c).
+
+    This used to also pass anything whose status was still `new`, which is the
+    status a submitted request keeps until marketing claims it: so a submitted
+    request could be edited, and submitted again, firing the form SLA a second
+    time. The timestamp is the only thing that tells the two apart.
+    """
+    if req.portal_draft_at is None:
+        raise AppException(status_code=409, message=message, code=code)
+
+
+def _detail_body(db: Session, req) -> dict:
+    """The request with its lines resolved, plus the attachments key.
+
+    The portal form reads `attachments` without checking, and nothing writes an
+    attachment against a price tag request yet (the PO dropzone holds its files
+    on the client), so the honest answer today is an empty list rather than a
+    missing key that would crash the page.
+    """
+    body = PriceTagRequestService.response_with_resolved_lines(db, req).model_dump(
+        mode="json"
+    )
+    body["attachments"] = []
+    return body
 
 
 def _resolve_company(db: Session, token: PortalToken) -> str:

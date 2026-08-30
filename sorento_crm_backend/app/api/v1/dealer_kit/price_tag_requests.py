@@ -79,36 +79,12 @@ def list_price_tag_requests(
 
 
 def _with_resolved_lines(db: Session, req) -> PriceTagRequestResponse:
-    """The request, with each line carrying what a person can read off it.
+    """The request with its lines resolved to code, name and both prices.
 
-    A line row holds a product id, a quantity and an override; the code, the
-    name and both prices live in the product master and the pricing engine.
-    Resolved through ``tag_data_service`` - the SAME call the designer and the
-    print payload use - so the detail page cannot quote a different price from
-    the tag it is about to print.
-
-    A line the resolver skipped (its product has been removed) keeps its blank
-    defaults rather than vanishing: a request that silently lists fewer lines
-    than were submitted is the worse failure.
+    One implementation, in the service: the portal detail route answers with the
+    same body, and two copies would let the two screens drift (D49).
     """
-    response = PriceTagRequestResponse.model_validate(req)
-    resolved = {row["line_id"]: row for row in tag_data_service.resolve_request_line_data(db, req)}
-    for line in response.lines:
-        row = resolved.get(line.id)
-        if not row:
-            continue
-        line.code = row["code"]
-        line.name = row["name"]
-        # float() here rather than trusting the annotation: assigning to a
-        # pydantic field does NOT validate, so a Decimal set on a `float` field
-        # is serialised as a JSON STRING and the page's `.toFixed(2)` throws.
-        line.list_price = _as_float(row["list_price"])
-        line.sell_price = _as_float(row["sell_price"])
-    return response
-
-
-def _as_float(value) -> float | None:
-    return None if value is None else float(value)
+    return PriceTagRequestService.response_with_resolved_lines(db, req)
 
 
 @router.get("/{request_id}", response_model=PriceTagRequestResponse)
