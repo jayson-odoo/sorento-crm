@@ -32,7 +32,11 @@ import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 // stable regardless of the viewer's machine timezone.
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { useBulkDeleteCertificates,
-  useDeleteCertificate, useCertificates } from '../hooks/useCertificates';
+  useCertificates } from '../hooks/useCertificates';
+import {
+  useDeferredRowAction,
+  useRowPending,
+} from '@/hooks/useDeferredRowAction';
 import {
   EXPIRING_WITHIN_OPTIONS,
   NEEDS_REVIEW_OPTIONS,
@@ -92,11 +96,19 @@ export default function CertificatesList() {
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [formOpen, setFormOpen] = useState(false);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
-  // The row's own Delete, the same action the record's gear offers (D15).
-  const [deleting, setDeleting] = useState<Certificate | null>(null);
-
   const bulkDeleteMutation = useBulkDeleteCertificates();
-  const deleteMutation = useDeleteCertificate();
+
+  // Delete asks nothing (D7): the row dims and a toast counts down with Cancel.
+  // Bulk delete keeps its dialog - selecting rows and pressing Delete selected is
+  // already a deliberate two-step gesture, and one countdown cannot speak for a
+  // set (see S6-10 notes in the plan).
+  const deletion = useDeferredRowAction({
+    actionKey: 'certificate.delete',
+    entityType: 'certificate',
+    successMessage: 'Certificate deleted',
+    invalidateKeys: [['certificates']],
+  });
+  const rowPending = useRowPending<Certificate>('certificate');
 
   useEffect(() => {
     setPagination((prev) => ({ ...prev, pageIndex: 0 }));
@@ -269,7 +281,11 @@ export default function CertificatesList() {
                 label: 'Delete certificate',
                 icon: Trash2,
                 kind: 'destructive',
-                run: () => setDeleting(row.original),
+                run: () =>
+                  deletion.run({
+                    id: row.original.id,
+                    subject: `${row.original.scheme} ${row.original.certificate_number}`,
+                  }),
               },
             ]}
           />
@@ -279,7 +295,7 @@ export default function CertificatesList() {
         enableResizing: false,
       },
     ],
-    [],
+    [deletion],
   );
 
   const table = useReactTable({
@@ -318,6 +334,7 @@ export default function CertificatesList() {
       table={table}
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
+      rowPending={rowPending}
       rowHref={(row: Certificate) => {
         const search = buildDetailSearch(
           {
@@ -460,26 +477,6 @@ export default function CertificatesList() {
 
       {/* Mounted only while open so the form state resets between openings. */}
       {formOpen && <CertificateFormDialog open={formOpen} onOpenChange={setFormOpen} />}
-
-      <ConfirmDeleteDialog
-        open={deleting !== null}
-        onOpenChange={(open) => {
-          if (!open) setDeleting(null);
-        }}
-        title="Confirm delete"
-        description={
-          <>
-            Delete {deleting?.certificate_number}, its revisions and its covered product
-            links. The uploaded files are kept. This action cannot be undone.
-          </>
-        }
-        successMessage="Certificate deleted"
-        onDelete={async () => {
-          if (deleting) await deleteMutation.mutateAsync(deleting.id);
-        }}
-        onSuccess={() => setDeleting(null)}
-        queryKeysToInvalidate={[['certificates']]}
-      />
 
       <ConfirmDeleteDialog
         open={bulkDeleteOpen}

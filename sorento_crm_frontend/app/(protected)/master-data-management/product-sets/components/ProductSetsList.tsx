@@ -13,6 +13,10 @@ import { Layers, Plus, Search, Sparkles, Trash2, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { RowActionsMenu } from '@/components/common/RowActionsMenu';
+import {
+  useDeferredRowAction,
+  useRowPending,
+} from '@/hooks/useDeferredRowAction';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
@@ -22,8 +26,7 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
-import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
-import { useDeleteProductSet, useProductSets } from '../hooks/useProductSets';
+import { useProductSets } from '../hooks/useProductSets';
 import type { ProductSet } from '../types/productSet.types';
 import { ProductSetFormModal } from './ProductSetFormModal';
 
@@ -55,7 +58,6 @@ export default function ProductSetsList() {
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [creating, setCreating] = useState(false);
-  const [deleting, setDeleting] = useState<ProductSet | null>(null);
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(searchQuery.trim()), 300);
@@ -72,7 +74,14 @@ export default function ProductSetsList() {
     sorting,
     searchQuery: debouncedSearch,
   });
-  const remove = useDeleteProductSet();
+  // Delete asks nothing (D7): the row dims and a toast counts down with Cancel.
+  const deletion = useDeferredRowAction({
+    actionKey: 'product_set.delete',
+    entityType: 'product_set',
+    successMessage: 'Product set deleted',
+    invalidateKeys: [['product-sets']],
+  });
+  const rowPending = useRowPending<ProductSet>('product_set');
 
   const rows = useMemo<ProductSet[]>(() => data?.data ?? [], [data]);
   const total = data?.pagination.total ?? 0;
@@ -185,7 +194,11 @@ export default function ProductSetsList() {
                 label: 'Delete product set',
                 icon: Trash2,
                 kind: 'destructive',
-                run: () => setDeleting(row.original),
+                run: () =>
+                  deletion.run({
+                    id: row.original.id,
+                    subject: `${row.original.name} (${row.original.set_code})`,
+                  }),
               },
             ]}
           />
@@ -196,7 +209,7 @@ export default function ProductSetsList() {
         meta: { headerTitle: 'Actions', cellClassName: 'text-right' },
       },
     ],
-    [rowHref],
+    [rowHref, deletion],
   );
 
   const table = useReactTable({
@@ -267,6 +280,7 @@ export default function ProductSetsList() {
           recordCount={total}
           isLoading={isLoading}
           rowHref={rowHref}
+          rowPending={rowPending}
           listingKey="master_data.product_sets.view"
           tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
           emptyMessage="No product sets match that search."
@@ -315,25 +329,6 @@ export default function ProductSetsList() {
       )}
 
       <ProductSetFormModal open={creating} onOpenChange={setCreating} />
-
-      <ConfirmDeleteDialog
-        open={deleting !== null}
-        onOpenChange={(open) => {
-          if (!open) setDeleting(null);
-        }}
-        title="Delete this product set?"
-        description={
-          deleting
-            ? `${deleting.set_code} will be removed permanently. Its ${deleting.member_count} member product${deleting.member_count === 1 ? '' : 's'} are not affected.`
-            : ''
-        }
-        successMessage="Product set deleted"
-        onDelete={async () => {
-          if (!deleting) return;
-          await remove.mutateAsync(deleting.id);
-        }}
-        onSuccess={() => setDeleting(null)}
-      />
     </div>
   );
 }

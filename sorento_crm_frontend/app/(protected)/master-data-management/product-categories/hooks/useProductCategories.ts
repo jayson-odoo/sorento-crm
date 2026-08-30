@@ -5,7 +5,6 @@ import {
   getCategory,
   createCategory,
   updateCategory,
-  deleteCategory,
   moveCategory,
 } from '../services/categoryService';
 import type { CategoryFormData, CategoryTreeItem } from '../types/category.types';
@@ -61,22 +60,6 @@ export function useUpdateCategory() {
     },
     onError: (error: Error) => {
       toast.error(error.message || 'Failed to update category');
-    },
-  });
-}
-
-export function useDeleteCategory() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: (id: string) => deleteCategory(id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['product-categories-tree'] });
-      queryClient.invalidateQueries({ queryKey: ['product-category-select'] });
-      toast.success('Category deleted successfully');
-    },
-    onError: (error: Error) => {
-      toast.error(error.message || 'Failed to delete category');
     },
   });
 }

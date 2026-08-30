@@ -16,12 +16,11 @@ import { Container } from '@/components/common/container';
 import { PageHeader } from '@/components/common/PageHeader';
 import BackToList, { useBackToListHref } from '@/components/common/BackToList';
 import DetailActions from '@/components/common/DetailActions';
-import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
+import { useDeferredAction } from '@/hooks/useDeferredAction';
 import type { RecordAction } from '@/components/common/recordActions';
 import {
   useCategoriesTree,
   useCategory,
-  useDeleteCategory,
   useUpdateCategory,
 } from '../hooks/useProductCategories';
 import type { CategoryTreeItem } from '../types/category.types';
@@ -88,11 +87,25 @@ export default function ProductCategoryDetailPage({
   const { data: category, isLoading } = useCategory(id);
   const { data: tree = [] } = useCategoriesTree();
   const update = useUpdateCategory();
-  const deleteMutation = useDeleteCategory();
+
+  // Delete asks nothing (D7): the countdown replaces the primary button and the
+  // server applies it when the window lapses. A category still carrying products
+  // is refused there, and the refusal arrives as the countdown's error.
+  const deletion = useDeferredAction({
+    actionKey: 'product_category.delete',
+    entityType: 'product_category',
+    entityId: id,
+    verb: 'Deleting',
+    subject: category ? `${category.category_name} (${category.category_code})` : '',
+    surface: 'inline',
+    watchFromMount: true,
+    successMessage: 'Category deleted',
+    invalidateKeys: [['product-categories-tree'], ['product-category-select']],
+    onCommitted: () => router.push(backHref),
+  });
 
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<Draft | null>(null);
-  const [deleteOpen, setDeleteOpen] = useState(false);
 
   const header = (
     <PageHeader
@@ -184,7 +197,8 @@ export default function ProductCategoryDetailPage({
       label: 'Delete category',
       icon: Trash2,
       kind: 'destructive',
-      run: () => setDeleteOpen(true),
+      disabled: deletion.isPending,
+      run: deletion.start,
     },
   ];
 
@@ -227,6 +241,7 @@ export default function ProductCategoryDetailPage({
               <DetailActions
                 actions={actions}
                 gearLabel="Category options"
+                pendingAction={deletion.countdown}
                 primary={
                   <Button onClick={startEdit}>
                     <Pencil className="size-4" /> Edit
@@ -390,21 +405,6 @@ export default function ProductCategoryDetailPage({
           </div>
         </div>
       </Container>
-
-      <ConfirmDeleteDialog
-        open={deleteOpen}
-        onOpenChange={setDeleteOpen}
-        title="Delete category"
-        description={
-          <>
-            Delete <strong>{category.category_name}</strong>? This cannot be undone.
-          </>
-        }
-        onDelete={async () => {
-          await deleteMutation.mutateAsync(id);
-        }}
-        onSuccess={() => router.push(backHref)}
-      />
     </>
   );
 }

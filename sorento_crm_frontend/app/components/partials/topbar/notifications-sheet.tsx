@@ -132,8 +132,11 @@ export function NotificationsSheet({ trigger }: { trigger: ReactNode }) {
     });
   };
 
+  // No prompt, and no countdown either (D7, S6-09). This is the reader's OWN
+  // notification, one of a list they can already Clear beside this button with no
+  // prompt at all; a dialog or a ten-second window would be the heaviest gesture in
+  // the panel guarding its lightest action.
   const handleDeleteOne = async (id: string) => {
-    if (!confirm('Delete this notification?')) return;
     try {
       await deleteNotification(id);
       toast.success('Deleted');

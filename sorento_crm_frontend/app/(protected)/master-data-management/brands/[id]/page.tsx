@@ -16,10 +16,10 @@ import { Container } from '@/components/common/container';
 import { PageHeader } from '@/components/common/PageHeader';
 import BackToList, { useBackToListHref } from '@/components/common/BackToList';
 import DetailActions from '@/components/common/DetailActions';
-import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import type { RecordAction } from '@/components/common/recordActions';
 import { useContactAccessTypes } from '@/app/(protected)/user-management/contact-access-types/hooks/useContactAccessTypes';
-import { useBrand, useDeleteBrand, useUpdateBrand } from '../hooks/useBrands';
+import { useBrand, useUpdateBrand } from '../hooks/useBrands';
+import { useDeferredAction } from '@/hooks/useDeferredAction';
 import { formatDate } from '@/lib/helpers';
 
 const LIST_PATH = '/master-data-management/brands';
@@ -73,11 +73,25 @@ export default function BrandDetailPage({ params }: { params: Promise<{ id: stri
   const { data: brand, isLoading } = useBrand(id);
   const { data: accessTypeOptions = [] } = useContactAccessTypes();
   const update = useUpdateBrand();
-  const deleteMutation = useDeleteBrand();
+
+  // Delete asks nothing (D7). The countdown takes the primary button's place and
+  // Cancel is the way back; the server applies it when the window lapses, even if
+  // this tab is closed first.
+  const deletion = useDeferredAction({
+    actionKey: 'brand.delete',
+    entityType: 'brand',
+    entityId: id,
+    verb: 'Deleting',
+    subject: brand ? `${brand.brand_name} (${brand.brand_code})` : '',
+    surface: 'inline',
+    watchFromMount: true,
+    successMessage: 'Brand deleted',
+    invalidateKeys: [['brands']],
+    onCommitted: () => router.push(backHref),
+  });
 
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<Draft | null>(null);
-  const [deleteOpen, setDeleteOpen] = useState(false);
 
   const header = (
     <PageHeader
@@ -159,7 +173,8 @@ export default function BrandDetailPage({ params }: { params: Promise<{ id: stri
       label: 'Delete brand',
       icon: Trash2,
       kind: 'destructive',
-      run: () => setDeleteOpen(true),
+      disabled: deletion.isPending,
+      run: deletion.start,
     },
   ];
 
@@ -202,6 +217,7 @@ export default function BrandDetailPage({ params }: { params: Promise<{ id: stri
               <DetailActions
                 actions={actions}
                 gearLabel="Brand options"
+                pendingAction={deletion.countdown}
                 primary={
                   <Button onClick={startEdit}>
                     <Pencil className="size-4" /> Edit
@@ -347,21 +363,6 @@ export default function BrandDetailPage({ params }: { params: Promise<{ id: stri
           </div>
         </div>
       </Container>
-
-      <ConfirmDeleteDialog
-        open={deleteOpen}
-        onOpenChange={setDeleteOpen}
-        title="Delete brand"
-        description={
-          <>
-            Delete <strong>{brand.brand_name}</strong>? This cannot be undone.
-          </>
-        }
-        onDelete={async () => {
-          await deleteMutation.mutateAsync(id);
-        }}
-        onSuccess={() => router.push(backHref)}
-      />
     </>
   );
 }
