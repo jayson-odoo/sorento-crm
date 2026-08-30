@@ -327,6 +327,33 @@ class PriceTagRequestService:
         )
 
     @staticmethod
+    def validate_claimable(request: PriceTagRequest) -> None:
+        """What a request needs before marketing may claim it.
+
+        A draft is refused FIRST and by its own code: it is still the
+        salesperson's, and the status it carries (``new``) is the same one a
+        submitted request carries, so the status check alone waved it through.
+        Claiming one moved it to ``designing``, and the salesperson's later
+        Submit reset it to ``new`` - the claim gone, the SLA fired twice, and a
+        designer working on something nobody had sent them.
+        """
+        if request.portal_draft_at is not None:
+            raise AppException(
+                status_code=409,
+                message=(
+                    "This request is still a draft on the salesperson's side and "
+                    "has not been submitted yet."
+                ),
+                code="NOT_SUBMITTED",
+            )
+        if request.status != STATUS_NEW:
+            raise AppException(
+                status_code=409,
+                message="Only requests in 'new' status can be claimed.",
+                code="INVALID_STATE",
+            )
+
+    @staticmethod
     def validate_set_guard(db: Session, request: PriceTagRequest) -> None:
         """Validate the set guard on an existing request's lines.
 
@@ -440,11 +467,21 @@ class PriceTagRequestService:
         contact_id: str | None = None,
         status: str | None = None,
         search: str | None = None,
+        include_drafts: bool = True,
     ) -> list[PriceTagRequest]:
-        """List requests, optionally filtered by contact_id, status, or search."""
+        """List requests, optionally filtered by contact_id, status, or search.
+
+        ``include_drafts=False`` is what marketing's queue asks for. A portal
+        draft carries status ``new`` exactly like a submitted request, so without
+        this the CRM listing showed forms the salesperson was still typing and
+        marketing could claim one. The portal's own list leaves it True: a draft
+        is the whole point of that screen.
+        """
         q = db.query(PriceTagRequest)
         if contact_id:
             q = q.filter(PriceTagRequest.contact_id == contact_id)
+        if not include_drafts:
+            q = q.filter(PriceTagRequest.portal_draft_at.is_(None))
         if status:
             q = q.filter(PriceTagRequest.status == status)
         if search:

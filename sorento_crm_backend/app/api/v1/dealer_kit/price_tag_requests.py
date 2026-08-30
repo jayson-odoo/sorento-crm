@@ -37,7 +37,6 @@ from app.services.error_handler import AppException
 from app.services.price_tag_request_service import (
     PriceTagRequestService,
     STATUS_DESIGNING,
-    STATUS_NEW,
 )
 
 logger = logging.getLogger(__name__)
@@ -66,9 +65,14 @@ def list_price_tag_requests(
     db: Session = Depends(get_db),
     _user: dict = Depends(_VIEW),
 ):
-    """Paginated listing of price tag requests."""
+    """Paginated listing of price tag requests.
+
+    Drafts are not in it. A request the salesperson has saved but not submitted
+    is not work yet, and it used to sit in this queue at status ``new`` looking
+    exactly like one that had been sent.
+    """
     results = PriceTagRequestService.list_requests(
-        db, status=status_filter, search=q,
+        db, status=status_filter, search=q, include_drafts=False,
     )
     return [PriceTagRequestListItem.model_validate(r) for r in results]
 
@@ -122,12 +126,7 @@ def claim_price_tag_request(
             message="Price tag request not found.",
             code="NOT_FOUND",
         )
-    if req.status != STATUS_NEW:
-        raise AppException(
-            status_code=409,
-            message="Only requests in 'new' status can be claimed.",
-            code="INVALID_STATE",
-        )
+    PriceTagRequestService.validate_claimable(req)
 
     req.created_by = _user_id(user)
     result = PriceTagRequestService.transition_status(

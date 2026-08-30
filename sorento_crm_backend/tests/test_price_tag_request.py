@@ -748,6 +748,81 @@ class TestRequestCRUD:
         assert all(r.contact_id == contact_a.id for r in results)
 
 
+class TestTheMarketingQueueHoldsOnlySubmittedWork:
+    """A portal draft belongs to the salesperson until they submit it.
+
+    It used to appear in marketing's queue the moment it was saved, at status
+    ``new`` like every submitted request, with nothing on the row to tell them
+    apart. Marketing could claim a form somebody was still typing; the claim
+    moved it to ``designing``, and the salesperson's Submit then set it straight
+    back to ``new`` - wiping the claim, re-firing the form SLA and leaving the
+    designer working on a request that no longer said it was theirs.
+    """
+
+    def _draft_and_submitted(self, db: Session):
+        contact = _make_contact(db)
+        draft = PriceTagRequestService.create_request(
+            db,
+            contact_id=contact.id,
+            company_id=_SORENTO_COMPANY_ID,
+            data={"debtor_name": "ZZT Draft"},
+        )
+        submitted = PriceTagRequestService.create_request(
+            db,
+            contact_id=contact.id,
+            company_id=_SORENTO_COMPANY_ID,
+            data={"debtor_name": "ZZT Submitted"},
+        )
+        submitted.portal_draft_at = None
+        db.flush()
+        return contact, draft, submitted
+
+    def test_a_draft_is_not_in_the_marketing_queue(self, db: Session):
+        _contact, draft, submitted = self._draft_and_submitted(db)
+
+        rows = PriceTagRequestService.list_requests(db, include_drafts=False)
+
+        ids = {row.id for row in rows}
+        assert submitted.id in ids
+        assert draft.id not in ids
+
+    def test_the_portal_still_lists_the_contact_their_own_draft(self, db: Session):
+        """The portal list is the other half: a draft is exactly what it is for."""
+        contact, draft, submitted = self._draft_and_submitted(db)
+
+        rows = PriceTagRequestService.list_requests(db, contact_id=contact.id)
+
+        ids = {row.id for row in rows}
+        assert {draft.id, submitted.id} <= ids
+
+    def test_a_draft_cannot_be_claimed(self, db: Session):
+        _contact, draft, _submitted = self._draft_and_submitted(db)
+
+        with pytest.raises(Exception) as exc_info:
+            PriceTagRequestService.validate_claimable(draft)
+
+        assert exc_info.value.status_code == 409
+        assert exc_info.value.detail["code"] == "NOT_SUBMITTED"
+
+    def test_a_submitted_request_can_be_claimed(self, db: Session):
+        _contact, _draft, submitted = self._draft_and_submitted(db)
+
+        PriceTagRequestService.validate_claimable(submitted)  # does not raise
+
+    def test_a_request_already_being_designed_cannot_be_claimed_again(
+        self, db: Session
+    ):
+        _contact, _draft, submitted = self._draft_and_submitted(db)
+        submitted.status = STATUS_DESIGNING
+        db.flush()
+
+        with pytest.raises(Exception) as exc_info:
+            PriceTagRequestService.validate_claimable(submitted)
+
+        assert exc_info.value.status_code == 409
+        assert exc_info.value.detail["code"] == "INVALID_STATE"
+
+
 # ---------------------------------------------------------------------------
 # 6. Debtor lookup scoping
 # ---------------------------------------------------------------------------
