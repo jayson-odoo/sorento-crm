@@ -549,7 +549,7 @@ def test_two_lines_of_one_confirm_share_one_pile_and_the_second_is_capped():
     assert stated[20] == [("buy", "30")], "10 is left by the second's, which is not whole"
     assert refusal is not None, "the second line asked for a pile the first had emptied"
     assert [row["line_no"] for row in refusal.detail["failing_lines"]] == [20], (
-        f"only the second line is refused: {refusal.detail["failing_lines"]}"
+        f"only the second line is refused: {refusal.detail['failing_lines']}"
     )
     assert refusal.detail["failing_lines"][0]["reason"] == (
         f"{own_code} now has 10 free for this line, and 30 was asked for."
