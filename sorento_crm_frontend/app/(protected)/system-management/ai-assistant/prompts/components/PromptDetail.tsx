@@ -21,6 +21,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Container } from '@/components/common/container';
+import { PageHeader } from '@/components/common/PageHeader';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { SearchableTextarea } from '@/components/common/find-in-text/SearchableTextarea';
 import {
@@ -199,25 +200,27 @@ export function PromptDetail({ name }: { name: string }) {
 
   return (
     <Container className="space-y-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0">
-          <Link
-            href="/system-management/ai-assistant/prompts"
-            className="mb-1 inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-          >
-            <ArrowLeft className="size-3.5" /> All prompts
-          </Link>
-          <h1 className="flex items-center gap-2 text-xl font-semibold break-words">
+      <PageHeader
+        title={
+          <span className="inline-flex flex-wrap items-center gap-2">
             <span className="font-mono">{name}</span>
             {!meta.active ? (
               <Badge variant="warning" className="text-xs">
                 Dormant · activates in {meta.activates_in}
               </Badge>
             ) : null}
-          </h1>
-          <p className="text-sm text-muted-foreground break-words">{meta.role}</p>
-        </div>
-      </div>
+          </span>
+        }
+        actions={
+          <Button variant="outline" asChild>
+            <Link href="/system-management/ai-assistant/prompts">
+              <ArrowLeft className="size-4" /> Back to prompts
+            </Link>
+          </Button>
+        }
+      >
+        <p className="text-sm text-muted-foreground break-words">{meta.role}</p>
+      </PageHeader>
 
       {!meta.active ? (
         <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-800">

@@ -4,22 +4,9 @@ import { use } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { MoveLeft, Play } from 'lucide-react';
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
 import { Button } from '@/components/ui/button';
 import { Container } from '@/components/common/container';
-import {
-  Toolbar,
-  ToolbarActions,
-  ToolbarHeading,
-  ToolbarTitle,
-} from '@/components/common/toolbar';
+import { PageHeader } from '@/components/common/PageHeader';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -74,28 +61,7 @@ export default function ScheduledTaskDetailPage({ params }: DetailPageProps) {
     return (
       <>
         <Container>
-          <Toolbar>
-            <ToolbarHeading>
-              <ToolbarTitle>Scheduled Task</ToolbarTitle>
-              <Breadcrumb>
-                <BreadcrumbList>
-                  <BreadcrumbItem>
-                    <BreadcrumbLink href="/">Home</BreadcrumbLink>
-                  </BreadcrumbItem>
-                  <BreadcrumbSeparator />
-                  <BreadcrumbItem>
-                    <BreadcrumbPage>System Management</BreadcrumbPage>
-                  </BreadcrumbItem>
-                  <BreadcrumbSeparator />
-                  <BreadcrumbItem>
-                    <BreadcrumbLink href="/system-management/scheduled-tasks">
-                      Scheduled Tasks
-                    </BreadcrumbLink>
-                  </BreadcrumbItem>
-                </BreadcrumbList>
-              </Breadcrumb>
-            </ToolbarHeading>
-          </Toolbar>
+          <PageHeader title="Scheduled Task" />
         </Container>
         <Container>
           <div className="space-y-6">
@@ -111,11 +77,7 @@ export default function ScheduledTaskDetailPage({ params }: DetailPageProps) {
     return (
       <>
         <Container>
-          <Toolbar>
-            <ToolbarHeading>
-              <ToolbarTitle>Scheduled Task</ToolbarTitle>
-            </ToolbarHeading>
-          </Toolbar>
+          <PageHeader title="Scheduled Task" />
         </Container>
         <Container>
           <div className="text-center py-12">
@@ -136,43 +98,26 @@ export default function ScheduledTaskDetailPage({ params }: DetailPageProps) {
   return (
     <>
       <Container>
-        <Toolbar>
-          <ToolbarHeading>
-            <ToolbarTitle>{task.name}</ToolbarTitle>
-            <Breadcrumb>
-              <BreadcrumbList>
-                <BreadcrumbItem>
-                  <BreadcrumbLink href="/">Home</BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbPage>System Management</BreadcrumbPage>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbLink href="/system-management/scheduled-tasks">
-                    Scheduled Tasks
-                  </BreadcrumbLink>
-                </BreadcrumbItem>
-              </BreadcrumbList>
-            </Breadcrumb>
-          </ToolbarHeading>
-          <ToolbarActions>
-            <Button asChild variant="outline">
-              <Link href="/system-management/scheduled-tasks">
-                <MoveLeft /> Back to list
-              </Link>
-            </Button>
-            <Button
-              variant="primary"
-              onClick={handleRunNow}
-              disabled={runNowMutation.isPending}
-            >
-              <Play className="size-4 mr-2" />
-              {runNowMutation.isPending ? 'Running...' : 'Run now'}
-            </Button>
-          </ToolbarActions>
-        </Toolbar>
+        <PageHeader
+          title={task.name}
+          actions={
+            <>
+              <Button asChild variant="outline">
+                <Link href="/system-management/scheduled-tasks">
+                  <MoveLeft /> Back to list
+                </Link>
+              </Button>
+              <Button
+                variant="primary"
+                onClick={handleRunNow}
+                disabled={runNowMutation.isPending}
+              >
+                <Play className="size-4 mr-2" />
+                {runNowMutation.isPending ? 'Running...' : 'Run now'}
+              </Button>
+            </>
+          }
+        />
       </Container>
 
       <Container>
