@@ -22,13 +22,14 @@
  * active; the right button starts nothing, because the context menu owns it.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import type Konva from 'konva';
 import { Konva as KonvaGlobal } from 'konva/lib/Global';
 import type {
   GroupBinding,
   ImageSource,
+  TagBindingData,
   TagLayer,
   TagLayerProps,
   TagTemplateDoc,
@@ -161,6 +162,31 @@ interface TagCanvasEditorProps {
    * to one, so this is normally absent and the badge previews list prices.
    */
   promotionId?: string | null;
+  /**
+   * What EVERY layer draws against, when the caller already knows (D51).
+   *
+   * The request designer edits one line's tag, so the thing on the canvas is
+   * that line - resolved once by the pricing engine, with its marketing
+   * override applied - rather than whatever each group happens to be bound to.
+   * Absent in the template editor, where the document's own bindings answer.
+   */
+  boundData?: TagBindingData | null;
+  /**
+   * Anything the host wants above the Layers panel (D51: the request's lines).
+   */
+  leftRail?: ReactNode;
+  /**
+   * Every change to the layers, so a host that owns the document can keep up.
+   *
+   * The template editor does not use it: there, Save is the only moment the
+   * document changes. The request designer does, because switching lines
+   * remounts the canvas and the edits have to survive that.
+   */
+  onLayersChange?: (layers: TagLayer[]) => void;
+  /** Offered in the Inspector on a selected group: swap the whole tag's template. */
+  onUseTemplate?: () => void;
+  /** The host owns saving, so the built-in Save bar would be a second Save. */
+  hideSaveBar?: boolean;
 }
 
 /** What the canvas is currently asking the user to pick. */
@@ -185,7 +211,16 @@ interface DragSession {
   dy: number;
 }
 
-export function TagCanvasEditor({ doc, onChange, promotionId }: TagCanvasEditorProps) {
+export function TagCanvasEditor({
+  doc,
+  onChange,
+  promotionId,
+  boundData,
+  leftRail,
+  onLayersChange,
+  onUseTemplate,
+  hideSaveBar,
+}: TagCanvasEditorProps) {
   const [layers, setLayers] = useState<TagLayer[]>(doc.layers);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [view, setView] = useState<CanvasView>({ zoom: 1, panX: 0, panY: 0 });
@@ -445,14 +480,23 @@ export function TagCanvasEditor({ doc, onChange, promotionId }: TagCanvasEditorP
   );
 
   const dataOf = useCallback(
-    (layer: TagLayer) => bindings.get(bindingOf(layer)),
-    [bindings, bindingOf],
+    (layer: TagLayer) => {
+      // The host already knows what this canvas is about (D51), so nothing has
+      // to be looked up per layer. A preview still wins: it is the deliberate
+      // "show me this other thing" and the host's data is the default.
+      if (!preview && boundData) return boundData;
+      return bindings.get(bindingOf(layer));
+    },
+    [bindings, bindingOf, preview, boundData],
   );
 
   // Resolve whatever the document already carries, once, on open. A template
   // stores bindings and no values (ADR 0008), so without this every bound layer
   // would open showing the text it was created with.
   useEffect(() => {
+    // Nothing to resolve when the host hands the data in: the bindings would
+    // be fetched only to be ignored by `dataOf`.
+    if (boundData) return;
     const carried = doc.layers
       .map((layer) => (layer.props.kind === 'group' ? layer.props.binding : undefined))
       .filter((binding): binding is GroupBinding => Boolean(binding));
@@ -1423,6 +1467,13 @@ export function TagCanvasEditor({ doc, onChange, promotionId }: TagCanvasEditorP
     onChange({ ...doc, layers });
   }, [doc, layers, onChange]);
 
+  // A host that owns the document (the request designer) hears every change, so
+  // switching to another line does not throw the edits away. The template
+  // editor passes nothing and keeps its Save-only behaviour.
+  useEffect(() => {
+    onLayersChange?.(layers);
+  }, [layers, onLayersChange]);
+
   // -- Derived state for toolbar ---------------------------------------------
 
   const selectedLayer = useMemo(() => {
@@ -1520,16 +1571,19 @@ export function TagCanvasEditor({ doc, onChange, promotionId }: TagCanvasEditorP
       />
 
       <div className="flex flex-1 overflow-hidden">
-        {/* Left sidebar: Layers panel */}
-        <div className="hidden w-52 shrink-0 md:block">
-          <LayersPanel
-            layers={layers}
-            selectedIds={selectedIds}
-            onSelect={handleSelect}
-            onToggleVisibility={handleToggleVisibility}
-            onToggleLock={handleToggleLock}
-            onMoveLayer={handleMoveLayer}
-          />
+        {/* Left sidebar: the host's rail, then the Layers panel */}
+        <div className="hidden w-52 shrink-0 md:flex md:flex-col md:overflow-hidden">
+          {leftRail}
+          <div className="min-h-0 flex-1">
+            <LayersPanel
+              layers={layers}
+              selectedIds={selectedIds}
+              onSelect={handleSelect}
+              onToggleVisibility={handleToggleVisibility}
+              onToggleLock={handleToggleLock}
+              onMoveLayer={handleMoveLayer}
+            />
+          </div>
         </div>
 
         {/* Centre: canvas workspace. The Stage fills it and the artboard sits at
@@ -1825,6 +1879,7 @@ export function TagCanvasEditor({ doc, onChange, promotionId }: TagCanvasEditorP
             onChooseBadge={handleChooseBadge}
             onRebind={handleRebind}
             onRelinkGroup={handleRelinkGroup}
+            onUseTemplate={onUseTemplate}
           />
         </div>
       </div>
@@ -1889,8 +1944,13 @@ export function TagCanvasEditor({ doc, onChange, promotionId }: TagCanvasEditorP
         }}
       />
 
-      {/* Save bar (sticky bottom) */}
-      <div className="flex h-10 shrink-0 items-center justify-end gap-2 border-t bg-background px-4">
+      {/* Save bar (sticky bottom). Absent when the host owns saving. */}
+      <div
+        className={cn(
+          'flex h-10 shrink-0 items-center justify-end gap-2 border-t bg-background px-4',
+          hideSaveBar && 'hidden',
+        )}
+      >
         <span className="text-xs text-muted-foreground">
           {layers.length} layer{layers.length !== 1 ? 's' : ''}
           {' / '}

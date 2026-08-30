@@ -276,6 +276,13 @@ function copyIndexOf(placementId: string): number {
   return match ? Number(match[1]) : 0;
 }
 
+/** The pin key one placed copy answers to, wherever it came from. */
+export function pinKeyForPlacement(
+  tag: Pick<PlacedTag, 'id' | 'request_line_id'>,
+): string {
+  return placementKey(tag.request_line_id, copyIndexOf(tag.id));
+}
+
 /** Every manual drag the saved document is carrying, ready to be re-applied. */
 export function pinnedFromDoc(doc: TagSheetDoc | null): Record<string, PinnedPlacement> {
   const pinned: Record<string, PinnedPlacement> = {};

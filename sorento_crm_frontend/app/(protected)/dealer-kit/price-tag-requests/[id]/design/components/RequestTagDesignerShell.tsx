@@ -1,9 +1,11 @@
 'use client';
 
 /**
- * Shell that loads the request and tag sheet doc, then renders the designer.
+ * Shell that loads the request and its tag sheet document, then renders the
+ * designer.
  *
- * Separated so that the page.tsx stays a server component for metadata.
+ * Separated so that the page.tsx stays a server component for metadata, and so
+ * the whole Konva tree below it is loaded with ssr:false in one place.
  */
 
 import { useCallback, useEffect, useState } from 'react';
@@ -21,8 +23,9 @@ import {
 import dynamic from 'next/dynamic';
 import { Skeleton } from '@/components/ui/skeleton';
 
-const TagSheetDesigner = dynamic(
-  () => import('./TagSheetDesigner').then((m) => ({ default: m.TagSheetDesigner })),
+const RequestTagDesigner = dynamic(
+  () =>
+    import('./RequestTagDesigner').then((m) => ({ default: m.RequestTagDesigner })),
   { ssr: false, loading: () => <Skeleton className="h-[400px] w-full" /> },
 );
 
@@ -30,7 +33,7 @@ interface Props {
   requestId: string;
 }
 
-export default function TagSheetDesignerShell({ requestId }: Props) {
+export default function RequestTagDesignerShell({ requestId }: Props) {
   const [request, setRequest] = useState<PriceTagRequestDetail | null>(null);
   const [initialDoc, setInitialDoc] = useState<TagSheetDoc | null | undefined>(
     undefined,
@@ -91,7 +94,7 @@ export default function TagSheetDesignerShell({ requestId }: Props) {
   }
 
   return (
-    <TagSheetDesigner
+    <RequestTagDesigner
       request={request}
       initialDoc={initialDoc ?? null}
       onSave={handleSave}

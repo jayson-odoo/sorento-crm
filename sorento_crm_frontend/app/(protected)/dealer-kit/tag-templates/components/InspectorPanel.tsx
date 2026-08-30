@@ -8,7 +8,7 @@
  */
 
 import { useCallback } from 'react';
-import { Link2, Link2Off } from 'lucide-react';
+import { LayoutTemplate, Link2, Link2Off } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
@@ -176,6 +176,8 @@ interface InspectorPanelProps {
   onRebind?: (groupId: string) => void;
   /** Clear every text override inside this group. */
   onRelinkGroup?: (groupId: string) => void;
+  /** Re-clone this whole tag from another template (D51, the request designer). */
+  onUseTemplate?: () => void;
 }
 
 export function InspectorPanel({
@@ -190,6 +192,7 @@ export function InspectorPanel({
   onChooseBadge,
   onRebind,
   onRelinkGroup,
+  onUseTemplate,
 }: InspectorPanelProps) {
   const update = useCallback(
     (changes: Partial<TagLayer>) => {
@@ -316,6 +319,7 @@ export function InspectorPanel({
               bindingLabel={bindingLabel ?? null}
               onRebind={onRebind}
               onRelinkGroup={onRelinkGroup}
+              onUseTemplate={onUseTemplate}
             />
           )}
 
@@ -702,11 +706,13 @@ function GroupBindingInspector({
   bindingLabel,
   onRebind,
   onRelinkGroup,
+  onUseTemplate,
 }: {
   layer: TagLayer;
   bindingLabel: string | null;
   onRebind?: (groupId: string) => void;
   onRelinkGroup?: (groupId: string) => void;
+  onUseTemplate?: () => void;
 }) {
   const props = layer.props as Extract<TagLayerProps, { kind: 'group' }>;
   const binding = props.binding;
@@ -750,6 +756,18 @@ function GroupBindingInspector({
         <p className="text-[10px] text-muted-foreground">
           This group is not bound to a product or set.
         </p>
+      )}
+      {onUseTemplate && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="mt-2 h-7 w-full text-xs"
+          onClick={onUseTemplate}
+        >
+          <LayoutTemplate className="mr-1 size-3" />
+          Use template...
+        </Button>
       )}
     </section>
   );

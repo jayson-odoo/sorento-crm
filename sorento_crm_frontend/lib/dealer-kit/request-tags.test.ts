@@ -22,6 +22,7 @@ import {
   copiesOf,
   defaultTemplateFor,
   impositionSlots,
+  pinKeyForPlacement,
   pinnedFromDoc,
   placementKey,
   tagForLine,
@@ -329,8 +330,22 @@ describe('autoArrange', () => {
 });
 
 // ---------------------------------------------------------------------------
-// pinnedFromDoc
+// pinKeyForPlacement and pinnedFromDoc
 // ---------------------------------------------------------------------------
+
+describe('pinKeyForPlacement', () => {
+  it('reads the copy index off the placement id', () => {
+    expect(pinKeyForPlacement({ id: 'tag-9-c2', request_line_id: 'l1' })).toBe(
+      placementKey('l1', 2),
+    );
+  });
+
+  it('treats a placement written before copy ids as the first copy', () => {
+    expect(pinKeyForPlacement({ id: 't-1756-3', request_line_id: 'l1' })).toBe(
+      placementKey('l1', 0),
+    );
+  });
+});
 
 describe('pinnedFromDoc', () => {
   it('reads a saved arrangement back as pins, keyed by line and copy', () => {

@@ -7,11 +7,11 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from '@/components/ui/breadcrumb';
-import TagSheetDesignerShell from './components/TagSheetDesignerShell';
+import RequestTagDesignerShell from './components/RequestTagDesignerShell';
 
 export const metadata: Metadata = {
-  title: 'Tag Sheet Designer',
-  description: 'Design price tag sheets for a request',
+  title: 'Design Price Tags',
+  description: "Design a price tag request's tags",
 };
 
 export default async function TagSheetDesignPage({
@@ -53,7 +53,7 @@ export default async function TagSheetDesignPage({
         </Breadcrumb>
       </div>
       <div className="flex-1 overflow-hidden">
-        <TagSheetDesignerShell requestId={id} />
+        <RequestTagDesignerShell requestId={id} />
       </div>
     </div>
   );
