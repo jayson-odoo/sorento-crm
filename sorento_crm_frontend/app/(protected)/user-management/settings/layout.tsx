@@ -35,13 +35,17 @@ type NavRoutes = Record<
 >;
 
 /** Map API snake_case settings to frontend camelCase SystemSetting */
-function mapSettingsFromApi(raw: Record<string, unknown> | null): SystemSetting | null {
+function mapSettingsFromApi(
+  raw: Record<string, unknown> | null,
+): SystemSetting | null {
   if (!raw || typeof raw !== 'object') return null;
   return {
     ...raw,
     id: raw.id as string,
     name: (raw.name as string) ?? '',
     logo: (raw.logo as string | null) ?? null,
+    // A new settings column reaches the FE only if it is in this manual mapper too.
+    signinBackground: (raw.signin_background as string | null) ?? null,
     active: Boolean(raw.active),
     address: (raw.address as string | null) ?? null,
     websiteURL: (raw.website_url as string | null) ?? null,
@@ -51,7 +55,8 @@ function mapSettingsFromApi(raw: Record<string, unknown> | null): SystemSetting 
     timezone: (raw.timezone as string) ?? 'Europe/London',
     currency: (raw.currency as string) ?? 'MYR',
     currencyFormat: (raw.currency_format as string) ?? 'RM {value}',
-    defaultProductSupplierId: (raw.default_product_supplier_id as string | null) ?? null,
+    defaultProductSupplierId:
+      (raw.default_product_supplier_id as string | null) ?? null,
     defaultProductStandardLeadTimeDays:
       typeof raw.default_product_standard_lead_time_days === 'number'
         ? raw.default_product_standard_lead_time_days
@@ -64,7 +69,9 @@ function mapSettingsFromApi(raw: Record<string, unknown> | null): SystemSetting 
         ? raw.takeover_cooldown_seconds
         : 60,
     formSlaGraceSeconds:
-      typeof raw.form_sla_grace_seconds === 'number' ? raw.form_sla_grace_seconds : 0,
+      typeof raw.form_sla_grace_seconds === 'number'
+        ? raw.form_sla_grace_seconds
+        : 0,
     // A new settings column reaches the FE only if it is in this manual mapper too.
     planGrain: raw.plan_grain === 'location' ? 'location' : 'product',
     purchaseRequestDefaultApproverUserId:
@@ -79,11 +86,14 @@ function mapSettingsFromApi(raw: Record<string, unknown> | null): SystemSetting 
       (raw.sponsorship_form_default_approver_name as string | null) ?? null,
     sponsorshipFormDefaultApproverEmail:
       (raw.sponsorship_form_default_approver_email as string | null) ?? null,
-    n8nAttachmentWebhookUrl: (raw.n8n_attachment_webhook_url as string | null) ?? null,
-    n8nCrmChatOutboundWebhookUrl: (raw.n8n_crm_chat_outbound_webhook_url as string | null) ?? null,
+    n8nAttachmentWebhookUrl:
+      (raw.n8n_attachment_webhook_url as string | null) ?? null,
+    n8nCrmChatOutboundWebhookUrl:
+      (raw.n8n_crm_chat_outbound_webhook_url as string | null) ?? null,
     n8nStockInquiryReviseWebhookUrl:
       (raw.n8n_stock_inquiry_revise_webhook_url as string | null) ?? null,
-    n8nCloseConvoWebhookUrl: (raw.n8n_close_convo_webhook_url as string | null) ?? null,
+    n8nCloseConvoWebhookUrl:
+      (raw.n8n_close_convo_webhook_url as string | null) ?? null,
     complaintDoDeliveredNotifyTiers:
       (raw.complaint_do_delivered_notify_tiers as string) ?? '1,2',
     handlingLockEnabledTypes: Array.isArray(raw.handling_lock_enabled_types)
@@ -97,7 +107,9 @@ function mapSettingsFromApi(raw: Record<string, unknown> | null): SystemSetting 
         ? raw.portal_revisions_enabled
         : true,
     portalMaxRevisions:
-      typeof raw.portal_max_revisions === 'number' ? raw.portal_max_revisions : 2,
+      typeof raw.portal_max_revisions === 'number'
+        ? raw.portal_max_revisions
+        : 2,
     healthDigestEnabled: Boolean(raw.health_digest_enabled),
     healthAlertsEnabled: Boolean(raw.health_alerts_enabled),
     healthNotifyRoleIds: Array.isArray(raw.health_notify_role_ids)
@@ -119,7 +131,9 @@ function mapSettingsFromApi(raw: Record<string, unknown> | null): SystemSetting 
         ? raw.chat_latency_p99_target_seconds
         : 10,
     chatLatencyPercentile:
-      typeof raw.chat_latency_percentile === 'number' ? raw.chat_latency_percentile : 99,
+      typeof raw.chat_latency_percentile === 'number'
+        ? raw.chat_latency_percentile
+        : 99,
     chatLatencyCeilingMultiplier:
       typeof raw.chat_latency_ceiling_multiplier === 'number'
         ? raw.chat_latency_ceiling_multiplier
@@ -129,8 +143,10 @@ function mapSettingsFromApi(raw: Record<string, unknown> | null): SystemSetting 
         ? raw.chat_latency_no_reply_minutes
         : 5,
     chatLatencyMinSample:
-      typeof raw.chat_latency_min_sample === 'number' ? raw.chat_latency_min_sample : 30,
-    smtp: raw.smtp as SystemSetting['smtp'] ?? null,
+      typeof raw.chat_latency_min_sample === 'number'
+        ? raw.chat_latency_min_sample
+        : 30,
+    smtp: (raw.smtp as SystemSetting['smtp']) ?? null,
   } as SystemSetting;
 }
 
@@ -151,6 +167,7 @@ function createDefaultSettings(): SystemSetting {
     id: '',
     name: '',
     logo: null,
+    signinBackground: null,
     active: true,
     address: null,
     websiteURL: null,
@@ -321,17 +338,19 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           {/* Ten tabs: at 375 seven of them were off-screen with nothing saying
               so. The strip scrolls now (S1) and each tab reads as the Users one. */}
           <TabsList>
-            {Object.entries(navRoutes).map(([key, { title, icon: Icon, path }]) => (
-              <TabsTrigger
-                key={key}
-                value={key}
-                disabled={isLoading}
-                onClick={() => handleTabClick(key, path)}
-              >
-                <Icon />
-                <span>{title}</span>
-              </TabsTrigger>
-            ))}
+            {Object.entries(navRoutes).map(
+              ([key, { title, icon: Icon, path }]) => (
+                <TabsTrigger
+                  key={key}
+                  value={key}
+                  disabled={isLoading}
+                  onClick={() => handleTabClick(key, path)}
+                >
+                  <Icon />
+                  <span>{title}</span>
+                </TabsTrigger>
+              ),
+            )}
           </TabsList>
         </Tabs>
         <div className="grow mt-5">{children}</div>
