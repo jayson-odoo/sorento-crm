@@ -252,8 +252,11 @@ def test_the_board_answers_one_row_per_product_with_the_whole_envelope(scm_app):
     assert row["undated"] == -12
     assert [month["key"] for month in row["months"]] == body["months"]
     balances = {month["key"]: month["balance"] for month in row["months"]}
-    assert balances[month_key(TODAY)] == 100
-    assert balances[month_key(_months_ahead(1))] == 70
+    # R37, month by month: the 100 on hand is spent (30 to the near line, 70 to the far
+    # one), so nothing is FREE in this month or the next, and the only month that owes
+    # anything is the one the short line is due in.
+    assert balances[month_key(TODAY)] == 0
+    assert balances[month_key(_months_ahead(1))] == 0
     assert balances[month_key(_months_ahead(3))] == -130
     tones = {month["key"]: month["tone"] for month in row["months"]}
     assert tones[month_key(TODAY)] == "green"
@@ -326,8 +329,12 @@ def test_the_group_filter_recomputes_rather_than_filters(scm_app):
         row = _row_of(body, product.product_code)
         return {month["key"]: month["balance"] for month in row["months"]}[key]
 
-    assert balance(whole, month_key(TODAY)) == 100
-    assert balance(whole, due) == 60
+    # R37: on the whole book the BB line draws 40 of the IB pile at its own date, so it is
+    # short of nothing in its month and 60 of the on hand is still free in the month the
+    # stock sits in. Narrowed to BB there is no pile at all: the line owes its whole 40 in
+    # its own month, and the current month has nothing to be free of.
+    assert balance(whole, month_key(TODAY)) == 60
+    assert balance(whole, due) == 0
     assert balance(narrowed, month_key(TODAY)) == 0
     assert balance(narrowed, due) == -40
 
@@ -1045,7 +1052,9 @@ def test_reserved_stock_is_not_offered_as_free_supply(scm_app):
 
     row = _row_of(board, product.product_code)
     balances = {m["key"]: m["balance"] for m in row["months"]}
-    assert balances[month_key(TODAY)] == 30
+    # The 30 that is free of the reserve is taken by the line next month, so no month has
+    # it spare (R37); the line goes without 20 on its own date.
+    assert balances[month_key(TODAY)] == 0
     assert balances[month_key(_months_ahead(1))] == -20
 
 
@@ -1147,3 +1156,175 @@ def test_a_product_whose_only_demand_is_unlocated_still_gets_a_row(scm_app):
 
     row = _row_of(board, product.product_code)
     assert row["unlocated"] == -8
+
+
+# --------------------------------------------------------------------------- R37
+
+
+def test_a_debt_stays_in_the_month_it_was_raised_in(scm_app):
+    """R37, and the defect that produced it (30 Aug, captain's feedback).
+
+    `1/2" ULTRA CIRCULAR` read -4 in Aug 26 and -4 again in every column after it, while the
+    drill for September was empty - the cell was a running balance and the drill was a
+    month, so the screen could not be added up. A month now states its own month: the line
+    books its shortfall where it is due, and the months after it read 0 because nothing is
+    due and nothing arrives in them.
+    """
+    app, db = _client(scm_app)
+    marker = f"ZZTSD{_u()[:6]}".upper()
+    warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
+    product = _product(db, f"{marker}-A")
+    _demand(
+        db, product, warehouse, qty=4, required_date=_months_ahead(1),
+        so_number=f"{marker}-SO1",
+    )
+    # A second product, so the axis reaches past the month the debt is in - the columns are
+    # the whole filtered set's, and without it there would be no later month to read.
+    later = _product(db, f"{marker}-B")
+    _demand(
+        db, later, warehouse, qty=1, required_date=_months_ahead(3),
+        so_number=f"{marker}-SO2",
+    )
+    db.flush()
+
+    due = month_key(_months_ahead(1))
+    after = month_key(_months_ahead(2))
+    with TestClient(app) as c:
+        board = c.get(BASE, params={"query": marker, "only_debt": False}).json()
+        drill = c.get(f"{BASE}/{product.id}/cell", params={"month": after}).json()
+
+    row = _row_of(board, product.product_code)
+    balances = {m["key"]: m["balance"] for m in row["months"]}
+    assert balances[due] == -4
+    assert balances[month_key(TODAY)] == 0
+    assert balances[after] == 0
+    assert balances[month_key(_months_ahead(3))] == 0
+    # The cell that reads 0 opens onto nothing, which is now the same statement twice.
+    assert drill == {"demand": [], "supply": []}
+
+
+def test_supply_arriving_after_the_debt_is_spare_in_its_own_month(scm_app):
+    """The other half of R37: 10 arriving next month against a 4 due this one reads -4 then
+    +6. The arrival clears the earlier line (it is `late`), so 4 of it is spent and only the
+    6 nobody took is spare - counted once, in the month it lands in."""
+    app, db = _client(scm_app)
+    marker = f"ZZTSD{_u()[:6]}".upper()
+    warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
+    product = _product(db, f"{marker}-A")
+    _demand(
+        db, product, warehouse, qty=4, required_date=_months_ahead(1),
+        so_number=f"{marker}-SO1",
+    )
+    _spo(db, product, warehouse, qty=10, arrives=_months_ahead(2))
+    db.flush()
+
+    due = month_key(_months_ahead(1))
+    arrives = month_key(_months_ahead(2))
+    with TestClient(app) as c:
+        board = c.get(BASE, params={"query": marker, "only_debt": False}).json()
+        short_cell = c.get(f"{BASE}/{product.id}/cell", params={"month": due}).json()
+        spare_cell = c.get(f"{BASE}/{product.id}/cell", params={"month": arrives}).json()
+
+    balances = {
+        m["key"]: m["balance"] for m in _row_of(board, product.product_code)["months"]
+    }
+    assert balances[due] == -4
+    assert balances[arrives] == 6
+
+    # The line ends covered and its month still owes the 4: it went without on the date it
+    # was promised, which is the fact the planner acts on.
+    assert short_cell["demand"][0]["status"] == "late"
+    assert short_cell["demand"][0]["short_qty"] == 4
+    assert short_cell["supply"] == []
+    assert spare_cell["demand"] == []
+    assert spare_cell["supply"][0]["qty"] == 10
+    assert spare_cell["supply"][0]["free_qty"] == 6
+
+
+def test_every_cell_foots_with_its_drill(scm_app):
+    """The identity R37 is worth having: for every month, the drill's free supply less its
+    short-at-date demand IS the balance the cell prints. 20 on hand, 30 due next month (20
+    now, 10 late off the SPO), 50 arriving the month after, 5 due the month after that."""
+    app, db = _client(scm_app)
+    marker = f"ZZTSD{_u()[:6]}".upper()
+    warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
+    product = _product(db, f"{marker}-A")
+    _stock(db, product, warehouse, 20)
+    _demand(
+        db, product, warehouse, qty=30, required_date=_months_ahead(1),
+        so_number=f"{marker}-SO1",
+    )
+    _spo(db, product, warehouse, qty=50, arrives=_months_ahead(2))
+    _demand(
+        db, product, warehouse, qty=5, required_date=_months_ahead(3),
+        so_number=f"{marker}-SO2",
+    )
+    db.flush()
+
+    with TestClient(app) as c:
+        board = c.get(BASE, params={"query": marker, "only_debt": False}).json()
+        row = _row_of(board, product.product_code)
+        cells = {
+            month["key"]: c.get(
+                f"{BASE}/{product.id}/cell", params={"month": month["key"]}
+            ).json()
+            for month in row["months"]
+        }
+
+    balances = {m["key"]: m["balance"] for m in row["months"]}
+    for key, cell in cells.items():
+        free = sum(event["free_qty"] for event in cell["supply"])
+        short = sum(line["short_qty"] for line in cell["demand"])
+        assert free - short == balances[key], f"{key} does not foot with its drill"
+
+    # And the figures themselves, so the identity cannot be satisfied by two zeroes.
+    assert balances[month_key(TODAY)] == 0
+    assert balances[month_key(_months_ahead(1))] == -10
+    assert balances[month_key(_months_ahead(2))] == 35
+    assert balances[month_key(_months_ahead(3))] == 0
+
+
+def test_the_tba_undated_and_unlocated_cells_are_unchanged_by_the_month_rule(scm_app):
+    """R37 is about MONTHS. The three buckets are not cumulative and never were: they draw
+    nothing at all, so every line in them is short its whole open quantity and there is no
+    supply to be free."""
+    app, db = _client(scm_app)
+    marker = f"ZZTSD{_u()[:6]}".upper()
+    warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
+    product = _product(db, f"{marker}-A")
+    _stock(db, product, warehouse, 500)
+    _demand(
+        db, product, warehouse, qty=60, required_date=date(2030, 1, 1),
+        so_number=f"{marker}-TBA",
+    )
+    _demand(
+        db, product, warehouse, qty=12, required_date=None, so_number=f"{marker}-NODATE",
+    )
+    _order, line = _demand(
+        db, product, warehouse, qty=15, required_date=_months_ahead(1),
+        so_number=f"{marker}-NOWHERE",
+    )
+    line.warehouse_id = None
+    db.flush()
+
+    with TestClient(app) as c:
+        board = c.get(BASE, params={"query": marker, "only_debt": False}).json()
+        cells = {
+            bucket: c.get(
+                f"{BASE}/{product.id}/cell", params={"month": bucket}
+            ).json()
+            for bucket in ("tba", "undated", "unlocated")
+        }
+
+    row = _row_of(board, product.product_code)
+    assert (row["tba"], row["undated"], row["unlocated"]) == (-60, -12, -15)
+    for bucket, cell in cells.items():
+        assert cell["supply"] == [], bucket
+        for entry in cell["demand"]:
+            assert entry["short_qty"] == entry["open_qty"], bucket
+    assert sum(e["short_qty"] for e in cells["tba"]["demand"]) == 60
+    assert sum(e["short_qty"] for e in cells["undated"]["demand"]) == 12
+    assert sum(e["short_qty"] for e in cells["unlocated"]["demand"]) == 15
+    # Nothing drew on the 500, so it is spare in the month it sits in - and only there.
+    balances = {m["key"]: m["balance"] for m in row["months"]}
+    assert balances[month_key(TODAY)] == 500

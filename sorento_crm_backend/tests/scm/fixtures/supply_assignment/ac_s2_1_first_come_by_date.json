@@ -11,7 +11,12 @@
     "own date and is short 130, with nothing behind it.",
     "",
     "An earlier line's open shortfall outranks a later line's in-time draw, which is what makes",
-    "this first-come BY REQUIRED DATE rather than first-come by arrival."
+    "this first-come BY REQUIRED DATE rather than first-come by arrival.",
+    "",
+    "The months are each month on its own (R37): every document is spent by the end of the walk,",
+    "so nothing is free anywhere, and each month books what its own lines went short of on their",
+    "own dates - Sep B's 40, Oct C's 30, Nov D's 130. B and C end covered and their months still",
+    "carry the debt, because they went without on the date they were promised."
   ],
   "as_of": "2026-09-01",
   "tba_from": "2029-01-01",
@@ -89,34 +94,78 @@
         "status": "covered",
         "uncovered": 0,
         "bucket": "2026-09",
-        "assigned": [["on_hand:BRW-BB", 80]]
+        "assigned": [
+          [
+            "on_hand:BRW-BB",
+            80
+          ]
+        ],
+        "short_at_date": 0
       },
       {
         "key": "B",
         "status": "late",
         "uncovered": 0,
         "bucket": "2026-09",
-        "assigned": [["on_hand:BRW-BB", 20], ["spo:S1", 40]]
+        "assigned": [
+          [
+            "on_hand:BRW-BB",
+            20
+          ],
+          [
+            "spo:S1",
+            40
+          ]
+        ],
+        "short_at_date": 40
       },
       {
         "key": "C",
         "status": "late",
         "uncovered": 0,
         "bucket": "2026-10",
-        "assigned": [["spo:S1", 10], ["po:P1", 30]]
+        "assigned": [
+          [
+            "spo:S1",
+            10
+          ],
+          [
+            "po:P1",
+            30
+          ]
+        ],
+        "short_at_date": 30
       },
       {
         "key": "D",
         "status": "short",
         "uncovered": 130,
         "bucket": "2026-11",
-        "assigned": [["po:P1", 170]]
+        "assigned": [
+          [
+            "po:P1",
+            170
+          ]
+        ],
+        "short_at_date": 130
       }
     ],
     "months": [
-      { "key": "2026-09", "balance": 10, "tone": "green" },
-      { "key": "2026-10", "balance": 170, "tone": "green" },
-      { "key": "2026-11", "balance": -130, "tone": "red" }
+      {
+        "key": "2026-09",
+        "balance": -40,
+        "tone": "red"
+      },
+      {
+        "key": "2026-10",
+        "balance": -30,
+        "tone": "red"
+      },
+      {
+        "key": "2026-11",
+        "balance": -130,
+        "tone": "red"
+      }
     ],
     "tba": 0,
     "undated": 0,

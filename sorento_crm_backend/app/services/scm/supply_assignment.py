@@ -1,10 +1,18 @@
 """Who gets what, and what is left over: one product's supply assigned to its demand.
 
 PURE maths, no I/O, golden-tested in isolation - the same discipline `coverage_timeline`
-keeps, and it reuses that module's `TimelineEvent` / `build_timeline` / `group_by_month` for
-the running balance rather than adding a second spelling of a dated accumulation. Months are
-a DISPLAY grouping of dated arithmetic (ADR-0011): no quantity is ever netted inside a
-bucket, so supply arriving on the 25th cannot cover demand due on the 3rd.
+keeps. Months are a DISPLAY grouping of dated arithmetic (ADR-0011): no quantity is ever
+netted inside a bucket, so supply arriving on the 25th cannot cover demand due on the 3rd.
+
+**A month states its own month, and nothing else** (R37, 30 Aug 2026). What is debted in
+August stays in August. The balance of month M is the supply DATED IN M that is still free
+when the whole walk is over, minus, for each line due in M, what that line was short AT ITS
+OWN DATE. A running balance was carried before, and it read as a fresh debt every month
+after: `1/2" ULTRA CIRCULAR` printed -4 in August and -4 again in every later column, while
+the drill for those columns was empty, because the cell was an accumulation and the drill
+was a month. A line that later supply clears (`late`) still books its shortfall in its own
+month - it went without on its own date, and that is the fact a planner acts on - and the
+supply that cleared it is no longer free, so it is never counted a second time.
 
 **The question.** "Is this product short, when, and whose order is the one that goes
 without?" The balance alone answers the first two; the assignment answers the third, and
@@ -61,14 +69,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Dict, List, Optional, Sequence, Tuple
 
-from app.services.scm.coverage_timeline import (
-    DEMAND,
-    QTY_PRECISION,
-    SUPPLY,
-    TimelineEvent,
-    build_timeline,
-    group_by_month,
-)
+from app.services.scm.coverage_timeline import QTY_PRECISION
 
 #: Quantities below this are noise from Decimal -> float, never a real shortfall.
 EPSILON = 10 ** -QTY_PRECISION / 2
@@ -186,10 +187,18 @@ class LineResult:
     status: str
     #: `YYYY-MM`, `tba` or `undated` - the cell this line is drilled from.
     bucket: str
+    #: What the line was short ON ITS OWN DATE - open qty less what it could draw from the
+    #: supply available by then. This is the figure its month books (R37), and it differs
+    #: from `uncovered` for a `late` line: later supply cleared it, so it ends covered, but
+    #: it still went without on the date it was promised. A TBA / undated / unlocated line
+    #: draws nothing at all, so its whole quantity is short.
+    short_at_date: float = 0.0
 
 
 @dataclass(frozen=True)
 class MonthBalance:
+    """One month, on its own: free supply dated in it, less the shortfalls it books (R37)."""
+
     key: str
     balance: float
     tone: str
@@ -199,6 +208,10 @@ class MonthBalance:
 class Assignment:
     lines: Tuple[LineResult, ...]
     months: Tuple[MonthBalance, ...]
+    #: Event key -> quantity nobody took, once the whole walk is over. The other half of a
+    #: month's balance (R37), and the number the drill prints beside a supply row, so a
+    #: reader can add the lightbox up and get the cell they pressed.
+    free: Dict[str, float]
     #: Signed totals: demand that draws nothing is debt, so all three are <= 0.
     tba: float
     undated: float
@@ -218,6 +231,13 @@ class _Open:
     taken: List[Assigned] = field(default_factory=list)
     late: bool = False
     pinned: bool = False
+    #: What was still missing when this line's own date came round (R37). Written once, by
+    #: the walk, at the line's own step.
+    short_at_date: float = 0.0
+    #: Pinned to a document that is NOT supply - an overdue one (R31). The promise stands,
+    #: so the line reads `pinned`, and the goods are still not there, so the month is still
+    #: owed the quantity. Without this the two rulings would cancel each other out.
+    uncounted_pinned: float = 0.0
 
 
 def _round(value: float) -> float:
@@ -244,8 +264,9 @@ def _next_month(key: str) -> str:
 def month_axis(first: str, last: str) -> List[str]:
     """Every month key from `first` to `last` inclusive, gaps included.
 
-    A missing column is not the same as a zero one: the balance CARRIES, so a month with no
-    movement still states a position, and leaving it out would make the axis jump.
+    A missing column is not the same as a zero one: a month with nothing due and nothing
+    arriving reads 0 (nothing owed, nothing spare, R37), and leaving it out would make the
+    calendar jump a month.
     """
     out = [first]
     while out[-1] < last:
@@ -335,6 +356,7 @@ def assign(
                 uncovered=_round(line.open_qty),
                 status=STATUS_SHORT,
                 bucket=bucket,
+                short_at_date=_round(line.open_qty),
             )
         )
 
@@ -370,6 +392,7 @@ def assign(
             if take <= EPSILON:
                 continue
             event = uncounted_by_key[hold.supply_key]
+            state.uncounted_pinned += take
         else:
             take = min(float(hold.qty), state.remaining)
             if take <= EPSILON:
@@ -415,19 +438,25 @@ def assign(
                 uncovered=uncovered,
                 status=status,
                 bucket=month_key(effective_date(line.required_date, as_of)),
+                short_at_date=state.short_at_date,
             )
         )
 
+    free = {
+        event.key: _round(max(left.get(event.key, 0.0), 0.0)) for event in counted
+    }
     months = _months(
         as_of=as_of,
         lead_days=lead_days,
         supply=counted,
-        demand=dated,
+        free=free,
+        states=[states[line.key] for line in dated],
     )
 
     return Assignment(
         lines=tuple(results),
         months=tuple(months),
+        free=free,
         tba=_round(-totals[BUCKET_TBA]),
         undated=_round(-totals[BUCKET_UNDATED]),
         unlocated=_round(-totals[BUCKET_UNLOCATED]),
@@ -508,21 +537,27 @@ def _walk(
             continue
 
         state: _Open = item  # type: ignore[assignment]
-        if state.remaining <= EPSILON:
-            continue
         group = _group_of(state.line.warehouse, state.line.is_pool)
-        for pile, event in _draw_order(piles, group):
-            if state.remaining <= EPSILON:
-                break
-            take = min(state.remaining, left[event.key])
-            if take <= EPSILON:
-                pile.remove(event)
-                continue
-            left[event.key] -= take
-            state.remaining -= take
-            state.taken.append(Assigned(event=event, qty=_round(take)))
-            if left[event.key] <= EPSILON:
-                pile.remove(event)
+        if state.remaining > EPSILON:
+            for pile, event in _draw_order(piles, group):
+                if state.remaining <= EPSILON:
+                    break
+                take = min(state.remaining, left[event.key])
+                if take <= EPSILON:
+                    pile.remove(event)
+                    continue
+                left[event.key] -= take
+                state.remaining -= take
+                state.taken.append(Assigned(event=event, qty=_round(take)))
+                if left[event.key] <= EPSILON:
+                    pile.remove(event)
+        # Its own date has now passed in the walk, so whatever is left is what this line
+        # went without ON ITS DATE - the figure its month books (R37). Later supply may
+        # still clear it (it becomes `late`), and that does not give the month back: the
+        # order was still short in the month it was promised for.
+        state.short_at_date = _round(
+            max(state.remaining, 0.0) + state.uncounted_pinned
+        )
         if state.remaining > EPSILON:
             shortfalls.setdefault(group, []).append(state)
 
@@ -598,54 +633,50 @@ def _months(
     as_of: date,
     lead_days: int,
     supply: Sequence[SupplyEvent],
-    demand: Sequence[DemandLine],
+    free: Dict[str, float],
+    states: Sequence[_Open],
 ) -> List[MonthBalance]:
-    """The cumulative dated balance, grouped into months for display.
+    """Each month on its own: what is spare in it, less what goes without in it (R37).
 
-    `build_timeline` does the accumulating and `group_by_month` the grouping, so the axis is
-    a reading of the same arithmetic the ladder uses and cannot drift from it.
+    Two sums, per month key:
+
+    - the supply DATED IN the month that nobody took by the end of the walk. Supply a line
+      consumed - including a late line whose shortfall it cleared - is spent, and spent
+      stock is not spare in any month.
+    - what each line due in the month was short AT ITS OWN DATE.
+
+    Nothing carries. A month with neither reads 0, which is the true statement about it:
+    nothing is owed and nothing is spare. The reader who wants the position over time reads
+    the row, which is the calendar.
     """
-    events: List[TimelineEvent] = []
-    for event in supply:
-        events.append(
-            TimelineEvent(
-                at=effective_date(event.at, as_of),
-                qty=float(event.qty),
-                kind=SUPPLY,
-                ref=event.ref or "",
-                location=event.warehouse or "",
-            )
-        )
-    for line in demand:
-        events.append(
-            TimelineEvent(
-                at=effective_date(line.required_date, as_of),
-                qty=-float(line.open_qty),
-                kind=DEMAND,
-                ref=line.so_number or "",
-                location=line.warehouse or "",
-                line_no=line.line_no,
-                line_id=line.key,
-            )
-        )
+    credit: Dict[str, float] = {}
+    debit: Dict[str, float] = {}
 
-    timeline = build_timeline(0.0, events)
-    closing = {}
-    for key, rows in group_by_month(timeline.rows):
-        if key is None:      # the opening row, which carries no date
+    for event in supply:
+        spare = free.get(event.key, 0.0)
+        if spare <= EPSILON:
             continue
-        closing[key] = rows[-1].balance
+        key = month_key(effective_date(event.at, as_of))
+        credit[key] = credit.get(key, 0.0) + spare
+    for state in states:
+        short = state.short_at_date
+        if short <= EPSILON:
+            continue
+        key = month_key(effective_date(state.line.required_date, as_of))
+        debit[key] = debit.get(key, 0.0) + short
 
     first = month_key(as_of)
-    last = max(closing) if closing else first
-    balance = 0.0
+    dates = [effective_date(event.at, as_of) for event in supply]
+    dates += [effective_date(state.line.required_date, as_of) for state in states]
+    last = max((month_key(value) for value in dates), default=first)
+
     out: List[MonthBalance] = []
     for key in month_axis(first, max(last, first)):
-        balance = closing.get(key, balance)
+        balance = _round(credit.get(key, 0.0) - debit.get(key, 0.0))
         out.append(
             MonthBalance(
                 key=key,
-                balance=_round(balance),
+                balance=balance,
                 tone=tone_for(balance, key, as_of=as_of, lead_days=lead_days),
             )
         )

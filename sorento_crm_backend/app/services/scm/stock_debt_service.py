@@ -4,8 +4,10 @@ S2 of `PLAN-scm-borrow-ladder-v7-stock-debt.md` (section 3.4), rulings R6/R7, R1
 
 **The view SHOWS; the board DECIDES** (R23). Nothing here writes, proposes or reserves. It
 reads the same book the ladder reads, hands it to `supply_assignment.assign()` - the one
-piece of arithmetic both surfaces share - and prints the answer as a running balance per
-month with the lines and documents behind each cell.
+piece of arithmetic both surfaces share - and prints the answer as a balance PER MONTH
+(R37: what is debted in August stays in August) with the lines and documents behind each
+cell. A cell and its drill are two readings of the same walk: free supply dated in the
+month, less what the lines due in it went short of on their own dates.
 
 **One read per input, never one per product.** The page is the whole flagged catalogue
 (1,000-2,000 products on the live book), so every fact is fetched for the WHOLE set in one
@@ -144,7 +146,9 @@ class StockDebtService:
         """The demand and the supply behind one cell (AC-S2-7, R28).
 
         The same reads as the board, narrowed to one product, so the two tables foot with the
-        cell that opened them by construction rather than by agreement. `group` is the
+        cell that opened them by construction rather than by agreement: the drill's
+        `free_qty` less its `short_qty`, over the rows of one month, IS that month's balance
+        (R37). `group` is the
         narrowing the BOARD was showing when the cell was pressed, and it is not optional
         detail: `group=BB` recomputes the balance from the BB span only, so a drill that read
         the whole book would answer a different question from the cell that opened it.
@@ -188,6 +192,11 @@ class StockDebtService:
                 "assigned_qty": round(sum(item.qty for item in line.assigned), 4),
                 "assigned_source": self._source_text(line),
                 "status": line.status,
+                # What this line booked into the month it sits in (R37): what it was short
+                # of ON ITS OWN DATE. A `late` line ends covered and still carries one,
+                # which is why the drill states it rather than leaving the reader to
+                # subtract Assigned from Open and get a different number from the cell.
+                "short_qty": line.short_at_date,
             }
             for line in result.lines
             if line.bucket == month
@@ -215,6 +224,10 @@ class StockDebtService:
                         "date": event.at,
                         "bought_for": event.bought_for,
                         "qty": event.qty,
+                        # What nobody took, once the whole walk was over - the other half of
+                        # the cell (R37). An overdue document is free of nothing: it is not
+                        # supply until somebody re-dates it (R31).
+                        "free_qty": result.free.get(event.key, 0.0) if counted else 0.0,
                         "overdue": not counted and event.at is not None,
                         "assigned_to": [
                             {"so_number": so_number, "qty": round(qty, 4)}
@@ -721,26 +734,23 @@ class StockDebtService:
     def _months_on_axis(
         self, result: Assignment, axis: Sequence[str], product_id: str
     ) -> List[dict]:
-        """One entry per axis key, in axis order: the balance CARRIES past a row's own last
-        event, so a shorter row states its position rather than a gap."""
+        """One entry per axis key, in axis order. Past a row's own last event the months
+        read 0, because nothing is due and nothing arrives in them (R37) - the balance does
+        not carry, so a column states its own month or it states nothing owed."""
         as_of = date.today()
         lead = self._lead_cache.get(product_id, DEFAULT_LEAD_TIME_DAYS)
         by_key = {month.key: month for month in result.months}
         out: List[dict] = []
-        balance = 0.0
         for key in axis:
             month = by_key.get(key)
-            if month is not None:
-                balance = month.balance
-                out.append(
-                    {"key": key, "balance": month.balance, "tone": month.tone}
-                )
-                continue
+            balance = month.balance if month is not None else 0.0
             out.append(
                 {
                     "key": key,
                     "balance": balance,
-                    "tone": tone_for(balance, key, as_of=as_of, lead_days=lead),
+                    "tone": month.tone
+                    if month is not None
+                    else tone_for(balance, key, as_of=as_of, lead_days=lead),
                 }
             )
         return out

@@ -1,13 +1,15 @@
 /**
- * S2 - the cell drill (AC-S2-7, AC-S2-11, R28/R30/R31).
+ * S2 - the cell drill (AC-S2-7, AC-S2-11, R28/R30/R31/R37).
  *
- * Two tables behind one cell, and three sentences that are easy to get subtly wrong: Plan
- * hands the ORDER to the board, an overdue document says it counts as nothing, and a PO's
- * bought-for date is stated as what it is and never as an arrival.
+ * Two TABS behind one cell, and four sentences that are easy to get subtly wrong: Plan
+ * hands the ORDER to the board, an overdue document says it counts as nothing, a PO's
+ * bought-for date is stated as what it is and never as an arrival, and the two footers
+ * foot with the cell that opened them (`Free` less `Uncovered` is the balance in the
+ * title, R37).
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { StockDebtCell } from '../types/stockDebt.types';
 
@@ -50,6 +52,7 @@ const CELL: StockDebtCell = {
       open_qty: 12,
       assigned_qty: 12,
       assigned_source: 'On hand BRW-BB',
+      short_qty: 0,
       status: 'covered',
     },
     {
@@ -60,6 +63,7 @@ const CELL: StockDebtCell = {
       open_qty: 32,
       assigned_qty: 16,
       assigned_source: 'On hand BRW-BB',
+      short_qty: 16,
       status: 'short',
     },
   ],
@@ -71,6 +75,7 @@ const CELL: StockDebtCell = {
       date: '2026-10-12',
       bought_for: null,
       qty: 40,
+      free_qty: 0,
       overdue: false,
       assigned_to: [{ so_number: 'SO407114', qty: 40 }],
     },
@@ -81,6 +86,7 @@ const CELL: StockDebtCell = {
       date: '2026-08-16',
       bought_for: '2026-10-15',
       qty: 12,
+      free_qty: 0,
       overdue: true,
       assigned_to: [],
     },
@@ -106,6 +112,13 @@ function renderDialog(cell: StockDebtCell = CELL) {
       />
     </QueryClientProvider>,
   );
+}
+
+/** Radix's TabsTrigger switches on mouse down; a bare `click` leaves the old panel up. */
+function switchTab(name: string) {
+  const tab = screen.getByRole('tab', { name });
+  fireEvent.mouseDown(tab);
+  fireEvent.click(tab);
 }
 
 beforeEach(() => vi.clearAllMocks());
@@ -148,6 +161,8 @@ describe('StockDebtCellDialog', () => {
 
   it('lists the supply with its document, arrival and who holds it', async () => {
     renderDialog();
+    await screen.findByText('SO390918');
+    switchTab('Supply (2)');
 
     expect(await screen.findByText('SPO 2026/09-0088')).toBeInTheDocument();
     expect(screen.getByText('SO407114 (40)')).toBeInTheDocument();
@@ -157,6 +172,8 @@ describe('StockDebtCellDialog', () => {
 
   it('says an overdue document counts as nothing, and only a PO says what it was bought for', async () => {
     renderDialog();
+    await screen.findByText('SO390918');
+    switchTab('Supply (2)');
 
     expect(await screen.findByText('overdue, not counted')).toBeInTheDocument();
     // R30: the PO's `expected_date` is the SO date it was typed against, so it is worded as
@@ -165,22 +182,45 @@ describe('StockDebtCellDialog', () => {
     expect(screen.queryByText(/bought for 12\/10\/2026/)).not.toBeInTheDocument();
   });
 
-  it('renders both empty states rather than two blank tables', async () => {
+  it('renders each tab own empty state rather than a blank table', async () => {
     renderDialog({ demand: [], supply: [] });
 
     expect(await screen.findByText('Nothing is due here')).toBeInTheDocument();
-    expect(screen.getByText('Nothing arrives here')).toBeInTheDocument();
+    switchTab('Supply (0)');
+    expect(await screen.findByText('Nothing arrives here')).toBeInTheDocument();
   });
 
   it('names the product, the column and the balance the reader pressed', async () => {
     renderDialog();
 
     const dialog = await screen.findByTestId('stock-debt-cell-dialog');
-    expect(
-      within(dialog).getByText('SRTWB242 - Sorento basin 242 · Oct 26'),
-    ).toBeInTheDocument();
-    expect(within(dialog).getByText('balance -16')).toBeInTheDocument();
-    // The group the board was narrowed to, so the figures are not read as the whole book.
-    expect(within(dialog).getByText('BB group')).toBeInTheDocument();
+    // The SCM family's shell: `<Kind> · <code>` with the qualifier beside it, and the
+    // product name on the muted line under it.
+    expect(within(dialog).getByText('Product · SRTWB242')).toBeInTheDocument();
+    // The month, the signed balance, and the group the board was narrowed to - so the
+    // figures are not read as the whole book.
+    expect(within(dialog).getByText('Oct 26 · -16 · BB group')).toBeInTheDocument();
+    expect(within(dialog).getByText('Sorento basin 242')).toBeInTheDocument();
+  });
+
+  it('is two tabs, Demand first, each saying how many rows it holds', async () => {
+    renderDialog();
+    await screen.findByText('SO390918');
+
+    const tabs = screen.getAllByRole('tab');
+    expect(tabs.map((tab) => tab.textContent)).toEqual(['Demand (2)', 'Supply (2)']);
+    // Demand is what the reader came for: which orders go without.
+    expect(tabs[0]).toHaveAttribute('data-state', 'active');
+  });
+
+  it('foots with the cell that opened it: Free less Uncovered is the balance (R37)', async () => {
+    renderDialog();
+    await screen.findByText('SO390918');
+
+    // The short line went without 16 on its own date; nothing in the month is free, so the
+    // cell reads -16 - which is the balance in the title.
+    expect(screen.getByText('Uncovered 16')).toBeInTheDocument();
+    switchTab('Supply (2)');
+    expect(await screen.findByText('Free 0')).toBeInTheDocument();
   });
 });

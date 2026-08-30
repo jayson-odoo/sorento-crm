@@ -24,6 +24,8 @@ from app.services.scm.supply_assignment import (
     Hold,
     SupplyEvent,
     assign,
+    effective_date,
+    month_key,
 )
 
 FIXTURES = Path(__file__).parent / "fixtures" / "supply_assignment"
@@ -86,6 +88,9 @@ def _assert_case(name: str) -> None:
         where = f"{case['case']} line {row['key']}"
         assert got.status == row["status"], where
         assert got.uncovered == pytest.approx(row["uncovered"]), where
+        # What the line's own month books (R37). Stated per line in the fixture, so the
+        # month figures below can be read as a sum of the lines rather than taken on trust.
+        assert got.short_at_date == pytest.approx(row["short_at_date"]), where
         assert got.bucket == row["bucket"], where
         assert [
             [item.event.key, item.qty] for item in got.assigned
@@ -94,6 +99,29 @@ def _assert_case(name: str) -> None:
     assert [
         {"key": m.key, "balance": m.balance, "tone": m.tone} for m in result.months
     ] == expected["months"], case["case"]
+    # R37, stated as arithmetic rather than as a table of numbers somebody typed: every
+    # month is the supply dated in it that stayed free, less the shortfalls it books.
+    as_of = _date(case["as_of"])
+    # The month a free quantity is credited to, read off the INPUT: the event's own arrival,
+    # never before today (the axis starts today).
+    event_month = {
+        row["key"]: month_key(effective_date(_date(row["at"]), as_of))
+        for row in case["supply"]
+    }
+    for month in result.months:
+        free = sum(
+            qty
+            for key, qty in result.free.items()
+            if event_month.get(key) == month.key
+        )
+        short = sum(
+            line.short_at_date
+            for line in result.lines
+            if line.bucket == month.key
+        )
+        assert month.balance == pytest.approx(free - short), (
+            f"{case['case']} {month.key}"
+        )
     assert result.tba == pytest.approx(expected["tba"])
     assert result.undated == pytest.approx(expected["undated"])
     assert [
