@@ -259,44 +259,6 @@ async def get_complaints(
         raise handle_internal_error(str(e))
 
 
-@router.get("/neighbours")
-async def get_complaint_neighbours(
-    id: str = Query(..., description="Complaint id to resolve neighbours for"),
-    query: Optional[str] = Query(None),
-    assigned_to: Optional[str] = Query(None),
-    status: Optional[str] = Query(None),
-    root_cause_ids: Optional[str] = Query(None, description="Comma-separated root cause ids"),
-    resolution_ids: Optional[str] = Query(None, description="Comma-separated resolution ids"),
-    sort: Optional[str] = Query("complaint_date"),
-    dir: Optional[str] = Query("asc"),
-    current_user: dict = Depends(get_current_user_or_api_key),
-    db: Session = Depends(get_db),
-):
-    """Prev/next neighbours of a complaint within the active filtered+sorted list set.
-
-    Accepts the same filter/sort/search params as the list GET (page/limit are
-    irrelevant and ignored). Returns ``{total, index, prev_id, next_id}`` with the
-    1-based ``index`` and circular wrap-around neighbours. If the record is not in
-    the filtered set, falls back to the unfiltered, default-sorted set.
-    """
-    try:
-        service = ComplaintService(db)
-        return service.neighbours(
-            complaint_id=id,
-            query=query,
-            assigned_to=assigned_to,
-            status=status,
-            sort_field=sort or "complaint_date",
-            sort_dir=dir or "asc",
-            root_cause_ids=_csv_ids(root_cause_ids),
-            resolution_ids=_csv_ids(resolution_ids),
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise handle_internal_error(str(e))
-
-
 @router.get("/analytics")
 async def get_complaint_analytics(
     metric: str = Query("count", description="Aggregate to compute. Only 'count' is supported."),

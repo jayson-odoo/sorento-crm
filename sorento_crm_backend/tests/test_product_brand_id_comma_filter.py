@@ -5,9 +5,8 @@ A single value keeps the pre-existing behaviour (exact match, resolved through
 ``discontinued_batch_id`` this is exactly what the product-discontinued deep
 link needs: a recipient's brand-filtered subset of one company's batch.
 
-Covers ``ProductService.list_products`` directly (the two routes - ``GET /`` and
-``GET /neighbours`` - both delegate to it via the same ``brand_id`` param, so a
-service-level test exercises the shared code path both routes rely on).
+Covers ``ProductService.list_products`` directly, which is what ``GET /`` passes
+``brand_id`` straight through to.
 """
 from __future__ import annotations
 

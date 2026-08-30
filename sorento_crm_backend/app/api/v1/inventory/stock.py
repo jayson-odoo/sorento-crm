@@ -59,7 +59,7 @@ from app.dependencies import (
 )
 from app.services.inventory_service import StockService
 from app.services.uuid_list_param import parse_uuid_list
-from app.schemas.inventory import StockResponse, StockDashboardResponse, BulkImportStockRequest, BulkImportStockResponse, StockLedgerResponse
+from app.schemas.inventory import StockResponse, StockBalanceListResponse, StockDashboardResponse, BulkImportStockRequest, BulkImportStockResponse, StockLedgerResponse
 from app.schemas.common import ListResponse, ValidateImportResponse
 from app.services.error_handler import handle_internal_error
 
@@ -71,7 +71,7 @@ class BulkDeleteStockRequest(BaseModel):
     ids: list[str]
 
 
-@router.get("/balance", response_model=ListResponse[StockResponse])
+@router.get("/balance", response_model=StockBalanceListResponse)
 def get_stock_balance(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=5000),
@@ -112,10 +112,55 @@ def get_stock_balance(
             "0 (last movement an import/sale, or no ledger) is still returned. Used by the MCP."
         ),
     ),
+    contact_id: Optional[str] = Query(
+        None,
+        description=(
+            "The contact this question is being asked ON BEHALF OF - either the "
+            "respond_contacts.id or the Respond.io id. Its presence switches the "
+            "stock-visibility policy on: which locations may be named, and whether "
+            "the answer comes back as rows, a per-product summary or a bare yes/no. "
+            "Absent (the staff web grid) means no policy is applied at all."
+        ),
+    ),
+    space_id: Optional[str] = Query(
+        None,
+        description=(
+            "Respond.io workspace id. Only used to disambiguate `contact_id` when "
+            "it is a Respond.io id: the same id can exist in two workspaces."
+        ),
+    ),
+    requested_qty: Optional[int] = Query(
+        None,
+        description=(
+            "How many units the contact asked for. Read only under an "
+            "`availability` policy, where it turns 'how many do you need?' into a "
+            "yes/no. A value below 1 is read as not provided (the number is parsed "
+            "out of a sentence, so a 0 is a parse artefact) and the reply asks for "
+            "the quantity again."
+        ),
+    ),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
-    """Get stock balance with pagination and filtering."""
+    """Get stock balance with pagination and filtering.
+
+    The stock-visibility policy (PLAN-stock-visibility-policy) is applied ONLY when
+    `contact_id` is present. Staff callers pass none, so the web grid keeps getting
+    full rows for every warehouse their RBAC allows even if the DEFAULT policy row
+    is later flipped to `compact` for the chatbot.
+
+    A `contact_id` MUST arrive with its `space_id`. Two independent resolvers read
+    this pair - the request-entry company scope (`_resolve_api_key_scope`) and the
+    visibility policy - and company scope needs BOTH params or it stays off
+    entirely. With only `contact_id` the contact would therefore be answered a
+    policy-shaped slice of every company's stock. They agree or nobody is answered.
+    """
+    if contact_id and not space_id:
+        return {
+            "data": [],
+            "pagination": {"total": 0, "page": page, "limit": limit},
+            "empty": True,
+        }
     try:
         service = StockService(db)
         result = service.list_stock(
@@ -133,6 +178,9 @@ def get_stock_balance(
             status=status,
             entities=_normalize_entities(entities),
             exclude_zero_system_adjustment=exclude_zero_system_adjustment,
+            contact_id=contact_id,
+            space_id=space_id,
+            requested_qty=requested_qty,
         )
         # Data-miss path (§3.3): when the service attached `alternatives` /
         # `relaxed_axis` (only on an empty result), bypass the strict

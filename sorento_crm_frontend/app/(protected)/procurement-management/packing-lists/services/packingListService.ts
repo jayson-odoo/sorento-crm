@@ -15,22 +15,6 @@ export type PackingListsListParams = DataGridApiFetchParams & {
   shipment_status?: string;
 };
 
-/**
- * Path of the packing-lists neighbours endpoint. Consumed by `usePackingListNeighbours`
- * via the generic `useRecordNeighbours` hook.
- *
- * Contract (see docs/plans/PLAN-record-navigation-standardization.md):
- *   GET /api/v1/procurement/packing-lists/neighbours
- *   Query params: id=<uuid> + the SAME params the list GET accepts
- *                 (query, supplier_id, shipment_status, sort, dir). page/limit ignored.
- *   Auth: same dependency + module guard as the list GET.
- *   200:  { total: number, index: number|null, prev_id: string|null, next_id: string|null }
- *       - index is 1-based; null when the record is not in the filtered set
- *           (the backend then falls back to the unfiltered, default-sorted set).
- *       - prev_id/next_id wrap circularly; null only when total <= 1.
- */
-export const PACKING_LIST_NEIGHBOURS_PATH =
-  '/api/v1/procurement/packing-lists/neighbours';
 
 export async function getPackingLists(
   params: PackingListsListParams,
@@ -276,4 +260,68 @@ export async function getLatestContainerStatusDocument(): Promise<LatestContaine
     );
   }
   return response.json();
+}
+
+/**
+ * ============================================================================
+ * Where this container's lines came from - the proforma invoices behind it (F10)
+ * ============================================================================
+ * Layering: the packing-list tabs -> usePackingListSourceInvoices -> THIS -> api-client.
+ *
+ * ── BACKEND CONTRACT (app/api/v1/scm/proforma_invoices.py) ────────────────
+ *  GET /api/v1/scm/inbound-shipments/{id}/source-proforma-invoices
+ *      -> 200 PackingListSourceInvoices. Auth: `scm.dashboard.view`, the same permission
+ *      the SPO planner tab on this very page already reads behind.
+ *      200 with empty lists on a container that was never converted from a PI (the real
+ *      packing-list upload path), so the card renders its empty state rather than erroring.
+ *
+ * ONE endpoint rather than four, because the Details card, the Lines column, the Timeline
+ * entry and the Documents list are four readings of the same link rows (AC-F9).
+ */
+export interface PackingListSourceInvoice {
+  id: string;
+  pi_number: string;
+  supplier_id: string | null;
+  supplier_name: string | null;
+  invoice_date: string | null;
+  revision_no: number;
+  /** How many revisions the chain holds - "Revision 2 of 2" (AC-F9). 1 on an original. */
+  revision_count: number;
+  status: 'current' | 'superseded';
+  /** The file it was read from, which is what the Documents tab lists (AC-F9). */
+  source_ref: string | null;
+  currency: string | null;
+  /** How many of ITS lines landed on this container, and how many it holds in total. */
+  lines: number;
+  total_lines: number;
+  /** What came here, out of the invoice's whole quantity. */
+  qty: number;
+  total_qty: number;
+  /** Value of what came here, at the invoice's own prices. Null when it states none. */
+  amount: number | null;
+}
+
+export interface PackingListSourceInvoices {
+  invoices: PackingListSourceInvoice[];
+  /** Who created this container, BY NAME - `inbound_shipments.created_by` is a user id and
+   *  this screen prints it. "System" when nobody is recorded, or the actor's user row has
+   *  gone; never the id. */
+  created_by: string;
+  /** Per shipment line id, which invoice(s) that line's goods were charged on. */
+  by_shipment_line: Record<
+    string,
+    Array<{ proforma_invoice_id: string; pi_number: string; qty: number }>
+  >;
+}
+
+export async function getPackingListSourceInvoices(
+  shipmentId: string,
+): Promise<PackingListSourceInvoices> {
+  const res = await apiFetch(
+    `/api/v1/scm/inbound-shipments/${shipmentId}/source-proforma-invoices`,
+  );
+  if (!res.ok) {
+    throw new Error(await extractApiError(res, 'Failed to load the source proforma invoices'));
+  }
+  return (await res.json()) as PackingListSourceInvoices;
 }

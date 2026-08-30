@@ -1,36 +1,55 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { buildDataGridParams } from '@/lib/api-client';
-import {
-  useRecordNeighbours,
-  type RecordNeighboursResult,
-} from '@/hooks/useRecordNeighbours';
-import { getForms, getForm, createForm, updateForm, deleteForm, bulkDeleteForms, duplicateForm, publishForm, getFormVersions, FORM_NEIGHBOURS_PATH } from '../services/formService';
+
+import { getForms, getForm, createForm, updateForm, deleteForm, bulkDeleteForms, duplicateForm, publishForm, getFormVersions } from '../services/formService';
 import type { FormsListParams } from '../services/formService';
+import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
 import type { FormFormData } from '../types/form.types';
 
+
 /**
- * Prev/next neighbours of a form within the active filtered+sorted list set.
- * Serializes the list query (search/sort/language/status/form_type) with
- * `buildDataGridParams` - the same serialization the list page uses - so the
- * backend honours filters identically. `page`/`limit` are sent but ignored by
- * the neighbours endpoint.
+ * The list's React Query key. The detail page's pager rebuilds the SAME key from
+ * the URL, so it reads the page the list already fetched.
  */
-export function useFormNeighbours(
-  formId: string | null,
-  listParams: FormsListParams,
-): RecordNeighboursResult {
-  const params = buildDataGridParams(listParams, {
-    language: listParams.language,
-    status: listParams.status,
-    form_type: listParams.form_type,
-  });
-  return useRecordNeighbours(FORM_NEIGHBOURS_PATH, formId, params);
+export function formsListQueryKey(params: FormsListParams): QueryKey {
+  return [
+    'forms',
+    params.pageIndex,
+    params.pageSize,
+    params.sorting,
+    params.searchQuery,
+    params.language,
+    params.status,
+    params.purpose,
+    params.form_type,
+  ];
 }
+
+/** The list query a detail URL describes, in the shape the list passes. */
+export function formsListParamsFromUrl(params: ListPagerParams): FormsListParams {
+  return {
+    pageIndex: params.pageIndex,
+    pageSize: params.pageSize,
+    sorting: params.sorting,
+    searchQuery: params.searchQuery,
+    language: params.filters.language,
+    status: params.filters.status,
+    purpose: params.filters.purpose,
+    form_type: params.filters.form_type,
+  };
+}
+
+/** The pager's two hooks into the forms list. */
+export const formsPagerQuery = {
+  listQueryKey: (params: ListPagerParams): QueryKey =>
+    formsListQueryKey(formsListParamsFromUrl(params)),
+  fetchPage: (params: ListPagerParams): Promise<ListPagerPage> =>
+    getForms(formsListParamsFromUrl(params)),
+};
 
 export function useForms(params: FormsListParams) {
   return useQuery({
-    queryKey: ['forms', params.pageIndex, params.pageSize, params.sorting, params.searchQuery, params.language, params.status, params.purpose, params.form_type],
+    queryKey: formsListQueryKey(params),
     queryFn: () => getForms(params),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,

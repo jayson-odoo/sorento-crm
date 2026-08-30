@@ -28,6 +28,7 @@ from app.api.v1 import (
     tickets,
     downloads,
     dealer_kit,
+    reports,
     scm,
 )
 from app.api.v1.system import modules_runtime, rule_facts, companies as system_companies
@@ -193,6 +194,15 @@ api_router.include_router(
     downloads.router,
     prefix="/downloads",
     tags=["downloads"],
+)
+# Reporting foundation: one set of routes for every report, each gated on its own
+# permission slug. Under the procurement guard while the sponsorship report is the only
+# one (PLAN-reporting-foundation); it moves when a second module owns a report.
+api_router.include_router(
+    reports.router,
+    prefix="/reports",
+    tags=["reports"],
+    dependencies=[Depends(require_module_enabled_with_api_key("procurement"))],
 )
 api_router.include_router(
     list_query.router,

@@ -7,11 +7,13 @@ PREFIX and never on AutoCount's own `Shipping Order` flag - nine rows of the cap
 book disagree with their own flag, and a misfiled row is the one thing this channel must not
 produce (ADR 337).
 
-Both families land in `purchase_orders` / `purchase_order_lines`, discriminated by
-`source_system` (`scm_po_history` / `scm_spo_history`). They are the same thing to this
-schema: a creditor document with dated item lines. The SPO half is deliberately NOT written
-to `spo_allocations` - see the S5 amendment in the plan and the `SPO_SOURCE_SYSTEM` note
-below.
+The two families land in DIFFERENT tables, and that is the whole point of the split: a
+purchase order is written to `purchase_orders` / `purchase_order_lines`, a shipping order to
+`spo_allocations`, one row per SPO line. `scm.on_order_v` reads `spo_allocations` and nothing
+else, so a shipping order filed as a purchase order was supply the module could not see.
+See `PLAN-scm-cs-planning-uat.md` section K and migration `420_spo_docs_in_allocations`,
+which moved the 3,983 SPO documents already held across and reversed the S5 amendment that
+had kept them here.
 
 One rule governs everything else:
 
@@ -34,6 +36,15 @@ Two things this service refuses to do:
     catalogue stops meaning anything.
   * **Guess a line-level SO link.** The `**SO:174830**` notes are order-level (see the
     reader), so the claims written here carry no item code.
+
+A creditor is the opposite case, and since the captain's ruling of 28 Aug 2026 this channel
+DOES back-create one - by its code where the file states one, else by its cleaned name under
+a generated code, exactly as the outstanding purchase-order upload does (the rule itself
+lives in `supplier_back_create`, so the two books cannot drift). A supplier named on a real
+purchase order is evidence the supplier exists, where an unknown item code is evidence of a
+typo; and an order with no creditor at all can be neither chased nor reconciled. The one
+creditor this still refuses to create is an AMBIGUOUS name - a company the master already
+holds twice, under one code per currency account.
 """
 from __future__ import annotations
 
@@ -45,7 +56,12 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.inventory import Warehouse
-from app.models.procurement import PurchaseOrder, PurchaseOrderLine, Supplier
+from app.models.procurement import (
+    PurchaseOrder,
+    PurchaseOrderLine,
+    SPOAllocation,
+    Supplier,
+)
 from app.models.product import Product
 from app.models.scm import OrderLinkClaim
 from app.services import import_outcome_codes as oc
@@ -63,6 +79,11 @@ from app.services.scm.purchase_history_reader import (
     STRUCTURED_DOC_TYPE,
     read_purchase_history,
 )
+from app.services.scm.supplier_back_create import (
+    CREATED_SUPPLIERS_LISTED,
+    back_create_supplier,
+    supplier_slug,
+)
 from app.services.sla_service import MALAYSIA_TZ, to_naive_datetime
 
 logger = logging.getLogger(__name__)
@@ -73,15 +94,13 @@ logger = logging.getLogger(__name__)
 #: back to open) has to recognise them, and it must not import this module's write path.
 SOURCE_SYSTEM = PO_HISTORY_SOURCE
 
-#: The same, for the SHIPPING-ORDER family (`SPO-2023/01-0001`). Both families land in
-#: `purchase_orders` / `purchase_order_lines` - they are the same thing to this schema, a
-#: creditor document with dated item lines - and the stamp is what lets a later reader tell
-#: them apart without re-parsing the number. See the S5 amendment in
-#: `documentation/plans/scm/PLAN-scm-order-import-feedback.md` for why the SPO half is NOT
-#: written to `spo_allocations`: that table is the SUPPLY read model behind `scm.on_order_v`,
-#: its warehouse is NOT NULL (578 rows of the captain's book name a location we do not hold),
-#: and its `(spo_number, product, warehouse)` unique key forbids the 2,253 repeated
-#: item-on-one-SPO groups the file actually contains.
+#: The same, for the SHIPPING-ORDER family (`SPO-2023/01-0001`), stamped on the
+#: `spo_allocations` rows this feed writes. It is what lets a later reader tell an imported
+#: shipping order from one this system raised, and it is what migration 420's downgrade
+#: moves back. The three objections that once kept this family in `purchase_orders` are all
+#: answered by that migration: `spo_allocations.warehouse_id` is nullable with the raw code
+#: kept beside it, and the unique key is the LINE, so repeated item-on-one-SPO groups are
+#: ordinary data rather than a collision.
 SPO_SOURCE_SYSTEM = SPO_HISTORY_SOURCE
 
 #: `source_ref` per file shape, so the two exports are distinguishable on the row.
@@ -128,6 +147,21 @@ _CURRENCY_SUFFIXES = frozenset({
 })
 
 
+def _clean_creditor_name(name: str) -> str:
+    """The creditor's name with AutoCount's trailing currency note removed.
+
+    What a back-created supplier is NAMED, so the master holds `XIAMEN TAIYANG TECHNOLOGY
+    CO.,LTD` rather than one row per currency the client happens to buy in. The case the file
+    used is kept: this is the display name, not the comparison key.
+    """
+    text = " ".join((name or "").split())
+    if text.endswith(")") and "(" in text:
+        head, _, tail = text.rpartition("(")
+        if tail[:-1].upper() in _CURRENCY_SUFFIXES:
+            return head.strip()
+    return text
+
+
 def _creditor_key(name: str) -> str:
     """The comparison key for a creditor NAME.
 
@@ -136,41 +170,45 @@ def _creditor_key(name: str) -> str:
     account's currency. Folding that away is what stops one supplier reading as two, and the
     currency list above is deliberately the ONLY thing folded.
     """
-    text = " ".join((name or "").upper().split())
-    if text.endswith(")") and "(" in text:
-        head, _, tail = text.rpartition("(")
-        if tail[:-1] in _CURRENCY_SUFFIXES:
-            return head.strip()
-    return text
+    return _clean_creditor_name(name).upper()
 
 
-def _suppliers_by_name(db: Session, names: set[str]) -> dict[str, Supplier]:
-    """Creditors matched by NAME, for the export that carries no creditor code.
+def _match_creditors(db: Session,
+                     names: set[str]) -> tuple[dict[str, Supplier], set[str]]:
+    """Creditors matched by NAME, and the names that match more than one supplier.
 
-    Never creates. `suppliers.supplier_code` is unique and NOT NULL, so a supplier could only
-    be created from this file by inventing its code - and an invented code is a supplier
-    nobody can reconcile against AutoCount, on a master that already exists. The banded
-    report DOES carry the code, which is why it may create; this one cannot, so an unmatched
-    creditor is reported and its orders are written unlinked. The quantity and the date, which
-    are what history is for, are true either way.
+    Two answers because they have two different fates. A name nothing holds is BACK-CREATED
+    (captain, 28 Aug 2026 - the same rule the outstanding purchase-order upload applies, in
+    `supplier_back_create`): the structured export states the creditor and never its code, so
+    leaving it unmatched wrote the order unlinked, and an order with no creditor cannot be
+    chased or reconciled. The generated code is a slug of the name; it is reconcilable against
+    AutoCount through the NAME, which is the only identity this export states.
 
-    An AMBIGUOUS name resolves to nothing. Two supplier rows can fold to one key (the same
-    company held twice under two codes, one per currency account), and the query that finds
-    them has no ORDER BY - so picking one would attribute a year of purchases to whichever row
-    Postgres happened to return first, differently on the next run and silently either way.
-    The name comes back unmatched instead, which is a line on the operator's list naming the
-    creditor to merge.
+    An AMBIGUOUS name still resolves to nothing and creates nothing. Two supplier rows can
+    fold to one key (the same company held twice under two codes, one per currency account),
+    and the query that finds them has no ORDER BY - so picking one would attribute a year of
+    purchases to whichever row Postgres happened to return first, differently on the next run
+    and silently either way. Creating a THIRD row for a company already held twice would be
+    worse still. The name is reported instead, which is a line on the operator's list naming
+    the creditor to merge.
     """
     if not names:
-        return {}
+        return {}, set()
     by_key: dict[str, list[Supplier]] = {}
     for supplier in db.query(Supplier).all():
         by_key.setdefault(_creditor_key(supplier.supplier_name), []).append(supplier)
-    return {
+    matched = {
         n: by_key[_creditor_key(n)][0]
         for n in names
         if len(by_key.get(_creditor_key(n), ())) == 1
     }
+    ambiguous = {n for n in names if len(by_key.get(_creditor_key(n), ())) > 1}
+    return matched, ambiguous
+
+
+def _suppliers_by_name(db: Session, names: set[str]) -> dict[str, Supplier]:
+    """The unambiguous half of `_match_creditors`, for a caller that needs only the matches."""
+    return _match_creditors(db, names)[0]
 
 
 def _warehouses_by_code(db: Session, codes: set[str]) -> dict[str, str]:
@@ -198,6 +236,222 @@ def _warehouses_by_code(db: Session, codes: set[str]) -> dict[str, str]:
     return out
 
 
+def _allocations_for(
+    db: Session, cache: dict[str, dict], spo_number: str
+) -> dict[int, SPOAllocation]:
+    """The SPO rows already held for ONE document, keyed by line number.
+
+    The same shape as `existing_lines` on the purchase-order side, and for the same reason: a
+    re-upload of a book somebody re-exported over a wider date range must refresh what it
+    already holds instead of doubling every historical quantity.
+
+    Per DOCUMENT, exactly as the purchase-order half reads its lines. A whole-file preload
+    would send 13,550 document numbers in one `IN` list and hold every row they match in the
+    session - some 74,000 ORM objects on a re-upload of the captain's own book - to answer a
+    question that is only ever asked one document at a time. Cached, so a number that appears
+    twice in one file is read once.
+    """
+    if spo_number not in cache:
+        cache[spo_number] = {
+            row.spo_line_number: row
+            for row in db.query(SPOAllocation)
+            .filter(SPOAllocation.spo_number == spo_number)
+            .all()
+        }
+    return cache[spo_number]
+
+
+def _write_shipping_order(
+    db: Session,
+    parsed_order,
+    *,
+    product_by_code: dict[str, str],
+    warehouse_by_code: dict[str, str],
+    supplier: Optional[Supplier],
+    existing: dict[int, SPOAllocation],
+    outcome: ImportOutcome,
+    company_id: Optional[str],
+    claimed: set,
+    now: datetime,
+) -> int:
+    """One shipping order, as `spo_allocations` rows. Returns how many rows were created.
+
+    Upserted on `(company, spo_number, spo_line_number)` - the line, not the
+    (document, product, location) triple, because the book states the same product on one
+    SPO 13,305 times over and every one of those is a real second container.
+
+    Written CLOSED and fully received, which is this whole service's governing rule: history
+    must never read as incoming supply. `scm.on_order_v` counts a row only while it is open
+    AND still has quantity to come, so 3,517 shipping orders from 2020 are excluded by
+    construction rather than by a filter somebody has to remember.
+    """
+    lines_created = 0
+    held = existing
+    for index, parsed_line in enumerate(parsed_order.lines, start=1):
+        identity = {"doc_no": parsed_order.po_number,
+                    "item_code": parsed_line.item_code,
+                    "line_no": parsed_line.line_no}
+        if not parsed_line.is_stock_item:
+            outcome.skip(row=parsed_line.source_row, code=oc.CHARGE_LINE,
+                         identity=identity, value=parsed_line.description or None)
+            continue
+        product_id = product_by_code.get(parsed_line.item_code)
+        if product_id is None:
+            outcome.skip(row=parsed_line.source_row, code=oc.PRODUCT_NOT_FOUND,
+                         identity=identity, value=parsed_line.item_code)
+            continue
+
+        # The book's own line number where it states one, else this line's position in the
+        # document. Position is only a fallback: the export that states none also states its
+        # lines in a fixed order, so the same file re-uploaded lands on the same numbers.
+        line_no = parsed_line.line_no or index
+        code = parsed_line.location.upper() if parsed_line.location else None
+        warehouse_id = warehouse_by_code.get(code) if code else None
+
+        if parsed_line.so_number:
+            # Claimed for every line the file states, whoever ends up owning the row below:
+            # "this shipping order carries that sales order" is a fact about the DOCUMENT,
+            # and the claim holds both numbers as text so it survives either way.
+            _claim_so_link(db, parsed_order.po_number, parsed_line.so_number, now,
+                           item_code=parsed_line.item_code, seen=claimed,
+                           company_id=company_id)
+
+        row = held.get(line_no)
+        if row is not None and (row.source_system or "") not in (SOURCE_SYSTEM, SPO_SOURCE_SYSTEM):
+            # Somebody else owns this line: the live outstanding book, or an SPO this system
+            # raised from a draft shipment. Those rows carry the OPEN balance that is the
+            # module's only incoming supply, and closing them because a history export also
+            # mentions the document would delete that supply on a re-upload.
+            outcome.skip(row=parsed_line.source_row, code=oc.DOCUMENT_OWNED_ELSEWHERE,
+                         identity=identity, value=parsed_order.po_number)
+            continue
+
+        quantity = int(round(parsed_line.qty_ordered or 0))
+        if row is None:
+            row = SPOAllocation(
+                spo_number=parsed_order.po_number,
+                spo_line_number=line_no,
+                product_id=product_id,
+                warehouse_id=warehouse_id,
+                # The code as the book spelled it, held or not. On 6,520 lines this is the
+                # only record of where the goods were meant to go.
+                location_code=code,
+                allocated_quantity=quantity,
+                quantity_received=quantity,
+                receipt_status="fully_received",
+                line_status="closed",
+                source_system=SPO_SOURCE_SYSTEM,
+                issue_date=parsed_order.order_date,
+                expected_date=parsed_line.expected_date,
+                supplier_id=str(supplier.id) if supplier else None,
+                unit_cost=parsed_line.unit_price,
+                currency=parsed_order.currency or None,
+            )
+            db.add(row)
+            held[line_no] = row
+            lines_created += 1
+            outcome.success(row=parsed_line.source_row, code=oc.CREATED,
+                            identity=identity, value=parsed_order.po_number)
+            continue
+
+        row.product_id = product_id
+        row.allocated_quantity = quantity
+        row.quantity_received = quantity
+        row.receipt_status = "fully_received"
+        row.line_status = "closed"
+        row.unit_cost = parsed_line.unit_price
+        row.currency = parsed_order.currency or row.currency
+        row.issue_date = parsed_order.order_date or row.issue_date
+        if code is not None:
+            row.location_code = code
+        if warehouse_id is not None:
+            row.warehouse_id = warehouse_id
+        if parsed_line.expected_date is not None:
+            row.expected_date = parsed_line.expected_date
+        if supplier is not None:
+            row.supplier_id = str(supplier.id)
+        # `updated`, not `unchanged`, whatever the values were: this feed's rule is that the
+        # file is the record of what was ordered, so the write happened.
+        outcome.updated(row=parsed_line.source_row, identity=identity,
+                        value=parsed_order.po_number, entity_type="spo_allocation",
+                        entity_id=row.id)
+    return lines_created
+
+
+def _match_existing_lines(
+    parsed_lines, existing, product_by_code: dict[str, str],
+    warehouse_by_code: dict[str, str],
+) -> list:
+    """Which held line each parsed line IS, keyed by `(product, warehouse)` before ordinal.
+
+    Section 3.G, AC-G3. Line identity used to be the document's line NUMBER alone, and the
+    structured extract carries no line number of its own - `purchase_history_reader` numbers
+    the rows POSITIONALLY, "the n-th line of the document, in file order". So the moment
+    AutoCount splits one line into two, every ordinal below it shifts by one and a re-upload
+    rewrites the wrong rows: on the captain's own case a DC1 500 line becomes BRW-BB 487 +
+    BRW 13, and under the ordinal alone the two locations swap their quantities silently.
+
+    So the pass order is:
+
+      1. `(product_id, warehouse_id)` - what the line IS. Each held line is consumed at most
+         once, so a document that states the same item at the same location on two rows (two
+         containers on one purchase order, 2,253 times over on the captain's book) pairs the
+         first with the first and the second with the second rather than collapsing them.
+      2. the ordinal, and only for a parsed line of the SAME PRODUCT. That is the split case:
+         the DC1 line and the BRW-BB line that replaced it are the same item, so the held row
+         is rewritten in place and everything pointing at it - a goods receipt, an order
+         inquiry link - stays attached. An ordinal match across two different products is a
+         coincidence rather than an identity, and following it is the shift bug itself.
+      3. nothing, and the caller creates.
+
+    Answers a list aligned to `parsed_lines`; a non-stock or unresolvable row is `None`,
+    because the caller skips it before it ever reaches a write.
+    """
+    by_key: dict[tuple, list] = {}
+    by_ordinal: dict[object, list] = {}
+    for line in existing:
+        by_key.setdefault(
+            (str(line.product_id), str(line.warehouse_id or "")), []
+        ).append(line)
+        ordinal = int(line.source_ref) if (line.source_ref or "").isdigit() else None
+        by_ordinal.setdefault(ordinal, []).append(line)
+
+    taken: set[str] = set()
+
+    def _take(bucket: list, product_id: Optional[str] = None):
+        for line in bucket:
+            if str(line.id) in taken:
+                continue
+            if product_id is not None and str(line.product_id) != str(product_id):
+                continue
+            taken.add(str(line.id))
+            return line
+        return None
+
+    matched: list = [None] * len(parsed_lines)
+    resolved: list = []
+    for parsed in parsed_lines:
+        product_id = (product_by_code.get(parsed.item_code)
+                      if parsed.is_stock_item else None)
+        warehouse_id = (warehouse_by_code.get(parsed.location.upper())
+                        if parsed.location else None)
+        resolved.append((product_id, warehouse_id))
+
+    for index, (product_id, warehouse_id) in enumerate(resolved):
+        if product_id is None:
+            continue
+        matched[index] = _take(
+            by_key.get((str(product_id), str(warehouse_id or "")), [])
+        )
+    for index, (product_id, _warehouse_id) in enumerate(resolved):
+        if product_id is None or matched[index] is not None:
+            continue
+        matched[index] = _take(
+            by_ordinal.get(parsed_lines[index].line_no, []), product_id=product_id
+        )
+    return matched
+
+
 def _parse(db: Session, file_data: bytes) -> PoListingResult:
     """Read the book, whichever of the two exports it is.
 
@@ -215,12 +469,23 @@ def _summarise(db: Session, parsed: PoListingResult) -> dict:
     }
     known = _products_by_code(db, stock_codes)
     unmatched = sorted(stock_codes - set(known))
-    existing = {
+    # Both tables, because the two families live in different ones. Asking only
+    # `purchase_orders` would report every shipping order in the file as new, and the
+    # "already held - they will be refreshed" warning is the operator's own check that they
+    # are re-uploading the book they think they are.
+    numbers = [o.po_number for o in parsed.orders]
+    existing = ({
         n
         for (n,) in db.query(PurchaseOrder.po_number)
-        .filter(PurchaseOrder.po_number.in_([o.po_number for o in parsed.orders]))
+        .filter(PurchaseOrder.po_number.in_(numbers))
         .all()
-    } if parsed.orders else set()
+    } | {
+        n
+        for (n,) in db.query(SPOAllocation.spo_number)
+        .filter(SPOAllocation.spo_number.in_(numbers))
+        .distinct()
+        .all()
+    }) if parsed.orders else set()
 
     # The creditor names and stock locations only the structured export states. Both are
     # reported rather than allowed to fail a line: a purchase we cannot attribute to a
@@ -228,7 +493,12 @@ def _summarise(db: Session, parsed: PoListingResult) -> dict:
     creditor_names = {
         o.supplier_name for o in parsed.orders if o.supplier_name and not o.supplier_code
     }
-    matched_creditors = set(_suppliers_by_name(db, creditor_names))
+    matched_creditors, ambiguous_creditors = _match_creditors(db, creditor_names)
+    # Two lists, because the two names have two different fates and one list would have to
+    # lie about half of them: a name nothing holds gets a supplier created for it, and a name
+    # held twice gets nothing until somebody merges the two rows.
+    to_create = sorted(creditor_names - set(matched_creditors) - ambiguous_creditors)
+    unlinked = sorted(ambiguous_creditors)
     location_codes = {l.location.upper() for o in parsed.orders for l in o.lines if l.location}
     known_locations = set(_warehouses_by_code(db, location_codes))
 
@@ -253,8 +523,15 @@ def _summarise(db: Session, parsed: PoListingResult) -> dict:
         # `unmatched_items` / `unmatched_item_codes` below. Heading a section with the length
         # of what it happens to be showing turns 400 unmatched creditors into "(200)", which
         # reads like a smaller, closed problem than it is.
-        "unmatched_creditor_count": len(creditor_names - matched_creditors),
-        "unmatched_creditors": sorted(creditor_names - matched_creditors)[:200],
+        # Names that stay UNLINKED, which since the back-create ruling means the ambiguous
+        # ones and nothing else.
+        "unmatched_creditor_count": len(unlinked),
+        "unmatched_creditors": unlinked[:200],
+        # Names this upload would create (preview) or did create (apply, which reports the
+        # same figure as `suppliers_created` afterwards). An operator must never discover an
+        # invented supplier by surprise, so it is on the confirm screen before it happens.
+        "creditors_to_create_count": len(to_create),
+        "creditors_to_create": to_create[:200],
         "unknown_location_count": len(location_codes - known_locations),
         "unknown_locations": sorted(location_codes - known_locations)[:200],
         # Every non-blank row the reader read, so the job's denominator and the operator's own
@@ -311,9 +588,16 @@ def validate(db: Session, file_data: bytes) -> dict:
         (f"{out['charge_lines']:,} charge lines (handling, misc) carry cost but no product, "
          f"so they are counted on the order and not as stock") if out["charge_lines"] else None,
         val.named(
+            out["creditors_to_create_count"], out["creditors_to_create"],
+            one="creditor name we do not hold, so a supplier is created for it",
+            many="creditor names we do not hold, so a supplier is created for each",
+        ),
+        val.named(
             out["unmatched_creditor_count"], out["unmatched_creditors"],
-            one="creditor name we do not hold, so its orders are written unlinked",
-            many="creditor names we do not hold, so their orders are written unlinked",
+            one=("creditor name we already hold twice, so nothing is created and its "
+                 "orders are written unlinked"),
+            many=("creditor names we already hold twice each, so nothing is created and "
+                  "their orders are written unlinked"),
         ),
         val.named(
             out["unknown_location_count"], out["unknown_locations"],
@@ -326,7 +610,8 @@ def validate(db: Session, file_data: bytes) -> dict:
             many="columns we could not place, so nothing in them is read",
         ),
         (f"{out['orders_spo']:,} of these documents are shipping orders (SPO) and "
-         f"{out['orders_po']:,} are purchase orders; both are loaded as history")
+         f"{out['orders_po']:,} are purchase orders; the shipping orders are loaded as SPO "
+         f"allocations, the purchase orders as purchase-order history")
         if out["orders_spo"] else None,
     ]
     return val.envelope(
@@ -369,6 +654,8 @@ def apply(db: Session, file_data: bytes, actor: Optional[str] = None,
     if not parsed.ok:
         summary["orders_created"] = 0
         summary["lines_created"] = 0
+        summary["suppliers_created"] = 0
+        summary["suppliers_created_codes"] = []
         summary["date_from"] = None
         summary["date_to"] = None
         return summary
@@ -391,11 +678,20 @@ def apply(db: Session, file_data: bytes, actor: Optional[str] = None,
 
     supplier_codes = {o.supplier_code for o in parsed.orders if o.supplier_code}
     supplier_by_code = _suppliers_by_code(db, supplier_codes)
-    # The structured export names the creditor and never its code, so that half is matched by
-    # name and never created (`_suppliers_by_name`).
-    supplier_by_name = _suppliers_by_name(
+    # The structured export names the creditor and never its code, so that half is matched -
+    # and, since the back-create ruling, created - by NAME. Keyed by the folded key rather
+    # than by the raw cell, because one file states `X` on one document and `X (RMB)` on the
+    # next: keyed by the cell, the second spelling would miss the row the first just created
+    # and invent a second supplier for the same company.
+    supplier_by_name, ambiguous_creditors = _match_creditors(
         db, {o.supplier_name for o in parsed.orders if o.supplier_name and not o.supplier_code}
     )
+    supplier_by_key = {_creditor_key(name): s for name, s in supplier_by_name.items()}
+    ambiguous_keys = {_creditor_key(name) for name in ambiguous_creditors}
+    #: What this upload invented, reported at the end. The count is the whole truth; the list
+    #: is capped, because a report naming every one of a few thousand creditors is not one a
+    #: person can read either.
+    created_supplier_codes: list[str] = []
     warehouse_by_code = _warehouses_by_code(
         db, {l.location.upper() for o in parsed.orders for l in o.lines if l.location}
     )
@@ -408,6 +704,8 @@ def apply(db: Session, file_data: bytes, actor: Optional[str] = None,
         .filter(PurchaseOrder.po_number.in_([o.po_number for o in parsed.orders]))
         .all()
     }
+    #: SPO document number -> its rows by line number, filled one document at a time.
+    existing_allocations: dict[str, dict] = {}
 
     orders_created = 0
     lines_created = 0
@@ -428,27 +726,58 @@ def apply(db: Session, file_data: bytes, actor: Optional[str] = None,
     claim_company_id = resolve_write_company_id(get_company_scope(db), ambiguous=None)
 
     for parsed_order in parsed.orders:
+        creditor_key = _creditor_key(parsed_order.supplier_name)
         supplier = (supplier_by_code.get(parsed_order.supplier_code)
                     if parsed_order.supplier_code
-                    else supplier_by_name.get(parsed_order.supplier_name))
+                    else supplier_by_key.get(creditor_key))
         if supplier is None and parsed_order.supplier_code:
             # Created from the creditor code, which IS the supplier's identity in AutoCount.
             # Unlike a product, a supplier named on a real purchase order is evidence the
             # supplier exists - and a purchase order with no creditor cannot be reconciled.
-            # `suppliers` carries no source columns, so the provenance of an imported
-            # creditor lives on the orders that name it rather than on the supplier row.
-            supplier = Supplier(
-                supplier_code=parsed_order.supplier_code,
-                supplier_name=parsed_order.supplier_name or parsed_order.supplier_code,
-            )
-            db.add(supplier)
-            db.flush()
-            supplier_by_code[parsed_order.supplier_code] = supplier
+            supplier = back_create_supplier(
+                db, code=parsed_order.supplier_code,
+                name=parsed_order.supplier_name or parsed_order.supplier_code)
+            if supplier is not None:
+                supplier_by_code[parsed_order.supplier_code] = supplier
+                created_supplier_codes.append(parsed_order.supplier_code)
+        elif (supplier is None and creditor_key
+                and creditor_key not in ambiguous_keys):
+            # The structured export's half: a creditor NAME nobody holds, under a code
+            # generated from that name (`supplier_slug`). The name is the only identity this
+            # file states, so it is what the row is reconciled against; a code held twice for
+            # one company is the ONE case left unlinked, above.
+            cleaned = _clean_creditor_name(parsed_order.supplier_name)
+            supplier = back_create_supplier(db, code=supplier_slug(db, cleaned),
+                                            name=cleaned)
+            if supplier is not None:
+                supplier_by_key[creditor_key] = supplier
+                # The cleaned NAME, not the generated slug: it is what the operator's own
+                # file said and what they will recognise, where the slug is an internal code
+                # they never typed. Same choice as the outstanding importer's name path.
+                created_supplier_codes.append(cleaned)
 
         # Which of the two writers this document belongs to, from its NUMBER. The routing is
         # a property of the document rather than of the file it arrived in, so a shipping
         # order in the banded report is filed the same way as one in the structured export.
         is_shipping_order = parsed_order.doc_family == FAMILY_SPO
+        if is_shipping_order:
+            held = _allocations_for(db, existing_allocations, parsed_order.po_number)
+            document_is_new = not held
+            lines_created += _write_shipping_order(
+                db, parsed_order,
+                product_by_code=product_by_code,
+                warehouse_by_code=warehouse_by_code,
+                supplier=supplier,
+                existing=held,
+                outcome=outcome,
+                company_id=claim_company_id,
+                claimed=claimed,
+                now=now,
+            )
+            orders_created += 1 if document_is_new else 0
+            _claim_so_links(db, parsed_order.po_number, parsed_order.so_numbers, now,
+                            seen=claimed, company_id=claim_company_id)
+            continue
 
         order = existing_orders.get(parsed_order.po_number)
         if order is None:
@@ -474,14 +803,16 @@ def apply(db: Session, file_data: bytes, actor: Optional[str] = None,
             if supplier is not None:
                 order.supplier_id = str(supplier.id)
 
-        existing_lines = {
-            (int(l.source_ref) if (l.source_ref or "").isdigit() else None): l
-            for l in db.query(PurchaseOrderLine)
+        matched_lines = _match_existing_lines(
+            parsed_order.lines,
+            db.query(PurchaseOrderLine)
             .filter(PurchaseOrderLine.purchase_order_id == str(order.id))
-            .all()
-        }
+            .all(),
+            product_by_code,
+            warehouse_by_code,
+        )
 
-        for parsed_line in parsed_order.lines:
+        for line_index, parsed_line in enumerate(parsed_order.lines):
             identity = {"doc_no": parsed_order.po_number,
                         "item_code": parsed_line.item_code,
                         "line_no": parsed_line.line_no}
@@ -508,7 +839,7 @@ def apply(db: Session, file_data: bytes, actor: Optional[str] = None,
             warehouse_id = (warehouse_by_code.get(parsed_line.location.upper())
                             if parsed_line.location else None)
 
-            line = existing_lines.get(parsed_line.line_no)
+            line = matched_lines[line_index]
             if line is None:
                 line = PurchaseOrderLine(
                     purchase_order_id=str(order.id),
@@ -560,8 +891,43 @@ def apply(db: Session, file_data: bytes, actor: Optional[str] = None,
                         seen=claimed, company_id=claim_company_id)
 
     db.flush()
+    # Section 3.G, AC-G3. A re-uploaded document may state the same item at a DIFFERENT
+    # location than the line an order inquiry was linked to - that is precisely the split the
+    # occupancy panel asks the buyer to make - so each placement is moved onto the line of its
+    # own document whose warehouse matches the demand. Best-effort: the book is already
+    # written, and a defect here must cost a relocation the next upload makes again rather
+    # than the whole 27,000-row job.
+    summary["relinked_placements"] = 0
+    if existing_orders:
+        try:
+            from app.services.project_order_inquiry_service import (
+                ProjectOrderInquiryService,
+            )
+
+            summary["relinked_placements"] = ProjectOrderInquiryService(
+                db
+            ).relink_to_matching_lines(
+                [str(order.id) for order in existing_orders.values()],
+                actor_user_id=actor,
+                trigger="po_history_upload",
+            )
+        except Exception:  # pragma: no cover - defensive, see above
+            logger.exception(
+                "re-linking placements failed for a purchase-history upload"
+            )
     summary["orders_created"] = orders_created
     summary["lines_created"] = lines_created
+    # The creditors this upload invented, by the same rule and with the same cap as the
+    # outstanding purchase-order upload reports its own: an operator must never discover a
+    # back-created supplier by surprise.
+    summary["suppliers_created"] = len(created_supplier_codes)
+    summary["suppliers_created_codes"] = created_supplier_codes[:CREATED_SUPPLIERS_LISTED]
+    # What this upload TOUCHED, for whoever presses "Link now" after it
+    # (`PLAN-scm-oi-handshake.md` AC-H13). The products it wrote a line for, and the
+    # documents it wrote - so the cascade that follows is scoped to the book that just
+    # arrived rather than re-dealing every open instruction in the company.
+    summary["product_ids"] = sorted({str(pid) for pid in product_by_code.values()})
+    summary["documents"] = sorted({o.po_number for o in parsed.orders if o.po_number})
     summary["date_from"] = summary["date_from"].isoformat() if summary["date_from"] else None
     summary["date_to"] = summary["date_to"].isoformat() if summary["date_to"] else None
     return summary

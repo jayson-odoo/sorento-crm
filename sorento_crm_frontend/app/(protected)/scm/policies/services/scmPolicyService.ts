@@ -47,11 +47,20 @@
  *  PUT    /api/v1/scm/policies/fulfilment-priority   body FulfilmentPriorityWrite
  *    → FulfilmentPriorityPolicy
  *    The single active `scm.priority_policy` row - ranking factor weights, demand-class
- *    weights, and the ladder-v2 reorder-coverage-date/cross-group-borrow settings
- *    (PLAN-demo-followups-19aug-ladder-v2.md C1/C2). `reorder_coverage_until` is a calendar
- *    date (`YYYY-MM-DD` or `null`), not a rolling day count. A PUT writes a NEW revision and
+ *    weights, and the two ladder dates. `reorder_coverage_until` is a calendar date
+ *    (`YYYY-MM-DD` or `null`), not a rolling day count. A PUT writes a NEW revision and
  *    activates it; the previous row is kept, deactivated. Gated `scm.policy.manage`, same as
  *    every other policy family.
+ *
+ *    Borrow ladder v7.1 S1 (migration 443) changes this shape:
+ *      + tba_date_from : string `YYYY-MM-DD`, NOT NULL, DEFAULT '2029-01-01'.
+ *          Demand dated ON or AFTER it is TBA - it takes no supply, is never covered and
+ *          never donates. PUT rejects a value earlier than today with 422 (AC-S1-2); the
+ *          panel mirrors that check client-side.
+ *      - cross_group_borrow_max_qty, cross_group_borrow_max_pct : DROPPED, request and
+ *          response both (R5 - any group may donate, so the cap has nothing left to cap).
+ *    A PUT that OMITS `tba_date_from` keeps the active revision's value; it is optional on
+ *    the body precisely so an older caller cannot silently reset it.
  *
  * Server-authoritative validation (mirrored client-side for UX) - AC-VAL-*,
  * AC-CFG-2, AC-SUP-2 - returns 422 via the global AppException handler.

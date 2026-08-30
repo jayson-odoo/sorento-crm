@@ -11,16 +11,25 @@ only ever SUGGESTS it. The suggestion is kept in its own column beside the store
 is never merged into it - an engine that quietly replaces the buyer's number is the thing
 that made the forecast basis unusable.
 
-Movement is read from `scm.consumption_v` (delivered sales lines), not from open orders.
-Three months of what actually left the building is the business's own rule for setting a
-level; open orders are demand, and demand is netted elsewhere.
+Movement is read from `scm.consumption_v` (delivery-order lines), not from open orders:
+what actually left the building is the business's own rule for setting a level, and open
+orders are demand, netted elsewhere.
+
+The suggestion itself is the industry formula (captain, 27 Aug):
+
+    ADU   = delivery-order quantity over the last 90 days / 90, every warehouse
+    level = ADU x lead_time + ADU x 14        (14 days of safety), rounded up
+
+It replaces the older `avg monthly movement x cover months`, which sized a level off a
+cover window nobody could point at a supplier for. The lead time is the product's own
+supplier lead time; 30 days when nobody knows one.
 """
 from __future__ import annotations
 
 import json
 import math
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any, Iterable, Optional
 
 from sqlalchemy import text
@@ -29,10 +38,16 @@ from sqlalchemy.orm import Session
 from app.services.company_scope_sql import company_sql_predicate
 from app.services.error_handler import AppException
 
-# The business's rule: "study 3 months movement to set reorder level". Overridable per policy
-# scope; these are only the fallbacks for a policy row that has not set them.
+# The months of movement the popover charts behind the suggestion. Overridable per policy
+# scope; this is only the fallback for a policy row that has not set it.
 DEFAULT_STUDY_MONTHS = 3
-DEFAULT_COVER_MONTHS = 2.0
+
+#: The study window ADU is averaged over: 90 days of delivery orders (captain, 27 Aug).
+LEVEL_WINDOW_DAYS = 90
+#: Days of safety stock carried on top of the lead time's demand.
+LEVEL_SAFETY_DAYS = 14.0
+#: What a lead time is worth when the product has no supplier lead time on file.
+DEFAULT_LEAD_TIME_DAYS = 30.0
 
 # Written into `source` so a later reader can tell an accepted suggestion from a typed number.
 SOURCE_MANUAL = "manual"
@@ -108,65 +123,88 @@ def _add_months(d: date, delta: int) -> date:
 
 # --- suggestion -------------------------------------------------------------------------
 
-def suggest_level(movement: list[dict[str, Any]], *, cover_months: float = DEFAULT_COVER_MONTHS,
-                  moq: Optional[float] = None,
-                  order_multiple: Optional[float] = None,
-                  trend: Optional[str] = None) -> dict[str, Any]:
-    """`avg monthly movement x cover months`, rounded up to what the supplier will sell.
+def average_daily_usage(db: Session, product_ids: list[str], *,
+                        window_days: int = LEVEL_WINDOW_DAYS,
+                        as_of: Optional[date] = None) -> dict[str, dict[str, Any]]:
+    """Delivery-order quantity per day over the window, EVERY warehouse, per product.
+
+    The reorder level is a product fact (captain, 27 Aug: "our reorder is per product, so
+    it doesn't matter your location"), so the usage behind it is read across the network
+    rather than per bin. `scm.consumption_v` is the delivery-order book - `orders` /
+    `order_lines`, cancelled orders excluded - which covers far more of the catalogue than
+    the sales-order lines do.
+
+    The window is the `window_days` days BEFORE `as_of` (`day >= as_of - n`, `day < as_of`):
+    a part-day today would drag the average down for no reason anyone could explain.
+    """
+    if not product_ids:
+        return {}
+    n = max(1, int(window_days or LEVEL_WINDOW_DAYS))
+    until = as_of or date.today()
+    since = until - timedelta(days=n)
+    rows = db.execute(text("""
+        SELECT c.product_id::text AS product_id, COALESCE(sum(c.qty_out), 0) AS qty
+          FROM scm.consumption_v c
+         WHERE c.product_id = ANY(CAST(:pids AS uuid[]))
+           AND c.day >= :since AND c.day < :until
+         GROUP BY 1
+    """), {"pids": _texts(product_ids), "since": since, "until": until}).mappings().all()
+
+    moved = {r["product_id"]: float(r["qty"] or 0) for r in rows}
+    return {
+        pid: {
+            "window_qty": round(moved.get(pid, 0.0), 4),
+            "window_days": n,
+            "adu": round(moved.get(pid, 0.0) / n, 6),
+            "since": since.isoformat(),
+            "until": until.isoformat(),
+        }
+        for pid in _texts(product_ids)
+    }
+
+
+def suggest_level_from_usage(*, adu: float, lead_time_days: Optional[float],
+                             safety_days: float = LEVEL_SAFETY_DAYS,
+                             window_days: int = LEVEL_WINDOW_DAYS,
+                             window_qty: Optional[float] = None,
+                             months: Optional[list[dict[str, Any]]] = None,
+                             lead_time_source: Optional[str] = None) -> dict[str, Any]:
+    """`ADU x lead_time + ADU x 14`, rounded up to a whole unit (captain, 27 Aug).
 
     Returns the level AND the arithmetic. A suggestion the buyer cannot argue with is a
-    suggestion they will not trust, so every input that produced the number travels with it.
+    suggestion they will not trust, so every term that produced the number travels with it
+    and the popover reads the three of them back.
 
-    `trend` (S13f) shapes only the ROUNDING, never the arithmetic: a rising book rounds up
-    to the next whole unit, a falling or quiet one rounds down. None = exact, as before.
+    An unknown lead time is 30 days - a number the business can point at, rather than a
+    zero that would quietly suggest holding nothing but safety stock.
     """
-    months = list(movement or [])
-    total = sum(float(m.get("qty") or 0) for m in months)
-    avg = (total / len(months)) if months else 0.0
-    cover = float(cover_months if cover_months is not None else DEFAULT_COVER_MONTHS)
-    raw = avg * cover
-    level = raw
-    if trend == "rising":
-        level = float(math.ceil(level))
-    elif trend in ("falling", "quiet"):
-        level = float(math.floor(level))
-    if moq is not None and level > 0 and level < float(moq):
-        level = float(moq)
-    if order_multiple and float(order_multiple) > 0 and level > 0:
-        m = float(order_multiple)
-        level = math.ceil(level / m) * m
-    # The reorder QUANTITY: the lot to order when stock hits the level. One cover of
-    # demand, ALWAYS rounded up - the level is a trigger the trend may lean down, but a
-    # quantity is something a PO line orders, and half a unit or "slightly less than a
-    # cover" is not a thing the supplier sells. Same MOQ/multiple pack rounding as the
-    # level, and the same "no movement suggests 0, never a pallet" rule.
-    quantity = float(math.ceil(raw)) if raw > 0 else 0.0
-    if moq is not None and quantity > 0 and quantity < float(moq):
-        quantity = float(moq)
-    if order_multiple and float(order_multiple) > 0 and quantity > 0:
-        m = float(order_multiple)
-        quantity = math.ceil(quantity / m) * m
+    rate = max(float(adu or 0.0), 0.0)
+    lead = float(lead_time_days) if lead_time_days else DEFAULT_LEAD_TIME_DAYS
+    if lead <= 0:
+        lead = DEFAULT_LEAD_TIME_DAYS
+    safety = float(safety_days if safety_days is not None else LEVEL_SAFETY_DAYS)
+    safety_stock = rate * safety
+    raw = rate * lead + safety_stock
+    level = float(math.ceil(raw)) if raw > 0 else 0.0
     return {
         "level": round(level, 4),
-        "quantity": round(quantity, 4),
         "basis": {
-            "months": months,
-            "months_studied": len(months),
-            "total_qty": round(total, 4),
-            "avg_monthly": round(avg, 4),
-            "cover_months": cover,
+            "adu": round(rate, 6),
+            "lead_time_days": round(lead, 4),
+            "lead_time_source": lead_time_source or ("supplier" if lead_time_days else "default"),
+            "safety_days": round(safety, 4),
+            "safety_stock": round(safety_stock, 4),
+            "window_days": int(window_days),
+            "window_qty": round(float(window_qty), 4) if window_qty is not None else None,
             "raw_level": round(raw, 4),
-            "moq": moq,
-            "order_multiple": order_multiple,
-            # The verdict that shaped the rounding, or None when none was consulted.
-            "trend": trend,
-            # Persisted inside the basis so it survives without a schema change; the
-            # payload lifts it to a top-level field beside `suggested_level`.
-            "suggested_quantity": round(quantity, 4),
+            # The months behind the average, for the popover's bar chart. Evidence only:
+            # the arithmetic above reads the 90-day window, never these buckets.
+            "months": list(months or []),
             # Said explicitly so a 0 reads as "nothing moved", never as "not computed".
-            "no_movement": total <= 0,
+            "no_movement": rate <= 0,
         },
     }
+
 
 
 # --- storage ----------------------------------------------------------------------------
@@ -198,7 +236,8 @@ def get_levels(db: Session, product_ids: list[str],
                rl.id::text AS id, rl.product_id::text AS product_id,
                rl.warehouse_id::text AS warehouse_id, rl.level, rl.source,
                rl.suggested_level, rl.suggested_at, rl.suggestion_basis,
-               rl.amended_level, rl.amended_at, rl.amended_by, rl.notes
+               rl.amended_level, rl.amended_at, rl.amended_by, rl.notes,
+               rl.reorder_qty
           FROM scm.reorder_level rl
          WHERE rl.product_id = ANY(CAST(:pids AS uuid[]))
            {where_wh}
@@ -235,33 +274,99 @@ def resolve_level(levels: dict[tuple[str, Optional[str]], dict], product_id: str
     return levels.get((product_id, None))
 
 
+#: "the caller said nothing about this field", which is not the same as "clear it".
+#: `reorder_qty` is written by the AutoCount level upload as well as by the buyer, so a
+#: level-only save must leave whatever the sheet last stated exactly where it is.
+UNCHANGED = object()
+
+
 def upsert_level(db: Session, *, product_id: str, warehouse_id: Optional[str],
                  level: Optional[float], source: str = SOURCE_MANUAL,
                  notes: Optional[str] = None,
-                 company_id: Optional[str] = None) -> dict:
-    """Set the level a buyer owns. Leaves the suggestion columns alone."""
+                 company_id: Optional[str] = None,
+                 reorder_qty: Any = UNCHANGED,
+                 commit: bool = True) -> dict:
+    """Set the level a buyer owns. Leaves the suggestion columns alone.
+
+    `reorder_qty` (R5) is the lot AutoCount orders when the level fires. It travels here
+    rather than in its own endpoint because it is the same row and the same save: the
+    panel shows Level and Reorder qty side by side and one Save carries both. Omitted, it
+    is left untouched - see `UNCHANGED`.
+
+    `commit=False` is for a caller that owns the transaction (the plan's bulk save, which
+    is one request over many rows and must roll the whole batch back on any failure).
+    """
     if source not in VALID_SOURCES:
         raise AppException(status_code=422,
                            message=f"source must be one of {', '.join(VALID_SOURCES)}.")
     if level is not None and float(level) < 0:
         raise AppException(status_code=422, message="A reorder level cannot be negative.")
+    if (reorder_qty is not UNCHANGED and reorder_qty is not None
+            and float(reorder_qty) < 0):
+        raise AppException(status_code=422,
+                           message="A reorder quantity cannot be negative.")
     row = _existing(db, product_id, warehouse_id, company_id)
     now = datetime.utcnow()
+    set_qty = reorder_qty is not UNCHANGED
+    qty_value = None if not set_qty else (
+        None if reorder_qty is None else float(reorder_qty))
     if row is None:
         new_id = str(uuid.uuid4())
         db.execute(text("""
             INSERT INTO scm.reorder_level
-                (id, product_id, warehouse_id, level, source, notes, company_id, created_at)
-            VALUES (:id, :pid, :wid, :level, :source, :notes, :co, :now)
+                (id, product_id, warehouse_id, level, source, notes, reorder_qty,
+                 company_id, created_at)
+            VALUES (:id, :pid, :wid, :level, :source, :notes, :rq, :co, :now)
         """), {"id": new_id, "pid": product_id, "wid": warehouse_id, "level": level,
-               "source": source, "notes": notes, "co": company_id, "now": now})
+               "source": source, "notes": notes, "rq": qty_value, "co": company_id,
+               "now": now})
+    else:
+        db.execute(text(f"""
+            UPDATE scm.reorder_level
+               SET level = :level, source = :source, notes = :notes,
+                   {"reorder_qty = :rq," if set_qty else ""}
+                   updated_at = :now
+             WHERE id = :id
+        """), {"id": row["id"], "level": level, "source": source, "notes": notes,
+               "now": now, **({"rq": qty_value} if set_qty else {})})
+    if commit:
+        db.commit()
+    else:
+        db.flush()
+    return _existing(db, product_id, warehouse_id, company_id) or {}
+
+
+def set_reorder_qty(db: Session, *, product_id: str, warehouse_id: Optional[str],
+                    reorder_qty: Optional[float], company_id: Optional[str] = None,
+                    commit: bool = True) -> dict:
+    """Set the AutoCount reorder QUANTITY alone, leaving the level exactly as it is (R5).
+
+    The plan panel edits the two independently - a buyer can change the lot size without
+    touching the trigger - so a quantity-only save must not route through `upsert_level`,
+    whose `level` argument would clear the level it was never asked about.
+    """
+    if reorder_qty is not None and float(reorder_qty) < 0:
+        raise AppException(status_code=422,
+                           message="A reorder quantity cannot be negative.")
+    row = _existing(db, product_id, warehouse_id, company_id)
+    now = datetime.utcnow()
+    value = None if reorder_qty is None else float(reorder_qty)
+    if row is None:
+        db.execute(text("""
+            INSERT INTO scm.reorder_level
+                (id, product_id, warehouse_id, reorder_qty, company_id, created_at)
+            VALUES (:id, :pid, :wid, :rq, :co, :now)
+        """), {"id": str(uuid.uuid4()), "pid": product_id, "wid": warehouse_id,
+               "rq": value, "co": company_id, "now": now})
     else:
         db.execute(text("""
-            UPDATE scm.reorder_level
-               SET level = :level, source = :source, notes = :notes, updated_at = :now
+            UPDATE scm.reorder_level SET reorder_qty = :rq, updated_at = :now
              WHERE id = :id
-        """), {"id": row["id"], "level": level, "source": source, "notes": notes, "now": now})
-    db.commit()
+        """), {"id": row["id"], "rq": value, "now": now})
+    if commit:
+        db.commit()
+    else:
+        db.flush()
     return _existing(db, product_id, warehouse_id, company_id) or {}
 
 
@@ -325,10 +430,10 @@ def accept_suggestion(db: Session, *, product_id: str, warehouse_id: Optional[st
 
 
 def supplier_constraints(db: Session, product_ids: list[str]) -> dict[str, dict]:
-    """`{product_id: {moq, order_multiple}}` from the cheapest linked supplier.
+    """`{product_id: {moq, order_multiple, lead_time_days}}` from the cheapest linked supplier.
 
     The same rule the engine already uses to pick a supplier, so a suggested level and the
-    order that fills it round to the same pack.
+    order that fills it read the same lead time and round to the same pack.
     """
     if not product_ids:
         return {}
@@ -336,39 +441,46 @@ def supplier_constraints(db: Session, product_ids: list[str]) -> dict[str, dict]
         SELECT DISTINCT ON (ps.product_id)
                ps.product_id::text AS product_id,
                COALESCE(ps.moq, ps.min_order_quantity) AS moq,
-               ps.order_multiple
+               ps.order_multiple,
+               ps.standard_lead_time_days AS lead_time_days
           FROM product_suppliers ps
          WHERE ps.product_id = ANY(CAST(:pids AS uuid[]))
          ORDER BY ps.product_id, ps.is_primary DESC NULLS LAST, ps.unit_cost ASC NULLS LAST
     """), {"pids": _texts(product_ids)}).mappings().all()
-    return {r["product_id"]: {"moq": _f(r["moq"]), "order_multiple": _f(r["order_multiple"])}
+    return {r["product_id"]: {"moq": _f(r["moq"]),
+                              "order_multiple": _f(r["order_multiple"]),
+                              "lead_time_days": _f(r["lead_time_days"])}
             for r in rows}
 
 
 def refresh_suggestions(db: Session, product_ids: list[str],
                         warehouse_ids: Optional[list[str]] = None, *,
                         study_months: int = DEFAULT_STUDY_MONTHS,
-                        cover_months: float = DEFAULT_COVER_MONTHS,
                         company_id: Optional[str] = None,
                         as_of: Optional[date] = None) -> int:
     """Recompute and store the suggestion for each (product, location) in scope.
 
-    Never touches a stored level. Returns how many suggestions were written.
+    The number itself is a PRODUCT fact - one ADU across every warehouse - so a run that
+    names several locations writes the same level against each of them rather than slicing
+    the usage per bin. Never touches a stored level. Returns how many were written.
     """
     if not product_ids:
         return 0
     constraints = supplier_constraints(db, product_ids)
+    usage = average_daily_usage(db, product_ids, as_of=as_of)
+    movement = monthly_movement(db, product_ids, None, months=study_months, as_of=as_of)
     written = 0
     # A suggestion is per location when locations are named, and product-wide otherwise, so
     # a tenant who plans one warehouse is not forced to set up a level per bin.
     targets: list[Optional[str]] = list(warehouse_ids) if warehouse_ids else [None]
     for wid in targets:
-        movement = monthly_movement(db, product_ids, [wid] if wid else None,
-                                    months=study_months, as_of=as_of)
         for pid in product_ids:
             c = constraints.get(pid, {})
-            out = suggest_level(movement.get(pid, []), cover_months=cover_months,
-                                moq=c.get("moq"), order_multiple=c.get("order_multiple"))
+            u = usage.get(pid, {})
+            out = suggest_level_from_usage(
+                adu=u.get("adu", 0.0), lead_time_days=c.get("lead_time_days"),
+                window_days=u.get("window_days", LEVEL_WINDOW_DAYS),
+                window_qty=u.get("window_qty"), months=movement.get(pid, []))
             store_suggestion(db, product_id=pid, warehouse_id=wid,
                              suggested_level=out["level"], basis=out["basis"],
                              company_id=company_id)
@@ -396,7 +508,8 @@ def _existing(db: Session, product_id: str, warehouse_id: Optional[str],
         row = db.execute(text("""
             SELECT id::text AS id, product_id::text AS product_id,
                    warehouse_id::text AS warehouse_id, level, source, suggested_level,
-                   suggested_at, suggestion_basis, notes, company_id::text AS company_id
+                   suggested_at, suggestion_basis, notes, reorder_qty,
+                   company_id::text AS company_id
               FROM scm.reorder_level
              WHERE product_id = CAST(:pid AS uuid)
                AND COALESCE(warehouse_id::text, :zero) = COALESCE(CAST(:wid AS text), :zero)
@@ -408,7 +521,8 @@ def _existing(db: Session, product_id: str, warehouse_id: Optional[str],
     row = db.execute(text("""
         SELECT id::text AS id, product_id::text AS product_id,
                warehouse_id::text AS warehouse_id, level, source, suggested_level,
-               suggested_at, suggestion_basis, notes, company_id::text AS company_id
+               suggested_at, suggestion_basis, notes, reorder_qty,
+               company_id::text AS company_id
           FROM scm.reorder_level
          WHERE product_id = CAST(:pid AS uuid)
            AND COALESCE(warehouse_id::text, :zero) = COALESCE(CAST(:wid AS text), :zero)

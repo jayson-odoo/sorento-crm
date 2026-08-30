@@ -213,7 +213,7 @@ from app.models.resources import Attachment, AttachmentType
 from app.schemas.product import (
     ProductCreate, ProductUpdate, ProductCategoryCreate, ProductCategoryUpdate,
     BrandCreate, BrandUpdate, UnitOfMeasureCreate, UnitOfMeasureUpdate,
-    ProductAttachmentCreate, ProductAttachmentUpdate
+    ProductAttachmentCreate, ProductAttachmentUpdate, ProductBulkUpdates
 )
 from app.services.error_handler import handle_not_found, handle_conflict, AppException
 from app.services.company_scope import stamp_lookup_companies
@@ -475,86 +475,6 @@ class ProductService:
         else:
             q = q.order_by(sort_column.asc().nulls_last(), Product.id.asc())
         return q
-
-    def neighbours(
-        self,
-        product_id: str,
-        query: Optional[str] = None,
-        category_id: Optional[str] = None,
-        brand_id: Optional[str] = None,
-        status: Optional[str] = None,
-        price_min: Optional[float] = None,
-        price_max: Optional[float] = None,
-        item_type: Optional[str] = None,
-        length_min: Optional[float] = None,
-        length_max: Optional[float] = None,
-        width_min: Optional[float] = None,
-        width_max: Optional[float] = None,
-        height_min: Optional[float] = None,
-        height_max: Optional[float] = None,
-        any_dimension_min: Optional[float] = None,
-        any_dimension_max: Optional[float] = None,
-        sort_field: str = "created_at",
-        sort_dir: str = "asc",
-        discontinued_batch_id: Optional[str] = None,
-    ) -> dict:
-        """Resolve prev/next neighbours for ``product_id`` within the active list
-        query.
-
-        Reuses :meth:`_build_list_query` (the exact filter+sort path the product
-        list GET uses) so list and neighbours can never drift. Selects only the
-        ordered ids, then defers position/wrap math to the pure
-        ``compute_neighbours`` helper. If the record is not in the filtered set
-        (deep link, edited out of the filter, or a filter that resolved to an
-        empty set), falls back to the unfiltered, default-sorted set so the pager
-        is never dead (D2).
-
-        Accepts a product UUID or product_code (SKU); resolved to the canonical
-        UUID first so the neighbour math matches the ids ``_build_list_query``
-        emits.
-        """
-        from app.services.record_navigation import compute_neighbours
-
-        # Resolve SKU -> canonical UUID (the list query yields Product.id values).
-        resolved_ids = resolve_identifier(
-            self.db, product_id, Product, code_fields=("product_code",)
-        )
-        resolved_id = resolved_ids[0] if resolved_ids else product_id
-
-        def _ordered_ids(q) -> list[str]:
-            if q is self._EMPTY_RESULT:
-                return []
-            return [str(row[0]) for row in q.with_entities(Product.id).all()]
-
-        filtered_q = self._build_list_query(
-            query=query,
-            category_id=category_id,
-            brand_id=brand_id,
-            status=status,
-            price_min=price_min,
-            price_max=price_max,
-            item_type=item_type,
-            length_min=length_min,
-            length_max=length_max,
-            width_min=width_min,
-            width_max=width_max,
-            height_min=height_min,
-            height_max=height_max,
-            any_dimension_min=any_dimension_min,
-            any_dimension_max=any_dimension_max,
-            sort_field=sort_field,
-            sort_dir=sort_dir,
-            discontinued_batch_id=discontinued_batch_id,
-        )
-        result = compute_neighbours(_ordered_ids(filtered_q), resolved_id)
-        if result["index"] is not None:
-            return result
-
-        # D2: current record not in the filtered set -> fall back to the
-        # unfiltered, default-sorted set so prev/next still works and total
-        # reflects all products.
-        unfiltered_q = self._build_list_query()
-        return compute_neighbours(_ordered_ids(unfiltered_q), resolved_id)
 
     def list_products(
         self,
@@ -1203,6 +1123,25 @@ class ProductService:
         except Exception:
             return []
 
+    def bulk_update_products(
+        self, product_ids: List[str], updates: ProductBulkUpdates, updated_by: str
+    ) -> dict:
+        """Apply the same edit to every listed product.
+
+        Row-by-row `setattr` rather than `query.update()`, so the audit listener
+        sees each change like it does for a single edit. The read is an ORM
+        query and therefore company-scoped: an id from another company is simply
+        not found and not counted, never written.
+        """
+        rows = self.db.query(Product).filter(Product.id.in_(product_ids)).all()
+        now = datetime.utcnow()
+        for product in rows:
+            product.is_searchable = updates.is_searchable
+            product.updated_by = updated_by
+            product.updated_at = now
+        self.db.commit()
+        return {"message": f"Updated {len(rows)} product(s)", "updated_count": len(rows)}
+
     def bulk_delete_products(self, product_ids: List[str]):
         """Delete multiple products by ID."""
         if not product_ids:
@@ -1224,13 +1163,23 @@ class ProductService:
         return {"message": f"Deleted {deleted} product(s)", "deleted_count": deleted}
 
     def _get_default_uom_id(self) -> str:
-        """Return the default UOM id for bulk import: EA, created if missing.
+        """The unit a product takes when nobody states one.
 
-        This used to fall back to ``UnitOfMeasure.first()`` when EA did not exist,
-        which handed every UOM-less product whatever row Postgres returned first
-        (Liter, on the Sorento data). Creating EA is deterministic and is what the
-        rows actually mean; the operator never asked for a UOM, the schema did.
+        The ADMIN'S setting first (``system_settings.default_uom_id``), because the
+        hardcoded answer was wrong: an older fallback took ``UnitOfMeasure.first()`` -
+        whatever row Postgres returned first, Liter on the Sorento data - and stamped 11,415
+        products with it. Correcting that by script means guessing what the admin can simply
+        state, so the setting is what it states and this reads it.
+
+        Failing that, EA, created if missing: deterministic, and what the rows actually mean
+        when the operator never asked for a UOM and the schema did. The FK on the setting is
+        ``ondelete="SET NULL"``, so a deleted unit puts the answer back to this fallback
+        rather than leaving it pointing at nothing.
         """
+        settings = self._system_settings_row()
+        configured = getattr(settings, "default_uom_id", None) if settings else None
+        if configured:
+            return configured
         uom = (
             self.db.query(UnitOfMeasure)
             .filter(UnitOfMeasure.uom_code.ilike("ea"))
@@ -1566,6 +1515,24 @@ class ProductService:
             lookup[value.lower()] = new_id
             return new_id
 
+        # id -> code, for the rows that report a unit MOVE. Built lazily and once, because a
+        # re-import of the stock item list moves thousands of rows at a stroke and a lookup
+        # per row would be thousands of queries for a sentence.
+        uom_code_by_id: dict[str, str] = {}
+
+        def uom_code_of(uom_row_id) -> str:
+            """The human code of a unit id, or "none" for a product that had none."""
+            if not uom_row_id:
+                return "none"
+            if not uom_code_by_id:
+                uom_code_by_id.update({
+                    str(i): c
+                    for i, c in self.db.query(
+                        UnitOfMeasure.id, UnitOfMeasure.uom_code
+                    ).all()
+                })
+            return uom_code_by_id.get(str(uom_row_id)) or "unknown"
+
         all_codes = []
         for row in products_data:
             code = (row.get("product_code") or row.get("Product Code") or row.get("Item Code") or "").strip()
@@ -1751,10 +1718,22 @@ class ProductService:
                     existing.description = description or None
                     existing.category_id = category_id
                     existing.brand_id = brand_id
-                    # Only a file that actually carries UOM re-points an existing
-                    # product; the default must not overwrite a curated value.
-                    if row_uom:
-                        existing.base_uom_id = uom_id
+                    # ONE rule for every row, existing or new: the file's unit when it
+                    # states one, the configured default when it does not.
+                    #
+                    # It used to be two rules - an existing product kept whatever unit it
+                    # held unless the file carried a UOM column - and that is precisely why
+                    # 11,415 products stamped `L` by an old fallback could not be corrected:
+                    # the stock item list has no UOM column at all, so re-importing it
+                    # declined to touch the column on every one of them. The admin now names
+                    # the right unit in system settings and this applies it.
+                    #
+                    # The prior unit is read BEFORE the assignment - it is the only place it
+                    # still exists once overwritten - so a row that actually moved can say
+                    # which unit it left.
+                    previous_uom_id = existing.base_uom_id
+                    existing.base_uom_id = uom_id
+                    uom_moved = not row_uom and previous_uom_id != uom_id
                     existing.list_price = list_price
                     existing.is_active = is_active
                     existing.is_discontinued = discontinued
@@ -1788,15 +1767,26 @@ class ProductService:
                     updated += 1
                     # One outcome entry per row, always: a second entry for the clear would
                     # push `processed_rows` past `total_rows`. The code carries the news
-                    # instead, so the job page can group and find them.
+                    # instead, so the job page can group and find them. A unit that MOVED is
+                    # reported ahead of a cleared level: the operator who re-imports the
+                    # stock list to fix 11,415 wrong units is running it for exactly that.
+                    if uom_moved:
+                        row_code = _oc.UOM_DEFAULTED
+                        row_message = (
+                            f"Product updated, unit of measure set to the default: "
+                            f"{product_code} ({uom_code_of(previous_uom_id)} -> "
+                            f"{uom_code_of(uom_id)})"
+                        )
+                    elif cleared_a_level:
+                        row_code = _oc.REORDER_LEVEL_CLEARED
+                        row_message = f"Product updated, reorder level cleared: {product_code}"
+                    else:
+                        row_code = _oc.UPDATED
+                        row_message = f"Product updated: {product_code}"
                     outcome.updated(
                         row=idx,
-                        code=_oc.REORDER_LEVEL_CLEARED if cleared_a_level else _oc.UPDATED,
-                        message=(
-                            f"Product updated, reorder level cleared: {product_code}"
-                            if cleared_a_level
-                            else f"Product updated: {product_code}"
-                        ),
+                        code=row_code,
+                        message=row_message,
                         value=product_code,
                         identity=_row_identity(row, product_code),
                         entity_type="product",
@@ -2222,6 +2212,7 @@ class ProductCategoryService:
                 "description": category.description,
                 "parent_category_id": str(category.parent_category_id) if category.parent_category_id else None,
                 "is_active": category.is_active,
+                "is_searchable": category.is_searchable,
                 "display_order": category.display_order or 0,
                 "created_by": str(category.created_by) if category.created_by else None,
                 "created_at": category.created_at,

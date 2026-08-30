@@ -296,7 +296,7 @@ function AccordionMenuSubTrigger({
           <ChevronDown
             data-slot="accordion-menu-sub-indicator"
             className={cn(
-              'ms-auto size-3.5! shrink-0 text-muted-foreground transition-transform duration-200 [[data-state=open]>&]:-rotate-180',
+              'ms-auto size-3.5! shrink-0 text-muted-foreground transition-transform duration-(--duration-base) ease-(--ease-standard) [[data-state=open]>&]:-rotate-180',
             )}
           />
         </>

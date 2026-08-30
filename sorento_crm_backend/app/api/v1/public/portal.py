@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import logging
 import os
-import re
 import uuid
 from typing import Annotated, Optional
 
@@ -51,6 +50,7 @@ from app.services.portal_service import (
     PortalService,
     SUPPORTED_TYPES,
 )
+from app.utils.http import content_disposition
 
 logger = logging.getLogger(__name__)
 
@@ -1250,15 +1250,6 @@ def _portal_can_read_attachment(
     ) or _attachment_is_in_own_revision_history(db, token, attachment_id)
 
 
-def _content_disposition(filename: str) -> str:
-    """RFC 5987 disposition - portal filenames come off the contact's device and
-    are frequently non-ASCII, which a bare ``filename="..."`` cannot encode."""
-    from urllib.parse import quote
-
-    ascii_name = re.sub(r'[^A-Za-z0-9._-]', "_", filename).strip("_") or "attachment"
-    return f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(filename)}"
-
-
 @router.get("/attachments/{attachment_id}/download")
 def portal_download_attachment(
     attachment_id: str = Path(...),
@@ -1305,7 +1296,7 @@ def portal_download_attachment(
         content=content,
         media_type=str(getattr(attachment, "mime_type", None) or "application/octet-stream"),
         headers={
-            "Content-Disposition": _content_disposition(filename),
+            "Content-Disposition": content_disposition(filename),
             "Content-Length": str(len(content)),
         },
     )

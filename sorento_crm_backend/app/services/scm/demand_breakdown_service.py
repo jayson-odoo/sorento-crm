@@ -21,31 +21,33 @@ BRW-IB's orders and a total larger than the SO figure printed on their own row. 
 scope is the set the RUN netted, and is stated in the header when it is the pool.
 
 PROVENANCE (20 Aug live ask): "for project is order inquiry, for retail is sales order
-directly". Every line carries a `source` - `order_inquiry` when the order the sheet-leg
-line belongs to was created BY the Order Inquiry feed (`demand_origin`), `sales_order`
-when it was not (the retail book, straight off AutoCount). A THIRD source,
-`order_inquiry_confirmed`, is the leg the sheet-leg query cannot show at all: once CS
-confirms a line, its sheet quantity leaves this query by design (`PLAN_DEMAND_LINE_SQL`'s
-`NOT EXISTS`) and the confirmed Buy residual on `projects.order_inquiry_rows` becomes the
-only Project reading of it - `scm.committed_v`'s own two-leg split, mirrored here so the
-popover's total and the netted figure never disagree. The two legs are mutually exclusive
-PER LINE by construction: a core line only ever appears in the confirmed leg here if an
-active decision's `line_snapshots` names it, and that is exactly the condition
-`PLAN_DEMAND_LINE_SQL` excludes it on in the sheet leg - so summing both is additive,
-never double-counted.
+directly", and since P3 that is literal: the BOOK query below speaks for the retail
+channel alone, and every Project quantity comes from `projects.order_inquiry_rows` as the
+`order_inquiry_confirmed` source - the un-linked remainder of a raised row pointing at an
+active CS decision, netted by its links exactly the way `scm.committed_v` nets it, so the
+popover's total and the netted figure on the row never disagree. A book line still carries
+`order_inquiry` or `sales_order` as its `source`, off `demand_origin`, which now says which
+FEED wrote a retail order rather than which leg counted it. The two queries are disjoint by
+construction (one reads the sales-order book with project class excluded, the other reads
+inquiry rows), so summing them is additive and never double-counted.
+
+Not yet shown here: a row the CS Order Inquiry Form raised with NO supply decision (the
+view's form leg). It is real demand and it is on the plan row; the popover has no sales
+order to name for it, so it is absent rather than misattributed. 0 such rows exist on the
+dev copy today.
 
 WHO SOLD IT (21 Aug live ask): `sales_orders.sales_agent_id` -> `sales_agents`, the same
 salesperson master `sales_order_service._agent_fields` already reads for the SO detail
 page. Every code ships with `person_label` unset today (measured on the live book: 0 of
 the codes carry one), so `AGENT_LABEL_SQL` falls back from the grouping label to the code
-itself - never invented, and never the raw FK. NULL on a sheet-leg line built by the Order
+itself - never invented, and never the raw FK. NULL on a book line built by the Order
 Inquiry import (`project_order_inquiry_import_service` never sets it), which is the honest
 reading for it: nobody has attributed an agent to that order yet.
 
 WHAT THEY PAY (21 Aug live ask): `sol.unit_price` / `psl.unit_price` were already the read
 - this module has carried them since the price question was first asked (see the PROVENANCE
 history below). A captain-witnessed "RM 0.00" is a real value on that line, not a
-serializer bug: measured live, 60% of sheet-leg Order-Inquiry lines and 50% of confirmed-leg
+serializer bug: measured live, 60% of book Order-Inquiry lines and 50% of confirmed-leg
 lines carry a positive price, and the rest are genuinely priced at 0.00 or carry no price at
 all - the FE already tells those two apart (a null price renders nothing, a stated 0.00
 renders "RM 0.00"). Nothing here changed for the price read; this note exists so the next
@@ -68,10 +70,23 @@ from app.services.scm.demand import (
     PLAN_DEMAND_LINE_SQL,
     PLAN_DEMAND_ORDER_SQL,
     PROJECT_CLASS,
-    UNPLACED_INQUIRY_STATE,
+    UNLINKED_INQUIRY_STATES,
 )
 from app.services.scm.trajectory import month_shift
 from app.services.scm.trajectory_service import demand_context_for_product
+
+#: The job a core sales-order line is for. The core book carries no project at all - the
+#: PROJECT sales order that mirrors the line does - so the title is read back through the
+#: mirror. A lateral rather than a join: the mirror is optional (a retail order has none)
+#: and a join would either drop the line or multiply it if a line were mirrored twice.
+_PROJECT_TITLE_SQL = """(
+    SELECT pj.title
+      FROM projects.sales_order_lines tpsl
+      JOIN projects.sales_orders tpso ON tpso.id = tpsl.project_sales_order_id
+      JOIN projects.projects pj ON pj.id = tpso.project_id
+     WHERE tpsl.core_sales_order_line_id = sol.id
+     LIMIT 1
+)"""
 
 # One screen's worth. A pool with thousands of lines is a reading problem, not a listing
 # problem, and the total is reported separately so the cap is never silent.
@@ -84,7 +99,10 @@ DEFAULT_LIMIT = 200
 # lines crowd the other off the 200-line cap, so a Project trigger next to
 # `project_committed` popped open a page that was mostly Retail (BRW: 279 lines, 200 shown,
 # retail happened to sort first).
-_CHANNELS = {"project", "retail", "unclassified"}
+#: The channels there ARE. `unclassified` was a third until P4; a caller still asking for
+#: it is an unrecognised channel now, which this endpoint has always answered unfiltered
+#: rather than with a 422 - a stale bookmark shows the whole row, not an error page.
+_CHANNELS = {"project", "retail"}
 
 # Quantities are floats out of NUMERIC, and "does this set reproduce the frozen figure"
 # must not turn on the last bit of a sum.
@@ -155,7 +173,19 @@ def _scope_for(db: Session, rec,
     """
     wid = rec["warehouse_id"]
     if not wid:
-        # A network-scope row names no location, so there is nothing to narrow to.
+        # A row that names no location was still sized over a set of them, and that set is
+        # frozen on the row: `plan_basis.locations` (AC-F08). Reading it is what lets a
+        # per-product buy (`PLAN-scm-reorder-per-product.md`) list the orders behind it -
+        # without it the drill has nothing to narrow to and answers "no open demand" for a
+        # row that was sized against demand at ten locations.
+        basis = (rec["inputs"] or {}).get("plan_basis") or {}
+        members = sorted({str(loc["warehouse_id"])
+                          for loc in (basis.get("locations") or [])
+                          if isinstance(loc, dict) and loc.get("warehouse_id")})
+        if members:
+            # Neither one location nor one pool: the product's own set, which is the word
+            # the FE already understands for a union across locations.
+            return members, "product", None
         return [], "warehouse", None
 
     pool_ids, pool_code = _pool_of(db, wid)
@@ -184,8 +214,8 @@ def demand_for_recommendation(db: Session, rec_id: str,
                               scope: Optional[str] = None) -> dict[str, Any]:
     """Open demand behind one recommendation, newest-needed first.
 
-    `channel` narrows the list to ONE of `project`/`retail`/`unclassified` - anything else
-    (None, an unrecognised string) is unfiltered, so a caller that never asks for a channel
+    `channel` narrows the list to ONE of `project`/`retail` - anything else
+    (None, an unrecognised string, the retired `unclassified`) is unfiltered, so a caller that never asks for a channel
     (the ungrouped row's own popover) sees exactly what it always has. Filtering happens
     before the display cap and before the sort, never after, and the SCOPE test below still
     runs against the UNFILTERED total - a channel is a display slice of an already-resolved
@@ -232,9 +262,9 @@ def demand_for_recommendation(db: Session, rec_id: str,
     co, co_params = company_sql_predicate(db, "so.company_id", param_prefix="dbk")
     qty = ("GREATEST(COALESCE(sol.qty_required, sol.qty_ordered) "
            "       - COALESCE(sol.qty_delivered, 0), 0)")
-    # Both halves of the rule: which orders the sheet speaks for, and which of their lines
-    # CS has already decided (`demand.py`). Applying only the first would show a buyer the
-    # sheet quantity of a line whose confirmed Buy is already in the plan beside it.
+    # Both halves of the rule (`demand.py`): the order-level one excludes project class
+    # outright since P3, and the line-level one is what the fulfilment board reads as
+    # covered. Kept together because that is how every book-demand reader applies them.
     plan_demand = f"{PLAN_DEMAND_ORDER_SQL} AND {PLAN_DEMAND_LINE_SQL}"
     # Same horizon rule as `demand.horizon_committed_select_sql` / `reorder_run_service`'s
     # own horizon predicates: a stated `required_date` past the cutoff is excluded, no
@@ -316,16 +346,19 @@ def demand_for_recommendation(db: Session, rec_id: str,
         "WHERE hpsl.core_sales_order_line_id = sol.id)"
     )
 
-    # Which bucket a line falls in - the same three-way split the totals CASE below already
-    # applies, restated as a WHERE so the display list and cap can be scoped to it. `TRUE`
-    # (channel=None) reproduces the unfiltered query byte-for-byte.
+    # Which bucket a line falls in - the same split the totals CASE below applies, restated
+    # as a WHERE so the display list and cap can be scoped to it. `TRUE` (channel=None)
+    # reproduces the unfiltered query byte-for-byte.
+    #
+    # RETAIL takes a NULL class, exactly as `scm.committed_v`'s book leg does since P4:
+    # nothing is unclassified any more (migration 425 stamped the NULLs and the SO import
+    # refuses a file that would make another), so a stray NULL reads as the book-direct
+    # channel rather than as a bucket no screen shows. There is no third branch for the
+    # same reason - the word is simply not a channel, and falls through to unfiltered.
     if channel == "project":
         channel_pred = "so.demand_class = :channel_project_class"
     elif channel == "retail":
-        channel_pred = ("so.demand_class IS NOT NULL "
-                        "AND so.demand_class <> :channel_project_class")
-    elif channel == "unclassified":
-        channel_pred = "so.demand_class IS NULL"
+        channel_pred = "so.demand_class IS DISTINCT FROM :channel_project_class"
     else:
         channel_pred = "TRUE"
 
@@ -336,6 +369,7 @@ def demand_for_recommendation(db: Session, rec_id: str,
                    sol.required_date, w.warehouse_code, sol.unit_price,
                    {CUSTOMER_LABEL_SQL} AS customer_label,
                    {AGENT_LABEL_SQL} AS agent_label,
+                   {_PROJECT_TITLE_SQL} AS project_title,
                    {qty} AS qty, {has_inquiry_pred} AS has_inquiry_row
             FROM sales_order_lines sol
             JOIN sales_orders so ON so.id = sol.sales_order_id
@@ -375,11 +409,14 @@ def demand_for_recommendation(db: Session, rec_id: str,
         f"       COALESCE(sum(qty) FILTER (WHERE warehouse_code IS NULL), 0) AS unlocated, "
         f"       COALESCE(sum(qty) FILTER (WHERE demand_class = :project_class), 0) "
         f"           AS project_qty, "
-        f"       COALESCE(sum(qty) FILTER (WHERE demand_class IS NOT NULL "
-        f"                                    AND demand_class <> :project_class), 0) "
+        f"       COALESCE(sum(qty) FILTER (WHERE demand_class "
+        f"                                  IS DISTINCT FROM :project_class), 0) "
         f"           AS retail_qty, "
-        f"       COALESCE(sum(qty) FILTER (WHERE demand_class IS NULL), 0) "
-        f"           AS unclassified_qty "
+        # Always 0 since P4, and stated rather than deleted so the payload keeps its shape
+        # for a client that still reads the key (the popover renders it only when nonzero).
+        # A NULL class is counted in `retail_qty` above, exactly as `scm.committed_v`
+        # counts it; summing it here as well would report the same quantity twice.
+        f"       0 AS unclassified_qty "
         f"FROM ({display_sql}) t"
     ), {**params, "project_class": PROJECT_CLASS}).mappings().first()
 
@@ -406,6 +443,10 @@ def demand_for_recommendation(db: Session, rec_id: str,
             # than 0.
             "customer_label": r["customer_label"],
             "agent_label": r["agent_label"],
+            # The job the units are for - what a buyer recognises a project order by, and
+            # the one thing the row never carried. Null on an order with no project behind
+            # it, which is a fact about the order rather than missing data.
+            "project_title": r["project_title"],
             "unit_price": float(r["unit_price"]) if r["unit_price"] is not None else None,
             # "for project is order inquiry, for retail is sales order directly" - which
             # feed wrote the order this line belongs to. `order_inquiry` here means the
@@ -423,10 +464,10 @@ def demand_for_recommendation(db: Session, rec_id: str,
     ]
 
     # The CONFIRMED Order-Inquiry leg (front planning 6.3 / `scm.committed_v`'s own
-    # second UNION ALL leg) - the sheet-leg query above cannot show it at all, because
-    # `PLAN_DEMAND_LINE_SQL` excludes exactly the core lines it covers. Same join shape as
+    # second UNION ALL leg) - the book query above cannot show it at all, because
+    # that query excludes project class outright (P3). Same join shape as
     # `summary_order_service._earliest_project_need_dates`. Scoped to `members`, the SAME
-    # locations the sheet leg was scoped to, so a pooled row's confirmed evidence is the
+    # locations the book query was scoped to, so a pooled row's confirmed evidence is the
     # pool's and a per-location row's is that location's alone. Entirely project-class by
     # construction (S13b), so a `retail`/`unclassified` channel filter excludes it outright
     # rather than querying for rows that can never match.
@@ -434,10 +475,10 @@ def demand_for_recommendation(db: Session, rec_id: str,
     confirmed_n = 0
     confirmed_total = 0.0
     if members and channel in (None, "project"):
-        # SF-1: unlike the sheet leg above, this had NO `LIMIT` at all - past the cap the
-        # sheet leg's `total`/`shown` were already correct and this leg's were not, so the
+        # SF-1: unlike the book query above, this had NO `LIMIT` at all - past the cap the
+        # book query's `total`/`shown` were already correct and this leg's were not, so the
         # combined figures disagreed with what was actually returned. Same shape as the
-        # sheet leg: a base query with no ORDER BY/LIMIT, a capped fetch for the lines the
+        # book query: a base query with no ORDER BY/LIMIT, a capped fetch for the lines the
         # FE renders, and a separate uncapped count/sum for the totals.
         confirmed_base_sql = f"""
             SELECT so.id::text AS so_id, so.so_number, so.order_type, so.order_date,
@@ -445,23 +486,44 @@ def demand_for_recommendation(db: Session, rec_id: str,
                    psl.unit_price AS unit_price,
                    {CUSTOMER_LABEL_SQL} AS customer_label,
                    {AGENT_LABEL_SQL} AS agent_label,
-                   oir.qty AS qty
+                   cpj.title AS project_title,
+                   GREATEST(oir.qty - COALESCE(lk.linked, 0), 0) AS qty,
+                   -- How much of the instruction is already on a purchase or shipping
+                   -- order. `qty` above is what is LEFT, so without this the reader
+                   -- cannot tell a 20 that was always 20 from a 50 that is 30 placed
+                   -- (AC-R8: the project rows carry the linked quantity).
+                   COALESCE(lk.linked, 0) AS linked_qty
             FROM projects.order_inquiry_rows oir
             JOIN projects.so_supply_decisions d
               ON d.id = oir.supply_decision_id AND d.state = :active_state
+            LEFT JOIN LATERAL (
+                SELECT COALESCE(SUM(l.qty), 0) AS linked
+                FROM projects.order_inquiry_links l
+                WHERE l.row_id = oir.id
+            ) lk ON TRUE
             JOIN projects.sales_order_lines psl ON psl.id = oir.so_line_id
+            -- The job the instruction belongs to. Reached through the row's OWN project
+            -- sales order rather than the lateral the book query uses: this leg already
+            -- holds the mirror line, so there is nothing to look up.
+            LEFT JOIN projects.sales_orders cpso ON cpso.id = psl.project_sales_order_id
+            LEFT JOIN projects.projects cpj ON cpj.id = cpso.project_id
             JOIN sales_order_lines sol ON sol.id = psl.core_sales_order_line_id
             JOIN sales_orders so ON so.id = sol.sales_order_id
             LEFT JOIN warehouses w ON w.id = sol.warehouse_id
             LEFT JOIN customers c ON {CUSTOMER_JOIN_ON}
             LEFT JOIN sales_agents sa ON sa.id = so.sales_agent_id
+            -- The SAME arithmetic `scm.committed_v`'s confirmed leg applies (migration
+            -- 422): a row is netted by what it has already been linked to rather than
+            -- tested for a state, so a half-linked row shows the half that is still
+            -- demand. `partly_linked` is in scope for exactly that reason - before the
+            -- links table it could only be all or nothing.
             WHERE oir.verb = :buy_verb
-              AND oir.state = :unplaced_state
-              AND oir.qty > 0
+              AND oir.state = ANY(:unplaced_states)
+              AND oir.qty > COALESCE(lk.linked, 0)
               AND sol.product_id::text = :pid
               AND sol.warehouse_id::text = ANY(:members)
               -- Same horizon rule as `demand.horizon_committed_select_sql`'s confirmed
-              -- leg: off the inquiry row's own delivery date, not the sheet leg's.
+              -- leg: off the inquiry row's own delivery date, not the book query's.
               AND (CAST(:horizon AS date) IS NULL OR oir.delivery_date IS NULL
                    OR oir.delivery_date <= CAST(:horizon AS date))
               {("AND " + co) if co else ""}
@@ -469,7 +531,7 @@ def demand_for_recommendation(db: Session, rec_id: str,
         confirmed_params = {
             "pid": rec["product_id"], "members": members, "horizon": horizon,
             "active_state": ACTIVE_DECISION_STATE, "buy_verb": BUY_VERB,
-            "unplaced_state": UNPLACED_INQUIRY_STATE, **co_params,
+            "unplaced_states": list(UNLINKED_INQUIRY_STATES), **co_params,
         }
         confirmed_rows = db.execute(text(
             confirmed_base_sql
@@ -494,10 +556,12 @@ def demand_for_recommendation(db: Session, rec_id: str,
             "qty": float(r["qty"] or 0),
             "customer_label": r["customer_label"],
             "agent_label": r["agent_label"],
+            "project_title": r["project_title"],
             "unit_price": float(r["unit_price"]) if r["unit_price"] is not None else None,
+            "linked_qty": float(r["linked_qty"] or 0),
             "source": "order_inquiry_confirmed",
             # This leg is BUILT from `projects.order_inquiry_rows` - there is always a row,
-            # by construction, unlike the sheet leg's stamp-only `order_inquiry` source.
+            # by construction, unlike the book query's stamp-only `order_inquiry` source.
             "has_inquiry_row": True,
         }
         for r in confirmed_rows
@@ -519,7 +583,7 @@ def demand_for_recommendation(db: Session, rec_id: str,
     # what's the sales order for the past year, who is the customer and agent... for
     # retail, past 3 months, same"). `context` above already carries the number; this is
     # the SAME window (`month_shift`, the identical arithmetic `trajectory_service` uses),
-    # fed as a second section rather than folded into `lines` above - the sheet-leg list is
+    # fed as a second section rather than folded into `lines` above - the book list is
     # OPEN, undelivered demand scoped to this row's own location(s), and the window here is
     # the WHOLE product's order flow regardless of status or location, exactly like
     # `project_12m_qty`/`retail_3m_qty` already are. Two different questions ("what is
@@ -541,7 +605,8 @@ def demand_for_recommendation(db: Session, rec_id: str,
             SELECT so.id::text AS so_id, so.so_number, so.order_date, so.demand_class,
                    sol.qty_ordered AS qty, sol.qty_delivered, sol.unit_price,
                    {CUSTOMER_LABEL_SQL} AS customer_label,
-                   {AGENT_LABEL_SQL} AS agent_label
+                   {AGENT_LABEL_SQL} AS agent_label,
+                   {_PROJECT_TITLE_SQL} AS project_title
             FROM sales_order_lines sol
             JOIN sales_orders so ON so.id = sol.sales_order_id
             LEFT JOIN customers c ON {CUSTOMER_JOIN_ON}
@@ -570,13 +635,14 @@ def demand_for_recommendation(db: Session, rec_id: str,
                 "demand_class": r["demand_class"],
                 "qty": float(r["qty"] or 0),
                 # Delivered vs still owed - "clearly separated or marked" (captain, 21
-                # Aug), since this section, unlike the sheet leg above, includes both.
+                # Aug), since this section, unlike the book query above, includes both.
                 "delivered": bool(
                     r["qty"] and float(r["qty"] or 0) > 0
                     and float(r["qty_delivered"] or 0) >= float(r["qty"] or 0)
                 ),
                 "customer_label": r["customer_label"],
                 "agent_label": r["agent_label"],
+                "project_title": r["project_title"],
                 "unit_price": float(r["unit_price"]) if r["unit_price"] is not None else None,
             }
             for r in hist_rows
@@ -587,7 +653,7 @@ def demand_for_recommendation(db: Session, rec_id: str,
         "total": int(totals["n"] or 0) + confirmed_n,
         "shown": len(all_lines),
         # The confirmed leg IS inside `project_committed` (`scm.committed_v`), so it
-        # belongs in the same total the sheet leg's committed figure already reports -
+        # belongs in the same total the book query's committed figure already reports -
         # additive, never a double count (see the module docstring's PROVENANCE note).
         # `confirmed_total` is the UNCAPPED sum (SF-1/SF-2), never `sum(l["qty"] for l in
         # confirmed_lines)`, which would undercount past the display cap.

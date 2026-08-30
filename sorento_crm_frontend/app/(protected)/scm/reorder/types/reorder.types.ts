@@ -146,6 +146,9 @@ export interface ReorderRecommendation {
    *  (`COALESCE(pool_warehouse_id, id)`), so a cover source can be scoped to the row's own
    *  site. Null on a network row. */
   pool_warehouse_id?: string | null;
+  /** The pool's CODE, so the SPO and PO dialogs can say "to BRW" on a GROUPED row - which
+   *  holds the pool's id but has no member sitting at the pool to read a code off. */
+  pool_warehouse_code?: string | null;
   is_network: boolean;
   /** Populated on network buy rows - the suggested per-warehouse split. */
   allocation: AllocationLine[] | null;
@@ -302,12 +305,9 @@ export interface ReorderRecommendation {
   /** The weekly checklist, frozen with the row so it still reads true next month.
    *  `incoming_spo` is stock on the water; `outstanding_po` is the ordered-not-received
    *  purchase book. Two different questions, kept apart. */
+  /** The SITE POOL's stock (R19, captain 28 Aug): a project bin's quantity is never part
+   *  of it, on any basis, because it is not stock the site may sell. */
   on_hand?: number | null;
-  /** Stock sitting at a project-held bin this location's pool feeds - visible, but NOT
-   *  part of `on_hand` (captain, 20 Aug: "the on hand need to consider pool quantity
-   *  only ... project on hand quantity is not really an actual usable quantity"). 0 at
-   *  a pool root, the bin's own stock at a bin. Never silently dropped from the screen. */
-  project_on_hand?: number | null;
   incoming_spo?: number | null;
   outstanding_po?: number | null;
   outstanding_sales?: number | null;
@@ -333,13 +333,17 @@ export interface ReorderRecommendation {
   last_purchase_date?: string | null;
   last_purchase_ref?: string | null;
   last_purchase_basis?: 'own_segment' | 'unattributed' | 'never_purchased' | null;
-  /** What three months of movement implies. Never applied on the buyer's behalf. */
+  /** `ADU x lead time + 14 days of safety`. Never applied on the buyer's behalf. */
   suggested_level?: number | null;
   suggestion_basis?: {
     months?: { month: string; qty: number }[];
-    months_studied?: number;
-    avg_monthly?: number;
-    cover_months?: number;
+    adu?: number;
+    lead_time_days?: number;
+    lead_time_source?: string | null;
+    safety_days?: number;
+    safety_stock?: number;
+    window_days?: number;
+    window_qty?: number | null;
     raw_level?: number;
     no_movement?: boolean;
   } | null;
@@ -367,34 +371,25 @@ export interface ReorderRecommendation {
   // `outstanding_po` and `reorder_level` above stay single shared facts of the
   // product-location and gain no channel dimension, because counting the same stock
   // once per channel would double the supply the plan believes it has.
-  /** Confirmed unplaced Project Buy at this location. Firm: never netted again. */
+  /**
+   * Un-linked Project Buy at this location: what CS raised on the Order Inquiry, less
+   * whatever of it already sits on a purchase or shipping order. Firm - never netted
+   * again - and since P3 it is the WHOLE of project demand: a project sales-order line
+   * nobody has decided on the board is awaiting CS, not demand.
+   */
   project_need?: number | null;
-  /** Retail-class need after normal netting. Answers the sheet leg below as well. */
+  /** Retail-class need after normal netting. */
   retail_need?: number | null;
   /**
-   * The unconfirmed sheet-origin Project leg (`demand_origin = 'scm_order_inquiry'` with
-   * no confirmed CS decision). Project-class in the reading, but NOT firm: the engine put
-   * it through ordinary netting, so it is already inside `retail_need` and must never be
-   * added to it. Shown as evidence for where a project-class quantity went (plan 4 / 5.3).
-   */
-  project_sheet_need?: number | null;
-  /**
-   * Demand whose SO carries no persisted class. Visible, and EXCLUDED from the
-   * actionable need in both grains until it is classified (AC-F05 / AC-E06).
-   */
-  unclassified_need?: number | null;
-  /**
    * front-planning follow-up (19-20 Aug): the RAW `committed_v` split - this location's
-   * OPEN demand by channel, before Project narrows to the confirmed-for-buy subset above.
-   * The grouped Product view's channel COLUMNS read these (summed across a product's
-   * locations), not `project_need`/`retail_need`/`unclassified_need`, because a buyer
-   * reading "Project" as a column wants everything on a project-class order, not only the
-   * firm leg the engine already bypassed netting for. The three sum to
-   * `outstanding_sales`, the same invariant `committed_v` guarantees per location.
+   * OPEN demand by channel. The grouped Product view's channel COLUMNS read these (summed
+   * across a product's locations) rather than `project_need`/`retail_need`. The two sum to
+   * `outstanding_sales`, the same invariant `committed_v` guarantees per location. There
+   * is no third channel: a sales order with no class reads as retail, and the SO import
+   * refuses a file that would create one (P4).
    */
   project_committed?: number | null;
   retail_committed?: number | null;
-  unclassified_committed?: number | null;
   /**
    * True when this run is decided at the Product grain, or is legacy, so the
    * per-location row is a read and drill row rather than a decision surface
@@ -412,6 +407,13 @@ export interface ReorderRunSummary {
   total_cash_impact: number;
   /** Total rows to review (buy + disposition) - powers the completion CTA. */
   recommendation_count: number;
+  /**
+   * Order inquiry rows purchasing has not acknowledged yet (`PLAN-scm-oi-handshake.md`,
+   * AC-H10) - the plan page's own chip. LIVE, unlike the counts above it, which are
+   * frozen in the run log: the plan counts acknowledged rows only, so this is the work
+   * the plan itself cannot see, and it drops as the buyer clears it.
+   */
+  awaiting_rows?: number;
 }
 
 /** The run record returned by create / poll. `stage` is UI-only progress. */
@@ -423,11 +425,21 @@ export interface ReorderRun {
   summary: ReorderRunSummary | null;
   /** Human error message when status = failed. */
   error: string | null;
+  /** Stamped once at creation; NULL on a legacy run (`lib/planGrain.ts`). */
+  decision_grain?: 'product' | 'location' | null;
+  /** `1` on a front-planning run, NULL on a legacy one - what makes a run read-only. */
+  front_planning_contract_version?: number | null;
+  /** The "Sales order cut-off" this run was launched with (`YYYY-MM-DD`), or null. */
+  plan_horizon_date?: string | null;
+  /** When the engine started - the plan header's "Plan dd/mm/yyyy HH:mm" (C1). */
+  started_at?: string | null;
 }
 
 /** Request to launch a run. `budget_id` is greyed in the UI until M4. Planning scope
  *  is fixed server-side (M8-D5) - `buy_scope` is no longer a request field. */
 export interface CreateReorderRunRequest {
+  /** Empty means EVERY warehouse (P1) - the backend resolves an empty scope to every
+   *  active warehouse, the same rule `product_codes` already carries. */
   warehouse_codes: string[];
   /**
    * Optional product scope (AC-B8a) - human product codes, never ids. Omitted or

@@ -12,6 +12,8 @@ scm→scm FKs are schema-qualified (``ForeignKey("scm.reorder_run.id")``).
 Per AC-M0.3 every table carries ``source_system`` + ``source_ref`` (``'seed'`` for demo
 rows, ``'manual'`` for future UI rows).
 """
+from datetime import date
+
 from sqlalchemy import (
     CheckConstraint,
     Column,
@@ -264,7 +266,7 @@ class ReorderRun(Base, CompanyScopedMixin):
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     created_by = Column(String, nullable=True)
-    status = Column(String(30), default="running", nullable=False)  # running | completed | failed
+    status = Column(String(30), default="running", nullable=False, server_default="running")  # running | completed | failed
     warehouse_ids = Column(JSONB, nullable=True)
     # The product scope of a manual plan. NULL means none was asked for (the daily run,
     # which plans everything); an EMPTY list means one was asked for and nothing resolved
@@ -273,7 +275,7 @@ class ReorderRun(Base, CompanyScopedMixin):
     buy_scope = Column(String(20), nullable=True)  # network | warehouse
     budget_id = Column(UUID(as_uuid=False), ForeignKey("scm.purchasing_budget.id", ondelete="SET NULL"), nullable=True)
     budget_amount = Column(Numeric(15, 2), nullable=True)  # M4 - chosen budget the "Apply budget" action persists
-    include_market = Column(Boolean, nullable=False, default=False)  # M7 - opt-in market-trend priority factor
+    include_market = Column(Boolean, nullable=False, default=False, server_default="false")  # M7 - opt-in market-trend priority factor
     # "Plan until" (captain, 20 Aug): demand needed AFTER this date is excluded from the
     # run's netting; NULL (the default) plans every open SO line regardless of need date,
     # unchanged from before this column existed. Stamped once at creation, like
@@ -351,7 +353,7 @@ class ReorderRecommendation(Base, CompanyScopedMixin):
     explanation = Column(Text, nullable=True)  # LLM (M5)
     market_advisory = Column(Text, nullable=True)  # LLM (M5)
     funding_status = Column(String(20), nullable=True)  # funded | deferred
-    status = Column(String(20), default="proposed", nullable=False)  # proposed | accepted | adjusted | dismissed
+    status = Column(String(20), default="proposed", nullable=False, server_default="proposed")  # proposed | accepted | adjusted | dismissed
     # Whether THIS location's purchase order has been keyed into AutoCount (AC-E2.2), for a
     # run decided at LOCATION grain, where the decision lives here rather than on the
     # product summary row. Same three values and the same manual semantics as
@@ -473,6 +475,17 @@ class PlanRowDecision(Base, CompanyScopedMixin):
     #: book is read by number elsewhere; this is the buyer's own note of which one(s)).
     po_refs = Column(JSONB, nullable=True)
     reason_text = Column(Text, nullable=True)
+    #: `use_last` (cost the line at what we last paid) or `ask_new` (the price is still a
+    #: question, so the drafted line carries none). AC-R13.
+    price_mode = Column(String(20), nullable=True)
+    #: The supplier the BUYER chose, when they overrode the engine's. NULL = the
+    #: recommendation's own proposed supplier stands (AC-R14).
+    supplier_id = Column(
+        UUID(as_uuid=False), ForeignKey("suppliers.id", ondelete="SET NULL"), nullable=True
+    )
+    #: The price this row is costed at, in the chosen supplier's currency. NULL under
+    #: `ask_new`: an unknown price is not a price of zero.
+    unit_cost = Column(Numeric, nullable=True)
     decided_by = Column(String, nullable=True)
     decided_at = Column(
         DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
@@ -655,7 +668,7 @@ class MarketResearchRun(Base, CompanyScopedMixin):
     __table_args__ = {"schema": "scm"}
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
-    status = Column(String(30), default="running", nullable=False)  # running | completed | failed
+    status = Column(String(30), default="running", nullable=False, server_default="running")  # running | completed | failed
     started_at = Column(DateTime(timezone=False), nullable=True)
     finished_at = Column(DateTime(timezone=False), nullable=True)
     topic_count = Column(Integer, nullable=True)  # active topics searched this run
@@ -711,14 +724,20 @@ class PriorityPolicy(Base):
     # today". A line required AFTER this date is proposed as `Buy now`, untouched - no
     # reservation, no borrow attempted. NULL means no coverage limit is set.
     reorder_coverage_until = Column(Date, nullable=True)
-    # A cross-OWNERSHIP-GROUP borrow (e.g. a BB line borrowing from an HP location) is only
-    # proposed under a small-quantity cap - either absolute qty or a percentage of the line,
-    # whichever the ladder decides to apply. Both are stored; which one gates is the ladder's
-    # call, not this row's.
-    cross_group_borrow_max_qty = Column(Integer, nullable=False, default=50,
-                                        server_default=text("50"))
-    cross_group_borrow_max_pct = Column(Numeric(6, 2), nullable=False, default=10,
-                                        server_default=text("10"))
+    # The other end of the same idea (borrow ladder v7.1, R20, migration 443). Demand dated
+    # ON or AFTER this date is TBA: it takes no supply, is never covered, and never donates.
+    # This client books "no date agreed yet" as 2030-01-01, so the default sits just before
+    # it; the next client's convention is a different date, which is exactly why it is a
+    # policy field and not a constant in the engine. NOT NULL - "no TBA date" would mean a
+    # placeholder line competing with real promises for real stock.
+    #
+    # `cross_group_borrow_max_qty` / `cross_group_borrow_max_pct` used to sit here and were
+    # dropped by the same migration (R5): any ownership group may donate now, so there is
+    # nothing left for a cap to cap.
+    tba_date_from = Column(
+        Date, nullable=False, default=date(2029, 1, 1),
+        server_default=text("'2029-01-01'::date"),
+    )
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(
         DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
@@ -1002,6 +1021,8 @@ class PlanException(Base, CompanyScopedMixin):
         # The queue query: this batch's open rows. Status leads because "what is left to
         # decide" is the question the screen opens on.
         Index("ix_scm_plan_exception_batch_status", "batch_id", "status"),
+        # The FK check when a purchase order is deleted (migration 420 deletes 3,983 at once).
+        Index("ix_scm_plan_exception_purchase_order", "purchase_order_id"),
         CheckConstraint(
             "exception_type IN ('shortfall_earlier', 'supply_early', 'supply_surplus', "
             "'supply_wrong_location')",
@@ -1028,6 +1049,11 @@ class OrderLinkClaim(Base, CompanyScopedMixin):
     upload result reports - "34 orders name a purchase order we have not seen" is how
     somebody finds out the PO book is a month behind.
 
+    The PURCHASE side is one of two columns, never both: `po_line_id` for a `######-S####`
+    purchase order, `spo_allocation_id` for an `SPO-####/##-####` shipping order, which since
+    migration 420 is a row in `spo_allocations`. Which one a claim uses is decided by the
+    number it already holds, so nothing has to be re-parsed at read time.
+
     `item_code` is nullable because the two feeds know different things. The Order Inquiry
     sheet states the item, so its claims are per line. The `**SO:174830**` notes inside the PO
     export do not - a note sits between lines and nothing says which side it describes - so
@@ -1052,11 +1078,29 @@ class OrderLinkClaim(Base, CompanyScopedMixin):
         UUID(as_uuid=False), ForeignKey("purchase_order_lines.id", ondelete="SET NULL"),
         nullable=True,
     )
+    #: The purchase side when the document is a SHIPPING order. An `SPO-` number names a row
+    #: in `spo_allocations`, not in `purchase_order_lines` (migration 420), and a claim with
+    #: nowhere to record that half could never resolve: 12,393 of them, naming 2,989 sales
+    #: orders, would have read "awaiting purchase order" for ever. Exactly one of the two
+    #: columns is filled, decided by the number the claim itself carries.
+    spo_allocation_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey(
+            "spo_allocations.id",
+            ondelete="SET NULL",
+            name="fk_scm_order_link_claim_spo_allocation",
+        ),
+        nullable=True,
+    )
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
     __table_args__ = (
         Index("ix_scm_order_link_claim_so", "so_number"),
         Index("ix_scm_order_link_claim_po", "po_number"),
+        Index("ix_scm_order_link_claim_spo_allocation", "spo_allocation_id"),
+        # The FK check when a purchase order line is deleted: without it every deleted line
+        # costs a sequential scan of this table (migration 420 deleted 80k lines).
+        Index("ix_scm_order_link_claim_po_line", "po_line_id"),
         CheckConstraint(
             "source IN ('po_history', 'order_inquiry', 'so_upload', 'po_upload', 'manual')",
             name="ck_scm_order_link_claim_source",
@@ -1103,6 +1147,84 @@ class ContainerSize(Base):
     )
 
 
+class SupplierProductCodeAlias(Base, CompanyScopedMixin):
+    """One supplier's spelling of one of our product codes (R16, migration 431).
+
+    Suppliers do not write our codes. They reorder the tokens, spell out a trap size ours
+    omits because it is the default, glue a suffix on. `supplier_code_matcher` works that
+    out with a ladder, and this table is where the answer is KEPT - so the ladder is never
+    re-run against a code somebody has already ruled on, and a wrong guess is corrected once
+    instead of being re-derived on every upload.
+
+    `source` is who decided and `matched_by` is which rung did it. Both are on the row
+    because an automatic bind has to be visible AS one: a screen that cannot tell a guess
+    from a decision cannot ask anyone to check the guess.
+
+    The code is stored VERBATIM - it is what the supplier's file says. Normalising happens
+    where codes are compared, never on the way in.
+    """
+    __tablename__ = "supplier_product_code_alias"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    supplier_id = Column(
+        UUID(as_uuid=False), ForeignKey("suppliers.id", ondelete="CASCADE"), nullable=False
+    )
+    supplier_code = Column(String(120), nullable=False)
+    #: Nullable because "none of ours" is an answer too (R17, migration 432): a dismissal is
+    #: a row with no product, and it is the only shape that can say the code names something
+    #: our catalogue is never going to hold.
+    product_id = Column(
+        UUID(as_uuid=False), ForeignKey("products.id", ondelete="CASCADE"), nullable=True
+    )
+    #: The other thing a supplier code can name (R19, R20, migration 433): a product SET.
+    #: `CWC605-RL` is the whole WC - pedestal plus cistern - and no product carries that
+    #: code, so a code spelled as one of our set codes could never bind before this column.
+    #: Exactly one of `product_id` / `product_set_id` is set, unless the row is a dismissal
+    #: and neither is.
+    product_set_id = Column(
+        UUID(as_uuid=False), ForeignKey("product_sets.id", ondelete="CASCADE"), nullable=True
+    )
+    source = Column(String(10), nullable=False, server_default=text("'auto'"))
+    matched_by = Column(Text, nullable=True)
+    created_by = Column(String(200), nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(
+            "source IN ('auto', 'manual', 'dismissed')",
+            name="ck_scm_supplier_code_alias_source",
+        ),
+        # `source` and what the row names are one fact, so the database says so: dismissed
+        # means exactly "nothing of ours", and a row claiming both is unreadable by every
+        # screen that renders it.
+        CheckConstraint(
+            "(source = 'dismissed') = (product_id IS NULL AND product_set_id IS NULL)",
+            name="ck_scm_supplier_code_alias_dismissed",
+        ),
+        # One code means ONE thing. A row naming a product and a set at once cannot be
+        # re-bound - the stock row and the invoice line each carry one of the two - so the
+        # database refuses it rather than leaving every reader to choose.
+        CheckConstraint(
+            "NOT (product_id IS NOT NULL AND product_set_id IS NOT NULL)",
+            name="ck_scm_supplier_code_alias_one_target",
+        ),
+        Index("ix_scm_supplier_code_alias_supplier", "supplier_id"),
+        Index("ix_scm_supplier_code_alias_product", "product_id"),
+        Index("ix_scm_supplier_code_alias_set", "product_set_id"),
+        # Declared on the MODEL as well as in migration 431: a CI database is built with
+        # `create_all` and never runs a migration body, so without it the guard against one
+        # supplier code meaning two products exists in production and nowhere else.
+        Index(
+            "uq_scm_supplier_code_alias_identity",
+            text("coalesce(company_id, '%s'::uuid)" % _NIL_COMPANY),
+            "supplier_id",
+            text("upper(supplier_code)"),
+            unique=True,
+        ),
+        {"schema": "scm"},
+    )
+
+
 class SupplierInventory(Base, CompanyScopedMixin):
     """What one supplier is holding for us right now: packed, unfinished, and how big it is.
 
@@ -1135,6 +1257,13 @@ class SupplierInventory(Base, CompanyScopedMixin):
     product_id = Column(
         UUID(as_uuid=False), ForeignKey("products.id", ondelete="SET NULL"), nullable=True
     )
+    #: The row's other possible binding (R19, migration 433): the supplier's code names a
+    #: product SET, not a product. `CWC605-RL` is a whole WC and no product carries that
+    #: code, so before this column the row could only sit unmatched. Never both - the
+    #: matcher answers one code with one thing.
+    product_set_id = Column(
+        UUID(as_uuid=False), ForeignKey("product_sets.id", ondelete="SET NULL"), nullable=True
+    )
 
     qty_packed = Column(Numeric, nullable=False, server_default=text("0"))
     qty_unfinished = Column(Numeric, nullable=False, server_default=text("0"))
@@ -1157,6 +1286,7 @@ class SupplierInventory(Base, CompanyScopedMixin):
     __table_args__ = (
         Index("ix_scm_supplier_inventory_supplier", "supplier_id"),
         Index("ix_scm_supplier_inventory_product", "product_id"),
+        Index("ix_scm_supplier_inventory_set", "product_set_id"),
         # Declared on the MODEL as well as in migration 336, because a CI database is built
         # with `create_all` and never runs a migration body: without it the guard against a
         # doubled packed quantity exists in production and nowhere else.
@@ -1172,15 +1302,18 @@ class SupplierInventory(Base, CompanyScopedMixin):
 
 
 class LoadingPlan(Base, CompanyScopedMixin):
-    """One attempt at filling containers at one supplier, on one day.
+    """One container plan at one supplier: what to ask them for, and what became of the ask.
 
-    Kept as a row rather than computed on demand because the container count is a DECISION
-    (AC-E6: change it and the plan re-runs), and because what Ms Tee sent the supplier has to
-    still be readable after the order book moves underneath it.
+    THE plan row since part 4 (R1). It was a stage-2 CBM fit before that, and the columns
+    below still carry both halves: `status` / `plan_horizon_date` / `document_kind` /
+    `line_edits` are the plan a buyer works on, and `container_*` / `planned_cbm` /
+    `deferred_count` are the CBM fit that was cut on the captain's 20 Aug ruling. A second
+    "container plan" table would have been the same row under a second name, and
+    `supplier_notices.loading_plan_id` already points here.
 
-    Capacity is `container_count * container_cbm` and both halves are stored, not just the
-    product: "three 40HQ" is the sentence a person says, and a plan that only remembers
-    "196.5 cbm" cannot be re-read or re-run.
+    Kept as a row rather than computed on demand because two people have to be able to open
+    the same plan, and because what was sent to a supplier has to stay readable after the
+    order book moves underneath it.
     """
     __tablename__ = "loading_plan"
 
@@ -1190,8 +1323,33 @@ class LoadingPlan(Base, CompanyScopedMixin):
     )
     container_type = Column(String(30), nullable=True)
     container_count = Column(Integer, nullable=False, server_default=text("1"))
-    container_cbm = Column(Numeric, nullable=False)
-    capacity_cbm = Column(Numeric, nullable=False)
+    #: Nullable since 441: the CBM fit is the stage-2 half, and a plan started from a stock
+    #: list has no container chosen yet (the supplier decides that when they pack).
+    container_cbm = Column(Numeric, nullable=True)
+    capacity_cbm = Column(Numeric, nullable=True)
+
+    #: `planning` -> `sent` (a notice went out) or `cancelled`. Never `opened`: an open is an
+    #: event that repeats, and a status that flipped back and forth would lie.
+    status = Column(String(20), nullable=False, server_default=text("'planning'"))
+    #: "Sales order cut-off". NULL means every open order counts, the same words and the same
+    #: rule the reorder run uses.
+    plan_horizon_date = Column(Date, nullable=True)
+    #: `stock_list` | `proforma` | `none` - which document the plan was started from.
+    document_kind = Column(String(20), nullable=False, server_default=text("'none'"))
+    #: The retained sheet itself, so the record can offer "View uploaded list". Not an FK:
+    #: attachments are pruned on their own schedule and a pruned file must not delete a plan.
+    source_attachment_id = Column(UUID(as_uuid=False), nullable=True)
+    #: The typed quantities, `row_key -> qty`. Replaced whole on save (R6), never patched: a
+    #: cleared cell must not survive as a stale override.
+    line_edits = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    #: What the LAST build of this plan asked for. A cache of a derived figure, so the list
+    #: can print a "To request" column without running one full suggestion per listed row.
+    to_request_qty = Column(Numeric, nullable=True)
+    to_request_cbm = Column(Numeric, nullable=True)
+
+    sent_at = Column(DateTime(timezone=False), nullable=True)
+    cancelled_at = Column(DateTime(timezone=False), nullable=True)
+    cancelled_by = Column(String, nullable=True)
 
     policy_id = Column(
         UUID(as_uuid=False), ForeignKey("scm.priority_policy.id", ondelete="SET NULL"),
@@ -1273,6 +1431,8 @@ class LoadingPlanLine(Base, CompanyScopedMixin):
     __table_args__ = (
         Index("ix_scm_loading_plan_line_plan", "plan_id"),
         Index("uq_scm_loading_plan_line_identity", "plan_id", "po_line_id", unique=True),
+        # The FK check when a purchase order line is deleted (see OrderLinkClaim).
+        Index("ix_scm_loading_plan_line_po_line", "po_line_id"),
         CheckConstraint(
             "status IN ('allocated', 'partial', 'deferred', 'unmeasured')",
             name="ck_scm_loading_plan_line_status",
@@ -1357,6 +1517,34 @@ class ProformaInvoice(Base, CompanyScopedMixin):
     block_index = Column(Integer, nullable=True)
     uploaded_by = Column(String, nullable=True)
 
+    #: Which box this invoice is being fitted into. NULL means the tenant's default size,
+    #: resolved on read rather than copied in - a PI uploaded before anybody thought about
+    #: capacity should follow the default, not freeze whatever it happened to be that day.
+    container_size_id = Column(
+        UUID(as_uuid=False), ForeignKey("scm.container_size.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    #: Who trimmed this document to fit, and when. NULL on an invoice nobody has touched,
+    #: which is what tells the screen to show the supplier's figures unqualified.
+    adjusted_by = Column(String(200), nullable=True)
+    adjusted_at = Column(DateTime(timezone=False), nullable=True)
+
+    #: The revision chain (AC-E7). A supplier resending the same container with new prices
+    #: is a REVISION of one document, not a second document sitting beside it: the two would
+    #: otherwise both answer "what is this container costing", and only one of them is true.
+    #: `revision_of_id` points at the immediately-previous revision, so the chain reads
+    #: backwards from the current one; `revision_no` is its position, 1 for an original.
+    revision_of_id = Column(
+        UUID(as_uuid=False), ForeignKey("scm.proforma_invoice.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    revision_no = Column(Integer, nullable=False, server_default=text("1"))
+    #: `current` or `superseded`. A superseded revision is KEPT and read-only: it is what the
+    #: supplier actually sent on the day, and the diff against it is the reason anybody looks
+    #: at the new one. It is never a cost and never converts (AC-E9, AC-E10).
+    status = Column(String(20), nullable=False, server_default=text("'current'"))
+
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(
         DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
@@ -1369,6 +1557,10 @@ class ProformaInvoice(Base, CompanyScopedMixin):
 
     __table_args__ = (
         Index("ix_scm_proforma_invoice_supplier", "supplier_id"),
+        Index("ix_scm_proforma_invoice_revision_of", "revision_of_id"),
+        CheckConstraint(
+            "status IN ('current', 'superseded')", name="ck_scm_proforma_invoice_status"
+        ),
         # Declared on the MODEL as well as in migration 375, because a CI database is built
         # with `create_all` and never runs a migration body: without it the guard against a
         # doubled invoice exists in production and nowhere else (the supplier_inventory
@@ -1418,8 +1610,45 @@ class ProformaInvoiceLine(Base, CompanyScopedMixin):
     po_ref = Column(String(100), nullable=True)
     remark = Column(Text, nullable=True)
 
+    #: How the supplier packs it, and how much room it takes. All three are NULL rather than
+    #: 0 on a document that states no volume (Kailu's), because 0 cbm and "not measured" are
+    #: different answers to "will this fit" and only one of them is honest (AC-D1).
+    cartons = Column(Numeric, nullable=True)
+    cbm_per_unit = Column(Numeric, nullable=True)
+    cbm_total = Column(Numeric, nullable=True)
+
+    #: What the line weighs, as the supplier stated it (净重 / 毛重, N.W. / G.W.). NULL on a
+    #: document that states neither, for the same reason the volumes are: a shipping weight
+    #: of 0 kg and an unstated one are different answers, and only one of them is honest.
+    net_weight = Column(Numeric(15, 4), nullable=True)
+    gross_weight = Column(Numeric(15, 4), nullable=True)
+
+    #: What it is made of and how it is boxed, as the supplier printed it (材质 / 装箱数 /
+    #: 外箱尺寸). The container workbook derives the carton count and the volume from these,
+    #: and `convert_to_draft_shipment` copies them onto the packing-list line so the sheet
+    #: is printable without anybody re-typing the supplier's own measurements.
+    #: Centimetres, as the documents state them.
+    material = Column(String(255), nullable=True)
+    pcs_per_carton = Column(Numeric(15, 4), nullable=True)
+    carton_length_cm = Column(Numeric(10, 2), nullable=True)
+    carton_width_cm = Column(Numeric(10, 2), nullable=True)
+    carton_height_cm = Column(Numeric(10, 2), nullable=True)
+
+    #: What the supplier said, frozen at import and never written again. `qty` and
+    #: `unit_price` above are OURS to adjust to fit the container; these two are theirs, and
+    #: the whole fulfilment journey rests on the two never being confused (AC-E2).
+    supplier_qty = Column(Numeric, nullable=True)
+    supplier_unit_price = Column(Numeric, nullable=True)
+
     product_id = Column(
         UUID(as_uuid=False), ForeignKey("products.id", ondelete="SET NULL"), nullable=True
+    )
+    #: The line's other possible binding (R19/R21, migration 433): the supplier priced a
+    #: SET. Stock lives on the members, so `convert_to_draft_shipment` explodes such a line
+    #: into one shipment line per member - the invoice itself keeps the set code, because
+    #: that is what the supplier reads.
+    product_set_id = Column(
+        UUID(as_uuid=False), ForeignKey("product_sets.id", ondelete="SET NULL"), nullable=True
     )
 
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
@@ -1429,6 +1658,7 @@ class ProformaInvoiceLine(Base, CompanyScopedMixin):
     __table_args__ = (
         Index("ix_scm_proforma_invoice_line_invoice", "invoice_id"),
         Index("ix_scm_proforma_invoice_line_po_ref", "po_ref"),
+        Index("ix_scm_proforma_invoice_line_set", "product_set_id"),
         {"schema": "scm"},
     )
 
@@ -1475,14 +1705,20 @@ class ProformaInvoiceShipmentLink(Base, CompanyScopedMixin):
     #: Why this line has no `inbound_shipment_line_id` - e.g. "no catalogue product match".
     #: Null on a real link.
     unmatched_reason = Column(String(255), nullable=True)
+    #: HOW MUCH of the line went to that shipment (Q9, migration 429). One line may be split
+    #: across two containers, so the quantity lives on the link rather than being implied by
+    #: the line. NULL on a SKIP row: nothing was placed, and a number there would say goods
+    #: went somewhere they did not.
+    qty = Column(Numeric, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
     __table_args__ = (
         Index("ix_scm_pi_shipment_link_invoice", "proforma_invoice_id"),
         Index("ix_scm_pi_shipment_link_shipment", "inbound_shipment_id"),
-        # One conversion outcome per PI line, ever - this is what makes a second convert
-        # attempt on an already-converted PI detectable rather than a silent duplicate.
-        Index("uq_scm_pi_shipment_link_line", "proforma_invoice_line_id", unique=True),
+        # NOT unique since migration 429: one PI line legitimately sits in two packing lists
+        # (Q9). What stops a silent double convert is now the service, which compares what
+        # is already placed against what the line holds - arithmetic an index cannot do.
+        Index("ix_scm_pi_shipment_link_line", "proforma_invoice_line_id"),
         {"schema": "scm"},
     )
 
@@ -1531,6 +1767,8 @@ class ShipmentLineSpoLink(Base, CompanyScopedMixin):
     __table_args__ = (
         Index("ix_scm_shipment_spo_link_shipment", "inbound_shipment_id"),
         Index("ix_scm_shipment_spo_link_po", "purchase_order_id"),
+        # The FK check when a purchase order line is deleted (see OrderLinkClaim).
+        Index("ix_scm_shipment_spo_link_po_line", "purchase_order_line_id"),
         # One conversion outcome per shipment line, ever - what makes a second "Create SPO"
         # attempt on an already-converted shipment detectable rather than a silent duplicate.
         Index("uq_scm_shipment_spo_link_line", "inbound_shipment_line_id", unique=True),

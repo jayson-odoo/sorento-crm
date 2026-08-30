@@ -145,7 +145,7 @@ export function PeriodPicker({
               })
             }
           >
-            <TabsList className="grid grid-cols-3 mb-3">
+            <TabsList variant="default" className="grid grid-cols-3 mb-3">
               <TabsTrigger value="day">Day</TabsTrigger>
               <TabsTrigger value="month">Month</TabsTrigger>
               <TabsTrigger value="year">Year</TabsTrigger>

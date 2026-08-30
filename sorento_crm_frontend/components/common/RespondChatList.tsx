@@ -82,6 +82,14 @@ export interface ConversationCommentRenderable {
   /** Naive UTC, as the backend serializes every datetime. */
   created_at: string;
   source?: 'crm' | 'respond';
+  /**
+   * Who the note tags. Respond draws its mentions as a "@Name" line above the
+   * body. A CRM-authored note already carries "@Name" inline in its body (the
+   * composer splices it in and derives `mentioned_user_ids` from it), so the
+   * row only lists names the body does not already show - otherwise the
+   * addressee reads twice.
+   */
+  mentioned_names?: string[];
 }
 
 interface RespondChatListProps {
@@ -572,7 +580,19 @@ export default function RespondChatList({
     scrollBubbleIntoView(node, { behavior: 'smooth', block: 'center' });
   }, [sortedItems.length, normalizedHighlightId, activeMatchId, scrollBubbleIntoView]);
 
+  // Whether this thread has been landed on its tail yet. The slack check below
+  // exists so a reader who scrolled up to read history is not yanked back on
+  // every poll - but on the FIRST render of a long thread the reader is at the
+  // top only because that is where a fresh scroll container starts, and the
+  // slack check read that as "reading history" and never pinned at all. Reset
+  // when the items empty out (a different conversation loading in the same
+  // mounted list).
+  const pinnedOnce = useRef(false);
   useEffect(() => {
+    if (sortedItems.length === 0) {
+      pinnedOnce.current = false;
+      return;
+    }
     if (activeMatchId || !pinToBottom) return;
     // A highlighted thread anchors on the enquiry, not on the tail. Until that
     // bubble is loaded there is nothing to anchor to, so the newest message is
@@ -582,13 +602,22 @@ export default function RespondChatList({
     }
     // A page that was just prepended leaves the reader at the top on purpose.
     if (prependAnchor.current) return;
-    const node = scrollRef.current;
-    const distanceFromBottom = node
-      ? node.scrollHeight - node.scrollTop - node.clientHeight
-      : 0;
-    if (distanceFromBottom > PIN_TO_BOTTOM_SLACK_PX) return;
-    messagesEndRef.current?.scrollIntoView?.({ behavior: 'smooth' });
-  }, [sortedItems.length, normalizedHighlightId, activeMatchId, pinToBottom]);
+    const firstPin = !pinnedOnce.current;
+    // The reader's own send always lands at the tail, wherever they were
+    // scrolled (optimistic send AC-B1): a bubble they cannot see is no answer
+    // to "did it go?".
+    const newest = sortedItems[sortedItems.length - 1] as { source?: string } | undefined;
+    const ownSend = newest?.source === 'pending';
+    if (!firstPin && !ownSend) {
+      const node = scrollRef.current;
+      const distanceFromBottom = node
+        ? node.scrollHeight - node.scrollTop - node.clientHeight
+        : 0;
+      if (distanceFromBottom > PIN_TO_BOTTOM_SLACK_PX) return;
+    }
+    pinnedOnce.current = true;
+    messagesEndRef.current?.scrollIntoView?.({ behavior: firstPin ? 'auto' : 'smooth' });
+  }, [sortedItems, normalizedHighlightId, activeMatchId, pinToBottom]);
 
   // Scroll anchoring: restore the reader's distance from the OLD top edge.
   useLayoutEffect(() => {
@@ -788,6 +817,9 @@ export default function RespondChatList({
             const noteDivider =
               dKeyNote && dKeyNote !== lastDateKey ? formatDatePillLabel(entry.ms) : '';
             if (dKeyNote) lastDateKey = dKeyNote;
+            const headerMentions = (comment.mentioned_names ?? []).filter(
+              (name) => !comment.body.includes(`@${name}`),
+            );
             return (
               <div key={`note-${comment.id}`} data-testid="chat-internal-note">
                 {noteDivider && (
@@ -816,6 +848,16 @@ export default function RespondChatList({
                         {entry.ms > 0 ? formatBubbleTime(entry.ms) : ''}
                       </span>
                     </div>
+                    {headerMentions.length > 0 && (
+                      <div
+                        className="mb-0.5 flex flex-wrap gap-x-1.5 text-xs font-medium text-sky-700 dark:text-sky-300"
+                        data-testid="chat-internal-note-mentions"
+                      >
+                        {headerMentions.map((name) => (
+                          <span key={name}>@{name}</span>
+                        ))}
+                      </div>
+                    )}
                     <div className="whitespace-pre-wrap break-words leading-snug">
                       <HighlightedText text={comment.body} term={highlightTerm} />
                     </div>

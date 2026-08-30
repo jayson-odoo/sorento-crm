@@ -155,15 +155,21 @@ export interface FulfilmentPriorityPolicy {
   /** A line required AFTER this calendar date is proposed as `Buy now`, untouched -
    *  the captain's "purchasing reorders until October". `null` = no coverage limit set. */
   reorder_coverage_until: string | null;
-  /** A cross-ownership-group borrow is only offered under this quantity... */
-  cross_group_borrow_max_qty: number;
-  /** ...or this percentage of the line, whichever the ladder applies. */
-  cross_group_borrow_max_pct: number;
+  /** Demand dated ON or AFTER this calendar date is TBA: it takes no supply, is never
+   *  covered, and never donates. `YYYY-MM-DD`, NOT NULL on the backend - `Reset` on the
+   *  panel restores `DEFAULT_TBA_DATE_FROM`. (Borrow ladder v7.1 R20 / AC-S1-2.) */
+  tba_date_from: string;
   /** False only on a database that has never activated a fulfilment-priority policy. */
   exists: boolean;
 }
 
 export type FulfilmentPriorityWrite = Omit<FulfilmentPriorityPolicy, 'name' | 'exists'>;
+
+/**
+ * The column default of `scm.priority_policy.tba_date_from` (migration 443). The field is
+ * NOT NULL, so `Reset` on the panel means "back to this", never "empty".
+ */
+export const DEFAULT_TBA_DATE_FROM = '2029-01-01';
 
 /** Why a scope link did (or did not) win, for the preview teaching surface. */
 export type ResolutionReason =

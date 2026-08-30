@@ -13,6 +13,19 @@ figure they must trust.
 The openness predicate here MUST stay identical to `scm.po_ordered_v` (the checklist
 column the plan already shows), or the popup's receipts would not sum to the number on
 the row.
+
+RETAIL ONLY (P8, `PLAN-scm-purchasing-uat-journey.md`; captain: "why does reorder planning
+consider outstanding PO again when the OI already links to it"). A project row's purchase
+order is consumed by the ORDER INQUIRY: the raised row links to the PO line and the plan's
+Project figure drops by exactly that much. Offering the same PO again on the plan is the
+same quantity twice, and the buyer handles it twice. So a row whose demand is entirely
+project-class serves no receipts here and the plan shows it no "Use PO" - while retail,
+which has no Order Inquiry at all, keeps it: the plan is the only place a retail demand and
+a purchase order ever meet.
+
+Entirely project-class is the test, not "has any project demand". A cell carrying both
+channels has a retail need that nothing else nets against a PO, and hiding the receipts
+there would leave that half of the row buying what is already ordered.
 """
 from __future__ import annotations
 
@@ -27,6 +40,11 @@ _PO_BOOK_SQL = """
         SELECT DISTINCT rr.product_id, rr.warehouse_id
         FROM scm.reorder_recommendation rr
         WHERE rr.run_id = :run_id
+          -- P8: a cell whose demand is ALL project gets no receipts. A run frozen before
+          -- the channel split states neither figure, so both COALESCE to 0, the row is not
+          -- project-only, and its receipts are served exactly as they always were.
+          AND NOT (COALESCE((rr.inputs ->> 'project_committed')::numeric, 0) > 0
+                   AND COALESCE((rr.inputs ->> 'retail_committed')::numeric, 0) = 0)
     )
     SELECT pol.product_id::text AS product_id,
            pol.warehouse_id::text AS warehouse_id,
@@ -46,7 +64,9 @@ _PO_BOOK_SQL = """
 
 
 def po_book_for_run(db: Session, run_id: str) -> dict[str, Any]:
-    """Open PO lines for every pair the run planned, keyed ``product_id:warehouse_id``."""
+    """Open PO lines for every RETAIL-facing pair the run planned, keyed
+    ``product_id:warehouse_id``. A project-only cell is absent, which is what removes
+    "Use PO" from a project row (P8)."""
     out: dict[str, list[dict[str, Any]]] = {}
     for r in db.execute(text(_PO_BOOK_SQL), {"run_id": run_id}).mappings().all():
         key = f"{r['product_id']}:{r['warehouse_id'] or ''}"

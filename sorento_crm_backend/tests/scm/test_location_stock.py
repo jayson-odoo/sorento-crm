@@ -39,6 +39,7 @@ def _warehouse(db, *, segment: str | None = None) -> Warehouse:
         warehouse_name=f"{MARKER} warehouse",
         is_active=True,
         segment=segment,
+        fulfilment_planning=True,
     )
     db.add(wh)
     db.flush()
@@ -122,8 +123,10 @@ def test_location_stock_composes_on_hand_so_and_spo_into_a_signed_available(scm_
     body = r.json()
     assert body["product_id"] == str(product.id)
     assert body["as_of"]
-    assert len(body["locations"]) == 1
-    loc = body["locations"][0]
+    # Every OTHER row is a site pool sitting at zero (R16) - this product is stocked
+    # nowhere else, and the pool rows are listed anyway.
+    loc = next(l for l in body["locations"] if l["warehouse_id"] == str(wh.id))
+    assert all(l["is_pool"] for l in body["locations"] if l["warehouse_id"] != str(wh.id))
     assert loc["warehouse_id"] == str(wh.id)
     assert loc["warehouse_code"] == wh.warehouse_code
     # No segment set, so it counts (captain, 20 Aug) - a site nobody has classified is
@@ -155,12 +158,78 @@ def test_location_stock_flags_a_project_segment_location_as_not_pool(scm_app):
     r = TestClient(app).get(URL, params={"product_id": str(product.id)})
 
     assert r.status_code == 200, r.text
-    loc = r.json()["locations"][0]
+    loc = next(l for l in r.json()["locations"] if l["warehouse_id"] == str(wh.id))
     assert loc["is_pool"] is False
     assert loc["on_hand"] == 80, "still shown - the panel never hides it"
 
 
-def test_location_stock_for_a_product_with_no_stock_anywhere_is_empty_locations(scm_app):
+def test_every_site_pool_is_listed_even_holding_nothing(scm_app):
+    """R16 (captain, 28 Aug): the On hand lightbox lists EVERY site-pool location, zeros
+    included.
+
+    Dropping the all-zero rows answered a different question. "DC1 has none" is a fact a
+    buyer deciding where to buy into needs to read; a missing row says only that nobody
+    told them, and the buyer cannot tell the two apart.
+    """
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    w = World(db)
+    product = w.product("A")
+    holding = _warehouse(db, segment="dealer")
+    empty_a = _warehouse(db, segment="dealer")
+    empty_b = _warehouse(db)  # no segment set - a site nobody classified is a pool
+    _on_hand(db, product.id, holding, 12)
+
+    r = TestClient(app).get(URL, params={"product_id": str(product.id)})
+
+    assert r.status_code == 200, r.text
+    by_id = {l["warehouse_id"]: l for l in r.json()["locations"]}
+    for empty in (empty_a, empty_b):
+        assert str(empty.id) in by_id, "a pool holding nothing still says so"
+        assert by_id[str(empty.id)]["on_hand"] == 0
+        assert by_id[str(empty.id)]["available"] == 0
+        assert by_id[str(empty.id)]["po_qty"] == 0
+    assert by_id[str(holding.id)]["on_hand"] == 12
+
+
+def test_an_empty_project_bin_is_still_dropped(scm_app):
+    """Only the POOL rows are unconditional. A project bin holding nothing is one of
+    fifty-five, and listing them all would turn the dialog into the warehouse list."""
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    w = World(db)
+    product = w.product("A")
+    empty_bin = _warehouse(db, segment="project")
+
+    r = TestClient(app).get(URL, params={"product_id": str(product.id)})
+
+    assert r.status_code == 200, r.text
+    assert str(empty_bin.id) not in {l["warehouse_id"] for l in r.json()["locations"]}
+
+
+def test_locations_come_back_pool_first_then_by_code(scm_app):
+    """One reading order, so the dialog and the fulfilment board's own table are walked
+    the same way rather than in whatever order Postgres felt like."""
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    w = World(db)
+    product = w.product("A")
+    bin_ = _warehouse(db, segment="project")
+    _on_hand(db, product.id, bin_, 7)
+
+    r = TestClient(app).get(URL, params={"product_id": str(product.id)})
+
+    rows = r.json()["locations"]
+    pools = [l["warehouse_code"] for l in rows if l["is_pool"]]
+    bins = [l["warehouse_code"] for l in rows if not l["is_pool"]]
+    assert pools == sorted(pools)
+    assert bins == sorted(bins)
+    assert [l["is_pool"] for l in rows] == sorted(
+        (l["is_pool"] for l in rows), reverse=True
+    ), "pools first"
+
+
+def test_location_stock_for_a_product_with_no_stock_anywhere_lists_only_pools(scm_app):
     app, db, gcu, gcuk = scm_app
     as_company_user(app, db, gcu, gcuk)
     w = World(db)
@@ -171,7 +240,9 @@ def test_location_stock_for_a_product_with_no_stock_anywhere_is_empty_locations(
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["product_id"] == str(product.id)
-    assert body["locations"] == []
+    # Never an empty answer any more: the pools say zero (R16). Nothing else appears.
+    assert all(l["is_pool"] for l in body["locations"])
+    assert all(l["on_hand"] == 0 for l in body["locations"])
 
 
 def test_location_stock_requires_the_view_permission(scm_app):

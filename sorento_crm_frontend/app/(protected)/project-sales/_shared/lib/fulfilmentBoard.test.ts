@@ -19,6 +19,7 @@ import {
   confirmLinesFor,
   DAY_WINDOW_COLUMNS as BOARD_DAY_WINDOW_COLUMNS,
   factorLabel,
+  matchesSuggestion,
   plannedLineCount,
   rankingNote,
   rowMatchesSearch,
@@ -26,6 +27,7 @@ import {
   unpostableDecidedFor,
   standingsFor,
 } from './fulfilmentBoard';
+import { amendDraftFrom, suggestionDraftFrom } from './boardAmend';
 import {
   bucketKeyFor,
   buildBoard,
@@ -759,6 +761,105 @@ describe('amendNeedsReason on a covered line', () => {
 });
 
 /**
+ * WHICH VERDICT THE ONE SAVE TAKES (the captain, 28 August: "if the suggestion is same as
+ * decision then it is approved, if suggestion different from decision then it is amended, so I
+ * just click on 1 button").
+ *
+ * Asserted against the drafts the editor actually opens on - `amendDraftFrom` and
+ * `suggestionDraftFrom` - because the panel compares one of those, and a baseline that agreed
+ * with a hand-written composition but not with the seeded one would call an untouched form an
+ * amendment.
+ */
+describe('matchesSuggestion', () => {
+  const board = buildBoard([line({ qty: '100' })], {
+    today: TODAY,
+    freeStock: { 'WESERP10B|BRW-BB': '40' },
+  });
+  const contribution = board.cells[0].contributions[0];
+
+  it('reads the draft the editor opens on as the suggestion, untouched', () => {
+    expect(matchesSuggestion(contribution, amendDraftFrom(contribution))).toBe(true);
+  });
+
+  it('stops reading it as the suggestion once a Reserve quantity is changed', () => {
+    const draft = amendDraftFrom(contribution);
+    expect(
+      matchesSuggestion(contribution, {
+        ...draft,
+        reserve: draft.reserve.map((row) => ({ ...row, qty: '10' })),
+        buy_qty: '90',
+      }),
+    ).toBe(false);
+  });
+
+  it('stops reading it as the suggestion once the same total moves to another warehouse', () => {
+    const draft = amendDraftFrom(contribution);
+    expect(
+      matchesSuggestion(contribution, {
+        ...draft,
+        reserve: draft.reserve.map((row) => ({ ...row, warehouse_id: 'wh-elsewhere' })),
+      }),
+    ).toBe(false);
+  });
+});
+
+/**
+ * A COVERED LINE IS THE CASE `amendNeedsReason` CANNOT ANSWER, and the reason this helper is
+ * its own function rather than a negation of that one.
+ *
+ * The canonical line: confirmed at 8 from its own location plus a Buy of 35 while the engine
+ * suggested the whole 43 from stock. `amendNeedsReason` compares against what was DECIDED, so
+ * it reports the frozen composition as needing no reason - correct, it overrides nothing - and
+ * would have called a planner typing the engine's numbers back an amendment.
+ */
+describe('matchesSuggestion on a covered line', () => {
+  const suggestion = [
+    {
+      kind: 'reserve' as const,
+      qty: '43',
+      location: 'BRW-BB',
+      warehouse_id: 'wh-BRW-BB',
+      reason: 'Free unclaimed stock at BRW-BB covers the whole line by the delivery date.',
+    },
+  ];
+  const board = buildBoard(
+    [
+      line({
+        qty: '43',
+        decision: {
+          revision_no: 4,
+          confirmed_at: '2026-08-18T02:00:00',
+          timely_spo_qty: '0',
+          reserve: [{ warehouse_id: 'wh-BRW-BB', location: 'BRW-BB', qty: '8' }],
+          borrow: [],
+          buy_qty: '35',
+        },
+        proposed_components: suggestion,
+      }),
+    ],
+    { today: TODAY },
+  );
+  const covered = board.cells[0].contributions[0];
+
+  it('is a covered contribution whose decision left the suggestion', () => {
+    expect(covered.covered).toBe(true);
+    expect(covered.proposed?.components).toEqual(suggestion);
+  });
+
+  it('reads the frozen composition Amend opens on as an amendment, not as the suggestion', () => {
+    const frozenDraft = amendDraftFrom(covered);
+    expect(matchesSuggestion(covered, frozenDraft)).toBe(false);
+    // The two questions, side by side: re-saving what was decided overrides nothing, so it is
+    // not the reason that separates them - it is what the composition IS.
+    expect(amendNeedsReason(covered, frozenDraft)).toBe(false);
+  });
+
+  it('reads the engine’s own composition as the suggestion, whatever was frozen', () => {
+    expect(matchesSuggestion(covered, suggestionDraftFrom(covered))).toBe(true);
+  });
+});
+
+/**
  * Phase 2, deviation 5: the contribution key is the SERVER's, and the counter must use it.
  *
  * The server derives `line_no` (core `sales_order_lines` carries none) and pins the key format
@@ -903,22 +1004,46 @@ describe('confirmLinesFor', () => {
   const keyOf = (soNumber: string, lineNo: number) =>
     contributions.find((entry) => entry.so_number === soNumber && entry.line_no === lineNo)!.key;
 
-  it('names only the lines of the order being confirmed', () => {
+  /**
+   * D4/R11: silence means the suggestion. Only the OTHER order's line is left out - never a
+   * line of this order the planner has simply not touched yet.
+   */
+  it('names only the lines of the order being confirmed, not the other order on the draft', () => {
     const lines = confirmLinesFor(contributions, 'so-a', {
       [keyOf('SO000001', 1)]: { verdict: 'approved' },
       [keyOf('SO000002', 3)]: { verdict: 'approved' },
     });
-    expect(lines).toHaveLength(1);
-    expect(lines[0].project_line_id).toBe('pl-so-a-1');
+    expect(lines.map((entry) => entry.project_line_id).sort()).toEqual([
+      'pl-so-a-1',
+      'pl-so-a-2',
+    ]);
+  });
+
+  it('posts an untouched plannable line as the engine’s own suggestion (R11)', () => {
+    // Line 2 carries no verdict at all: silence agrees with the proposal.
+    const lines = confirmLinesFor(contributions, 'so-a', {
+      [keyOf('SO000001', 1)]: { verdict: 'approved' },
+    });
+    const untouched = lines.find((entry) => entry.project_line_id === 'pl-so-a-2')!;
+    expect(untouched).toEqual({
+      project_line_id: 'pl-so-a-2',
+      timely_spo_qty: '0',
+      suspected_system_issue: false,
+      reserve: [{ warehouse_id: 'wh-BRW-BB', qty: '20' }],
+      borrow: [],
+      buy_qty: '30',
+    });
   });
 
   it('carries the proposal as the engine wrote it on an approved line', () => {
     const lines = confirmLinesFor(contributions, 'so-a', {
       [keyOf('SO000001', 1)]: { verdict: 'approved' },
     });
-    expect(lines[0]).toEqual({
+    const approved = lines.find((entry) => entry.project_line_id === 'pl-so-a-1')!;
+    expect(approved).toEqual({
       project_line_id: 'pl-so-a-1',
       timely_spo_qty: '0',
+      suspected_system_issue: false,
       reserve: [{ warehouse_id: 'wh-BRW-BB', qty: '100' }],
       borrow: [],
       buy_qty: '0',
@@ -935,21 +1060,21 @@ describe('confirmLinesFor', () => {
     expect(lines[0].buy_qty).toBe('45');
   });
 
-  it('leaves a REJECTED line out entirely, so it stays undecided', () => {
-    expect(
-      confirmLinesFor(contributions, 'so-a', {
-        [keyOf('SO000001', 1)]: { verdict: 'rejected', reason: 'No.' },
-      }),
-    ).toEqual([]);
+  it('leaves a REJECTED line out entirely, so it stays undecided (the other line of the order still posts)', () => {
+    const lines = confirmLinesFor(contributions, 'so-a', {
+      [keyOf('SO000001', 1)]: { verdict: 'rejected', reason: 'No.' },
+    });
+    expect(lines.map((entry) => entry.project_line_id)).toEqual(['pl-so-a-2']);
   });
 
-  it('leaves out a line the server gave no mirror id for, rather than posting a null', () => {
+  it('leaves out a line the server gave no mirror id for, rather than posting a null (the other line still posts)', () => {
     const orphan = contributions.map((entry) =>
       entry.line_no === 1 ? { ...entry, project_line_id: null } : entry,
     );
-    expect(
-      confirmLinesFor(orphan, 'so-a', { [keyOf('SO000001', 1)]: { verdict: 'approved' } }),
-    ).toEqual([]);
+    const lines = confirmLinesFor(orphan, 'so-a', {
+      [keyOf('SO000001', 1)]: { verdict: 'approved' },
+    });
+    expect(lines.map((entry) => entry.project_line_id)).toEqual(['pl-so-a-2']);
   });
 
   it('counts only what would actually commit, so the button cannot promise a rejected line', () => {
@@ -1134,6 +1259,7 @@ describe('confirmLinesFor and a composed amendment', () => {
     expect(lines[0]).toEqual({
       project_line_id: 'pl-so-a-1',
       timely_spo_qty: '0',
+      suspected_system_issue: false,
       reserve: [{ warehouse_id: 'wh-BRW-BB', qty: '20' }],
       borrow: [
         {
@@ -1277,13 +1403,15 @@ describe('confirmLinesFor and a line an active decision already covers', () => {
     expect(lines[0].buy_qty).toBe('16');
   });
 
-  it('confirms nothing at all when every decided line is already confirmed', () => {
-    // Nothing to do: re-posting the same revision would supersede a decision with a copy of
-    // itself, and the planner asked for no such thing.
-    expect(confirmLinesFor(contributions, 'so-a', {})).toEqual([]);
+  it('posts the untouched, uncovered line by its own suggestion; the covered one stays carried (R11)', () => {
+    // Nothing to re-post for line 1: the server carries the untouched covered line verbatim.
+    // Line 2 is untouched too, but it is NOT covered, so silence agrees with its suggestion.
+    const lines = confirmLinesFor(contributions, 'so-a', {});
+    expect(lines.map((entry) => entry.project_line_id)).toEqual(['pl-so-a-2']);
+    expect(lines[0].buy_qty).toBe('16');
   });
 
-  it('sends the amendment when the planner amended the covered line', () => {
+  it('sends the amendment when the planner amended the covered line, alongside the other line’s own suggestion', () => {
     const lines = confirmLinesFor(contributions, 'so-a', {
       [keyOf(1)]: {
         verdict: 'amended',
@@ -1296,10 +1424,15 @@ describe('confirmLinesFor and a line an active decision already covers', () => {
       },
     });
 
-    expect(lines).toHaveLength(1);
-    expect(lines[0]).toEqual({
+    expect(lines.map((entry) => entry.project_line_id).sort()).toEqual([
+      'pl-so-a-1',
+      'pl-so-a-2',
+    ]);
+    const amended = lines.find((entry) => entry.project_line_id === 'pl-so-a-1')!;
+    expect(amended).toEqual({
       project_line_id: 'pl-so-a-1',
       timely_spo_qty: '0',
+      suspected_system_issue: false,
       reserve: [{ warehouse_id: 'wh-BRW-BB', qty: '5' }],
       borrow: [],
       buy_qty: '38',
@@ -1358,9 +1491,11 @@ describe('confirmLinesFor and a line an active decision already covers', () => {
     };
     const standing = standingsFor(board.orders, owners, draft, new Set([keyOf(1)]))[0];
     expect(standing.carried_count).toBe(0);
+    // The body now carries TWO lines: the amendment, and line 2's own suggestion (R11) - so
+    // nothing of this two-line order is left undecided by the press.
     expect(commitPreviewFor(standing, confirmLinesFor(contributions, 'so-a', draft).length)).toEqual({
-      committing: 1,
-      leaving_undecided: 1,
+      committing: 2,
+      leaving_undecided: 0,
       blocked: 0,
     });
   });
@@ -1371,6 +1506,201 @@ describe('confirmLinesFor and a line an active decision already covers', () => {
     );
     const lines = confirmLinesFor(orphan, 'so-a', { [keyOf(2)]: { verdict: 'approved' } });
     expect(lines.map((entry) => entry.project_line_id)).toEqual(['pl-so-a-2']);
+  });
+
+  /**
+   * AN EXPLICIT APPROVAL ON A COVERED LINE IS A DECISION, AND IT IS POSTED (C11).
+   *
+   * Silence on a covered line means "leave it as the database has it", which is why an
+   * untouched one is never named. An approval is not silence: the planner amended a
+   * confirmed line, changed their mind, and put the engine's composition back. The board swallowed it - the pill read Approved, the Confirm counter stayed where
+   * it was and the press wrote nothing, so a reload showed the old revision unchanged. An
+   * approved covered line goes down the same derivation branch an approved uncovered one
+   * does, and the confirmation writes a new revision at the suggestion.
+   */
+  it('posts the suggestion for a covered line the planner APPROVED (C11)', () => {
+    const lines = confirmLinesFor(contributions, 'so-a', {
+      [keyOf(1)]: { verdict: 'approved' },
+    });
+
+    expect(lines.map((entry) => entry.project_line_id).sort()).toEqual([
+      'pl-so-a-1',
+      'pl-so-a-2',
+    ]);
+    const approved = lines.find((entry) => entry.project_line_id === 'pl-so-a-1')!;
+    // The engine's own composition for the line, exactly as the panel resets the inputs to
+    // it: nothing re-derived here, and no `amend_reason` - an approval is not an override.
+    expect(approved.buy_qty).toBe('33');
+    expect(approved.borrow.map((row) => [row.warehouse_id, row.qty])).toEqual([
+      ['wh-mwh-ib', '10'],
+    ]);
+    expect(approved.reserve).toEqual([]);
+    expect(approved.amend_reason).toBeUndefined();
+  });
+
+  it('still posts nothing for a covered line nobody touched', () => {
+    expect(confirmLinesFor(contributions, 'so-a', {}).map((entry) => entry.project_line_id))
+      .toEqual(['pl-so-a-2']);
+  });
+
+  it('still posts nothing for a covered line the planner REJECTED', () => {
+    const lines = confirmLinesFor(contributions, 'so-a', {
+      [keyOf(1)]: { verdict: 'rejected', reason: 'The site cancelled it.' },
+    });
+    expect(lines.map((entry) => entry.project_line_id)).toEqual(['pl-so-a-2']);
+  });
+
+  it('counts the approved covered line on the Confirm button, and the untouched one not', () => {
+    // The counter reads the same rule the body does, so "Confirm (N)" and what the press
+    // posts cannot disagree - the defect was visible as a button stuck at 0.
+    expect(plannedLineCount(contributions, 'so-a', {})).toBe(1);
+    expect(
+      plannedLineCount(contributions, 'so-a', { [keyOf(1)]: { verdict: 'approved' } }),
+    ).toBe(2);
+  });
+
+  it('counts an approved covered line as committing, not as carried', () => {
+    const owners = new Map(contributions.map((entry) => [entry.key, entry.sales_order_id]));
+    const draft = { [keyOf(1)]: { verdict: 'approved' as const } };
+    const standing = standingsFor(board.orders, owners, draft, new Set([keyOf(1)]))[0];
+    expect(standing.carried_count).toBe(0);
+    expect(
+      commitPreviewFor(standing, confirmLinesFor(contributions, 'so-a', draft).length),
+    ).toEqual({ committing: 2, leaving_undecided: 0, blocked: 0 });
+  });
+});
+
+/**
+ * AN APPROVAL ON A COVERED LINE POSTS THE ENGINE'S COMPOSITION, NOT THE FROZEN ONE.
+ *
+ * The plan's canonical line, third browser run: SO404352 line 22 was confirmed at Reserve 8
+ * from BRW-AM plus 16 from the BRW pool while the engine suggests 9 plus 15. Amend, then the
+ * engine's numbers typed back, flipped the pill to Approved and moved the Confirm counter -
+ * and then posted the 8 and the 16 again ("0 transfers proposed", the revision unchanged after a
+ * reload), because `qty_proposed_*` and the source strip both state the ACTIVE DECISION on a
+ * covered line (the server's `_apply_frozen`). So the approval is composed from the
+ * suggestion the way the editor composes it, and posted the way an amendment is.
+ */
+describe('confirmLinesFor: an approval on a covered line whose decision left the suggestion', () => {
+  const frozen = {
+    revision_no: 4,
+    confirmed_at: '2026-08-18T02:00:00',
+    timely_spo_qty: '0',
+    reserve: [
+      { warehouse_id: 'wh-BRW-AM', location: 'BRW-AM', qty: '8' },
+      { warehouse_id: 'wh-BRW', location: 'BRW', qty: '16' },
+    ],
+    borrow: [],
+    buy_qty: '0',
+  };
+  const suggestion = [
+    {
+      kind: 'reserve' as const,
+      qty: '9',
+      location: 'BRW-AM',
+      warehouse_id: 'wh-BRW-AM',
+      reason: 'Free unclaimed stock at BRW-AM covers this much by the delivery date.',
+    },
+    {
+      kind: 'reserve' as const,
+      qty: '15',
+      location: 'BRW',
+      warehouse_id: 'wh-BRW',
+      reason: 'The shared pool at BRW covers this much within its cap.',
+    },
+  ];
+  const board = buildBoard(
+    [
+      line({
+        sales_order_id: 'so-a',
+        so_number: 'SO404352',
+        line_no: 22,
+        qty: '24',
+        item_code: 'SRTWB7518',
+        fulfilment_location: 'BRW-AM',
+        decision: frozen,
+      }),
+    ],
+    { today: TODAY },
+  );
+  // As the server sends a covered line: `sources` and `qty_proposed_*` state the DECISION
+  // (`_apply_frozen`), and the engine's own composition is the proposal frozen beside it.
+  const contributions = board.cells
+    .flatMap((cell) => cell.contributions)
+    .map((entry) => ({ ...entry, proposed: { components: suggestion } }));
+  const key = contributions[0].key;
+
+  it('posts the engine’s 9 and 15, never the 8 and 16 the revision froze', () => {
+    const lines = confirmLinesFor(contributions, 'so-a', {
+      [key]: { verdict: 'approved' },
+    });
+
+    expect(lines).toHaveLength(1);
+    expect(lines[0].reserve).toEqual([
+      { warehouse_id: 'wh-BRW-AM', qty: '9' },
+      { warehouse_id: 'wh-BRW', qty: '15' },
+    ]);
+    expect(lines[0].buy_qty).toBe('0');
+    // An approval is not an override: it carries no reason of its own.
+    expect(lines[0].amend_reason).toBeUndefined();
+  });
+
+  it('carries the doubt beside the verdict (R10)', () => {
+    const lines = confirmLinesFor(contributions, 'so-a', {
+      [key]: { verdict: 'approved', suspected_system_issue: true },
+    });
+    expect(lines[0].suspected_system_issue).toBe(true);
+  });
+
+  it('posts what the planner composed when they amended instead', () => {
+    const lines = confirmLinesFor(contributions, 'so-a', {
+      [key]: {
+        verdict: 'amended',
+        reserve_qty: '24',
+        timely_spo_qty: '0',
+        reserve: [
+          { warehouse_id: 'wh-BRW-AM', location: 'BRW-AM', qty: '8' },
+          { warehouse_id: 'wh-BRW', location: 'BRW', qty: '16' },
+        ],
+        borrow: [],
+        buy_qty: '0',
+        reason: 'The site took the extra from the pool.',
+      },
+    });
+
+    expect(lines[0].reserve).toEqual([
+      { warehouse_id: 'wh-BRW-AM', qty: '8' },
+      { warehouse_id: 'wh-BRW', qty: '16' },
+    ]);
+    expect(lines[0].amend_reason).toBe('The site took the extra from the pool.');
+  });
+
+  it('still posts nothing for the covered line while nobody has touched it, or rejected it', () => {
+    expect(confirmLinesFor(contributions, 'so-a', {})).toEqual([]);
+    expect(
+      confirmLinesFor(contributions, 'so-a', {
+        [key]: { verdict: 'rejected', reason: 'The site cancelled it.' },
+      }),
+    ).toEqual([]);
+  });
+
+  it('leaves an UNCOVERED approval on its own derivation', () => {
+    const uncovered = contributions.map((entry) => ({
+      ...entry,
+      covered: false,
+      decision: null,
+      sources: suggestion,
+      qty_proposed_reserve: '24',
+      qty_proposed_incoming: '0',
+      qty_proposed_buy: '0',
+    }));
+    const lines = confirmLinesFor(uncovered, 'so-a', { [key]: { verdict: 'approved' } });
+
+    expect(lines[0].reserve).toEqual([
+      { warehouse_id: 'wh-BRW-AM', qty: '9' },
+      { warehouse_id: 'wh-BRW', qty: '15' },
+    ]);
+    expect(lines[0].buy_qty).toBe('0');
   });
 });
 
@@ -1482,7 +1812,7 @@ describe('confirmLinesFor and a discontinued product', () => {
     expect(unpostableDecidedFor(contributions, 'so-a', draft)).toEqual([]);
   });
 
-  it('still names it on an amendment that buys it without a reason', () => {
+  it('still names it on an amendment that buys it without a reason (line 1 still posts by its own suggestion, R11)', () => {
     const draft = {
       [old.key]: {
         verdict: 'amended' as const,
@@ -1492,7 +1822,8 @@ describe('confirmLinesFor and a discontinued product', () => {
         timely_spo_qty: '0',
       },
     };
-    expect(confirmLinesFor(contributions, 'so-a', draft)).toEqual([]);
+    const lines = confirmLinesFor(contributions, 'so-a', draft);
+    expect(lines.map((entry) => entry.project_line_id)).toEqual(['pl-so-a-1']);
     expect(unpostableDecidedFor(contributions, 'so-a', draft).map((entry) => entry.reason)).toEqual([
       'buy_reason_missing',
     ]);
@@ -1792,21 +2123,24 @@ describe('rankingNote', () => {
     expect(note).toBeNull();
   });
 
-  it('says a single line is simply the only one here', () => {
-    // Nothing was ranked because there was nothing to rank against. Calling that a policy
-    // failure is the wording that read wrong.
+  it('still says Not ranked for one line, but carries no sentence about it', () => {
+    // Nothing was ranked because there was nothing to rank against, and "Only line in this
+    // cell" said that back to a reader who could already see the single row underneath it.
+    // Removed 25 August 2026: a sentence that restates the screen is a sentence to skip past.
+    // The Rank column keeps "Not ranked" - a flat 0.00 there would claim a ranking nobody ran.
     const note = rankingNote(cellOf(1, { rank_separates: false, distinct_order_count: 1 }));
     expect(note?.cell).toBe('Not ranked');
-    expect(note?.note).toBe('Only line in this cell');
+    expect(note?.note).toBeNull();
   });
 
-  it('names line order when the tie is one order competing with itself', () => {
-    // Common and benign under the fair policy: lines of one order in one week share their
-    // date, their document date and their terms, so nothing about the POLICY is wrong.
+  it('says nothing when the tie is one order competing with itself (ladder v4)', () => {
+    // It used to read "Same sales order; line order decided which line was served first",
+    // which described the rank queue deciding availability. Under ladder v4 availability is
+    // the ownership group's and rank decides only the order of service, so the sentence
+    // named a cause the engine no longer has.
     const note = rankingNote(cellOf(4, { rank_separates: false, distinct_order_count: 1 }));
-    expect(note?.note).toBe(
-      'Same sales order; line order decided which line was served first',
-    );
+    expect(note?.cell).toBe('Not ranked');
+    expect(note?.note).toBeNull();
   });
 
   it('keeps the policy sentence for a real tie between different orders', () => {

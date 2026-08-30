@@ -88,6 +88,10 @@ class User(Base):
     # always fires for non-actor recipients.
     notify_email_on_handling = Column(Boolean, default=True, nullable=False, server_default="true")
     notify_whatsapp_on_handling = Column(Boolean, default=False, nullable=False, server_default="false")
+    # Mentioned in an internal note (ticket comment). Recipient is each mentioned
+    # user minus the author. Email defaults on; there is no WhatsApp twin for this
+    # event. In-app always fires.
+    notify_email_on_mention = Column(Boolean, default=True, nullable=False, server_default="true")
     # Which contacts' inbound messages push to this user's phone (PLAN-message-push).
     # One of assigned_and_coverage | assigned_only | all_contacts | off. A column and not
     # a preference table because there is exactly ONE event today; the second event
@@ -389,10 +393,26 @@ class SystemSetting(Base):
     )
     default_product_standard_lead_time_days = Column(Integer, nullable=False, server_default="90", default=90)
 
+    # The unit a product gets when the source states none - a product-import row with no
+    # UOM cell, and any other create that leaves it out. NULL means "no admin has said", and
+    # the code falls back to `EA` (`ProductService.DEFAULT_UOM_CODE`).
+    #
+    # A setting rather than a constant because the constant was WRONG: an older fallback
+    # took whatever unit the database returned first and stamped 11,415 products with `L`.
+    # A backfill script would have to guess the same thing this column lets somebody state,
+    # and a re-import of the product list then applies it.
+    default_uom_id = Column(
+        PG_UUID(as_uuid=False),
+        ForeignKey("units_of_measure.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
     # n8n integration (optional; attachment URL falls back to N8N_WEBHOOK_URL env if unset)
     n8n_attachment_webhook_url = Column(Text, nullable=True)
     n8n_crm_chat_outbound_webhook_url = Column(Text, nullable=True)
     n8n_stock_inquiry_revise_webhook_url = Column(Text, nullable=True)
+    # CRM -> n8n respond-close-convo signal on a ticket resolve (AC-M3). Env fallback.
+    n8n_close_convo_webhook_url = Column(Text, nullable=True)
 
     # Procurement: when set, "Send for approval" can skip the approver dialog and email the default user.
     purchase_request_default_approver_user_id = Column(

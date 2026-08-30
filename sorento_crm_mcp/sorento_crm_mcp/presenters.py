@@ -28,8 +28,10 @@ the AI assistant (which still reads raw) is not affected until it migrates.
 from __future__ import annotations
 
 import json
+import logging
+from datetime import datetime
 from decimal import Decimal, InvalidOperation
-from typing import Any
+from typing import Any, Optional
 
 # Tools that support `view=render`. Used by server._compile_tool to inject the
 # `view` param into the generated input schema, and by the dispatcher below.
@@ -51,6 +53,8 @@ PRESENTER_TOOLS: frozenset[str] = frozenset(
         "crm_portal_link_get",
     }
 )
+
+logger = logging.getLogger(__name__)
 
 _DEFAULT_INTRO = {
     "crm_order_management_orders_list": "Here are the orders I found.",
@@ -86,6 +90,23 @@ _RESULT_TYPE = {
     "crm_portal_link_get": "portal_link",
 }
 
+_STOCK_TOOL = "crm_inventory_stock_balance_list"
+
+# The stock tool answers in whichever shape the contact's visibility policy
+# allows, so its result_type is decided per RESPONSE, not per tool.
+_STOCK_MODE_RESULT_TYPE = {
+    "compact": "stock_compact",
+    "availability": "stock_availability",
+}
+
+_STOCK_COMPACT_INTRO = "Stock summary for the requested products."
+# The dealer answer, verbatim. This IS the outbound WhatsApp text (n8n prints the
+# intro and nothing else for this mode), so the wording is the contract.
+_AVAILABILITY_ASK = "How many units do you need?"
+_AVAILABILITY_YES = "Yes, we have stock."
+_AVAILABILITY_NO = "Sorry, we do not have enough stock for that quantity."
+_AVAILABILITY_MIXED = "Here is the stock availability for the requested products."
+
 # Passthrough keys preserved from the raw response into the envelope (e.g. the
 # escalation hint attached after sanitize). Kept so render mode loses nothing.
 _PASSTHROUGH_KEYS = (
@@ -104,6 +125,16 @@ _PASSTHROUGH_KEYS = (
     # this" from "it has not happened yet" - so it guesses, and it guesses the
     # second one out loud.
     "field_access",
+    # Filter-wide measures for list answers (backend `stamp_order_summary`,
+    # only when the caller asked with include_summary). Not interpreted here:
+    # the backend computes, n8n presents. Absent when absent. `pagination` is
+    # deliberately NOT passed through - the consumer reads `summary.row_count`
+    # and nothing reads the page geometry (reviewer R6: no key without a reader).
+    "summary",
+    # Which stock-visibility policy answered, so the consumer can branch on the
+    # mode (which format to print, whether to ask the quantity question again)
+    # instead of inferring it from which block happens to be present.
+    "stock_visibility",
 )
 
 
@@ -226,6 +257,23 @@ class _Builder:
             }
         )
 
+    def raw_item(self, title: Any, fields: list[dict[str, Any]], flags: dict[str, Any]) -> None:
+        """An item whose fields and flags the SOURCE already shaped.
+
+        `item()` maps a raw CRM row: it drops empty values and stamps the five
+        standard flags. The stock-visibility blocks arrive pre-shaped by the
+        policy - an `availability` answer has no fields AT ALL (that is the
+        point of the mode) and carries its own two flags - so mapping them
+        through `item()` would delete the answer for being empty.
+        """
+        self.items.append(
+            {
+                "title": title if _filled(title) else None,
+                "fields": fields,
+                "flags": flags,
+            }
+        )
+
     def attach(self, a: Any) -> None:
         if not isinstance(a, dict):
             return
@@ -339,6 +387,153 @@ def _orders_by_product(rows: list[dict], b: _Builder) -> None:
                 ("Products", prods),
             ],
         )
+
+
+# ---------------------------------------------------------------------------
+# order quantity summary -> summary_items in the ITEM shape (QS-8, plan §3d)
+# ---------------------------------------------------------------------------
+# WHY THIS SHAPE. The render envelope already has one shape the consumer knows
+# how to print: items[] {title, fields[{key,label,value}]}. The summary uses the
+# same shape and the same renderer - no sentences composed anywhere, no
+# vocabulary in n8n, and any consumer can match on `key`, never on a label.
+# The numbers come from `summary` (SQL over the WHOLE filter); nothing here
+# adds anything up. Names come from what the backend filtered on, never from
+# the parser; an unnameable entry is dropped, not coerced.
+# NEVER RAISES on its own account - and the render path wraps it anyway.
+
+_SUMMARY_FIELDS = (
+    ("customer", "Customer"),
+    ("product_code", "Product Code"),
+    ("order_count", "DOs"),
+    ("delivered_quantity", "Delivered Qty"),
+    ("pending_quantity", "Pending Qty"),
+    ("delivered_between", "Delivered"),
+)
+
+
+def _sl_num(v: Any):
+    """A renderable count or None. Integral -> int (48.0 -> 48), else float."""
+    if v is None or isinstance(v, bool) or v == "":
+        return None
+    try:
+        d = Decimal(str(v))
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+    if not d.is_finite() or abs(d) >= Decimal("1e15"):
+        return None
+    return int(d) if d == d.to_integral_value() else float(d)
+
+
+def _sl_date(v: Any) -> Optional[str]:
+    """dd/mm/yyyy for a date-only string; None on anything unparseable."""
+    s = str(v or "").strip()
+    if not s:
+        return None
+    try:
+        if len(s) == 10:
+            d = datetime.strptime(s, "%Y-%m-%d")
+        else:
+            d = datetime.fromisoformat(s.replace("Z", "+00:00"))
+            if d.tzinfo is not None:
+                d = d.astimezone()
+    except (ValueError, TypeError, OverflowError):
+        return None
+    out = f"{d.day:02d}/{d.month:02d}/{d.year:04d}"
+    if d.hour or d.minute or d.second:
+        out += f" {d.hour:02d}:{d.minute:02d}:{d.second:02d}"
+    return out
+
+
+def _sl_between(row: dict) -> Optional[str]:
+    a, b = _sl_date(row.get("delivered_from")), _sl_date(row.get("delivered_to"))
+    if a and b:
+        return a if a == b else f"{a} – {b}"
+    return a or b
+
+
+def _summary_item(customer: Optional[str], row: dict) -> Optional[dict]:
+    """One render item from a groups[]/products[] row; None when nothing can be named."""
+    code = row.get("product_code")
+    if not isinstance(code, str) or not code.strip():
+        return None
+    code = code.strip()
+    values = {
+        "customer": customer,
+        "product_code": code,
+        "order_count": _sl_num(row.get("order_count")),
+        "delivered_quantity": _sl_num(row.get("delivered_quantity")),
+        "pending_quantity": _sl_num(row.get("pending_quantity")),
+        "delivered_between": _sl_between(row),
+    }
+    fields = [
+        {"key": k, "label": lbl, "value": values[k]}
+        for k, lbl in _SUMMARY_FIELDS
+        if _filled(values[k])
+    ]
+    if len(fields) <= 1:  # the code alone says nothing
+        return None
+    title = f"{customer} · {code}" if customer else code
+    return {"title": title, "fields": fields}
+
+
+def summary_items(summary: Any) -> list[dict]:
+    """The summary as render items: per product, a leading Total when more than one
+    customer took it, then one item per customer x product. [] when nothing renders."""
+    if not isinstance(summary, dict):
+        return []
+    products = summary.get("products") if isinstance(summary.get("products"), list) else []
+    groups = summary.get("groups") if isinstance(summary.get("groups"), list) else []
+    items: list[dict] = []
+    seen_codes: set[str] = set()
+    for p in products:
+        if not isinstance(p, dict) or not isinstance(p.get("product_code"), str):
+            continue
+        code = p["product_code"].strip()
+        if not code or code in seen_codes:
+            continue
+        seen_codes.add(code)
+        rows = [
+            g for g in groups
+            if isinstance(g, dict) and isinstance(g.get("product_code"), str)
+            and g["product_code"].strip() == code
+            and isinstance(g.get("customer"), str) and g["customer"].strip()
+        ]
+        # N is the CRM's exact per-product customer count when it has one; the visible
+        # groups[] slice can be short of it after the ceiling (cross-model review F).
+        n_cust = _sl_num(p.get("customer_count"))
+        n_cust = int(n_cust) if (n_cust is not None and n_cust >= 0) else len(rows)
+        if n_cust > 1 or (summary.get("groups_truncated") is True and rows):
+            total = _summary_item(f"All customers ({max(n_cust, len(rows))})", p)
+            if total:
+                items.append(total)
+        for g in rows:
+            it = _summary_item(g["customer"].strip(), g)
+            if it:
+                items.append(it)
+        if not rows:
+            # no nameable customer row - the product total still says what was asked
+            solo = _summary_item(None, p)
+            if solo:
+                items.append(solo)
+    return items
+
+
+def summary_intro(summary: Any, n_items: int) -> Optional[str]:
+    """The summary intro (count over the whole filter; truncation notice). `n_items` is
+    kept in the signature for callers; the page geometry is no longer stated."""
+    if not isinstance(summary, dict):
+        return None
+    rc = _sl_num(summary.get("row_count"))
+    if rc is None:
+        return None
+    n = int(rc)
+    text = f"Summary over {n} DO{'' if n == 1 else 's'}."
+    # No page geometry: on a quantity ask the consumer prints the summary ONLY
+    # (order-quantity-summary amendment 5) - the DO page is not shown, so
+    # "showing N of them below" would describe something the reader cannot see.
+    if summary.get("groups_truncated") is True or summary.get("products_truncated") is True:
+        text += " Not every breakdown is shown — add a customer, a product or a date range."
+    return text
 
 
 #: Clearance fields, in the order a person narrates a container's journey, paired
@@ -821,6 +1016,92 @@ def _stock(rows: list[dict], b: _Builder) -> None:
         )
 
 
+def _stock_int(v: Any) -> Any:
+    """A quantity as a plain int. n8n prints `Total: ${value}` straight into the
+    message, so a Decimal-shaped string ("500.0000") would be read out as-is."""
+    if v is None:
+        return v
+    try:
+        return int(Decimal(str(v)))
+    except (InvalidOperation, TypeError, ValueError):
+        return v
+
+
+def _stock_compact(payload: dict, b: _Builder) -> None:
+    """`compact`: one item per product, Product Code, Total, then the allowed locations.
+
+    Location order is the backend's (already sorted by code). Re-sorting here
+    would let the two answers disagree about the same stock.
+    """
+    for entry in payload.get("stock_summary") or []:
+        if not isinstance(entry, dict):
+            continue
+        # Product Code leads the fields, keyed like the detailed row's. n8n's
+        # output-structurer walks `fields` and does not print `title`, so a
+        # code that lives only in the title never reaches the reader and two
+        # products' blocks become indistinguishable stacks of numbers.
+        code_field = entry.get("product_code")
+        fields: list[dict[str, Any]] = []
+        if _filled(code_field):
+            fields.append({"key": "product_code", "label": "Product Code", "value": code_field})
+        fields.append({"label": "Total", "value": _stock_int(entry.get("total_on_hand"))})
+        for loc in entry.get("locations") or []:
+            if not isinstance(loc, dict):
+                continue
+            # `warehouse_code` is what the backend declares. `system_location` is
+            # the same value under the Sage vocabulary name, read in case a
+            # sanitizer relabels the block on the way here.
+            code = loc.get("warehouse_code") or loc.get("system_location")
+            if not _filled(code):
+                continue
+            fields.append(
+                {"label": str(code), "value": _stock_int(loc.get("quantity_on_hand"))}
+            )
+        # No `key` on these pairs: the label IS data (the location the contact is
+        # allowed to see), not a CRM field name a consumer could match on.
+        b.raw_item(entry.get("product_code"), fields, dict(entry.get("flags") or {}))
+
+
+def _stock_availability(payload: dict, b: _Builder) -> None:
+    """`availability`: yes / no / ask, and nothing else.
+
+    `fields` stays empty on purpose. This mode exists so a dealer is never told a
+    quantity, and an empty field list is the only shape that cannot carry one.
+    """
+    for entry in payload.get("stock_availability") or []:
+        if not isinstance(entry, dict):
+            continue
+        b.raw_item(
+            entry.get("product_code"),
+            [],
+            {
+                "needs_quantity": bool(entry.get("needs_quantity")),
+                "available": entry.get("available"),
+            },
+        )
+
+
+def _availability_intro(payload: dict) -> str:
+    """The whole reply, in one line.
+
+    Several products can disagree. Any product still missing its quantity makes
+    the turn a question, not an answer - so ask, and say nothing about the rest.
+    Otherwise a shared yes or no speaks for all of them; a split verdict cannot,
+    so the intro steps back and the per-item flags carry it.
+    """
+    entries = [
+        e for e in (payload.get("stock_availability") or []) if isinstance(e, dict)
+    ]
+    if any(e.get("needs_quantity") for e in entries):
+        return _AVAILABILITY_ASK
+    verdicts = {e.get("available") for e in entries}
+    if verdicts == {True}:
+        return _AVAILABILITY_YES
+    if verdicts == {False}:
+        return _AVAILABILITY_NO
+    return _AVAILABILITY_MIXED
+
+
 def _forms(rows: list[dict], b: _Builder) -> None:
     for f in rows:
         b.item(f.get("name"), [("Form Name", f.get("name"))])
@@ -915,6 +1196,20 @@ def _company_names(lookup_companies: Any) -> str | None:
     return ", ".join(names[:-1]) + " or " + names[-1]
 
 
+def _stock_mode(tool_name: str, data: dict[str, Any]) -> str:
+    """Which stock-visibility policy shaped this response.
+
+    Anything other than the two summary modes (including a response with no
+    policy block at all, i.e. every caller that is not a contact) is `detailed`,
+    which is the envelope this tool has always produced.
+    """
+    if tool_name != _STOCK_TOOL:
+        return "detailed"
+    block = data.get("stock_visibility")
+    mode = block.get("mode") if isinstance(block, dict) else None
+    return mode if mode in _STOCK_MODE_RESULT_TYPE else "detailed"
+
+
 # --------------------------------------------------------------------------
 # dispatcher
 # --------------------------------------------------------------------------
@@ -936,8 +1231,13 @@ def present_response(tool_name: str, raw: str) -> str:
         rows = [] if rows is None else ([rows] if isinstance(rows, dict) else [])
 
     b = _Builder()
+    stock_mode = _stock_mode(tool_name, data)
     if tool_name == "crm_portal_link_get":
         _portal_link(data, b)
+    elif stock_mode == "compact":
+        _stock_compact(data, b)
+    elif stock_mode == "availability":
+        _stock_availability(data, b)
     else:
         builder = _BUILDERS.get(tool_name, _generic)
         builder(rows, b)
@@ -970,11 +1270,16 @@ def present_response(tool_name: str, raw: str) -> str:
             if searched
             else "No matching results found."
         )
+    elif stock_mode == "compact":
+        intro = _STOCK_COMPACT_INTRO
+    elif stock_mode == "availability":
+        intro = _availability_intro(data)
     else:
         intro = _DEFAULT_INTRO.get(tool_name, "Here are the results I found.")
 
     envelope: dict[str, Any] = {
-        "result_type": _RESULT_TYPE.get(tool_name, "result"),
+        "result_type": _STOCK_MODE_RESULT_TYPE.get(stock_mode)
+        or _RESULT_TYPE.get(tool_name, "result"),
         "intro": intro,
         "items": b.items,
         "attachments": attachments,
@@ -985,5 +1290,20 @@ def present_response(tool_name: str, raw: str) -> str:
     for k in _PASSTHROUGH_KEYS:
         if k in data and _filled(data.get(k)):
             envelope[k] = data[k]
+    # QS-8: the summary in the ITEM shape, printed by the same renderer as the
+    # rows. Only over a real answer (has_result AND rows on the page); absent
+    # otherwise, never []. Exception boundary: a hostile leaf inside `summary`
+    # must cost the summary, never the envelope the rows already rendered into.
+    if has_result and b.items and isinstance(data.get("summary"), dict):
+        try:
+            _sitems = summary_items(data["summary"])
+            _sintro = summary_intro(data["summary"], len(b.items))
+        except Exception as _exc:  # pragma: no cover - by contract
+            logger.warning("summary_items skipped: %s", _exc)
+            _sitems, _sintro = [], None
+        if _sitems:
+            envelope["summary_items"] = _sitems
+            if _sintro:
+                envelope["intro"] = _sintro
     _annotate_field_access(envelope, tool_name)
     return json.dumps(envelope)

@@ -1,34 +1,38 @@
 'use client';
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
   approveLoadingPlan,
   buildContainerRequest,
-  createLoadingPlan,
+  cancelLoadingPlan,
+  createLoadingPlanRecord,
   createSpo,
-  deleteLoadingPlan,
   deleteSpo,
+  downloadContainerRequestDocument,
   downloadSpoWorksheet,
   getConsolidatedPackingList,
+  getContainerRequestHistory,
   getContainerSizes,
   getFulfilmentSuppliers,
-  getLoadingPlan,
-  getLoadingPlans,
+  getLoadingPlanList,
   getPlanNotices,
   getSpoSuggestion,
+  getSupplierChatContacts,
   getSupplierNotices,
   getSupplierStock,
   getSupplierStockListFile,
-  getUnfinishedStock,
+  saveLoadingPlanEdits,
   sendContainerRequest,
-  updateLoadingPlan,
+  updateLoadingPlanCutOff,
   type ContainerRequestLine,
-  type LoadingPlan,
-  type LoadingPlanRequest,
+  type ContainerRequestSendOptions,
+  type LoadingPlanCreate,
+  type LoadingPlanListParams,
+  type LoadingPlanRecord,
   type SpoConfirmLine,
 } from '../services/fulfilmentService';
-import { fmtTrimmedDecimal } from '../lib/format';
+import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
 
 const KEY = ['scm', 'fulfilment'] as const;
 
@@ -58,30 +62,46 @@ export function useSupplierStock(supplierId: string | null) {
   });
 }
 
-export function useUnfinishedStock(supplierId: string | null) {
-  return useQuery({
-    queryKey: [...KEY, 'unfinished', supplierId],
-    queryFn: () => getUnfinishedStock(supplierId as string),
-    enabled: !!supplierId,
-    refetchOnWindowFocus: false,
-  });
+/**
+ * The plans list (`/scm/loading-plan`, R3). Server-paged, server-sorted and server-searched,
+ * so the grid never holds more than the page it shows.
+ */
+/**
+ * The plans list's React Query key. The plan page's pager rebuilds the SAME key
+ * from the URL, so it reads the page the list already fetched.
+ */
+export function loadingPlanListQueryKey(params: LoadingPlanListParams): QueryKey {
+  return [...KEY, 'plan-list', params];
 }
 
-export function useLoadingPlans(supplierId: string | null) {
-  return useQuery({
-    queryKey: [...KEY, 'plans', supplierId],
-    queryFn: () => getLoadingPlans(supplierId ?? undefined),
-    enabled: !!supplierId,
-    refetchOnWindowFocus: false,
-  });
+/** The list query a plan URL describes, in the shape the list passes. */
+export function loadingPlanListParamsFromUrl(
+  params: ListPagerParams,
+): LoadingPlanListParams {
+  return {
+    pageIndex: params.pageIndex,
+    pageSize: params.pageSize,
+    sorting: params.sorting,
+    searchQuery: params.searchQuery,
+    // `active` (planning + sent) is the chip the list opens on.
+    status: (params.filters.status as LoadingPlanListParams['status']) ?? 'active',
+  };
 }
 
-export function useLoadingPlanDetail(planId: string | null) {
+/** The pager's two hooks into the loading plans list. */
+export const loadingPlanPagerQuery = {
+  listQueryKey: (params: ListPagerParams): QueryKey =>
+    loadingPlanListQueryKey(loadingPlanListParamsFromUrl(params)),
+  fetchPage: (params: ListPagerParams): Promise<ListPagerPage> =>
+    getLoadingPlanList(loadingPlanListParamsFromUrl(params)),
+};
+
+export function useLoadingPlanList(params: LoadingPlanListParams) {
   return useQuery({
-    queryKey: [...KEY, 'plan', planId],
-    queryFn: () => getLoadingPlan(planId as string),
-    enabled: !!planId,
+    queryKey: loadingPlanListQueryKey(params),
+    queryFn: () => getLoadingPlanList(params),
     refetchOnWindowFocus: false,
+    placeholderData: (prev) => prev,
   });
 }
 
@@ -100,9 +120,8 @@ function useSupplierInvalidator() {
   const qc = useQueryClient();
   return (supplierId: string | null) => {
     void qc.invalidateQueries({ queryKey: [...KEY, 'stock', supplierId] });
-    void qc.invalidateQueries({ queryKey: [...KEY, 'unfinished', supplierId] });
-    void qc.invalidateQueries({ queryKey: [...KEY, 'plans', supplierId] });
     void qc.invalidateQueries({ queryKey: [...KEY, 'stock-list-file', supplierId] });
+    void qc.invalidateQueries({ queryKey: [...KEY, 'plan-list'] });
   };
 }
 
@@ -110,40 +129,60 @@ export function useStockListApplied() {
   return useSupplierInvalidator();
 }
 
-export function useBuildLoadingPlan() {
-  const invalidate = useSupplierInvalidator();
-  return useMutation({
-    mutationFn: (body: LoadingPlanRequest) => createLoadingPlan(body),
-    onSuccess: (plan: LoadingPlan) => {
-      invalidate(plan.supplier_id);
-      toast.success(
-        `Planned ${fmtTrimmedDecimal(plan.planned_cbm, 3)} of ${fmtTrimmedDecimal(plan.capacity_cbm, 3)} cbm.`,
-      );
-    },
-    onError: (e: Error) => toast.error(e.message),
-  });
-}
-
-export function useRerunLoadingPlan() {
+/** Start a plan (R4). No toast: the caller navigates straight onto the record. */
+export function useCreateLoadingPlan() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; container_count?: number; container_type?: string }) =>
-      updateLoadingPlan(id, body),
-    onSuccess: (plan: LoadingPlan) => {
-      qc.setQueryData([...KEY, 'plan', plan.id], plan);
-      void qc.invalidateQueries({ queryKey: [...KEY, 'plans', plan.supplier_id] });
+    mutationFn: (body: LoadingPlanCreate) => createLoadingPlanRecord(body),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: [...KEY, 'plan-list'] }),
+    onError: (e: Error) => toast.error(e.message),
+  });
+}
+
+/** Cancel: the plan stops being worked on AND the supplier's live link stops answering (Q4). */
+export function useCancelLoadingPlan() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => cancelLoadingPlan(id),
+    onSuccess: (plan: LoadingPlanRecord) => {
+      qc.setQueryData([...KEY, 'container-request', plan.id], (prev: unknown) =>
+        prev && typeof prev === 'object' ? { ...(prev as object), plan } : prev,
+      );
+      void qc.invalidateQueries({ queryKey: [...KEY, 'plan-list'] });
+      void qc.invalidateQueries({ queryKey: [...KEY, 'container-request', plan.id] });
+      toast.success('Plan cancelled. The supplier link no longer works.');
     },
     onError: (e: Error) => toast.error(e.message),
   });
 }
 
-export function useDeleteLoadingPlan(supplierId: string | null) {
-  const invalidate = useSupplierInvalidator();
+/**
+ * Save the typed quantities (R6). The whole map goes in one PUT, and the build is invalidated
+ * rather than patched: `suggested_qty` comes back with the edits already applied, so the grid
+ * and the document read the same numbers.
+ */
+export function useUpdateLoadingPlanCutOff(planId: string | null) {
+  const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => deleteLoadingPlan(id),
+    mutationFn: (planHorizonDate: string | null) =>
+      updateLoadingPlanCutOff(planId as string, planHorizonDate),
     onSuccess: () => {
-      invalidate(supplierId);
-      toast.success('Loading plan deleted.');
+      void qc.invalidateQueries({ queryKey: [...KEY, 'container-request', planId] });
+      void qc.invalidateQueries({ queryKey: [...KEY, 'plan-list'] });
+      toast.success('Cut-off changed. The suggestion has been worked out again.');
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+}
+
+export function useSaveLoadingPlanEdits(planId: string | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (edits: Record<string, number>) =>
+      saveLoadingPlanEdits(planId as string, edits),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: [...KEY, 'container-request', planId] });
+      void qc.invalidateQueries({ queryKey: [...KEY, 'plan-list'] });
     },
     onError: (e: Error) => toast.error(e.message),
   });
@@ -184,24 +223,71 @@ export function useApproveLoadingPlan() {
  * `planHorizonDate` ("Plan until", captain 20 Aug) is keyed into the query so picking a
  * different cutoff is a fresh fetch, not a stale one served out of cache under the same key.
  */
-export function useContainerRequestBuild(
-  supplierId: string | null,
-  planHorizonDate?: string | null,
-) {
+export function useContainerRequestBuild(planId: string | null) {
   return useQuery({
-    queryKey: [...KEY, 'container-request', supplierId, planHorizonDate ?? null],
-    queryFn: () => buildContainerRequest(supplierId as string, planHorizonDate),
+    queryKey: [...KEY, 'container-request', planId],
+    queryFn: () => buildContainerRequest(planId as string),
+    enabled: !!planId,
+    refetchOnWindowFocus: false,
+    retry: false,
+  });
+}
+
+/**
+ * The sales history behind the rows currently ON SCREEN (AC-B8).
+ *
+ * Keyed on the product ids, so paging to the next 25 rows is a new query rather than a
+ * refetch of everything: the sidecar exists precisely so a 120-product supplier does not pay
+ * for 120 products' worth of monthly series to read one page.
+ *
+ * `cold` because a month bucket cannot change while she is looking at it - this is closed
+ * history, not the live sales book.
+ */
+export function useContainerRequestHistory(supplierId: string | null, productIds: string[]) {
+  // Sorted so two pages holding the same products in a different order share one cache entry.
+  const key = [...productIds].sort().join(',');
+  return useQuery({
+    queryKey: [...KEY, 'container-request', 'history', supplierId, key],
+    queryFn: () => getContainerRequestHistory(supplierId as string, productIds),
+    enabled: !!supplierId && productIds.length > 0,
+    ...cold,
+  });
+}
+
+/**
+ * Notices sent to this supplier, either stage - the caller filters by `notice_type`.
+ *
+ * `loadingPlanId` narrows it to one plan (R3/R11), which is what a plan's record page wants:
+ * a supplier commonly has two plans open at once and each holds its own current ask, so the
+ * other one's sends and its live link do not belong on this page.
+ */
+export function useSupplierNotices(supplierId: string | null, loadingPlanId?: string | null) {
+  return useQuery({
+    queryKey: [...KEY, 'notices', 'supplier', supplierId, loadingPlanId ?? null],
+    queryFn: () => getSupplierNotices(supplierId as string, loadingPlanId),
     enabled: !!supplierId,
     refetchOnWindowFocus: false,
   });
 }
 
-/** Every notice sent to this supplier, either stage - the caller filters by `notice_type`. */
-export function useSupplierNotices(supplierId: string | null) {
+/**
+ * Who a chat send could be addressed to, searched on the server (AC-C3).
+ *
+ * The answer also carries the WORKSPACE's own fact - whether a WeChat channel is connected at
+ * all - which is what labels and disables the Chat option, so the send dialog asks on OPEN
+ * rather than once Chat is chosen: a choice cannot be disabled with its reason after it has
+ * been made. It is a read of our own mirror (`respond_channels` / `respond_contacts`), never
+ * a live Respond.io call, and `enabled` still keeps it off any screen that is not asking.
+ */
+export function useSupplierChatContacts(
+  supplierId: string | null,
+  query: string,
+  enabled: boolean,
+) {
   return useQuery({
-    queryKey: [...KEY, 'notices', 'supplier', supplierId],
-    queryFn: () => getSupplierNotices(supplierId as string),
-    enabled: !!supplierId,
+    queryKey: [...KEY, 'chat-contacts', supplierId, query],
+    queryFn: () => getSupplierChatContacts(supplierId as string, query),
+    enabled: enabled && !!supplierId,
     refetchOnWindowFocus: false,
   });
 }
@@ -210,17 +296,49 @@ export function useSendContainerRequest() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({
-      supplierId,
+      planId,
       lines,
+      options,
     }: {
+      planId: string;
       supplierId: string;
       supplierName: string;
       lines: ContainerRequestLine[];
-    }) => sendContainerRequest(supplierId, lines),
-    onSuccess: (_out, { supplierId, supplierName }) => {
+      options?: ContainerRequestSendOptions;
+    }) => sendContainerRequest(planId, lines, options),
+    onSuccess: (_out, { planId, supplierId, supplierName }) => {
       void qc.invalidateQueries({ queryKey: [...KEY, 'notices', 'supplier', supplierId] });
+      void qc.invalidateQueries({ queryKey: [...KEY, 'container-request', planId] });
+      void qc.invalidateQueries({ queryKey: [...KEY, 'plan-list'] });
       toast.success(`Request sent to ${supplierName}.`);
     },
+    // A refused send still wrote its notice, and the record's "Requests sent" list has to
+    // show the attempt and its reason - so the notices are re-read on the failing path too.
+    onError: (_e, { supplierId }) => {
+      void qc.invalidateQueries({ queryKey: [...KEY, 'notices', 'supplier', supplierId] });
+    },
+    // No toast: the send dialog stays open on a refusal and prints the reason beside the
+    // field that can fix it (AC-C5). A toast would say the same thing where it cannot be
+    // acted on, and would vanish while she is still reading it.
+  });
+}
+
+/**
+ * The gear menu's two downloads (R23): the same request, as a file, without sending it.
+ *
+ * A mutation rather than a query because it is an act she asks for and because the pending
+ * state disables the menu item - there is nothing to cache, the answer is a file that has
+ * already left for the disk.
+ */
+export function useDownloadContainerRequestDocument(planId: string | null) {
+  return useMutation({
+    mutationFn: ({
+      lines,
+      format,
+    }: {
+      lines: ContainerRequestLine[];
+      format: 'xlsx' | 'pdf';
+    }) => downloadContainerRequestDocument(planId as string, lines, format),
     onError: (e: Error) => toast.error(e.message),
   });
 }

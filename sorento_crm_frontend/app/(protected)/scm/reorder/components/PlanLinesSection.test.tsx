@@ -1,6 +1,6 @@
 /**
  * PlanLinesSection - the extracted "one list" block (grid + budget review + level
- * changes) driven by usePlanLines. Both ReorderPlanningView and the SCM simulation
+ * changes) driven by usePlanLines. Both the plan page and the SCM simulation
  * page's Planning view tab render this SAME component; this file checks the
  * orchestration (loading / error / data) in isolation from the heavy children.
  */
@@ -14,6 +14,23 @@ import type { ToolbarAction } from '@/components/ui/data-grid-list-toolbar';
 
 const usePlanLines = vi.fn();
 vi.mock('../hooks/usePlanLines', () => ({ usePlanLines: (...a: unknown[]) => usePlanLines(...a) }));
+
+// The draft map has its own suite (`usePlanEdits` is exercised through `PlanLinesGrid`);
+// here it would only drag a QueryClient into every case that is about orchestration.
+vi.mock('../hooks/usePlanEdits', () => ({
+  usePlanEdits: () => ({
+    edits: {},
+    setRowEdit: vi.fn(),
+    resetRow: vi.fn(),
+    clearAll: vi.fn(),
+    saveCount: 0,
+    confirmable: { products: 0, cash: 0, unpriced: 0 },
+    save: vi.fn(),
+    confirm: vi.fn(),
+    isSaving: false,
+    isConfirming: false,
+  }),
+}));
 
 vi.mock('./PlanLinesGrid', () => ({
   PlanLinesGrid: ({
@@ -357,6 +374,47 @@ describe('PlanLinesSection - manual mode hides not-breached covered rows by defa
     render(<PlanLinesSection runId="run-1" />);
 
     expect(screen.getByText(/plan-lines-grid/).textContent).toContain('AUTO-NOT-BREACHED');
+  });
+
+  it('keeps the PRODUCT\'s own covered row while the product is still on the plan', () => {
+    // The per-product basis (`PLAN-scm-reorder-per-product.md`) writes one row for the
+    // whole product, naming no warehouse, and the grouped view builds the product row from
+    // it. Hiding it left SRTWT7408's BRW disposition standing in as the plan row: Suggested
+    // qty "-", On hand 1,296 of 5,495, and no ledger to open.
+    const productRow = line({
+      id: 'a', sku: 'SRTWT7408', product_id: 'p-srt', type: 'covered',
+      warehouse_id: null, warehouse_code: null, warehouse_name: null,
+      policy_type: 'reorder_level', reorder_level: 500, net_position: 5758,
+    });
+    const disposition = line({
+      id: 'b', sku: 'SRTWT7408', product_id: 'p-srt', type: 'disposition',
+      warehouse_id: 'w-brw', warehouse_code: 'BRW', policy_type: 'reorder_level',
+    });
+    stubPlanLines({ lines: [productRow, disposition] });
+    render(<PlanLinesSection runId="run-1" />);
+
+    // Both rows reach the grid: the product row IS the group row, the disposition sits
+    // under it.
+    expect(screen.getByText(/plan-lines-grid/).textContent).toContain(
+      'lines=SRTWT7408,SRTWT7408',
+    );
+  });
+
+  it('still drops a product whose ONLY row is a not-breached covered one', () => {
+    // The rule the buyer asked for, where it was aimed: nothing else on the plan for this
+    // item, so the item is not their business today and stays off the list entirely.
+    const lonely = line({
+      id: 'a', sku: 'COV-ONLY', product_id: 'p-lonely', type: 'covered',
+      warehouse_id: null, warehouse_code: null, warehouse_name: null,
+      policy_type: 'reorder_level', reorder_level: 120, net_position: 135,
+    });
+    const other = line({ id: 'b', sku: 'BUY-1', product_id: 'p-other', type: 'buy' });
+    stubPlanLines({ lines: [lonely, other] });
+    render(<PlanLinesSection runId="run-1" />);
+
+    const grid = screen.getByText(/plan-lines-grid/);
+    expect(grid.textContent).not.toContain('COV-ONLY');
+    expect(grid.textContent).toContain('BUY-1');
   });
 
   it('a manual-basis buy row (not covered) is unaffected', () => {

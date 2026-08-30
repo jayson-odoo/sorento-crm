@@ -1,0 +1,125 @@
+{
+  "case": "AC-S2-1",
+  "why": [
+    "The worked example of the whole module: one product, three supply documents and four",
+    "demand lines, drawn first-come by date across one ownership group (BB spans BRW and MWH).",
+    "",
+    "A takes the on hand at its date. B empties what is left and waits: the SPO that lands on",
+    "15 Sep clears its shortfall FIRST, before any later line draws, so B ends covered and LATE.",
+    "C then finds 10 of that SPO in time and is short 30 until the PO lands on 20 Oct, which",
+    "clears its shortfall the same way - C is late too. D draws what is left of the PO at its",
+    "own date and is short 130, with nothing behind it.",
+    "",
+    "An earlier line's open shortfall outranks a later line's in-time draw, which is what makes",
+    "this first-come BY REQUIRED DATE rather than first-come by arrival."
+  ],
+  "as_of": "2026-09-01",
+  "tba_from": "2029-01-01",
+  "lead_days": 90,
+  "supply": [
+    {
+      "key": "on_hand:BRW-BB",
+      "kind": "on_hand",
+      "warehouse": "BRW-BB",
+      "at": "2026-09-01",
+      "qty": 100,
+      "ref": null
+    },
+    {
+      "key": "spo:S1",
+      "kind": "spo",
+      "warehouse": "BRW-BB",
+      "at": "2026-09-15",
+      "qty": 50,
+      "ref": "SPO 2026/09-0088"
+    },
+    {
+      "key": "po:P1",
+      "kind": "po",
+      "warehouse": "BRW-BB",
+      "at": "2026-10-20",
+      "qty": 200,
+      "ref": "PO 202608-S0041 line 1",
+      "bought_for": "2026-11-01"
+    }
+  ],
+  "demand": [
+    {
+      "key": "A",
+      "so_number": "SO400001",
+      "line_no": 1,
+      "warehouse": "BRW-BB",
+      "agent_code": "JAY",
+      "required_date": "2026-09-05",
+      "open_qty": 80
+    },
+    {
+      "key": "B",
+      "so_number": "SO400002",
+      "line_no": 1,
+      "warehouse": "BRW-BB",
+      "agent_code": "JEREMY",
+      "required_date": "2026-09-10",
+      "open_qty": 60
+    },
+    {
+      "key": "C",
+      "so_number": "SO400003",
+      "line_no": 1,
+      "warehouse": "MWH-BB",
+      "agent_code": "TERA",
+      "required_date": "2026-10-01",
+      "open_qty": 40
+    },
+    {
+      "key": "D",
+      "so_number": "SO400004",
+      "line_no": 1,
+      "warehouse": "BRW-BB",
+      "agent_code": "JAY",
+      "required_date": "2026-11-01",
+      "open_qty": 300
+    }
+  ],
+  "pinned": [],
+  "expect": {
+    "lines": [
+      {
+        "key": "A",
+        "status": "covered",
+        "uncovered": 0,
+        "bucket": "2026-09",
+        "assigned": [["on_hand:BRW-BB", 80]]
+      },
+      {
+        "key": "B",
+        "status": "late",
+        "uncovered": 0,
+        "bucket": "2026-09",
+        "assigned": [["on_hand:BRW-BB", 20], ["spo:S1", 40]]
+      },
+      {
+        "key": "C",
+        "status": "late",
+        "uncovered": 0,
+        "bucket": "2026-10",
+        "assigned": [["spo:S1", 10], ["po:P1", 30]]
+      },
+      {
+        "key": "D",
+        "status": "short",
+        "uncovered": 130,
+        "bucket": "2026-11",
+        "assigned": [["po:P1", 170]]
+      }
+    ],
+    "months": [
+      { "key": "2026-09", "balance": 10, "tone": "green" },
+      { "key": "2026-10", "balance": 170, "tone": "green" },
+      { "key": "2026-11", "balance": -130, "tone": "red" }
+    ],
+    "tba": 0,
+    "undated": 0,
+    "uncounted": []
+  }
+}

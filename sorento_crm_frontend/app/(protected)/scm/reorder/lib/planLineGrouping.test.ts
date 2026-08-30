@@ -2,17 +2,15 @@
  * Product-grain channel grouping (5.3, follow-up 19-20 Aug: SUPERSEDES the (product,channel)
  * cut). Reproduces the captain's TPE-9204 complaint - a bare-site Retail row and two
  * suffixed-bin Project rows for one product - but the refined ask is ONE row per PRODUCT
- * with Project/Retail/Unclassified as dynamic COLUMNS on that one row, not a row per channel.
+ * with Project/Retail as dynamic COLUMNS on that one row, not a row per channel.
  */
 import { describe, it, expect } from 'vitest';
 import type { ReorderRecommendation } from '../types/reorder.types';
 import { recToPlanLine, type PlanLine } from './planLine';
 import {
-  channelOf,
   groupPlanLinesByChannel,
   isGroupedLine,
   locationLabel,
-  presentChannels,
 } from './planLineGrouping';
 
 function rec(over: Partial<ReorderRecommendation> = {}): ReorderRecommendation {
@@ -34,25 +32,13 @@ function rec(over: Partial<ReorderRecommendation> = {}): ReorderRecommendation {
     days_to_stockout: null, rank_factors: [],
     on_hand: 1, incoming_spo: 0, outstanding_po: 0, outstanding_sales: 5,
     segment: 'dealer',
-    project_need: 0, retail_need: 0, unclassified_need: 0,
-    project_committed: 0, retail_committed: 0, unclassified_committed: 0,
+    project_need: 0, retail_need: 0,
+    project_committed: 0, retail_committed: 0,
     ...over,
   } as ReorderRecommendation;
 }
 
 const line = (over: Partial<ReorderRecommendation> = {}): PlanLine => recToPlanLine(rec(over));
-
-describe('channelOf', () => {
-  it('maps the bare-site dealer segment to retail', () => {
-    expect(channelOf(line({ segment: 'dealer' }))).toBe('retail');
-  });
-  it('maps the suffixed-bin project segment to project', () => {
-    expect(channelOf(line({ segment: 'project' }))).toBe('project');
-  });
-  it('is Unclassified rather than guessed at when the segment is missing', () => {
-    expect(channelOf(line({ segment: null }))).toBe('unclassified');
-  });
-});
 
 describe('locationLabel', () => {
   it('joins codes while short', () => {
@@ -63,52 +49,27 @@ describe('locationLabel', () => {
   });
 });
 
-describe('presentChannels', () => {
-  it('is Project then Retail, in fixed order, never the order rows first appear', () => {
-    const rows = [line({ segment: 'dealer' }), line({ segment: 'project' })];
-    expect(presentChannels(rows)).toEqual(['project', 'retail']);
-  });
-  it('includes Unclassified only when the run carries a NONZERO unclassified sum, never on a bare missing segment', () => {
-    expect(presentChannels([line({ segment: 'dealer' })])).toEqual(['retail']);
-    // A warehouse with no segment folds into `channelOf`'s Unclassified bucket, but with
-    // nothing actually committed there the column must stay hidden (captain, 19 Aug:
-    // "I don't need unclassified, nothing should be unclassified by right").
-    expect(
-      presentChannels([
-        line({ segment: 'dealer' }),
-        line({ segment: null, unclassified_committed: 0 }),
-      ]),
-    ).toEqual(['retail']);
-    expect(
-      presentChannels([
-        line({ segment: 'dealer' }),
-        line({ segment: null, unclassified_committed: 2 }),
-      ]),
-    ).toEqual(['retail', 'unclassified']);
-  });
-});
-
 describe('groupPlanLinesByChannel - the TPE-9204 case (one row per PRODUCT)', () => {
   // 1 bare-site (dealer/Retail) row + 2 suffixed-bin (project) rows for the same product -
   // the captain's own complaint: "my expectation is 1 line of retail, 1 line of project" is
   // now satisfied INSIDE one product row via channel columns, not by a row per channel.
   const retail = line({
     id: 'a', warehouse_id: 'w-brw', warehouse_code: 'BRW', warehouse_name: 'Butterworth',
-    segment: 'dealer', rank: 1, on_hand: 4, project_on_hand: 0, incoming_spo: 1, outstanding_po: 0,
+    segment: 'dealer', rank: 1, on_hand: 4, incoming_spo: 1, outstanding_po: 0,
     outstanding_sales: 6, order_qty: 3, net_position: -3, forecast_daily_demand: 1,
-    retail_committed: 6, project_committed: 0, unclassified_committed: 0, project_need: 0,
+    retail_committed: 6, project_committed: 0, project_need: 0,
   });
   const projectIb = line({
     id: 'b', warehouse_id: 'w-ib', warehouse_code: 'BRW-IB', warehouse_name: 'BRW - IB',
-    segment: 'project', rank: 2, on_hand: 2, project_on_hand: 3, incoming_spo: 0, outstanding_po: 1,
+    segment: 'project', rank: 2, on_hand: 0, incoming_spo: 0, outstanding_po: 1,
     outstanding_sales: 5, order_qty: 4, net_position: -4, forecast_daily_demand: 2,
-    retail_committed: 0, project_committed: 5, unclassified_committed: 0, project_need: 3,
+    retail_committed: 0, project_committed: 5, project_need: 3,
   });
   const projectIr = line({
     id: 'c', warehouse_id: 'w-ir', warehouse_code: 'BRW-IR', warehouse_name: 'BRW - IR',
-    segment: 'project', rank: 4, on_hand: 1, project_on_hand: 1, incoming_spo: 0, outstanding_po: 0,
+    segment: 'project', rank: 4, on_hand: 0, incoming_spo: 0, outstanding_po: 0,
     outstanding_sales: 2, order_qty: 5, net_position: -5, forecast_daily_demand: 1,
-    retail_committed: 0, project_committed: 2, unclassified_committed: 0, project_need: 1,
+    retail_committed: 0, project_committed: 2, project_need: 1,
   });
 
   it('collapses all 3 per-warehouse rows of the same product into ONE grouped row', () => {
@@ -124,7 +85,9 @@ describe('groupPlanLinesByChannel - the TPE-9204 case (one row per PRODUCT)', ()
     expect(group.warehouse).toBe('Butterworth, BRW - IB, BRW - IR');
   });
 
-  it('the channel columns are dynamic - Project and Retail present, Unclassified absent', () => {
+  it('the channel columns are Project and Retail, always, whatever the rows hold', () => {
+    // R17: never derived from a warehouse segment. A plan with no project demand shows a
+    // Project column reading zero, which is the answer - a missing column is not.
     const [group] = groupPlanLinesByChannel([retail, projectIb, projectIr]);
     expect(group.__group.channels).toEqual(['project', 'retail']);
   });
@@ -133,7 +96,6 @@ describe('groupPlanLinesByChannel - the TPE-9204 case (one row per PRODUCT)', ()
     const [group] = groupPlanLinesByChannel([retail, projectIb, projectIr]);
     expect(group.__group.channelQty.project).toBe(7); // 0 + 5 + 2
     expect(group.__group.channelQty.retail).toBe(6); // 6 + 0 + 0
-    expect(group.__group.channelQty.unclassified).toBe(0); // 0 + 0 + 0, present as a fact
   });
 
   it('the channel sums equal the committed split sums across every member', () => {
@@ -154,11 +116,9 @@ describe('groupPlanLinesByChannel - the TPE-9204 case (one row per PRODUCT)', ()
 
   it('sums the shared numeric facts across the group\'s warehouses', () => {
     const [group] = groupPlanLinesByChannel([retail, projectIb, projectIr]);
-    expect(group.rec.on_hand).toBe(7); // 4 + 2 + 1
-    // Pool-only supply (`on_hand`) and project-held supply (`project_on_hand`) are two
-    // separate sums of two separate per-location facts (captain, 20 Aug) - summing the
-    // group never mixes the two back together.
-    expect(group.rec.project_on_hand).toBe(4); // 0 + 3 + 1
+    // Pool-only supply, every member (R19): the two project bins arrive holding 0 on hand
+    // whatever sits in them, so the group's total is the pool's 4 and nothing else.
+    expect(group.rec.on_hand).toBe(4); // 4 + 0 + 0
     expect(group.rec.incoming_spo).toBe(1);
     expect(group.rec.outstanding_po).toBe(1);
     expect(group.rec.outstanding_sales).toBe(13); // 6 + 5 + 2
@@ -202,23 +162,23 @@ describe('groupPlanLinesByChannel - the TPE-9204 case (one row per PRODUCT)', ()
   it('preserves a null channelQty entry rather than reading a legacy plan as zero', () => {
     const legacy = line({
       id: 'g', warehouse_id: 'w-legacy', rank: 8,
-      project_committed: null, retail_committed: null, unclassified_committed: null,
+      project_committed: null, retail_committed: null,
     });
     const [group] = groupPlanLinesByChannel([legacy]);
     expect(group.__group.channelQty.project).toBeNull();
     expect(group.__group.channelQty.retail).toBeNull();
   });
 
-  it('groups an unclassified-segment warehouse into the SAME product row, not a Retail one', () => {
-    const unclassified = line({
+  it('groups a segment-less warehouse into the SAME product row', () => {
+    const untagged = line({
       id: 'd', warehouse_id: 'w-x', warehouse_code: 'WHX', warehouse_name: 'Unmapped',
-      segment: null, rank: 5, outstanding_sales: 1, unclassified_committed: 1,
+      segment: null, rank: 5, outstanding_sales: 1, retail_committed: 1,
     });
-    const groups = groupPlanLinesByChannel([retail, unclassified]);
+    const groups = groupPlanLinesByChannel([retail, untagged]);
     expect(groups).toHaveLength(1);
-    expect(groups[0].__group.members).toEqual([retail, unclassified]);
-    expect(groups[0].__group.channels).toEqual(['retail', 'unclassified']);
-    expect(groups[0].__group.channelQty.unclassified).toBe(1);
+    expect(groups[0].__group.members).toEqual([retail, untagged]);
+    expect(groups[0].__group.channels).toEqual(['project', 'retail']);
+    expect(groups[0].__group.channelQty.retail).toBe(7);
   });
 
   it('carries the master reorder level/qty through from the first member (19-20 Aug follow-up)', () => {
@@ -294,5 +254,101 @@ describe('supplier/price/MOQ are product facts (captain, 20 Aug ruling): carried
     expect(group.rec.supplier).toBeNull();
     expect(group.order_qty_inputs.moq).toBeNull();
     expect(group.rec.moq).toBeNull();
+  });
+});
+
+/**
+ * The per-product basis (`PLAN-scm-reorder-per-product.md`): the run writes ONE row for the
+ * whole product, naming no warehouse, plus per-location disposition rows. The fixture below
+ * is the exact shape `GET .../recommendations?query=SRTWT7408` returned on run
+ * c05363a1 (27 Aug), where the grouped view showed the BRW disposition's own numbers as the
+ * product's plan row.
+ */
+describe('groupPlanLinesByChannel - the product row IS the group row', () => {
+  const productRow = line({
+    id: 'rec-product', product_id: 'p-srt', sku: 'SRTWT7408', type: 'covered',
+    warehouse_id: null, warehouse_code: null, warehouse_name: null, is_network: true,
+    policy_type: 'reorder_level', reorder_level: 500,
+    order_qty: 7, recommended_qty: 0, net_position: 5758,
+    on_hand: 5495, incoming_spo: 0, outstanding_po: 263,
+    outstanding_sales: 7, project_committed: 0, retail_committed: 7, project_need: 0,
+    rank: null,
+  });
+  const brwDisposition = line({
+    id: 'rec-disposition', product_id: 'p-srt', sku: 'SRTWT7408', type: 'disposition',
+    warehouse_id: 'w-brw', warehouse_code: 'BRW', warehouse_name: 'Butterworth',
+    policy_type: 'reorder_level', disposition_action: 'hold',
+    order_qty: 0, recommended_qty: null, on_hand: 1296, outstanding_po: 270,
+    outstanding_sales: 0, project_committed: 0, retail_committed: 0, project_need: 0,
+    rank: null,
+  });
+  const needsLevelRow = line({
+    id: 'rec-b2155', product_id: 'p-b2155', sku: 'B2155-NL-BLUE', type: 'needs_level',
+    warehouse_id: null, warehouse_code: null, warehouse_name: null, is_network: true,
+    policy_type: 'reorder_level', reorder_level: null, master_reorder_level: null,
+    order_qty: 0, recommended_qty: null, on_hand: 28828, net_position: 31892,
+    project_committed: 0, retail_committed: 3, rank: null,
+  });
+
+  it('takes the product row whole - never the sum of it and its locations', () => {
+    const [group] = groupPlanLinesByChannel([productRow, brwDisposition]);
+    expect(group.rec.id).toBe('rec-product');
+    // 5,495 + 1,296 would be the same stock counted twice: the product row already spans
+    // every location (AC-R1).
+    expect(group.rec.on_hand).toBe(5495);
+    expect(group.net).toBe(5758);
+    expect(group.order_qty).toBe(7);
+    expect(group.rec.outstanding_po).toBe(263);
+  });
+
+  it('reads the channels off the product row, not off its locations', () => {
+    const [group] = groupPlanLinesByChannel([productRow, brwDisposition]);
+    expect(group.__group.channelQty).toEqual({ project: 0, retail: 7 });
+  });
+
+  it('keeps the product row decidable and drillable - the disposition never stands in', () => {
+    // The defect: with the covered row filtered out, the group was built from the BRW
+    // disposition, which is not purchasable - so the Suggested-qty cell rendered a dash
+    // and the ledger had no trigger to open.
+    const [group] = groupPlanLinesByChannel([productRow, brwDisposition]);
+    expect(group.status).toBe('covered_by_stock');
+    expect(group.purchasable).toBe(true);
+    expect(group.__group.productLine?.id).toBe('rec-product');
+  });
+
+  it('carries the locations underneath, product row first so its level is the one read', () => {
+    const [group] = groupPlanLinesByChannel([productRow, brwDisposition]);
+    expect(group.__group.members.map((m) => m.id)).toEqual(['rec-product', 'rec-disposition']);
+    expect(group.__group.locationCodes).toEqual(['Butterworth']);
+  });
+
+  it('groups a needs_level product the same way, so the level cell has a row to sit on', () => {
+    const [group] = groupPlanLinesByChannel([needsLevelRow]);
+    expect(group.rec.id).toBe('rec-b2155');
+    expect(group.status).toBe('needs_level');
+    expect(group.purchasable).toBe(true);
+    expect(group.order_qty).toBe(0);
+    expect(group.rec.on_hand).toBe(28828);
+  });
+
+  it('keeps one row per product across the three-row response', () => {
+    const nlProductRow = line({
+      id: 'rec-nl', product_id: 'p-srt-nl', sku: 'SRTWT7408-NL', type: 'covered',
+      warehouse_id: null, warehouse_code: null, warehouse_name: null, is_network: true,
+      policy_type: 'reorder_level', order_qty: 0, on_hand: 12, rank: null,
+    });
+    const groups = groupPlanLinesByChannel([productRow, brwDisposition, nlProductRow]);
+    expect(groups.map((g) => g.sku)).toEqual(['SRTWT7408', 'SRTWT7408-NL']);
+  });
+
+  it('still sums a product the run planned per location, with no product row of its own', () => {
+    const a = line({ id: 'x', product_id: 'p-loc', sku: 'LOC-1', warehouse_id: 'w1',
+                     warehouse_code: 'BRW', on_hand: 4, order_qty: 2 });
+    const b = line({ id: 'y', product_id: 'p-loc', sku: 'LOC-1', warehouse_id: 'w2',
+                     warehouse_code: 'MWH', on_hand: 6, order_qty: 3 });
+    const [group] = groupPlanLinesByChannel([a, b]);
+    expect(group.__group.productLine).toBeNull();
+    expect(group.rec.on_hand).toBe(10);
+    expect(group.order_qty).toBe(5);
   });
 });

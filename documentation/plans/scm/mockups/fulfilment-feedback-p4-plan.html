@@ -1,0 +1,260 @@
+<!doctype html><html><head><meta charset="utf-8"><title>SCM fulfilment feedback part 4</title>
+<style>
+:root{--bg:#fafaf9;--fg:#1c1917;--mut:#6b7280;--line:#e7e5e4;--card:#fff;--rose:#e11d48;--sky:#0284c7;--em:#059669;--amb:#d97706;--vio:#7c3aed;--pri:#2563eb}
+body{font:14px/1.5 -apple-system,Inter,system-ui,sans-serif;background:var(--bg);color:var(--fg);margin:0;padding:32px;max-width:1180px}
+h1{font-size:22px;margin:0 0 4px}h2{font-size:16px;margin:34px 0 8px;border-bottom:1px solid var(--line);padding-bottom:4px}h3{font-size:14px;margin:18px 0 6px}
+.sub{color:var(--mut);margin-bottom:22px}
+table{border-collapse:collapse;width:100%;background:var(--card);font-size:13px}th,td{border:1px solid var(--line);padding:6px 8px;text-align:left;vertical-align:top}th{background:#f5f5f4}
+td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin:10px 0;min-width:0}
+.card b{display:block;margin-bottom:4px}
+.ruled{background:#ecfdf5;border-color:#a7f3d0}.warn{background:#fffbeb;border-color:#fcd34d}
+.badge{display:inline-block;font-size:11px;padding:1px 7px;border-radius:999px;border:1px solid var(--line);background:#f5f5f4;color:var(--mut);white-space:nowrap}
+.badge.g{background:#ecfdf5;border-color:#a7f3d0;color:var(--em)}.badge.b{background:#eff6ff;border-color:#bfdbfe;color:var(--pri)}.badge.a{background:#fffbeb;border-color:#fcd34d;color:var(--amb)}.badge.r{background:#fff1f2;border-color:#fecdd3;color:var(--rose)}
+.mock{border:1px solid var(--line);border-radius:10px;background:#fff;padding:12px 14px;margin:8px 0;font-size:12px;overflow-x:auto;min-width:0}
+.mock table{font-size:12px}.mock th{font-weight:500;color:var(--mut);white-space:nowrap;background:#fafaf9}.mock td{white-space:nowrap}
+.two{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px}
+.lbl{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--mut);margin:0 0 6px}
+.btn{display:inline-block;font-size:12px;padding:5px 11px;border:1px solid #d6d3d1;border-radius:7px;background:#fff;margin-right:6px;white-space:nowrap}
+.btn.p{background:var(--pri);color:#fff;border-color:var(--pri)}.btn.dim{opacity:.5}.btn.ic{padding:5px 7px}
+.toolbar{display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap;padding:8px 0}
+.menu{border:1px solid var(--line);border-radius:8px;background:#fff;box-shadow:0 4px 14px rgba(0,0,0,.08);padding:4px;display:inline-block;font-size:12px;vertical-align:top;margin-left:8px}
+.menu div{padding:4px 10px;border-radius:5px}.menu div.dim{color:var(--mut)}.menu div.red{color:var(--rose)}
+.neg{color:var(--rose);font-weight:600}.pos{color:var(--em);font-weight:600}
+.exp{background:#f5f5f4;border-top:1px solid var(--line);padding:12px 14px;display:grid;grid-template-columns:minmax(0,1fr);gap:16px;font-size:12px}
+.exp h4{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--mut);margin:0 0 6px}
+.exp .row{display:flex;justify-content:space-between;gap:8px;padding:3px 0;border-bottom:1px dashed #e7e5e4}
+.inp{display:inline-block;border:1px solid #d6d3d1;border-radius:5px;padding:2px 6px;min-width:44px;text-align:right;background:#fff;font-variant-numeric:tabular-nums}
+.sel{display:inline-block;border:1px solid #d6d3d1;border-radius:5px;padding:2px 8px;background:#fff;min-width:120px}
+.drop{border:1.5px dashed #a8a29e;border-radius:8px;padding:18px;text-align:center;color:var(--mut);margin:8px 0}
+.note{font-size:12px;color:var(--mut)}
+.link{color:var(--pri);text-decoration:underline dotted}
+.dialog{border:1px solid var(--line);border-radius:12px;background:#fff;box-shadow:0 8px 30px rgba(0,0,0,.12);padding:16px;max-width:560px;font-size:12px;margin:8px 0}
+.dialog h4{margin:0 0 10px;font-size:14px}
+.field{margin:8px 0}.field .lbl{margin-bottom:3px}
+.chip{display:inline-block;border:1px solid #d6d3d1;border-radius:999px;padding:1px 8px;margin:2px 4px 2px 0;background:#f5f5f4}
+.pill{display:inline-flex;align-items:center;gap:4px;font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid}
+.xl{font-family:Calibri,"Songti SC","宋体",serif;font-size:12px}.xl td,.xl th{text-align:center;border:1px solid #9ca3af;padding:3px 6px}
+.xl .y{background:#ffff00}.xl .red{color:#e00}.xl .t{font-size:16px;font-weight:700}.xl th{font-weight:700;background:#fff}
+.k{background:#ffff00;border-left:2px solid var(--pri) !important}
+img.shot{max-width:100%;border:1px solid var(--line);border-radius:8px;display:block;margin:6px 0}
+ol,ul{margin:6px 0 6px 20px}li{margin:3px 0}
+code{font-size:12px;background:#f5f5f4;padding:1px 4px;border-radius:4px}
+form.q{border:1px solid var(--line);border-radius:8px;background:#fff;padding:10px 12px;margin:8px 0}
+form.q label{display:block;margin:3px 0}form.q button{font-size:12px;padding:4px 10px;border:1px solid #d6d3d1;border-radius:6px;background:#fff;margin-top:6px}
+</style></head><body>
+<h1>SCM fulfilment feedback, part 4</h1>
+<div class="sub">Loading plan becomes a list of records · eight lightboxes · send by email or chat with open tracking · supplier document = their 库存明细 · PI "Start" · packing list fixes · SPO planner redesign. <span class="badge a">DRAFT for grill</span> Lane <code>feat/scm-fulfilment-feedback-p4</code> off main #353. Plan file <code>documentation/plans/scm/PLAN-scm-fulfilment-feedback-p4.md</code>, UAC alongside. Annotate anything; answer Q1-Q7 at the bottom.</div>
+
+<h2>1. Loading plan: a record with a list</h2>
+<div class="two">
+<div class="card warn"><b>Today</b>One page, state in React only. Supplier + "Plan until" + document live in the browser tab; <code>POST /container-requests/build</code> "persists nothing". Nothing to list, cancel, delete or reopen. Two Upload buttons (header card + empty state).
+<img class="shot" src="p4-loading-plan-today.png" alt="today"></div>
+<div class="card ruled"><b>R1-R6 proposed</b>A plan = a row in the existing <code>scm.loading_plan</code> table (migration 440 adds <code>status</code>, <code>plan_horizon_date</code>, <code>document_kind</code>, <code>source_attachment_id</code>, <code>line_edits</code> JSONB, <code>sent_at</code>, <code>cancelled_at/by</code>). List at <code>/scm/loading-plan</code>, record at <code>/scm/loading-plan/{id}</code>. Build is scoped by <code>plan_id</code>; typed quantities persist via Save. "Plan until" is renamed <b>Sales order cut-off</b> everywhere, same words as reorder planning.</div>
+</div>
+
+<h3>1a. The list (mirrors <code>ReorderRunsGrid</code>)</h3>
+<div class="mock">
+<div class="toolbar"><div><span class="sel">Search plans by supplier</span> <span class="btn">Filters <span class="badge">1</span></span> <span class="btn">Columns</span> <span class="badge b">Active ×</span></div><div><span class="btn p">⬆ Upload</span></div></div>
+<table><tr><th>Started ▾</th><th>Supplier</th><th>SO cut-off</th><th>Document</th><th class="n">To request</th><th>Sent</th><th>Opened</th><th>Status</th><th></th></tr>
+<tr><td>27/08/2026 14:02</td><td>CHAOZHOU JINBAICHUAN SANITARY WARE CO., LTD</td><td>30/09/2026</td><td>Stock list 27/07/2026</td><td class="n">83,229<br><span class="note">est. 2,588 cbm</span></td><td>✉ 27/08 14:40</td><td>27/08 15:10</td><td><span class="pill" style="border-color:#bfdbfe;color:#2563eb">Sent</span></td><td>⊘ 🗑</td></tr>
+<tr><td>26/08/2026 09:15</td><td>KAILU SANITARY</td><td>-</td><td>Proforma invoice PI-2026-7-17</td><td class="n">4,120<br><span class="note">est. 61 cbm</span></td><td>-</td><td>-</td><td><span class="pill" style="border-color:#fcd34d;color:#d97706">Planning</span></td><td>⊘ 🗑</td></tr>
+<tr style="color:#9ca3af"><td>20/08/2026 11:00</td><td>CHAOZHOU JINBAICHUAN SANITARY WARE CO., LTD</td><td>31/08/2026</td><td>No file</td><td class="n">61,004</td><td>✉ 20/08 11:30</td><td>Not opened</td><td><span class="pill" style="border-color:#e7e5e4;color:#6b7280">Cancelled</span></td><td></td></tr>
+</table>
+<p class="note">Whole row opens the plan. Row actions: <b>Cancel</b> (ConfirmActionDialog, retires the supplier link, Q4) and <b>Delete</b> (ConfirmDeleteDialog; refused once sent, Q5). Filter default "Active" = Planning + Sent. <code>listingKey scm.dashboard.view::loading-plans</code>.</p>
+</div>
+
+<h3>1b. Upload = "Plan a container", dropzone inside</h3>
+<div class="two">
+<div><p class="lbl">Today (two dialogs)</p><img class="shot" src="p4-plan-dialog-today.png" alt="today dialog"><p class="note">Continue opens a SECOND dialog (StockListUploadDialog) for the file.</p></div>
+<div><p class="lbl">Proposed (one dialog)</p>
+<div class="dialog"><h4>Plan a container</h4>
+<div class="field"><div class="lbl">Supplier</div><span class="sel" style="min-width:320px">CHAOZHOU JINBAICHUAN SANITARY WARE CO., LTD ▾</span></div>
+<div class="field"><div class="lbl">Sales order cut-off</div><span class="sel">30/09/2026 ✕</span> <span class="note">Empty = every open order counts.</span></div>
+<div class="field"><div class="lbl">Document</div>◉ Stock list &nbsp; ○ Proforma invoice &nbsp; ○ No file</div>
+<div class="drop">Drop the supplier's stock list here, or click to choose<br><span class="note">.xlsx · the sheet is read on Test</span></div>
+<div class="card" style="margin:6px 0;padding:8px 10px"><b>Test result</b>120 rows · 55 bound · 60 unbound (48 sizes without a product) · 5 dismissed</div>
+<div style="text-align:right"><span class="btn">Cancel</span><span class="btn">Test</span><span class="btn p">Confirm and start plan</span></div>
+</div>
+<p class="note">Confirm = create the plan row + apply the file + open <code>/scm/loading-plan/{id}</code>. "No file" turns the primary into <b>Start plan</b>. The existing two-step (<code>useTwoStepUpload</code>) runs in place; nothing is re-implemented.</p></div>
+</div>
+
+<h3>1c. The record (users-page shape, gear LEFT of the CTA)</h3>
+<div class="mock">
+<div class="toolbar"><div><b style="font-size:15px">CHAOZHOU JINBAICHUAN SANITARY WARE CO., LTD</b> <span class="pill" style="border-color:#bfdbfe;color:#2563eb">Sent</span><br><span class="note">Started 27/08/2026 14:02 · SO cut-off 30/09/2026 · Stock list 27/07/2026</span><br><span class="note">Home › Supply Chain › Loading Plan › JINBAICHUAN 27/08</span></div>
+<div><span class="btn">‹</span><span class="btn">2 / 3</span><span class="btn">›</span> <span class="btn ic">⚙</span><span class="btn">Save (3)</span><span class="btn p">➤ Send to supplier</span><span class="btn">← Back to loading plans</span>
+<span class="menu"><div>View uploaded list</div><div>Refresh matching</div><div>Refresh suggestion</div><div>Copy link</div><div>Download XLSX</div><div>Download PDF</div><div>Change cut-off</div><div class="red">Cancel plan</div><div class="red">Delete plan</div></span></div></div>
+<p class="note">Header card (Supplier / Plan until / Upload / gear) deleted. Unmatched queue, four stat cards, "What to ask ... to cover until 30/09/2026" heading + Table/Schedule + grid unchanged. <b>Save (N)</b> = rows whose typed qty differs from the engine's; Send saves first. Cancelled plan: grid read-only, Save/Send disabled with the reason.</p>
+</div>
+
+<h2>2. Eight columns open the standard lightbox (R7-R8)</h2>
+<div class="mock">
+<table><tr><th>Rank</th><th>Product</th><th>Suggested</th><th class="n">Need</th><th class="n">Project</th><th class="n">Retail</th><th class="n">On hand</th><th class="n">SPO</th><th class="n">Incoming PL</th><th class="n">PO</th><th>Earliest</th><th class="n">Packed</th><th>Project peak</th><th>Retail peak</th></tr>
+<tr><td>1 · 0.95</td><td>SRTWB241</td><td><span class="inp">4242</span></td><td class="n">4,646</td><td class="n"><span class="link">2,876</span></td><td class="n"><span class="link">1,770</span></td><td class="n"><span class="link">287</span></td><td class="n"><span class="link">117</span></td><td class="n"><span class="link">599</span></td><td class="n"><span class="link">143</span></td><td>20/11/2024</td><td class="n">522</td><td><span class="link">1,504</span> Mar 26</td><td><span class="link">701</span> Jul 26</td></tr></table>
+<p class="note">Every underlined figure opens <code>PlanRowDialog</code> (shell copied from the reorder-revamp lane into <code>scm/components/</code>, one owner after merge). Popovers and their <code>PopoverPortal</code> workarounds go.</p>
+<p class="note" style="margin:10px 0 4px"><b>Same shapes as reorder planning's six lightboxes</b> (revamp lane, <code>PlanRowDialogs.tsx</code>: tabs Open · History, document rows, › expands to lines). Mocked below for every column; the SPO planner reuses On hand and SPO (section 7).</p>
+<div class="two">
+<div class="dialog" style="max-width:none"><h4>Project · SRTWB241 <span class="note">2,876 before cut-off 30/09/2026</span></h4><div><span class="badge b">Open project SO lines (6)</span> <span class="badge">12-month history</span></div>
+<table><tr><th>Sales order</th><th>Customer</th><th>Project</th><th>Agent</th><th class="n">Price</th><th class="n">Qty</th><th>Required</th></tr>
+<tr><td>SO404118</td><td>PEMBINAAN MAJU SDN BHD</td><td>Taman Sri Bayu Ph2</td><td>SEAN</td><td class="n">RM 318.00</td><td class="n">1,200</td><td>30/09/2026</td></tr>
+<tr><td>SO403990</td><td>E-REGION BUILDER SDN BHD</td><td>Bandar Rimbayu</td><td>LCL</td><td class="n">RM 312.00</td><td class="n">900</td><td>15/10/2026</td></tr>
+<tr><td colspan="5"><b>Total</b></td><td class="n"><b>2,876</b></td><td></td></tr></table>
+<div class="note" style="margin-top:6px">Open = the R15 read (open project SO lines net of inquiry links), already in the build payload. History tab = the two 12-month series with the peak month named; <b>Project peak</b> opens this dialog on that tab.</div></div>
+<div class="dialog" style="max-width:none"><h4>Retail · SRTWB241 <span class="note">1,770 before cut-off</span></h4><div><span class="badge b">Open sales orders (11)</span> <span class="badge">12-month history</span></div>
+<table><tr><th>Sales order</th><th>Customer</th><th>Project</th><th>Agent</th><th class="n">Price</th><th class="n">Qty</th><th>Required</th></tr>
+<tr><td>SO404352</td><td>SYARIKAT PERNIAGAAN KL</td><td>-</td><td>SEAN III</td><td class="n">RM 330.00</td><td class="n">240</td><td>20/09/2026</td></tr>
+<tr><td>SO404201</td><td>HARDWARE MART SDN BHD</td><td>-</td><td>AMY</td><td class="n">RM 335.00</td><td class="n">180</td><td>28/09/2026</td></tr></table>
+<div class="note" style="margin-top:6px">Same shape, retail + unclassified lines. <b>Retail peak</b> opens it on the history tab.</div></div>
+<div class="dialog" style="max-width:none"><h4>On hand · SRTWB241 <span class="note">Stock as of 27/08/2026, 6:05 am</span></h4>
+<table><tr><th></th><th>Location</th><th class="n">On hand</th><th class="n">Reserved</th><th class="n">Free</th><th class="n">SO qty</th><th class="n">SPO qty</th><th class="n">Available</th><th class="n">PO qty</th></tr>
+<tr><td>⌄</td><td>BRW</td><td class="n">201</td><td class="n">0</td><td class="n">201</td><td class="n">96</td><td class="n">90</td><td class="n">105</td><td class="n">143</td></tr>
+<tr><td colspan="9" style="background:#fafaf9"><table><tr><th>Doc</th><th>Number</th><th>Customer / Supplier</th><th>Doc date</th><th>Delivery</th><th class="n">Qty</th></tr><tr><td>SO</td><td>SO404352</td><td>SYARIKAT PERNIAGAAN KL</td><td>20/05/2026</td><td>20/09/2026</td><td class="n">96</td></tr><tr><td>PO</td><td>PO-24118</td><td>JINBAICHUAN</td><td>28/04/2026</td><td>15/09/2026</td><td class="n">143</td></tr></table></td></tr>
+<tr><td>›</td><td>WH3</td><td class="n">86</td><td class="n">0</td><td class="n">86</td><td class="n">0</td><td class="n">27</td><td class="n">86</td><td class="n">0</td></tr>
+<tr><td colspan="2"><b>Site pools</b></td><td class="n"><b>287</b></td><td colspan="6"></td></tr></table>
+<div class="note" style="margin-top:6px">Identical to reorder planning's On hand lightbox: <code>location-stock?product_id=</code> pool rows + documents reader. Sum = the cell (287).</div></div>
+<div class="dialog" style="max-width:none"><h4>SPO · SRTWB241 <span class="note">117 arriving at site pools</span></h4><div><span class="badge b">Open to pools (2)</span> <span class="badge">History (9)</span></div>
+<table><tr><th>SPO</th><th>Packing list</th><th>To</th><th class="n">Qty</th><th class="n">Received</th><th>ETA</th><th>Status</th></tr>
+<tr><td>CRM-SPO-e372b1e9</td><td>FSCU8103365</td><td>BRW</td><td class="n">90</td><td class="n">0</td><td>27/07/2026</td><td><span class="badge a">In transit</span></td></tr>
+<tr><td>CRM-SPO-1a0c77</td><td>PL-2608-001</td><td>WH3</td><td class="n">27</td><td class="n">0</td><td>-</td><td><span class="badge">Draft</span></td></tr>
+<tr><td colspan="3"><b>Total</b></td><td class="n"><b>117</b></td><td colspan="3"></td></tr></table>
+<div class="note" style="margin-top:6px"><b>Source = the purchase-order table</b> (captain: SPOs will be uploaded into it, one standard reader for PO and SPO). Rows = SPO-kind purchase order lines for the product bound for a site pool; the SPO cell reads the same rows, so <code>on_order</code> / <code>spo_allocations</code> no longer feed it. History = received SPO lines, same reader.</div></div>
+<div class="dialog" style="max-width:none"><h4>Incoming PL · SRTWB241 <span class="note">599 on packing lists not yet received (reference only)</span></h4>
+<table><tr><th>Packing list</th><th>Container</th><th>Supplier</th><th class="n">Qty</th><th>ETA</th><th>Status</th></tr>
+<tr><td>FSCU8103365</td><td>FSCU8103365</td><td>JINBAICHUAN</td><td class="n">399</td><td>27/07/2026</td><td><span class="badge a">In transit</span></td></tr>
+<tr><td>PL-2608-001</td><td>-</td><td>JINBAICHUAN</td><td class="n">200</td><td>-</td><td><span class="badge">Draft</span></td></tr>
+<tr><td colspan="3"><b>Total</b></td><td class="n"><b>599</b></td><td colspan="2"></td></tr></table>
+<div class="note" style="margin-top:6px">Unreceived <code>inbound_shipment_lines</code> for the product (Q1 of part 3: shown, never subtracted). Opens the packing list on click.</div></div>
+<div class="dialog" style="max-width:none"><h4>PO · SRTWB241 <span class="note">143 still to come (reference only)</span></h4><div><span class="badge b">Open (2)</span> <span class="badge">History (7)</span></div>
+<table><tr><th>PO</th><th>Supplier</th><th class="n">Qty</th><th class="n">Still to come</th><th class="n">Unit price</th><th>Issued</th><th>ETA</th><th>Status</th></tr>
+<tr><td>PO-24118</td><td>JINBAICHUAN</td><td class="n">200</td><td class="n">143</td><td class="n">CNY 335.00</td><td>28/04/2026</td><td>15/09/2026</td><td><span class="badge a">Partly received</span></td></tr>
+<tr><td>PO-24090</td><td>JINBAICHUAN</td><td class="n">100</td><td class="n">0</td><td class="n">CNY 330.00</td><td>30/03/2026</td><td>28/06/2026</td><td><span class="badge g">Closed</span></td></tr></table>
+<div class="note" style="margin-top:6px"><code>purchase_order_lines</code> for the product, open first (the qty the PO cell counts), then history. Same columns as reorder planning's PO lightbox.</div></div>
+</div>
+<table style="margin-top:8px"><tr><th>Column</th><th>Dialog tabs</th><th>Data</th></tr>
+<tr><td>Project / Retail / Project peak / Retail peak</td><td>Open lines · 12-month history (peak opens on history)</td><td>build payload (<code>include_lines</code>) + history payload, both exist</td></tr>
+<tr><td>On hand</td><td>Site pool stock, › documents</td><td><code>GET /reorder-runs/location-stock?product_id=</code> (exists, product-only)</td></tr>
+<tr><td>SPO · Incoming PL · PO</td><td>Open · History</td><td>NEW <code>GET /container-requests/drill?supplier_id&amp;product_id&amp;kind=</code>: the row form of the predicate the cells sum. SPO and PO both read <code>purchase_order_lines</code> (SPO-kind vs PO-kind); Incoming PL reads unreceived <code>inbound_shipment_lines</code>. Cell == Σ open rows by construction; the SPO cell moves off <code>on_order</code> to this reader.</td></tr></table>
+
+<h2>3. Send to supplier: channel, recipients, opens (R9-R11)</h2>
+<div class="two">
+<div class="card warn"><b>Today</b>Bare "Send this request?" confirm. Email goes to <code>suppliers.email</code> only; no way to add an address. A chat row is written on EVERY send and always reads <i>skipped: "No chat channel is linked to this supplier yet."</i> Nothing records whether the supplier opened the link.</div>
+<div class="dialog"><h4>Send this request</h4>
+<div class="field">◉ Email &nbsp; ○ Chat (WeChat via Respond.io)</div>
+<div class="field"><div class="lbl">To</div><span class="chip">sales@jinbaichuan.cn ✕</span><span class="chip">ms.tee@sorento.com.my ✕</span> <span class="sel" style="min-width:160px;color:#9ca3af">Add an address</span></div>
+<div class="field"><div class="lbl">Note (optional)</div><span class="sel" style="min-width:100%;color:#9ca3af">Please confirm by Friday</span></div>
+<div class="note">PDF + XLSX attached · link <code>/c/sorento/supplier-request/…</code> · 30-day link, previous link retired</div>
+<div style="text-align:right;margin-top:8px"><span class="btn">Cancel</span><span class="btn p">Send</span></div></div>
+</div>
+<div class="card"><b>Chat channel = WeChat.</b> Suppliers are in China, so the chat row is the supplier's WeChat contact on the Respond.io WeChat channel (Respond.io lists WeChat Official Account as a channel; whether the workspace has one connected is a check, Q3). Picker over Respond.io contacts on that channel, prefilled by the supplier's phone; sends through the composer's outbound path (text + link inside the 24h window, approved template outside it, outbox row always). No approved template = refused with that reason (seeding the template is a Respond.io task with its own go, Q3). ONE notice row per send for the chosen channel; the always-skipped chat row is gone. Migration 441: <code>recipients</code> JSONB, <code>opened_at</code>, <code>last_opened_at</code>, <code>open_count</code>.</div>
+<div class="mock"><p class="lbl">Requests sent (on the record)</p>
+<table><tr><th>Sent</th><th>Channel</th><th>To</th><th>Status</th><th>Opened</th><th></th></tr>
+<tr><td>27/08 14:40</td><td>✉ Email</td><td>sales@jinbaichuan.cn, ms.tee@…</td><td><span class="pos">Sent</span></td><td>3 times · last 27/08 15:10</td><td>PDF · XLSX · Copy link</td></tr>
+<tr><td>20/08 11:30</td><td>💬 WeChat</td><td>Mr Chen (JBC)</td><td><span class="pos">Sent</span></td><td>Not opened yet</td><td>XLSX · link retired</td></tr></table>
+<p class="note">The public page (and its downloads) stamps the open on the notice: best-effort write on GET, never blocks the page. Plan status stays <b>Sent</b>; an open is an event, not a status.</p></div>
+
+<h2>4. The supplier document IS their sheet (R12-R13)</h2>
+<div class="card warn"><b>Today: three renderers, three shapes.</b> XLSX replays the retained file's VALUES + a Qty-to-load column (merges, yellow fills, fonts, widths, title row lost); the no-file fallback is a five-column sheet of our own; the PDF and the public page carry six columns of our naming.</div>
+<div class="card ruled"><b>Proposed: one <code>SheetModel</code>, three renderers.</b> With a retained stock list the XLSX is the supplier's own workbook opened with openpyxl and column K written into it, every existing cell / merge / fill / font / width untouched. PDF and the public page render the same model with <code>rowSpan</code> for the merged 序号 / 体积 / 总体积. Golden test on the committed <code>2026-7-27 库存明细.xlsx</code>.</div>
+<div class="mock"><p class="lbl">Rendered from 库存明细.xlsx (first family), column K added</p>
+<table class="xl"><tr><th colspan="11" class="t">金百川库存表 2026年7月27日</th></tr>
+<tr><th>序号</th><th>型号</th><th>商标</th><th>规格</th><th>品名</th><th>包装好库存</th><th>空瓷</th><th>体积(cbm)</th><th>总体积(cbm)</th><th>备注</th><th class="k">需装数量<br>Qty to load</th></tr>
+<tr><td rowspan="4">1</td><td class="y">SRTWC286-SH-150NEW</td><td class="y">S</td><td class="y">150</td><td class="y">连体马桶</td><td class="y red">0</td><td class="y">0</td><td rowspan="4">0.17</td><td rowspan="4">540.43</td><td class="y"></td><td class="k"></td></tr>
+<tr><td class="y">SRTWC286-SH-180</td><td class="y">S</td><td class="y">180</td><td class="y">连体马桶</td><td class="y red">0</td><td class="y">101</td><td class="y"></td><td class="k"></td></tr>
+<tr><td class="y">SRTWC286-SH-200NEW</td><td class="y">S</td><td class="y">200</td><td class="y">连体马桶</td><td class="y">288</td><td class="y">243</td><td class="y"></td><td class="k">288</td></tr>
+<tr><td class="y">SRTWC286-SH-250NEW</td><td class="y">S</td><td class="y">250NEW</td><td class="y">连体马桶</td><td class="y">1509</td><td class="y"></td><td class="y"></td><td class="k">1,432</td></tr>
+<tr><td>39</td><td class="y">SRTWB241</td><td class="y">S</td><td class="y"></td><td class="y">SRTWB241</td><td class="y"></td><td class="y"></td><td></td><td></td><td class="y">不在库存表 / Not on your list</td><td class="k">4,242</td></tr>
+<tr><td class="red t" style="font-size:14px">合计：</td><td colspan="4"></td><td class="red">=SUM(F)</td><td class="red">=SUM(G)</td><td></td><td class="red">=SUM(I)</td><td></td><td class="k red">=SUM(K)</td></tr></table>
+<p class="note">Styles are theirs: title Calibri 22 bold merged, header 14 bold centred, data 宋体 14 centred, B:G + J yellow, a zero in 包装好库存 red, widths A 6 / B 28.7 / … / J 13.9. Column K copies J's style. Requested rows absent from their list are appended below the last family with a continuing 序号 (Q1: K vs 备注). Without a file: same 10+1 header, no merges (we do not know their families), 商标 = company letter, 品名 = product name.</p></div>
+
+<h2>5. Proforma invoices list: Start (R14-R15)</h2>
+<div class="two">
+<div><p class="lbl">Today</p><img class="shot" src="p4-pi-list-today.png" alt="pi today"><p class="note">Bulk strip: Export · Convert 2 to draft shipment · Delete 2 · Clear; CTA "Upload proforma invoice". Convert opens a dialog (packing list select).</p></div>
+<div><p class="lbl">Proposed</p><div class="mock">
+<div class="toolbar"><div><span class="badge">2 selected</span> <span class="btn">✕ Clear</span> <span class="badge b">Not converted ×</span></div><div><span class="btn ic">⚙</span><span class="btn p">▶ Start ▾</span></div></div>
+<div><span class="menu"><div>Export</div><div class="red">Delete 2</div></span> <span class="menu"><div>Upload proforma invoice</div><div>Convert 2 to packing list</div></span></div>
+<p class="note">"Convert N to packing list" is disabled with "Select invoices first" until rows are ticked. Convert runs at once: one NEW draft packing list, every line places what it has left, toast "Packing list PL-2608-003 created with 12 lines" + navigate. The only interruption is capacity: the existing <b>OverCapacityDialog</b> ("This will not fit", reason required, Convert anyway). The words "draft shipment" leave this screen. The PI DETAIL keeps its Convert with the per-line quantity editor (a partial placement, Q9 split, is a deliberate act on one invoice). "Add to existing draft" is dropped everywhere (captain, Q6).</p></div></div>
+</div>
+
+<h2>6. Packing list fixes (R16-R20)</h2>
+<table><tr><th style="width:26%">Item</th><th>Cause found</th><th>Fix</th></tr>
+<tr><td><b>SHIP-DRAFT-46949e1c</b> random number</td><td>No <code>document_numbering_rule</code> row for <code>inbound_shipment_draft</code>, so the <code>uuid4[:8]</code> fallback at <code>proforma_invoice_service.py:972</code> fires every time.</td><td>Migration 442 seeds <code>PL-{YYMM}-{NNN}</code> (Q2); the random fallback is deleted (service raises <code>numbering_rule_missing</code>). <code>/new</code> without a number uses the same rule (AC-F3.3 stands). Renamed to the container number when known, as today.</td></tr>
+<tr><td>Notes "Draft from proforma invoice(s): …"</td><td><code>_draft_notes()</code> writes provenance into the user's notes field; the PI tab already carries it.</td><td>No notes written. An over-capacity override keeps its reason as a <b>Timeline</b> entry ("Converted over capacity: … Reason: …"), not a notes string.</td></tr>
+<tr><td>Supplier select too long</td><td><code>SupplierCombobox</code> label = <code>Name (CODE)</code>.</td><td>Label = name only; <code>searchText</code> keeps the code so typing a code still finds it. Applies to Details, <code>/new</code>, per-line factory, PI detail.</td></tr>
+<tr><td>Edit on Shipment lines jumps to Details</td><td>No redirect visible in <code>layout.tsx</code>; <code>beginEdit</code> only snapshots the draft. Tab-bar remount or pager suspected.</td><td>Reproduce in the browser first (Phase 1), fix, AC-F5 keeps the URL on <code>/lines</code> through Edit / Save / Cancel.</td></tr>
+<tr><td>Download shows rows not on the shipment</td><td><code>consolidated_packing_list.py:642-653</code> appends one row per loading-plan product not packed ("Not packed - loading plan asked N"); <code>:188-206</code> writes "Not on the loading plan" / "asked X, packed Y" into REMARKS.</td><td>Both deleted. REMARKS = the supplier's own remark. A cell-by-cell fidelity test against the committed <code>FSCU8103365.xlsx</code> (header block, merges, widths, row heights 35.1 / 15.95, Calibri 12, bold red subtotals, number formats, formulas, V-column block amount, SORENTO/MOCHA footer, 订单号/柜号/封号) drives any remaining formatting fixes.</td></tr></table>
+<img class="shot" src="p4-packing-list-xlsx-today.png" alt="xlsx today" style="max-width:60%">
+
+<h2>7. SPO planner redesign (R21-R22)</h2>
+<img class="shot" src="p4-spo-planner-today.png" alt="spo today" style="max-width:70%">
+<div class="mock"><p class="lbl">Proposed</p>
+<div class="toolbar"><div><span class="btn">Table</span><span class="btn">Schedule</span> <span class="btn">Expand all</span><span class="btn">Collapse all</span></div><div><span class="btn p">✓ Create SPO</span></div></div>
+<table><tr><th></th><th>Product</th><th class="n">Packed</th><th class="n">PO covers</th><th class="n">On hand</th><th class="n">Incoming SPO</th><th>SPO qty</th><th>SO covered</th><th>Location</th></tr>
+<tr><td>▾</td><td>SRTWC8354-SH<br><span class="note">SRTWC8354-SH · JINBAICHUAN</span></td><td class="n">90</td><td class="n"><span class="link">90</span><br><span class="note">2 of 3 POs</span></td><td class="n"><span class="link">2</span></td><td class="n"><span class="link">0</span></td><td><span class="inp">90</span></td><td><span class="link">75</span><br><span class="note">15 unassigned</span></td><td>2 locations<br><span class="note">15 unassigned</span></td></tr>
+<tr><td colspan="9" style="padding:0"><div class="exp">
+<div><h4>Destinations · 90 / 90</h4>
+<div class="row"><span><span class="sel">BRW ▾</span></span><span><span class="inp">60</span> ✕</span></div>
+<div class="row"><span><span class="sel">WH3 ▾</span></span><span><span class="inp">15</span> ✕</span></div>
+<div class="row" style="color:#6b7280"><span>Unassigned (free stock at BRW)</span><span>15</span></div>
+<span class="btn" style="margin-top:6px">+ Add location</span></div>
+</div></td></tr>
+<tr><td>▸</td><td>SRTWC8357-200-RL</td><td class="n">20</td><td class="n"><span class="link">0</span></td><td class="n"><span class="link">51</span></td><td class="n"><span class="link">0</span></td><td><span class="inp">0</span></td><td>-</td><td>No location</td></tr></table>
+<div class="dialog" style="max-width:640px;margin-top:10px"><h4>SRTWC8354-SH · PO covers <span class="note">2 of 3 POs · covers 90 of packed 90</span></h4>
+<table><tr><th></th><th>PO</th><th>Issued</th><th>Expected</th><th class="n">Open</th><th class="n">Take</th></tr>
+<tr><td>☑</td><td>PO-25-0912</td><td>22/09/2025</td><td>30/11/2025</td><td class="n">60</td><td class="n">60</td></tr>
+<tr><td>☑</td><td>PO-26-0107</td><td>08/01/2026</td><td>28/02/2026</td><td class="n">40</td><td class="n">30</td></tr>
+<tr><td>☐</td><td>PO-26-0330</td><td>30/03/2026</td><td>31/05/2026</td><td class="n">50</td><td class="n">0</td></tr></table></div>
+<div class="dialog" style="max-width:720px;margin-top:10px"><h4>SRTWC8354-SH · SO covered <span class="note">75 of packed 90 · 15 unassigned</span></h4>
+<table><tr><th></th><th>Sales order</th><th>Customer</th><th>Class</th><th>Required</th><th class="n">Open</th><th class="n">Take</th><th>Location</th></tr>
+<tr><td>☑</td><td>SO-2202</td><td>PEMBINAAN MAJU SDN BHD</td><td><span class="badge g">Project</span></td><td>30/09/2026</td><td class="n">60</td><td class="n">60</td><td>BRW</td></tr>
+<tr><td>☑</td><td>SO-2210</td><td>HARDWARE MART SDN BHD</td><td><span class="badge b">Retail</span></td><td>15/10/2026</td><td class="n">40</td><td class="n">15</td><td>WH3</td></tr>
+<tr><td>☐</td><td>SO-2231</td><td>SYARIKAT PERNIAGAAN KL</td><td><span class="badge b">Retail</span></td><td>30/11/2026</td><td class="n">25</td><td class="n">0</td><td>-</td></tr>
+<tr><td colspan="6"><b>Unassigned (free stock at BRW)</b></td><td class="n"><b>15</b></td><td></td></tr></table>
+<div class="note" style="margin-top:6px">Project lines first, then retail, by required date (AC-G3); pre-ticked until packed is consumed; ticks drive the destination split (R12 one walk). A retail tick still writes no link row (R7).</div></div>
+<div class="two" style="margin-top:10px">
+<div class="dialog" style="max-width:none"><h4>On hand · SRTWC8354-SH <span class="note">Stock as of 27/08/2026, 6:05 am</span></h4>
+<table><tr><th></th><th>Location</th><th class="n">On hand</th><th class="n">Reserved</th><th class="n">Free</th><th class="n">SO qty</th><th class="n">SPO qty</th><th class="n">Available</th><th class="n">PO qty</th></tr>
+<tr><td>⌄</td><td>BRW</td><td class="n">2</td><td class="n">0</td><td class="n">2</td><td class="n">60</td><td class="n">0</td><td class="n">-58</td><td class="n">90</td></tr>
+<tr><td colspan="9" style="background:#fafaf9"><table><tr><th>Doc</th><th>Number</th><th>Customer / Supplier</th><th>Doc date</th><th>Delivery</th><th class="n">Qty</th></tr><tr><td>SO</td><td>SO-2202</td><td>PEMBINAAN MAJU SDN BHD</td><td>12/06/2026</td><td>30/09/2026</td><td class="n">60</td></tr><tr><td>PO</td><td>PO-25-0912</td><td>JINBAICHUAN</td><td>22/09/2025</td><td>30/11/2025</td><td class="n">90</td></tr></table></td></tr>
+<tr><td>›</td><td>WH3</td><td class="n">0</td><td class="n">0</td><td class="n">0</td><td class="n">40</td><td class="n">0</td><td class="n">-40</td><td class="n">0</td></tr>
+<tr><td colspan="2"><b>Site pools</b></td><td class="n"><b>2</b></td><td colspan="6"></td></tr></table>
+<div class="note" style="margin-top:6px">The same On hand lightbox as the loading plan and reorder planning (section 2): <code>location-stock?product_id=</code>, site pools only, › opens the documents behind SO / SPO / PO qty. Total = the cell (2).</div></div>
+<div class="dialog" style="max-width:none"><h4>Incoming SPO · SRTWC8354-SH <span class="note">0 arriving at site pools</span></h4><div><span class="badge b">Open to pools (0)</span> <span class="badge">History (3)</span></div>
+<table><tr><th>SPO</th><th>Packing list</th><th>To</th><th class="n">Qty</th><th class="n">Received</th><th>ETA</th><th>Status</th></tr>
+<tr><td colspan="7" style="text-align:center;color:#6b7280;padding:14px">No SPO is on its way to a site pool for this product. Nothing is double-counted against this container.</td></tr></table>
+<div class="note" style="margin-top:6px">History tab (same columns): CRM-SPO-7c11 · FSCU8092210 · BRW · 120 · 120 · 14/05/2026 · <span class="badge g">Received</span> … Same SPO lightbox as section 2, reading SPO-kind purchase order lines (R8a). A draft's OWN packed lines are excluded so the cell never counts the container being planned.</div></div>
+</div>
+<p class="note">PO covers / SO covered: lightboxes with checkboxes, suggested takes pre-ticked, same client cascade as today. On hand / Incoming SPO: the reorder lightboxes of section 2 (On hand, SPO). Location: the expanded row holds the destinations and replaces <code>LocationSplitPopover</code>. Three popovers deleted.</p></div>
+
+<h2>8. Slices, order, slots</h2>
+<table><tr><th>Slice</th><th>Content</th><th class="n">Days</th><th>Slot</th></tr>
+<tr><td>S1</td><td>Plan row + list + Plan-a-container dialog + record toolbar + Save/edits + cancel/delete (migration 440)</td><td class="n">4.5</td><td>A</td></tr>
+<tr><td>S2</td><td>Shared PlanRowDialog, eight lightboxes, drill endpoint</td><td class="n">3.5</td><td>A</td></tr>
+<tr><td>S3</td><td>Send dialog, recipients, chat via composer path, open tracking (441)</td><td class="n">3.5</td><td>A</td></tr>
+<tr><td>S6</td><td>Numbering seed (442), no notes, name-only supplier, edit-on-tab, workbook extras + fidelity test</td><td class="n">3</td><td>B first (two verified defects)</td></tr>
+<tr><td>S4</td><td>SheetModel, XLSX-is-their-file, PDF + public page, golden test</td><td class="n">3</td><td>B</td></tr>
+<tr><td>S5</td><td>PI Start ▾, gear, direct convert</td><td class="n">1.5</td><td>B</td></tr>
+<tr><td>S7</td><td>SPO planner lightboxes + expanded-row locations</td><td class="n">3</td><td>B</td></tr></table>
+<p class="note">~22 dev-days. Each slice: Phase 1 FE against mocks (browser-verified) → Phase 2 BE test-first → review. Migrations 440 → 441 → 442 chained onto main's head at branch time (438 today, 439 pending #354). Cross-lane: the reorder-revamp lane owns <code>PlanRowDialogs.tsx</code> + the toolbar <code>leftActions</code> prop today; copied here, deduplicated at whichever merge comes second. No stack slot yet for this lane.</p>
+
+<h2>9. Risks</h2>
+<ul>
+<li><b>Older plans move under a newer upload</b> (R2): the stock snapshot is per supplier. Stated on the record's subtitle (which file it started from); the honest reading, but a surprise the first time.</li>
+<li><b>Chat depends on Respond.io state</b>: a contact must exist and a template must be approved outside the 24h window. Email ships regardless.</li>
+<li><b>Open tracking is a write on GET</b>: best-effort, own transaction; a stamp failure never blocks the supplier.</li>
+<li><b>XLSX-is-their-file inherits their file</b>: a malformed retained workbook (no item_code column) falls back to the no-file model and says so in the notice.</li>
+<li><b>"Add to existing draft" is gone</b> (list and detail, Q6): a PI always opens a new draft; merging drafts is not asked.</li>
+</ul>
+
+<h2>10. Decisions taken (27 Aug, artifact round 2)</h2>
+<table><tr><th>#</th><th>Decision</th></tr>
+<tr><td>Q1</td><td>Asked quantity = appended column K <code>需装数量 / Qty to load</code>; their ten columns untouched.</td></tr>
+<tr><td>Q2</td><td>Draft packing list number = <code>PL-YYMM-NNN</code>, monthly sequence.</td></tr>
+<tr><td>Q3</td><td>Email + chat both in S3; chat = WeChat via Respond.io; channel connection / template seed = separate Respond.io task with its own go.</td></tr>
+<tr><td>Q4</td><td>Cancelling a plan retires the live supplier link.</td></tr>
+<tr><td>Q5</td><td>A sent plan cannot be deleted; cancel instead.</td></tr>
+<tr><td>Q6</td><td>"Add to existing draft" dropped everywhere (list and PI detail).</td></tr>
+<tr><td>Q7</td><td>Empty Sales order cut-off = every open order counts.</td></tr>
+<tr><td>A1</td><td>SPO figures and lightbox read the purchase-order table (SPO uploads will land there); one reader for PO and SPO.</td></tr>
+<tr><td>A2</td><td>SPO planner expanded row = destinations only, full width; coverage in the SO covered lightbox.</td></tr></table>
+<p class="note">Say GO to start S1 (slot A) + S6 (slot B), or annotate.</p>
+</body></html>

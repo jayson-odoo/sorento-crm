@@ -247,6 +247,7 @@ PERMISSION_REGISTRY.extend(_crud("inventory", "storage_zones", "Storage Zones"))
 PERMISSION_REGISTRY.extend(_with_import_export("inventory", "stock", "Stock"))
 PERMISSION_REGISTRY.extend(_crud("inventory", "stock_batches", "Stock Batches"))
 PERMISSION_REGISTRY.extend(_crud("inventory", "stock_ledger", "Stock Ledger"))
+PERMISSION_REGISTRY.extend(_crud("inventory", "stock_transfers", "Stock Transfers"))
 
 # Marketing
 PERMISSION_REGISTRY.extend(_crud("marketing", "promotions", "Promotions"))
@@ -537,6 +538,26 @@ PERMISSION_REGISTRY.extend([
         ),
     },
     {
+        "slug": "projects.order_inquiries.acknowledge",
+        "name": "Acknowledge Order Inquiry Rows",
+        "description": (
+            "Purchasing grant: acknowledge an order inquiry row - which is the moment "
+            "documents are linked to it - reject one with a reason, run Link now, and "
+            "upload the purchase order and SPO books from the Order Inquiries page. "
+            "Separate from `projects.order_inquiry.action`, which is marking a row's "
+            "supply state: acknowledging is purchasing taking CS's instruction on, and "
+            "CS may not do it for them."
+        ),
+    },
+    {
+        "slug": "projects.stock_debt.view",
+        "name": "View Stock Debt",
+        "description": (
+            "View the Stock Debt month-by-product balance and drill into a month's demand "
+            "and supply."
+        ),
+    },
+    {
         "slug": "projects.types.view",
         "name": "View Project Types and Templates",
         "description": "View configurable project types, templates and stakeholder roles.",
@@ -674,6 +695,25 @@ PERMISSION_REGISTRY.extend([
         "slug": "dealer_kit.tag_templates.manage",
         "name": "Manage Tag Templates",
         "description": "Create, edit, and delete tag templates for price tag design.",
+    },
+])
+
+
+# Reporting foundation - migration 422 creates these two and sweeps them onto whoever
+# already holds the sponsorship view / edit grants. Declared here for the same reason the
+# Dealer Kit and SCM blocks above are: a database built with create_all + sync_permissions
+# (CI, `scripts/bootstrap_env`) never runs a migration body, so a slug that lives only in
+# the migration does not exist there and every report route answers 403.
+PERMISSION_REGISTRY.extend([
+    {
+        "slug": "procurement.sponsorship_forms.report",
+        "name": "View Sponsorship Report",
+        "description": "Permission to open the Sponsorship report.",
+    },
+    {
+        "slug": "reports.views.publish",
+        "name": "Publish Report Views",
+        "description": "Permission to share a saved report view and set the default for everyone.",
     },
 ])
 

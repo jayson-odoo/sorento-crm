@@ -45,6 +45,7 @@ from app.models.project_so import (
     IV_ORDER,
     SO_STATUS_DRAFT,
     OrderInquiry,
+    OrderInquiryLink,
     OrderInquiryRow,
     ProjectSalesOrder,
     ProjectSalesOrderLine,
@@ -123,6 +124,17 @@ def _inquiry_for(db, company_id: str, order: ProjectSalesOrder) -> OrderInquiry:
 
 
 def _row(db, company_id: str, inquiry: OrderInquiry, **fields) -> OrderInquiryRow:
+    """One inquiry row, and its LINKS when the caller names a `po_line_id`.
+
+    Since section 3.I a placement lives in `projects.order_inquiry_links`, not in the row's
+    own `po_line_id` - which is now the derived display of the first link. Every reader
+    that used to follow the scalar (the worklist's PO no and Supplier columns, "Taken from
+    PO", the `linked` filter) follows the links instead, so a row built with a bare
+    `po_line_id` and `state='placed'` is a shape the application can no longer produce and
+    no reader answers for. The helper writes the link the service would have written, so a
+    test states its intent - "this row is on that PO line" - and gets a real one.
+    """
+    po_line_id = fields.pop("po_line_id", None)
     row = OrderInquiryRow(
         id=_uid(),
         company_id=company_id,
@@ -130,10 +142,23 @@ def _row(db, company_id: str, inquiry: OrderInquiry, **fields) -> OrderInquiryRo
         verb=fields.pop("verb", IV_ORDER),
         state=fields.pop("state", INQUIRY_RAISED),
         qty=Decimal(str(fields.pop("qty", "10"))),
+        po_line_id=po_line_id,
         **fields,
     )
     db.add(row)
     db.flush()
+    if po_line_id:
+        db.add(
+            OrderInquiryLink(
+                id=_uid(),
+                company_id=company_id,
+                row_id=row.id,
+                po_line_id=po_line_id,
+                document=row.po_ref,
+                qty=row.qty,
+            )
+        )
+        db.flush()
     return row
 
 
@@ -508,6 +533,69 @@ def test_the_per_project_list_agrees_with_the_worklist_on_the_customer_label(api
     assert mine["project_customer"] == theirs["project_customer"]
 
 
+# ----------------------------------------------------------- the inquiry number
+
+
+def _inquiry_no_of(db, row: OrderInquiryRow) -> str:
+    return (
+        db.query(OrderInquiry.inquiry_no)
+        .filter(OrderInquiry.id == row.order_inquiry_id)
+        .scalar()
+    )
+
+
+def test_every_row_names_the_inquiry_it_belongs_to(api):
+    """`OI-000123`, off the row's own header - the number a person quotes.
+
+    The S/O no beside it cannot answer "which instruction was I given": an amendment
+    raises a SECOND inquiry on the same sales order, and both rows print the same
+    sales-order number.
+    """
+    client, db, _company_id, seeded = api
+
+    body = client.get(LIST).json()
+    by_id = {row["id"]: row for row in body["data"]}
+
+    # It survives `response_model`, which silently drops anything undeclared.
+    assert "inquiry_no" in by_id[seeded["authored_row"].id], by_id[
+        seeded["authored_row"].id
+    ].keys()
+    assert by_id[seeded["authored_row"].id]["inquiry_no"] == _inquiry_no_of(
+        db, seeded["authored_row"]
+    )
+    assert by_id[seeded["adopted_row"].id]["inquiry_no"] == _inquiry_no_of(
+        db, seeded["adopted_row"]
+    )
+    # The stamp is real, not a test fixture's invention.
+    assert by_id[seeded["authored_row"].id]["inquiry_no"].startswith("OI-")
+
+
+def test_the_query_box_matches_the_inquiry_number(api):
+    """Purchasing is asked about "OI-000123" by name, so the one search box has to find
+    it - the row is otherwise reachable only by knowing which sales order raised it."""
+    client, db, _company_id, seeded = api
+
+    number = _inquiry_no_of(db, seeded["authored_row"])
+    body = client.get(LIST, params={"query": number}).json()
+
+    assert [row["id"] for row in body["data"]] == [seeded["authored_row"].id]
+
+
+def test_the_list_sorts_by_the_inquiry_number(api):
+    """Nulls last in both directions, and the order is total, like every other column."""
+    client, db, _company_id, seeded = api
+
+    ascending = client.get(LIST, params={"sort": "inquiry_no", "dir": "asc"}).json()
+    descending = client.get(LIST, params={"sort": "inquiry_no", "dir": "desc"}).json()
+
+    numbers = [row["inquiry_no"] for row in ascending["data"]]
+    assert numbers == sorted(numbers)
+    assert [row["inquiry_no"] for row in descending["data"]] == sorted(
+        numbers, reverse=True
+    )
+    assert _inquiry_no_of(db, seeded["adopted_row"]) in numbers
+
+
 # ---------------------------------------------------------------- the filters
 
 
@@ -772,6 +860,12 @@ def test_the_summary_totals_the_visible_set_and_still_lists_every_month(api):
     assert everything["total_qty"] == "182"
     assert everything["by_state"] == {
         "raised": 2,
+        # The two states the links table added: some of the quantity on a document, and
+        # all of it. Declared on the schema (`OrderInquiryStateCounts`) rather than left
+        # to grow off the rows, because `response_model` drops a key it has not been told
+        # about and the strip would have gone quietly wrong.
+        "partly_linked": 0,
+        "placed": 0,
         "actioned": 1,
         "cancelled": 0,
         "total": 3,
@@ -958,43 +1052,48 @@ def _line_on_authored_order(db, company_id: str, seeded: dict, *, qty: str, day:
     return line
 
 
-def test_taken_from_po_and_remaining_open_reflect_the_g2_cascade_split(api):
-    """One line, split by the cascade into a placed allocation (5) and a raised
-    remainder (14): both rows report the SAME pair, because both describe the same
-    line - what was actually taken off a PO, and what still flows to reorder planning."""
+def test_taken_from_po_and_remaining_open_read_the_links_not_a_split(api):
+    """One line, 19 owed, 5 of it on a purchase order (AC-I6/AC-I7).
+
+    The cascade used to SPLIT the line into a placed 5 and a raised 14, and the pair was
+    "sum the placed siblings" against "sum the raised siblings". A row keeps its full
+    quantity now and carries links, so the pair is "sum the links" against "sum of
+    `qty - linked`" - the same two numbers, off the table that actually records them, and
+    on ONE instruction rather than two.
+    """
     client, db, company_id, seeded = api
     inquiry = db.get(OrderInquiry, seeded["authored_row"].order_inquiry_id)
     line = _line_on_authored_order(db, company_id, seeded, qty="19", day=1)
-    placed = _row(
+    po_line = _purchase_order(db, company_id)["line"]
+    row = _row(
         db,
         company_id,
         inquiry,
         so_line_id=line.id,
         item_code=f"{MARKER}-SPLIT",
-        qty="5",
-        state=INQUIRY_PLACED,
+        qty="19",
+        state="partly_linked",
         delivery_date=date(2026, 4, 1),
     )
-    raised = _row(
-        db,
-        company_id,
-        inquiry,
-        so_line_id=line.id,
-        item_code=f"{MARKER}-SPLIT",
-        qty="14",
-        state=INQUIRY_RAISED,
-        delivery_date=date(2026, 4, 1),
+    db.add(
+        OrderInquiryLink(
+            id=_uid(),
+            company_id=company_id,
+            row_id=row.id,
+            po_line_id=po_line.id,
+            document="ZZT-PO-LINKED",
+            qty=Decimal("5"),
+        )
     )
     db.commit()
 
     body = client.get(LIST, params={"delivery_month": "2026-04"}).json()
-    by_id = {row["id"]: row for row in body["data"]}
+    by_id = {entry["id"]: entry for entry in body["data"]}
 
-    assert by_id[placed.id]["taken_from_po"] == "5"
-    assert by_id[placed.id]["remaining_open"] == "14"
-    assert by_id[raised.id]["taken_from_po"] == "5"
-    # A raised row IS the uncovered remainder, so its own quantity counts towards it.
-    assert by_id[raised.id]["remaining_open"] == "14"
+    assert by_id[row.id]["taken_from_po"] == "5"
+    assert by_id[row.id]["remaining_open"] == "14"
+    assert by_id[row.id]["linked_qty"] == "5"
+    assert [link["qty"] for link in by_id[row.id]["links"]] == ["5"]
 
 
 def test_a_redirected_placed_row_no_longer_counts_toward_taken_from_po(api):

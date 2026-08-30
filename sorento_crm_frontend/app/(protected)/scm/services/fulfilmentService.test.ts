@@ -14,7 +14,12 @@ vi.mock(
   }),
 );
 
-import { deleteSpo, downloadPackingListExport } from './fulfilmentService';
+import {
+  deleteSpo,
+  downloadPackingListExport,
+  getSupplierNotices,
+  sendContainerRequest,
+} from './fulfilmentService';
 
 function fileResponse(disposition: string | null, status = 200) {
   const headers = new Headers();
@@ -129,5 +134,60 @@ describe('deleteSpo', () => {
     await expect(deleteSpo('ship-1')).rejects.toThrow(
       'CRM-SPO-9999 was not created by Create SPO and cannot be deleted from this screen.',
     );
+  });
+});
+
+describe('getSupplierNotices', () => {
+  it('asks for one plan\'s notices when the record page names its plan (R3/R11)', async () => {
+    apiFetch.mockResolvedValue(jsonResponse({ data: [] }));
+
+    await getSupplierNotices('sup-1', 'plan-1');
+
+    expect(String(apiFetch.mock.calls[0][0])).toBe(
+      '/api/v1/scm/supplier-notices?supplier_id=sup-1&loading_plan_id=plan-1',
+    );
+  });
+
+  it('asks for the supplier\'s whole history when no plan is named', async () => {
+    apiFetch.mockResolvedValue(jsonResponse({ data: [] }));
+
+    await getSupplierNotices('sup-1');
+
+    expect(String(apiFetch.mock.calls[0][0])).toBe(
+      '/api/v1/scm/supplier-notices?supplier_id=sup-1',
+    );
+  });
+});
+
+describe('sendContainerRequest', () => {
+  const notice = (over: Record<string, unknown>) => ({
+    id: 'n-1',
+    status: 'sent',
+    status_reason: null,
+    last_error: null,
+    ...over,
+  });
+
+  it('raises the reason when the 201 carries a notice that never went out', async () => {
+    apiFetch.mockResolvedValue(
+      jsonResponse({
+        notices: [notice({ status: 'failed', last_error: 'the outbox is not accepting mail' })],
+        document_filename: 'container-request.pdf',
+      }),
+    );
+
+    await expect(sendContainerRequest('plan-1', [])).rejects.toThrow(
+      'the outbox is not accepting mail',
+    );
+  });
+
+  it('returns the body when the notice went out', async () => {
+    apiFetch.mockResolvedValue(
+      jsonResponse({ notices: [notice({})], document_filename: 'container-request.pdf' }),
+    );
+
+    const out = await sendContainerRequest('plan-1', []);
+
+    expect(out.notices[0].status).toBe('sent');
   });
 });

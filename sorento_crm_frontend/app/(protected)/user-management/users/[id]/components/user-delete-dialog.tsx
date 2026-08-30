@@ -48,12 +48,15 @@ interface UserDeleteDialogProps {
   open: boolean;
   closeDialog: () => void;
   user: User;
+  /** Where to go once the user is gone. The record page hands back the list. */
+  onSuccess?: () => void;
 }
 
 const UserDeleteDialog = ({
   open,
   closeDialog,
   user,
+  onSuccess,
 }: UserDeleteDialogProps) => {
   const queryClient = useQueryClient();
 
@@ -97,11 +100,16 @@ const UserDeleteDialog = ({
         },
       );
 
-      // Update user data
+      // Update user data. The list too: the dialog now also opens from a list
+      // row's "..." menu, where a stale grid would still show the trashed user.
       queryClient.invalidateQueries({ queryKey: ['user-user'] });
+      queryClient.invalidateQueries({ queryKey: ['user-users'] });
 
-      //router.push('/user-management/users/');
       closeDialog();
+      // A record page cannot stay open on a row that no longer exists: the pager
+      // would find nothing on its page and hide (S3-05). The caller sends the
+      // reader back to the list they came from, query string and all.
+      onSuccess?.();
     },
     onError: (error: Error) => {
       const message = error.message;

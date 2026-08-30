@@ -1,0 +1,70 @@
+{
+  "case": "AC-S2-2",
+  "why": [
+    "A confirmed decision holds 30 at BRW-BB for the LATER line. The pin binds before any",
+    "first-come assignment, so the earlier line finds the pile empty and goes short - which is",
+    "the whole point of pinning: a decision that was taken is not re-taken every time somebody",
+    "opens the view."
+  ],
+  "as_of": "2026-09-01",
+  "tba_from": "2029-01-01",
+  "lead_days": 90,
+  "supply": [
+    {
+      "key": "on_hand:BRW-BB",
+      "kind": "on_hand",
+      "warehouse": "BRW-BB",
+      "at": "2026-09-01",
+      "qty": 30,
+      "ref": null
+    }
+  ],
+  "demand": [
+    {
+      "key": "X",
+      "so_number": "SO400010",
+      "line_no": 1,
+      "warehouse": "BRW-BB",
+      "agent_code": "JAY",
+      "required_date": "2026-09-05",
+      "open_qty": 30
+    },
+    {
+      "key": "Y",
+      "so_number": "SO400011",
+      "line_no": 2,
+      "warehouse": "BRW-BB",
+      "agent_code": "JEREMY",
+      "required_date": "2026-12-01",
+      "open_qty": 30
+    }
+  ],
+  "pinned": [{ "line": "Y", "supply": "on_hand:BRW-BB", "qty": 30 }],
+  "expect": {
+    "lines": [
+      {
+        "key": "X",
+        "status": "short",
+        "uncovered": 30,
+        "bucket": "2026-09",
+        "assigned": []
+      },
+      {
+        "key": "Y",
+        "status": "pinned",
+        "uncovered": 0,
+        "bucket": "2026-12",
+        "assigned": [["on_hand:BRW-BB", 30]]
+      }
+    ],
+    "months": [
+      { "key": "2026-09", "balance": 0, "tone": "green" },
+      { "key": "2026-10", "balance": 0, "tone": "green" },
+      { "key": "2026-11", "balance": 0, "tone": "green" },
+      { "key": "2026-12", "balance": -30, "tone": "amber" }
+    ],
+    "tba": 0,
+    "undated": 0,
+    "uncounted": []
+  }
+}

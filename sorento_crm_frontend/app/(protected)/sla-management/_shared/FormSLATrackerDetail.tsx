@@ -351,7 +351,7 @@ export default function FormSLATrackerDetail({
       </div>
 
       <Tabs defaultValue="overview">
-        <TabsList>
+        <TabsList variant="default">
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="event-log">Event Log</TabsTrigger>
         </TabsList>

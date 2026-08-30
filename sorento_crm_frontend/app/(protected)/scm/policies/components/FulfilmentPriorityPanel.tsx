@@ -14,18 +14,31 @@ import {
   FULFILMENT_FACTOR_ORDER,
   fulfilmentFactorLabel,
 } from '../lib/labels';
+import { DEFAULT_TBA_DATE_FROM } from '../types/policy.types';
 import { useFulfilmentPriority, useSaveFulfilmentPriority } from '../hooks/usePolicies';
+
+/** Local calendar day as `YYYY-MM-DD`, so the mirror of the backend check reads the same
+ *  date the user sees in the picker rather than a UTC-shifted one. */
+function todayIso(): string {
+  const now = new Date();
+  return new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+}
 
 /**
  * The ranking that decides both what goes in a container and which purchase-order line
  * arriving stock is assigned to (AC-H5) - one policy, tuned here. Ranking factors weigh a
  * demand row against its competitors; demand-class weights say how much a project order
- * outranks a retail one; the last three settings are the ladder's reorder-coverage date and
- * cross-ownership-group borrow caps (PLAN-demo-followups-19aug-ladder-v2.md C1/C2).
+ * outranks a retail one; the last two settings are the ladder's two calendar dates.
  *
  * `reorder_coverage_until` is a CALENDAR DATE (19 Aug follow-up), not a rolling day count -
  * the captain's own framing was "purchasing reorders until October". A line required after
  * this date is proposed as Buy now, untouched; clearing it means no coverage limit is set.
+ *
+ * `tba_date_from` is the other end of the same idea (borrow ladder v7.1, R20): demand dated
+ * on or after it is TBA - it takes no supply, is never covered and never donates. It is NOT
+ * NULL, so the button beside it resets to the column default rather than emptying the field.
+ * The cross-group borrow caps that used to sit here are gone with R5: any ownership group may
+ * donate now, so there is nothing left for a cap to cap.
  *
  * Read and edit are the same layout - every value is always an input, the way the other
  * policy panels on this page already work; Save writes a NEW policy revision and activates
@@ -38,8 +51,7 @@ export function FulfilmentPriorityPanel() {
   const [factors, setFactors] = useState<Record<string, string>>({});
   const [classWeights, setClassWeights] = useState<Record<string, string>>({});
   const [reorderCoverageUntil, setReorderCoverageUntil] = useState('');
-  const [borrowMaxQty, setBorrowMaxQty] = useState('');
-  const [borrowMaxPct, setBorrowMaxPct] = useState('');
+  const [tbaDateFrom, setTbaDateFrom] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -67,8 +79,7 @@ export function FulfilmentPriorityPanel() {
     setClassWeights(nextClasses);
 
     setReorderCoverageUntil(data.reorder_coverage_until ?? '');
-    setBorrowMaxQty(String(data.cross_group_borrow_max_qty));
-    setBorrowMaxPct(String(data.cross_group_borrow_max_pct));
+    setTbaDateFrom(data.tba_date_from);
   }, [data]);
 
   const onSave = async () => {
@@ -104,14 +115,19 @@ export function FulfilmentPriorityPanel() {
       if (Number.isFinite(value)) parsedClasses[key] = value;
     }
 
-    const maxQty = Number(borrowMaxQty);
-    if (!Number.isInteger(maxQty) || maxQty < 0) {
-      setFormError('The cross-group borrow quantity cap must be 0 or a whole number more.');
-      return;
-    }
-    const maxPct = Number(borrowMaxPct);
-    if (!Number.isFinite(maxPct) || maxPct < 0 || maxPct > 100) {
-      setFormError('The cross-group borrow percentage cap must be between 0 and 100.');
+    // A native date input hands back '' when the user clears it, and the column is NOT
+    // NULL - so an emptied field saves the default rather than nothing. This is the ONE
+    // fallback on this screen: what the backend sends is rendered as it comes.
+    const tba = tbaDateFrom || DEFAULT_TBA_DATE_FROM;
+    // The backend rejects a CHANGE to a past TBA date with 422; mirrored here so the
+    // message arrives beside the field instead of as a toast after a round trip.
+    //
+    // Only when the field is DIRTY. Every save sends the whole record, so once a
+    // configured date had quietly passed this check refused the panel's own unchanged
+    // value - and with it every weight, coverage date and class weight on the screen. The
+    // rule is about moving the TBA line back, not about the age of a date nobody touched.
+    if (tba !== data?.tba_date_from && tba < todayIso()) {
+      setFormError('TBA date from must be today or later.');
       return;
     }
     setFormError(null);
@@ -120,8 +136,7 @@ export function FulfilmentPriorityPanel() {
         factors: parsedFactors,
         demand_class_weights: parsedClasses,
         reorder_coverage_until: reorderCoverageUntil || null,
-        cross_group_borrow_max_qty: maxQty,
-        cross_group_borrow_max_pct: maxPct,
+        tba_date_from: tba,
       });
     } catch {
       // Already toasted by the mutation's own onError; this only stops the rejection
@@ -217,8 +232,8 @@ export function FulfilmentPriorityPanel() {
             </div>
 
             <div>
-              <h4 className="mb-3 text-sm font-medium">Reorder coverage &amp; cross-group borrow</h4>
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+              <h4 className="mb-3 text-sm font-medium">Coverage dates</h4>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
                   <Label htmlFor="fulfilment-coverage-until" className="mb-1 block">
                     Purchasing covers demand until
@@ -247,38 +262,28 @@ export function FulfilmentPriorityPanel() {
                   </p>
                 </div>
                 <div>
-                  <Label htmlFor="fulfilment-borrow-qty" className="mb-1 block">
-                    Cross-group borrow cap (qty)
+                  <Label htmlFor="fulfilment-tba-date-from" className="mb-1 block">
+                    TBA date from
                   </Label>
-                  <Input
-                    id="fulfilment-borrow-qty"
-                    type="number"
-                    min={0}
-                    inputMode="numeric"
-                    value={borrowMaxQty}
-                    onChange={(e) => setBorrowMaxQty(e.target.value)}
-                  />
-                  <p className="mt-1 text-2xs text-muted-foreground">
-                    Borrowing across ownership groups is only offered under this quantity.
-                  </p>
-                </div>
-                <div>
-                  <Label htmlFor="fulfilment-borrow-pct" className="mb-1 block">
-                    Cross-group borrow cap (%)
-                  </Label>
-                  <Input
-                    id="fulfilment-borrow-pct"
-                    type="number"
-                    min={0}
-                    max={100}
-                    step={0.5}
-                    inputMode="decimal"
-                    value={borrowMaxPct}
-                    onChange={(e) => setBorrowMaxPct(e.target.value)}
-                  />
-                  <p className="mt-1 text-2xs text-muted-foreground">
-                    ...or this share of the line, whichever the ladder applies.
-                  </p>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      id="fulfilment-tba-date-from"
+                      type="date"
+                      value={tbaDateFrom}
+                      onChange={(e) => setTbaDateFrom(e.target.value)}
+                      className="w-full"
+                    />
+                    {tbaDateFrom !== DEFAULT_TBA_DATE_FROM ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setTbaDateFrom(DEFAULT_TBA_DATE_FROM)}
+                      >
+                        Reset
+                      </Button>
+                    ) : null}
+                  </div>
                 </div>
               </div>
             </div>

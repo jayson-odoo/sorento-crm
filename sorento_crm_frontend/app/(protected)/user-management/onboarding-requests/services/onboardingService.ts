@@ -3,8 +3,6 @@
  *
  *   GET    /api/v1/user-management/onboarding/requests            `.view`
  *          Paged, sorted and searched server-side; standard grid envelope.
- *   GET    /api/v1/user-management/onboarding/requests/neighbours `.view`
- *          Prev/next within the active list query, for the detail pager.
  *   POST   /api/v1/user-management/onboarding/requests            `.add`
  *   GET    /api/v1/user-management/onboarding/requests/{id}       `.view`
  *          Detail, with collisions computed live on read.
@@ -37,8 +35,6 @@ import type {
 
 const BASE = '/api/user-management/onboarding';
 
-/** Where the detail page's prev/next pager reads its neighbours from. */
-export const ONBOARDING_NEIGHBOURS_PATH = `${BASE}/requests/neighbours`;
 
 export type OnboardingRequestListParams = DataGridApiFetchParams & {
   /** A single `onboarding_request` status code, or undefined for all. */

@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import {
   ColumnDef,
   PaginationState,
@@ -35,6 +35,7 @@ import type {
 } from '../types/spoAllocation.types';
 import Link from 'next/link';
 import React from 'react';
+import { allocationLocation } from '../lib/allocationLocation';
 import { getStatusBadgeVariant } from '@/lib/status-badge';
 
 type ViewMode = 'none' | 'spo_number';
@@ -51,7 +52,9 @@ export default function SPOAllocationsList() {
   const [sorting, setSorting] = useState<SortingState>([
     { id: 'spo_number', desc: false },
   ]);
-  const [searchQuery, setSearchQuery] = useState('');
+  // A link from the reorder plan's SPO column lands here narrowed to its product.
+  const searchParams = useSearchParams();
+  const [searchQuery, setSearchQuery] = useState(searchParams.get('query') ?? '');
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [selectedAllocationIds, setSelectedAllocationIds] = useState<Set<string>>(new Set());
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
@@ -263,8 +266,7 @@ export default function SPOAllocationsList() {
       {
         id: 'location',
         header: 'Location',
-        cell: ({ row }) =>
-          row.original.warehouse?.warehouse_code ?? row.original.warehouse?.warehouse_name ?? '-',
+        cell: ({ row }) => allocationLocation(row.original),
         size: 100,
         meta: { headerTitle: 'Location' },
       },
@@ -674,7 +676,7 @@ export default function SPOAllocationsList() {
                                             )}
                                           </td>
                                           <td className="p-1.5">
-                                            {allocation.warehouse?.warehouse_code ?? allocation.warehouse?.warehouse_name ?? '-'}
+                                            {allocationLocation(allocation)}
                                           </td>
                                           <td className="p-1.5">
                                             {allocation.allocated_quantity}

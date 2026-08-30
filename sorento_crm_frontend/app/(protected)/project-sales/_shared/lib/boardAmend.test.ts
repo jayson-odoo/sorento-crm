@@ -17,6 +17,7 @@ import {
   amendSummary,
   borrowCandidatesOf,
   decisionFromAmendDraft,
+  suggestionDraftFrom,
 } from './boardAmend';
 import { buildBoard, type BoardDemandLine } from './__testsupport__/boardFixture';
 import type { BoardContribution } from '../types/fulfilmentPlanning.types';
@@ -63,14 +64,21 @@ describe('amendDraftFrom: the proposal, as something a person can edit', () => {
     expect(draft.buy_qty).toBe('60');
   });
 
-  it('opens with no Reserve row when the proposal reserved nothing (ladder v2: own location is never a source)', () => {
-    // Ladder v2 (`PLAN-demo-followups-19aug-ladder-v2.md` section E rule 7): the line's
-    // own location is never a Reserve source any more, so there is nothing left to
-    // invent a row for - unlike the old ladder, whose own-location rung this used to
-    // fall back onto.
+  it('opens with the line’s own location at zero when the proposal reserved nothing', () => {
+    // Ladder v3 (`PLAN-scm-cs-planning-uat.md` section 1b rung 2): the own location is a
+    // location of the line's ownership group again, so it is always somewhere the planner
+    // may reserve from - and on a wholly-bought line it is the only row there would be.
     const draft = amendDraftFrom(contributionOf({}));
 
-    expect(draft.reserve).toEqual([]);
+    expect(draft.reserve).toEqual([
+      {
+        key: 'reserve-BRW-BB',
+        location: 'BRW-BB',
+        warehouse_id: 'wh-BRW-BB',
+        qty: '0',
+        reason: '',
+      },
+    ]);
     expect(draft.buy_qty).toBe('100');
   });
 
@@ -242,6 +250,127 @@ describe('amendDraftFrom on a covered line', () => {
   });
 });
 
+/**
+ * THE ENGINE'S SUGGESTION, on a line an active decision already covers (C9 / C11).
+ *
+ * The fixture is the plan's own canonical example: SO404352 line 22, SRTWB7518, confirmed at
+ * Reserve 8 from BRW-AM plus 16 from the BRW pool while the engine suggests 9 plus 15. Amend
+ * opens on the 8 and the 16 - the planner edits their OWN composition - and an approval has to
+ * put the 9 and the 15 back, which is the whole reason this seeder exists beside
+ * `amendDraftFrom`.
+ */
+describe('suggestionDraftFrom on a covered line', () => {
+  const frozen = {
+    revision_no: 4,
+    confirmed_at: '2026-08-18T02:00:00',
+    timely_spo_qty: '0',
+    reserve: [
+      { warehouse_id: 'wh-BRW-AM', location: 'BRW-AM', qty: '8' },
+      { warehouse_id: 'wh-BRW', location: 'BRW', qty: '16' },
+    ],
+    borrow: [],
+    buy_qty: '0',
+  };
+  const suggestion = [
+    {
+      kind: 'reserve' as const,
+      qty: '9',
+      location: 'BRW-AM',
+      warehouse_id: 'wh-BRW-AM',
+      reason: 'Free unclaimed stock at BRW-AM covers this much by the delivery date.',
+    },
+    {
+      kind: 'reserve' as const,
+      qty: '15',
+      location: 'BRW',
+      warehouse_id: 'wh-BRW',
+      reason: 'The shared pool at BRW covers this much within its cap.',
+    },
+  ];
+
+  /** The covered contribution as the board sends one, with the suggestion beside it. */
+  function coveredContribution(overrides: Partial<BoardContribution> = {}): BoardContribution {
+    const base = contributionOf(
+      {},
+      { qty: '24', fulfilment_location: 'BRW-AM', decision: frozen },
+    );
+    return { ...base, sources: suggestion, ...overrides };
+  }
+
+  it('opens on the engine’s numbers, not on the composition the revision froze', () => {
+    const draft = suggestionDraftFrom(coveredContribution());
+
+    expect(draft.reserve.map((row) => [row.warehouse_id, row.qty])).toEqual([
+      ['wh-BRW-AM', '9'],
+      ['wh-BRW', '15'],
+    ]);
+    expect(draft.buy_qty).toBe('0');
+  });
+
+  it('takes the proposal FROZEN beside the decision when the revision recorded one', () => {
+    // `sources` states the decision on a covered line (the server's `_apply_frozen`); the
+    // suggestion of the day it was confirmed is in `proposed`, and that is the one the
+    // Suggestion card shows, so the reset has to agree with it.
+    const draft = suggestionDraftFrom(
+      coveredContribution({
+        sources: [
+          {
+            kind: 'reserve',
+            qty: '8',
+            location: 'BRW-AM',
+            warehouse_id: 'wh-BRW-AM',
+            reason: 'Reserved at BRW-AM in revision 4.',
+          },
+          {
+            kind: 'reserve',
+            qty: '16',
+            location: 'BRW',
+            warehouse_id: 'wh-BRW',
+            reason: 'Reserved at BRW in revision 4.',
+          },
+        ],
+        proposed: { components: suggestion },
+      }),
+    );
+
+    expect(draft.reserve.map((row) => [row.warehouse_id, row.qty])).toEqual([
+      ['wh-BRW-AM', '9'],
+      ['wh-BRW', '15'],
+    ]);
+  });
+
+  it('leaves Amend itself on the frozen composition', () => {
+    // Two different questions: Amend edits what was decided, an approval asks for the
+    // engine's. Seeding both from the same place is the defect, not the fix.
+    const draft = amendDraftFrom(coveredContribution());
+
+    expect(draft.reserve.map((row) => [row.warehouse_id, row.qty])).toEqual([
+      ['wh-BRW-AM', '8'],
+      ['wh-BRW', '16'],
+    ]);
+  });
+
+  it('shows the frozen composition when the revision recorded no proposal at all', () => {
+    // Written before the proposal was frozen: `sources` is the decision and there is nothing
+    // else the board holds for the line, so the reset states that rather than an empty form.
+    const base = contributionOf(
+      {},
+      { qty: '24', fulfilment_location: 'BRW-AM', decision: frozen },
+    );
+    const draft = suggestionDraftFrom(base);
+
+    expect(draft.reserve.map((row) => [row.warehouse_id, row.qty])).toEqual([
+      ['wh-BRW-AM', '8'],
+      ['wh-BRW', '16'],
+    ]);
+  });
+
+  it('is the same draft as Amend on an UNCOVERED line', () => {
+    const uncovered = contributionOf({ 'WESERP10B|BRW-BB': '40' });
+    expect(suggestionDraftFrom(uncovered)).toEqual(amendDraftFrom(uncovered));
+  });
+});
+
 describe('borrowCandidatesOf: only a donor the confirmation can name', () => {
   it('fills the sheet’s candidate shape from the board’s', () => {
     const base = contributionOf({});
@@ -304,8 +433,6 @@ describe('borrowCandidatesOf: only a donor the confirmation can name', () => {
         donor_core_line_id: null,
         lower_ranked: false,
         same_agent: false,
-        over_cap: false,
-        cap_reason: null,
       },
     ]);
   });
@@ -429,24 +556,76 @@ describe('decisionFromAmendDraft: what the draft carries away', () => {
 });
 
 describe('amendSummary: what the decided row reads', () => {
-  it('states the composition rather than one number of it', () => {
+  /**
+   * SECTION 2'S WORDS, the same table the bar under this pill is painted from: a reserve at
+   * the line's own group location is "Own", the shared pool is "Shared", and a borrow says
+   * which kind of borrow it is. It used to read "Reserve 20 BRW-BB · Borrow 10 · Buy 13"
+   * beside an emerald "Own" segment describing the identical quantity.
+   */
+  it('states the composition in the vocabulary the bar beside it is drawn from', () => {
     expect(
-      amendSummary({
-        verdict: 'amended',
-        reserve: [{ warehouse_id: 'wh-own', location: 'BRW-BB', qty: '20' }],
-        borrow: [
-          {
-            source: 'other_location',
-            warehouse_id: 'wh-ib',
-            warehouse_code: 'BRW-IB',
-            qty: '10',
-            reason: 'Agreed with the other site.',
-          },
-        ],
-        buy_qty: '13',
-        timely_spo_qty: '0',
-      }),
-    ).toBe('Reserve 20 BRW-BB · Borrow 10 · Buy 13');
+      amendSummary(
+        {
+          verdict: 'amended',
+          reserve: [{ warehouse_id: 'wh-own', location: 'BRW-BB', qty: '20' }],
+          borrow: [
+            {
+              source: 'other_location',
+              warehouse_id: 'wh-ib',
+              warehouse_code: 'BRW-IB',
+              qty: '10',
+              reason: 'Agreed with the other site.',
+            },
+          ],
+          buy_qty: '13',
+          timely_spo_qty: '0',
+        },
+        'BRW-BB',
+      ),
+    ).toBe('Own 20 BRW-BB · Borrow (other) 10 BRW-IB · Buy 13');
+  });
+
+  it('splits a reserve that draws on two different kinds of stock', () => {
+    // The pool and the agent's own group are two different answers, and the bar already
+    // draws them as two segments. One "Reserve" word over both said neither.
+    expect(
+      amendSummary(
+        {
+          verdict: 'amended',
+          reserve: [
+            { warehouse_id: 'wh-pool', location: 'BRW', qty: '71' },
+            { warehouse_id: 'wh-dc1', location: 'DC1-BB', qty: '454' },
+          ],
+          buy_qty: '0',
+          timely_spo_qty: '0',
+        },
+        'BRW-BB',
+      ),
+    ).toBe('Own 454 DC1-BB · BRW 71 BRW');
+  });
+
+  it('names a borrow that states its donor order as a borrow from another order', () => {
+    expect(
+      amendSummary(
+        {
+          verdict: 'amended',
+          reserve: [],
+          borrow: [
+            {
+              source: 'other_location',
+              warehouse_id: 'wh-own',
+              warehouse_code: 'BRW-BB',
+              qty: '71',
+              reason: 'Authorised by the agent.',
+              donor_so_number: 'SO415472',
+            },
+          ],
+          buy_qty: '0',
+          timely_spo_qty: '0',
+        },
+        'BRW-BB',
+      ),
+    ).toBe('Borrow (order) 71 BRW-BB');
   });
 
   it('falls back to the one number a decision taken before the editor carries', () => {

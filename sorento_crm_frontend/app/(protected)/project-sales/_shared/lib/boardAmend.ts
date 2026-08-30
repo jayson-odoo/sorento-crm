@@ -19,7 +19,10 @@ import type {
   BoardContribution,
   BoardDecision,
   BoardReserveComponent,
+  BoardSource,
   BorrowCandidate,
+  ConfirmBorrowComponent,
+  ConfirmLine,
 } from '../types/fulfilmentPlanning.types';
 import {
   fromMinor,
@@ -28,6 +31,7 @@ import {
   type DraftLine,
   type DraftReserve,
 } from './supplyComposition';
+import { ORDER, SHORT_LABELS, rowOf, type SupplyKind } from './supplyVocabulary';
 
 /**
  * The engine's proposal for one row, as the editor's opening draft.
@@ -36,11 +40,11 @@ import {
  * for the same reason `confirmLinesFor` reads them: the board proposes what the sheet proposes,
  * pool and all, so re-deriving a composition here would be a second, worse allocator.
  *
- * Ladder v2 (`PLAN-demo-followups-19aug-ladder-v2.md` section E rule 7): the line's own
- * location is NEVER a Reserve source any more, so it is no longer forced into the editor
- * as a row - every Reserve row here is a pool or a group-take sibling the proposal itself
- * named. Group borrow and cross-group borrow (rules 4/5) are now AUTO-PROPOSED too, and
- * arrive as `kind: 'borrow'` sources the same way a Reserve does.
+ * Ladder v3 (`PLAN-scm-cs-planning-uat.md` section 1b rung 2) gives the own location back:
+ * it is a location of the line's ownership group, so it is forced into the editor as a row
+ * even when the proposal drew nothing there. That row is the amendment a planner most often
+ * wants to make - the Buy switch is turned off and the stock they can see is typed in - and
+ * without it a wholly-bought line offers nowhere at all to compose an alternative.
  *
  * ON A COVERED LINE THE FROZEN DECISION WINS, because there is no proposal to seed from: the
  * board proposes nothing for a line an active decision already covers. Amending it opens on
@@ -50,9 +54,50 @@ import {
 export function amendDraftFrom(contribution: BoardContribution): DraftLine {
   const frozen = contribution.covered ? contribution.decision : null;
   if (frozen) return frozenDraft(contribution, frozen);
-  const reserveSources = contribution.sources.filter(
-    (source) => source.kind === 'reserve',
+  return draftFromSources(contribution, contribution.sources, true);
+}
+
+/**
+ * THE ENGINE'S SUGGESTION as the editor's draft, whatever the line's own decision says.
+ *
+ * `amendDraftFrom` opens a covered line on what was DECIDED, which is right for Amend and
+ * wrong for an approval: the planner has just asked for the engine's composition back, and on
+ * SO404352 line 22 they got the frozen 8 / 16 they were pressing Save to leave.
+ *
+ * The suggestion is `contributionSuggestion`'s own rule (`supplyVocabulary`) - the proposal
+ * FROZEN beside the decision when the revision recorded one, the live ladder otherwise - so
+ * the inputs reset to exactly the composition the Suggestion card states.
+ *
+ * A revision written before the proposal was frozen records none, and `sources` states the
+ * decision itself on a covered line: the frozen composition is then all the board holds for
+ * that line, so it is what the reset shows rather than an empty form.
+ */
+export function suggestionDraftFrom(contribution: BoardContribution): DraftLine {
+  // On an UNCOVERED line the proposal IS the draft, so there is one seeder, not two.
+  if (!contribution.covered) return amendDraftFrom(contribution);
+  // `qty_proposed_*` states the ACTIVE DECISION on a covered line (the server's
+  // `_apply_frozen`), so the totals come off the suggestion's own components instead.
+  return draftFromSources(
+    contribution,
+    contribution.proposed?.components ?? contribution.sources,
+    false,
   );
+}
+
+/**
+ * One composition, read off supply components: the shared body of the two seeders above.
+ *
+ * `proposedTotals` says whether the server's `qty_proposed_*` may be trusted for the incoming
+ * and Buy figures. It may on a line the engine planned - those are its own totals, and they
+ * are the reason the board proposes what the sheet proposes - and it may NOT on a covered
+ * line, where the same three fields state what was decided rather than what was suggested.
+ */
+function draftFromSources(
+  contribution: BoardContribution,
+  sources: BoardSource[],
+  proposedTotals: boolean,
+): DraftLine {
+  const reserveSources = sources.filter((source) => source.kind === 'reserve');
 
   const rows: DraftReserve[] = [];
   for (const source of reserveSources) {
@@ -69,17 +114,14 @@ export function amendDraftFrom(contribution: BoardContribution): DraftLine {
       reason: source.reason,
     });
   }
-  // Nothing addressable came back but the server still proposed a Reserve. Ladder v2
-  // (section E rule 7) no longer offers the line's own location - the only Reserve
-  // sources left are the pool and a group-take sibling, both of which the loop above
-  // already carried over by warehouse_id - so there is nowhere left to invent a row at.
+  seedOwnLocation(rows, contribution);
 
-  // Ladder v2's group borrow / cross-group borrow rungs (section E rules 4/5) are now
-  // AUTO-PROPOSED, unlike the old ladder's Borrow: a source of kind `borrow` on the
-  // proposal is something the engine already composed and named a donor for, and
-  // dropping it here (as the old "the board proposes no Borrow" comment did) silently
-  // lost it the instant Amend was opened.
-  const borrowSources = contribution.sources.filter(
+  // A `borrow` source on the proposal is the CROSS-GROUP rung (ladder v3 rung 4), the one
+  // borrow the engine still composes on its own: free stock outside the ownership group,
+  // within the cap. Group borrow left the engine entirely (AC-L3) and reaches this editor
+  // only when a person picks a donor. Either way, a borrow the proposal DID name has to be
+  // carried in - dropping it here would lose it the instant Amend was opened.
+  const borrowSources = sources.filter(
     (source) => source.kind === 'borrow' && source.warehouse_id,
   );
   const borrowRows: DraftBorrow[] = borrowSources.map((source, index) => ({
@@ -97,6 +139,9 @@ export function amendDraftFrom(contribution: BoardContribution): DraftLine {
     donor_line_no: source.donor_line_no ?? null,
     donor_agent_code: source.donor_agent_code ?? null,
     same_agent: source.same_agent ?? false,
+    // The donor's own delivery date, which is the order-back's urgency: dropped here it was
+    // lost from the posted borrow the moment the composition went through this editor.
+    donor_required_date: source.donor_required_date ?? null,
   }));
 
   return {
@@ -107,9 +152,11 @@ export function amendDraftFrom(contribution: BoardContribution): DraftLine {
     // Dated supply, not a choice: it is shown and never typed, on the board exactly as on the
     // sheet, so an amendment cannot promise incoming stock that is not coming.
     timely_spo_qty: fromMinor(
-      numberOr(contribution.qty_proposed_incoming, () =>
-        sumSources(contribution, 'timely_spo'),
-      ),
+      proposedTotals
+        ? numberOr(contribution.qty_proposed_incoming, () =>
+            sumSources(sources, 'timely_spo'),
+          )
+        : sumSources(sources, 'timely_spo'),
     ),
     reserve: rows,
     // The engine's own auto-proposed borrows (group / cross-group), carried into the
@@ -117,13 +164,19 @@ export function amendDraftFrom(contribution: BoardContribution): DraftLine {
     // with its own reason (AC-B09).
     borrow: borrowRows,
     buy_qty: fromMinor(
-      numberOr(contribution.qty_proposed_buy, () => sumSources(contribution, 'buy')),
+      proposedTotals
+        ? numberOr(contribution.qty_proposed_buy, () => sumSources(sources, 'buy'))
+        : sumSources(sources, 'buy'),
     ),
     buy_reason: '',
     // The item facts the ladder judged the line on, so a Buy of a discontinued product asks
     // for its reason HERE rather than being refused by the confirmation. Absent flags claim
     // nothing; the confirmation rechecks against the product record either way.
     is_discontinued: Boolean(contribution.item_flags?.discontinued),
+    // An engine proposal is never an order back: the ladder proposes a purchase, and only
+    // a person can say the quantity is owed against something already on its way.
+    order_back: false,
+    cited_document: '',
   };
 }
 
@@ -150,20 +203,7 @@ function frozenDraft(
       qty: row.qty,
       reason: '',
     }));
-  const ownId = contribution.fulfilment_warehouse_id;
-  const ownCode = contribution.fulfilment_location;
-  const hasOwn = rows.some(
-    (row) => row.warehouse_id === ownId || (Boolean(ownCode) && row.location === ownCode),
-  );
-  if (!hasOwn && ownId) {
-    rows.unshift({
-      key: `reserve-${ownCode ?? ownId}`,
-      location: ownCode ?? null,
-      warehouse_id: ownId,
-      qty: '0',
-      reason: '',
-    });
-  }
+  seedOwnLocation(rows, contribution);
 
   return {
     project_line_id: contribution.project_line_id ?? '',
@@ -188,7 +228,7 @@ function frozenDraft(
           free_after_full_borrow: '0',
           committed_qty: '0',
         },
-      // Ladder v2 group borrow (section E.4): the frozen row already names its donor
+      // Group borrow (section 1c): the frozen row already names its donor
       // line, carried through so re-approving it still checks the live commitment.
       donor_core_line_id: row.donor_core_line_id ?? null,
       donor_so_number: row.donor_so_number ?? null,
@@ -200,7 +240,33 @@ function frozenDraft(
     buy_qty: frozen.buy_qty,
     buy_reason: frozen.buy_reason ?? '',
     is_discontinued: Boolean(contribution.item_flags?.discontinued),
+    order_back: Boolean(frozen?.order_back),
+    cited_document: frozen?.cited_document ?? '',
   };
+}
+
+/**
+ * The line's OWN location as a Reserve row, first, when nothing already names it.
+ *
+ * Ladder v3 rung 2: the own location is a location of the ownership group again, so it is
+ * always somewhere the planner may reserve from. At zero, because the proposal did not draw
+ * on it - what it CAN give is the server's answer at confirm, not a figure to guess here.
+ */
+function seedOwnLocation(rows: DraftReserve[], contribution: BoardContribution): void {
+  const ownId = contribution.fulfilment_warehouse_id;
+  if (!ownId) return;
+  const ownCode = contribution.fulfilment_location;
+  const named = rows.some(
+    (row) => row.warehouse_id === ownId || (Boolean(ownCode) && row.location === ownCode),
+  );
+  if (named) return;
+  rows.unshift({
+    key: `reserve-${ownCode ?? ownId}`,
+    location: ownCode ?? null,
+    warehouse_id: ownId,
+    qty: '0',
+    reason: '',
+  });
 }
 
 /**
@@ -237,9 +303,9 @@ export function borrowCandidatesOf(contribution: BoardContribution): BorrowCandi
         free_after_full_borrow: '0',
         committed_qty: '0',
       },
-      // Ladder v2 (section E): the group-aware donor facts - which rung this row is,
-      // the donor SO line it names, whether it is ranked below this line or shares this
-      // line's agent, and whether it sits outside the cross-group cap.
+      // Section 1b/1c: the group-aware donor facts - which rung this row is, the donor
+      // SO line it names, and whether it is ranked below this line or shares this line's
+      // agent. No cap verdict since v7.1 (R5): any ownership group may donate.
       rung: candidate.rung ?? null,
       donor_so_number: candidate.donor_so_number ?? null,
       donor_line_no: candidate.donor_line_no ?? null,
@@ -247,8 +313,6 @@ export function borrowCandidatesOf(contribution: BoardContribution): BorrowCandi
       donor_core_line_id: candidate.donor_core_line_id ?? null,
       lower_ranked: Boolean(candidate.lower_ranked),
       same_agent: Boolean(candidate.same_agent),
-      over_cap: Boolean(candidate.over_cap),
-      cap_reason: candidate.cap_reason ?? null,
     }));
 }
 
@@ -295,37 +359,128 @@ export function decisionFromAmendDraft(draft: DraftLine, reason: string): BoardD
     buy_qty: fromMinor(toMinor(draft.buy_qty)),
     buy_reason: draft.buy_reason.trim() || undefined,
     reason: reason.trim() || undefined,
+    // Only carried when the Buy is one: an order back with nothing bought is not an
+    // instruction, and a cited document with no order back names nothing.
+    order_back: toMinor(draft.buy_qty) > 0 && draft.order_back ? true : undefined,
+    cited_document:
+      toMinor(draft.buy_qty) > 0 && draft.order_back
+        ? draft.cited_document.trim() || undefined
+        : undefined,
   };
 }
 
 /**
- * What an amended row reads on the board, in the words the composition was made in.
+ * A composed decision as the LINE ONE CONFIRMATION POSTS, component for component.
+ *
+ * One mapping for the two verdicts that post a composition rather than a derivation: an
+ * amendment as the planner typed it, and an approval of the engine's suggestion on a line an
+ * active decision already covers (C9 / C11). The approval used to be derived from
+ * `qty_proposed_*` and the source strip, and BOTH state the decision on a covered line, so
+ * an approval re-posted the very numbers Save was pressed to leave.
+ *
+ * A zero-quantity component is dropped: it decides nothing, and the confirmation would drop
+ * it anyway. `amend_reason` is whatever the decision carries - an approval carries none,
+ * because it is not an override.
+ */
+export function confirmLineFrom(
+  projectLineId: string,
+  decision: BoardDecision,
+): ConfirmLine {
+  const borrow: ConfirmBorrowComponent[] = (decision.borrow ?? [])
+    .filter((row) => toMinor(row.qty) > 0)
+    .map((row) => ({
+      source: row.source,
+      warehouse_id: row.warehouse_id,
+      donor_project_id: row.donor_project_id ?? null,
+      qty: row.qty,
+      reason: row.reason,
+      // Ladder v2 group borrow (section E.4): round-tripped so the confirmation checks
+      // this row against the donor line's live commitment, not against free stock.
+      donor_core_line_id: row.donor_core_line_id ?? null,
+      donor_so_number: row.donor_so_number ?? null,
+      donor_line_no: row.donor_line_no ?? null,
+      donor_agent_code: row.donor_agent_code ?? null,
+      same_agent: row.same_agent ?? false,
+      donor_required_date: row.donor_required_date ?? null,
+    }));
+  return {
+    project_line_id: projectLineId,
+    timely_spo_qty: fromMinor(toMinor(decision.timely_spo_qty ?? '0')),
+    reserve: (decision.reserve ?? [])
+      .filter((row) => toMinor(row.qty) > 0)
+      .map((row) => ({ warehouse_id: row.warehouse_id, qty: row.qty })),
+    borrow,
+    buy_qty: fromMinor(toMinor(decision.buy_qty ?? '0')),
+    buy_reason: decision.buy_reason?.trim() || undefined,
+    // Frozen with the line. Every other component carries the sentence of the RULE that
+    // produced it, and those explain a decision nobody took once a person overrode them.
+    amend_reason: decision.reason,
+    // The doubt beside the verdict (R10). Sent on every verdict, not only an amendment:
+    // "I did what it said and I think the numbers are wrong" is the case worth chasing.
+    suspected_system_issue: decision.suspected_system_issue ?? false,
+  };
+}
+
+/**
+ * What an amended row reads on the board, IN SECTION 2'S WORDS.
  *
  * "Amended to reserve 20" was true and no longer sufficient: the same amendment can now borrow
  * and buy, and a pill naming one of the three describes a decision the planner did not take.
+ *
+ * The words come from `SHORT_LABELS` (`supplyVocabulary`), the same table the bar under this
+ * pill, the legend and the popover's cards read - PLAN section 2 is ONE vocabulary, and this
+ * sentence used to speak a second one ("Reserve 454 DC1-BB" beside an emerald "Own" segment
+ * describing the identical quantity). A reserve is split per kind rather than lumped: the
+ * agent's own group and the shared pool are two different answers and the bar already draws
+ * them as two segments.
+ *
+ * `ownLocation` is the line's own warehouse code, which is what tells own-group stock from the
+ * pool for a component carrying no rung. Without it a reserve is read the widest way `rowOf`
+ * allows, never as the agent's own.
  */
-export function amendSummary(decision: BoardDecision): string {
+export function amendSummary(decision: BoardDecision, ownLocation?: string | null): string {
   if (!decision.reserve && !decision.borrow && decision.buy_qty === undefined) {
     return `Amended to reserve ${decision.reserve_qty ?? '0'}`;
   }
-  const parts: string[] = [];
-  const incoming = toMinor(decision.timely_spo_qty ?? '0');
-  if (incoming > 0) parts.push(`Incoming ${fromMinor(incoming)}`);
-  const reserve = (decision.reserve ?? []).filter((row) => toMinor(row.qty) > 0);
-  if (reserve.length > 0) {
-    parts.push(
-      `Reserve ${reserve
-        .map((row) => `${row.qty}${row.location ? ` ${row.location}` : ''}`)
-        .join(' + ')}`,
+  // Per kind, in the vocabulary's own reading order, so two rows are comparable.
+  const places = new Map<SupplyKind, string[]>();
+  const push = (kind: SupplyKind | null, text: string) => {
+    if (!kind) return;
+    const existing = places.get(kind);
+    if (existing) existing.push(text);
+    else places.set(kind, [text]);
+  };
+
+  for (const row of (decision.reserve ?? []).filter((entry) => toMinor(entry.qty) > 0)) {
+    push(
+      rowOf({ kind: 'reserve', qty: row.qty, location: row.location }, ownLocation),
+      `${row.qty}${row.location ? ` ${row.location}` : ''}`,
     );
   }
-  const borrowed = (decision.borrow ?? []).reduce(
-    (total, row) => total + toMinor(row.qty),
-    0,
-  );
-  if (borrowed > 0) parts.push(`Borrow ${fromMinor(borrowed)}`);
+  for (const row of (decision.borrow ?? []).filter((entry) => toMinor(entry.qty) > 0)) {
+    push(
+      rowOf(
+        {
+          kind: 'borrow',
+          // No rung on this shape by design: an amendment's borrow is a person's pick, not a
+          // rung the engine fired. The donor sales order is what tells the two borrows apart.
+          qty: row.qty,
+          location: row.warehouse_code ?? null,
+          donor_so_number: row.donor_so_number,
+        },
+        ownLocation,
+      ),
+      `${row.qty}${row.warehouse_code ? ` ${row.warehouse_code}` : ''}`,
+    );
+  }
+  const incoming = toMinor(decision.timely_spo_qty ?? '0');
+  if (incoming > 0) push('incoming', fromMinor(incoming));
   const buy = toMinor(decision.buy_qty ?? '0');
-  if (buy > 0) parts.push(`Buy ${fromMinor(buy)}`);
+  if (buy > 0) push('buy', fromMinor(buy));
+
+  const parts = ORDER.filter((kind) => places.has(kind)).map(
+    (kind) => `${SHORT_LABELS[kind]} ${(places.get(kind) ?? []).join(' + ')}`,
+  );
   return parts.length > 0 ? parts.join(' · ') : 'Amended to nothing';
 }
 
@@ -334,8 +489,8 @@ function numberOr(value: string | null | undefined, fallback: () => number): num
   return value === null || value === undefined ? fallback() : toMinor(value);
 }
 
-function sumSources(contribution: BoardContribution, kind: string): number {
-  return contribution.sources
+function sumSources(sources: BoardSource[], kind: string): number {
+  return sources
     .filter((source) => source.kind === kind)
     .reduce((total, source) => total + toMinor(source.qty), 0);
 }

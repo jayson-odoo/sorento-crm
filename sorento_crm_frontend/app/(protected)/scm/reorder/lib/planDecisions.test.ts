@@ -287,7 +287,10 @@ describe('toRecordPlanRowDecisionPayload - the FE shape, as the backend wants it
           { warehouse_id: 'wh-PJ-SR', warehouse_code: 'PJ-SR', qty: 1 },
         ],
       },
-      reason: 'Trend: orders rose 12%',
+      // A reason string that still has a producer: the ledger's forecast add-on writes
+      // exactly this shape (`PlanOrderQtyLedger`). The trend advisory that used to write
+      // "Trend: orders rose 12%" was removed with the decision cell's advice line (P6).
+      reason: 'Forecast: +12 (next 30d demand at 0.4/day - sales orders)',
     };
     expect(toRecordPlanRowDecisionPayload(d)).toEqual({
       kind: 'mixture',
@@ -297,7 +300,8 @@ describe('toRecordPlanRowDecisionPayload - the FE shape, as the backend wants it
         { location: 'PJ-SR', qty: 1 },
       ],
       po_qty: undefined,
-      reason_text: 'Trend: orders rose 12%',
+      reason_text: 'Forecast: +12 (next 30d demand at 0.4/day - sales orders)',
+      price_mode: 'use_last',
     });
   });
 
@@ -308,7 +312,25 @@ describe('toRecordPlanRowDecisionPayload - the FE shape, as the backend wants it
       stock_takes: [],
       po_qty: undefined,
       reason_text: undefined,
+      price_mode: 'use_last',
     });
+  });
+
+  it('carries the price call and the supplier CODE the buyer chose (AC-R13 / AC-R14)', () => {
+    expect(
+      toRecordPlanRowDecisionPayload({ buy: 120, priceMode: 'ask_new', supplierCode: 'SUP-2' }),
+    ).toMatchObject({
+      kind: 'buy',
+      buy_qty: 120,
+      price_mode: 'ask_new',
+      supplier_code: 'SUP-2',
+    });
+  });
+
+  it('omits the supplier entirely when the engine\u2019s own choice stands', () => {
+    const payload = toRecordPlanRowDecisionPayload({ buy: 120 });
+    expect(payload.price_mode).toBe('use_last');
+    expect('supplier_code' in payload).toBe(false);
   });
 });
 
@@ -320,11 +342,14 @@ describe('fromServerPlanDecision - the persisted decision, folded back', () => {
         recommendation_id: 'r1', kind: 'mixture', buy_qty: 182,
         stock_takes: [{ location: 'BRW-BB', location_name: 'Butterworth', qty: 6 }],
         po_qty: null, po_refs: [], reason_text: null,
+        price_mode: 'use_last' as const, supplier_code: null, supplier_name: null,
+        unit_cost: null, lead_time_days: null,
         draft_po_number: null, draft_po_id: null,
       },
       resolve,
     );
     expect(d).toEqual({
+      priceMode: 'use_last',
       buy: 182,
       stock: { qty: 6, sources: [{ warehouse_id: 'wh-BRW-BB', warehouse_code: 'BRW-BB', qty: 6 }] },
     });
@@ -336,6 +361,8 @@ describe('fromServerPlanDecision - the persisted decision, folded back', () => {
         recommendation_id: 'r1', kind: 'use_stock', buy_qty: null,
         stock_takes: [{ location: 'GONE', location_name: null, qty: 3 }],
         po_qty: null, po_refs: [], reason_text: null,
+        price_mode: 'use_last' as const, supplier_code: null, supplier_name: null,
+        unit_cost: null, lead_time_days: null,
         draft_po_number: null, draft_po_id: null,
       },
       () => undefined,
@@ -347,11 +374,13 @@ describe('fromServerPlanDecision - the persisted decision, folded back', () => {
     const d = fromServerPlanDecision(
       {
         recommendation_id: 'r1', kind: 'skip', buy_qty: null, stock_takes: [], po_qty: null,
-        po_refs: [], reason_text: null, draft_po_number: null, draft_po_id: null,
+        po_refs: [], reason_text: null, price_mode: 'use_last' as const,
+        supplier_code: null, supplier_name: null, unit_cost: null, lead_time_days: null,
+        draft_po_number: null, draft_po_id: null,
       },
       () => undefined,
     );
-    expect(d).toEqual({ skip: true });
+    expect(d).toEqual({ skip: true, priceMode: 'use_last' });
   });
 });
 
@@ -366,12 +395,15 @@ describe('serverDecisionsToMap - every persisted row decision, folded into the m
         recommendation_id: 'r1', kind: 'use_stock', buy_qty: null,
         stock_takes: [{ location: 'BRW-BB', location_name: null, qty: 4 }],
         po_qty: null, po_refs: [], reason_text: null,
+        price_mode: 'use_last' as const, supplier_code: null, supplier_name: null,
+        unit_cost: null, lead_time_days: null,
         draft_po_number: null, draft_po_id: null,
       }],
       lines,
       coverSources,
     );
     expect(map.r1).toEqual({
+      priceMode: 'use_last',
       stock: { qty: 4, sources: [{ warehouse_id: 'wh-BRW-BB', warehouse_code: 'BRW-BB', qty: 4 }] },
     });
   });

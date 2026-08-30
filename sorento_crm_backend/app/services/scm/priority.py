@@ -41,11 +41,11 @@ from __future__ import annotations
 from datetime import date
 from typing import Any, Mapping, Optional, Sequence
 
-from sqlalchemy import text
+from sqlalchemy import func, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.models.scm import PriorityPolicy
+from app.models.scm import PriorityPolicy, ReorderRun
 from app.services.error_handler import AppException
 from app.services.scm.cash_ranking import Factor, rank_score
 
@@ -174,16 +174,18 @@ def policy_weights(policy: Optional[PriorityPolicy]) -> tuple[dict, dict]:
 # Fulfilment policy admin (PLAN-demo-followups-19aug-ladder-v2.md C1/C2)
 # --------------------------------------------------------------------------- #
 
-#: What `reorder_coverage_until` / `cross_group_borrow_max_qty` / `cross_group_borrow_max_pct`
-#: answer for a policy-less database. `reorder_coverage_until` defaults to None - a fresh
-#: install has no coverage limit set, never a guessed date. `cross_group_borrow_max_*` mirror
-#: the literals migration `ed706a98ddc6` seeds as `server_default`, kept here (not imported)
-#: for the same "migrations stay standalone" reason 385 states. The ladder (workstream E) is
-#: the eventual reader; this slice only stores and surfaces them.
+#: The date every install starts its TBA line on. Mirrors the literal migration 443 seeds as
+#: `server_default`, kept here (not imported) for the same "migrations stay standalone"
+#: reason 385 states.
+DEFAULT_TBA_DATE_FROM = date(2029, 1, 1)
+
+#: What `reorder_coverage_until` / `tba_date_from` answer for a policy-less database.
+#: `reorder_coverage_until` defaults to None - a fresh install has no coverage limit set,
+#: never a guessed date. `tba_date_from` cannot default to None: the column is NOT NULL and
+#: "no TBA line" would let a 2030 placeholder compete for real stock.
 FULFILMENT_SETTINGS_DEFAULTS = {
     "reorder_coverage_until": None,
-    "cross_group_borrow_max_qty": 50,
-    "cross_group_borrow_max_pct": 10.0,
+    "tba_date_from": DEFAULT_TBA_DATE_FROM,
 }
 
 #: What the admin screen shows when NO policy has ever been activated (a database that
@@ -195,17 +197,68 @@ _NO_POLICY_NAME = "Fulfilment priority (no policy activated yet)"
 
 
 def fulfilment_settings(policy: Optional[PriorityPolicy]) -> dict:
-    """`{reorder_coverage_until, cross_group_borrow_max_qty, cross_group_borrow_max_pct}` for
-    a policy, or the documented default. A sibling of `policy_weights` for the fields C2
-    added: this slice does not wire them into scoring (that is workstream E), but the admin
-    screen - and later the ladder - both need one place to read them off the active row."""
+    """`{reorder_coverage_until, tba_date_from}` for a policy, or the documented default.
+
+    A sibling of `policy_weights` for the ladder's two calendar dates: one place reads them
+    off the active row, so the admin screen and the engine cannot come to different views of
+    how far purchasing covers and where TBA starts."""
     if policy is None:
         return dict(FULFILMENT_SETTINGS_DEFAULTS)
     return {
         "reorder_coverage_until": policy.reorder_coverage_until,
-        "cross_group_borrow_max_qty": int(policy.cross_group_borrow_max_qty),
-        "cross_group_borrow_max_pct": float(policy.cross_group_borrow_max_pct),
+        "tba_date_from": policy.tba_date_from or DEFAULT_TBA_DATE_FROM,
     }
+
+
+def plan_link_horizon(db: Session, *, run_id: Optional[str] = None) -> Optional[date]:
+    """How far out the reorder plan planned - and therefore how far out a link may reach.
+
+    `PLAN-scm-oi-handshake.md` section 11 (captain, 27 Aug 2026). Every path that ties a
+    document to an order-inquiry row takes a date to link up to, and the one a caller that
+    names none falls back to is THIS: the reorder run's own "Plan until"
+    (`scm.reorder_run.plan_horizon_date`), the date its netting stopped at.
+
+    NOT `scm.priority_policy.reorder_coverage_until`, which this read until S2 of the
+    27 August review corrected it. That field is the ladder's BUY-NOW line - "a line
+    required AFTER this date is proposed Buy now" (`front_planning_engine`, and the
+    column's own comment) - so the rows beyond it are exactly the ones the engine ordered
+    bought, and using it as the link horizon meant the purchase order raised FOR those
+    rows could never be linked BACK to them. The two dates say opposite things about the
+    same rows; `reorder_coverage_until` is left alone, doing its own job.
+
+    `run_id` names the run a caller is answering for - a purchase-order confirm knows the
+    run its draft was drafted off, and that run's horizon is the one the buy was sized
+    under, not whatever has planned since. An unknown run falls back to the ladder below,
+    so one place answers "which date" however the caller arrived.
+
+    Otherwise: the LATEST COMPLETED run for the company. Latest, because that is the plan
+    in force; completed, because a run still going has produced nothing to buy to and a
+    failed one produced nothing at all. Its own `plan_horizon_date` is taken as it stands,
+    NULL included - a run that named no horizon planned every open line, so no horizon is
+    in force, and reaching back to an older run's date would link to a horizon nobody is
+    planning to any more.
+
+    `None` when no run has ever completed. That is "no horizon is in force", not "guess
+    one": a fresh install has never been asked how far out it plans, and inventing a date
+    would refuse links nobody asked to have refused.
+    """
+    if run_id:
+        named = db.query(ReorderRun).filter(ReorderRun.id == str(run_id)).first()
+        if named is not None:
+            return named.plan_horizon_date
+    latest = (
+        db.query(ReorderRun)
+        .filter(ReorderRun.status == "completed")
+        # The same ordering `reorder_run_service` lists runs by. `id` last because every
+        # row of one transaction shares one `now()`, so `created_at` can tie.
+        .order_by(
+            func.coalesce(ReorderRun.finished_at, ReorderRun.created_at).desc(),
+            ReorderRun.created_at.desc(),
+            ReorderRun.id.desc(),
+        )
+        .first()
+    )
+    return latest.plan_horizon_date if latest is not None else None
 
 
 def fulfilment_priority_as_dict(policy: Optional[PriorityPolicy]) -> dict:
@@ -233,8 +286,7 @@ def create_revision(
     factors: Mapping[str, float],
     demand_class_weights: Mapping[str, float],
     reorder_coverage_until: Optional[date],
-    cross_group_borrow_max_qty: int,
-    cross_group_borrow_max_pct: float,
+    tba_date_from: Optional[date] = None,
     notes: Optional[str] = None,
 ) -> PriorityPolicy:
     """Write a NEW policy revision and activate it. Never mutates an old row.
@@ -268,8 +320,7 @@ def create_revision(
         factors=dict(factors),
         demand_class_weights=dict(demand_class_weights),
         reorder_coverage_until=reorder_coverage_until,
-        cross_group_borrow_max_qty=int(cross_group_borrow_max_qty),
-        cross_group_borrow_max_pct=cross_group_borrow_max_pct,
+        tba_date_from=tba_date_from or DEFAULT_TBA_DATE_FROM,
         notes=notes,
     )
     savepoint = db.begin_nested()

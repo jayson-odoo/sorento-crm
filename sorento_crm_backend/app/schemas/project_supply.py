@@ -130,10 +130,6 @@ class BorrowCandidate(BaseModel):
     lower_ranked: bool = False
     #: The donor shares this line's own sales agent (section 8) - offered at any rank.
     same_agent: bool = False
-    #: This donor is outside the small-quantity cap (`cross_group_borrow_max_qty` /
-    #: `_pct`), so it is shown but not selectable without a manual override.
-    over_cap: bool = False
-    cap_reason: Optional[str] = None
     #: The donor's own required date (section E.4: "urgency = the donor's required
     #: date"), for a `group_borrow` row - the confirm payload round-trips this into
     #: `ConfirmBorrowComponent.donor_required_date`. `None` on every other rung.
@@ -150,11 +146,24 @@ class SupplyFrozenLine(BaseModel):
     amend_reason: Optional[str] = None
     #: The reason a discontinued product was still bought (AC-B11), when one was given.
     buy_reason: Optional[str] = None
+    #: The frozen Buy was an ORDER BACK - a shortfall against something already ordered or
+    #: already shipped, not a fresh purchase - and the document CS cited for it, if any
+    #: (`PLAN-scm-purchasing-uat-journey.md` section 4b). Read back by the Amend editor so
+    #: re-opening a covered line shows what was actually decided.
+    order_back: bool = False
+    cited_document: Optional[str] = None
 
 
 class SupplyLine(BaseModel):
     project_line_id: str
     line_no: int
+    #: The PLANNING UNIT this line was composed in (ladder v6): this order's lines for the
+    #: same item, the same fulfilment location and the same delivery date are ONE quantity,
+    #: covered whole from stock or bought whole. The unit's total, and how many lines it is.
+    #: `1` and the line's own quantity when it was planned on its own, which is most lines -
+    #: the screen says nothing extra for those.
+    unit_qty: str = "0"
+    unit_line_count: int = 1
     item_code: Optional[str] = None
     #: Addressing only, never rendered (see module docstring) - what the Proof button asks
     #: `GET .../fulfilment-planning/classification` with.
@@ -277,15 +286,53 @@ class ConfirmLine(BaseModel):
     borrow: List[ConfirmBorrowComponent] = Field(default_factory=list)
     buy_qty: Decimal = Decimal("0")
     buy_reason: Optional[str] = None
+    #: This Buy is an ORDER BACK (part 2 section 4b, captain 25 Aug): the quantity is owed
+    #: against something already ordered or already shipped rather than being a new
+    #: purchase, so the row purchasing gets carries verb `ORDER_BACK` and is the one row
+    #: whose links may name an `spo_allocations` row.
+    #:
+    #: Meaningless without a Buy, and ignored when `buy_qty` is 0: an order back with
+    #: nothing bought is not an instruction.
+    order_back: bool = False
+    #: The document CS named for it - "202604-S0083", "SPO-2026/08-0061" - as they spelled
+    #: it. Not a link by itself: it is what the auto-link walk tries FIRST, before any
+    #: location tier or date, and a document this system does not hold is recorded rather
+    #: than refused (AC-J2).
+    cited_document: Optional[str] = None
     #: Why this composition is not the one the engine proposed, in the planner's own words.
     #: Absent when they took the proposal as it stood: demanding a reason for agreeing is how
     #: a mandatory field becomes a rubber stamp. It is FROZEN with the line, beside the
     #: engine's own sentences, because those explain a decision nobody took once it is amended.
     amend_reason: Optional[str] = None
+    #: "This might be a system problem, flag it for investigation" (R10,
+    #: `PLAN-scm-planning-inline-decisions.md` section 3.D5).
+    #:
+    #: A SECOND answer, beside the verdict rather than instead of it: a planner who amends a
+    #: line because the availability printed next to it reads wrong is telling us two
+    #: different things, and a decision that recorded only the amendment lost the one worth
+    #: chasing. It travels with whichever verdict was given - approved, amended or rejected -
+    #: and is frozen beside `amend_reason` so the warning is still on the pill after a reload.
+    suspected_system_issue: bool = False
 
 
 class ConfirmSupplyBody(BaseModel):
     lines: List[ConfirmLine] = Field(default_factory=list)
+    #: The date the planner is deciding AS OF, which the board already has as a dial. It is
+    #: read for ONE purpose: the engine proposal frozen beside the decision (AC-D1) is walked
+    #: against the same day the planner saw, so a board opened on a Friday and confirmed on
+    #: the Monday does not record a suggestion nobody was ever shown. It does NOT move the
+    #: decision itself - live stock, the queue and every refusal are judged against now, and a
+    #: back-dated confirmation of stock that has since gone would be a promise nobody can keep.
+    #: Absent means today, which is what every caller sends today.
+    as_of: Optional[date] = None
+    #: The planning-change batch this Confirm is ANSWERING (part 3, AC-P3-4).
+    #:
+    #: Set when the board was opened at `?orders=...&batch=<id>`: the lines above become
+    #: those batch rows' own compositions, the batch is applied, and exactly one revision
+    #: is written - one press, one call. Absent on every ordinary board Confirm. A second
+    #: Confirm naming a batch already applied is refused with a message rather than
+    #: writing a second revision.
+    batch_id: Optional[str] = None
 
 
 class ConfirmException(BaseModel):
@@ -306,6 +353,21 @@ class ConfirmResult(BaseModel):
     #: `lines_undecided > 0` is a normal, deliberate outcome, not a warning.
     lines_decided: int = 0
     lines_undecided: int = 0
+    #: The physical movements this confirmation raised, and how many it could NOT write
+    #: (`PLAN-scm-cs-planning-uat.md` section E). The transfer write is best-effort so a
+    #: failure cannot fail a promise already made, but a movement nobody was told about is
+    #: a movement nobody makes - so the count reaches the screen rather than a server log.
+    transfers_written: int = 0
+    transfers_failed: int = 0
+    #: And how many open movements this revision KEPT rather than re-raising (R16): the same
+    #: instruction at the same quantity survives a reconfirm with its state and its approval
+    #: intact. Counted apart from `transfers_written`, which is only rows actually created,
+    #: so "nothing new had to move" is not read as "nothing moved".
+    transfers_kept: int = 0
+    #: How many of this revision's lines the planner flagged as a suspected system problem
+    #: (R10). Reported rather than logged: the flag is a request to look at something, and a
+    #: request nobody is told about is a request nobody answers.
+    suspected_issues: int = 0
 
 
 # ------------------------------------------------------------------- the Plans page (D1)
@@ -354,6 +416,15 @@ class ConfirmManyOrderBody(BaseModel):
 
 class ConfirmManyBody(BaseModel):
     orders: List[ConfirmManyOrderBody] = Field(default_factory=list)
+    #: The planning-change batch this press is ANSWERING (part 3, AC-P3-4).
+    #:
+    #: One batch per board, which is the shape the board already has: it is opened at
+    #: `?orders=...&batch=<id>` and every order on it belongs to that batch. Set, each
+    #: order's lines become its batch rows' own compositions and the batch is applied for
+    #: THAT order - the same single write `POST .../sales-orders/{id}/confirm` does with its
+    #: own `batch_id`, once per order rather than once per press. Absent on every ordinary
+    #: board Confirm.
+    batch_id: Optional[str] = None
 
 
 class ConfirmManyOrderResult(BaseModel):
@@ -367,6 +438,15 @@ class ConfirmManyOrderResult(BaseModel):
     inquiry_rows_created: Optional[int] = None
     lines_decided: Optional[int] = None
     lines_undecided: Optional[int] = None
+    #: The movements this order's confirmation raised, and how many could NOT be written -
+    #: the same pair the single-order `ConfirmResult` carries. The board's toast reads "N
+    #: lines confirmed, T transfers proposed", and T comes from here.
+    transfers_written: Optional[int] = None
+    transfers_failed: Optional[int] = None
+    #: The open movements this order's confirmation kept as they were (R16).
+    transfers_kept: Optional[int] = None
+    #: The lines flagged as a suspected system problem, summed the same way (R10).
+    suspected_issues: Optional[int] = None
     error: Optional[str] = None
     #: The lines the server refused, named the way `SupplyFailingLine` always is (AC-C02),
     #: when the refusal named any.

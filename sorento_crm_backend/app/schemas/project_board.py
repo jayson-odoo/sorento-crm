@@ -86,6 +86,12 @@ class BoardSource(BaseModel):
     #: Ladder v2 (section E): which rung produced this source - `pool`, `group_take`,
     #: `group_borrow` or `cross_group_borrow`. `None` on a plain `timely_spo`/`buy` row.
     rung: Optional[str] = None
+    #: WHICH LADDER wrote it (AC-V8). A LIVE suggestion carries today's version; a FROZEN
+    #: one carries whatever was stamped when it was frozen, and `None` for a snapshot older
+    #: than the stamp itself. It is what lets the screen label a stale suggestion as history
+    #: without guessing - and without it the label showed on every line, live ones included,
+    #: because a missing key read as "older than v4" everywhere.
+    ladder: Optional[str] = None
     donor_so_number: Optional[str] = None
     donor_line_no: Optional[int] = None
     donor_agent_code: Optional[str] = None
@@ -99,18 +105,24 @@ class BoardSource(BaseModel):
     donor_required_date: Optional[date] = None
 
 
-#: Ladder v2 (`PLAN-demo-followups-19aug-ladder-v2.md` section E): "incoming" now comes
-#: BEFORE the pool, the own-location rung is gone (section E rule 7), and the group rungs
-#: are new. `reserve_own` / `reserve_pool` are the pre-v2 spellings, kept in the Literal so
-#: an old snapshot's frozen trail (there is none - the trail is never frozen - but a stale
-#: client cache might still hold one) does not 422 a read.
+#: LADDER V5 (`PLAN-scm-cs-planning-uat.md` section 1e): the trail is the captain's four
+#: questions plus Buy, and `own` is the first of them - the ownership group read as one pile,
+#: with the old read-only `reserve_own` strip folded into it (it existed to name the queue,
+#: which is one of that question's facts rather than a question of its own). `incoming` is no
+#: longer emitted at all: an SPO is inside the group's net.
+#:
+#: These are INTERNAL KEYS and are never rendered. The reader is shown `question`.
+#:
+#: The retired spellings stay in the Literal so a stale client cache holding an older trail
+#: does not 422 a read: `incoming`, `group_take`, `reserve_own`, `reserve_pool`, `borrow`.
 BoardTrailKind = Literal[
-    "incoming", "pool", "group_take", "group_borrow", "cross_group_borrow", "buy",
-    "reserve_own", "reserve_pool", "borrow",
+    "own", "pool", "cross_group_borrow", "group_borrow", "buy",
+    "incoming", "group_take", "reserve_own", "reserve_pool", "borrow",
 ]
-BoardTrailOutcome = Literal[
-    "took", "nothing_left", "not_eligible", "offered", "none_needed"
-]
+#: Yes or no, one word per question (AC-V1). It replaced a five-value `outcome`
+#: (`took` / `nothing_left` / `not_eligible` / `offered` / `none_needed`), which was five
+#: shades of the same two answers and put the reasoning in a pill instead of in the sentence.
+BoardTrailAnswer = Literal["yes", "no"]
 
 
 class BoardAheadLine(BaseModel):
@@ -212,65 +224,66 @@ class BoardItemFlags(BaseModel):
 
 
 class BoardTrailStep(BaseModel):
-    """One rung of the source ladder, as it was walked for one line.
+    """One of the four questions ladder v5 asks about a line, or Buy (section 1e).
 
     The captain, reading a Buy: "can you justify how you arrive at the buy, like what's the
-    process you have gone through: checking the available quantity first, deciding whether to
-    reserve it or not, then checking the SPO quantity, then checking whether can borrow" - and
-    then, on being shown a paragraph: "the justification needs to be STRUCTURED".
+    process you have gone through" - and then, on being shown a paragraph: "the justification
+    needs to be STRUCTURED". And, walking SO381895 on 26 August: "our thought process is
+    simpler now."
 
-    So EVERY rung is emitted for a plannable line, including the ones that gave nothing: a step
-    that is silently omitted reads as a step that was never taken, which is the exact doubt this
-    exists to answer. A line that cannot be planned at all carries no trail, because no ladder
-    was walked for it.
+    So it is FIVE ROWS, always, in one order: our own location, the pool, another location,
+    the same agent's other order, Buy. Every question is answered even when the line was
+    covered two rows above, because "the pool was checked and had none" is the answer to that
+    question and an omitted row reads as a question nobody asked.
+
+    THE FIGURES ARE INSIDE THE WORDS. `why` carries the group's net, the pile's net, the donor
+    group's net or the cap - the number that actually decided the answer - so the row is a
+    sentence with an answer beside it rather than eight columns of arithmetic a reader has to
+    do themselves. That is what retired `opening`, `offered`, `remaining_after` and the
+    five-valued `outcome`.
 
     The trail is a READ of what `front_planning_engine.propose_line` did. It never decides a
     quantity, so it cannot disagree with the proposal it explains.
     """
 
-    #: 1-based, in the order the ladder walked.
+    #: 1-based, in the order the questions are asked.
     step: int
+    #: The INTERNAL rung key. Addressing and test ids only - never rendered.
     kind: BoardTrailKind
-    #: Warehouse CODE of the source. Null for Buy, which is held nowhere, and for Borrow, whose
-    #: donors are several and are listed on the contribution itself.
+    #: The question, in the words a planner would ask it.
+    question: str
+    #: Whether this question supplied anything.
+    answer: BoardTrailAnswer
+    #: What the line took from it. Always "0" for the two borrow questions when nobody has
+    #: picked a donor: a Borrow needs a donor and a reason from a person (AC-B09).
+    took: str = "0"
+    #: The warehouses it came from, comma-joined, or null on a No.
+    from_: Optional[str] = Field(default=None, alias="from")
+    #: WHY, in ONE plain sentence, with the deciding figure in it.
+    why: Optional[str] = None
+    #: ONE short structured hint, never a paragraph: "checked BRW, DC1", "MWH-IB 12000 · BRW
+    #: 9000", "dealer hot-selling: the whole pile is kept for retail".
+    note: Optional[str] = None
+    #: Warehouse CODE of the source. Null for Buy, which is held nowhere, and for the borrow
+    #: questions, whose donors are several and are listed on the contribution itself.
     location: Optional[str] = None
     #: Addressing only, never rendered, exactly as on `BoardSource`.
     warehouse_id: Optional[str] = None
-    #: What the source held when the ladder reached this line, BEFORE the demand ranked ahead:
-    #: the pile's free stock for the own location, the running pool balance for the pool, the
-    #: timely incoming total, the donors' total for Borrow. Null where the question is
-    #: meaningless (Buy holds nothing; an absent pool holds nothing).
-    opening: Optional[str] = None
-    #: Own location only: what the demand ranked ahead of this line still wants there, and how
-    #: many lines that is. Null elsewhere - the pool nets its own book before it is offered, and
-    #: incoming and Buy have no queue.
+    #: Question 1 only: what the demand ranked ahead of this line still wants at its own pile,
+    #: and how many lines that is. Null elsewhere - no other question has a queue. Under
+    #: ladder v4 the queue decides no availability; it is who is in front of this line.
     ahead_qty: Optional[str] = None
     ahead_lines: Optional[int] = None
     #: WHO is in that queue: the top of it in rank order, how many more there are, and a count
-    #: of the whole queue by the factor that put each line in front. Own location only, for the
-    #: same reason `ahead_qty` is - no other rung has a queue.
+    #: of the whole queue by the factor that put each line in front.
     ahead: List[BoardAheadLine] = []
     ahead_more: int = 0
     ahead_by_factor: Dict[str, int] = {}
-    #: What this source could give THIS line after its own rules were applied.
-    offered: str = "0"
-    #: What the line actually took from it. Always "0" for Borrow: it is offered and never
-    #: proposed, because a Borrow needs a donor and a reason from a person (AC-B09).
-    taken: str = "0"
-    #: The line's still-uncovered quantity after this step. Zero on the last one.
-    remaining_after: str = "0"
-    outcome: BoardTrailOutcome
-    #: WHY it ended that way, in ONE plain sentence. The numbers above are what the captain was
-    #: already looking at when he asked "what does this mean? why do the orders stand ahead of
-    #: me? why? and why is the donor offered but I did not take, why?" - so this answers in
-    #: words, never by restating the row.
-    why: Optional[str] = None
-    #: ONE short structured hint, never a paragraph: "hot-selling: pool only", "capped by
-    #: reorder level 10", "ZZT-SPO-0001 arrives 2026-08-25", "MWH-IB 12000 · BRW 9000".
-    note: Optional[str] = None
-    #: The pool's pile behind the `reserve_pool` rung. Null on every other rung, and on a
-    #: pool rung with no pile to describe (no shared pool; the pool is this location).
+    #: The pool's pile behind question 2. Null on every other question, and on a pool question
+    #: with no pile to describe (no shared pool; the pool is this location).
     pool: Optional[BoardTrailPool] = None
+
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class BoardDecisionReserve(BaseModel):
@@ -280,6 +293,30 @@ class BoardDecisionReserve(BaseModel):
     #: The warehouse CODE, which is what the screen reads. The id beside it is addressing.
     location: Optional[str] = None
     qty: str
+    #: Which rung the confirmation froze this share under (`group_take` / `pool` / ...).
+    #: Carried rather than dropped: without it every reserve row of a covered line reached
+    #: the screen unrunged and the vocabulary had to be guessed back from the warehouse
+    #: code, which is the reading PLAN section 2 exists to replace. `None` on a revision
+    #: frozen before the rung was recorded.
+    rung: Optional[str] = None
+
+
+class BoardDecisionIncoming(BaseModel):
+    """One SPO share of a frozen decision, in the shape a Reserve row already has.
+
+    `BoardLineDecision.timely_spo_qty` is the TOTAL and is what `ConfirmLine` takes the
+    composition back in; this says WHERE each share was coming to and WHICH question drew
+    it. Under ladder v5 the water is question 1's own answer (`rung: group_take`), so a
+    screen reading only the scalar filed a confirmed water line under "Incoming supply"
+    while its own suggestion filed it under "Use own location".
+    """
+
+    warehouse_id: Optional[str] = None
+    location: Optional[str] = None
+    qty: str
+    #: `group_take` on a v5 confirmation, `incoming` on one frozen under the retired rung 1,
+    #: `None` on a revision written before the rung was recorded at all.
+    rung: Optional[str] = None
 
 
 class BoardDecisionBorrow(BaseModel):
@@ -323,6 +360,9 @@ class BoardLineDecision(BaseModel):
     revision_no: int
     confirmed_at: Optional[datetime] = None
     timely_spo_qty: str = "0"
+    #: The same quantity, split per document location and rung. Empty on a revision frozen
+    #: before it was recorded, where `timely_spo_qty` is all there is.
+    incoming: List[BoardDecisionIncoming] = []
     reserve: List[BoardDecisionReserve] = []
     borrow: List[BoardDecisionBorrow] = []
     buy_qty: str = "0"
@@ -331,11 +371,65 @@ class BoardLineDecision(BaseModel):
     #: Why the composition is not the engine's, in the planner's own words. Absent when they
     #: took the proposal as it stood.
     amend_reason: Optional[str] = None
+    #: The planner flagged this decision as one whose numbers look wrong (R10). Echoed on
+    #: the frozen decision so the warning stays on the pill after a reload.
+    suspected_system_issue: bool = False
+
+
+class BoardLineOrderInquiry(BaseModel):
+    """The order inquiry covering one board line, in the two words a person reads it by.
+
+    The ROW's state, not the header's: "purchasing placed this line" is what the column
+    answers, and a header still at `raised` while its row has been placed on a purchase
+    order would say the opposite.
+    """
+
+    #: `OI-000123`. Null only on a row raised before inquiries were numbered.
+    inquiry_no: Optional[str] = None
+    state: str
+    #: The HANDSHAKE (`PLAN-scm-oi-handshake.md`): `awaiting`, `acknowledged`, `changed` or
+    #: `rejected`. Defaulted so a row written before the handshake existed still reads, and
+    #: NULL once CS has answered a refusal: the cell is then about their decision and not
+    #: about the objection that prompted it, so there is no acknowledgement left to report.
+    ack_state: Optional[str] = "awaiting"
+    #: Why purchasing refused it, and who did. Both null unless `ack_state` is `rejected`,
+    #: and both are what the cell prints beside an undecided line - a decision that came
+    #: back with no reason is the thing this exists to stop.
+    rejected_reason: Optional[str] = None
+    rejected_by_name: Optional[str] = None
+
+
+class BoardLineLending(BaseModel):
+    """One borrow taken OFF this line by another sales order (AC-L6)."""
+
+    #: How much was taken.
+    qty: str
+    #: The order that took it, by its document number - never a UUID.
+    so_number: Optional[str] = None
+    #: Its line on that order, so two lines of one order are told apart.
+    line_no: Optional[int] = None
+
+
+class BoardProposed(BaseModel):
+    """What the engine suggested for one line, in the same words a source is stated in.
+
+    A wrapper rather than a bare list, so the suggestion has somewhere to grow a fact ABOUT
+    itself (when it was frozen, which revision) without every reader re-shaping.
+    """
+
+    components: List[BoardSource] = []
 
 
 class BoardContribution(BaseModel):
     """One contributing sales-order line inside a cell: a row of the breakdown table."""
 
+    #: THIS LINE's own location table (R1): the same rows the cell carries, netted of this
+    #: line's own quantity and no other's, so the subtotal IS the offer the ladder made it
+    #: (`max(group net + this line's open qty, 0)`) and the decision panel's "N available"
+    #: beside each Reserve input is that line's figure. A cell holding two lines has two
+    #: tables, and the drawer shows whichever line is expanded. Empty for a line whose bucket
+    #: is outside the day window, which builds no cell.
+    locations: List["BoardCellLocation"] = []
     #: Stable draft key, and part of the contract because the frontend rebuilds it:
     #: `${sales_order_id}|${line_no}|${item_code}|${bucket_key}`. Addressing only.
     key: str
@@ -379,6 +473,14 @@ class BoardContribution(BaseModel):
     qty_ordered: str = "0"
     qty_delivered: str = "0"
     qty_outstanding: str = "0"
+    #: The PLANNING UNIT this line was composed in (ladder v6): its OWN sales order's lines
+    #: for the same item, the same fulfilment location and the same delivery date are one
+    #: quantity, covered whole from stock or bought whole - never "line 31 borrows and line
+    #: 32 buys". The unit's total, and how many lines it is. The line's own quantity and `1`
+    #: when it was planned alone, which is most lines; the cell's source note says nothing
+    #: extra for those.
+    unit_qty: str = "0"
+    unit_line_count: int = 1
     #: What the engine proposes to meet it with, from the SAME ladder the per-order sheet runs
     #: (own location, then the shared pool under the hot-selling rules, then timely incoming,
     #: then Buy). The three add up to `qty_outstanding`.
@@ -427,6 +529,14 @@ class BoardContribution(BaseModel):
     rank_score: float
     rank_factors: List[BoardRankFactor] = []
     sources: List[BoardSource] = []
+    #: What the ENGINE suggested for this line, beside what was decided (AC-D2).
+    #:
+    #: The LIVE ladder on an undecided line (the same list as `sources`), and the composition
+    #: frozen at confirm on a covered one - where `sources` states the DECISION and the
+    #: suggestion would otherwise be lost the moment somebody amended it. Null, never an
+    #: empty object, on a revision written before the proposal was frozen: "not recorded" and
+    #: "the engine suggested nothing" are different answers and the screen says which.
+    proposed: Optional[BoardProposed] = None
     #: The ladder, rung by rung, in the order it was walked (see `BoardTrailStep`). Empty for a
     #: line that cannot be planned: no ladder was walked for it.
     trail: List[BoardTrailStep] = []
@@ -446,6 +556,20 @@ class BoardContribution(BaseModel):
     #: What was frozen, when the line is covered. Null otherwise, and never an empty object:
     #: "nobody decided this" and "decided, to nothing" are different answers.
     decision: Optional[BoardLineDecision] = None
+    #: What purchasing was already TOLD about this line, reached through the planning
+    #: record's mirror (`projects.sales_order_lines.core_sales_order_line_id`), and how far
+    #: they got with it.
+    #:
+    #: The other half of `decision`: that is the promise, this is the instruction the
+    #: promise produced. Null when nobody has raised one - which is most of the board, since
+    #: an inquiry exists only once somebody has confirmed supply - and never an empty
+    #: object, by the same rule `decision` follows.
+    order_inquiry: Optional[BoardLineOrderInquiry] = None
+    #: What ANOTHER sales order borrowed off THIS line (AC-L6, the captain 25 August 2026:
+    #: the donor's cell reads "71 lent to SO415472"). A borrow used to be visible only on the
+    #: taking side, so the agent whose stock moved found out when the delivery did not.
+    #: An empty list when nothing was lent, never absent: the cell has one shape to read.
+    lent_to: List[BoardLineLending] = Field(default_factory=list)
 
 
 class BorrowDonorImpact(BaseModel):
@@ -501,12 +625,16 @@ class BorrowCandidate(BaseModel):
     donor_core_line_id: Optional[str] = None
     lower_ranked: bool = False
     same_agent: bool = False
-    over_cap: bool = False
-    cap_reason: Optional[str] = None
 
 
 class StockDetailSalesOrder(BaseModel):
-    """One document contributing to a location's SO Qty, as AutoCount's drill-down lists it."""
+    """One document contributing to a location's SO Qty, as AutoCount's drill-down lists it.
+
+    NO RANK AND NO QUEUE STATE (R5, `PLAN-scm-planning-inline-decisions.md` section 3.B3):
+    the list answers "what else is claiming this stock, and when", the queue screen answers
+    "why is that line in front of mine", and carrying half of the second question here made
+    the first one harder to read.
+    """
 
     sales_order_id: str
     so_number: str
@@ -517,22 +645,17 @@ class StockDetailSalesOrder(BaseModel):
     agent_code: Optional[str] = None
     project_label: Optional[str] = None
     demand_class: Optional[str] = None
-    #: The document's own date, and the date the quantity is wanted.
+    #: The document's own date, and the date the quantity is wanted. The list is ordered by
+    #: the second, ascending.
     doc_date: Optional[date] = None
     delivery_date: Optional[date] = None
     so_qty: str
-    #: A confirmed decision already covers this line: committed demand, not merely outstanding.
-    is_covered: bool = False
     #: The CORE sales-order line this document row IS. Addressing only: one order stands
     #: behind a location once per line, so the order id alone does not name a row.
     line_id: Optional[str] = None
-    line_no: Optional[int] = None
-    #: Where this line stands in the pile's queue (1-based, `pile_book` order) and the score
-    #: that put it there, with the same per-factor breakdown the queue screen shows. Null on a
-    #: covered line: its claim is already a hold, so it is not in the queue at all.
-    rank_position: Optional[int] = None
-    rank_score: Optional[float] = None
-    rank_factors: List[BoardRankFactor] = []
+    #: One of the lines the drawer was opened for (`line_ids`), so a planner can find their
+    #: own row in somebody else's list.
+    is_this_line: bool = False
 
 
 class StockDetailIncoming(BaseModel):
@@ -570,8 +693,6 @@ class StockDetail(BaseModel):
     qty_free: str
     sales_orders: List[StockDetailSalesOrder] = []
     incoming: List[StockDetailIncoming] = []
-    #: The `scm.priority_policy` the ranks in `sales_orders` came from.
-    policy_name: Optional[str] = None
 
 
 class PileQueueLine(BaseModel):
@@ -648,6 +769,12 @@ class BoardCellLocation(BaseModel):
     """
 
     location: Optional[str] = None
+    #: Where this location stands relative to the cell: `own` (a location the cell's own lines
+    #: name), `group` (the sales agent's ownership group), `site_pool` (a pool the ladder drew
+    #: from and a proposal cites) or `other_group` (outside the group, where a Borrow was
+    #: proposed from). The table lists every location the ladder consulted, so this is what
+    #: tells the pool holding 1716 from a group warehouse holding nothing.
+    where: str = "own"
     #: Addressing only: what the stock drill-down is opened by. Never rendered, and never
     #: derived on the client from a warehouse code or an item code.
     product_id: Optional[str] = None
@@ -684,6 +811,27 @@ class BoardCellLocation(BaseModel):
     #: "Available Qty": `on hand - SO + SPO`, SIGNED and never clamped - "oversold here by 632"
     #: is the signal, and a floor of zero would report it as "nothing left" instead.
     available_qty: Optional[str] = None
+    #: "PO qty": the open PURCHASE-order balance at this location, less what an order-inquiry
+    #: row already claims off those lines. SPO documents are excluded - they are already
+    #: `spo_qty`, and counting them twice would invent supply.
+    #:
+    #: INFORMATION ONLY, and deliberately outside `available_qty`: a purchase order reaches a
+    #: project line through a link, never by sitting at the location (PLAN section I).
+    po_open_qty: Optional[str] = None
+    #: LADDER V4 (`PLAN-scm-cs-planning-uat.md` section 1d): what the SET this row belongs
+    #: to nets between its locations, signed - the ownership group for an `own` / `group`
+    #: row, the five site pools for a `site_pool` row, and the donor group's own net for an
+    #: `other_group` row. THE NUMBER THE ENGINE ACTUALLY DECIDED ON: `MWH-IB` reading 7000
+    #: available offers nothing while the IB group nets -15514, so a table that showed only
+    #: the per-row figure could not explain why nothing was taken from it.
+    #:
+    #: Stated by the server rather than summed on the client, because the rows shown are the
+    #: ones this cell consulted and the net is over the whole set, `RSW-IB` and every other
+    #: silent member included.
+    net: Optional[str] = None
+    #: Which set that net is over, for the subtotal's own label: the group code (`IB`),
+    #: `pools`, or None where no set applies.
+    net_of: Optional[str] = None
     incoming: List["BoardIncoming"] = []
     qty_proposed_reserve: str = "0"
     qty_proposed_incoming: str = "0"
@@ -698,11 +846,25 @@ class BoardIncoming(BaseModel):
     qty: str
 
 
+# `BoardContribution` names `BoardCellLocation` above the class that defines it (a line's own
+# table is a fact about the line), so the reference is resolved here, once both exist.
+BoardContribution.model_rebuild()
+
+
 class BoardCell(BaseModel):
     item_code: str
     bucket_key: str
     #: Summed across every contributing line, including the unplannable ones.
     total_qty: str
+    #: The sales agents' warehouse-suffix ownership group whose locations are listed below
+    #: alongside the ones this cell's own lines name (`BB` for BRW-BB / MWH-BB / DC1-BB).
+    #: Several, joined by " / ", when the cell holds orders of agents in different groups.
+    #: None when none could be resolved, and then `location_group_note` says why - silence
+    #: would read as "this product lives in exactly one place".
+    location_group: Optional[str] = None
+    #: Why only the line's own location is listed, when that is all there is. Set ONLY when
+    #: `location_group` is None.
+    location_group_note: Optional[str] = None
     locations: List[BoardCellLocation] = []
     contributions: List[BoardContribution] = []
     unplannable_count: int = 0

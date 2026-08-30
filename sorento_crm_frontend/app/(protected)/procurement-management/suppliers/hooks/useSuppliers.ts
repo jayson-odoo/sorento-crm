@@ -1,76 +1,88 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { buildDataGridParams } from '@/lib/api-client';
-import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
-import {
-  useRecordNeighbours,
-  type RecordNeighboursResult,
-} from '@/hooks/useRecordNeighbours';
-import {
-  getSuppliers,
-  getSupplier,
-  createSupplier,
-  updateSupplier,
-  deleteSupplier,
-  SUPPLIER_NEIGHBOURS_PATH,
-  type SuppliersListParams,
-} from '../services/supplierService';
+
+import type { DataGridApiFetchParams, DataGridApiResponse } from '@/components/ui/data-grid';
+import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
+import { decodeAdvancedFilter } from '@/lib/listNavQuery';
+import { getSuppliers, getSupplier, createSupplier, updateSupplier, deleteSupplier } from '../services/supplierService';
 import type { Supplier, SupplierFormData } from '../types/supplier.types';
 import { postListQuerySearch } from '@/lib/list-query/listQueryService';
 import type { ListQueryFilterGroup } from '@/lib/list-query/listQueryService';
 
+
+export type SuppliersListQueryParams = DataGridApiFetchParams & {
+  country?: string;
+  city?: string;
+  payment_terms_days?: number;
+  status?: string;
+  advancedFilter?: ListQueryFilterGroup | null;
+};
+
 /**
- * Prev/next neighbours of a supplier within the active filtered+sorted list set.
- * Serializes the list query (search/sort) with `buildDataGridParams` - the same
- * serialization the list page uses - so the backend honours the filter/sort
- * identically. `page`/`limit` are sent but ignored by the neighbours endpoint.
+ * The list's React Query key. The detail page's pager rebuilds the SAME key from
+ * the URL, so it reads the page the list already fetched.
  */
-export function useSupplierNeighbours(
-  supplierId: string | null,
-  listParams: SuppliersListParams,
-): RecordNeighboursResult {
-  const params = buildDataGridParams(listParams);
-  return useRecordNeighbours(SUPPLIER_NEIGHBOURS_PATH, supplierId, params);
+export function suppliersListQueryKey(params: SuppliersListQueryParams): QueryKey {
+  return [
+    'suppliers',
+    params.pageIndex,
+    params.pageSize,
+    params.sorting,
+    params.searchQuery,
+    params.country,
+    params.city,
+    params.payment_terms_days,
+    params.status,
+    params.advancedFilter,
+  ];
 }
 
-export function useSuppliers(
-  params: DataGridApiFetchParams & {
-    country?: string;
-    city?: string;
-    payment_terms_days?: number;
-    status?: string;
-    advancedFilter?: ListQueryFilterGroup | null;
-  },
-) {
+/** One page of the suppliers list, advanced filter included. */
+export function fetchSuppliersPage(
+  params: SuppliersListQueryParams,
+): Promise<DataGridApiResponse<Supplier>> {
+  if (params.advancedFilter) {
+    const sortField = params.sorting?.[0]?.id || '';
+    const sortDirection = params.sorting?.[0]?.desc ? 'desc' : 'asc';
+    return postListQuerySearch<Supplier>({
+      resource: 'suppliers',
+      filter: params.advancedFilter,
+      page: params.pageIndex + 1,
+      limit: params.pageSize,
+      sort: sortField || 'created_at',
+      dir: sortDirection,
+      quick_search: params.searchQuery || undefined,
+    });
+  }
+  return getSuppliers(params);
+}
+
+/** The list query a detail URL describes, in the shape the list passes. */
+export function suppliersListParamsFromUrl(
+  params: ListPagerParams,
+): SuppliersListQueryParams {
+  return {
+    pageIndex: params.pageIndex,
+    pageSize: params.pageSize,
+    sorting: params.sorting,
+    searchQuery: params.searchQuery,
+    advancedFilter:
+      decodeAdvancedFilter<ListQueryFilterGroup>(params.filters.advFilter) ?? undefined,
+  };
+}
+
+/** The pager's two hooks into the suppliers list. */
+export const suppliersPagerQuery = {
+  listQueryKey: (params: ListPagerParams): QueryKey =>
+    suppliersListQueryKey(suppliersListParamsFromUrl(params)),
+  fetchPage: (params: ListPagerParams): Promise<ListPagerPage> =>
+    fetchSuppliersPage(suppliersListParamsFromUrl(params)),
+};
+
+export function useSuppliers(params: SuppliersListQueryParams) {
   return useQuery({
-    queryKey: [
-      'suppliers',
-      params.pageIndex,
-      params.pageSize,
-      params.sorting,
-      params.searchQuery,
-      params.country,
-      params.city,
-      params.payment_terms_days,
-      params.status,
-      params.advancedFilter,
-    ],
-    queryFn: async () => {
-      if (params.advancedFilter) {
-        const sortField = params.sorting?.[0]?.id || '';
-        const sortDirection = params.sorting?.[0]?.desc ? 'desc' : 'asc';
-        return postListQuerySearch<Supplier>({
-          resource: 'suppliers',
-          filter: params.advancedFilter,
-          page: params.pageIndex + 1,
-          limit: params.pageSize,
-          sort: sortField || 'created_at',
-          dir: sortDirection,
-          quick_search: params.searchQuery || undefined,
-        });
-      }
-      return getSuppliers(params);
-    },
+    queryKey: suppliersListQueryKey(params),
+    queryFn: () => fetchSuppliersPage(params),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,
     refetchOnWindowFocus: false,

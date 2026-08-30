@@ -1,0 +1,51 @@
+{
+  "case": "AC-S2-5",
+  "why": [
+    "A line due 15 July is owed NOW, not in July: a column for a month that has gone is a column",
+    "nobody can act in. So a past-due line is read at today - it takes the on hand it can still",
+    "be served from, and whatever is left of it lands in the CURRENT month's balance.",
+    "",
+    "Lead 30 here rather than 90, so the red horizon (10 Oct) is inside the axis and September's",
+    "debt is red because no purchase could reach it."
+  ],
+  "as_of": "2026-09-10",
+  "tba_from": "2029-01-01",
+  "lead_days": 30,
+  "supply": [
+    {
+      "key": "on_hand:BRW-BB",
+      "kind": "on_hand",
+      "warehouse": "BRW-BB",
+      "at": "2026-09-10",
+      "qty": 30,
+      "ref": null
+    }
+  ],
+  "demand": [
+    {
+      "key": "P",
+      "so_number": "SO400040",
+      "line_no": 1,
+      "warehouse": "BRW-BB",
+      "agent_code": "CINDY LEE",
+      "required_date": "2026-07-15",
+      "open_qty": 80
+    }
+  ],
+  "pinned": [],
+  "expect": {
+    "lines": [
+      {
+        "key": "P",
+        "status": "short",
+        "uncovered": 50,
+        "bucket": "2026-09",
+        "assigned": [["on_hand:BRW-BB", 30]]
+      }
+    ],
+    "months": [{ "key": "2026-09", "balance": -50, "tone": "red" }],
+    "tba": 0,
+    "undated": 0,
+    "uncounted": []
+  }
+}

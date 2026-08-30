@@ -96,7 +96,7 @@ export type ListToolbarFilters =
       content: ReactNode;
     };
 
-export type ListToolbarExport<TData extends object> = {
+export type ListToolbarExport = {
   filename?: string;
   /**
    * All-records (server) export. Used when the user has chosen "select all N
@@ -159,14 +159,38 @@ export type DataGridListToolbarProps<TData extends object> = {
   filters?: ListToolbarFilters;
   /** Export config, or `false` to hide Export. Default: selection-gated client export;
    *  pass a `{kind:'listQuery'}` config for server-side filtered-set export. */
-  exportConfig?: ListToolbarExport<TData> | ListToolbarListQueryExport | false;
+  exportConfig?: ListToolbarExport | ListToolbarListQueryExport | false;
   /** Show the Columns personalization button. Default true. */
   showColumns?: boolean;
+  /**
+   * Show the toolbar's OWN Export button. Default true.
+   *
+   * The same shape as `showColumns`, and for the same reason: a page whose right cluster owns
+   * Export itself (the proforma-invoice book's gear, AC-E2) hides the toolbar's button and
+   * calls `openExport` from its own menu. It used to say `exportConfig={false}` for this,
+   * which also threw away the `filename` - so the file the user got was called `export.xlsx`.
+   */
+  showExport?: boolean;
   /** Optional manual refresh (wire to React Query refetch). Renders after Columns. */
   onRefresh?: () => void | Promise<void>;
   isRefreshing?: boolean;
-  /** Primary call-to-action (e.g. the "Add" button). Anchored to the right edge. */
-  primaryAction?: ReactNode;
+  /**
+   * Extra controls at the END of the left cluster, after Export / Refresh - for a grid
+   * whose rows expand (Expand all / Collapse all). They belong beside Columns and Export
+   * because they change what the TABLE shows, not what the list contains, and hiding them
+   * in the Actions menu on the right puts a view control among the record actions.
+   * Hidden while the bulk strip is up, like everything else in that cluster.
+   */
+  leftActions?: ReactNode;
+  /**
+   * Primary call-to-action (e.g. the "Add" button). Anchored to the right edge.
+   *
+   * May be a render function receiving `{ openExport }` - for a page whose right cluster
+   * owns Export itself (the proforma-invoice book's gear, AC-E2) and passes
+   * `exportConfig={false}` so the toolbar renders no Export button of its own. The dialog
+   * behind `openExport` is the SAME selected-rows export, so the two cannot drift.
+   */
+  primaryAction?: ReactNode | ((api: { openExport: () => void }) => ReactNode);
   /** Secondary actions (Import, attachment links, templates). Overflow `▾` at >=2 (D7). */
   secondaryActions?: ToolbarAction[];
   /** Bulk actions shown in the bulk strip when rows are selected (H). */
@@ -238,6 +262,7 @@ export function DataGridListToolbar<TData extends object>({
   filters,
   exportConfig,
   showColumns = true,
+  showExport = true,
   primaryAction,
   secondaryActions = [],
   bulkActions = [],
@@ -245,6 +270,7 @@ export function DataGridListToolbar<TData extends object>({
   selectAllMatching,
   onRefresh,
   isRefreshing = false,
+  leftActions,
 }: DataGridListToolbarProps<TData>) {
   const [filterOpen, setFilterOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
@@ -356,7 +382,7 @@ export function DataGridListToolbar<TData extends object>({
     filters?.kind === 'custom' && filters.active ? filters.activeSummary : undefined;
 
   const exportButtonEl =
-    exportConfig === false ? null : exportEnabled ? (
+    exportConfig === false || !showExport ? null : exportEnabled ? (
       <Button
         variant="outline"
         size="sm"
@@ -382,8 +408,11 @@ export function DataGridListToolbar<TData extends object>({
 
   return (
     <TooltipProvider>
-     <div className="flex w-full flex-col gap-2 py-5">
-      <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+     <div data-slot="data-grid-list-toolbar" className="flex w-full flex-col gap-2 py-5">
+      {/* `flex-wrap`: at a narrow desktop width the two clusters used to push each
+          other past the viewport edge instead of stacking, so Quick filters and
+          Group by went out of reach. */}
+      <div className="flex w-full flex-col flex-wrap gap-3 sm:flex-row sm:items-center sm:justify-between">
         {/* LEFT cluster - replaced by the bulk strip while rows are selected (D2/H). */}
         {bulkStripActive ? (
           <div className="flex flex-wrap items-center gap-2">
@@ -416,8 +445,26 @@ export function DataGridListToolbar<TData extends object>({
             </Button>
           </div>
         ) : (
-          <div className="flex flex-wrap items-center gap-2">
-            {searchSlot}
+          // `grow` (flex-grow, basis auto), not the default `0 1 auto`: without it a
+          // wrapping flex item is sized at its own basis rather than at the free space
+          // beside it, so Columns and Refresh dropped onto a second row at 1280 with
+          // ~300px of empty toolbar to their right (AC-D13). Growing costs nothing when
+          // the row is genuinely full - the item still shrinks to min-content and wraps.
+          <div className="flex grow flex-wrap items-center gap-2">
+            {/*
+              The slot's OWN children have to wrap, not just sit in a wrapping row.
+              Promotions and SPO Allocations both hand the toolbar a nested flex -
+              search box plus "Quick filters" / "Group by" - with no wrap of its
+              own, so at 375 it ran past the viewport edge and took the page
+              sideways with it. `[&>*]` reaches whatever the list put here, and is
+              inert on a child that is not a flex row.
+            */}
+            <div
+              data-slot="data-grid-list-toolbar-search"
+              className="flex min-w-0 flex-wrap items-center gap-2 [&>*]:min-w-0 [&>*]:flex-wrap"
+            >
+              {searchSlot}
+            </div>
             {filters ? (
               filters.kind === 'listQuery' ? (
                 <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setFilterOpen(true)}>
@@ -471,6 +518,7 @@ export function DataGridListToolbar<TData extends object>({
                 <RefreshCw className={`size-4 ${isRefreshing ? 'animate-spin' : ''}`} />
               </Button>
             ) : null}
+            {leftActions}
           </div>
         )}
 
@@ -493,7 +541,13 @@ export function DataGridListToolbar<TData extends object>({
                     <DropdownMenuItem
                       key={action.key}
                       disabled={action.disabled}
-                      onClick={action.onClick}
+                      // Not wired at all while disabled. Radix only suppresses its own
+                      // `onSelect` for a disabled item; a plain `onClick` still fires, and
+                      // the ONLY thing stopping it is the `data-disabled:pointer-events-none`
+                      // class - so a disabled action was one missing stylesheet away from
+                      // running. The single-button path next door is a real `<button
+                      // disabled>`, which the DOM itself refuses to click.
+                      onClick={action.disabled ? undefined : action.onClick}
                       className={action.destructive ? 'text-destructive' : undefined}
                       asChild={Boolean(action.href && !action.disabled)}
                       data-guide-target={action.href && !action.disabled ? undefined : action.dataGuideTarget}
@@ -520,7 +574,9 @@ export function DataGridListToolbar<TData extends object>({
               </DropdownMenuContent>
             </DropdownMenu>
           ) : null}
-          {primaryAction}
+          {typeof primaryAction === 'function'
+            ? primaryAction({ openExport: isListQueryExport ? () => setExportOpen(true) : openExport })
+            : primaryAction}
         </div>
       </div>
 

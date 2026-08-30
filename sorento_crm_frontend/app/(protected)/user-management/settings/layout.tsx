@@ -46,6 +46,9 @@ function mapSettingsFromApi(raw: Record<string, unknown> | null): SystemSetting 
       typeof raw.default_product_standard_lead_time_days === 'number'
         ? raw.default_product_standard_lead_time_days
         : 90,
+    // A new settings column reaches the FE only if it is in this manual mapper too.
+    defaultUomId: (raw.default_uom_id as string | null) ?? null,
+    defaultUomCode: (raw.default_uom_code as string | null) ?? null,
     takeoverCooldownSeconds:
       typeof raw.takeover_cooldown_seconds === 'number'
         ? raw.takeover_cooldown_seconds
@@ -70,6 +73,7 @@ function mapSettingsFromApi(raw: Record<string, unknown> | null): SystemSetting 
     n8nCrmChatOutboundWebhookUrl: (raw.n8n_crm_chat_outbound_webhook_url as string | null) ?? null,
     n8nStockInquiryReviseWebhookUrl:
       (raw.n8n_stock_inquiry_revise_webhook_url as string | null) ?? null,
+    n8nCloseConvoWebhookUrl: (raw.n8n_close_convo_webhook_url as string | null) ?? null,
     complaintDoDeliveredNotifyTiers:
       (raw.complaint_do_delivered_notify_tiers as string) ?? '1,2',
     handlingLockEnabledTypes: Array.isArray(raw.handling_lock_enabled_types)
@@ -148,6 +152,8 @@ function createDefaultSettings(): SystemSetting {
     currencyFormat: 'RM {value}',
     defaultProductSupplierId: null,
     defaultProductStandardLeadTimeDays: 90,
+    defaultUomId: null,
+    defaultUomCode: null,
     takeoverCooldownSeconds: 60,
     formSlaGraceSeconds: 0,
     planGrain: 'product',
@@ -160,6 +166,7 @@ function createDefaultSettings(): SystemSetting {
     n8nAttachmentWebhookUrl: null,
     n8nCrmChatOutboundWebhookUrl: null,
     n8nStockInquiryReviseWebhookUrl: null,
+    n8nCloseConvoWebhookUrl: null,
     notifyStockEmail: false,
     notifyStockWeb: false,
     notifyStockThreshold: 0,
@@ -233,6 +240,10 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       'chatbot-media': {
         title: 'Chatbot Media',
         path: '/user-management/settings/chatbot-media',
+      },
+      'stock-visibility': {
+        title: 'Stock Visibility',
+        path: '/user-management/settings/stock-visibility',
       },
       'system-health': {
         title: 'System Health',

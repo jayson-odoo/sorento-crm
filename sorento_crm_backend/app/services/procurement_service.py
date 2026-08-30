@@ -547,6 +547,25 @@ def _merge_shipment_lines(lines_data, header_supplier_id: Optional[str]) -> list
     return list(merged.values())
 
 
+def _line_company_kwargs(shipment: "InboundShipment") -> dict:
+    """The company a new line of this container belongs to: its HEADER's.
+
+    The insert auto-stamp (`company_scope._stamp_company_id`) reads the SESSION
+    scope, not the row's parent. The n8n re-upload path arrives with no company
+    identity at all - scope `None`, the deliberate all-companies principal - so it
+    finds a Mocha container and stamps the replacement lines with the incumbent
+    company (Sorento). The lines then belong to a different company from the
+    container they hang off, and every scoped read of `inbound_shipment_lines`
+    stops seeing them: the container reads `in_transit` with nothing received
+    although its GRN received the lot (packing list TGHU6295708).
+
+    Returns `{}` when the header itself names no company, so the auto-stamp stays
+    the fallback rather than being replaced by a NULL.
+    """
+    company_id = getattr(shipment, "company_id", None)
+    return {"company_id": company_id} if company_id else {}
+
+
 class SupplierService:
     """Service for supplier operations."""
     
@@ -618,40 +637,6 @@ class SupplierService:
             "pagination": {"total": total, "page": page, "limit": limit},
             "empty": total == 0
         }
-
-    def neighbours(
-        self,
-        supplier_id: str,
-        query: Optional[str] = None,
-        sort_field: str = "created_at",
-        sort_dir: str = "asc",
-    ) -> dict:
-        """Resolve prev/next neighbours for ``supplier_id`` within the active list
-        query.
-
-        Selects only the ordered ids (not full rows) for efficiency, then defers the
-        position/wrap math to the pure ``compute_neighbours`` helper. If the record is
-        not in the filtered set (deep link, or filtered out after an edit), falls back
-        to the unfiltered, default-sorted set so the pager is never dead (D2).
-        """
-        from app.services.record_navigation import compute_neighbours
-
-        def _ordered_ids(q) -> list[str]:
-            return [str(row[0]) for row in q.with_entities(Supplier.id).all()]
-
-        filtered_q = self._build_list_query(
-            query=query,
-            sort_field=sort_field,
-            sort_dir=sort_dir,
-        )
-        result = compute_neighbours(_ordered_ids(filtered_q), supplier_id)
-        if result["index"] is not None:
-            return result
-
-        # D2: current record not in the filtered set -> fall back to the unfiltered,
-        # default-sorted set so prev/next still works and total reflects all suppliers.
-        unfiltered_q = self._build_list_query()
-        return compute_neighbours(_ordered_ids(unfiltered_q), supplier_id)
 
     def get_supplier(self, supplier_id: str):
         """Get a supplier by ID."""
@@ -785,44 +770,6 @@ class InboundShipmentService:
             q = q.order_by(sort_column.asc(), InboundShipment.id.asc())
         return q, False
 
-    def neighbours(
-        self,
-        shipment_id: str,
-        query: Optional[str] = None,
-        supplier_id: Optional[str] = None,
-        shipment_status: Optional[str] = None,
-        sort_field: str = "created_at",
-        sort_dir: str = "asc",
-    ) -> dict:
-        """Resolve prev/next neighbours for ``shipment_id`` within the active list
-        query.
-
-        Selects only the ordered ids (not full rows) for efficiency, then defers the
-        position/wrap math to the pure ``compute_neighbours`` helper. If the record is
-        not in the filtered set (deep link, or filtered out after an edit), falls back
-        to the unfiltered, default-sorted set so the pager is never dead (D2).
-        """
-        from app.services.record_navigation import compute_neighbours
-
-        def _ordered_ids(q) -> list[str]:
-            return [str(row[0]) for row in q.with_entities(InboundShipment.id).all()]
-
-        filtered_q, _empty = self._build_list_query(
-            query=query,
-            supplier_id=supplier_id,
-            shipment_status=shipment_status,
-            sort_field=sort_field,
-            sort_dir=sort_dir,
-        )
-        result = compute_neighbours(_ordered_ids(filtered_q), shipment_id)
-        if result["index"] is not None:
-            return result
-
-        # D2: current record not in the filtered set -> fall back to the unfiltered,
-        # default-sorted set so prev/next still works and total reflects all shipments.
-        unfiltered_q, _ = self._build_list_query()
-        return compute_neighbours(_ordered_ids(unfiltered_q), shipment_id)
-
     def list_shipments(
         self,
         page: int = 1,
@@ -863,33 +810,30 @@ class InboundShipmentService:
         non_received_counts: dict[str, int] = {}
         spo_counts: dict[str, int] = {}
         if shipment_ids:
-            line_counts = {
-                str(shipment_id): int(count or 0)
-                for shipment_id, count in (
-                    self.db.query(
-                        InboundShipmentLine.shipment_id,
-                        func.count(InboundShipmentLine.id),
-                    )
-                    .filter(InboundShipmentLine.shipment_id.in_(shipment_ids))
-                    .group_by(InboundShipmentLine.shipment_id)
-                    .all()
+            # Counted per CONTAINER, over the line TABLE rather than the ORM entity:
+            # `shipment_ids` came out of the scoped header query above, so the
+            # containers are already the ones this caller may see, and the count must
+            # then cover every line ON them. Counting through the entity re-applies the
+            # company predicate to the LINE, so a line mis-stamped with another company
+            # (an n8n re-upload under a company-less scope) dropped out of its own
+            # container's count: a fully received container reported 0 lines and stayed
+            # `in_transit`. An ORM join does not help - `func.count(Line.id)` puts the
+            # line mapper back into the statement's top-level entities.
+            lines_table = InboundShipmentLine.__table__
+
+            def _line_counts(*extra_filters) -> dict[str, int]:
+                stmt = (
+                    select(lines_table.c.shipment_id, func.count(lines_table.c.id))
+                    .where(lines_table.c.shipment_id.in_(shipment_ids), *extra_filters)
+                    .group_by(lines_table.c.shipment_id)
                 )
-            }
-            non_received_counts = {
-                str(shipment_id): int(count or 0)
-                for shipment_id, count in (
-                    self.db.query(
-                        InboundShipmentLine.shipment_id,
-                        func.count(InboundShipmentLine.id),
-                    )
-                    .filter(
-                        InboundShipmentLine.shipment_id.in_(shipment_ids),
-                        InboundShipmentLine.line_status != "received",
-                    )
-                    .group_by(InboundShipmentLine.shipment_id)
-                    .all()
-                )
-            }
+                return {
+                    str(row_id): int(count or 0)
+                    for row_id, count in self.db.execute(stmt).all()
+                }
+
+            line_counts = _line_counts()
+            non_received_counts = _line_counts(lines_table.c.line_status != "received")
             spo_counts = {
                 str(shipment_id): int(count or 0)
                 for shipment_id, count in (
@@ -1027,12 +971,24 @@ class InboundShipmentService:
         return received_totals
 
     def refresh_shipment_line_statuses(self, shipment_id: str) -> None:
-        """Recompute and persist line_status for all lines of this shipment (for n8n/API)."""
-        lines = (
-            self.db.query(InboundShipmentLine)
-            .filter(InboundShipmentLine.shipment_id == shipment_id)
-            .all()
+        """Recompute and persist line_status for all lines of this shipment (for n8n/API).
+
+        The lines are read off the RELATIONSHIP, never with a direct query on
+        `InboundShipmentLine`. The company-scope filter is applied to a statement's
+        top-level entities only and deliberately skips relationship loads, so a line
+        mis-stamped with another company answered a direct query with nothing: this
+        method returned at `if not lines` and left a fully received container reading
+        `in_transit` forever, while the detail page (a joined relationship load) showed
+        the very lines it could not find.
+        """
+        shipment = (
+            self.db.query(InboundShipment)
+            .filter(InboundShipment.id == shipment_id)
+            .first()
         )
+        if shipment is None:
+            return
+        lines = list(shipment.shipment_lines)
         if not lines:
             return
         totals_alloc = (
@@ -1044,6 +1000,11 @@ class InboundShipmentService:
         spo_by_product = {str(p): int(t) for p, t in totals_alloc}
         received_by_product = self.get_received_quantities_by_product(shipment_id)
         for line in lines:
+            # Self-heal: a line belongs to the company of the container it hangs off,
+            # and an earlier company-less write may have stamped it with the incumbent
+            # company instead. Put it back, or the next scoped read loses it again.
+            if shipment.company_id and line.company_id != shipment.company_id:
+                line.company_id = shipment.company_id
             alloc = spo_by_product.get(str(line.product_id), 0)
             recv = received_by_product.get(str(line.product_id), 0)
             line.spo_allocated_quantity = alloc
@@ -1051,17 +1012,11 @@ class InboundShipmentService:
             line.line_status = compute_inbound_shipment_line_status(
                 line.quantity_shipped or 0, alloc, recv
             )
-        shipment = (
-            self.db.query(InboundShipment)
-            .filter(InboundShipment.id == shipment_id)
-            .first()
-        )
-        if shipment:
-            all_lines_received = all((line.line_status or "").strip().lower() == "received" for line in lines)
-            if all_lines_received:
-                shipment.shipment_status = "fully_received"
-            elif (shipment.shipment_status or "").strip().lower() in ("received", "fully_received"):
-                shipment.shipment_status = "in_transit"
+        all_lines_received = all((line.line_status or "").strip().lower() == "received" for line in lines)
+        if all_lines_received:
+            shipment.shipment_status = "fully_received"
+        elif (shipment.shipment_status or "").strip().lower() in ("received", "fully_received"):
+            shipment.shipment_status = "in_transit"
         self.db.commit()
 
     def _derive_header_supplier(
@@ -1193,9 +1148,24 @@ class InboundShipmentService:
         # Delete before insert: the unique index on (shipment, product, supplier) treats
         # NULL as a value, so an insert that reuses a departing row's key would collide if
         # the unit of work flushed the save first.
-        for line in existing:
-            if str(line.id) not in claimed:
-                self.db.delete(line)
+        departing = [line for line in existing if str(line.id) not in claimed]
+        if departing:
+            # The proforma-invoice links pointing at these lines go with them, HERE, in the
+            # same transaction. The FK is ON DELETE SET NULL, which left a phantom behind:
+            # a link naming a shipment but no line on it, so the invoice read as sitting on
+            # a container that no longer holds its goods, refused every further write, and
+            # could never be converted again. One writer for the deletion and the trail it
+            # invalidates, rather than a sweeper that runs later and sometimes.
+            from app.models.scm import ProformaInvoiceShipmentLink
+
+            self.db.query(ProformaInvoiceShipmentLink).filter(
+                ProformaInvoiceShipmentLink.inbound_shipment_line_id.in_(
+                    [str(line.id) for line in departing]
+                )
+            ).delete(synchronize_session=False)
+            self.db.flush()
+        for line in departing:
+            self.db.delete(line)
         self.db.flush()
 
         for line, d in updates:
@@ -1206,7 +1176,11 @@ class InboundShipmentService:
                 if value is not None:
                     setattr(line, field, value)
         for d in inserts:
-            self.db.add(InboundShipmentLine(**d, shipment_id=shipment.id))
+            self.db.add(
+                InboundShipmentLine(
+                    **d, shipment_id=shipment.id, **_line_company_kwargs(shipment)
+                )
+            )
         self.db.flush()
 
     def create_shipment(self, shipment_data: InboundShipmentCreate, created_by: str | None = None):
@@ -1306,7 +1280,9 @@ class InboundShipmentService:
                 self.db.delete(line)
             self.db.flush()
             for d in merged_lines:
-                line = InboundShipmentLine(**d, shipment_id=existing.id)
+                line = InboundShipmentLine(
+                    **d, shipment_id=existing.id, **_line_company_kwargs(existing)
+                )
                 self.db.add(line)
             self.db.flush()
             self._derive_header_supplier(existing, shipment_data.supplier_id)
@@ -1322,17 +1298,31 @@ class InboundShipmentService:
             shipment_dict.get("shipment_status")
         )
         shipment_dict["created_by"] = created_by
+        if not (shipment_dict.get("shipment_number") or "").strip():
+            # The create form no longer asks for one: a shipment number is ours to issue,
+            # and asking somebody to invent a unique string before they have typed anything
+            # about the container is a decision the system can make for them. Numbered from
+            # the same rule the proforma-to-packing-list convert uses, so a container drafted
+            # either way is named the same. AFTER the match attempts above, which key off the
+            # number the CALLER stated - numbering first would make every upload a new row.
+            from app.services.scm.proforma_invoice_service import _draft_shipment_number
+
+            shipment_dict["shipment_number"] = _draft_shipment_number(self.db)
         shipment = InboundShipment(**shipment_dict)
         self.db.add(shipment)
+        # Flushed before the lines are built, so the header's own auto-stamp has
+        # already run and `_line_company_kwargs` has a company to copy.
         self.db.flush()  # Get the ID
-        
+
         # Create lines if provided (one row per product PER SUPPLIER on this shipment;
         # duplicates within the payload are merged on that same pair)
         if shipment_data.shipment_lines:
             for d in _merge_shipment_lines(
                 shipment_data.shipment_lines, shipment_data.supplier_id
             ):
-                line = InboundShipmentLine(**d, shipment_id=shipment.id)
+                line = InboundShipmentLine(
+                    **d, shipment_id=shipment.id, **_line_company_kwargs(shipment)
+                )
                 self.db.add(line)
             self.db.flush()
             self._derive_header_supplier(shipment, shipment_data.supplier_id)
@@ -1388,6 +1378,34 @@ class InboundShipmentService:
         self.db.commit()
         deleted = len(shipments)
         return {"message": f"{deleted} packing list(s) deleted", "deleted_count": deleted}
+
+
+def next_spo_line_number(
+    db: Session, spo_number: str, *, taken: Optional[dict] = None
+) -> int:
+    """The next line number on a shipping order, 1 where it has none yet.
+
+    The LINE is the identity of a row in `spo_allocations` since migration 420
+    (`uk_spo_allocations_company_spo_line`), so every writer has to produce one; a row left
+    with NULL is a row no re-upload can ever match again, and Postgres treats NULLs as
+    distinct so the index would not even complain.
+
+    `taken` is a caller-owned counter for a BATCH that adds several rows to one document
+    before flushing any of them: without it every row of the batch reads the same maximum
+    off the database and they all claim the same number.
+    """
+    if taken is not None and spo_number in taken:
+        taken[spo_number] += 1
+        return taken[spo_number]
+    highest = (
+        db.query(func.max(SPOAllocation.spo_line_number))
+        .filter(SPOAllocation.spo_number == spo_number)
+        .scalar()
+    )
+    nxt = int(highest or 0) + 1
+    if taken is not None:
+        taken[spo_number] = nxt
+    return nxt
 
 
 class SPOAllocationService:
@@ -1482,10 +1500,14 @@ class SPOAllocationService:
         allocations = q.offset(offset).limit(limit).all()
         data = []
         try:
-            alloc_ids = [str(a.id) for a in allocations]
-            received_map = self.get_computed_received_map(alloc_ids)
+            computed = [a for a in allocations if self._receipt_is_computed(a)]
+            received_map = self.get_computed_received_map([str(a.id) for a in computed])
             for a in allocations:
                 resp = SPOAllocationResponse.model_validate(a)
+                if not self._receipt_is_computed(a):
+                    # An imported document states its own receipt. Left alone.
+                    data.append(resp)
+                    continue
                 rec = received_map.get(str(a.id), 0)
                 data.append(resp.model_copy(update={
                     "quantity_received": rec,
@@ -1773,7 +1795,12 @@ class SPOAllocationService:
                 key = (line.shipment_id, line.product_id)
                 shipped_by_ship_product[key] = shipped_by_ship_product.get(key, 0) + (line.quantity_shipped or 0)
 
-        page_alloc_ids = [str(a.id) for spo_num in spo_page for a in by_spo.get(spo_num, [])]
+        page_alloc_ids = [
+            str(a.id)
+            for spo_num in spo_page
+            for a in by_spo.get(spo_num, [])
+            if self._receipt_is_computed(a)
+        ]
         try:
             received_map = self.get_computed_received_map(page_alloc_ids)
         except Exception:
@@ -1786,9 +1813,12 @@ class SPOAllocationService:
             for a in allocs:
                 try:
                     data = SPOAllocationResponse.model_validate(a).model_dump()
-                    rec = received_map.get(str(a.id), 0)
-                    data["quantity_received"] = rec
-                    data["receipt_status"] = "received" if rec >= (a.allocated_quantity or 0) else "pending"
+                    if self._receipt_is_computed(a):
+                        rec = received_map.get(str(a.id), 0)
+                        data["quantity_received"] = rec
+                        data["receipt_status"] = (
+                            "received" if rec >= (a.allocated_quantity or 0) else "pending"
+                        )
                     qty_shipped = shipped_by_ship_product.get((a.inbound_shipment_id, a.product_id))
                     data["quantity_shipped"] = qty_shipped
                     alloc_responses.append(SPOAllocationWithShippedResponse(**data))
@@ -1840,27 +1870,40 @@ class SPOAllocationService:
         so that caller suppresses it here and fires it once, per SPO number, when
         the whole file has landed.
         """
-        # Check unique constraint: (spo_number, product_id, warehouse_id)
-        if allocation_data.spo_number and allocation_data.product_id and allocation_data.warehouse_id:
-            existing = self.db.query(SPOAllocation).filter(
-                SPOAllocation.spo_number == allocation_data.spo_number,
-                SPOAllocation.product_id == allocation_data.product_id,
-                SPOAllocation.warehouse_id == allocation_data.warehouse_id,
-            ).first()
-            if existing:
-                raise handle_conflict("SPO number, product and warehouse combination already exists.")
-        
         allocation_dict = allocation_data.model_dump()
         allocation_dict["receipt_status"] = _normalize_spo_receipt_status(
             allocation_dict.get("receipt_status")
         )
         allocation_dict["created_by"] = created_by
+        # The LINE is the identity of a row in this table since migration 420
+        # (`uk_spo_allocations_company_spo_line`), so a caller that does not state a line
+        # number gets the next one on that document. The old guard checked
+        # (spo_number, product, warehouse), which is not unique and never was: the captain's
+        # book states the same product on one SPO 13,305 times over, two containers at a
+        # time, and refusing the second one refuses ordinary data.
+        if allocation_dict.get("spo_number") and allocation_dict.get("spo_line_number") is None:
+            allocation_dict["spo_line_number"] = self._next_spo_line_number(
+                allocation_dict["spo_number"]
+            )
+        if allocation_dict.get("spo_number") and allocation_dict.get("spo_line_number") is not None:
+            existing = self.db.query(SPOAllocation.id).filter(
+                SPOAllocation.spo_number == allocation_dict["spo_number"],
+                SPOAllocation.spo_line_number == allocation_dict["spo_line_number"],
+            ).first()
+            if existing:
+                raise handle_conflict("This SPO already carries that line number.")
+
         allocation = SPOAllocation(**allocation_dict)
         self.db.add(allocation)
         self.db.commit()
         self.db.refresh(allocation)
         self._capture_incoming_cost(allocation)
-        InboundShipmentService(self.db).refresh_shipment_line_statuses(allocation.inbound_shipment_id)
+        if allocation.inbound_shipment_id:
+            # An SPO document has no shipment until somebody books a container for it, and
+            # there is nothing to refresh until then.
+            InboundShipmentService(self.db).refresh_shipment_line_statuses(
+                allocation.inbound_shipment_id
+            )
         # The other half of the journey: any GRN line that stated this SPO and
         # could not be placed when it was imported is now placeable. This is the
         # hook for the paths that write ONE allocation - the UI / API create, and
@@ -1869,6 +1912,9 @@ class SPOAllocationService:
         if forward_match:
             _forward_match_for_spo(self.db, allocation.spo_number, allocation.company_id)
         return allocation
+
+    def _next_spo_line_number(self, spo_number: str) -> int:
+        return next_spo_line_number(self.db, spo_number)
 
     def _capture_incoming_cost(self, allocation: SPOAllocation) -> None:
         """Stamp the packing-list cost, in its currency, on the inbound shipment line.
@@ -1992,7 +2038,13 @@ class SPOAllocationService:
                 SPOAllocation.spo_number == allocation_data.spo_number,
                 SPOAllocation.product_id == allocation_data.product_id,
                 SPOAllocation.warehouse_id == allocation_data.warehouse_id,
-            ).first()
+                # Rows this writer could own, which is the ones nobody stamped. Since
+                # migration 420 the same table holds the IMPORTED documents too, and the
+                # triple is not unique across them - two containers of one product on one
+                # SPO is ordinary data - so without this the allocation sheet would rewrite
+                # a 2023 history quantity, and `.first()` would pick which one at random.
+                SPOAllocation.source_system.is_(None),
+            ).order_by(SPOAllocation.spo_line_number).first()
 
         if existing is None:
             allocation = self.create_allocation(
@@ -2020,7 +2072,10 @@ class SPOAllocationService:
         # (AC-C3.2). The "unchanged" path above returns before any write and stamps
         # nothing, because there was no moment of allocation to capture at.
         self._capture_incoming_cost(existing)
-        InboundShipmentService(self.db).refresh_shipment_line_statuses(existing.inbound_shipment_id)
+        if existing.inbound_shipment_id:
+            InboundShipmentService(self.db).refresh_shipment_line_statuses(
+                existing.inbound_shipment_id
+            )
         # A corrected SPO file raising `allocated_quantity` FREES capacity, and the
         # lines waiting on it should get it. The "unchanged" branch returns above
         # without writing, so there is no moment of allocation to react to there.
@@ -2098,6 +2153,17 @@ class SPOAllocationService:
             .scalar()
         )
         return int(total)
+
+    #: An allocation whose figures came from a FILE states its own receipt, and the GRN
+    #: view of the world must not overwrite it. Every imported SPO document carries a
+    #: `source_system` (migration 420) and 74,016 of them are 2020-2023 history that was
+    #: written fully received; recomputing their received quantity from the GRNs in this
+    #: system returns 0 for all of them, which would show three years of delivered
+    #: purchases as outstanding. A row this system raised itself carries no stamp, and for
+    #: those the GRN lines ARE the record.
+    @staticmethod
+    def _receipt_is_computed(allocation) -> bool:
+        return getattr(allocation, "source_system", None) is None
 
     def get_computed_received_map(self, allocation_ids: list[str]) -> dict[str, int]:
         """Bulk: for each allocation id, return computed quantity_received (the sum
@@ -2260,50 +2326,6 @@ class PickingHeaderService:
         else:
             q = q.order_by(sort_column.asc().nulls_last(), PickingHeader.id.asc())
         return q, None
-
-    def neighbours(
-        self,
-        grn_id: str,
-        query: Optional[str] = None,
-        product_query: Optional[str] = None,
-        picking_status: Optional[str] = None,
-        inspection_status: Optional[str] = None,
-        sort_field: str = "created_at",
-        sort_dir: str = "asc",
-    ) -> dict:
-        """Resolve prev/next neighbours for ``grn_id`` within the active list query.
-
-        Selects only the ordered ids (not full rows), then defers position/wrap math
-        to the pure ``compute_neighbours`` helper. If the record is not in the
-        filtered set (deep link, or filtered out after an edit), falls back to the
-        unfiltered, default-sorted set so the pager is never dead (D2).
-        """
-        from app.services.record_navigation import compute_neighbours
-
-        # Resolve picking_number/UUID input to the canonical id so the lookup matches
-        # the ordered-id list (which holds PickingHeader.id values).
-        resolved = self.get_grn(grn_id)
-        resolved_id = str(resolved.id)
-
-        def _ordered_ids(q) -> list[str]:
-            return [str(row[0]) for row in q.with_entities(PickingHeader.id).all()]
-
-        filtered_q, _ = self._build_grn_list_query(
-            query=query,
-            product_query=product_query,
-            picking_status=picking_status,
-            inspection_status=inspection_status,
-            sort_field=sort_field,
-            sort_dir=sort_dir,
-        )
-        result = compute_neighbours(_ordered_ids(filtered_q), resolved_id)
-        if result["index"] is not None:
-            return result
-
-        # D2: current record not in the filtered set -> fall back to the unfiltered,
-        # default-sorted set so prev/next still works and total reflects all GRNs.
-        unfiltered_q, _ = self._build_grn_list_query()
-        return compute_neighbours(_ordered_ids(unfiltered_q), resolved_id)
 
     def list_grns(
         self,
@@ -3486,45 +3508,6 @@ class StockInquiryService:
         else:
             q = q.order_by(sort_column.asc().nulls_last(), StockInquiry.id.asc())
         return q
-
-    def neighbours(
-        self,
-        inquiry_id: str,
-        query: Optional[str] = None,
-        sort_field: str = "created_at",
-        sort_dir: str = "desc",
-        contact_id: Optional[str] = None,
-        space_id: Optional[str] = None,
-        statuses: Optional[List[str]] = None,
-    ) -> dict:
-        """Resolve prev/next neighbours for ``inquiry_id`` within the active list query.
-
-        Selects only the ordered ids (not full rows), then defers the position/wrap math
-        to the pure ``compute_neighbours`` helper. If the record is not in the filtered
-        set (deep link, or filtered out after an edit), falls back to the unfiltered,
-        default-sorted set so the pager is never dead (D2).
-        """
-        from app.services.record_navigation import compute_neighbours
-
-        def _ordered_ids(q) -> list[str]:
-            return [str(row[0]) for row in q.with_entities(StockInquiry.id).all()]
-
-        filtered_q = self._build_list_query(
-            query=query,
-            sort_field=sort_field,
-            sort_dir=sort_dir,
-            contact_id=contact_id,
-            space_id=space_id,
-            statuses=statuses,
-        )
-        result = compute_neighbours(_ordered_ids(filtered_q), inquiry_id)
-        if result["index"] is not None:
-            return result
-
-        # D2: current record not in the filtered set -> fall back to the unfiltered,
-        # default-sorted set so prev/next still works and total reflects all inquiries.
-        unfiltered_q = self._build_list_query()
-        return compute_neighbours(_ordered_ids(unfiltered_q), inquiry_id)
 
     def list_inquiries(
         self,
@@ -7061,52 +7044,6 @@ class PurchaseRequestService:
         else:
             q = q.order_by(sort_col.asc().nullsfirst(), PurchaseRequestHeader.id.asc())
         return q
-
-    def neighbours(
-        self,
-        request_id: str,
-        query: Optional[str] = None,
-        request_type: Optional[str] = None,
-        approval_status: Optional[str] = None,
-        sort_field: str = "request_date",
-        sort_dir: str = "desc",
-        contact_id: Optional[str] = None,
-        space_id: Optional[str] = None,
-        assigned_to: Optional[str] = None,
-    ) -> dict:
-        """Resolve prev/next neighbours for ``request_id`` within the active list query.
-
-        Selects only the ordered ids (not full rows) for efficiency, then defers the
-        position/wrap math to the pure ``compute_neighbours`` helper. If the record is
-        not in the filtered set (deep link, or filtered out after an edit), falls back
-        to the default-sorted set so the pager is never dead (D2).
-
-        The D2 fallback preserves ``request_type`` only - so PR navigation can never
-        wrap into sponsorship forms (and vice-versa) even on the fallback path.
-        """
-        from app.services.record_navigation import compute_neighbours
-
-        def _ordered_ids(q) -> list[str]:
-            return [str(row[0]) for row in q.with_entities(PurchaseRequestHeader.id).all()]
-
-        filtered_q = self._build_request_list_query(
-            query=query,
-            request_type=request_type,
-            approval_status=approval_status,
-            sort_field=sort_field,
-            sort_dir=sort_dir,
-            contact_id=contact_id,
-            space_id=space_id,
-            assigned_to=assigned_to,
-        )
-        result = compute_neighbours(_ordered_ids(filtered_q), request_id)
-        if result["index"] is not None:
-            return result
-
-        # D2: current record not in the filtered set -> fall back to the default-sorted
-        # set, still scoped to request_type so PR nav stays in PRs / SF in SFs.
-        unfiltered_q = self._build_request_list_query(request_type=request_type)
-        return compute_neighbours(_ordered_ids(unfiltered_q), request_id)
 
     def list_requests(
         self,

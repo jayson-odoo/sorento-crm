@@ -31,8 +31,10 @@ def _rec(**over):
         "status": None,
         "warehouse_code": "WH", "warehouse_name": "WH", "segment": "dealer",
         # COALESCE(w.pool_warehouse_id, w.id): a location with no pool of its own IS its
-        # own pool, so a row at "w1" reports "w1".
+        # own pool, so a row at "w1" reports "w1" - and its CODE, which is what the SPO and
+        # PO dialogs name the destination with (`PLAN-scm-reorder-revamp.md` 5.11).
         "pool_warehouse_id": "w1",
+        "pool_warehouse_code": "WH",
         "supplier_code": "S1", "supplier_name": "S1",
         "currency": "USD", "rate_to_base": 4.4, "rate_as_of": None,
         "inputs": {

@@ -243,6 +243,13 @@ export const MENU_SIDEBAR: MenuConfig = [
             permission: 'projects.projects.view',
           },
           {
+            // Directly under the board (R15): the board decides, this shows what the
+            // decisions leave outstanding, month by month.
+            title: 'Stock Debt',
+            path: '/project-sales/stock-debt',
+            permission: 'projects.stock_debt.view',
+          },
+          {
             title: 'Plans',
             path: '/project-sales/plans',
             permission: 'projects.projects.view',
@@ -362,6 +369,11 @@ export const MENU_SIDEBAR: MenuConfig = [
         title: 'Stock Ledger',
         path: '/inventory-management/stock-ledger',
         permission: 'inventory.stock_ledger.view',
+      },
+      {
+        title: 'Stock Transfers',
+        path: '/inventory-management/stock-transfers',
+        permission: 'inventory.stock_transfers.view',
       },
     ],
   },
@@ -594,6 +606,11 @@ export const MENU_SIDEBAR: MenuConfig = [
         title: 'Sponsorship Forms',
         path: '/procurement-management/sponsorship-forms',
         permission: 'procurement.sponsorship_forms.view',
+      },
+      {
+        title: 'Sponsorship Report',
+        path: '/procurement-management/sponsorship-forms/report',
+        permission: 'procurement.sponsorship_forms.report',
       },
     ],
   },
@@ -1730,6 +1747,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         path: '/procurement-management/sponsorship-forms',
         permission: 'procurement.sponsorship_forms.view',
       },
+      {
+        title: 'Sponsorship Report',
+        path: '/procurement-management/sponsorship-forms/report',
+        permission: 'procurement.sponsorship_forms.report',
+      },
     ],
   },
   {
@@ -1761,6 +1783,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         title: 'Stock Ledger',
         path: '/inventory-management/stock-ledger',
         permission: 'inventory.stock_ledger.view',
+      },
+      {
+        title: 'Stock Transfers',
+        path: '/inventory-management/stock-transfers',
+        permission: 'inventory.stock_transfers.view',
       },
     ],
   },
@@ -1818,6 +1845,13 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         title: 'Fulfilment Planning',
         path: '/project-sales/fulfilment-planning',
         permission: 'projects.projects.view',
+      },
+      {
+        // Directly under the board (R15), and cross-project for the same reason it is:
+        // debt is read per product across the whole book, not inside one project.
+        title: 'Stock Debt',
+        path: '/project-sales/stock-debt',
+        permission: 'projects.stock_debt.view',
       },
       {
         // "Is the plan stored, how do I review it" (captain, 19 Aug 2026 demo): the board

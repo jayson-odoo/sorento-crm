@@ -1,22 +1,55 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
+import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
 import {
   annotateSalesAgent,
+  bulkAnnotateSalesAgents,
   getSalesAgent,
   getSalesAgents,
 } from '../services/salesAgentService';
-import type { MirrorAnnotationPayload } from '../types/salesAgent.types';
+import type {
+  MirrorAnnotationPayload,
+  SalesAgentBulkAnnotatePayload,
+} from '../types/salesAgent.types';
+
+/**
+ * The list's React Query key. The detail page's pager rebuilds the SAME key from
+ * the URL, so it reads the page the list already fetched.
+ */
+export function salesAgentsListQueryKey(params: DataGridApiFetchParams): QueryKey {
+  return [
+    'sales-agents',
+    params.pageIndex,
+    params.pageSize,
+    params.sorting,
+    params.searchQuery,
+  ];
+}
+
+/** The list query a detail URL describes, in the shape the list passes. */
+export function salesAgentsListParamsFromUrl(
+  params: ListPagerParams,
+): DataGridApiFetchParams {
+  return {
+    pageIndex: params.pageIndex,
+    pageSize: params.pageSize,
+    sorting: params.sorting,
+    searchQuery: params.searchQuery,
+  };
+}
+
+/** The pager's two hooks into the sales agents list. */
+export const salesAgentsPagerQuery = {
+  listQueryKey: (params: ListPagerParams): QueryKey =>
+    salesAgentsListQueryKey(salesAgentsListParamsFromUrl(params)),
+  fetchPage: (params: ListPagerParams): Promise<ListPagerPage> =>
+    getSalesAgents(salesAgentsListParamsFromUrl(params)),
+};
 
 export function useSalesAgents(params: DataGridApiFetchParams) {
   return useQuery({
-    queryKey: [
-      'sales-agents',
-      params.pageIndex,
-      params.pageSize,
-      params.sorting,
-      params.searchQuery,
-    ],
+    queryKey: salesAgentsListQueryKey(params),
     queryFn: () => getSalesAgents(params),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,
@@ -25,10 +58,7 @@ export function useSalesAgents(params: DataGridApiFetchParams) {
   });
 }
 
-/**
- * One agent by id. Unused by the list + modal this slice ships, and kept because the
- * AutoCount branch's `[id]` detail page imports exactly this symbol (see PLAN amendment 11).
- */
+/** One agent by id, for the record page at `/master-data-management/sales-agents/{id}`. */
 export function useSalesAgent(id: string | null) {
   return useQuery({
     queryKey: ['sales-agent', id],
@@ -38,6 +68,20 @@ export function useSalesAgent(id: string | null) {
     },
     enabled: !!id,
     retry: 1,
+  });
+}
+
+/** Set one annotation across a selection. Toasts the COUNT, because the whole point of the
+ *  action is that it touched more than the row the user is looking at. */
+export function useBulkAnnotateSalesAgents() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data: SalesAgentBulkAnnotatePayload) => bulkAnnotateSalesAgents(data),
+    onSuccess: (res) => {
+      queryClient.invalidateQueries({ queryKey: ['sales-agents'] });
+      toast.success(`${res.updated} sales agent${res.updated === 1 ? '' : 's'} updated`);
+    },
+    onError: (error: Error) => toast.error(error.message || 'Failed to update the selected agents'),
   });
 }
 

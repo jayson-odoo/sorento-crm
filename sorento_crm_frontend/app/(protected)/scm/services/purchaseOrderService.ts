@@ -43,7 +43,7 @@
 import { apiFetch } from '@/lib/api';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 import type { DataGridApiResponse } from '@/components/ui/data-grid';
-import type { PurchaseOrder } from '../types/scm.types';
+import type { PurchaseOrder, PurchaseOrderUpdateData } from '../types/scm.types';
 import {
   USE_SLICE_B_MOCKS,
   mockConfirmPurchaseOrders,
@@ -75,6 +75,19 @@ export interface PurchaseOrderListQuery {
    * own `is_on_order` flag, so the filter and the badge can never disagree.
    */
   outstanding?: boolean | null;
+  /**
+   * true = at least one order-inquiry row is linked to a line of this order; false = none
+   * is; omitted/null = every order (AC-G4). The buyer's "is this purchase order already
+   * spoken for" - the same fact the Allocated column prints, so the filter and the column
+   * can never disagree.
+   */
+  allocated?: boolean | null;
+  /**
+   * Keep only these purchase order NUMBERS. What the Order Inquiries page hands over when
+   * the buyer asks to see the book they have just uploaded (AC-H13); omitted on every
+   * other read of this list.
+   */
+  documents?: string[] | null;
 }
 
 /** What we last paid for a SKU. `null` when we have never bought it; a recorded 0 is 0. */
@@ -133,6 +146,8 @@ export async function getPurchaseOrders(
       supplier: params.supplier ?? undefined,
       product_code: params.productCode || undefined,
       outstanding: params.outstanding ?? undefined,
+      allocated: params.allocated ?? undefined,
+      documents: params.documents?.length ? params.documents.join(',') : undefined,
     },
   );
   const res = await apiFetch(`${BASE}?${sp.toString()}`);
@@ -146,6 +161,46 @@ export async function getPurchaseOrder(id: string): Promise<PurchaseOrder | null
   const res = await apiFetch(`${BASE}/${encodeURIComponent(id)}`);
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load purchase order'));
+  return (await res.json()) as PurchaseOrder;
+}
+
+/**
+ * Correct a purchase order in place. PUT /purchase-orders/{id}.
+ *
+ * The payload is built the same way `salesOrderService.toWritePayload` builds its own: a
+ * key that is genuinely ABSENT leaves the stored column alone, and one sent as `null`
+ * clears it, which is the distinction the backend reads through `model_fields_set`.
+ * `lines` is left off entirely when nothing on any line moved.
+ */
+export async function updatePurchaseOrder(
+  id: string,
+  data: PurchaseOrderUpdateData,
+): Promise<PurchaseOrder> {
+  const body = {
+    ...(data.order_date !== undefined ? { order_date: data.order_date } : {}),
+    ...(data.expected_date !== undefined ? { expected_date: data.expected_date } : {}),
+    ...(data.supplier_code !== undefined ? { supplier_code: data.supplier_code } : {}),
+    ...(data.lines !== undefined
+      ? {
+          lines: data.lines.map((l) => ({
+            id: l.id,
+            sku: l.sku,
+            qty_ordered: l.qty_ordered,
+            ...(l.uom !== undefined ? { uom: l.uom } : {}),
+            ...(l.warehouse_code !== undefined ? { warehouse_code: l.warehouse_code } : {}),
+            ...(l.expected_date !== undefined ? { expected_date: l.expected_date } : {}),
+            ...(l.unit_price !== undefined ? { unit_price: l.unit_price } : {}),
+            ...(l.discount !== undefined ? { discount: l.discount } : {}),
+          })),
+        }
+      : {}),
+  };
+  const res = await apiFetch(`${BASE}/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to update purchase order'));
   return (await res.json()) as PurchaseOrder;
 }
 
@@ -181,7 +236,15 @@ export async function bulkDeletePurchaseOrders(
   return (await res.json()) as BulkDeletePurchaseOrdersResult;
 }
 
-/** Create a goods receipt from an active PO (M4-D6). Returns the GR reference. */
+/**
+ * Create a goods receipt from an active PO (M4-D6). Returns the GR reference.
+ *
+ * NOT CALLED BY ANY SCREEN TODAY. The per-row "Create GR" button came off the purchase-order
+ * list the same day "Create DO" came off the sales-order list: recording what arrived is a
+ * receiving decision made against the delivery in hand, not a button on a list of 13,000
+ * orders. The endpoint and this binding stay because the route is live and a receiving
+ * screen is where the action belongs; delete both if that screen never arrives.
+ */
 export async function createGrFromPurchaseOrder(id: string): Promise<{ gr_reference: string }> {
   if (USE_SLICE_B_MOCKS) {
     const res = mockCreateGr(id);

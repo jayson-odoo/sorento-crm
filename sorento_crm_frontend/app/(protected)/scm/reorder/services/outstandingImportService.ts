@@ -124,7 +124,11 @@ export interface OutstandingPlanningChangeBatch {
 
 export interface OutstandingPreview {
   doc_type: string;
-  /** false = the header is missing required columns; nothing can be applied. */
+  /**
+   * false = nothing can be applied. Two reasons: the header is missing required columns,
+   * or the file names an order whose demand class cannot be decided
+   * (`unclassified_documents`).
+   */
   ok: boolean;
   scope_documents: string[];
   counts: OutstandingCounts;
@@ -135,6 +139,43 @@ export interface OutstandingPreview {
   resolution_issues: OutstandingResolutionIssue[];
   samples: OutstandingSamples;
   unmapped_agents: OutstandingAgentNotice[];
+  /**
+   * File-level notices that belong to no single row: "N rows carry a date the reader could
+   * not read", "N rows are shipping orders". Already written as sentences a person reads,
+   * so the verdict prints them as they are.
+   */
+  warnings?: string[];
+  /**
+   * How many rows of a PURCHASE book belong to shipping orders (`SPO-...`), which this
+   * channel does not write. Its own number rather than a fact buried in a warning string,
+   * because "would import" is a count and a book that is half SPO would otherwise claim to
+   * import twice what it will.
+   */
+  shipping_order_rows?: number;
+  /**
+   * What the shipping-order half of a purchase book would DO, since it files those rows
+   * rather than dropping them: the documents it names, the lines it would state
+   * (`spo_new + spo_changed + spo_unchanged`), the open lines it would CLOSE because the
+   * book no longer states them, and the lines whose stock location we do not hold.
+   *
+   * The split matters and the bare line count did not: the verdict printed "721 rows are
+   * shipping orders" beside "nothing would change", because the sentence about change read
+   * the purchase-order diff alone and this half had no figure to contradict it with.
+   */
+  spo_documents?: number;
+  spo_lines?: number;
+  spo_new?: number;
+  spo_changed?: number;
+  spo_unchanged?: number;
+  spo_closed?: number;
+  spo_unknown_locations?: number;
+  /**
+   * Sales orders in this file that no order type, customer market segment or agent class
+   * can classify (QP1). Non-empty REFUSES the whole file: a half-imported book disagrees
+   * with AutoCount, and a defaulted class is worse still because it is stable and no later
+   * upload surfaces it. The per-row list says which row and which debtor to fix.
+   */
+  unclassified_documents?: string[];
   /** Absent (not just `null`) on every Phase 1 response - Phase 2 wires the real preview. */
   planning_change_batch?: OutstandingPlanningChangeBatch | null;
 }

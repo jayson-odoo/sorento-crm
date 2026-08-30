@@ -13,10 +13,16 @@ Scope is the PLAN's rows only (user decision), not the whole catalogue: the sugg
 part of reviewing this week's plan, and a catalogue-wide sweep would bury the forty levels
 worth changing under thousands nobody is looking at.
 
-The arithmetic is the S10b one (`avg monthly movement x cover months`, study/cover windows
-from the planning policy). What S13f adds is the trajectory: a product whose orders are
-rising rounds UP to the next whole unit, one whose orders died off rounds DOWN, so the
-suggested level leans the way the demand is leaning (AC-S13f.1).
+The arithmetic is the industry one (captain, 27 Aug; AC-R11):
+
+    ADU   = delivery-order quantity over the last 90 days / 90, every warehouse
+    level = ADU x lead_time + ADU x 14, rounded up to a whole unit
+
+`lead_time` is the product's own supplier lead time - the recommendation's frozen supplier
+first (that is the supplier this plan intends to buy from), then `product_suppliers`, then
+30 days when nobody knows one. It replaces the S10b `avg monthly movement x cover months`
+suggestion and the S13f trajectory lean on top of it: a level sized against a lead time is
+a number the buyer can argue with, and a rounding nudged by a trend verdict was not.
 """
 from __future__ import annotations
 
@@ -30,7 +36,6 @@ from sqlalchemy.orm import Session
 from app.services.company_scope_sql import company_sql_predicate
 from app.services.error_handler import AppException
 from app.services.scm import reorder_level_service as rl
-from app.services.scm import trajectory_service
 
 log = logging.getLogger(__name__)
 
@@ -49,6 +54,9 @@ def _plan_pairs(db: Session, run_id: str) -> list[dict]:
                rr.company_id::text  AS company_id,
                p.product_code, p.product_name,
                p.reorder_quantity AS master_reorder_quantity,
+               -- The lead time the run FROZE for the supplier it chose. There is no
+               -- column for it: `inputs.supplier` is where the run keeps the choice.
+               (rr.inputs -> 'supplier' ->> 'lead_time_days') AS lead_time_days,
                w.warehouse_code, w.warehouse_name
           FROM scm.reorder_recommendation rr
           JOIN products p ON p.id = rr.product_id
@@ -59,16 +67,15 @@ def _plan_pairs(db: Session, run_id: str) -> list[dict]:
 
 
 def _level_windows(db: Session) -> dict[str, float]:
-    """The study/cover months off the global planning policy. NULL = the code default."""
+    """The months the popover CHARTS off the global planning policy. NULL = the code
+    default. The level's own arithmetic reads the 90-day ADU window, never these months -
+    they are the evidence bars under the sentence."""
     row = db.execute(text(
-        "SELECT level_study_months, level_cover_months "
+        "SELECT level_study_months "
         "FROM scm.reorder_policy WHERE scope_type = 'global' AND is_active = true "
         "ORDER BY priority DESC NULLS LAST LIMIT 1"
     )).first()
-    return {
-        "study_months": int(row[0]) if row and row[0] else rl.DEFAULT_STUDY_MONTHS,
-        "cover_months": float(row[1]) if row and row[1] else rl.DEFAULT_COVER_MONTHS,
-    }
+    return {"study_months": int(row[0]) if row and row[0] else rl.DEFAULT_STUDY_MONTHS}
 
 
 def refresh_for_run(db: Session, run_id: str, *, as_of: Optional[date] = None) -> int:
@@ -83,25 +90,21 @@ def refresh_for_run(db: Session, run_id: str, *, as_of: Optional[date] = None) -
     windows = _level_windows(db)
     product_ids = sorted({p["product_id"] for p in pairs})
     constraints = rl.supplier_constraints(db, product_ids)
-    # The same verdicts the Trend popup shows, so the two never disagree about a product.
-    trend = trajectory_service.trajectory_for_run(db, run_id, as_of=as_of)["series"]
+    # ADU and the evidence bars are PRODUCT facts, read once across every warehouse - the
+    # level does not care which bin the units left from (captain, 27 Aug).
+    usage = rl.average_daily_usage(db, product_ids, as_of=as_of)
+    movement = rl.monthly_movement(db, product_ids, None,
+                                   months=windows["study_months"], as_of=as_of)
 
     written = 0
-    movement_by_wid: dict[Optional[str], dict[str, list]] = {}
     for pair in pairs:
         pid, wid = pair["product_id"], pair["warehouse_id"]
-        if wid not in movement_by_wid:
-            movement_by_wid[wid] = rl.monthly_movement(
-                db, product_ids, [wid] if wid else None,
-                months=windows["study_months"], as_of=as_of)
-        segment = pair["segment"] or "project"
-        verdict = (trend.get(f"{pid}:{segment}") or {}).get("verdict")
-        c = constraints.get(pid, {})
-        out = rl.suggest_level(
-            movement_by_wid[wid].get(pid, []),
-            cover_months=windows["cover_months"],
-            moq=c.get("moq"), order_multiple=c.get("order_multiple"),
-            trend=verdict)
+        u = usage.get(pid, {})
+        lead, source = _lead_time_for(pair, constraints.get(pid, {}))
+        out = rl.suggest_level_from_usage(
+            adu=u.get("adu", 0.0), lead_time_days=lead, lead_time_source=source,
+            window_days=u.get("window_days", rl.LEVEL_WINDOW_DAYS),
+            window_qty=u.get("window_qty"), months=movement.get(pid, []))
         rl.store_suggestion(db, product_id=pid, warehouse_id=wid,
                             suggested_level=out["level"], basis=out["basis"],
                             company_id=pair["company_id"])
@@ -110,8 +113,26 @@ def refresh_for_run(db: Session, run_id: str, *, as_of: Optional[date] = None) -
     return written
 
 
+def _lead_time_for(pair: dict, constraint: dict) -> tuple[Optional[float], Optional[str]]:
+    """The lead time the level is sized against, and where it came from.
+
+    The recommendation's own frozen lead time wins: that is the supplier this plan intends
+    to buy from, and a level sized against a different one would ask the buyer to hold
+    stock for a lead time nobody is ordering on. `product_suppliers` is the fallback for a
+    row the engine never costed (a `needs_level` row often has no supplier chosen).
+    """
+    rec_lead = pair.get("lead_time_days")
+    if rec_lead:
+        return float(rec_lead), "recommendation"
+    ps_lead = constraint.get("lead_time_days")
+    if ps_lead:
+        return float(ps_lead), "supplier"
+    return None, "default"
+
+
 def amend_suggestion(db: Session, *, product_id: str, warehouse_id: Optional[str],
-                     amended_level: Optional[float], amended_by: Optional[str]) -> dict:
+                     amended_level: Optional[float], amended_by: Optional[str],
+                     commit: bool = True) -> dict:
     """Record the buyer's own figure BESIDE the engine's suggestion (S14).
 
     Never touches `suggested_level` (the engine's number stays arguable-with) and never
@@ -145,7 +166,12 @@ def amend_suggestion(db: Session, *, product_id: str, warehouse_id: Optional[str
                updated_at = :now
          WHERE id = :id
     """), {"id": row["id"], "al": amended_level, "by": amended_by, "now": now})
-    db.commit()
+    # `commit=False` is the plan's bulk save, which owns the transaction across every
+    # edited row and must roll the whole batch back on any one failure.
+    if commit:
+        db.commit()
+    else:
+        db.flush()
 
     fresh = db.execute(text(
         "SELECT suggested_level, amended_level, amended_at, amended_by "
@@ -201,6 +227,12 @@ def suggestions_for_run(db: Session, run_id: str) -> dict[str, Any]:
             "master_reorder_quantity": (
                 float(pair["master_reorder_quantity"])
                 if pair.get("master_reorder_quantity") is not None else None),
+            # The figure the BUYER set (R5), which the level upload also writes. Null when
+            # neither has said anything, and never merged into `master_reorder_quantity`
+            # above - the panel shows the buyer's number and the master's beside it, the
+            # same way `amended_level` sits beside `suggested_level`.
+            "reorder_qty": (float(row["reorder_qty"])
+                            if row.get("reorder_qty") is not None else None),
             "suggested_at": (row["suggested_at"].isoformat()
                              if row.get("suggested_at") else None),
             # The buyer's own figure, beside the engine's - never instead of it (S14).

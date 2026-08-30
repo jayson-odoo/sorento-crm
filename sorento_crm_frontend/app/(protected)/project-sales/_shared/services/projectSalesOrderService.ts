@@ -96,20 +96,6 @@ export async function buildSalesOrders(
   return normaliseEnvelope(await response.json(), 50);
 }
 
-/**
- * Prev/next neighbours of a sales order within its project's list - the same set, in the
- * same order, that `/projects/{id}/sales-orders` returns. Read by the generic
- * `useRecordNeighbours` hook.
- *
- *   GET /api/v1/project-sales/projects/{project_id}/sales-orders/neighbours?id=<pso_id>
- *   200 { total, index, prev_id, next_id }
- *     - index is 1-based, null when the order belongs to another project.
- *     - prev_id/next_id wrap circularly; null only when total <= 1.
- *   404 when the project or the sales order id names nothing.
- */
-export function salesOrderNeighboursPath(projectId: string): string {
-  return `${BASE}/projects/${projectId}/sales-orders/neighbours`;
-}
 
 export async function listProjectSalesOrders(
   projectId: string,

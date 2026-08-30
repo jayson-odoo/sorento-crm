@@ -69,11 +69,20 @@ def _seed_po(db, marker: str) -> tuple[str, str, str]:
 def _seed_placed_row(db, marker: str, po_line_id: str, *, qty=10) -> str:
     """An order-inquiry row PLACED on `po_line_id`, mirroring what `place_on_po` writes
     (`project_order_inquiry_service.place_on_po`), so the bulk-delete side effect has a
-    real row to unplace. Returns the row id."""
+    real row to unplace. Returns the row id.
+
+    Both halves of the placement, because since migration 421 a placement IS a
+    `projects.order_inquiry_links` row: the `po_line_id`/`po_ref` columns are the
+    single-document summary the listing reads, and `unplace` works off the links. A row
+    carrying only the summary is a shape no writer produces (the migration backfilled a
+    link for every one of them) and it makes the unplace refuse with
+    `order_inquiry_not_placed`.
+    """
     from app.models.project_so import (
         INQUIRY_PLACED,
         IV_ORDER,
         OrderInquiry,
+        OrderInquiryLink,
         OrderInquiryRow,
         ProjectSalesOrder,
     )
@@ -90,6 +99,13 @@ def _seed_placed_row(db, marker: str, po_line_id: str, *, qty=10) -> str:
         note="pre-existing note",
     )
     db.add(row)
+    db.flush()
+    db.add(
+        OrderInquiryLink(
+            id=str(uuid.uuid4()), row_id=row.id, po_line_id=po_line_id,
+            document=marker, qty=qty, auto=True,
+        )
+    )
     db.flush()
     return str(row.id)
 

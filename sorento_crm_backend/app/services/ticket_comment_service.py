@@ -107,8 +107,13 @@ def mirror_comment_to_respond(
     *,
     identifier: Optional[str],
     client=None,
+    respond_mentions: Optional[list[str]] = None,
 ) -> bool:
     """Best-effort mirror of a committed CRM comment to Respond.io (AC-L2).
+
+    ``respond_mentions`` are raw Respond user ids to tag ahead of the body
+    (the integration lane holds those, not CRM ids); they are prepended as
+    ``{{@user.<id>}}`` tokens exactly the way the n8n sub used to write them.
 
     Post-commit and never raising: the comment is already saved, so a mirror
     failure is a logged outbox row, not a 500 for work that succeeded. Every
@@ -125,6 +130,13 @@ def mirror_comment_to_respond(
         return False
 
     text = build_mirror_text(db, comment.body or "", list(comment.mentioned_user_ids or []))
+    tags = [
+        "{{@user." + str(rid).strip() + "}}"
+        for rid in (respond_mentions or [])
+        if str(rid).strip() and ("{{@user." + str(rid).strip() + "}}") not in text
+    ]
+    if tags:
+        text = " ".join(tags) + "\n" + text
     endpoint = f"https://api.respond.io/v2/contact/id:{ident}/comment"
     payload = {"text": text}
     api = client if client is not None else RespondClient.for_identifier(db, ident)
@@ -304,6 +316,7 @@ class TicketCommentService:
         author_user_id: str,
         body: str,
         mentions: list[str],
+        author_name: Optional[str] = None,
     ) -> ConversationTicketComment:
         author = self.db.query(User).filter(User.id == str(author_user_id)).first()
         comment = ConversationTicketComment(
@@ -311,7 +324,7 @@ class TicketCommentService:
             tracking_id=tracking_id,
             respond_contact_id=respond_contact_id,
             author_id=str(author_user_id) if author else None,
-            author_name=_display_name(author),
+            author_name=(author_name or "").strip() or _display_name(author),
             body=body.strip(),
             mentioned_user_ids=mentions,
             source=COMMENT_SOURCE_CRM,
@@ -411,6 +424,62 @@ class TicketCommentService:
         self._publish(identifier)
         return self.serialize(comment)
 
+    def create_for_contact_from_integration(
+        self,
+        contact_ref: str,
+        *,
+        author_user_id: str,
+        body: str,
+        mentioned_respond_user_ids: list[str],
+        author_name: Optional[str] = None,
+    ) -> tuple[TicketCommentResponse, list[str]]:
+        """A flow-written note on a CONTACT (n8n ``sub-add-comment-respond``).
+
+        Same shape and same side effects as ``create_for_contact`` - the CRM is
+        written first, the Respond mirror is a best-effort courtesy after - with
+        two integration-specific differences: the author label is the flow's
+        (``author_name``), and mentions arrive as Respond user ids. Those that
+        map to a CRM user (``users.respond_user_id``) become real mentions so the
+        in-app notification fires; every id, mapped or not, is still tagged in
+        the mirror text so the Respond agent is notified exactly as before.
+        Returns the comment and the ids that matched nobody in the CRM.
+        """
+        from app.services.sla_service import ConversationSLATrackingService
+
+        contact = ConversationSLATrackingService(self.db).require_contact(contact_ref)
+        respond_ids = [str(r).strip() for r in (mentioned_respond_user_ids or []) if str(r).strip()]
+        mapped: dict[str, User] = {}
+        if respond_ids:
+            for user in (
+                self.db.query(User)
+                .filter(User.respond_user_id.in_(respond_ids))
+                .filter(User.is_trashed.is_(False))
+                .all()
+            ):
+                mapped.setdefault(str(user.respond_user_id).strip(), user)
+        unmapped = [rid for rid in respond_ids if rid not in mapped]
+        mentions = [str(mapped[rid].id) for rid in respond_ids if rid in mapped]
+
+        comment = self._persist(
+            tracking_id=None,
+            respond_contact_id=str(contact.id),
+            author_user_id=author_user_id,
+            body=body,
+            mentions=mentions,
+            author_name=author_name,
+        )
+
+        identifier = str(getattr(contact, "respond_io_id", "") or "").strip() or None
+        self._notify_mentions(
+            comment,
+            author_user_id=str(author_user_id),
+            tracking=None,
+            contact=contact,
+        )
+        self._mirror(comment, identifier, respond_mentions=respond_ids)
+        self._publish(identifier)
+        return self.serialize(comment), unmapped
+
     def _existing_ingested_comment(
         self, respond_comment_id: str
     ) -> Optional[ConversationTicketComment]:
@@ -498,12 +567,13 @@ class TicketCommentService:
         tracking: Optional[ConversationSLATracking] = None,
         contact: Optional[RespondContact] = None,
     ) -> None:
-        """In-app notification with a deep link, one per mentioned user (AC-L1).
+        """In-app + email notification with a deep link, one per mentioned user (AC-L1).
 
-        In-app lane only per the AC (no email, no WhatsApp); the notification
-        service still mirrors in-app to web push for users who subscribed their
-        browser, which IS the in-app lane's delivery. Best-effort: the comment
-        is committed, so a notification failure must not fail the save.
+        In-app always fires; email is gated on the recipient's
+        notify_email_on_mention toggle (defaults on). No WhatsApp for this event.
+        The notification service also mirrors in-app to web push for users who
+        subscribed their browser, which IS the in-app lane's delivery. Best-effort:
+        the comment is committed, so a notification failure must not fail the save.
 
         Two lanes, one body. A note written in a drawer names its ticket, so the
         link opens that ticket. A note written in the Conversations inbox is
@@ -563,7 +633,8 @@ class TicketCommentService:
                     # same ticket is a second notification, not a stale dedupe.
                     event_type=f"comment_mention:{comment.id}",
                     send_in_app=True,
-                    send_email=False,
+                    send_email=True,
+                    email_pref_attr="notify_email_on_mention",
                     send_whatsapp=False,
                 )
         except Exception as exc:  # noqa: BLE001 - the comment already committed
@@ -575,9 +646,19 @@ class TicketCommentService:
                 "mention notify failed for comment %s: %s", getattr(comment, "id", "?"), exc
             )
 
-    def _mirror(self, comment: ConversationTicketComment, identifier: Optional[str]) -> None:
+    def _mirror(
+        self,
+        comment: ConversationTicketComment,
+        identifier: Optional[str],
+        respond_mentions: Optional[list[str]] = None,
+    ) -> None:
         try:
-            mirror_comment_to_respond(self.db, comment, identifier=identifier)
+            if respond_mentions:
+                mirror_comment_to_respond(
+                    self.db, comment, identifier=identifier, respond_mentions=respond_mentions
+                )
+            else:
+                mirror_comment_to_respond(self.db, comment, identifier=identifier)
         except Exception as exc:  # noqa: BLE001 - belt and braces; it never raises
             logger.warning("Respond comment mirror raised for %s: %s", comment.id, exc)
 

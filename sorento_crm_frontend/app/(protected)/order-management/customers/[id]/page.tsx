@@ -1,9 +1,6 @@
 'use client';
 
 import { use } from 'react';
-import { useRouter } from 'next/navigation';
-import Link from 'next/link';
-import { MoveLeft } from 'lucide-react';
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -12,14 +9,13 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from '@/components/ui/breadcrumb';
-import { Button } from '@/components/ui/button';
 import { Container } from '@/components/common/container';
 import { Toolbar, ToolbarActions, ToolbarHeading, ToolbarTitle } from '@/components/common/toolbar';
+import BackToList from '@/components/common/BackToList';
 import CustomerDetail from '../components/CustomerDetail';
 
 export default function CustomerDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
-  const router = useRouter();
 
   return (
     <>
@@ -44,11 +40,10 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
             </Breadcrumb>
           </ToolbarHeading>
           <ToolbarActions>
-            <Button asChild variant="outline">
-              <Link href="/order-management/customers">
-                <MoveLeft /> Back to customers
-              </Link>
-            </Button>
+            <BackToList
+              listPath="/order-management/customers"
+              label="Back to customers"
+            />
           </ToolbarActions>
         </Toolbar>
       </Container>

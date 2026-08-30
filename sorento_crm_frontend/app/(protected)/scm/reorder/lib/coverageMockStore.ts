@@ -40,8 +40,7 @@ export const USE_COVERAGE_MOCKS = false;
  * behind them yet**, because the screens that produce them are later slices:
  * `plan_exceptions` arrives with S5 (recompute-and-diff) and `po_worklist` with S4
  * (the keyed-into-AutoCount worklist). Deleting this file in Phase 2 means feeding
- * both counts from the run summary instead - see the TODO at the call site in
- * `ReorderPlanningView`.
+ * both counts from the run summary instead - see the call site on the plan page.
  */
 export const MOCK_PLAN_TILE_COUNTS = {
   plan_exceptions: 4,

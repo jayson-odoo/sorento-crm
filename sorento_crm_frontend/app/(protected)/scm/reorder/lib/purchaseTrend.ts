@@ -32,7 +32,7 @@ export interface PurchaseTrendPayload {
 }
 
 /**
- * "Purchased 400 in the last 3 months, 1,200 in the 3 months before." Numbers carry their
+ * "Ordered 400 in the last 3 months, 1,200 in the 3 months before." Numbers carry their
  * meaning, same rule as the order-trend headline: a bare percentage would not.
  */
 export function describePurchaseTrend(
@@ -40,9 +40,9 @@ export function describePurchaseTrend(
   windowMonths: number,
 ): string {
   if (!t || (t.recent_qty === 0 && t.previous_qty === 0 && t.lines.length === 0)) {
-    return 'Never purchased in the imported history.';
+    return 'Never ordered in the imported history.';
   }
   const w = windowMonths;
   const windowWord = `${w} month${w === 1 ? '' : 's'}`;
-  return `Purchased ${fmtInt(t.recent_qty)} in the last ${windowWord}, ${fmtInt(t.previous_qty)} in the ${windowWord} before.`;
+  return `Ordered ${fmtInt(t.recent_qty)} in the last ${windowWord}, ${fmtInt(t.previous_qty)} in the ${windowWord} before.`;
 }

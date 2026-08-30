@@ -111,6 +111,30 @@ def test_a_file_without_a_po_date_column_does_not_blank_the_issue_date(db, seede
     assert header["currency"] == "MYR"
 
 
+def test_a_purchase_book_stating_no_currency_is_cny_and_a_stated_one_wins(db, seeded):
+    """Captain, 28 Aug 2026: the AutoCount purchase export carries no currency column and
+    the book is Chinese, so a purchase document that states no currency is CNY - header and
+    lines. A file that DOES state one is believed, and a later file stating none leaves that
+    stated value alone (the existing fill rule). The sales book gets no such default."""
+    def _file(cost, ccy):
+        return po_workbook([
+            po_row(SUPPLIER_MAIN_LABEL, seeded.main_po, date(2026, 4, 6), seeded.creditor_main,
+                   seeded.item_rl, 100, 0, date(2026, 7, 1), seeded.loc_project, cost, ccy),
+        ])
+
+    svc.apply(db, _file(12.5, None), PO)
+    assert _header(db, seeded.main_po)["currency"] == "CNY"
+    assert _line(db, seeded.main_po, seeded.item_rl)["currency"] == "CNY"
+
+    svc.apply(db, _file(12.5, "MYR"), PO)
+    assert _header(db, seeded.main_po)["currency"] == "MYR", "a stated currency wins"
+    assert _line(db, seeded.main_po, seeded.item_rl)["currency"] == "MYR"
+
+    svc.apply(db, _file(12.5, None), PO)
+    assert _header(db, seeded.main_po)["currency"] == "MYR", "a blank never overwrites"
+    assert _line(db, seeded.main_po, seeded.item_rl)["currency"] == "MYR"
+
+
 def test_the_reader_carries_a_repeated_row_and_no_longer_calls_it_a_problem(db, seeded):
     """Both rows are carried, and neither is complained about (AC-2.1).
 

@@ -24,7 +24,6 @@ vi.mock('../services/productService', () => ({
   setVariantParent: vi.fn(),
   unlinkVariant: vi.fn(),
   resetVariantAuto: vi.fn(),
-  PRODUCT_NEIGHBOURS_PATH: '/api/v1/master-data/products/neighbours',
 }));
 
 import { useProducts } from './useProducts';

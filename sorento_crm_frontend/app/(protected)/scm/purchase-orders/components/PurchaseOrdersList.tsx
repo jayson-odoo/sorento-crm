@@ -12,7 +12,7 @@ import {
   useReactTable,
 } from '@tanstack/react-table';
 import { toast } from 'sonner';
-import { CheckCircle2, LoaderCircle, PackageCheck, Search, Upload, X } from 'lucide-react';
+import { LoaderCircle, RefreshCw, Search, Upload, X } from 'lucide-react';
 import {
   AlertDialog,
   AlertDialogContent,
@@ -36,60 +36,55 @@ import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { useSearchParams } from 'next/navigation';
 import { usePurchaseOrders } from '../../hooks/usePurchaseOrders';
 import { usePurchaseOrderActions } from '../../hooks/usePurchaseOrderActions';
 import { ConfirmActionDialog } from '../../components/ConfirmActionDialog';
 import { BulkActionsMenu } from '../../components/BulkActionsMenu';
 import { OutstandingUploadDialog } from '../../reorder/components/OutstandingUploadDialog';
 import { buildPoBulkActions } from '../lib/poBulkActions';
-import { EM_DASH, fmtDate, fmtInt, fmtMoney, fmtSupplierCost } from '../../lib/format';
-import type { PurchaseOrder, PurchaseOrderStatus } from '../../types/scm.types';
+import { EM_DASH, fmtDate, fmtInt, fmtSupplierCost } from '../../lib/format';
+import {
+  PURCHASE_ORDER_STATUS_FILTER_OPTIONS,
+  isDraftPurchaseOrder,
+  purchaseOrderStatusPill,
+} from '../../lib/purchaseOrderStatus';
+import type { PurchaseOrder } from '../../types/scm.types';
+import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 
-/** All / Outstanding / Closed - the buyer's "at a glance" read (the captain, 20 Aug: "how
+/** All / Outstanding / Completed - the buyer's "at a glance" read (the captain, 20 Aug: "how
  *  do i know the open PO / outstanding PO"). Maps straight onto the list's `outstanding`
  *  query param: `true` / `false` / omitted. Default Outstanding, because that is the
- *  question this screen exists to answer. */
-type OutstandingFilter = 'all' | 'outstanding' | 'closed';
+ *  question this screen exists to answer.
+ *
+ *  Worded the way the Status column words the same fact, and the way the sales-order book
+ *  words its own: a toggle reading "Closed" over a column of "Completed" is two names for
+ *  one thing on one screen. */
+type OutstandingFilter = 'all' | 'outstanding' | 'completed';
 
 const OUTSTANDING_TO_PARAM: Record<OutstandingFilter, boolean | null> = {
   all: null,
   outstanding: true,
-  closed: false,
+  completed: false,
 };
 
-type BadgeDef = { variant: 'secondary' | 'primary' | 'warning' | 'success'; label: string };
+/** Allocated = yes | no, or every order (AC-G4). A string rather than a tri-state boolean
+ *  because that is what `SearchableSelect` reads and writes, the same as the Status filter
+ *  beside it. */
+type AllocatedFilter = '' | 'yes' | 'no';
 
-/** Title-case an unknown enum value so any BE-supplied string still reads well. */
-function titleCase(v: string): string {
-  return v.replace(/[_-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
-}
-
-const STATUS_BADGE: Partial<Record<PurchaseOrderStatus, BadgeDef>> = {
-  draft: { variant: 'secondary', label: 'Draft' },
-  draft_recommendation: { variant: 'secondary', label: 'Draft' },
-  active: { variant: 'primary', label: 'Active' },
-  confirmed: { variant: 'primary', label: 'Confirmed' },
-  partially_received: { variant: 'warning', label: 'Partially received' },
-  received: { variant: 'success', label: 'Received' },
-  cancelled: { variant: 'secondary', label: 'Cancelled' },
+const ALLOCATED_TO_PARAM: Record<AllocatedFilter, boolean | null> = {
+  '': null,
+  yes: true,
+  no: false,
 };
 
-const statusBadge = (s: string): BadgeDef =>
-  STATUS_BADGE[s as PurchaseOrderStatus] ?? { variant: 'secondary', label: titleCase(s) };
-
-const isDraft = (s: string) => s === 'draft_recommendation' || s === 'draft';
-const countsAsOnOrder = (po: PurchaseOrder) =>
-  po.is_on_order ?? (!isDraft(po.status) && po.status !== 'cancelled');
-
-const STATUS_FILTER_OPTIONS = [
-  { value: '', label: 'All statuses' },
-  { value: 'draft_recommendation', label: 'Draft' },
-  { value: 'active', label: 'Active' },
-  { value: 'confirmed', label: 'Confirmed' },
-  { value: 'partially_received', label: 'Partially received' },
-  { value: 'received', label: 'Received' },
-  { value: 'cancelled', label: 'Cancelled' },
+const ALLOCATED_FILTER_OPTIONS = [
+  { value: 'yes', label: 'Allocated' },
+  { value: 'no', label: 'Not allocated' },
 ];
+
+const isDraft = isDraftPurchaseOrder;
 
 export default function PurchaseOrdersList() {
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 25 });
@@ -102,21 +97,47 @@ export default function PurchaseOrdersList() {
   // "Have we ever bought this item, and for how much." The plan now takes its cost from
   // this book, so when a plan line shows no cost, this is where the buyer finds out why.
   const [productFilter, setProductFilter] = useState('');
+
+  // Back hands the list its own query string back, and the pager keeps
+  // rewriting it, so the list reads it (S3-01). One hook, every list.
+  useListStateFromUrl((state) => {
+    setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
+    setSorting(state.sorting);
+    setSearchQuery(state.searchQuery);
+    setStatusFilter(state.filters.status ?? '');
+    setProductFilter(state.filters.product_code ?? '');
+    setOutstandingFilter(
+      state.filters.outstanding === 'true'
+        ? 'outstanding'
+        : state.filters.outstanding === 'false'
+          ? 'completed'
+          : 'all',
+    );
+  });
   // Committed on Enter or blur rather than per keystroke: this filter hits the whole order
   // book by line, and firing it on every character is a query per letter typed.
   const [productDraft, setProductDraft] = useState('');
+  // "Is this purchase order already spoken for" (section 3.G, AC-G4). '' = every order,
+  // 'yes' = something is linked to a line of it, 'no' = nothing is.
+  const [allocatedFilter, setAllocatedFilter] = useState<AllocatedFilter>('');
+  // `?documents=a,b,c` - the exact orders ONE upload wrote, which is how the Order
+  // Inquiries page sends the buyer here to look at the book they just uploaded (AC-H13).
+  // Read from the URL and clearable like any other filter; absent on every other visit.
+  const searchParams = useSearchParams();
+  const [documentsFilter, setDocumentsFilter] = useState<string[]>(() =>
+    (searchParams.get('documents') ?? '').split(',').filter(Boolean),
+  );
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
   // Confirm-flow dialog state.
   const [confirmIds, setConfirmIds] = useState<string[] | null>(null);
-  const [grPo, setGrPo] = useState<PurchaseOrder | null>(null);
   // Bulk delete (captain, 20 Aug: "give me an option to bulk delete purchase orders").
   const [deleteIds, setDeleteIds] = useState<string[] | null>(null);
   // The outstanding PURCHASE-ORDER book is loaded here, on the screen whose actor owns
   // it, until AutoCount is integrated.
   const [uploadOpen, setUploadOpen] = useState(false);
 
-  const { data, isLoading, isFetching, refetch } = usePurchaseOrders({
+  const { data, isLoading, refetch } = usePurchaseOrders({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -125,14 +146,26 @@ export default function PurchaseOrdersList() {
     supplier: null,
     productCode: productFilter || null,
     outstanding: OUTSTANDING_TO_PARAM[outstandingFilter],
+    allocated: ALLOCATED_TO_PARAM[allocatedFilter],
+    documents: documentsFilter.length ? documentsFilter : null,
   });
 
-  const { confirm, createGr, bulkDelete } = usePurchaseOrderActions();
+  // `createGr` is deliberately not taken: recording what arrived is a receiving decision
+  // made against the delivery in hand, not a button on a list of 13,000 orders - the same
+  // reason "Create DO" came off the sales-order list.
+  const { confirm, bulkDelete } = usePurchaseOrderActions();
 
   useEffect(() => {
     setPagination((p) => ({ ...p, pageIndex: 0 }));
     setRowSelection({});
-  }, [searchQuery, statusFilter, productFilter, outstandingFilter]);
+  }, [
+    searchQuery,
+    statusFilter,
+    productFilter,
+    outstandingFilter,
+    allocatedFilter,
+    documentsFilter,
+  ]);
 
   const rows = useMemo<PurchaseOrder[]>(() => data?.data ?? [], [data]);
 
@@ -146,6 +179,7 @@ export default function PurchaseOrdersList() {
           status: statusFilter || undefined,
           product_code: productFilter || undefined,
           outstanding: OUTSTANDING_TO_PARAM[outstandingFilter] ?? undefined,
+          allocated: ALLOCATED_TO_PARAM[allocatedFilter] ?? undefined,
         },
       ),
     [
@@ -156,8 +190,12 @@ export default function PurchaseOrdersList() {
       statusFilter,
       productFilter,
       outstandingFilter,
+      allocatedFilter,
     ],
   );
+
+  const detailHref = (po: PurchaseOrder) =>
+    `/scm/purchase-orders/${po.id}${detailSearch ? `?${detailSearch}` : ''}`;
 
   const columns = useMemo<ColumnDef<PurchaseOrder>[]>(
     () => [
@@ -169,8 +207,11 @@ export default function PurchaseOrdersList() {
         header: ({ column }) => <DataGridColumnHeader title="PO number" column={column} />,
         cell: ({ row }) => (
           <div className="flex flex-col">
+            {/* The document number IS the way in, and the whole row opens it too. The
+                anchor stays real so middle-click and copy-link still work, and stops its
+                own click propagating. */}
             <Link
-              href={`/scm/purchase-orders/${row.original.id}${detailSearch ? `?${detailSearch}` : ''}`}
+              href={detailHref(row.original)}
               onClick={(e) => e.stopPropagation()}
               className="font-medium text-primary hover:underline"
               title={`Open ${row.original.po_number}`}
@@ -211,11 +252,19 @@ export default function PurchaseOrdersList() {
       {
         accessorKey: 'status',
         header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
+        // The same light chip every other enum column on this screen wears, worded the way
+        // AutoCount words it: still expecting goods reads Outstanding, an order that
+        // finished reads Completed. It used to be a ghost chip with a dot, on the theory
+        // that a STATE is a different kind of thing from an enum; the captain's verdict on
+        // a bare green dot beside a word was that it reads as an unfinished control, so the
+        // colour is carried by the chip itself. The separate "On order" column that used to
+        // sit beside it is gone - it said the same thing twice, in different words, in a
+        // column whose only two values were the two this pill now carries.
         cell: ({ row }) => {
-          const s = statusBadge(row.original.status);
+          const pill = purchaseOrderStatusPill(row.original);
           return (
-            <Badge variant={s.variant} appearance="light">
-              {s.label}
+            <Badge variant={pill.variant} appearance="light" size="md">
+              {pill.label}
             </Badge>
           );
         },
@@ -223,30 +272,17 @@ export default function PurchaseOrdersList() {
         meta: { headerTitle: 'Status' },
       },
       {
-        id: 'on_order',
-        header: ({ column }) => <DataGridColumnHeader title="On order" column={column} />,
-        cell: ({ row }) =>
-          countsAsOnOrder(row.original) ? (
-            <span className="inline-flex items-center gap-1 text-xs font-medium text-scm-incoming">
-              <CheckCircle2 className="size-3.5" /> On order
-            </span>
-          ) : (
-            <span className="text-xs text-muted-foreground" title="Drafts don't count as incoming stock until confirmed">
-              Not on order
-            </span>
-          ),
-        size: 130,
-        enableSorting: false,
-        meta: { headerTitle: 'On order' },
-      },
-      {
         accessorKey: 'expected_date',
-        header: ({ column }) => <DataGridColumnHeader title="Expected date" column={column} />,
+        // "Delivery date" is what the buyer calls it and what AutoCount prints; "Expected
+        // date" was our word for the same column. The stored field is untouched - only the
+        // heading is - so the sort key, the listing preference and the API all still say
+        // `expected_date`.
+        header: ({ column }) => <DataGridColumnHeader title="Delivery date" column={column} />,
         cell: ({ row }) => (
           <span className="text-muted-foreground">{fmtDate(row.original.expected_date)}</span>
         ),
         size: 140,
-        meta: { headerTitle: 'Expected date' },
+        meta: { headerTitle: 'Delivery date' },
       },
       {
         accessorKey: 'total_qty',
@@ -263,34 +299,39 @@ export default function PurchaseOrdersList() {
         meta: { headerTitle: 'Lines', headerClassName: 'text-right', cellClassName: 'text-right tabular-nums' },
       },
       {
-        // create-GR stays a PER-ROW action on an active PO (not bulk). Drafts
-        // have no per-row action - they're confirmed via the bulk Actions menu.
-        id: 'actions',
-        header: '',
-        cell: ({ row }) => {
-          const po = row.original;
-          if (po.status === 'active' || po.status === 'confirmed' || po.status === 'partially_received') {
-            return (
-              <div className="flex items-center justify-end">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-8 gap-1 px-2 text-xs"
-                  onClick={() => setGrPo(po)}
-                >
-                  <PackageCheck className="size-3.5" />
-                  Create GR
-                </Button>
-              </div>
-            );
-          }
-          return null;
-        },
-        size: 130,
-        enableHiding: false,
+        accessorKey: 'allocated_qty',
+        // How much of this order an order inquiry has already occupied (section 3.G,
+        // AC-G4). WHO is on it lives on the detail page's Allocated to panel - a list of
+        // 13,000 orders answers "is this one spoken for", not "by whom".
+        header: ({ column }) => <DataGridColumnHeader title="Allocated" column={column} />,
+        cell: ({ row }) =>
+          row.original.allocated_qty ? (
+            fmtInt(row.original.allocated_qty)
+          ) : (
+            // 0 and "nothing is linked to it" are the same answer here, and the dash is
+            // what stops a column of zeros reading as a figure somebody has to check.
+            <span className="text-muted-foreground">{EM_DASH}</span>
+          ),
+        // Not sortable: the figure is computed off the links table per page rather than
+        // being a column of `purchase_orders`, so an ORDER BY on it would need a join the
+        // list does not make. The filter beside it is what narrows on this fact.
         enableSorting: false,
+        size: 110,
+        meta: {
+          headerTitle: 'Allocated',
+          headerClassName: 'text-right',
+          cellClassName: 'text-right tabular-nums',
+        },
       },
+      // No per-row action column. "Create GR" lived here and is gone, the same day and for
+      // the same reason "Create DO" came off the sales-order list: recording what arrived
+      // is a receiving decision made against the delivery in hand, not a button beside a
+      // row on a list of 13,000 orders. Confirm and Delete stay, as bulk actions, because
+      // they ARE list decisions - the buyer picks the rows and acts on the set.
     ],
+    // `detailSearch` is read by the PO-number link and the row-click handler. Left out of
+    // the deps, the columns would keep the query from the FIRST render, so every row would
+    // link to page 1 of an unfiltered list.
     [detailSearch],
   );
 
@@ -311,7 +352,11 @@ export default function PurchaseOrdersList() {
     enableColumnResizing: true,
   });
 
-  const filtersActive = (statusFilter ? 1 : 0) + (productFilter ? 1 : 0);
+  const filtersActive =
+    (statusFilter ? 1 : 0) +
+    (productFilter ? 1 : 0) +
+    (allocatedFilter ? 1 : 0) +
+    (documentsFilter.length ? 1 : 0);
   const lastCost = data?.product_cost ?? null;
 
   // Confirm applies to the DRAFT subset of the selection (select-all can include actives);
@@ -346,17 +391,6 @@ export default function PurchaseOrdersList() {
     void refetch();
   };
 
-  const runCreateGr = async () => {
-    if (!grPo) return;
-    try {
-      const res = await createGr.mutateAsync(grPo.id);
-      toast.success(`Goods receipt ${res.gr_reference} created for ${grPo.po_number}`);
-      setGrPo(null);
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to create goods receipt');
-    }
-  };
-
   const runBulkDelete = async () => {
     if (!deleteIds) return;
     try {
@@ -376,6 +410,20 @@ export default function PurchaseOrdersList() {
     }
   };
 
+  // An empty book and an over-filtered one look identical in the grid, so they say different
+  // things: one is a dead end the user can clear, the other is the step they have not done
+  // yet. The default toggle IS a filter, so it counts - otherwise a book with nothing
+  // outstanding would tell the buyer he has never uploaded one.
+  const emptyMessage =
+    filtersActive || searchQuery || outstandingFilter !== 'all' ? (
+      'No purchase order matches this search and filter.'
+    ) : (
+      <span>
+        No purchase orders yet. Upload the purchase-order book from the Actions menu, or
+        accept a funded reorder recommendation to draft one.
+      </span>
+    );
+
   return (
     <div className="space-y-3">
       {/* The draft-vs-active explainer banner lived here until the captain removed it
@@ -385,9 +433,25 @@ export default function PurchaseOrdersList() {
         recordCount={data?.pagination.total || 0}
         isLoading={isLoading}
         tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
-        emptyMessage="No purchase orders yet. Accept a funded reorder recommendation to draft one."
+        emptyMessage={emptyMessage}
+        // The whole row opens the order, the same as the sales-order list. The PO-number
+        // link stays a real anchor and stops its own click propagating.
+        rowHref={(row) => detailHref(row)}
       >
         <Card>
+          {documentsFilter.length ? (
+            // A list narrowed to somebody else's link is not a state to leave unexplained:
+            // it says how many orders it is showing and gives them all back in one press.
+            <div className="flex items-center justify-between gap-3 border-b px-5 py-2.5 text-sm">
+              <span>
+                Showing the {documentsFilter.length} purchase order
+                {documentsFilter.length === 1 ? '' : 's'} from one upload.
+              </span>
+              <Button variant="ghost" size="sm" onClick={() => setDocumentsFilter([])}>
+                Show all
+              </Button>
+            </div>
+          ) : null}
           {productFilter ? (
             <div
               className="border-b px-5 py-2.5 text-sm"
@@ -459,8 +523,8 @@ export default function PurchaseOrdersList() {
                     <ToggleGroupItem value="outstanding" className="px-3">
                       Outstanding
                     </ToggleGroupItem>
-                    <ToggleGroupItem value="closed" className="px-3">
-                      Closed
+                    <ToggleGroupItem value="completed" className="px-3">
+                      Completed
                     </ToggleGroupItem>
                   </ToggleGroup>
                 </>
@@ -490,12 +554,31 @@ export default function PurchaseOrdersList() {
                       <Label htmlFor="po-status" className="mb-1 block">
                         Status
                       </Label>
+                      {/* Only Draft and Cancelled: the toggle above already answers
+                          Outstanding versus Completed, and offering "Received" or "Closed"
+                          here would put words in the filter that the Status column never
+                          prints. */}
                       <SearchableSelect
                         id="po-status"
                         value={statusFilter}
                         onChange={setStatusFilter}
-                        options={STATUS_FILTER_OPTIONS}
+                        options={PURCHASE_ORDER_STATUS_FILTER_OPTIONS}
                         placeholder="All statuses"
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="po-allocated" className="mb-1 block">
+                        Allocated
+                      </Label>
+                      {/* Clearable, like every other optional select: the buyer has to be
+                          able to unset it, not only change it. */}
+                      <SearchableSelect
+                        id="po-allocated"
+                        value={allocatedFilter}
+                        onChange={(v) => setAllocatedFilter((v || '') as AllocatedFilter)}
+                        options={ALLOCATED_FILTER_OPTIONS}
+                        placeholder="Any"
+                        clearable
                       />
                     </div>
                     {filtersActive > 0 ? (
@@ -507,6 +590,8 @@ export default function PurchaseOrdersList() {
                             setStatusFilter('');
                             setProductFilter('');
                             setProductDraft('');
+                            setAllocatedFilter('');
+                            setDocumentsFilter([]);
                           }}
                         >
                           Clear filters
@@ -531,17 +616,28 @@ export default function PurchaseOrdersList() {
                   )}
                 />
               }
+              exportConfig={{ filename: 'purchase_orders_export.xlsx' }}
+              // Two secondary actions is what makes the shared toolbar collapse them into
+              // an "Actions" dropdown (data-grid-list-toolbar.tsx) instead of a loose button
+              // beside a standalone refresh icon, which wrapped this toolbar onto a second
+              // row at 1280px. Same shape as the sales-order list.
               secondaryActions={[
                 {
-                  key: 'upload-order-book',
-                  label: 'Upload order book',
+                  key: 'refresh',
+                  label: 'Refresh',
+                  icon: RefreshCw,
+                  onClick: () => void refetch(),
+                },
+                {
+                  key: 'upload-purchase-orders',
+                  // The file carries the whole book - orders still outstanding and orders
+                  // already completed - so naming the action after half of it described a
+                  // scope the export never had. Same wording as the sales-order side.
+                  label: 'Upload purchase orders',
                   icon: Upload,
                   onClick: () => setUploadOpen(true),
                 },
               ]}
-              exportConfig={{ filename: 'purchase_orders_export.xlsx' }}
-              onRefresh={() => void refetch()}
-              isRefreshing={isFetching && !isLoading}
             />
           </CardHeader>
           <CardTable>
@@ -572,26 +668,16 @@ export default function PurchaseOrdersList() {
         isBusy={confirm.isPending}
       />
 
-      <ConfirmActionDialog
-        open={!!grPo}
-        onOpenChange={(o) => !o && setGrPo(null)}
-        title="Create goods receipt?"
-        description={
-          grPo
-            ? `Create a goods receipt for ${grPo.po_number} (${grPo.supplier_name})? This stamps the received quantity against each line.`
-            : ''
-        }
-        confirmLabel="Create GR"
-        onConfirm={runCreateGr}
-        isBusy={createGr.isPending}
-      />
-
-      <OutstandingUploadDialog
-        open={uploadOpen}
-        onOpenChange={setUploadOpen}
-        kind="purchase-orders"
-        onQueued={bookQueued}
-      />
+      {/* Mounted only while open, the same as the sales-order list: a closed dialog starts
+          from a clean flow rather than whatever the last upload left behind. */}
+      {uploadOpen ? (
+        <OutstandingUploadDialog
+          open
+          onOpenChange={setUploadOpen}
+          kind="purchase-orders"
+          onQueued={bookQueued}
+        />
+      ) : null}
 
       {/* Destructive - AlertDialog + destructive button per ADR-PRODUCT-STANDARDS, not
           ConfirmActionDialog (that one is reserved for non-destructive confirms). */}

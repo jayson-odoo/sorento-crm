@@ -4,7 +4,7 @@ Backs `PLAN-flyer-read-hardening.md`'s picker gap: the file library had a
 document-CLASS filter (`attachment_type_id`) but nothing that asked "what is
 this file's own type", which is what a picker restricted to PDFs needs.
 
-Mirrors `tests/test_attachment_neighbours.py`'s pattern for this exact
+Mirrors the attachment list tests' pattern for this exact
 resource: seed rows with a unique `original_filename` prefix against the live
 Postgres test DB, assert, clean up by prefix. This endpoint has MANY callers,
 so the load-bearing assertion here is as much "the unfiltered call is
@@ -156,37 +156,6 @@ def test_the_unfiltered_call_is_unchanged(db: Session) -> None:
     ids = {row.id for row in result["data"]}
     assert ids == {pdf.id, png.id, none.id}
     assert result["pagination"].total == 3
-
-
-# --------------------------------------------------------------------------- #
-# Service-level: AttachmentService.neighbours
-# --------------------------------------------------------------------------- #
-def test_neighbours_prev_next_stays_inside_the_mime_filtered_set(db: Session) -> None:
-    # Deterministic order by name: p0 < p1 < p2 (pdf), z0 < z1 (png) interleave
-    # alphabetically so a filter bug (ignoring mime in neighbours) would pull a
-    # png in as a false prev/next.
-    pdfs = [_seed(db, f"{PREFIX}m-p{i}.pdf", mime_type="application/pdf") for i in range(3)]
-    _seed(db, f"{PREFIX}m-p0a.png", mime_type="image/png")  # sorts between p0 and p1
-
-    svc = AttachmentService(db)
-    out = svc.neighbours(
-        pdfs[1].id, query=PREFIX, sort="name", dir="asc", mime_type="application/pdf"
-    )
-
-    assert out["total"] == 3  # only the 3 pdfs, the png is excluded
-    assert out["prev_id"] == pdfs[0].id
-    assert out["next_id"] == pdfs[2].id
-
-
-def test_neighbours_unchanged_when_mime_params_are_omitted(db: Session) -> None:
-    pdf = _seed(db, f"{PREFIX}n-p0.pdf", mime_type="application/pdf")
-    png = _seed(db, f"{PREFIX}n-p1.png", mime_type="image/png")
-
-    svc = AttachmentService(db)
-    out = svc.neighbours(pdf.id, query=PREFIX, sort="name", dir="asc")
-
-    assert out["total"] == 2  # both rows, mime-blind, exactly as before the filter
-    assert out["next_id"] == png.id
 
 
 # --------------------------------------------------------------------------- #

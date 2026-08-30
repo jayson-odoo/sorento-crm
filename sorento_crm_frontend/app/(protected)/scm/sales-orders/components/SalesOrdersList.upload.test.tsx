@@ -3,9 +3,13 @@
  * from it - but a sales order manager reasonably looks for it here too. This pins the wiring
  * ONLY: the toolbar opens the real, unforked `OutstandingUploadDialog` with `kind="sales-orders"`,
  * and once it queues an upload, this list's own query and the reorder plan's two queries are
- * invalidated the same way `ReorderPlanningView`'s `uploadQueued` does. The dialog's own
- * behaviour (diff, samples, problem sections, ...) is pinned once in
+ * invalidated the same way the reorder plans list's `uploadQueued` does. The dialog's own
+ * behaviour (the Test verdict, the two-step guarantee, ...) is pinned once in
  * `../../reorder/components/OutstandingUploadDialog.test.tsx` and is not re-asserted here.
+ *
+ * The action is called "Upload sales orders", never "Upload outstanding sales orders": the
+ * file carries the whole book, completed orders included, and the old wording had the captain
+ * asking which half of it he was meant to export.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -56,6 +60,14 @@ vi.mock('../../hooks/useScmOptions', () => ({
   useWarehouseOptions: () => EMPTY,
 }));
 
+// The Plan action asks whether this user may open the fulfilment board. `useHasPermission`
+// reaches for the NextAuth session, which is not mounted under jsdom, so it is stubbed the
+// same way the proforma-invoice view's own suite stubs it.
+vi.mock('@/hooks/usePermissions', () => ({
+  useHasPermission: () => true,
+  usePermissions: () => ({ permissions: [], permissionSet: new Set(), isLoading: false }),
+}));
+
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: async () => {}, isLoading: false }),
 }));
@@ -71,6 +83,7 @@ vi.mock('../../hooks/useSalesOrders', () => ({
   useCreateSalesOrder: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useUpdateSalesOrder: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useDeleteSalesOrder: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useResetSalesOrderPlanning: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useCreateDoFromSalesOrder: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
 
@@ -134,42 +147,37 @@ beforeEach(() => {
     .mockResolvedValue({ allowed_extensions: ['.xlsx', '.xlsm', '.xls'] });
 });
 
-describe('SalesOrdersList - upload outstanding sales orders', () => {
+describe('SalesOrdersList - upload sales orders', () => {
   it('is not open until the toolbar button is pressed', () => {
     renderList();
     expect(
-      screen.queryByRole('heading', { name: /Upload outstanding sales orders/i }),
+      screen.queryByRole('heading', { name: /Upload sales orders/i }),
     ).toBeNull();
   });
 
   it('opens the real, unforked outstanding-upload dialog scoped to sales orders', async () => {
     renderList();
 
-    // Two secondary actions (Refresh, Upload) collapse into the shared "Actions" dropdown -
-    // open it first, the same as the Delivery Orders list. Radix's dropdown trigger opens on
-    // pointerdown, not click - same reason `openFilters()` in the filters suite uses it.
-    fireEvent.pointerDown(screen.getByRole('button', { name: /^Actions/i }), {
-      ctrlKey: false,
-      button: 0,
-    });
-    fireEvent.click(await screen.findByText('Upload outstanding sales orders'));
+    // Upload sales orders lives on the "Start" dropdown now (A1), beside Plan selected - the
+    // two ways a day's work begins - not on "Actions". Radix's dropdown trigger opens on
+    // pointerdown, which jsdom does not synthesise from `fireEvent.click`, so the keyboard
+    // opens it instead.
+    fireEvent.keyDown(screen.getByRole('button', { name: /^Start$/ }), { key: 'Enter' });
+    fireEvent.click(await screen.findByText('Upload sales orders'));
 
     expect(
-      await screen.findByRole('heading', { name: /Upload outstanding sales orders/i }),
+      await screen.findByRole('heading', { name: /Upload sales orders/i }),
     ).toBeInTheDocument();
   });
 
   it('invalidates the sales-orders list and the reorder plan queries once the upload queues', async () => {
     const { invalidateSpy } = renderList();
 
-    fireEvent.pointerDown(screen.getByRole('button', { name: /^Actions/i }), {
-      ctrlKey: false,
-      button: 0,
-    });
-    fireEvent.click(await screen.findByText('Upload outstanding sales orders'));
-    await screen.findByRole('heading', { name: /Upload outstanding sales orders/i });
+    fireEvent.keyDown(screen.getByRole('button', { name: /^Start$/ }), { key: 'Enter' });
+    fireEvent.click(await screen.findByText('Upload sales orders'));
+    await screen.findByRole('heading', { name: /Upload sales orders/i });
 
-    fireEvent.change(screen.getByLabelText('Outstanding orders file'), {
+    fireEvent.change(screen.getByLabelText('Sales orders file'), {
       target: { files: [xlsx()] },
     });
     fireEvent.click(screen.getByRole('button', { name: /^Test$/i }));
@@ -189,7 +197,7 @@ describe('SalesOrdersList - upload outstanding sales orders', () => {
     // The dialog closes itself on a successful queue.
     await waitFor(() =>
       expect(
-        screen.queryByRole('heading', { name: /Upload outstanding sales orders/i }),
+        screen.queryByRole('heading', { name: /Upload sales orders/i }),
       ).toBeNull(),
     );
   });

@@ -411,3 +411,76 @@ class ProductSetService:
 
         product_set.complete_sets = complete
         product_set.limiting_member_code = limiting
+
+
+# ----------------------------------------------------------- the DRIVER member (R19)
+#
+# A set is never stocked, never ordered and never costed - its members are - so every
+# figure a set row shows on the loading plan has to be read off ONE of them.
+
+
+def driver_members(db: Session, set_ids: list[str]) -> dict[str, ProductSetMember]:
+    """`{set_id: the member whose figures the set reads}` (R19), in ONE pass.
+
+    The driver is the member belonging to the FEWEST sets, ties broken by `sort_order` and
+    then by product code. On Sorento's catalogue that is always the pedestal, without
+    anybody having to tag one.
+
+    Both alternatives were rejected for the same reason, and the reason is `CWCY605`: that
+    cistern sits in six different sets. A minimum across members would understate every one
+    of them (each set would read the cistern's own thin demand), and a sum would count the
+    cistern six times. The pedestal belongs to one set, so its numbers describe that set and
+    nothing else.
+
+    Every tie is broken on a stated value, ending on the product code, so two runs of the
+    same plan cannot disagree about whose numbers a row is showing.
+
+    Batched because `container_request_service.build` asks for every set on a supplier's
+    statement at once, and a query per set on a page of forty is how a screen gets slow
+    without anyone noticing.
+    """
+    wanted = [str(i) for i in dict.fromkeys(set_ids) if i]
+    if not wanted:
+        return {}
+
+    members = (
+        db.query(ProductSetMember)
+        .options(joinedload(ProductSetMember.product))
+        .filter(ProductSetMember.product_set_id.in_(wanted))
+        .all()
+    )
+    if not members:
+        return {}
+
+    # How many sets each of these products belongs to. Joined through `product_sets` so the
+    # caller's company scope applies: another company's set must not sway which member of
+    # ours drives a row.
+    counts = dict(
+        db.query(ProductSetMember.product_id, func.count(ProductSetMember.id))
+        .join(ProductSet, ProductSet.id == ProductSetMember.product_set_id)
+        .filter(
+            ProductSetMember.product_id.in_(
+                list({str(m.product_id) for m in members})
+            )
+        )
+        .group_by(ProductSetMember.product_id)
+        .all()
+    )
+
+    best: dict[str, ProductSetMember] = {}
+    for member in sorted(
+        members,
+        key=lambda m: (
+            counts.get(str(m.product_id), 1),
+            m.sort_order or 0,
+            (getattr(m.product, "product_code", None) or ""),
+            str(m.id),
+        ),
+    ):
+        best.setdefault(str(member.product_set_id), member)
+    return best
+
+
+def driver_member(db: Session, set_id: str) -> Optional[ProductSetMember]:
+    """The one set's driver, or None when the set has no members yet."""
+    return driver_members(db, [str(set_id)]).get(str(set_id))

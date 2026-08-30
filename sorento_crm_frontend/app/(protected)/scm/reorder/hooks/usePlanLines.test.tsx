@@ -39,6 +39,11 @@ let planRowDecisionsStore: Array<{
   po_qty: number | null;
   po_refs: string[];
   reason_text: string | null;
+  price_mode?: string;
+  supplier_code?: string | null;
+  supplier_name?: string | null;
+  unit_cost?: number | null;
+  lead_time_days?: number | null;
   draft_po_number: string | null;
   draft_po_id: string | null;
 }> = [];
@@ -218,7 +223,8 @@ describe('usePlanLines - one row cannot reserve stock it does not need', () => {
     ]);
     getCoverSources.mockResolvedValue({
       sources: {
-        p1: [{ warehouse_id: 'wh-BRW-IB', warehouse_code: 'BRW-IB', segment: 'project', qty: 50 }],
+        // A site pool: after R18 a project bin is never offered as a source.
+        p1: [{ warehouse_id: 'wh-MWH', warehouse_code: 'MWH', segment: 'dealer', qty: 50 }],
       },
       cover_scope: 'all_locations',
     });
@@ -228,7 +234,7 @@ describe('usePlanLines - one row cannot reserve stock it does not need', () => {
 
     const first = result.current.lines.find((l) => l.id === 'r1')!;
     // The buyer types 40 into a location holding 50, against a gap of 10.
-    const edited = applySourceEdits(result.current.coverFor(first), { 'wh-BRW-IB': 40 });
+    const edited = applySourceEdits(result.current.coverFor(first), { 'wh-MWH': 40 });
     expect(edited.coverQty).toBe(10);
     await act(async () => {
       await result.current.decide(first, {
@@ -247,6 +253,64 @@ describe('usePlanLines - one row cannot reserve stock it does not need', () => {
     const second = result.current.lines.find((l) => l.id === 'r2')!;
     // 50 free less the 10 the first row actually took, never less the 40 it typed.
     expect(result.current.coverFor(second).offered.map((s) => s.qty)).toEqual([40]);
+  });
+});
+
+/**
+ * P8: "Use PO" is a retail answer, never a project one.
+ *
+ * The backend already keeps a project-only cell out of the `po_book` map. This is the other
+ * half of the same decision, and the half that matters on a GROUPED row: a product whose
+ * project bin and dealer bin are summed together must still show the dealer bin's receipts
+ * while showing none of the project bin's.
+ */
+describe('usePlanLines - poFor never offers a project row a purchase order', () => {
+  function row(over: Record<string, unknown> = {}) {
+    return {
+      id: 'r1', type: 'buy', sku: 'SKU-1', product_name: 'Product one',
+      abc_class: null, xyz_class: null, warehouse_code: 'DC1', warehouse_name: 'DC1',
+      product_id: 'p1', warehouse_id: 'wh-DC1', is_network: false, allocation: null,
+      order_qty: 10, recommended_qty: 10, reorder_point: 10, min_qty: null, max_qty: null,
+      order_up_to: 20, net_position: -10, days_of_cover: null, reason: 'reorder_point',
+      reason_label: '', confidence: 'low', sample_size: 0,
+      supplier: { supplier_code: 'S1', supplier_name: 'Acme', unit_cost: 10,
+                  lead_time_days: 30, composite_score: 0, is_primary: true },
+      alternatives: [], is_exception: false, disposition_action: null, transfer_flag: null,
+      forecast_daily_demand: 1, lead_time_days: 30, lead_time_source: 'default',
+      safety_stock: 0, safety_stock_method: null, safety_stock_fallback: null,
+      service_level: null, safety_days: 0, review_days: 30, demand_window_days: 90,
+      moq: null, order_multiple: null, policy_type: 'reorder_point',
+      supplier_selection: 'primary', unit_cost: 10, cash_impact: 100, rank: 1,
+      rank_score: 0, funding_status: null, days_to_stockout: null, rank_factors: [],
+      segment: 'dealer', on_hand: 0, incoming_spo: 0, outstanding_po: 0,
+      outstanding_sales: 10, reorder_level: null, master_reorder_level: null,
+      project_committed: 0, retail_committed: 10,
+      ...over,
+    };
+  }
+
+  const receipt = { po_number: 'PO-1', status: 'active', expected_date: null, remaining: 20 };
+
+  it('serves the receipts of a retail row', async () => {
+    getBuyRecommendationsForCash.mockResolvedValue([row()]);
+    getPoBook.mockResolvedValue({ po_book: { 'p1:wh-DC1': [receipt] } });
+
+    const { result } = renderHook(() => usePlanLines('run-1', true), { wrapper });
+    await waitFor(() => expect(result.current.lines).toHaveLength(1));
+
+    expect(result.current.poFor(result.current.lines[0])).toHaveLength(1);
+  });
+
+  it('serves none to a project row, even when the map still carries its key', async () => {
+    getBuyRecommendationsForCash.mockResolvedValue([
+      row({ project_committed: 9857, retail_committed: 0 }),
+    ]);
+    getPoBook.mockResolvedValue({ po_book: { 'p1:wh-DC1': [receipt] } });
+
+    const { result } = renderHook(() => usePlanLines('run-1', true), { wrapper });
+    await waitFor(() => expect(result.current.lines).toHaveLength(1));
+
+    expect(result.current.poFor(result.current.lines[0])).toEqual([]);
   });
 });
 
@@ -379,7 +443,7 @@ describe('usePlanLines - updateMoq (20 Aug live test)', () => {
   it('a single rejected write on an ungrouped row still rejects, after refreshing the grid', async () => {
     // S8: the group write is now `Promise.allSettled`, not `Promise.all` - this pins that
     // an ungrouped (single-member) failure still surfaces as a rejection for the caller
-    // (PlanMoqCell) to report, rather than being swallowed here.
+    // (the row panel's MOQ input) to report, rather than being swallowed here.
     setMoqOverride.mockReset().mockRejectedValue(new Error('Failed to save the MOQ.'));
     const { result } = renderHook(() => usePlanLines('run-1', true), { wrapper });
     await waitFor(() => expect(getBuyRecommendationsForCash).toHaveBeenCalled());
@@ -457,7 +521,7 @@ describe('usePlanLines - S16 row decisions (decide/clear)', () => {
       expect.objectContaining({ kind: 'buy', buy_qty: 23 }),
     );
     // The server round trip lands back in `decisions`, keyed by the real rec id.
-    await waitFor(() => expect(result.current.decisions.r1).toEqual({ buy: 23 }));
+    await waitFor(() => expect(result.current.decisions.r1).toEqual({ buy: 23, priceMode: 'use_last' }));
   });
 
   it('a grouped product row fans the SAME decision out to every member, never the synthetic group id', async () => {
@@ -484,13 +548,66 @@ describe('usePlanLines - S16 row decisions (decide/clear)', () => {
     expect(recordPlanRowDecision).not.toHaveBeenCalledWith('group-p1', expect.anything());
   });
 
+  it('a pending price call and supplier ride into the decision when it is made (AC-R13/R14)', async () => {
+    const { result } = renderHook(() => usePlanLines('run-1', true), { wrapper });
+    await waitFor(() => expect(getBuyRecommendationsForCash).toHaveBeenCalled());
+
+    const line = { id: 'r1', rec: { id: 'r1' }, supplier: { code: 'SUP-A' } } as never;
+    // Changing either on an UNDECIDED row records nothing: it must not start counting as
+    // decided just because its supplier changed.
+    await act(async () => {
+      await result.current.chooseRow(line, { priceMode: 'ask_new' });
+      await result.current.chooseRow(line, { supplierCode: 'SUP-B' });
+    });
+    expect(recordPlanRowDecision).not.toHaveBeenCalled();
+    expect(result.current.choiceFor(line)).toEqual({
+      priceMode: 'ask_new',
+      supplierCode: 'SUP-B',
+    });
+
+    await act(async () => {
+      await result.current.decide(line, { buy: 40 });
+    });
+
+    expect(recordPlanRowDecision).toHaveBeenCalledWith(
+      'r1',
+      expect.objectContaining({
+        kind: 'buy',
+        buy_qty: 40,
+        price_mode: 'ask_new',
+        supplier_code: 'SUP-B',
+      }),
+    );
+  });
+
+  it('changing the supplier on an ALREADY decided row re-records it there and then', async () => {
+    planRowDecisionsStore = [{
+      recommendation_id: 'r1', kind: 'buy', buy_qty: 23, stock_takes: [], po_qty: null,
+      po_refs: [], reason_text: null, price_mode: 'use_last', supplier_code: null,
+      supplier_name: null, unit_cost: null, lead_time_days: null,
+      draft_po_number: null, draft_po_id: null,
+    }];
+    const { result } = renderHook(() => usePlanLines('run-1', true), { wrapper });
+    await waitFor(() => expect(result.current.decisions.r1).toBeDefined());
+
+    const line = { id: 'r1', rec: { id: 'r1' }, supplier: { code: 'SUP-A' } } as never;
+    await act(async () => {
+      await result.current.chooseRow(line, { supplierCode: 'SUP-B' });
+    });
+
+    expect(recordPlanRowDecision).toHaveBeenCalledWith(
+      'r1',
+      expect.objectContaining({ kind: 'buy', buy_qty: 23, supplier_code: 'SUP-B' }),
+    );
+  });
+
   it('clear withdraws an ungrouped row, and refetches the decisions', async () => {
     planRowDecisionsStore = [{
       recommendation_id: 'r1', kind: 'buy', buy_qty: 23, stock_takes: [], po_qty: null,
       po_refs: [], reason_text: null, draft_po_number: null, draft_po_id: null,
     }];
     const { result } = renderHook(() => usePlanLines('run-1', true), { wrapper });
-    await waitFor(() => expect(result.current.decisions.r1).toEqual({ buy: 23 }));
+    await waitFor(() => expect(result.current.decisions.r1).toEqual({ buy: 23, priceMode: 'use_last' }));
 
     const line = { rec: { id: 'r1' } } as never;
     await act(async () => {

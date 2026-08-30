@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { LoaderCircle } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -15,15 +15,23 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
-import { useProductOptions, useWarehouseOptions } from '../../hooks/useScmOptions';
+import { searchProductOptions } from '../../services/scmOptionsService';
+import { useWarehouseOptions } from '../../hooks/useScmOptions';
 
-/** Manual-plan inputs (M8-D5, revised; captain 20 Aug dropped the cash budget field -
+/** Start Plan inputs (M8-D5, revised; captain 20 Aug dropped the cash budget field -
  *  budget stays a backend/post-run capability only, tightened afterwards on the plan
  *  via `CashBudgetPanel`/`applyBudget`, never set at launch). No market-insight
  *  toggle - market never enters a run; it reaches the plan only through the chat
- *  (Slice E). The legacy `buy_scope` is removed. Warehouse is now MULTI-select (pick
- *  several, or Select all) so a manual run can cover any subset like the daily run. */
+ *  (Slice E). The legacy `buy_scope` is removed. Warehouse is MULTI-select and
+ *  OPTIONAL (pick several, or leave it empty for every warehouse) so a plan can cover
+ *  any subset - or the same ground as the daily run. */
 export interface ManualPlanInputs {
+  /**
+   * Optional warehouse scope. **Empty means every warehouse** (P1, captain 25 Aug),
+   * exactly as empty products already means every product - the backend resolves an
+   * empty list to every active warehouse, so an unnarrowed manual plan covers the
+   * same ground as the scheduled daily run.
+   */
   warehouse_codes: string[];
   /**
    * Optional product scope (AC-B8a). **Empty means all products**, so the existing
@@ -33,7 +41,7 @@ export interface ManualPlanInputs {
    */
   product_codes: string[];
   /**
-   * "Plan until" (captain, 20 Aug). **Empty means no horizon** - every open SO line is
+   * "Sales order cut-off" (captain, 20 Aug; renamed in the revamp). **Empty means no horizon** - every open SO line is
    * planned regardless of when it is needed, today's behaviour. `YYYY-MM-DD` when set;
    * demand needed after it is excluded from this run's netting, and demand carrying no
    * date is always still counted.
@@ -53,9 +61,16 @@ function todayDateInputValue(): string {
 }
 
 /**
- * SCM M8 (slice D) - "Manual plan" on-demand run inputs. The scheduled daily run
- * (all warehouses, full budget) fires without this modal; this is the manual
- * override. Prototype: submitting just closes and re-shows the mock plan.
+ * Start Plan - the one way a person launches a run (plan 4.2). The scheduled daily run
+ * (all warehouses, full budget) fires without this modal.
+ *
+ * Fields in the order the buyer decides them: how far ahead to plan, then which warehouses,
+ * then which products. Every one is optional and empty means "everything", which is what
+ * makes Start Plan a single click on the day the answer is "the usual".
+ *
+ * There is no Select all: empty ALREADY means every warehouse, so a button that filled the
+ * box with every code produced the same run by a longer route and read as though leaving it
+ * blank would do something else.
  */
 export function RunPlanningModal({
   open,
@@ -72,6 +87,9 @@ export function RunPlanningModal({
   const [products, setProducts] = useState<string[]>([]);
   const [horizon, setHorizon] = useState('');
   const [error, setError] = useState<string | null>(null);
+  /** Labels of every product this modal has seen come back from the server, so a chip for a
+   *  code that is not on the page currently loaded still reads as its name. */
+  const [productLabels, setProductLabels] = useState<Record<string, string>>({});
 
   const {
     data: warehouseOptions,
@@ -79,14 +97,25 @@ export function RunPlanningModal({
     isError: warehousesError,
   } = useWarehouseOptions();
 
-  const {
-    data: productOptions,
-    isLoading: productsLoading,
-    isError: productsError,
-  } = useProductOptions();
+  /** Products are SEARCHED ON THE SERVER, never a static list: `products/select` answers with
+   *  its own default of 100 rows against ~22,000 active products, so the list this field used
+   *  to hold covered 0.5% of the catalogue and said "no products found" for the rest (R19
+   *  browser run: CB2907 and SRTWT7445-LV were unpickable). Same helper the sales-order and
+   *  purchase-order line pickers use. */
+  const fetchProductOptions = useCallback(async (query: string) => {
+    const options = await searchProductOptions(query);
+    setProductLabels((prev) => {
+      const next = { ...prev };
+      for (const opt of options) next[opt.value] = opt.label;
+      return next;
+    });
+    return options;
+  }, []);
 
-  const allCodes = (warehouseOptions ?? []).map((o) => o.value);
-  const allSelected = allCodes.length > 0 && warehouses.length === allCodes.length;
+  const selectedProductOptions = useMemo(
+    () => products.map((code) => ({ value: code, label: productLabels[code] ?? code })),
+    [products, productLabels],
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -94,24 +123,24 @@ export function RunPlanningModal({
     setProducts([]);
     setHorizon('');
     setError(null);
+    setProductLabels({});
   }, [open]);
 
   const today = todayDateInputValue();
 
   const submit = () => {
     setError(null);
-    if (warehouses.length === 0) {
-      setError('Select at least one warehouse to plan for.');
-      return;
-    }
     // A past cutoff nets every open line against demand that "must" have been needed
     // before today, which is every line - the run then silently returns zero demand
     // rather than saying why (nit, code review 20 Aug 2026).
     if (horizon && horizon < today) {
-      setError('Plan until cannot be in the past - it would leave the run with no demand.');
+      setError('The cut-off cannot be in the past - it would leave the run with no demand.');
       return;
     }
     onSubmit({
+      // Empty = every warehouse (P1), the same rule products already carry: narrowing
+      // is the exception, and requiring a pick made every manual run harder than the
+      // daily one it stands in for.
       warehouse_codes: warehouses,
       // Empty = all products. Products are deliberately NOT required: narrowing to
       // one is the exception, and forcing a pick would make every run harder than
@@ -127,7 +156,7 @@ export function RunPlanningModal({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>Manual plan</DialogTitle>
+          <DialogTitle>Start Plan</DialogTitle>
         </DialogHeader>
 
         <DialogBody className="space-y-5">
@@ -138,28 +167,44 @@ export function RunPlanningModal({
           ) : null}
 
           <div>
+            <Label htmlFor="plan-cutoff" className="mb-1 block">
+              Sales order cut-off
+            </Label>
+            <Input
+              id="plan-cutoff"
+              type="date"
+              min={today}
+              value={horizon}
+              onChange={(e) => setHorizon(e.target.value)}
+            />
+            <p className="mt-1 text-2xs text-muted-foreground">
+              Empty = every open order counts.
+            </p>
+          </div>
+
+          <div>
             <div className="mb-1 flex items-center justify-between">
               <Label>Warehouses</Label>
-              <button
-                type="button"
-                className="text-2xs font-medium text-primary underline-offset-2 hover:underline disabled:opacity-50"
-                disabled={warehousesLoading || allCodes.length === 0}
-                onClick={() => setWarehouses(allSelected ? [] : allCodes)}
-              >
-                {allSelected ? 'Clear all' : 'Select all'}
-              </button>
+              {warehouses.length ? (
+                <button
+                  type="button"
+                  className="text-2xs font-medium text-primary underline-offset-2 hover:underline"
+                  onClick={() => setWarehouses([])}
+                >
+                  Clear all
+                </button>
+              ) : null}
             </div>
             <SearchableMultiSelect
               value={warehouses}
               onChange={setWarehouses}
               options={warehouseOptions ?? []}
               disabled={warehousesLoading}
-              placeholder={warehousesLoading ? 'Loading warehouses...' : 'Select warehouses'}
+              placeholder={warehousesLoading ? 'Loading warehouses...' : 'All warehouses'}
               emptyMessage={warehousesError ? 'Could not load warehouses.' : 'No warehouses found.'}
             />
             <p className="mt-1 text-2xs text-muted-foreground">
-              Pick one or more warehouses, or Select all. The scheduled daily run always covers all
-              warehouses.
+              Leave empty to plan every warehouse.
             </p>
           </div>
 
@@ -179,31 +224,13 @@ export function RunPlanningModal({
             <SearchableMultiSelect
               value={products}
               onChange={setProducts}
-              options={productOptions ?? []}
-              disabled={productsLoading}
-              placeholder={productsLoading ? 'Loading products...' : 'All products'}
-              emptyMessage={productsError ? 'Could not load products.' : 'No products found.'}
+              fetchOptions={fetchProductOptions}
+              selectedOptions={selectedProductOptions}
+              placeholder="All products"
+              emptyMessage="No products found."
             />
             <p className="mt-1 text-2xs text-muted-foreground">
               Leave empty to plan every product.
-            </p>
-          </div>
-
-          <div>
-            <Label htmlFor="manual-horizon" className="mb-1 block">
-              Plan until
-            </Label>
-            <Input
-              id="manual-horizon"
-              type="date"
-              min={today}
-              value={horizon}
-              onChange={(e) => setHorizon(e.target.value)}
-            />
-            <p className="mt-1 text-2xs text-muted-foreground">
-              Empty = no cutoff, every open order counts. Demand needed after this date is
-              left out; demand with no date is always counted (unscheduled demand is still
-              demand).
             </p>
           </div>
         </DialogBody>
@@ -214,7 +241,7 @@ export function RunPlanningModal({
           </Button>
           <Button onClick={submit} disabled={isSubmitting}>
             {isSubmitting ? <LoaderCircle className="size-4 animate-spin" /> : null}
-            Generate plan
+            Start Plan
           </Button>
         </DialogFooter>
       </DialogContent>

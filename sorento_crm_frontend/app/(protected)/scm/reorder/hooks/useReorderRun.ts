@@ -20,6 +20,7 @@ import {
   getUnlocatedDemand,
   listReorderRuns,
   type RecommendationQuery,
+  type ReorderRunQuery,
 } from '../services/reorderRunService';
 import type {
   CreateReorderRunRequest,
@@ -237,13 +238,19 @@ export function useUnlocatedDemand() {
 }
 
 /**
- * Newest-first paginated run history for the Run history panel. Invalidate
- * `runHistoryKey` when a fresh run completes so it appears at the top.
+ * One page of the plans list (`/scm/reorder`). Invalidate `runHistoryKey` when a fresh run
+ * completes so it appears at the top.
  */
-export function useReorderRunHistory(page: number, limit: number, enabled = true) {
+export function useReorderRuns(query: ReorderRunQuery, enabled = true) {
   return useQuery({
-    queryKey: [...runHistoryKey, page, limit],
-    queryFn: () => listReorderRuns(page, limit),
+    queryKey: [
+      ...runHistoryKey,
+      query.pageIndex,
+      query.pageSize,
+      query.sorting ?? [],
+      query.searchQuery ?? '',
+    ],
+    queryFn: () => listReorderRuns(query),
     enabled,
     refetchOnWindowFocus: false,
     staleTime: 10_000,
@@ -266,6 +273,10 @@ export function useReorderRunDetail(runId: string | null, enabled: boolean) {
     refetchOnWindowFocus: false,
     staleTime: 30_000,
     retry: 1,
+    // Start Plan navigates to the plan on the 202, so the first thing this page shows is a
+    // run still being built by the worker. Poll while that is true and stop the moment it
+    // is not - there is no other way for the page to learn the plan is ready.
+    refetchInterval: (query) => (query.state.data?.status === 'running' ? RUN_POLL_MS : false),
   });
 }
 

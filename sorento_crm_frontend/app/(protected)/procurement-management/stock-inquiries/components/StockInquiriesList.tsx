@@ -12,7 +12,7 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Plus, Search, X, ChevronRight, Trash2, Check } from 'lucide-react';
+import { Plus, Search, X, Trash2, Check } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -40,6 +40,7 @@ import type { StockInquiry } from '../types/stockInquiry.types';
 import { STOCK_INQUIRY_STATUS_LABELS } from '../types/stockInquiry.types';
 import StockInquiryBulkDeleteDialog from './StockInquiryBulkDeleteDialog';
 import { EntityDownloadsButton } from '@/components/my-downloads/EntityDownloadsButton';
+import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 
 /**
  * The listing's shipped default, used until the user has left one behind.
@@ -90,6 +91,15 @@ export default function StockInquiriesList() {
     [viewFilters],
   );
 
+  // Back hands the list its own query string back, and the pager keeps rewriting
+  // it, so the list reads it (S3-01). One hook, every list. Sorting and the
+  // status filter are remembered per user by `useListingViewPreferences`, which
+  // is the stronger memory, so the URL only restores the page and the search.
+  useListStateFromUrl((state) => {
+    setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
+    setSearchQuery(state.searchQuery);
+  });
+
   const { data, isLoading, refetch, isFetching } = useStockInquiries({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
@@ -100,10 +110,9 @@ export default function StockInquiriesList() {
     enabled: !isViewPrefsLoading,
   });
 
-  const handleRowClick = (row: StockInquiry) => {
-    const inquiryId = row.id;
-    // Carry the active list query into the detail URL so its prev/next pager
-    // walks the same filtered+sorted set.
+  // The whole row opens the record, carrying the list query the pager rebuilds
+  // its key from.
+  const rowHref = (row: StockInquiry) => {
     const search = buildDetailSearch(
       {
         pageIndex: pagination.pageIndex,
@@ -116,7 +125,7 @@ export default function StockInquiriesList() {
       },
     );
     const qs = search ? `?${search}` : '';
-    router.push(`/procurement-management/stock-inquiries/${inquiryId}${qs}`);
+    return `/procurement-management/stock-inquiries/${row.id}${qs}`;
   };
 
   const applyStatusFilter = (next: string[]) => {
@@ -395,15 +404,6 @@ export default function StockInquiriesList() {
           skeleton: <Skeleton className="h-4 w-12" />,
         },
       },
-      {
-        accessorKey: 'actions',
-        header: '',
-        cell: () => (
-          <ChevronRight className="text-muted-foreground/70 size-3.5" />
-        ),
-        size: 40,
-        enableHiding: false,
-      },
     ],
     [],
   );
@@ -431,7 +431,7 @@ export default function StockInquiriesList() {
       table={table}
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading || isViewPrefsLoading}
-      onRowClick={handleRowClick}
+      rowHref={rowHref}
       standardToolbar={false}
       tableLayout={{ columnsVisibility: true }}
     >

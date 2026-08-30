@@ -330,6 +330,196 @@ def test_an_over_long_person_label_is_refused(client, db):
     assert db.query(SalesAgent).filter(SalesAgent.id == agent.id).one().person_label is None
 
 
+# --------------------------------------------------------------------------- #
+# Retiring a code
+# --------------------------------------------------------------------------- #
+# `is_active` decides whether a code is offered by the Agent pickers
+# (`sales_order_service.list_agents` filters on it). Until the record page carried a switch
+# for it there was no way to retire a code at all, so a person who had left was still
+# offered on every order. It is sales-agent-only: the shared `MirrorAnnotationUpdate` the
+# other mirror entities use does not accept it, because for them the column is synced and a
+# UI write would be clobbered by the next re-sync.
+def test_the_patch_can_retire_an_agent(client, db):
+    agent = _seed(db, sales_agent="ZZT RETIRE", is_active=True)
+
+    res = client.patch(f"{BASE}/{agent.id}/annotation", json={"is_active": False})
+    assert res.status_code == 200, res.text
+    assert res.json()["is_active"] is False
+
+    db.expire_all()
+    assert db.query(SalesAgent).filter(SalesAgent.id == agent.id).one().is_active is False
+
+
+def test_the_patch_can_bring_a_retired_agent_back(client, db):
+    agent = _seed(db, sales_agent="ZZT REHIRE", is_active=False)
+
+    res = client.patch(f"{BASE}/{agent.id}/annotation", json={"is_active": True})
+    assert res.status_code == 200, res.text
+    assert res.json()["is_active"] is True
+
+    db.expire_all()
+    assert db.query(SalesAgent).filter(SalesAgent.id == agent.id).one().is_active is True
+
+
+def test_omitting_is_active_leaves_it_alone(client, db):
+    """The same `model_fields_set` rule as every other field: a save that only renames the
+    person must not quietly reactivate a code somebody retired."""
+    agent = _seed(db, sales_agent="ZZT KEEPRETIRED", is_active=False)
+
+    res = client.patch(f"{BASE}/{agent.id}/annotation", json={"person_label": "ZZT P"})
+    assert res.status_code == 200, res.text
+    assert res.json()["is_active"] is False
+
+    db.expire_all()
+    assert db.query(SalesAgent).filter(SalesAgent.id == agent.id).one().is_active is False
+
+
+def test_a_refused_class_leaves_the_activation_unwritten(client, db):
+    """One save, one transaction - the same rule the label already follows."""
+    agent = _seed(db, sales_agent="ZZT HALFRETIRE", is_active=True)
+
+    res = client.patch(
+        f"{BASE}/{agent.id}/annotation",
+        json={"is_active": False, "demand_class": "dealer"},
+    )
+    assert res.status_code == 400, res.text
+
+    db.expire_all()
+    assert db.query(SalesAgent).filter(SalesAgent.id == agent.id).one().is_active is True
+
+
+def test_retiring_is_gated_on_the_edit_permission(read_only_client, db):
+    agent = _seed(db, sales_agent="ZZT NOEDIT ACTIVE")
+
+    res = read_only_client.patch(f"{BASE}/{agent.id}/annotation", json={"is_active": False})
+    assert res.status_code == 403, res.text
+
+    db.expire_all()
+    assert db.query(SalesAgent).filter(SalesAgent.id == agent.id).one().is_active is True
+
+
+# --------------------------------------------------------------------------- #
+# Bulk annotation
+# --------------------------------------------------------------------------- #
+# 38 codes arrived unclassified from the client's first upload and every one of them had
+# to be opened, edited and saved on its own. The bulk route sets ONE field across a
+# selection, with the same normalisation, the same vocabulary guard and the same
+# permission as the per-row PATCH - it is that PATCH applied N times, never a second
+# opinion about what a demand class is.
+def test_bulk_sets_the_demand_class_on_every_selected_agent(client, db):
+    a = _seed(db, sales_agent="ZZT BULK A")
+    b = _seed(db, sales_agent="ZZT BULK B")
+    untouched = _seed(db, sales_agent="ZZT BULK C")
+
+    res = client.post(
+        f"{BASE}/bulk-annotate",
+        json={"sales_agent_ids": [a.id, b.id], "demand_class": PROJECT},
+    )
+    assert res.status_code == 200, res.text
+    assert res.json() == {"updated": 2}
+
+    db.expire_all()
+    assert db.query(SalesAgent).filter(SalesAgent.id == a.id).one().demand_class == PROJECT
+    assert db.query(SalesAgent).filter(SalesAgent.id == b.id).one().demand_class == PROJECT
+    assert db.query(SalesAgent).filter(SalesAgent.id == untouched.id).one().demand_class is None
+
+
+def test_bulk_normalises_the_location_group(client, db):
+    """Same `upper(btrim())` the single-row annotation applies - a group typed in lower
+    case has to compare equal to the warehouse-code suffix it names."""
+    a = _seed(db, sales_agent="ZZT BULK GROUP")
+
+    res = client.post(
+        f"{BASE}/bulk-annotate",
+        json={"sales_agent_ids": [a.id], "location_group": " bb "},
+    )
+    assert res.status_code == 200, res.text
+
+    db.expire_all()
+    assert db.query(SalesAgent).filter(SalesAgent.id == a.id).one().location_group == "BB"
+
+
+def test_bulk_leaves_an_omitted_field_alone(client, db):
+    """`model_fields_set`: setting the group must not wipe a class the captain set."""
+    a = _seed(db, sales_agent="ZZT BULK KEEP", demand_class=PROJECT)
+
+    res = client.post(
+        f"{BASE}/bulk-annotate",
+        json={"sales_agent_ids": [a.id], "location_group": "HP"},
+    )
+    assert res.status_code == 200, res.text
+
+    db.expire_all()
+    stored = db.query(SalesAgent).filter(SalesAgent.id == a.id).one()
+    assert stored.demand_class == PROJECT
+    assert stored.location_group == "HP"
+
+
+def test_bulk_clears_a_field_sent_as_null(client, db):
+    """An explicit null is a decision - the same one the single-row PATCH already honours."""
+    a = _seed(db, sales_agent="ZZT BULK CLEAR", demand_class=DEFAULT_DEMAND_CLASS,
+              location_group="BB")
+
+    res = client.post(
+        f"{BASE}/bulk-annotate",
+        json={"sales_agent_ids": [a.id], "demand_class": None},
+    )
+    assert res.status_code == 200, res.text
+
+    db.expire_all()
+    stored = db.query(SalesAgent).filter(SalesAgent.id == a.id).one()
+    assert stored.demand_class is None
+    assert stored.location_group == "BB"
+
+
+def test_bulk_refuses_a_word_outside_the_vocabulary(client, db):
+    """And writes nothing: a rejected class must not classify half the selection."""
+    a = _seed(db, sales_agent="ZZT BULK BAD A")
+    b = _seed(db, sales_agent="ZZT BULK BAD B")
+
+    res = client.post(
+        f"{BASE}/bulk-annotate",
+        json={"sales_agent_ids": [a.id, b.id], "demand_class": "dealer"},
+    )
+    assert res.status_code == 400, res.text
+    assert "dealer" in res.text
+
+    db.expire_all()
+    assert db.query(SalesAgent).filter(SalesAgent.id == a.id).one().demand_class is None
+    assert db.query(SalesAgent).filter(SalesAgent.id == b.id).one().demand_class is None
+
+
+def test_bulk_refuses_an_id_it_does_not_hold(client, db):
+    """Named rather than silently skipped: "updated: 1 of 2" with no reason is how a
+    selection quietly loses a row."""
+    a = _seed(db, sales_agent="ZZT BULK MISSING")
+
+    res = client.post(
+        f"{BASE}/bulk-annotate",
+        json={"sales_agent_ids": [a.id, str(uuid.uuid4())], "demand_class": PROJECT},
+    )
+    assert res.status_code == 404, res.text
+
+    db.expire_all()
+    assert db.query(SalesAgent).filter(SalesAgent.id == a.id).one().demand_class is None
+
+
+def test_bulk_requires_at_least_one_agent(client):
+    res = client.post(f"{BASE}/bulk-annotate", json={"sales_agent_ids": []})
+    assert res.status_code == 422, res.text
+
+
+def test_bulk_is_gated_on_the_same_permission_as_the_patch(read_only_client, db):
+    """A role that may read the master must not be able to reclassify 38 rows at once."""
+    a = _seed(db, sales_agent="ZZT BULK GATED")
+
+    res = read_only_client.post(
+        f"{BASE}/bulk-annotate",
+        json={"sales_agent_ids": [a.id], "demand_class": PROJECT},
+    )
+    assert res.status_code == 403, res.text
+
+
 def test_the_class_lands_on_the_clicked_row_not_a_namesake(client, db):
     """The code is unique PER COMPANY, so two rows may legitimately spell it the same.
 

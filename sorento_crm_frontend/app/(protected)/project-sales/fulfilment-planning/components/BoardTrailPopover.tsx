@@ -2,7 +2,12 @@
 
 import * as React from 'react';
 import { ListChecks } from 'lucide-react';
-import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/components/ui/popover';
+import {
+  Popover,
+  PopoverContent,
+  PopoverPortal,
+  PopoverTrigger,
+} from '@/components/ui/popover';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { statusPillClass } from '@/lib/status-pill';
 import type {
@@ -14,24 +19,31 @@ import { ClassificationProofPopover } from './ClassificationProofPopover';
 import { PileQueueDialog } from './PileQueueDialog';
 
 /**
- * How this line's proposal was arrived at, rung by rung.
+ * How this line's proposal was arrived at: the four questions, and Buy.
  *
  * The captain, on a Buy: "can you justify how you arrive at the buy, like what's the process
- * you have gone through: checking the available quantity first, deciding whether to reserve it
- * or not, then checking the SPO quantity, then checking whether can borrow ... need more
- * justification" - and then, on being shown a paragraph: "the justification needs to be
- * STRUCTURED instead of plain text explaining, you can put it under the tooltip".
+ * you have gone through" - and then, on being shown a paragraph: "the justification needs to be
+ * STRUCTURED instead of plain text explaining, you can put it under the tooltip". And on 26
+ * August, walking SO381895: "our thought process is simpler now."
  *
- * So it is a table of STEPS in the order the ladder walked them, and every rung is here
- * including the ones that gave nothing: "the pool was checked and had none" is the answer to
- * that question, and a rung left out reads as a rung nobody walked. What each source HELD, who
- * was ahead of this line at it, what it could offer, what the line took, and what was still
- * owed after it - the same numbers the source strip beside it is the summary of.
+ * So it is FIVE ROWS, always, one per question plus Buy, and every one is answered: "the pool
+ * was checked and had none" is the answer to that question, and a row left out reads as a
+ * question nobody asked. Each row is a QUESTION, a Yes or No, what it took, where from, and
+ * one sentence with the deciding figure inside it - the group's net, the pile's net, the donor
+ * group's net, the cap. The eight columns of arithmetic this replaced left the reader to do
+ * the subtraction themselves.
  *
- * A real `<table>` and not the shared DataGrid on purpose: five fixed rows of arithmetic inside
- * a popover, with no sorting, paging or column preferences to speak of.
+ * The engine's rung names (own, pool, cross_group_borrow, group_borrow, buy) stay internal and
+ * are never rendered.
+ *
+ * A real `<table>` and not the shared DataGrid on purpose: five fixed rows inside a popover,
+ * with no sorting, paging or column preferences to speak of.
  */
-export function BoardTrailPopover({ contribution }: { contribution: BoardContribution }) {
+export function BoardTrailPopover({
+  contribution,
+}: {
+  contribution: BoardContribution;
+}) {
   const trail = contribution.trail ?? [];
   /**
    * The whole queue, over the popover.
@@ -66,10 +78,12 @@ export function BoardTrailPopover({ contribution }: { contribution: BoardContrib
             // content, so it does not need the focus.
             onOpenAutoFocus={(event) => event.preventDefault()}
           >
-            {/* Scrolls in BOTH directions: at 375px the eight columns are wider than the phone,
-                and clipping them silently drops Still owed and Outcome - the two that say how the
-                rung ended. */}
-            <div data-testid={`trail-${contribution.key}`} className="max-h-[60vh] overflow-auto">
+            {/* Scrolls in BOTH directions: at 375px the row is wider than the phone, and
+                clipping it silently drops Took and From. */}
+            <div
+              data-testid={`trail-${contribution.key}`}
+              className="max-h-[60vh] overflow-auto"
+            >
               <div className="flex flex-wrap items-center gap-1.5 border-b px-3 py-2 text-xs font-semibold">
                 <span>How this decision was reached</span>
                 <ItemFlagChips contribution={contribution} />
@@ -79,17 +93,20 @@ export function BoardTrailPopover({ contribution }: { contribution: BoardContrib
                   {trailAbsence(contribution)}
                 </p>
               ) : (
-                <table className="w-full min-w-[560px] text-xs">
+                <table className="w-full min-w-[520px] text-xs">
                   <thead>
                     <tr className="border-b text-2xs uppercase tracking-wide text-muted-foreground">
                       <th className="px-3 py-1.5 text-start font-medium">#</th>
-                      <th className="px-2 py-1.5 text-start font-medium">Source</th>
-                      <th className="px-2 py-1.5 text-end font-medium">Had</th>
-                      <th className="px-2 py-1.5 text-start font-medium">Ahead</th>
-                      <th className="px-2 py-1.5 text-end font-medium">For this line</th>
+                      <th className="px-2 py-1.5 text-start font-medium">
+                        Question
+                      </th>
+                      <th className="px-2 py-1.5 text-start font-medium">
+                        Answer
+                      </th>
                       <th className="px-2 py-1.5 text-end font-medium">Took</th>
-                      <th className="px-2 py-1.5 text-end font-medium">Still owed</th>
-                      <th className="px-3 py-1.5 text-start font-medium">Outcome</th>
+                      <th className="px-3 py-1.5 text-start font-medium">
+                        From
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
@@ -98,35 +115,43 @@ export function BoardTrailPopover({ contribution }: { contribution: BoardContrib
                         <tr
                           data-step={step.step}
                           data-testid={`trail-step-${contribution.key}-${step.kind}`}
-                          className={hasFooter(step) ? '' : 'border-b last:border-b-0'}
+                          className={
+                            hasFooter(step) ? '' : 'border-b last:border-b-0'
+                          }
                         >
-                          <td className="px-3 py-1.5 tabular-nums">{step.step}</td>
-                          <td className="px-2 py-1.5">{sourceOf(step)}</td>
-                          <td className="px-2 py-1.5 text-end tabular-nums">
-                            {step.opening ?? '-'}
+                          <td className="px-3 py-1.5 tabular-nums">
+                            {step.step}
                           </td>
-                          <td className="px-2 py-1.5 tabular-nums">{aheadOf(step)}</td>
-                          <td className="px-2 py-1.5 text-end tabular-nums">{step.offered}</td>
-                          <td className="px-2 py-1.5 text-end font-medium tabular-nums">
-                            {step.taken}
+                          <td className="px-2 py-1.5">
+                            <span className="block" title={step.question}>
+                              {step.question}
+                            </span>
                           </td>
-                          <td className="px-2 py-1.5 text-end tabular-nums">
-                            {step.remaining_after}
-                          </td>
-                          <td className="px-3 py-1.5">
+                          <td className="px-2 py-1.5">
                             <span
+                              data-testid={`trail-answer-${contribution.key}-${step.kind}`}
                               className={`inline-flex items-center rounded px-1.5 py-0.5 text-2xs font-medium ${
-                                OUTCOME_CLASS[step.outcome] ?? 'bg-muted text-muted-foreground'
+                                ANSWER_CLASS[step.answer] ??
+                                'bg-muted text-muted-foreground'
                               }`}
                             >
-                              {OUTCOME_LABEL[step.outcome] ?? step.outcome}
+                              {ANSWER_LABEL[step.answer] ?? step.answer}
                             </span>
+                          </td>
+                          <td className="px-2 py-1.5 text-end font-medium tabular-nums">
+                            {step.took}
+                          </td>
+                          <td
+                            className="max-w-[160px] truncate px-3 py-1.5"
+                            title={step.from ?? undefined}
+                          >
+                            {step.from ?? '-'}
                           </td>
                         </tr>
                         {hasFooter(step) && (
                           <tr className="border-b last:border-b-0">
                             <td />
-                            <td colSpan={7} className="space-y-1 px-2 pb-1.5">
+                            <td colSpan={4} className="space-y-1 px-2 pb-1.5">
                               {/* WHY it ended that way, in the server's own words. The row above
                                   is the arithmetic; this is the sentence the captain asked for
                                   when the arithmetic alone left him asking "what does this
@@ -140,17 +165,23 @@ export function BoardTrailPopover({ contribution }: { contribution: BoardContrib
                                 </p>
                               )}
                               {step.note && (
-                                <p className="text-2xs text-muted-foreground">{step.note}</p>
+                                <p className="text-2xs text-muted-foreground">
+                                  {step.note}
+                                </p>
                               )}
                               {step.kind === 'pool' && step.pool && (
-                                <PoolPile pool={step.pool} contributionKey={contribution.key} />
+                                <PoolPile
+                                  pool={step.pool}
+                                  contributionKey={contribution.key}
+                                />
                               )}
                               {(step.ahead?.length ?? 0) > 0 && (
                                 <QueueLink
                                   step={step}
                                   contributionKey={contribution.key}
                                   onOpenQueue={
-                                    contribution.product_id && contribution.fulfilment_warehouse_id
+                                    contribution.product_id &&
+                                    contribution.fulfilment_warehouse_id
                                       ? () => setQueueOpen(true)
                                       : undefined
                                   }
@@ -168,22 +199,26 @@ export function BoardTrailPopover({ contribution }: { contribution: BoardContrib
           </PopoverContent>
         </PopoverPortal>
       </Popover>
-      {queueOpen && contribution.product_id && contribution.fulfilment_warehouse_id && (
-        <PileQueueDialog
-          productId={contribution.product_id}
-          warehouseId={contribution.fulfilment_warehouse_id}
-          lineId={contribution.line_id}
-          itemCode={contribution.item_code}
-          onClose={() => setQueueOpen(false)}
-        />
-      )}
+      {queueOpen &&
+        contribution.product_id &&
+        contribution.fulfilment_warehouse_id && (
+          <PileQueueDialog
+            productId={contribution.product_id}
+            warehouseId={contribution.fulfilment_warehouse_id}
+            lineId={contribution.line_id}
+            itemCode={contribution.item_code}
+            onClose={() => setQueueOpen(false)}
+          />
+        )}
     </>
   );
 }
 
 /** A rung says something under itself when it has a sentence, a hint, a pile or a queue to name. */
 function hasFooter(step: BoardTrailStep): boolean {
-  return Boolean(step.why || step.note || step.pool || (step.ahead?.length ?? 0) > 0);
+  return Boolean(
+    step.why || step.note || step.pool || (step.ahead?.length ?? 0) > 0,
+  );
 }
 
 /**
@@ -204,10 +239,22 @@ function hasFooter(step: BoardTrailStep): boolean {
  * cold chip for the same class), and "Not classified" when the item has no evidence at all.
  * The Proof button beside the chips is where the ranked number behind any of these lives.
  */
-function ItemFlagChips({ contribution }: { contribution: BoardContribution }) {
+export function ItemFlagChips({
+  contribution,
+  idKey = contribution.key,
+}: {
+  contribution: BoardContribution;
+  /** Test-id key. The cell dialog's header renders the same chips under its own key. */
+  idKey?: string;
+}) {
   const flags = contribution.item_flags;
   if (!flags) return null;
-  const chips: Array<{ key: string; label: string; title: string; tone: string }> = [];
+  const chips: Array<{
+    key: string;
+    label: string;
+    title: string;
+    tone: string;
+  }> = [];
   if (flags.dealer_hot_selling) {
     const where = flags.dealer_hot_selling_where.join(', ');
     chips.push({
@@ -222,7 +269,8 @@ function ItemFlagChips({ contribution }: { contribution: BoardContribution }) {
     chips.push({
       key: 'dealer-cold',
       label: 'Cold at retail',
-      title: 'Cold at retail: the shared pool is offered as it is for any ordinary item.',
+      title:
+        'Cold at retail: the shared pool is offered as it is for any ordinary item.',
       tone: 'draft',
     });
   }
@@ -240,7 +288,8 @@ function ItemFlagChips({ contribution }: { contribution: BoardContribution }) {
     chips.push({
       key: 'project-cold',
       label: 'Cold at project',
-      title: 'Cold at project: the shared pool is offered as it is for any ordinary item.',
+      title:
+        'Cold at project: the shared pool is offered as it is for any ordinary item.',
       tone: 'draft',
     });
   }
@@ -256,7 +305,8 @@ function ItemFlagChips({ contribution }: { contribution: BoardContribution }) {
     chips.push({
       key: 'not-classified',
       label: 'Not classified',
-      title: 'No retail or project deliveries of this item in the last 12 months, so hot-selling cannot be judged.',
+      title:
+        'No retail or project deliveries of this item in the last 12 months, so hot-selling cannot be judged.',
       tone: 'unknown',
     });
   }
@@ -264,13 +314,13 @@ function ItemFlagChips({ contribution }: { contribution: BoardContribution }) {
     <span className="inline-flex flex-wrap items-center gap-1">
       {chips.length > 0 && (
         <span
-          data-testid={`trail-flags-${contribution.key}`}
+          data-testid={`trail-flags-${idKey}`}
           className="inline-flex flex-wrap gap-1"
         >
           {chips.map((chip) => (
             <span
               key={chip.key}
-              data-testid={`trail-flag-${contribution.key}-${chip.key}`}
+              data-testid={`trail-flag-${idKey}-${chip.key}`}
               title={chip.title}
               className={`inline-flex items-center rounded px-1.5 py-0.5 text-2xs font-medium ${statusPillClass(chip.tone)}`}
             >
@@ -279,7 +329,10 @@ function ItemFlagChips({ contribution }: { contribution: BoardContribution }) {
           ))}
         </span>
       )}
-      <ClassificationProofPopover productId={contribution.product_id} testId={contribution.key} />
+      <ClassificationProofPopover
+        productId={contribution.product_id}
+        testId={idKey}
+      />
     </span>
   );
 }
@@ -292,13 +345,35 @@ function ItemFlagChips({ contribution }: { contribution: BoardContribution }) {
  * whole position. Both are here, with the subtraction between them, so the rung can be checked
  * against the stock screen. Seven fixed cells of arithmetic, so a plain table.
  */
-function PoolPile({ pool, contributionKey }: { pool: BoardTrailPool; contributionKey: string }) {
+function PoolPile({
+  pool,
+  contributionKey,
+}: {
+  pool: BoardTrailPool;
+  contributionKey: string;
+}) {
   const cells: Array<{ label: string; value: string; title?: string }> = [
     { label: 'On hand', value: pool.on_hand },
-    { label: 'SO qty', value: pool.so_qty, title: 'Owed by every open sales order at this location' },
-    { label: 'SPO qty', value: pool.spo_qty, title: 'On the water to this location' },
-    { label: 'Available', value: pool.available, title: 'On hand - SO qty + SPO qty' },
-    { label: 'Free', value: pool.free, title: 'On hand less reserved less confirmed holds' },
+    {
+      label: 'SO qty',
+      value: pool.so_qty,
+      title: 'Outstanding on every open sales order at this location',
+    },
+    {
+      label: 'SPO qty',
+      value: pool.spo_qty,
+      title: 'On the water to this location',
+    },
+    {
+      label: 'Available',
+      value: pool.available,
+      title: 'On hand - SO qty + SPO qty',
+    },
+    {
+      label: 'Free',
+      value: pool.free,
+      title: 'On hand less reserved less confirmed holds',
+    },
     {
       label: 'Claimed ahead',
       value: `${pool.claimed_ahead_qty} (${pool.claimed_ahead_lines} line${
@@ -306,7 +381,11 @@ function PoolPile({ pool, contributionKey }: { pool: BoardTrailPool; contributio
       })`,
       title: "By this location's own orders ranked ahead of this line",
     },
-    { label: 'Left', value: pool.left, title: 'For this line, when the rung was reached' },
+    {
+      label: 'Left',
+      value: pool.left,
+      title: 'For this line, when the rung was reached',
+    },
   ];
   return (
     <table
@@ -380,53 +459,14 @@ function QueueLink({
   );
 }
 
-/**
- * What the rung is, ladder v2's own order
- * (`documentation/plans/scm/PLAN-demo-followups-19aug-ladder-v2.md` section E): Incoming,
- * Pool, Group take, Group borrow, Cross-group borrow, Buy. The own-location Reserve rung is
- * gone (rule 7) - stock at the line's own location is read-only on the strip, never a rung.
- */
-function sourceOf(step: BoardTrailStep): string {
-  if (step.kind === 'reserve_own') {
-    return step.location ? `This location (${step.location})` : 'This location';
-  }
-  if (step.kind === 'incoming') return 'Incoming (SPO)';
-  if (step.kind === 'pool') return step.location ? `Pool ${step.location}` : 'Pool';
-  if (step.kind === 'group_take') {
-    return step.location ? `Group take at ${step.location}` : 'Group take';
-  }
-  if (step.kind === 'group_borrow') return 'Group borrow';
-  if (step.kind === 'cross_group_borrow') return 'Cross-group borrow';
-  if (step.kind === 'borrow') return 'Borrow';
-  return 'Buy';
-}
-
-/**
- * Who was in front of this line at a rung with a queue. Own location only (`reserve_own`,
- * S4 of the 19 Aug review): every other rung sends an empty list, because no other rung
- * queues - the pool nets its own book before it is offered, and incoming and Buy have none.
- */
-function aheadOf(step: BoardTrailStep): string {
-  if (!step.ahead_lines) return '-';
-  return `${step.ahead_qty ?? '0'} across ${step.ahead_lines} line${
-    step.ahead_lines === 1 ? '' : 's'
-  }`;
-}
-
-const OUTCOME_LABEL: Record<string, string> = {
-  took: 'Took',
-  nothing_left: 'Nothing left',
-  not_eligible: 'Not eligible',
-  offered: 'Offered',
-  none_needed: 'Not needed',
+const ANSWER_LABEL: Record<string, string> = {
+  yes: 'Yes',
+  no: 'No',
 };
 
-const OUTCOME_CLASS: Record<string, string> = {
-  took: 'bg-emerald-100 text-emerald-800',
-  nothing_left: 'bg-amber-100 text-amber-800',
-  not_eligible: 'bg-muted text-muted-foreground',
-  offered: 'bg-sky-100 text-sky-800',
-  none_needed: 'bg-muted text-muted-foreground',
+const ANSWER_CLASS: Record<string, string> = {
+  yes: 'bg-emerald-100 text-emerald-800',
+  no: 'bg-muted text-muted-foreground',
 };
 
 /**
@@ -449,7 +489,9 @@ function trailAbsence(contribution: BoardContribution): string {
 
 /** Why there is no ladder to show: the server's own sentence, never one invented here. */
 function noPlanReason(contribution: BoardContribution): string {
-  const stated = contribution.sources.find((source) => source.kind === 'unplannable');
+  const stated = contribution.sources.find(
+    (source) => source.kind === 'unplannable',
+  );
   return (
     stated?.reason ??
     'No fulfilment location on the sales order line, so nothing can be sourced for it.'

@@ -1,15 +1,19 @@
 import { apiFetch } from '@/lib/api';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
+import type { LinkHorizonRequest } from '../lib/linkHorizon';
 import type {
+  AcknowledgeResult,
   AutoPlaceRequest,
   AutoPlaceResult,
   OrderInquiryDetail,
   OrderInquiryListEnvelope,
   OrderInquiryListParams,
   OrderInquiryPoAllocation,
+  OrderInquiryBulkRejectResult,
   OrderInquiryPoCandidate,
   OrderInquiryPoDetail,
   OrderInquiryRow,
+  OrderInquirySpoDetail,
   OrderInquirySummary,
   OrderInquiryWorklistEnvelope,
   OrderInquiryWorklistParams,
@@ -18,6 +22,7 @@ import type {
   UnplaceAllPreview,
   UnplaceAllRequest,
   UnplaceAllResult,
+  UploadJobScope,
 } from '../types/orderInquiry.types';
 
 const BASE = '/api/v1/project-sales';
@@ -107,56 +112,56 @@ export async function markOrderInquiryRows(
   return response.json();
 }
 
-/* --------------------------------------------------------- Place on PO (section G, G2)
+/* -------------------------------------------------- Link PO / Link SPO (section 3.I)
  *
- * API CONTRACT (backend section G, reworked G2 20 Aug - placements happen automatically;
- * this dialog is override + audit).
+ * API CONTRACT (PLAN-scm-cs-planning-uat.md section 3.I, AC-I1 to AC-I10). The ROUTE
+ * PATHS are unchanged on purpose - the plan renames the verb, not the URLs - so
+ * `place-on-po` is the link endpoint and `unplace` is the unlink one.
  *
  *   GET  {BASE}/order-inquiry-rows/{rowId}/po-candidates
- *        -> OrderInquiryPoCandidate[], soonest expected_date first, ties by document
- *        sequence. Each candidate carries `default_take` - the cascade's own preview of
- *        what it would take off that line. 409 when the row is not a raised
- *        ORDER/RESERVE & ORDER row.
+ *        -> OrderInquiryPoCandidate[], in the walk's own order: the cited document first,
+ *        then SPO allocations before PO lines on an ORDER BACK row, then location tier
+ *        (Q5), then the PO's issue date, then the line's expected date, then the document
+ *        number (Q7). Every candidate carries BOTH dates and its tier; location never
+ *        filters a candidate out. `default_take` is the cascade's own preview of what it
+ *        would take off that line. 409 when the row is not linkable.
  *
  *   POST {BASE}/order-inquiry-rows/{rowId}/place-on-po  { po_line_id }
- *        -> OrderInquiryRowOut, state 'placed'. The original single-line shape,
- *        unchanged: one line, no split. 409 naming the shortfall when the line's
- *        remaining balance cannot cover the row.
+ *        -> OrderInquiryRowOut. One PO line, the single-target shape.
  *
- *   POST {BASE}/order-inquiry-rows/{rowId}/place-on-po  { allocations: [{po_line_id, qty}] }
- *        -> OrderInquiryRowOut, the FIRST row the call touched (the row reused on full
- *        coverage, the first new split row on a partial one). A row several lines cover
- *        SPLITS server-side - refetch the rows list to see every row the call wrote.
- *        409 `order_inquiry_over_allocated` when the allocations total more than the
- *        row's own quantity; 409 `order_inquiry_po_line_short` naming the line that
- *        cannot cover what was asked of it.
+ *   POST {BASE}/order-inquiry-rows/{rowId}/place-on-po
+ *        { allocations: [{po_line_id | spo_allocation_id, qty}] }
+ *        -> OrderInquiryRowOut - the SAME row, with one link per allocation. The row is
+ *        never split any more (AC-I6): it keeps its full quantity and reads linked or
+ *        partly linked. 409 `order_inquiry_over_allocated` when the allocations total
+ *        more than the row's own quantity; 409 `order_inquiry_po_line_short` naming the
+ *        line that cannot cover what was asked of it; 409
+ *        `order_inquiry_spo_not_order_back` when a non-ORDER BACK row names an SPO.
  *
- *   POST {BASE}/order-inquiry-rows/{rowId}/unplace
- *        -> OrderInquiryRowOut, state back to 'raised'. 409 when the row is not placed.
- *        Works on a split row exactly as on an unsplit one.
+ *   POST {BASE}/order-inquiry-rows/{rowId}/unplace  { link_id? }
+ *        -> OrderInquiryRowOut. With a `link_id` that ONE link goes; without one every
+ *        link the row holds goes. The row's state is re-derived either way. 409 when the
+ *        row holds no links at all.
  *
  *   POST {BASE}/order-inquiries/auto-place  { product_ids? }
  *        -> AutoPlaceResult { placed_rows, allocations, products_touched }. Runs the
- *        cascade now, over every raised row of the named products (or of every product
- *        carrying one, when `product_ids` is omitted). Idempotent - a second call with
- *        the same products places nothing further.
+ *        cascade now, over every raised or partly linked row of the named products (or of
+ *        every product carrying one, when `product_ids` is omitted). Idempotent - a
+ *        second call links nothing further.
  *
  *   GET  {BASE}/order-inquiries/unplace-all-preview  { query?, delivery_month?,
- *        raised_date?, project_id?, supplier_id? }
+ *        raised_date?, project_id?, supplier_id?, raised_by? }
  *        -> UnplaceAllPreview { count, product_code?, product_name? }. The confirm
- *        dialog's own numbers, resolved server-side against the SAME filters `unplace-all`
- *        itself reads - never off whatever page of the worklist happens to be loaded.
- *        `product_code`/`product_name` are set only when every matching row resolves to
- *        the same product.
+ *        dialog's own numbers, resolved server-side against the SAME filters
+ *        `unplace-all` itself reads - never off whatever page of the worklist happens to
+ *        be loaded. `product_code`/`product_name` are set only when every matching row
+ *        resolves to the same product.
  *
- *   POST {BASE}/order-inquiries/unplace-all  { query?, delivery_month?, raised_date?,
- *        project_id?, supplier_id? }
- *        -> UnplaceAllResult { unplaced }. Every PLACED row matching the CURRENT worklist
- *        scope - the SAME filter shape `GET /order-inquiries` takes, `state` always
- *        forced to placed - reverts to raised. No filter at all means every placed row in
- *        the company. A row a cascade split into several stays split; each sibling goes
- *        raised at its own quantity. Never `product_ids`: the worklist paginates
- *        server-side, so a client-derived product list would miss rows behind page 1.
+ *   POST {BASE}/order-inquiries/unplace-all  { ...the same filters }
+ *        -> UnplaceAllResult { unplaced }. Every LINKED or partly linked row matching the
+ *        CURRENT worklist scope loses its links. No filter at all means every linked row
+ *        in the company. Never `product_ids`: the worklist paginates server-side, so a
+ *        client-derived product list would miss rows behind page 1.
  *
  * Permission is the same as `mark`: `projects.order_inquiry.action`.
  */
@@ -166,12 +171,11 @@ export async function getOrderInquiryPoCandidates(
 ): Promise<OrderInquiryPoCandidate[]> {
   const response = await apiFetch(`${BASE}/order-inquiry-rows/${rowId}/po-candidates`);
   if (!response.ok)
-    throw new Error(await extractApiError(response, 'Failed to load purchase order lines'));
+    throw new Error(await extractApiError(response, 'Failed to load candidate lines'));
   return response.json();
 }
 
-/** Tag a raised row onto one outstanding PO line - the captain's "quantity to be ordered
- * is deducted". The original single-line shape. */
+/** Link a row to ONE outstanding PO line - the single-target shape. */
 export async function placeOrderInquiryRowOnPo(
   rowId: string,
   poLineId: string,
@@ -182,14 +186,14 @@ export async function placeOrderInquiryRowOnPo(
     body: JSON.stringify({ po_line_id: poLineId }),
   });
   if (!response.ok)
-    throw new Error(await extractApiError(response, 'Failed to place this row on a purchase order'));
+    throw new Error(await extractApiError(response, 'Failed to link this row to a document'));
   return response.json();
 }
 
 /**
- * Tag a raised row across one or more outstanding PO lines - the cascade shape (G2), one
- * call. The row may split server-side; the caller reads back the FIRST row the call
- * touched and refetches the rows list to see the rest.
+ * Link a row across one or more document lines - PO lines, or SPO allocations on an
+ * ORDER BACK row - in one call. The row keeps its full quantity and gains one link per
+ * allocation, so the response is that same row.
  */
 export async function placeOrderInquiryRowOnPoAllocations(
   rowId: string,
@@ -201,25 +205,30 @@ export async function placeOrderInquiryRowOnPoAllocations(
     body: JSON.stringify({ allocations }),
   });
   if (!response.ok)
-    throw new Error(await extractApiError(response, 'Failed to place this row on a purchase order'));
+    throw new Error(await extractApiError(response, 'Failed to link this row to a document'));
   return response.json();
 }
 
-/** Untag: the row goes back to raised. Works on a split row exactly as on an unsplit one. */
-export async function unplaceOrderInquiryRow(rowId: string): Promise<OrderInquiryRow> {
+/** Unlink: one link when `linkId` names it, every link the row holds when it does not. */
+export async function unplaceOrderInquiryRow(
+  rowId: string,
+  linkId?: string,
+): Promise<OrderInquiryRow> {
   const response = await apiFetch(`${BASE}/order-inquiry-rows/${rowId}/unplace`, {
     method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(linkId ? { link_id: linkId } : {}),
   });
   if (!response.ok)
-    throw new Error(await extractApiError(response, 'Failed to unplace this row'));
+    throw new Error(await extractApiError(response, 'Failed to unlink this row'));
   return response.json();
 }
 
 /**
- * Run the cascade now (G2 rule 4) - the worklist's "Auto-place". Every raised
- * ORDER/RESERVE & ORDER row of the named products, or of every product carrying one when
- * `product_ids` is omitted, tagged to its own open PO lines, earliest expected date
- * first. Idempotent: a second call with the same products places nothing further.
+ * Run the cascade now - the worklist's "Auto-link". Every raised or partly linked row of
+ * the named products, or of every product carrying one when `product_ids` is omitted,
+ * linked to its own open document lines in the walk's order. Idempotent: a second call
+ * links nothing further.
  */
 export async function autoPlaceOrderInquiryRows(
   params: AutoPlaceRequest = {},
@@ -230,11 +239,106 @@ export async function autoPlaceOrderInquiryRows(
     body: JSON.stringify(params),
   });
   if (!response.ok)
-    throw new Error(await extractApiError(response, 'Failed to run the auto-place pass'));
+    throw new Error(await extractApiError(response, 'Failed to run the auto-link pass'));
   return response.json();
 }
 
-/** The same five fields, however they are used - a query string for the preview GET, a
+/**
+ * Purchasing takes these instructions on (AC-H2), one row or a batch.
+ *
+ * One press does two things because they are one decision: the rows become purchasing's
+ * work, and the cascade runs for exactly them, so whatever open document can cover them
+ * is linked at that moment. Nothing links before this.
+ *
+ * `horizon` is how far out the linking half reaches (AC-LH1): every ticked row is taken
+ * on, and one due after that date is left Not linked and reported on `after_horizon`. It
+ * is `linkHorizonRequest`'s own fragment - a date, an explicit `link_horizon: 'none'`, or
+ * nothing at all, which the server reads as the reorder plan's own (S1).
+ */
+export async function acknowledgeOrderInquiryRows(
+  rowIds: string[],
+  horizon?: LinkHorizonRequest,
+): Promise<AcknowledgeResult> {
+  const response = await apiFetch(`${BASE}/order-inquiries/acknowledge`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ row_ids: rowIds, ...(horizon ?? {}) }),
+  });
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to acknowledge those rows'));
+  return response.json();
+}
+
+/**
+ * Purchasing refuses one row, with a reason (AC-H5). The row leaves netting and its
+ * sales-order line goes back to the board undecided carrying the refusal.
+ */
+export async function rejectOrderInquiryRow(
+  rowId: string,
+  reason: string,
+): Promise<OrderInquiryRow> {
+  const response = await apiFetch(`${BASE}/order-inquiries/${rowId}/reject`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ reason }),
+  });
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to reject this row'));
+  return response.json();
+}
+
+/**
+ * Purchasing refuses a BATCH with ONE reason (plan section 5.6, item 15). Reject is a
+ * bulk action now that the row actions column is gone, and asking for the reason once
+ * per row would make refusing twenty rows twenty dialogs.
+ *
+ * ONE call, and the server takes it all or nothing: a press that half happened leaves the
+ * buyer to work out which half from a screen that has already moved on.
+ */
+export async function rejectOrderInquiryRows(
+  rowIds: string[],
+  reason: string,
+): Promise<OrderInquiryBulkRejectResult> {
+  const response = await apiFetch(`${BASE}/order-inquiries/reject`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ row_ids: rowIds, reason }),
+  });
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to reject those rows'));
+  return response.json();
+}
+
+/**
+ * What the book this page uploaded has written (AC-H13), once the worker is done with it.
+ * The two next steps read it: the products to link against, the documents to go and look
+ * at. Asked for by the job id the upload dialog handed back.
+ */
+export async function getOrderInquiryUploadJob(jobId: string): Promise<UploadJobScope> {
+  const response = await apiFetch(`${BASE}/order-inquiries/upload-jobs/${jobId}`);
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to read that upload'));
+  return response.json();
+}
+
+/**
+ * Run the cascade over ACKNOWLEDGED rows now (AC-H13) - what the buyer presses once an
+ * uploaded book has landed. `product_ids` narrows it to what the upload touched.
+ */
+export async function linkNowOrderInquiryRows(
+  params: AutoPlaceRequest = {},
+): Promise<AutoPlaceResult> {
+  const response = await apiFetch(`${BASE}/order-inquiries/link-now`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to link those rows'));
+  return response.json();
+}
+
+/** The same fields, however they are used - a query string for the preview GET, a
  * JSON body for the commit POST. No page/sort/limit: neither endpoint paginates. */
 function unplaceAllSearchParams(filters: UnplaceAllRequest): URLSearchParams {
   const params = new URLSearchParams();
@@ -243,6 +347,7 @@ function unplaceAllSearchParams(filters: UnplaceAllRequest): URLSearchParams {
   if (filters.raised_date) params.set('raised_date', filters.raised_date);
   if (filters.project_id) params.set('project_id', filters.project_id);
   if (filters.supplier_id) params.set('supplier_id', filters.supplier_id);
+  if (filters.raised_by) params.set('raised_by', filters.raised_by);
   return params;
 }
 
@@ -259,15 +364,14 @@ export async function getUnplaceAllPreview(
     `${BASE}/order-inquiries/unplace-all-preview${qs ? `?${qs}` : ''}`,
   );
   if (!response.ok)
-    throw new Error(await extractApiError(response, 'Failed to load the unplace count'));
+    throw new Error(await extractApiError(response, 'Failed to load the unlink count'));
   return response.json();
 }
 
 /**
- * "Unplace all" for the CURRENT worklist scope (the captain, 20-21 Aug): every PLACED row
- * matching the SAME filters the worklist list reads (state forced to placed) reverts to
- * raised in one call, so Auto-place can re-deal them earliest-first. No filter at all
- * means every placed row in the company.
+ * "Unlink all" for the CURRENT worklist scope: every linked or partly linked row matching
+ * the SAME filters the worklist list reads loses its links in one call, so Auto-link can
+ * re-deal them. No filter at all means every linked row in the company.
  */
 export async function unplaceAllOrderInquiryRows(
   params: UnplaceAllRequest = {},
@@ -278,7 +382,7 @@ export async function unplaceAllOrderInquiryRows(
     body: JSON.stringify(params),
   });
   if (!response.ok)
-    throw new Error(await extractApiError(response, 'Failed to unplace those rows'));
+    throw new Error(await extractApiError(response, 'Failed to unlink those rows'));
   return response.json();
 }
 
@@ -289,17 +393,30 @@ export async function unplaceAllOrderInquiryRows(
  *
  *   GET  {BASE}/order-inquiries
  *        query, delivery_month=YYYY-MM, raised_date=YYYY-MM-DD, state, project_id,
- *        supplier_id, page, limit, sort, dir
+ *        supplier_id, raised_by, linked, kind, page, limit, sort, dir
+ *        kind=spo|po|buy is the cards' own filter (AC-I11): every row CARRYING that
+ *        kind, so a row linked 5 of 8 to a purchase order answers to po and to buy
+ *        alike, and a cancelled row to neither.
+ *        query also matches the name and the email prefix of the CS who raised it.
  *        -> { data: OrderInquiryWorklistRow[], pagination: {total,page,limit}, empty }
  *        sort is a CLOSED set - so_date, so_number, item_code, product_name, qty,
- *        delivery_date, project_customer, supplier, po_number, state, raised_at - and an
- *        unknown value is a 422, never a silent fall back to the default.
+ *        delivery_date, project_customer, supplier, po_number, state, raised_at,
+ *        raised_by_name - and an unknown value is a 422, never a silent fall back to
+ *        the default.
  *
  *   GET  {BASE}/order-inquiries/summary
  *        the same filters, no paging
  *        -> { total_rows, total_qty, by_state,
- *             by_month: [{month,label,rows,qty}], suppliers: [], projects: [] }
- *        The totals honour every filter. The three AXES each ignore their own filter on
+ *             by_month: [{month,label,rows,qty}], suppliers: [], projects: [],
+ *             raised_by: [], kinds: {spo,po,buy} }
+ *        `kinds` is the three cards above both views - quantity on SPO allocations, on
+ *        purchase order lines, and the unlinked remainder - over every matching row.
+ *        The TOTALS honour `kind` like every other filter, because they describe what is
+ *        on screen; the `kinds` facet itself drops it, so pressing one card leaves the
+ *        other two readable.
+ *        `raised_by` lists only the people who have actually raised one of the rows in
+ *        view, id + name, which is what the "Raised by" filter offers.
+ *        The totals honour every filter. The AXES each ignore their own filter on
  *        purpose: they are the screen's controls, and a control that empties itself the
  *        moment it is used cannot be used a second time.
  *
@@ -330,6 +447,13 @@ function worklistParams(params: OrderInquiryWorklistParams, limit: number) {
       state: params.state,
       project_id: params.project_id,
       supplier_id: params.supplier_id,
+      raised_by: params.raised_by,
+      linked: params.linked,
+      kind: params.kind,
+      // `to_confirm` travels as itself: the server reads it as awaiting OR changed on the
+      // list, the summary facet and the export alike (R3), so the page's default filter is
+      // one value rather than two the client would have to union.
+      ack: params.ack,
     },
   );
 }
@@ -408,6 +532,25 @@ export async function getOrderInquiryPoDetail(poId: string): Promise<OrderInquir
   const response = await apiFetch(`${BASE}/order-inquiries/po/${poId}`);
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to load this purchase order'));
+  return response.json();
+}
+
+/**
+ * The same lightbox, for the other book (plan section 4.3): the shipping order's own
+ * allocation lines and who they are spoken for by. Addressed by NUMBER - an SPO has no
+ * purchase order id behind it, and the number is what the link on screen carries.
+ *
+ * The number is percent-encoded because it carries a slash (`SPO-2026/08-0015`); the
+ * route takes the rest of the path as one parameter for exactly that reason.
+ */
+export async function getOrderInquirySpoDetail(
+  spoNumber: string,
+): Promise<OrderInquirySpoDetail> {
+  const response = await apiFetch(
+    `${BASE}/order-inquiries/spo/${encodeURIComponent(spoNumber)}`,
+  );
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to load this shipping order'));
   return response.json();
 }
 

@@ -1,7 +1,6 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import AccessAgentFormModal from './AccessAgentFormModal';
 import {
   ColumnDef,
@@ -13,7 +12,8 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Plus, ChevronRight, Search, X } from 'lucide-react';
+import { Plus, Search, X } from 'lucide-react';
+import { AccessAgentRowActions } from '../actions';
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -29,12 +29,21 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import { useAccessAgents } from '../hooks/useAccessAgents';
 import type { AccessAgent } from '../types/accessAgent.types';
+import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
+import Link from 'next/link';
 
 export default function AccessAgentsList() {
-  const router = useRouter();
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [sorting, setSorting] = useState<SortingState>([{ id: 'created_at', desc: true }]);
   const [searchQuery, setSearchQuery] = useState('');
+
+  // Back hands the list its own query string back, and the pager keeps
+  // rewriting it, so the list reads it (S3-01). One hook, every list.
+  useListStateFromUrl((state) => {
+    setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
+    setSorting(state.sorting);
+    setSearchQuery(state.searchQuery);
+  });
   const [formModalOpen, setFormModalOpen] = useState(false);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
@@ -45,18 +54,16 @@ export default function AccessAgentsList() {
     searchQuery,
   });
 
-  const handleRowClick = (row: AccessAgent) => {
-    // Carry the active list query into the detail URL so the prev/next pager
-    // walks the exact same filtered+sorted set the user navigated from.
+  // The whole row opens the record, carrying the list query the pager rebuilds
+  // its key from.
+  const rowHref = (row: AccessAgent) => {
     const search = buildDetailSearch({
       pageIndex: pagination.pageIndex,
       pageSize: pagination.pageSize,
       sorting,
       searchQuery,
     });
-    router.push(
-      `/user-management/access-agents/${row.id}${search ? `?${search}` : ''}`,
-    );
+    return `/user-management/access-agents/${row.id}${search ? `?${search}` : ''}`;
   };
 
   const columns = useMemo<ColumnDef<AccessAgent>[]>(
@@ -65,6 +72,18 @@ export default function AccessAgentsList() {
       {
         accessorKey: 'code',
         header: ({ column }) => <DataGridColumnHeader title="Code" column={column} />,
+        cell: ({ row }) => (
+          // The row opens the agent, and the code is the same link said out loud:
+          // copyable, middle-clickable, and visibly the way in.
+          <Link
+            href={rowHref(row.original)}
+            className="truncate font-medium text-primary hover:underline"
+            title={row.original.code}
+            onClick={(event) => event.stopPropagation()}
+          >
+            {row.original.code}
+          </Link>
+        ),
         size: 150,
         meta: { headerTitle: 'Code', skeleton: <Skeleton className="h-4 w-24" /> },
       },
@@ -100,7 +119,7 @@ export default function AccessAgentsList() {
       {
         accessorKey: 'actions',
         header: '',
-        cell: () => <ChevronRight className="text-muted-foreground/70 size-3.5" />,
+        cell: ({ row }) => <AccessAgentRowActions accessAgent={row.original} />,
         size: 40,
         enableHiding: false,
       },
@@ -131,7 +150,7 @@ export default function AccessAgentsList() {
       table={table}
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
-      onRowClick={handleRowClick}
+      rowHref={rowHref}
       tableLayout={{ columnsVisibility: true }}
     >
       <Card>

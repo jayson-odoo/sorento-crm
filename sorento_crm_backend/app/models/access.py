@@ -1,6 +1,6 @@
 """Access control models."""
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Table, Text, Index, Integer, text, UniqueConstraint
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy import CheckConstraint, Column, String, Boolean, DateTime, ForeignKey, Table, Text, Index, Integer, text, UniqueConstraint
+from sqlalchemy.dialects.postgresql import ARRAY, UUID, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
@@ -675,4 +675,100 @@ class McpTool(Base):
     __table_args__ = (
         Index("ix_mcp_tools_module_key", "module_key"),
         Index("ix_mcp_tools_is_active", "is_active"),
+    )
+
+
+class StockVisibilityPolicy(Base):
+    """Which locations a chatbot contact may be told about, and in which shape.
+
+    Three tiers in ONE table, distinguished by which key is set:
+
+        contact_id set        -> the per-contact override
+        access_type_code set  -> the per-access-type rule (`dealer`, `end_user` ...)
+        both NULL             -> the single global default
+
+    A row is exactly one tier, enforced by the CHECK below: a row naming both a
+    contact and an access type has no defined precedence, so it must not exist.
+
+    ``warehouse_ids`` is an array rather than an M2M because the list is short,
+    read-only at query time, and the admin card replaces it wholesale - there is
+    no second writer to race with. NULL = every active warehouse the caller's
+    company scope allows; ``[]`` = none at all, which is how a contact is told
+    about no stock without inventing a fourth mode.
+
+    The access-type tier is what makes the dealer roll-out scale: one row for
+    `dealer` rather than one per dealer contact. When a contact holds several
+    types, ``app.services.stock_visibility`` merges them MOST RESTRICTIVE first -
+    a contact tagged both `dealer` and `end_user` must not be widened by the
+    looser tag.
+
+    Audited (``__audit_track__``) like the other master data an admin edits: one
+    row decides what every future answer to a contact contains, so "who changed
+    this, and from what" has to be answerable.
+    """
+
+    __tablename__ = "stock_visibility_policies"
+    __audit_track__ = True
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    #: NULL unless this is the per-contact override tier.
+    contact_id = Column(
+        Text, ForeignKey("respond_contacts.id", ondelete="CASCADE"), nullable=True
+    )
+    #: NULL unless this is the per-access-type tier. FK to the CODE with
+    #: ON UPDATE CASCADE, same reasoning as `agent_field_access.agent_code`: the
+    #: code is what the admin screens and the resolver name, and a rename should
+    #: carry the rows with it.
+    access_type_code = Column(
+        String(50),
+        ForeignKey("contact_access_types.code", ondelete="CASCADE", onupdate="CASCADE"),
+        nullable=True,
+    )
+    #: detailed | compact | availability. See `stock_visibility.MODES`.
+    mode = Column(String(20), nullable=False)
+    #: NULL = every active warehouse; [] = none.
+    warehouse_ids = Column(ARRAY(UUID(as_uuid=False)), nullable=True)
+    #: Drop the locations holding NONE of the product from the answer. `detailed`
+    #: withholds the row, `compact` the location line (the total is unchanged),
+    #: and `availability` has no line to withhold so it is unaffected. NEGATIVES
+    #: stay visible in both: a count that cannot be true is an anomaly somebody
+    #: has to act on, not "none left".
+    hide_zero_locations = Column(
+        Boolean, nullable=False, server_default=text("false"), default=False
+    )
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "mode IN ('detailed', 'compact', 'availability')",
+            name="ck_stock_visibility_policies_mode",
+        ),
+        CheckConstraint(
+            "contact_id IS NULL OR access_type_code IS NULL",
+            name="ck_stock_visibility_policies_one_tier",
+        ),
+        # Three partial uniques, not one constraint: Postgres NULLs are distinct,
+        # so a plain UNIQUE would let a SECOND default row in and the resolution
+        # chain would then pick one of them at random.
+        Index(
+            "uq_stock_visibility_policies_contact",
+            "contact_id",
+            unique=True,
+            postgresql_where=text("contact_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_stock_visibility_policies_access_type",
+            "access_type_code",
+            unique=True,
+            postgresql_where=text("access_type_code IS NOT NULL"),
+        ),
+        Index(
+            "uq_stock_visibility_policies_default",
+            text("(true)"),
+            unique=True,
+            postgresql_where=text("contact_id IS NULL AND access_type_code IS NULL"),
+        ),
     )

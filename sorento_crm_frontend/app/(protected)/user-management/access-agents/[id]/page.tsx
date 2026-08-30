@@ -1,9 +1,6 @@
 'use client';
 
 import { use } from 'react';
-import { useRouter } from 'next/navigation';
-import Link from 'next/link';
-import { MoveLeft } from 'lucide-react';
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -12,14 +9,13 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from '@/components/ui/breadcrumb';
-import { Button } from '@/components/ui/button';
 import { Container } from '@/components/common/container';
+import BackToList from '@/components/common/BackToList';
 import { Toolbar, ToolbarActions, ToolbarHeading, ToolbarTitle } from '@/components/common/toolbar';
 import AccessAgentDetail from '../components/AccessAgentDetail';
 
 export default function AccessAgentDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
-  const router = useRouter();
 
   return (
     <>
@@ -44,11 +40,10 @@ export default function AccessAgentDetailPage({ params }: { params: Promise<{ id
             </Breadcrumb>
           </ToolbarHeading>
           <ToolbarActions>
-            <Button asChild variant="outline">
-              <Link href="/user-management/access-agents">
-                <MoveLeft /> Back to access agents
-              </Link>
-            </Button>
+            <BackToList
+              listPath="/user-management/access-agents"
+              label="Back to access agents"
+            />
           </ToolbarActions>
         </Toolbar>
       </Container>

@@ -1,15 +1,24 @@
 /**
  * Stage 1 of Ms Tee's journey (PLAN-scm-loading-plan-demand-first.md): what to ask a supplier
- * for before any container is chosen. The states that matter: a supplier with no stock list
- * gets a CTA to upload one (not a bare empty table), a supplier whose products carry no open
- * demand says so plainly, editing a quantity to 0 removes it from what gets sent without
- * removing the row, and the Send button cannot fire when nothing would go out.
+ * for before any container is chosen. The states that matter: a supplier whose products carry
+ * no open demand says so plainly, a typed quantity reaches the record that owns it, and a
+ * cancelled plan renders the same grid without letting anybody type into it.
+ *
+ * Send, the gear and the two downloads left this component in part 4 (R5) - they live on the
+ * record's toolbar now, and `LoadingPlanView.test.tsx` owns them. What turns the grid's
+ * quantities into lines that go out is `requestLinesFrom`, covered in
+ * `containerRequestSummary.test.ts`.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import type { ContainerRequestRow, ContainerRequestSources } from '../../services/fulfilmentService';
+import type {
+  ContainerRequestHistoryProduct,
+  ContainerRequestRow,
+  ContainerRequestSoLine,
+  ContainerRequestSources,
+} from '../../services/fulfilmentService';
 
 if (!window.matchMedia) {
   (window as unknown as { matchMedia: unknown }).matchMedia = () => ({
@@ -34,6 +43,22 @@ vi.mock('sonner', () => ({
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() },
 }));
 
+// The gear menu, flattened: Radix opens on pointerdown through a portal, and what this suite
+// asks of it is which items it offers, not how it animates. Same stub LoadingPlanView.test.tsx
+// uses on the toolbar's own gear.
+/* eslint-disable @typescript-eslint/no-explicit-any */
+vi.mock('@/components/ui/dropdown-menu', () => ({
+  DropdownMenu: ({ children }: any) => <div>{children}</div>,
+  DropdownMenuTrigger: ({ children }: any) => <>{children}</>,
+  DropdownMenuContent: ({ children }: any) => <div data-testid="menu-content">{children}</div>,
+  DropdownMenuItem: ({ children, onSelect, disabled, ...rest }: any) => (
+    <button type="button" onClick={onSelect} disabled={disabled} {...rest}>
+      {children}
+    </button>
+  ),
+}));
+/* eslint-enable @typescript-eslint/no-explicit-any */
+
 // B3 gap: the Document button on a sent-notice row calls the real service fn, not a bare fetch.
 const getNoticeDocumentUrlMock = vi.fn();
 vi.mock('../../services/fulfilmentService', async () => {
@@ -49,6 +74,32 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
 }));
 
+// The lightbox's own data hooks (S2 R7): every drill is one query per open dialog, so a test
+// about WHICH dialog a figure opens states what came back rather than waiting on react-query.
+const useContainerRequestDrill = vi.fn();
+vi.mock('../../hooks/useContainerRequestDrill', () => ({
+  useContainerRequestDrill: (...a: unknown[]) => useContainerRequestDrill(...a),
+}));
+
+const useLocationStock = vi.fn();
+vi.mock('../../reorder/hooks/useReorderRun', () => ({
+  useLocationStock: (...a: unknown[]) => useLocationStock(...a),
+}));
+
+vi.mock('../../../project-sales/fulfilment-planning/components/StockDocumentsPanel', () => ({
+  StockDocumentsPanel: ({ locationCode }: { locationCode: string }) => (
+    <div data-testid="stock-documents">{`documents for ${locationCode}`}</div>
+  ),
+}));
+
+// Partial: `DataGrid` itself reads `usePathname` for its listing key, so replacing the whole
+// module would blank the grid this suite is about.
+const routerPush = vi.fn();
+vi.mock('next/navigation', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('next/navigation')>()),
+  useRouter: () => ({ push: routerPush }),
+}));
+
 // Amended contract (PLAN-scm-loading-plan-demand-first.md section 4, 20 Aug): `not_on_stock_list`
 // is gone (the row scope now covers the whole stock list, `has_demand` per row instead), and a
 // `sources` block carries the per-document freshness stamp the section's own strip reads.
@@ -60,6 +111,8 @@ const EMPTY_SOURCES: ContainerRequestSources = {
   po_book_as_of: null,
   spo_as_of: null,
   stock_list_as_of: null,
+  proforma_as_of: null,
+  proforma_pi_number: null,
 };
 
 const state = {
@@ -72,7 +125,7 @@ const state = {
           stock_list_as_of: string | null;
           rows: ContainerRequestRow[];
           sources: typeof EMPTY_SOURCES;
-          lines?: never[];
+          lines?: ContainerRequestSoLine[];
         }
       | undefined,
     isFetching: false,
@@ -84,37 +137,66 @@ const state = {
     isError: false,
     error: null as Error | null,
   },
+  history: { data: undefined, isFetching: false } as {
+    data: { products: ContainerRequestHistoryProduct[] } | undefined;
+    isFetching: boolean;
+  },
   notices: [] as unknown[],
-  // What the supplier holds unfinished, per the feed the ranked table's "They hold" column
-  // now folds in (captain follow-up, 20 Aug). Empty by default - only the "unmatched" tests
-  // below populate it.
-  unfinished: [] as { item_code: string; product_name: string | null; qty_unfinished: number; qty_packed: number; as_of: string | null }[],
+  download: vi.fn(),
 };
 
 vi.mock('../../hooks/useFulfilment', () => ({
   useContainerRequestBuild: () => state.build,
+  // The sales-history sidecar (F3) is its own query, off by default here: this suite is about
+  // the request table, and `ContainerRequestHistory.test.tsx` owns the series itself. The two
+  // peak columns need it, so a test that opens one states its own series.
+  useContainerRequestHistory: () => state.history,
   useSendContainerRequest: () => state.send,
   useSupplierNotices: () => ({ data: state.notices }),
-  useUnfinishedStock: () => ({ data: state.unfinished }),
+  useDownloadContainerRequestDocument: () => ({
+    mutate: state.download,
+    isPending: false,
+  }),
 }));
 
-import { ContainerRequestSection } from './ContainerRequestSection';
+import { ContainerRequestSection, holdingSortValue } from './ContainerRequestSection';
 
 function row(over: Partial<ContainerRequestRow> = {}): ContainerRequestRow {
-  return {
+  const merged: ContainerRequestRow = {
+    // F12: an ordinary product row. A set row sets `row_kind`, `product_set_id` and the
+    // driver fields; `row_key` follows `product_id` unless a test names its own.
+    row_key: 'p1',
+    row_kind: 'product' as const,
+    product_set_id: null,
+    set_code: null,
+    set_name: null,
+    driver_product_id: null,
+    driver_item_code: null,
+    driver_product_name: null,
     product_id: 'p1',
     item_code: 'ITEM-1',
     product_name: 'Widget',
     open_so_need: 10,
     suggested_qty: 10,
+    engine_qty: 10,
     on_hand: 0,
+    on_hand_group: 0,
     incoming_spo: 0,
+    incoming_spo_group: 0,
+    incoming_pl: 0,
+    incoming_pl_shipments: [],
     outstanding_po: 0,
+    outstanding_po_lines: [],
+    sites: [],
+    group_locations: { count: 0, on_hand: 0, incoming_spo: 0, warehouse_codes: [] },
     project_qty: 6,
     retail_qty: 4,
     unclassified_qty: 0,
     earliest_required_date: '2026-09-01',
     so_count: 2,
+    holding_source: 'stock_list' as const,
+    holding_qty: 3,
+    holding_as_of: null,
     qty_packed: 3,
     qty_unfinished: 1,
     cbm_per_unit: null,
@@ -125,22 +207,48 @@ function row(over: Partial<ContainerRequestRow> = {}): ContainerRequestRow {
     has_demand: true,
     ...over,
   };
+  // Keyed off whatever `product_id` ended up being, so two rows in one test never collide
+  // on the grid's row id just because only one of them named a key. `engine_qty` follows
+  // `suggested_qty` unless a test states its own: an unedited row is the engine's answer.
+  return {
+    ...merged,
+    row_key: over.row_key ?? merged.product_id,
+    engine_qty: over.engine_qty ?? merged.suggested_qty,
+  };
 }
 
-function renderSection(onUploadStockList = vi.fn()) {
+/**
+ * The section is CONTROLLED since part 4 (R5): the record page owns the typed quantities,
+ * because Save and Send act on them from its own toolbar. This harness plays that record -
+ * it holds the map and reports every change, so a test can assert both what reached the
+ * parent and what the grid shows afterwards.
+ */
+const onQtyChange = vi.fn();
+
+function Harness({ readOnly }: { readOnly?: boolean }) {
+  const [edits, setEdits] = React.useState<Record<string, number>>({});
+  return (
+    <ContainerRequestSection
+      planId="plan-1"
+      supplierId="sup-1"
+      supplierName="Foshan Ceramics"
+      readOnly={readOnly}
+      qtyFor={(r) => edits[r.row_key] ?? r.suggested_qty}
+      onQtyChange={(rowKey, qty) => {
+        onQtyChange(rowKey, qty);
+        setEdits((prev) => ({ ...prev, [rowKey]: qty }));
+      }}
+    />
+  );
+}
+
+function renderSection(readOnly = false) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return {
-    onUploadStockList,
-    ...render(
-      <QueryClientProvider client={qc}>
-        <ContainerRequestSection
-          supplierId="sup-1"
-          supplierName="Foshan Ceramics"
-          onUploadStockList={onUploadStockList}
-        />
-      </QueryClientProvider>,
-    ),
-  };
+  return render(
+    <QueryClientProvider client={qc}>
+      <Harness readOnly={readOnly} />
+    </QueryClientProvider>,
+  );
 }
 
 beforeEach(() => {
@@ -153,8 +261,18 @@ beforeEach(() => {
     refetch: vi.fn(),
   };
   state.send = { mutate: vi.fn(), isPending: false, isError: false, error: null };
+  state.history = { data: undefined, isFetching: false };
   state.notices = [];
-  state.unfinished = [];
+  useContainerRequestDrill.mockReset();
+  useContainerRequestDrill.mockReturnValue({
+    data: { rows: [], total: 0, history: [] },
+    isLoading: false,
+  });
+  useLocationStock.mockReset();
+  useLocationStock.mockReturnValue({ data: undefined, isLoading: false });
+  routerPush.mockReset();
+  state.download = vi.fn();
+  onQtyChange.mockReset();
   getNoticeDocumentUrlMock.mockReset();
   getNoticeDocumentUrlMock.mockResolvedValue({ url: 'https://cdn.test/doc.pdf', filename: 'doc.pdf' });
 });
@@ -167,22 +285,29 @@ describe('ContainerRequestSection - loading / empty / error states', () => {
     expect(screen.queryByText('What to ask Foshan Ceramics for')).not.toBeInTheDocument();
   });
 
-  it('offers a CTA to upload a stock list when this supplier has none yet, not a bare table', () => {
+  it('says there is nothing to ask for, and points at the list rather than an Upload of its own', () => {
+    // AC-A1: a missing stock list is no longer an empty state. AC-A3: the ONE Upload lives on
+    // the plans list, so this state says where to go rather than growing a second button.
     state.build.data = { stock_list_as_of: null, rows: [], sources: EMPTY_SOURCES };
-    const { onUploadStockList } = renderSection();
-
-    expect(screen.getByText(/no stock list for foshan ceramics yet/i)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: /upload stock list/i }));
-    expect(onUploadStockList).toHaveBeenCalledTimes(1);
-  });
-
-  it('says plainly when the supplier\'s products carry no open demand', () => {
-    state.build.data = { stock_list_as_of: '2026-08-18T00:00:00', rows: [], sources: EMPTY_SOURCES };
     renderSection();
 
-    expect(
-      screen.getByText(/no open customer demand for what foshan ceramics supplies/i),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/nothing to ask foshan ceramics for right now/i)).toBeInTheDocument();
+    expect(screen.getByText(/Start a new plan from the loading plans list/i)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /upload/i })).not.toBeInTheDocument();
+  });
+
+  it('renders the table with no stock list at all, on demand alone', () => {
+    // The regression AC-A1 exists to prevent: a supplier who has never sent a stock list used
+    // to get a CTA instead of a plan.
+    state.build.data = {
+      stock_list_as_of: null,
+      rows: [row({ holding_source: 'none', holding_qty: null, qty_packed: 0, qty_unfinished: 0 })],
+      sources: EMPTY_SOURCES,
+    };
+    renderSection();
+
+    expect(screen.getByText('ITEM-1')).toBeInTheDocument();
+    expect(screen.queryByText(/nothing to ask foshan ceramics for/i)).not.toBeInTheDocument();
   });
 
   it('shows the error and lets her try again', () => {
@@ -202,39 +327,214 @@ describe('ContainerRequestSection - the grid', () => {
 
     expect(screen.getByText('ITEM-1')).toBeInTheDocument();
     expect(screen.getByText('Widget')).toBeInTheDocument();
-    expect(screen.getByText('2')).toBeInTheDocument(); // so_count
   });
 
-  it('the Unclassified column only appears when a row actually carries one', () => {
+  // AC-A2 / AC-A3: "Packed" says WHICH document said it.
+  it('reads the packed quantity off a stock list, and nothing about unfinished (captain, 27 Aug)', () => {
+    state.build.data = {
+      stock_list_as_of: '2026-08-18T00:00:00',
+      rows: [row({ holding_source: 'stock_list', holding_qty: 3, qty_packed: 3, qty_unfinished: 7 })],
+      sources: EMPTY_SOURCES,
+    };
     renderSection();
-    expect(screen.queryByText('Unclassified')).not.toBeInTheDocument();
+
+    expect(screen.getByText('3')).toBeInTheDocument();
+    expect(screen.queryByText(/unfinished/)).not.toBeInTheDocument();
   });
 
-  it('the Unclassified column appears once a row carries a nonzero unclassified qty', () => {
+  it('reads the stand-in proforma with a PI badge, not as packed stock', () => {
+    state.build.data = {
+      stock_list_as_of: null,
+      rows: [
+        row({
+          holding_source: 'proforma',
+          holding_qty: 300,
+          holding_as_of: '2026-07-31',
+          qty_packed: 0,
+          qty_unfinished: 0,
+        }),
+      ],
+      sources: { ...EMPTY_SOURCES, proforma_as_of: '2026-07-31', proforma_pi_number: 'PI-7' },
+    };
+    renderSection();
+
+    expect(screen.getByText('300')).toBeInTheDocument();
+    // Once, on the row: the freshness strip is gone (captain, 27 Aug).
+    expect(screen.getAllByText(/PI 31\/07\/2026/)).toHaveLength(1);
+    // Not "0 packed": a proforma states one quantity per line and there is no unfinished
+    // half of it to report, so reporting zeroes would be inventing the supplier's words.
+    expect(screen.queryByText(/0 packed/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/unfinished/)).not.toBeInTheDocument();
+  });
+
+  it('reads a dash when neither document names the product', () => {
+    // Not a zero: "they have told us nothing" and "they told us they have none" are
+    // different answers, and only one of them lets the plan proceed on their word.
+    state.build.data = {
+      stock_list_as_of: null,
+      rows: [row({ holding_source: 'none', holding_qty: null, qty_packed: 0, qty_unfinished: 0 })],
+      sources: EMPTY_SOURCES,
+    };
+    renderSection();
+
+    expect(screen.queryByText('0 packed')).not.toBeInTheDocument();
+  });
+
+  // AC-A2.2: the column is gone for good, unclassified demand or not - it goes with part 2's
+  // P4 classification work, and the figure still travels on the row for the breakdown.
+  it('has no Unclassified column, even when a row carries an unclassified qty', () => {
     state.build.data = {
       stock_list_as_of: '2026-08-18T00:00:00',
       rows: [row({ unclassified_qty: 3 })],
       sources: EMPTY_SOURCES,
     };
     renderSection();
-    expect(screen.getByText('Unclassified')).toBeInTheDocument();
+    expect(screen.queryByText('Unclassified')).not.toBeInTheDocument();
   });
 
-  it('the suggested qty is editable, and edits are what Send sends', async () => {
+  it('shows the four cards above the grid, decomposing the need (AC-A2.1)', () => {
+    state.build.data = {
+      stock_list_as_of: '2026-08-18T00:00:00',
+      rows: [row({ open_so_need: 100, on_hand: 30, incoming_spo: 20, suggested_qty: 50 })],
+      sources: EMPTY_SOURCES,
+    };
     renderSection();
 
-    const qtyInput = screen.getByDisplayValue('10');
-    fireEvent.change(qtyInput, { target: { value: '25' } });
-
-    fireEvent.click(screen.getByRole('button', { name: /send to supplier/i }));
-    fireEvent.click(await screen.findByRole('button', { name: /^send$/i }));
-
-    await waitFor(() => expect(state.send.mutate).toHaveBeenCalledTimes(1));
-    const [payload] = state.send.mutate.mock.calls[0];
-    expect(payload.lines).toEqual([{ product_id: 'p1', qty: 25 }]);
+    const cards = screen.getByTestId('container-request-stat-cards');
+    expect(within(cards).getByTestId('stat-need')).toHaveTextContent('100');
+    expect(within(cards).getByTestId('stat-pool')).toHaveTextContent('30');
+    expect(within(cards).getByTestId('stat-spo')).toHaveTextContent('20');
+    expect(within(cards).getByTestId('stat-ask')).toHaveTextContent('50');
+    expect(within(cards).queryByTestId('stat-packed')).not.toBeInTheDocument();
   });
 
-  it('a quantity edited to 0 is dropped from what gets sent, without leaving the grid', async () => {
+  it('the To ask card follows an edited quantity', async () => {
+    state.build.data = {
+      stock_list_as_of: '2026-08-18T00:00:00',
+      rows: [row({ open_so_need: 100, suggested_qty: 100 })],
+      sources: EMPTY_SOURCES,
+    };
+    renderSection();
+
+    fireEvent.change(screen.getByRole('spinbutton'), { target: { value: '7' } });
+
+    await waitFor(() =>
+      expect(screen.getByTestId('stat-ask')).toHaveTextContent('7'),
+    );
+  });
+
+  it('carries an Incoming PL column that is never part of the suggestion (AC-B4/B5)', () => {
+    state.build.data = {
+      stock_list_as_of: '2026-08-18T00:00:00',
+      rows: [row({ open_so_need: 10, incoming_pl: 600, suggested_qty: 10 })],
+      sources: EMPTY_SOURCES,
+    };
+    renderSection();
+
+    expect(screen.getByText('Incoming PL')).toBeInTheDocument();
+    expect(screen.getByText('600')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('10')).toBeInTheDocument(); // the ask, untouched by it
+  });
+
+  it('clicking the product opens the row breakdown (AC-A2.3)', async () => {
+    renderSection();
+
+    expect(screen.queryByTestId('container-request-row-dialog')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /ITEM-1/ }));
+
+    await waitFor(() =>
+      expect(screen.getByTestId('container-request-row-dialog')).toBeInTheDocument(),
+    );
+    expect(screen.getByTestId('row-quantity-needed')).toBeInTheDocument();
+  });
+
+  it('the suggested qty is editable, and the typed figure reaches the record', async () => {
+    renderSection();
+
+    fireEvent.change(screen.getByDisplayValue('10'), { target: { value: '25' } });
+
+    expect(onQtyChange).toHaveBeenCalledWith('p1', 25);
+    await waitFor(() => expect(screen.getByDisplayValue('25')).toBeInTheDocument());
+  });
+
+  it('a cancelled plan shows the same grid, with nothing typeable (AC-A8)', () => {
+    renderSection(true);
+
+    expect(screen.getByDisplayValue('10')).toBeDisabled();
+  });
+
+  it('the formula tooltip explains the ENGINE figure, not the typed one', () => {
+    state.build.data = {
+      stock_list_as_of: '2026-08-18T00:00:00',
+      rows: [row({ suggested_qty: 25, engine_qty: 10 })],
+      sources: EMPTY_SOURCES,
+    };
+    renderSection();
+
+    expect(screen.getByDisplayValue('25').getAttribute('title')).toContain('= 10');
+  });
+
+  it('a set row wears a Set badge and names the member its figures come from (AC-F12.3)', () => {
+    state.build.data = {
+      stock_list_as_of: '2026-08-18T00:00:00',
+      rows: [
+        row({
+          row_key: 'set:s-1',
+          row_kind: 'set',
+          product_id: 'p-driver',
+          product_set_id: 's-1',
+          set_code: 'CWC605-RL',
+          set_name: 'Close-coupled WC',
+          item_code: 'CWC605-RL',
+          product_name: 'Close-coupled WC',
+          driver_product_id: 'p-driver',
+          driver_item_code: 'CWCX605-RL',
+          driver_product_name: 'Pedestal',
+        }),
+      ],
+      sources: EMPTY_SOURCES,
+    };
+    renderSection();
+
+    expect(screen.getByTestId('set-badge')).toBeInTheDocument();
+    expect(screen.getByText('CWC605-RL')).toBeInTheDocument();
+    // The driver's code, not the set's name: whose numbers these are is the question the
+    // second line answers.
+    expect(screen.getByText('CWCX605-RL')).toBeInTheDocument();
+  });
+
+  it('two set rows sharing a driver each keep their own editable quantity', () => {
+    state.build.data = {
+      stock_list_as_of: '2026-08-18T00:00:00',
+      rows: [
+        row({
+          row_key: 'set:s-1',
+          row_kind: 'set',
+          product_id: 'p-driver',
+          product_set_id: 's-1',
+          item_code: 'SET-ONE',
+          driver_item_code: 'CWCX605-RL',
+          suggested_qty: 11,
+        }),
+        row({
+          row_key: 'set:s-2',
+          row_kind: 'set',
+          product_id: 'p-driver',
+          product_set_id: 's-2',
+          item_code: 'SET-TWO',
+          driver_item_code: 'CWCX605-RL',
+          suggested_qty: 22,
+        }),
+      ],
+      sources: EMPTY_SOURCES,
+    };
+    renderSection();
+
+    expect(screen.getByDisplayValue('11')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('22')).toBeInTheDocument();
+  });
+
+  it('a quantity edited to 0 keeps its row on the grid', () => {
     state.build.data = {
       stock_list_as_of: '2026-08-18T00:00:00',
       rows: [row({ product_id: 'p1', item_code: 'ITEM-1' }), row({ product_id: 'p2', item_code: 'ITEM-2', suggested_qty: 5 })],
@@ -243,92 +543,307 @@ describe('ContainerRequestSection - the grid', () => {
     renderSection();
 
     fireEvent.change(screen.getByDisplayValue('10'), { target: { value: '0' } });
-    // The row stays visible even at 0.
+
+    // She can still see it and change her mind; it just leaves the request.
     expect(screen.getByText('ITEM-1')).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: /send to supplier/i }));
-    fireEvent.click(await screen.findByRole('button', { name: /^send$/i }));
-
-    await waitFor(() => expect(state.send.mutate).toHaveBeenCalledTimes(1));
-    const [payload] = state.send.mutate.mock.calls[0];
-    expect(payload.lines).toEqual([{ product_id: 'p2', qty: 5 }]);
+    expect(onQtyChange).toHaveBeenCalledWith('p1', 0);
   });
 
-  it('Send is disabled once every row has been edited to 0', () => {
+  it('Send, the gear and the downloads are NOT here any more (R5)', () => {
     renderSection();
 
-    fireEvent.change(screen.getByDisplayValue('10'), { target: { value: '0' } });
-
-    expect(screen.getByRole('button', { name: /send to supplier/i })).toBeDisabled();
-  });
-
-  it('the confirm dialog states the supplier, line count and channel before anything is sent', async () => {
-    renderSection();
-
-    fireEvent.click(screen.getByRole('button', { name: /send to supplier/i }));
-
-    expect(
-      await screen.findByText(/send this request to foshan ceramics\?/i),
-    ).toBeInTheDocument();
-    expect(screen.getByText(/1 product, 10 units in total/i)).toBeInTheDocument();
-    expect(state.send.mutate).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: /send to supplier/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Plan actions' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /download/i })).not.toBeInTheDocument();
   });
 });
 
-describe('ContainerRequestSection - the freshness strip (source staleness)', () => {
-  // "plan with trusted data": a source older than a week reads amber, not a hard block.
-  it('a source fetched moments ago reads in the ordinary tone, no warning title', () => {
-    const fresh = new Date().toISOString();
-    state.build.data = {
-      stock_list_as_of: '2026-08-18',
-      rows: [row()],
-      sources: { ...EMPTY_SOURCES, so_book_as_of: fresh },
+describe('ContainerRequestSection - the eight figures open the shared lightbox (AC-B1-B7)', () => {
+  function soLine(over: Partial<ContainerRequestSoLine> = {}): ContainerRequestSoLine {
+    return {
+      product_id: 'p1',
+      item_code: 'ITEM-1',
+      so_number: 'SO-1',
+      customer_label: 'Acme Sdn Bhd',
+      project_title: null,
+      agent_label: null,
+      unit_price: null,
+      demand_class: 'project',
+      order_date: '2026-05-01',
+      required_date: '2026-08-19',
+      qty: 6,
+      ...over,
     };
-    renderSection();
+  }
 
-    const stamp = screen.getByText(/SO book/).closest('span') as HTMLElement;
-    expect(stamp.className).not.toContain('text-amber-600');
-    expect(stamp).not.toHaveAttribute('title');
-  });
+  function series(peakMonth: string | null, peakQty: number) {
+    const months = ['2026-06', '2026-07'].map((month) => ({
+      month,
+      qty: month === peakMonth ? peakQty : 0,
+    }));
+    return { months, total: peakQty, avg: peakQty / 2, peak_month: peakMonth, peak_qty: peakQty };
+  }
 
-  it('a source over 7 days old reads amber, with a re-upload hint', () => {
-    const stale = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString();
-    state.build.data = {
-      stock_list_as_of: '2026-08-18',
-      rows: [row()],
-      sources: { ...EMPTY_SOURCES, so_book_as_of: stale },
+  function withHistory() {
+    state.history = {
+      data: {
+        products: [
+          {
+            product_id: 'p1',
+            project: series('2026-06', 1240),
+            retail: series('2026-07', 320),
+          } as ContainerRequestHistoryProduct,
+        ],
+      },
+      isFetching: false,
     };
-    renderSection();
+  }
 
-    const stamp = screen.getByText(/SO book/).closest('span') as HTMLElement;
-    expect(stamp.className).toContain('text-amber-600');
-    expect(stamp).toHaveAttribute('title', 'Consider re-uploading');
-  });
+  function openFigure(name: RegExp | string) {
+    fireEvent.click(screen.getByRole('button', { name }));
+    return screen.getByRole('dialog');
+  }
 
-  it('a source with no ingest yet renders the em dash, never a fabricated date', () => {
+  beforeEach(() => {
     state.build.data = {
-      stock_list_as_of: '2026-08-18',
-      rows: [row()],
+      stock_list_as_of: '2026-08-18T00:00:00',
+      rows: [row({ on_hand: 40, incoming_spo: 117, incoming_pl: 25, outstanding_po: 60 })],
       sources: EMPTY_SOURCES,
+      lines: [
+        soLine({
+          so_number: 'SO-PROJ',
+          demand_class: 'project',
+          qty: 6,
+          project_title: 'Tuju Residence',
+          agent_label: 'Wong Mei Ling',
+          unit_price: 12.5,
+        }),
+        soLine({ so_number: 'SO-RET', demand_class: 'retail', qty: 4 }),
+      ],
     };
-    renderSection();
-
-    expect(screen.getByText(/PO book -/)).toBeInTheDocument();
   });
 
-  // SF-3 (reviewer): the timestamp half must go through `formatDateTimeInMalaysia` (parses
-  // naive-UTC, renders MYT) rather than a bare `new Date(iso)`, which reads the naive string as
-  // local time and lands the displayed clock 8h early.
-  it('a naive-UTC timestamp source renders its time 8h ahead, in Malaysia time', () => {
+  it('the Project figure opens the project lines, with the seven columns and a footing total', () => {
+    renderSection();
+
+    const dialog = openFigure('Open project sales orders');
+
+    expect(dialog).toHaveTextContent('Project · ITEM-1');
+    for (const header of ['Sales order', 'Customer', 'Project', 'Agent', 'Price', 'Qty', 'Required']) {
+      expect(within(dialog).getByText(header)).toBeInTheDocument();
+    }
+    expect(within(dialog).getByText('SO-PROJ')).toBeInTheDocument();
+    expect(within(dialog).getByText('Tuju Residence')).toBeInTheDocument();
+    expect(within(dialog).getByText('Wong Mei Ling')).toBeInTheDocument();
+    // AC-B2: the total foots to the cell, which is the row's own project_qty.
+    expect(within(dialog).getByText('Total').closest('tr')).toHaveTextContent('6');
+    // The retail line is on the other channel's dialog, never on this one.
+    expect(within(dialog).queryByText('SO-RET')).not.toBeInTheDocument();
+  });
+
+  it('the Retail figure opens the retail lines, and its total is the retail cell', () => {
+    renderSection();
+
+    const dialog = openFigure('Open retail sales orders');
+
+    expect(dialog).toHaveTextContent('Retail · ITEM-1');
+    expect(within(dialog).getByText('SO-RET')).toBeInTheDocument();
+    expect(within(dialog).queryByText('SO-PROJ')).not.toBeInTheDocument();
+    expect(within(dialog).getByText('Total').closest('tr')).toHaveTextContent('4');
+  });
+
+  it('the On hand figure opens the location table, pools only, footing to the cell (AC-B3)', () => {
+    useLocationStock.mockReturnValue({
+      data: {
+        as_of: '2026-08-27T10:00:00',
+        locations: [
+          {
+            warehouse_id: 'w1',
+            warehouse_code: 'BRW',
+            is_pool: true,
+            on_hand: 40,
+            reserved: 5,
+            free: 35,
+            so_qty: 10,
+            spo_qty: 2,
+            available: 25,
+          },
+          {
+            warehouse_id: 'w2',
+            warehouse_code: 'PROJ-BIN',
+            is_pool: false,
+            on_hand: 999,
+            reserved: 0,
+            free: 999,
+            so_qty: 0,
+            spo_qty: 0,
+            available: 999,
+          },
+        ],
+      },
+      isLoading: false,
+    });
+    renderSection();
+
+    const dialog = openFigure('Stock by location');
+
+    expect(dialog).toHaveTextContent('On hand · ITEM-1');
+    expect(within(dialog).getByText('BRW')).toBeInTheDocument();
+    expect(within(dialog).queryByText('PROJ-BIN')).not.toBeInTheDocument();
+    expect(within(dialog).getByText('Site pools').closest('tr')).toHaveTextContent('40');
+  });
+
+  it('the SPO figure opens the shipping orders on their way to a pool (AC-B4)', () => {
+    useContainerRequestDrill.mockReturnValue({
+      data: {
+        rows: [
+          {
+            spo_number: 'SPO-9',
+            shipment_id: 's1',
+            shipment_number: 'PL-2608-001',
+            warehouse_code: 'BRW',
+            qty: 117,
+            received: 0,
+            eta: '2026-09-10',
+            status: 'In transit',
+          },
+        ],
+        total: 117,
+        history: [],
+      },
+      isLoading: false,
+    });
+    renderSection();
+
+    const dialog = openFigure('Shipping orders on their way to a site pool');
+
+    expect(dialog).toHaveTextContent('SPO · ITEM-1');
+    expect(within(dialog).getByText('SPO-9')).toBeInTheDocument();
+    expect(within(dialog).getByText('Total').closest('tr')).toHaveTextContent('117');
+  });
+
+  it('the Incoming PL figure opens the packing lists, and one opens the packing list itself', () => {
+    useContainerRequestDrill.mockReturnValue({
+      data: {
+        rows: [
+          {
+            shipment_id: 'ship-7',
+            shipment_number: 'PL-2608-004',
+            container_number: 'FSCU8103365',
+            supplier_name: 'Foshan Ceramics',
+            qty: 25,
+            eta: '2026-09-02',
+            status: 'In transit',
+          },
+        ],
+        total: 25,
+        history: [],
+      },
+      isLoading: false,
+    });
+    renderSection();
+
+    const dialog = openFigure('Packing lists on their way, reference only');
+
+    expect(dialog).toHaveTextContent('Incoming PL · ITEM-1');
+    expect(within(dialog).getByText('FSCU8103365')).toBeInTheDocument();
+    expect(within(dialog).getByText('Total').closest('tr')).toHaveTextContent('25');
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'PL-2608-004' }));
+    expect(routerPush).toHaveBeenCalledWith('/procurement-management/packing-lists/ship-7');
+  });
+
+  it('the PO figure opens the purchase orders still to come', () => {
+    useContainerRequestDrill.mockReturnValue({
+      data: {
+        rows: [
+          {
+            purchase_order_id: 'po1',
+            po_number: 'PO-77',
+            supplier_name: 'Foshan Ceramics',
+            qty_ordered: 100,
+            still_to_come: 60,
+            unit_price: null,
+            currency: null,
+            issued: '2026-06-01',
+            eta: '2026-09-20',
+            status: 'Open',
+          },
+        ],
+        total: 60,
+        history: [],
+      },
+      isLoading: false,
+    });
+    renderSection();
+
+    const dialog = openFigure('Purchase orders still to come, reference only');
+
+    expect(dialog).toHaveTextContent('PO · ITEM-1');
+    expect(within(dialog).getByText('PO-77')).toBeInTheDocument();
+    expect(within(dialog).getByText('Total still to come').closest('tr')).toHaveTextContent('60');
+  });
+
+  it('a peak figure opens its channel dialog on the 12-month tab, focused on that series (AC-B6)', () => {
+    withHistory();
+    renderSection();
+
+    // The cell states the peak and the month it fell in.
+    const peak = screen.getByRole('button', { name: 'Project ordered, last 12 months' });
+    expect(peak).toHaveTextContent('1,240');
+    expect(peak).toHaveTextContent('Jun 26');
+
+    fireEvent.click(peak);
+    const dialog = screen.getByRole('dialog');
+
+    expect(dialog).toHaveTextContent('Project · ITEM-1');
+    // Landed ON the history tab, not the open one.
+    expect(within(dialog).getByRole('tab', { name: '12-month history' })).toHaveAttribute(
+      'data-state',
+      'active',
+    );
+    expect(within(dialog).getByText('Project peak 1,240 Jun 26')).toBeInTheDocument();
+    expect(within(dialog).getByText('Retail peak 320 Jul 26')).toBeInTheDocument();
+  });
+
+  it('the Retail peak opens the retail dialog on the same tab', () => {
+    withHistory();
+    renderSection();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retail ordered, last 12 months' }));
+
+    const dialog = screen.getByRole('dialog');
+    expect(dialog).toHaveTextContent('Retail · ITEM-1');
+    expect(within(dialog).getByRole('tab', { name: '12-month history' })).toHaveAttribute(
+      'data-state',
+      'active',
+    );
+  });
+
+  it('Escape closes the lightbox (AC-B1)', async () => {
+    renderSection();
+    openFigure('Open project sales orders');
+
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape', code: 'Escape' });
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  });
+
+  it('a channel figure with nothing behind it is plain text, not a dead trigger', () => {
     state.build.data = {
-      stock_list_as_of: '2026-08-18',
-      rows: [row()],
-      sources: { ...EMPTY_SOURCES, so_book_as_of: '2026-08-18T00:00:00' },
+      stock_list_as_of: null,
+      rows: [row({ project_qty: 0, retail_qty: 0 })],
+      sources: EMPTY_SOURCES,
+      lines: [],
     };
     renderSection();
 
-    const stamp = screen.getByText(/SO book/).closest('span') as HTMLElement;
-    expect(stamp.textContent).toContain('8:00 am');
+    expect(
+      screen.queryByRole('button', { name: 'Open project sales orders' }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Open retail sales orders' }),
+    ).not.toBeInTheDocument();
   });
 });
 
@@ -376,49 +891,169 @@ describe('ContainerRequestSection - requests already sent', () => {
     expect(screen.getByText('Nothing sent to this supplier yet.')).toBeInTheDocument();
   });
 
-  it('clicking Document calls getNoticeDocumentUrl for that notice and opens the returned url', async () => {
+  const sentRequest = () => ({
+    id: 'n-3', supplier_id: 'sup-1', supplier_name: 'Foshan Ceramics',
+    loading_plan_id: null, notice_type: 'container_request', channel: 'email',
+    recipient: 'sales@foshan.test',
+    recipients: ['sales@foshan.test', 'ms.tee@sorento.com.my'],
+    opened_at: null, last_opened_at: null, open_count: 0,
+    status: 'sent', status_reason: null,
+    sent_at: '2026-08-18T02:00:00', attempt_count: 1, last_error: null,
+    document_filename: 'container-request.pdf', has_document: true,
+    xlsx_filename: 'container-request.xlsx', has_xlsx: true,
+    public_url: 'https://crm.test/c/SRT/supplier-request/tok-1',
+    link_retired: false,
+    container_type: null, container_count: null, planned_cbm: null,
+    line_count: 4, production_line_count: 0, created_at: '2026-08-18T02:00:00',
+    created_by: 'Ms Tee',
+  });
+
+  it('clicking PDF calls getNoticeDocumentUrl for that notice and opens the returned url', async () => {
     const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
-    state.notices = [
-      {
-        id: 'n-3', supplier_id: 'sup-1', supplier_name: 'Foshan Ceramics',
-        loading_plan_id: null, notice_type: 'container_request', channel: 'email',
-        recipient: 'sales@foshan.test', status: 'sent', status_reason: null,
-        sent_at: '2026-08-18T02:00:00', attempt_count: 1, last_error: null,
-        document_filename: 'container-request.pdf', has_document: true,
-        container_type: null, container_count: null, planned_cbm: null,
-        line_count: 4, production_line_count: 0, created_at: '2026-08-18T02:00:00',
-        created_by: 'Ms Tee',
-      },
-    ];
+    state.notices = [sentRequest()];
     renderSection();
 
-    fireEvent.click(screen.getByRole('button', { name: /document/i }));
+    fireEvent.click(
+      within(screen.getByTestId('requests-sent')).getByRole('button', { name: /^pdf$/i }),
+    );
 
-    await waitFor(() => expect(getNoticeDocumentUrlMock).toHaveBeenCalledWith('n-3'));
+    await waitFor(() => expect(getNoticeDocumentUrlMock).toHaveBeenCalledWith('n-3', 'pdf'));
     await waitFor(() =>
       expect(openSpy).toHaveBeenCalledWith('https://cdn.test/doc.pdf', '_blank', 'noopener'),
     );
     openSpy.mockRestore();
   });
-});
 
-describe('ContainerRequestSection - SF-4 (reviewer): the sent-requests card survives every early return', () => {
-  it('renders on the no-stock-list branch', () => {
-    state.build.data = { stock_list_as_of: null, rows: [], sources: EMPTY_SOURCES };
+  // AC-C4: the card offers all three of what the send produced.
+  it('clicking XLSX asks for the spreadsheet, not the pdf', async () => {
+    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
+    state.notices = [sentRequest()];
     renderSection();
 
-    expect(screen.getByText(/no stock list for foshan ceramics yet/i)).toBeInTheDocument();
-    expect(screen.getByText('Requests sent to Foshan Ceramics')).toBeInTheDocument();
-    expect(screen.getByText('Nothing sent to this supplier yet.')).toBeInTheDocument();
+    fireEvent.click(
+      within(screen.getByTestId('requests-sent')).getByRole('button', { name: /xlsx/i }),
+    );
+
+    await waitFor(() => expect(getNoticeDocumentUrlMock).toHaveBeenCalledWith('n-3', 'xlsx'));
+    openSpy.mockRestore();
   });
 
-  it('renders on the zero-rows (no open demand) branch', () => {
-    state.build.data = { stock_list_as_of: '2026-08-18T00:00:00', rows: [], sources: EMPTY_SOURCES };
+  it('a notice sent before the spreadsheet existed offers no XLSX button', () => {
+    state.notices = [{ ...sentRequest(), has_xlsx: false, xlsx_filename: null }];
     renderSection();
 
     expect(
-      screen.getByText(/no open customer demand for what foshan ceramics supplies/i),
+      within(screen.getByTestId('requests-sent')).queryByRole('button', { name: /xlsx/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('Copy link puts the supplier page on the clipboard', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, { clipboard: { writeText } });
+    state.notices = [sentRequest()];
+    renderSection();
+
+    // Scoped to the card: the gear on the header offers the same action for the CURRENT
+    // link, and this is about the row's own button.
+    fireEvent.click(
+      within(screen.getByTestId('requests-sent')).getByRole('button', { name: /copy link/i }),
+    );
+
+    await waitFor(() =>
+      expect(writeText).toHaveBeenCalledWith('https://crm.test/c/SRT/supplier-request/tok-1'),
+    );
+  });
+
+  it('a retired link says so instead of offering a dead button (AC-C8)', () => {
+    // A copied dead link is worse than no button: the supplier opens it, is told it is gone,
+    // and has no way to tell that a live one exists. Silence is not right either - the row
+    // would read like one that never carried a link at all.
+    state.notices = [{ ...sentRequest(), public_url: null, link_retired: true }];
+    renderSection();
+
+    const card = within(screen.getByTestId('requests-sent'));
+    expect(card.queryByRole('button', { name: /copy link/i })).not.toBeInTheDocument();
+    expect(card.getByText('Link retired')).toBeInTheDocument();
+  });
+
+  it('a notice that never carried a link says nothing about one', () => {
+    state.notices = [{ ...sentRequest(), public_url: null, link_retired: false }];
+    renderSection();
+
+    const card = within(screen.getByTestId('requests-sent'));
+    expect(card.queryByRole('button', { name: /copy link/i })).not.toBeInTheDocument();
+    expect(card.queryByText('Link retired')).not.toBeInTheDocument();
+  });
+
+  it('lists every address the send named, not just the first (AC-C2)', () => {
+    state.notices = [sentRequest()];
+    renderSection();
+
+    expect(
+      within(screen.getByTestId('requests-sent')).getByText(
+        'sales@foshan.test, ms.tee@sorento.com.my',
+      ),
     ).toBeInTheDocument();
+  });
+
+  it('names the WeChat contact a chat send went to, never its id (AC-C2)', () => {
+    state.notices = [
+      {
+        ...sentRequest(),
+        id: 'n-9',
+        channel: 'chat',
+        recipient: null,
+        recipients: [
+          { respond_contact_id: '6b2f...uuid', name: 'Mr Chen (JBC)', channel: 'wechat' },
+        ],
+      },
+    ];
+    renderSection();
+
+    const card = within(screen.getByTestId('requests-sent'));
+    expect(card.getByText('WeChat')).toBeInTheDocument();
+    expect(card.getByText('Mr Chen (JBC)')).toBeInTheDocument();
+    expect(card.queryByText(/6b2f/)).not.toBeInTheDocument();
+  });
+
+  it('says whether the supplier has opened the link, and how often (AC-C8)', () => {
+    state.notices = [
+      { ...sentRequest(), open_count: 3, last_opened_at: '2026-08-27T07:10:00' },
+    ];
+    renderSection();
+
+    expect(screen.getByTestId('notice-opens').textContent).toContain('Opened 3 times, last');
+  });
+
+  it('a link nobody has opened says so, rather than falling silent (AC-C8)', () => {
+    state.notices = [sentRequest()];
+    renderSection();
+
+    expect(screen.getByTestId('notice-opens').textContent).toBe('Not opened yet');
+  });
+
+  it('offers Copy link on BOTH rows of one send (AC-C8)', () => {
+    // R23: one credential, delivered two ways. The chat row is the one Ms Tee copies from
+    // for WeChat, so a link on the email row alone is a link she cannot reach where she
+    // looks for it.
+    state.notices = [
+      sentRequest(),
+      { ...sentRequest(), id: 'n-4', channel: 'chat', status: 'skipped' },
+    ];
+    renderSection();
+
+    expect(
+      within(screen.getByTestId('requests-sent')).getAllByRole('button', { name: /copy link/i }),
+    ).toHaveLength(2);
+  });
+});
+
+describe('ContainerRequestSection - SF-4 (reviewer): the sent-requests card survives every early return', () => {
+  it('renders on the nothing-to-ask-for branch', () => {
+    state.build.data = { stock_list_as_of: null, rows: [], sources: EMPTY_SOURCES };
+    renderSection();
+
+    expect(screen.getByText(/nothing to ask foshan ceramics for right now/i)).toBeInTheDocument();
     expect(screen.getByText('Requests sent to Foshan Ceramics')).toBeInTheDocument();
     expect(screen.getByText('Nothing sent to this supplier yet.')).toBeInTheDocument();
   });
@@ -437,5 +1072,28 @@ describe('ContainerRequestSection - SF-4 (reviewer): the sent-requests card surv
     renderSection();
 
     expect(screen.getByText('Requests sent to Foshan Ceramics')).toBeInTheDocument();
+  });
+});
+
+describe('holdingSortValue - what "Packed" sorts by', () => {
+  // Captain, 27 Aug: the unfinished half left the grid, so the column sorts on the one
+  // figure it shows. (It used to sort on unfinished, the ordering of the old "Waiting on
+  // production" list.)
+  it('sorts a stock-list row by its packed quantity', () => {
+    expect(holdingSortValue(row({ holding_source: 'stock_list', holding_qty: 9, qty_unfinished: 500 })))
+      .toBe(9);
+  });
+
+  it('sorts a proforma row by the quantity it states', () => {
+    expect(
+      holdingSortValue(
+        row({ holding_source: 'proforma', holding_qty: 400, qty_packed: 0, qty_unfinished: 0 }),
+      ),
+    ).toBe(400);
+  });
+
+  it('sorts a row neither document names below every row that has a figure', () => {
+    expect(holdingSortValue(row({ holding_source: 'none', holding_qty: null, qty_unfinished: 0 })))
+      .toBeLessThan(0);
   });
 });

@@ -6,13 +6,9 @@
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import type { PaginationState, SortingState } from '@tanstack/react-table';
+
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
-import { buildDataGridParams } from '@/lib/api-client';
-import {
-  useRecordNeighbours,
-  type RecordNeighboursResult,
-} from '@/hooks/useRecordNeighbours';
+
 import {
   getProducts,
   getProduct,
@@ -27,15 +23,10 @@ import {
   setVariantParent,
   unlinkVariant,
   resetVariantAuto,
-  PRODUCT_NEIGHBOURS_PATH,
   type GetProductsParams,
+  type ProductBulkUpdates,
 } from '../services/productService';
-import type {
-  Product,
-  ProductFormData,
-  ProductDetail,
-  PriceHistory,
-} from '../types/product.types';
+import type { ProductFormData } from '../types/product.types';
 
 /**
  * Hook for fetching products list with pagination, sorting, and filtering
@@ -74,25 +65,6 @@ export type ProductNeighboursListParams = DataGridApiFetchParams & {
   discontinued_batch_id?: string;
 };
 
-/**
- * Prev/next neighbours of a product within the active filtered+sorted list set.
- * Serializes the list query (search/sort + category/brand/status/discontinued
- * batch filters) with `buildDataGridParams` - the same serialization the list
- * page uses - so the backend honours filters identically. `page`/`limit` are
- * sent but ignored by the neighbours endpoint.
- */
-export function useProductNeighbours(
-  productId: string | null,
-  listParams: ProductNeighboursListParams,
-): RecordNeighboursResult {
-  const params = buildDataGridParams(listParams, {
-    category_id: listParams.category_id,
-    brand_id: listParams.brand_id,
-    status: listParams.status,
-    discontinued_batch_id: listParams.discontinued_batch_id,
-  });
-  return useRecordNeighbours(PRODUCT_NEIGHBOURS_PATH, productId, params);
-}
 
 /**
  * Hook for fetching single product by ID
@@ -326,11 +298,12 @@ export function useBulkUpdateProducts() {
       updates,
     }: {
       ids: string[];
-      updates: Partial<ProductFormData>;
+      updates: ProductBulkUpdates;
     }) => bulkUpdateProducts(ids, updates),
-    onSuccess: () => {
+    onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ['products'] });
-      toast.success('Products updated successfully', {
+      queryClient.invalidateQueries({ queryKey: ['product'] });
+      toast.success(`${result.updated_count} product${result.updated_count === 1 ? '' : 's'} updated`, {
         position: 'top-center',
       });
     },

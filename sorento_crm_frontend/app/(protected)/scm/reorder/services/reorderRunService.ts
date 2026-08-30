@@ -48,11 +48,10 @@
  *                                                      (AC-F01 / AC-F09 / AC-F10).
  *
  *    Each recommendation row carries its frozen demand-channel split:
- *      project_need, retail_need, unclassified_need: number | null   (NULL on legacy)
- *          project_need is CONFIRMED unplaced Buy only - the leg that bypasses the
- *          reorder trigger. project_sheet_need: number | null carries the unconfirmed
- *          sheet-origin project leg, which was netted like any other commitment and is
- *          therefore already inside retail_need, never added to it.
+ *      project_need, retail_need: number | null      (NULL on legacy)
+ *          project_need is the un-linked remainder of raised Order Inquiry rows - the leg
+ *          that bypasses the reorder trigger, and since P3 the whole of project demand.
+ *          There is no third channel: a sales order with no class reads as retail.
  *      decisions_read_only: boolean                  true when the run is decided at
  *                                                    the other grain, so the location
  *                                                    row is a read and drill row
@@ -219,6 +218,34 @@ export interface ReorderRunHistoryItem {
    * carried none (every run has always planned every open SO line, unchanged).
    */
   plan_horizon_date?: string | null;
+  /**
+   * The scheduled daily run rather than one a person started (`reorder_run.created_by IS
+   * NULL` - `task_scheduler._reorder_plan_tick` passes no actor). Drives the "daily" badge
+   * on the plans list.
+   */
+  is_scheduled?: boolean;
+  /**
+   * The run covers EVERY active warehouse. A plan launched with no warehouse scope stores
+   * them all, so without this the column reads "60 warehouses" for what the buyer asked
+   * for as "all" - and only the backend knows how many active ones there are.
+   */
+  is_all_warehouses?: boolean;
+  /**
+   * The product SCOPE this run was launched with, or null when it narrowed to nothing (the
+   * daily run plans every product). Distinct from `summary.recommendation_count`, which
+   * counts rows.
+   */
+  product_count?: number | null;
+  /**
+   * How many products the run actually wrote rows for - the denominator of the Decided
+   * column. `product_count` above is the scope and is null on the daily run, which would
+   * otherwise leave the most common plan reading "12 of -".
+   */
+  planned_product_count?: number | null;
+  /** Products with a decision recorded against them - the "x" of the Decided column (R14). */
+  decided_product_count?: number | null;
+  /** Products already confirmed into a draft purchase order - drives the Confirmed status. */
+  confirmed_product_count?: number | null;
 }
 
 export interface ReorderRunHistoryPage {
@@ -306,6 +333,12 @@ interface ReorderRunStatusDto {
   buy_scope: string | null;
   error: string | null;
   summary: ReorderRunSummary | null;
+  decision_grain?: PlanGrain | null;
+  front_planning_contract_version?: number | null;
+  plan_horizon_date?: string | null;
+  /** When the engine started. The plan page's header reads "Plan dd/mm/yyyy HH:mm" off
+   *  it (C1) and this response is the only thing that page reads. */
+  started_at?: string | null;
 }
 
 const DEFAULT_STAGE: ReorderRunStage = 'resolving_policies';
@@ -317,6 +350,11 @@ export async function createReorderRun(req: CreateReorderRunRequest): Promise<Re
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
+      // Always sent, empty list included: the backend's `_resolve_warehouse_ids` reads a
+      // falsy scope as EVERY active warehouse (`if warehouse_codes:` ... else every active
+      // one), so `[]` is how "all warehouses" is expressed on the wire (P1). Unlike
+      // `product_codes` the key has always been present, so sending it empty - rather than
+      // omitting it - is what keeps an unnarrowed run byte-identical to before.
       warehouse_codes: req.warehouse_codes,
       budget_id: req.budget_id ?? null,
       include_market: req.include_market ?? false,
@@ -355,6 +393,12 @@ export async function getReorderRun(runId: string): Promise<ReorderRun> {
     buy_scope: (dto.buy_scope as BuyScope) ?? 'network',
     summary: dto.summary ?? null,
     error: dto.error ?? null,
+    // The run carries its OWN stamped grain and cut-off (AC-F01), so the plan page reads
+    // the run in front of it rather than today's policy.
+    decision_grain: dto.decision_grain ?? null,
+    front_planning_contract_version: dto.front_planning_contract_version ?? null,
+    plan_horizon_date: dto.plan_horizon_date ?? null,
+    started_at: dto.started_at ?? null,
   };
 }
 
@@ -547,10 +591,23 @@ async function inFlightAtMost<T, R>(
   return out;
 }
 
-/** Newest-first paginated run history (drives the Run history panel). */
+/** What the plans list asks for: one DataGrid page of runs, newest first by default. */
+export interface ReorderRunQuery {
+  pageIndex: number;
+  pageSize: number;
+  sorting?: SortingState;
+  searchQuery?: string;
+}
+
+/**
+ * One page of plans (`/scm/reorder`). The endpoint is the existing paginated runs list;
+ * `sort`, `dir` and `query` travel through `buildDataGridParams` like every other listing.
+ *
+ * `query` matches a WAREHOUSE CODE, which is what the search box says: a plan has no other
+ * human handle (no UUID surfaces, and a run is identified by its time and its scope).
+ */
 export async function listReorderRuns(
-  page: number,
-  limit: number,
+  query: ReorderRunQuery,
 ): Promise<ReorderRunHistoryPage> {
   if (USE_M4_MOCKS) {
     return {
@@ -566,17 +623,17 @@ export async function listReorderRuns(
           summary: MOCK_SUMMARY,
         },
       ],
-      pagination: { page: 1, limit, total: 1, total_pages: 1 },
+      pagination: { page: 1, limit: query.pageSize, total: 1, total_pages: 1 },
     };
   }
   const params = buildDataGridParams({
-    pageIndex: page - 1,
-    pageSize: limit,
-    sorting: [],
-    searchQuery: '',
+    pageIndex: query.pageIndex,
+    pageSize: query.pageSize,
+    sorting: query.sorting ?? [],
+    searchQuery: query.searchQuery ?? '',
   });
   const res = await apiFetch(`/api/v1/scm/reorder-runs?${params}`);
-  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load run history'));
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load the plans'));
   // As in `getTodayRun`: a history run carries its OWN stamped grain, so opening a
   // past run never relabels it with today's policy (AC-F10).
   return (await res.json()) as ReorderRunHistoryPage;
@@ -671,6 +728,9 @@ export interface PlanDemandLine {
    *  order carries no agent at all - never invented (captain, 21 Aug: "who is the
    *  customer and agent"). Optional - absent on a cached response predating the field. */
   agent_label?: string | null;
+  /** The job the units are for - the Project column in both dialogs (F2/F3). Null on an
+   *  order with no project behind it, which is a fact about the order. */
+  project_title?: string | null;
   /** What they pay for it, when the order line carries a price. */
   unit_price: number | null;
   /**
@@ -691,6 +751,11 @@ export interface PlanDemandLine {
    * response that predates the field; treated as false by the caller in that case.
    */
   has_inquiry_row?: boolean;
+  /** How much of an Order Inquiry instruction is already placed on a purchase or shipping
+   *  order. `qty` above is what is LEFT of it, so this is what tells a 20 that was always
+   *  20 from a 50 that is 30 placed (AC-R8). Only the confirmed project leg carries it -
+   *  a retail book line has no instruction to place. */
+  linked_qty?: number | null;
 }
 
 export interface PlanDemand {
@@ -771,6 +836,8 @@ export interface PlanDemandHistoryLine {
   delivered: boolean;
   customer_label: string;
   agent_label: string | null;
+  /** See `PlanDemandLine.project_title` - the same column on the history tab. */
+  project_title?: string | null;
   unit_price: number | null;
 }
 
@@ -791,11 +858,22 @@ export interface LocationStockLocation {
   so_qty: number;
   spo_qty: number;
   available: number;
+  /**
+   * Whether this location is a SITE POOL rather than a project bin. The On hand lightbox
+   * counts pool rows only (R15) - a project bin's stock is already spoken for by an Order
+   * Inquiry, so counting it here would double it against the plan's own netting.
+   */
+  is_pool?: boolean;
+  /** Open purchase-order quantity bound for this location. 0 when nothing is on order. */
+  po_qty?: number | null;
 }
 
 export interface LocationStockResponse {
   product_id: string;
-  as_of: string;
+  /** When the stock shown here was last written (R7) - the newest `stock.updated_at` for
+   *  the product, NOT the moment the dialog asked. Null when neither that nor a stock
+   *  import has ever run. */
+  as_of: string | null;
   locations: LocationStockLocation[];
 }
 

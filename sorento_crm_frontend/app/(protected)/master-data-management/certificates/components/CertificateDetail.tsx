@@ -3,33 +3,18 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import {
-  AlertTriangle,
-  ArrowLeft,
-  CopyCheck,
-  FileText,
-  History,
-  Package,
-  Pencil,
-  Settings,
-  Split,
-  Trash2,
-} from 'lucide-react';
+import { AlertTriangle, CopyCheck, FileText, History, Package, Pencil, Split, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { useBackToListHref } from '@/components/common/BackToList';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
+
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import RecordEntityRegistrar from '@/components/common/RecordEntityRegistrar';
-import RecordNavigation from '@/components/common/RecordNavigation';
+import DetailActions from '@/components/common/DetailActions';
+import { certificatesPagerQuery } from '../hooks/useCertificates';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 // The backend serializes datetimes as NAIVE UTC (no trailing Z), so `new
 // Date(str)` would parse them as local time and render 8 hours early. The
@@ -37,11 +22,7 @@ import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 // valid_from / valid_until / issued_at are DATE columns, so they go through
 // formatDateInMalaysia, which keeps a civil date stable on any machine.
 import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
-import {
-  useCertificate,
-  useCertificates,
-  useDeleteCertificate,
-} from '../hooks/useCertificates';
+import { useCertificate, useDeleteCertificate } from '../hooks/useCertificates';
 import {
   STATUS_LABELS,
   VALIDITY_STATE_LABELS,
@@ -55,29 +36,12 @@ import AttachmentDetailModal from '@/app/(protected)/resource-management/attachm
 
 const LIST_PATH = '/master-data-management/certificates';
 
-/**
- * Records fetched for the prev/next chevrons. Deliberately UNFILTERED (no
- * validity or status scope): the list's default view hides valid certificates,
- * and a record you can open must be a record you can page through. Ordered by
- * the same default the list uses so the counter agrees with what you just left.
- */
-const NAVIGATION_PAGE_SIZE = 500;
 
 export default function CertificateDetail({ certificateId }: { certificateId: string }) {
   const router = useRouter();
+  const backHref = useBackToListHref(LIST_PATH);
   const { data: certificate, isLoading } = useCertificate(certificateId);
   const deleteMutation = useDeleteCertificate();
-  const navigationList = useCertificates({
-    pageIndex: 0,
-    pageSize: NAVIGATION_PAGE_SIZE,
-    sorting: [{ id: 'valid_until', desc: false }],
-    searchQuery: '',
-    // Both omitted on purpose: the backend reads a missing validity_state /
-    // status as "no scope", which is what an unfiltered navigation list needs.
-    validity_state: undefined,
-    status: undefined,
-  });
-  const navigationItems = navigationList.data?.data ?? [];
 
   const [editOpen, setEditOpen] = useState(false);
   const [mergeOpen, setMergeOpen] = useState(false);
@@ -137,43 +101,36 @@ export default function CertificateDetail({ certificateId }: { certificateId: st
             )}
           </div>
         </div>
-        <div className="flex flex-wrap items-center gap-2 sm:justify-end">
-          <RecordNavigation
-            currentId={certificate.id}
-            items={navigationItems}
-            totalCount={navigationList.data?.pagination?.total}
-            basePath={LIST_PATH}
-            ariaLabel="certificate"
-          />
-          <Button variant="outline" size="sm" onClick={() => router.push(LIST_PATH)}>
-            <ArrowLeft className="size-4" />
-            Back
-          </Button>
-          {/* Record actions live behind the gear, the same place every other
-              detail page in the system keeps them. */}
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="icon" aria-label="Certificate options">
-                <Settings className="size-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={() => setEditOpen(true)}>
-                <Pencil className="size-4" />
-                Edit
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setMergeOpen(true)}>
-                <Split className="size-4" />
-                Merge as revision of...
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem variant="destructive" onClick={() => setDeleteOpen(true)}>
-                <Trash2 className="size-4" />
-                Delete
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
+        <DetailActions
+          pager={{
+            ...certificatesPagerQuery,
+            detailPath: LIST_PATH,
+            currentId: certificate.id,
+            ariaLabel: 'certificate',
+          }}
+          actions={[
+            {
+              key: 'certificate.merge',
+              label: 'Merge as revision of...',
+              icon: Split,
+              run: () => setMergeOpen(true),
+            },
+            {
+              key: 'certificate.delete',
+              label: 'Delete certificate',
+              icon: Trash2,
+              kind: 'destructive' as const,
+              run: () => setDeleteOpen(true),
+            },
+          ]}
+          gearLabel="Certificate options"
+          primary={
+            <Button onClick={() => setEditOpen(true)}>
+              <Pencil className="size-4" />
+              Edit
+            </Button>
+          }
+        />
       </div>
 
       {/*
@@ -383,7 +340,7 @@ export default function CertificateDetail({ certificateId }: { certificateId: st
         onDelete={async () => {
           await deleteMutation.mutateAsync(certificate.id);
         }}
-        onSuccess={() => router.push(LIST_PATH)}
+        onSuccess={() => router.push(backHref)}
         queryKeysToInvalidate={[['certificates']]}
       />
     </div>

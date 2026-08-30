@@ -2,6 +2,7 @@ import * as React from 'react';
 import { cn } from '@/lib/utils';
 import { cva, type VariantProps } from 'class-variance-authority';
 import { Slot as SlotPrimitive } from 'radix-ui';
+import { getStatusBadgeVariant } from '@/lib/status-badge';
 
 export interface BadgeProps extends React.HTMLAttributes<HTMLDivElement>, VariantProps<typeof badgeVariants> {
   asChild?: boolean;
@@ -18,7 +19,8 @@ export interface BadgeButtonProps
 export type BadgeDotProps = React.HTMLAttributes<HTMLSpanElement>;
 
 const badgeVariants = cva(
-  'inline-flex items-center justify-center border border-transparent font-medium focus:outline-hidden focus:ring-2 focus:ring-ring focus:ring-offset-2 [&_svg]:-ms-px [&_svg]:shrink-0',
+  // Round by default: one pill shape for every status and tag in the product.
+  'inline-flex items-center justify-center rounded-full border border-transparent font-medium focus:outline-hidden focus:ring-2 focus:ring-ring focus:ring-offset-2 [&_svg]:-ms-px [&_svg]:shrink-0',
   {
     variants: {
       variant: {
@@ -33,22 +35,30 @@ const badgeVariants = cva(
         destructive: 'bg-destructive text-destructive-foreground',
       },
       appearance: {
-        default: '',
         light: '',
         outline: '',
-        ghost: 'border-transparent bg-transparent',
+        /** The pre-pill solid fill. Count badges (`shape="circle"`) keep it. */
+        solid: '',
+        /**
+         * @deprecated Retired by PLAN-apple-alignment 3.1 - a dot-and-text badge
+         * with no fill read as a second status language beside the tinted pill.
+         * `Badge` maps it to `light`; the call-site sweep is a later slice.
+         */
+        ghost: '',
       },
       disabled: {
         true: 'opacity-50 pointer-events-none',
       },
       size: {
-        lg: 'rounded-md px-[0.5rem] h-7 min-w-7 gap-1.5 text-xs [&_svg]:size-3.5',
-        md: 'rounded-md px-[0.45rem] h-6 min-w-6 gap-1.5 text-xs [&_svg]:size-3.5 ',
-        sm: 'rounded-sm px-[0.325rem] h-5 min-w-5 gap-1 text-[0.6875rem] leading-[0.75rem] [&_svg]:size-3',
-        xs: 'rounded-sm px-[0.25rem] h-4 min-w-4 gap-1 text-[0.625rem] leading-[0.5rem] [&_svg]:size-3',
+        lg: 'px-3 h-7 min-w-7 gap-1.5 text-xs [&_svg]:size-3.5',
+        md: 'px-2.5 h-6 min-w-6 gap-1.5 text-xs [&_svg]:size-3.5',
+        sm: 'px-2 h-5 min-w-5 gap-1 text-[0.6875rem] leading-[0.75rem] [&_svg]:size-3',
+        xs: 'px-1.5 h-4 min-w-4 gap-1 text-[0.625rem] leading-[0.5rem] [&_svg]:size-3',
       },
       shape: {
         default: '',
+        // A count badge is a solid disc, not a tinted status pill - S1-08 says it
+        // renders unchanged, and the tint made "3 unread" look like a status.
         circle: 'rounded-full',
       },
     },
@@ -120,46 +130,10 @@ const badgeVariants = cva(
         className:
           'text-[var(--color-destructive-accent,var(--color-red-700))] border-[var(--color-destructive-soft,var(--color-red-100))] bg-[var(--color-destructive-soft,var(--color-red-50))] dark:bg-[var(--color-destructive-soft,var(--color-red-950))] dark:border-[var(--color-destructive-soft,var(--color-red-900))] dark:text-[var(--color-destructive-soft,var(--color-red-600))]',
       },
-      /* Ghost */
-      {
-        variant: 'primary',
-        appearance: 'ghost',
-        className: 'text-primary',
-      },
-      {
-        variant: 'secondary',
-        appearance: 'ghost',
-        className: 'text-secondary-foreground',
-      },
-      {
-        variant: 'success',
-        appearance: 'ghost',
-        className: 'text-[var(--color-success-accent,var(--color-green-500))]',
-      },
-      {
-        variant: 'warning',
-        appearance: 'ghost',
-        className: 'text-[var(--color-warning-accent,var(--color-yellow-500))]',
-      },
-      {
-        variant: 'info',
-        appearance: 'ghost',
-        className: 'text-[var(--color-info-accent,var(--color-violet-500))]',
-      },
-      {
-        variant: 'destructive',
-        appearance: 'ghost',
-        className: 'text-destructive',
-      },
-
-      { size: 'lg', appearance: 'ghost', className: 'px-0' },
-      { size: 'md', appearance: 'ghost', className: 'px-0' },
-      { size: 'sm', appearance: 'ghost', className: 'px-0' },
-      { size: 'xs', appearance: 'ghost', className: 'px-0' },
     ],
     defaultVariants: {
       variant: 'primary',
-      appearance: 'default',
+      appearance: 'light',
       size: 'md',
     },
   },
@@ -187,16 +161,50 @@ function Badge({
   shape,
   asChild = false,
   disabled,
+  status,
+  children,
   ...props
-}: React.ComponentProps<'span'> & VariantProps<typeof badgeVariants> & { asChild?: boolean }) {
+}: React.ComponentProps<'span'> &
+  VariantProps<typeof badgeVariants> & {
+    asChild?: boolean;
+    /**
+     * The raw status string. The pill then draws its dot and resolves its own
+     * colour through `getStatusBadgeVariant`, so a caller never pairs a status
+     * with a variant by hand and two lists cannot disagree about a colour.
+     */
+    status?: string | null;
+  }) {
   const Comp = asChild ? SlotPrimitive.Slot : 'span';
+
+  // `ghost` is retired (see the variant's deprecation note); map it so the
+  // remaining call sites keep rendering the tint until the sweep reaches them.
+  const resolvedAppearance = appearance === 'ghost' ? 'light' : appearance;
+  const isStatus = status != null && String(status).trim() !== '';
+  const resolvedVariant = isStatus ? getStatusBadgeVariant(status) : variant;
+  // A count badge keeps the solid fill it had before the pill work.
+  const effectiveAppearance = shape === 'circle' && appearance === undefined ? 'solid' : resolvedAppearance;
 
   return (
     <Comp
       data-slot="badge"
-      className={cn(badgeVariants({ variant, size, appearance, shape, disabled }), className)}
+      className={cn(
+        badgeVariants({ variant: resolvedVariant, size, appearance: effectiveAppearance, shape, disabled }),
+        className,
+      )}
       {...props}
-    />
+    >
+      {/* One expression, not two: Slot runs React.Children.only, and a null dot
+          beside the children is still an ARRAY of two. An `asChild` badge owns
+          its own markup, so it never gets the dot. */}
+      {isStatus && !asChild ? (
+        <>
+          <BadgeDot />
+          {children}
+        </>
+      ) : (
+        children
+      )}
+    </Comp>
   );
 }
 

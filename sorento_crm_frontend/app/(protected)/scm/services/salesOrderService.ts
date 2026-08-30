@@ -32,6 +32,7 @@
  *                                   (`outstandingImportService`'s own `planning_change_batch`).
  *   DELETE /sales-orders/{id}       hard delete (204)
  *   POST   /sales-orders/{id}/create-do   → { sales_order, do_number }
+ *   POST   /sales-orders/{id}/reset-planning { rewind_book } → { so_number, planned, removed }
  * ============================================================================
  */
 import { apiFetch } from '@/lib/api';
@@ -78,9 +79,17 @@ export interface SalesOrderListQuery {
  */
 function toWritePayload(data: SalesOrderFormData) {
   return {
-    order_type: data.order_type,
+    // Both spread conditionally, and for opposite reasons. The CREATE modal sends
+    // `order_type` and no `demand_class`; the detail page's edit sends `demand_class` and
+    // no `order_type`, because the class is what that screen renders and `order_type` is
+    // NULL on 96% of this book. A key that is genuinely absent leaves the stored column
+    // alone; sending `order_type: undefined` would do the same through `JSON.stringify`,
+    // but only by accident of what that function drops.
+    ...(data.order_type !== undefined ? { order_type: data.order_type } : {}),
+    ...(data.demand_class !== undefined ? { demand_class: data.demand_class } : {}),
     customer_code: data.customer_code,
     priority: data.priority,
+    ...(data.order_date !== undefined ? { order_date: data.order_date } : {}),
     requested_delivery_date: data.requested_delivery_date ?? null,
     // `null` here is an explicit "clear the agent", not "leave it alone" - the BE
     // distinguishes a field it never received from one sent as `null` via
@@ -93,6 +102,8 @@ function toWritePayload(data: SalesOrderFormData) {
       ...(l.warehouse_code !== undefined ? { warehouse_code: l.warehouse_code } : {}),
       ...(l.required_date !== undefined ? { required_date: l.required_date } : {}),
       ...(l.uom !== undefined ? { uom: l.uom } : {}),
+      ...(l.unit_price !== undefined ? { unit_price: l.unit_price } : {}),
+      ...(l.discount !== undefined ? { discount: l.discount } : {}),
     })),
   };
 }
@@ -228,5 +239,29 @@ export async function createDoFromSalesOrder(
 ): Promise<{ sales_order: SalesOrder; do_number: string }> {
   const res = await apiFetch(`${BASE}/${id}/create-do`, { method: 'POST' });
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to create delivery order'));
+  return res.json();
+}
+
+export interface ResetPlanningResult {
+  so_number: string;
+  planned: boolean;
+  removed: Record<string, number>;
+}
+
+/**
+ * Back to never-planned: the order's inquiries, links, allocations, transfers and supply
+ * decisions go; the order and its lines stay. `rewindBook` also puts the lines a
+ * planning-change upload moved back to before the first upload.
+ */
+export async function resetSalesOrderPlanning(
+  id: string,
+  rewindBook = false,
+): Promise<ResetPlanningResult> {
+  const res = await apiFetch(`${BASE}/${id}/reset-planning`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ rewind_book: rewindBook }),
+  });
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to reset planning'));
   return res.json();
 }

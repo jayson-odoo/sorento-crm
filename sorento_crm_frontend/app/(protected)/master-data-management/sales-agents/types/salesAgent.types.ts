@@ -54,6 +54,23 @@ export interface MirrorAnnotationPayload {
   internal_note?: string | null;
   follow_up?: boolean;
   contact_id?: string | null;
+  /** Whether the code is still sold under. Sales-agent only (the other mirror entities'
+   *  PATCH does not accept it): a retired code has to leave the Agent pickers, and until
+   *  the record page carried this switch there was no way to retire one at all. */
+  is_active?: boolean;
 }
 
 export type SalesAgentAnnotationPayload = MirrorAnnotationPayload;
+
+/**
+ * POST body for `/bulk-annotate`. Same key semantics as the single-row PATCH - an omitted
+ * field is left alone, `null` clears it - so the bulk action is that PATCH applied N times.
+ *
+ * No `person_label`: a label names ONE human, and applying one across a selection is the
+ * write nobody means to make.
+ */
+export interface SalesAgentBulkAnnotatePayload {
+  sales_agent_ids: string[];
+  demand_class?: string | null;
+  location_group?: string | null;
+}

@@ -14,10 +14,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FulfilmentPlanningRow } from '../../_shared/types/fulfilmentPlanning.types';
 
 const routerReplace = vi.fn();
+/** Back out of a board is a NAVIGATION to another route now, not a rewrite of this one. */
+const routerPush = vi.fn();
 let currentSearchParams = new URLSearchParams('');
 
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push: vi.fn(), replace: (...args: unknown[]) => routerReplace(...args) }),
+  useRouter: () => ({
+    push: (...args: unknown[]) => routerPush(...args),
+    replace: (...args: unknown[]) => routerReplace(...args),
+  }),
   usePathname: () => '/project-sales/fulfilment-planning',
   useSearchParams: () => currentSearchParams,
 }));
@@ -1094,6 +1099,25 @@ describe('FulfilmentPlanningClient: the board lives in the URL', () => {
     expect(getPlanningBoard).not.toHaveBeenCalled();
   });
 
+  it('opens a board on every order of a planning-change batch, cap or no cap', async () => {
+    // The cap exists because a selection the sender did not choose is not the set they
+    // meant to share. A batch IS a chosen set - one upload, the orders it moved - and the
+    // separate batch page is retired, so refusing it dead-ends the change with nowhere
+    // else to decide it.
+    const many = Array.from({ length: 60 }, (_unused, index) => `SO${200000 + index}`);
+    currentSearchParams = new URLSearchParams(
+      `orders=${many.join(',')}&batch=pcb-so381895`,
+    );
+    listFulfilmentPlanning.mockResolvedValue(envelope([planned(1)]));
+
+    renderClient();
+
+    expect(await screen.findByText('Planning 60 sales orders together')).toBeInTheDocument();
+    expect(
+      screen.queryByText('60 ticked. A board takes at most 50 sales orders.'),
+    ).not.toBeInTheDocument();
+  });
+
   it('writes the selection into the URL when the board is opened', async () => {
     listFulfilmentPlanning.mockResolvedValue(envelope([planned(1), planned(2)]));
     getPlanningBoard.mockReturnValue(new Promise(() => {}));
@@ -1112,9 +1136,12 @@ describe('FulfilmentPlanningClient: the board lives in the URL', () => {
     );
   });
 
-  it('drops the whole board from the URL on the way back to the worklist', async () => {
+  it('goes back to the SALES ORDER LIST, dropping the whole board from the URL', async () => {
+    // The board is opened from the sales-order list's Plan action, so that is where Back
+    // belongs. The board's own three parameters leave with it; everything else rides along,
+    // so a board opened from a filtered, paged list returns to that page.
     currentSearchParams = new URLSearchParams(
-      'orders=SO100001&granularity=month&product=cks&sort=customer_name&dir=asc',
+      'orders=SO100001&granularity=month&product=cks&page=3&limit=25&query=rowenda',
     );
     listFulfilmentPlanning.mockResolvedValue(envelope([planned(1)]));
     getPlanningBoard.mockReturnValue(new Promise(() => {}));
@@ -1122,16 +1149,54 @@ describe('FulfilmentPlanningClient: the board lives in the URL', () => {
     renderClient();
     await screen.findByText('Planning 1 sales orders together');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Back to the worklist' }));
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Board actions' }), { key: 'Enter' });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Back to sales orders' }));
 
     await waitFor(() => {
-      const urls = routerReplace.mock.calls.map((call) => String(call[0]));
-      const back = urls[urls.length - 1];
+      const back = String(routerPush.mock.calls[routerPush.mock.calls.length - 1][0]);
+      expect(back.split('?')[0]).toBe('/scm/sales-orders');
       expect(back).not.toContain('orders=');
       expect(back).not.toContain('granularity=');
       expect(back).not.toContain('product=');
-      // The worklist's own state is not collateral damage.
-      expect(back).toContain('sort=customer_name');
+      // The list's own page and search are not collateral damage.
+      expect(back).toContain('page=3');
+      expect(back).toContain('limit=25');
+      expect(back).toContain('query=rowenda');
     });
+  });
+
+  it('drops the WORKLIST own query rather than forwarding it as a sales-order one', async () => {
+    // A board opened from the worklist carries `sort=earliest_required_date`, which is not a
+    // sales-order sort field: the same param name means a different thing on that screen, and
+    // carrying it over would ask the list to sort by a column it does not have.
+    currentSearchParams = new URLSearchParams(
+      'orders=SO100001&sort=earliest_required_date&dir=asc&state=planned',
+    );
+    listFulfilmentPlanning.mockResolvedValue(envelope([planned(1)]));
+    getPlanningBoard.mockReturnValue(new Promise(() => {}));
+
+    renderClient();
+    await screen.findByText('Planning 1 sales orders together');
+
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Board actions' }), { key: 'Enter' });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Back to sales orders' }));
+
+    await waitFor(() => expect(routerPush).toHaveBeenLastCalledWith('/scm/sales-orders'));
+  });
+
+  it('goes back to a bare sales-order list when the board URL carried no list query', async () => {
+    currentSearchParams = new URLSearchParams('orders=SO100001');
+    listFulfilmentPlanning.mockResolvedValue(envelope([planned(1)]));
+    getPlanningBoard.mockReturnValue(new Promise(() => {}));
+
+    renderClient();
+    await screen.findByText('Planning 1 sales orders together');
+
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Board actions' }), { key: 'Enter' });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Back to sales orders' }));
+
+    await waitFor(() =>
+      expect(routerPush).toHaveBeenLastCalledWith('/scm/sales-orders'),
+    );
   });
 });

@@ -93,6 +93,9 @@ class PlanningChangeInquiryRow(BaseModel):
 
 class PlanningChangeRow(BaseModel):
     id: str
+    #: The planning mirror line this row is about, so a board cell can be matched exactly
+    #: rather than by product and sales order (AC-P3-2). `None` on an `added` row.
+    project_line_id: Optional[str] = None
     line_no: int
     item_code: str
     product_name: Optional[str] = None
@@ -104,6 +107,10 @@ class PlanningChangeRow(BaseModel):
     facts: PlanningChangeFacts
     suggested: PlanningChangeReaction
     why: str
+    #: Stock that has ALREADY physically moved for this line, in one phrase - "10 moved
+    #: BRW -> BRW-IB, line cancelled" (AC-P3-9). Stated, never reversed: a movement is a
+    #: person's decision and the plan does not get to undo one. `None` on nearly every row.
+    moved_transfer: Optional[str] = None
     proposal: Optional[BoardContribution] = None
     inquiry_rows: List[PlanningChangeInquiryRow] = Field(default_factory=list)
     decision: PlanningChangeDecision = None
@@ -188,6 +195,9 @@ class PlanningChangeBatchSummary(BaseModel):
     failed_count: int
     applied_at: Optional[datetime] = None
     applied_by_name: Optional[str] = None
+    #: The sales orders this batch touched, by NUMBER (AC-P3-1) - what the list row's Plan
+    #: action addresses the board with, so the list needs no second call to open one.
+    so_numbers: List[str] = Field(default_factory=list)
 
 
 class PlanningChangeListEnvelope(BaseModel):

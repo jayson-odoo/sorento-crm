@@ -55,7 +55,10 @@ from tests._pg_fixture import pg_session
 MARKER = "ZZTISO"
 
 # The header row the seeded `import_field_alias` rows map (doc_type = outstanding_so).
-_HEADERS = ["S/O NO", "ITEM CODE", "QTY", "DELIVERY DATE", "STOCK LOCATION"]
+# `ORDER TYPE` is on every SO header set here because since QP1 an upload naming an order
+# nothing can classify is refused outright, and these files name debtors this test invents
+# - a company-isolation case must not be measuring the refusal instead.
+_HEADERS = ["S/O NO", "ITEM CODE", "QTY", "DELIVERY DATE", "STOCK LOCATION", "ORDER TYPE"]
 
 # The same, for doc_type = outstanding_po. The creditor code is the PO book's third
 # company-scoped lookup, alongside the item code and the stock location.
@@ -64,7 +67,7 @@ _PO_HEADERS = ["PO NO", "CREDITOR CODE", "ITEM CODE", "QTY ORDERED", "ETA", "STO
 # The SO headers plus the debtor code, for the tests about the customer LINK. Kept off
 # `_HEADERS` so the lookup tests above still exercise a file that names no counterparty.
 _SO_DEBTOR_HEADERS = ["S/O NO", "DEBTOR CODE", "ITEM CODE", "QTY", "DELIVERY DATE",
-                      "STOCK LOCATION"]
+                      "STOCK LOCATION", "ORDER TYPE"]
 
 
 def _u() -> str:
@@ -82,9 +85,15 @@ def _workbook(rows, headers=None) -> bytes:
 
     wb = openpyxl.Workbook()
     ws = wb.active
-    ws.append(headers or _HEADERS)
+    head = headers or _HEADERS
+    ws.append(head)
     for row in rows:
-        ws.append(list(row))
+        row = list(row)
+        # Every SO row states DEALER, which is the class these orders effectively imported
+        # with before QP1 (an unclassified line counted exactly as a retail one does).
+        if head[-1] == "ORDER TYPE" and len(row) == len(head) - 1:
+            row.append("DEALER")
+        ws.append(row)
     buf = BytesIO()
     wb.save(buf)
     return buf.getvalue()
@@ -160,7 +169,7 @@ class World:
     def segment(self, stem: str) -> str:
         """A market segment whose CODE carries the word the demand class keys off.
 
-        `_demand_class_for` matches "project" / "contract" as a substring of the code, so a
+        `_class_of` matches "project" / "contract" as a substring of the code, so a
         marker-prefixed code still classifies exactly as the production ones do.
         """
         code = f"{MARKER}-{stem}-{uuid.uuid4().hex[:6]}".lower()
@@ -467,19 +476,19 @@ def test_the_demand_class_reads_a_customer_of_the_active_company_only(world):
 
     _act_as(db, world.a)
 
-    assert svc._demand_class_for(db, code) == "retail"
+    assert svc._class_of(svc._segment_of(db, code)) == "retail"
 
 
 def test_a_customer_owned_only_by_another_company_does_not_set_the_demand_class(world):
-    """The deterministic half: company A has no such debtor, so the class falls back to the
-    default. A raw lookup finds company B's project customer and promotes the order."""
+    """The deterministic half: company A has no such debtor, so the segment answers
+    nothing. A raw lookup finds company B's project customer and promotes the order."""
     db = world.db
     code = _code("CUST")[:50]
     world.customer(code, f"{MARKER} B debtor", world.b, world.segment("project"))
 
     _act_as(db, world.a)
 
-    assert svc._demand_class_for(db, code) == svc.DEFAULT_DEMAND_CLASS
+    assert svc._class_of(svc._segment_of(db, code)) is None
 
 
 # The SO book now LINKS that customer (`sales_orders.customer_id`), not just reads their

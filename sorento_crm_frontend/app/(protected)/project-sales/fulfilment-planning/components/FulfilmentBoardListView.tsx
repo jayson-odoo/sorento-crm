@@ -2,23 +2,31 @@
 
 import * as React from 'react';
 import Link from 'next/link';
-import { Check, Pencil, X } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { ChevronDown, ChevronRight } from 'lucide-react';
 import { ColumnDef } from '@tanstack/react-table';
-import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { PanelDataGrid } from '../../_shared/components/PanelDataGrid';
-import { proposalSummaryFor } from '../../_shared/lib/fulfilmentBoard';
-import { amendSummary } from '../../_shared/lib/boardAmend';
-import { confirmedSummary } from './BoardCellBreakdownDialog';
-import { BoardAmendDialog } from './BoardAmendDialog';
-import type { BoardContribution, BoardDecision, BoardDraft } from '../../_shared/types/fulfilmentPlanning.types';
-
-const VERDICT_PALETTE: Record<BoardDecision['verdict'], string> = {
-  approved: 'approved',
-  amended: 'approved',
-  rejected: 'rejected',
-};
+import { BoardDecidedMarker, decidedRevisions } from './BoardDecidedMarker';
+import { BoardDecisionPill } from './BoardDecisionPill';
+import { BoardLineDecisionPanel } from './BoardLineDecisionPanel';
+import { UnsavedDecisionPrompt, useDecisionRowExpansion } from './decisionRowExpansion';
+import { SupplyBar } from '../../_shared/components/SupplyBar';
+import {
+  COLOURS,
+  LABELS,
+  contributionDecision,
+  contributionSuggestion,
+  contributionSupply,
+  // Aliased the way `SalesOrderDetail` aliases it: bare `describe` is vitest's, and a file
+  // that imports both reads as though the test runner were writing the column.
+  describe as describeSupply,
+  segmentsOf,
+} from '../../_shared/lib/supplyVocabulary';
+import type {
+  BoardContribution,
+  BoardDecision,
+  BoardDraft,
+} from '../../_shared/types/fulfilmentPlanning.types';
 
 /**
  * The board as a LIST, not a grid: one row per contributing line across every cell (D2,
@@ -42,7 +50,15 @@ export function FulfilmentBoardListView({
   onDecide: (key: string, decision: BoardDecision | null) => void;
   isLoading?: boolean;
 }) {
-  const [amending, setAmending] = React.useState<BoardContribution | null>(null);
+  /**
+   * Which row is open, ONE at a time - the same STATE the cell breakdown keeps, and the same
+   * panel inside it. The list used to carry Approve / Amend / Reject buttons in its Verdict
+   * column and open the amend MODAL over the board; a decision is taken in the row on both
+   * readings now, or the two would teach different gestures for one act - including the
+   * question asked before an unsaved composition is thrown away (C5).
+   */
+  const expansion = useDecisionRowExpansion();
+  const { expanded, setExpanded, setDirty, requestRow } = expansion;
 
   const columns = React.useMemo<ColumnDef<BoardContribution>[]>(
     () => [
@@ -54,8 +70,27 @@ export function FulfilmentBoardListView({
           const contribution = row.original;
           const body = (
             <div className="min-w-0">
-              <div className="truncate text-sm font-medium tabular-nums">
-                {contribution.so_number}
+              <div className="flex min-w-0 items-center gap-1.5">
+                {/* A state indicator, not a control: the whole row opens the decision. */}
+                {row.getIsExpanded() ? (
+                  <ChevronDown
+                    className="size-3.5 shrink-0 text-muted-foreground"
+                    aria-hidden
+                  />
+                ) : (
+                  <ChevronRight
+                    className="size-3.5 shrink-0 text-muted-foreground"
+                    aria-hidden
+                  />
+                )}
+                <span className="truncate text-sm font-medium tabular-nums">
+                  {contribution.so_number}
+                </span>
+                {/* The same tick the grid puts on a fully-decided cell, here per row: one
+                    row IS one contribution, so it is decided or it is not. */}
+                <BoardDecidedMarker
+                  revisions={decidedRevisions([contribution])}
+                />
               </div>
               <div className="truncate text-xs text-muted-foreground">
                 {`Line ${contribution.line_no}`}
@@ -76,6 +111,22 @@ export function FulfilmentBoardListView({
         },
         size: 150,
         minSize: 120,
+        meta: {
+          // The SAME editor the cell breakdown expands, so a decision reads and is taken
+          // identically whichever way the planner came at the line - the per-location
+          // Available included (C4). The figures ride on the CONTRIBUTION, netted of this
+          // line's own quantity, so the list does not have to know which cell the line sits
+          // in to quote the right pile.
+          expandedContent: (contribution: BoardContribution) => (
+            <BoardLineDecisionPanel
+              contribution={contribution}
+              decision={draft[contribution.key] ?? null}
+              locations={contribution.locations ?? []}
+              onDecide={(next) => onDecide(contribution.key, next)}
+              onDirtyChange={setDirty}
+            />
+          ),
+        },
       },
       {
         id: 'agent',
@@ -115,7 +166,10 @@ export function FulfilmentBoardListView({
         accessorFn: (row) => row.item_code,
         header: 'Product',
         cell: ({ row }) => (
-          <span className="block truncate tabular-nums" title={row.original.item_code}>
+          <span
+            className="block truncate tabular-nums"
+            title={row.original.item_code}
+          >
             {row.original.item_code}
           </span>
         ),
@@ -140,7 +194,7 @@ export function FulfilmentBoardListView({
       {
         id: 'owed_qty',
         accessorFn: (row) => row.qty_outstanding ?? row.qty,
-        header: 'Owed qty',
+        header: 'Outstanding qty',
         cell: ({ row }) => (
           <span className="block truncate tabular-nums">
             {row.original.qty_outstanding ?? row.original.qty}
@@ -150,23 +204,84 @@ export function FulfilmentBoardListView({
         minSize: 90,
       },
       {
-        id: 'proposal',
+        // AC-D4: what the ENGINE said, in PLAN section 2's own words. Split off the old
+        // single "Proposal" column, which showed the decision on a decided line and the
+        // proposal on an undecided one - so the two could never be compared, which is the
+        // one thing the planner opens this view to do.
+        id: 'suggested',
         accessorFn: () => '',
-        header: 'Proposal',
+        header: 'Suggested',
         cell: ({ row }) => {
           const contribution = row.original;
-          const text =
-            contribution.covered && contribution.decision
-              ? confirmedSummary(contribution.decision)
-              : proposalSummaryFor(contribution);
+          if (contribution.unplannable) {
+            // The ladder was never walked for it (AC-FP16), so there is nothing to suggest -
+            // and the reason is the one thing worth saying in its place.
+            return (
+              <span className="text-muted-foreground">Needs a location</span>
+            );
+          }
+          const parts = contributionSuggestion(contribution);
+          if (!parts) {
+            // A decision frozen before the proposal was recorded. Not "nothing suggested".
+            return <span className="text-muted-foreground">Not recorded</span>;
+          }
+          const text = describeSupply(parts, contribution.fulfilment_location);
           return (
-            <span className="block truncate" title={text}>
-              {text}
-            </span>
+            <div className="min-w-0 space-y-1">
+              <span className="block truncate" title={text}>
+                {text || (
+                  <span className="text-muted-foreground">
+                    Nothing proposed
+                  </span>
+                )}
+              </span>
+              {/* Faded: a suggestion is not a decision. */}
+              <SupplyBar
+                segments={segmentsOf(parts, contribution.fulfilment_location)}
+                decided={false}
+                labels={LABELS}
+                colours={COLOURS}
+              />
+            </div>
           );
         },
-        size: 260,
-        minSize: 180,
+        size: 240,
+        minSize: 170,
+      },
+      {
+        id: 'decided',
+        accessorFn: () => '',
+        header: 'Decided',
+        cell: ({ row }) => {
+          const contribution = row.original;
+          const drafted = draft[contribution.key] ?? null;
+          const parts = contributionDecision(contribution, drafted);
+          if (!parts) {
+            return <span className="text-muted-foreground">Not decided</span>;
+          }
+          // The SAME bar the grid draws, off the same draft, so the two views cannot
+          // disagree about what this line is going to be supplied from.
+          const supply = contributionSupply(contribution, drafted);
+          // The composition alone, in section 2's words. NOT "Confirmed rev 1 · Buy 43":
+          // the revision is already on the Verdict column and on the row's tick, and
+          // repeating it here would cost the width the composition needs.
+          const text = describeSupply(parts, contribution.fulfilment_location);
+          return (
+            <div className="min-w-0 space-y-1">
+              <span className="block truncate" title={text}>
+                {text}
+              </span>
+              <SupplyBar
+                segments={supply.segments}
+                decided={supply.decided}
+                labels={LABELS}
+                colours={COLOURS}
+              />
+            </div>
+          );
+        },
+        size: 240,
+        minSize: 170,
       },
       {
         id: 'rank',
@@ -176,7 +291,9 @@ export function FulfilmentBoardListView({
           row.original.covered || row.original.unplannable ? (
             <span className="text-muted-foreground">-</span>
           ) : (
-            <span className="tabular-nums">{row.original.rank_score.toFixed(2)}</span>
+            <span className="tabular-nums">
+              {row.original.rank_score.toFixed(2)}
+            </span>
           ),
         size: 80,
         minSize: 70,
@@ -185,140 +302,44 @@ export function FulfilmentBoardListView({
         id: 'verdict',
         accessorFn: () => '',
         header: 'Verdict',
-        cell: ({ row }) => {
-          const contribution = row.original;
-          const decision = draft[contribution.key] ?? null;
-
-          if (contribution.unplannable) {
-            return (
-              <span
-                className="block truncate text-sm text-destructive"
-                title="This line cannot be decided here: its sales order states no fulfilment location."
-              >
-                Needs a location
-              </span>
-            );
-          }
-
-          if (!decision && contribution.covered && contribution.decision) {
-            return (
-              <div className="flex min-w-0 flex-wrap items-center gap-1">
-                <span
-                  className={`${STATUS_PILL_BASE} max-w-full whitespace-normal break-words text-start normal-case ${statusPillClass('closed')}`}
-                >
-                  {`Confirmed rev ${contribution.decision.revision_no}`}
-                </span>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  onClick={() => setAmending(contribution)}
-                >
-                  <Pencil className="size-4" aria-hidden />
-                  Amend
-                </Button>
-              </div>
-            );
-          }
-
-          if (decision) {
-            return (
-              <div className="flex min-w-0 flex-wrap items-center gap-1">
-                <span
-                  className={`${STATUS_PILL_BASE} max-w-full whitespace-normal break-words text-start normal-case ${statusPillClass(VERDICT_PALETTE[decision.verdict])}`}
-                  title={decision.reason ?? ''}
-                >
-                  {decision.verdict === 'approved'
-                    ? 'Approved'
-                    : decision.verdict === 'amended'
-                      ? amendSummary(decision)
-                      : 'Rejected'}
-                </span>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => onDecide(contribution.key, null)}
-                >
-                  Undo
-                </Button>
-              </div>
-            );
-          }
-
-          return (
-            <div className="flex flex-wrap items-center gap-1">
-              <Button
-                type="button"
-                size="sm"
-                onClick={() => onDecide(contribution.key, { verdict: 'approved' })}
-              >
-                <Check className="size-4" aria-hidden />
-                Approve
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={() => setAmending(contribution)}
-              >
-                <Pencil className="size-4" aria-hidden />
-                Amend
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={() =>
-                  onDecide(contribution.key, {
-                    verdict: 'rejected',
-                    reason: 'Rejected on the planning board.',
-                  })
-                }
-              >
-                <X className="size-4" aria-hidden />
-                Reject
-              </Button>
-            </div>
-          );
-        },
-        size: 260,
-        minSize: 220,
+        // A PILL, and nothing else. The three verbs are in the expanded row, where the
+        // numbers the decision is made against are.
+        cell: ({ row }) => (
+          <BoardDecisionPill
+            contribution={row.original}
+            decision={draft[row.original.key] ?? null}
+          />
+        ),
+        size: 160,
+        minSize: 120,
         enableResizing: false,
       },
     ],
-    [draft, onDecide],
+    [draft, onDecide, setDirty],
   );
 
   return (
     <>
-      <PanelDataGrid
-        title="Every contributing line"
-        columns={columns}
-        rows={contributions}
-        getRowId={(row) => row.key}
-        listingKey="projects.projects.view::project-fulfilment-board-list-v1"
-        isLoading={isLoading}
-        emptyTitle="Nothing is owed on this board"
-        searchPlaceholder="Search sales order, customer, agent or product"
-        searchOf={(row) =>
-          [row.so_number, row.customer_name, row.agent_code, row.item_code]
-            .filter(Boolean)
-            .join(' ')
-        }
-        pageSize={25}
-      />
-
-      {amending && (
-        <BoardAmendDialog
-          contribution={amending}
-          onCancel={() => setAmending(null)}
-          onSave={(decision) => {
-            onDecide(amending.key, decision);
-            setAmending(null);
-          }}
-        />
-      )}
+    <PanelDataGrid
+      title="Every contributing line"
+      columns={columns}
+      rows={contributions}
+      getRowId={(row) => row.key}
+      listingKey="projects.projects.view::project-fulfilment-board-list-v1"
+      isLoading={isLoading}
+      emptyTitle="Nothing is outstanding on this board"
+      searchPlaceholder="Search sales order, customer, agent or product"
+      searchOf={(row) =>
+        [row.so_number, row.customer_name, row.agent_code, row.item_code]
+          .filter(Boolean)
+          .join(' ')
+      }
+      expanded={expanded}
+      onExpandedChange={setExpanded}
+      onRowClick={(row) => requestRow(row.key)}
+      pageSize={25}
+    />
+    <UnsavedDecisionPrompt state={expansion} />
     </>
   );
 }

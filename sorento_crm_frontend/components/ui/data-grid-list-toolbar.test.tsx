@@ -65,6 +65,30 @@ describe('DataGridListToolbar', () => {
     expect(screen.getByRole('button', { name: /clear/i })).toBeInTheDocument();
   });
 
+  it('hides its own Export button when the page owns it, and keeps the filename', () => {
+    // A page whose right cluster owns Export used to say `exportConfig={false}`, which also
+    // threw away the filename - so the file downloaded as `export.xlsx`. `showExport` is the
+    // same shape as `showColumns`: hide the control, keep the configuration.
+    const openers: Array<() => void> = [];
+    render(
+      <Harness
+        initialSelection={{ '1': true }}
+        toolbarProps={{
+          showExport: false,
+          exportConfig: { filename: 'proforma-invoices-20260828.xlsx' },
+          primaryAction: ({ openExport }) => {
+            openers.push(openExport);
+            return <button type="button" onClick={openExport}>Export from the gear</button>;
+          },
+        }}
+      />,
+    );
+
+    expect(screen.queryByRole('button', { name: /^export$/i })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Export from the gear' }));
+    expect(screen.getByRole('button', { name: /download excel/i })).toBeInTheDocument();
+  });
+
   it('hides the search while rows are selected, unless the page opts out (D2/H)', () => {
     render(
       <Harness
@@ -228,5 +252,44 @@ describe('DataGridListToolbar', () => {
     );
     fireEvent.click(screen.getByRole('button', { name: /clear filter: responded/i }));
     expect(onClear).toHaveBeenCalledTimes(1);
+  });
+  it('S1-11: a control the list puts in the search slot wraps too', () => {
+    render(
+      <Harness
+        toolbarProps={{
+          exportConfig: false,
+          searchSlot: (
+            <div className="flex items-center gap-2">
+              <input aria-label="Search" />
+              <button type="button">Quick filters</button>
+            </div>
+          ),
+        }}
+      />,
+    );
+
+    const slot = document.querySelector('[data-slot="data-grid-list-toolbar-search"]') as HTMLElement;
+    expect(slot).not.toBeNull();
+
+    // Promotions and SPO Allocations both hand the toolbar a NESTED flex row -
+    // search box plus "Quick filters" / "Group by" - with no wrap of its own, so
+    // at 375 it ran past the viewport edge and took the page sideways with it.
+    // The list should not have to remember; the slot makes its own children wrap.
+    expect(slot).toHaveClass('flex-wrap');
+    expect(slot.className).toContain('[&>*]:flex-wrap');
+    expect(slot.className).toContain('[&>*]:min-w-0');
+  });
+
+  it('S1-11: its controls wrap instead of running past the viewport edge', () => {
+    render(<Harness toolbarProps={{ exportConfig: { filename: 'x.xlsx' } }} />);
+
+    const toolbar = document.querySelector('[data-slot="data-grid-list-toolbar"]');
+    expect(toolbar).not.toBeNull();
+
+    // The row that holds the two clusters is the one that has to wrap; at 375 it
+    // is already a column, so the rule only bites at a narrow desktop width.
+    const clusterRow = toolbar!.firstElementChild;
+    expect(clusterRow).toHaveClass('flex-wrap');
+    expect(clusterRow).toHaveClass('sm:flex-row');
   });
 });

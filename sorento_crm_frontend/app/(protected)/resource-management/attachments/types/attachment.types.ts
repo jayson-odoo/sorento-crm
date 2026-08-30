@@ -28,6 +28,9 @@ export interface Attachment {
   /** Certificates this file is a filed revision of. Read-only: the link
    *  exists because the document was filed, not because a user made it. */
   linked_certificates?: LinkedEntityRef[];
+  /** Owning company. Null means the file is shared across every company. */
+  company_id?: string | null;
+  company_name?: string | null;
   uploaded_by?: string | null;
   uploaded_at: Date;
   created_at: Date;
@@ -130,4 +133,14 @@ export interface AttachmentResponse {
   attachment_type?: AttachmentTypeSimple | null;
   target_entity_type?: FieldLinkageEntityType | null;
   target_field_keys?: string[] | null;
+}
+
+/** What the detail card prints for the owning company. Null company = shared
+ *  across every company; a set id with no resolved name never shows the id. */
+export function attachmentCompanyLabel(
+  attachment: Pick<Attachment, 'company_id' | 'company_name'>,
+): string {
+  const name = attachment.company_name?.trim();
+  if (name) return name;
+  return attachment.company_id ? '-' : 'Shared';
 }

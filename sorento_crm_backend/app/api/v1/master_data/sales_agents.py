@@ -3,8 +3,10 @@
 Deliberately not a CRUD master. There is no create and no delete: a row appears when an
 upload meets a code no one holds (`sales_agent_service.resolve_or_create`), which is the
 only place the codes are ever known, and deleting one would orphan the orders that name
-it. What a human does here is annotate: say who the code belongs to, and say what its
-orders are for.
+it. What a human does here is annotate: say who the code belongs to, say what its orders
+are for, and retire a code nobody sells under any more (`is_active`, which is what the
+Agent pickers filter on - see `SalesAgentAnnotationUpdate` for why that one field is
+sales-agent-only).
 
 The list and detail reads are `MirrorReadService`, the same generic reader every other
 mirror entity uses. The annotation adds `person_label` and `demand_class` to the two
@@ -19,7 +21,12 @@ from typing import Optional
 from app.database import get_db
 from app.dependencies import require_permission, require_permission_with_api_key
 from app.models.sales_agent import SalesAgent
-from app.schemas.autocount_mirror import MirrorAnnotationUpdate, SalesAgentResponse
+from app.schemas.autocount_mirror import (
+    BulkAnnotateResult,
+    SalesAgentAnnotationUpdate,
+    SalesAgentBulkAnnotate,
+    SalesAgentResponse,
+)
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.services.autocount_mirror_service import MirrorReadService
 from app.services.error_handler import handle_internal_error
@@ -50,6 +57,40 @@ async def list_sales_agents(
         raise handle_internal_error(str(e))
 
 
+@router.post("/bulk-annotate", response_model=BulkAnnotateResult)
+async def bulk_annotate_sales_agents(
+    payload: SalesAgentBulkAnnotate,
+    current_user: dict = Depends(require_permission("master_data.sales_agents.edit")),
+    db: Session = Depends(get_db),
+):
+    """Set one annotation across a selection.
+
+    Declared before `/{sales_agent_id}` so `bulk-annotate` never parses as an id, and gated
+    on the SAME permission as the single-row PATCH: reclassifying 38 agents at once is the
+    same write, not a bigger one, and a role that may not do it once may not do it in bulk.
+
+    One transaction: `sales_agent_service.annotate_many` flushes, and the commit is here, so
+    a class the fulfilment policy cannot weigh (or an id that no longer resolves) leaves the
+    whole selection untouched rather than classifying half of it.
+    """
+    try:
+        fields = payload.model_fields_set
+        updated = sales_agent_service.annotate_many(
+            db, payload.sales_agent_ids,
+            demand_class=payload.demand_class,
+            write_demand_class="demand_class" in fields,
+            location_group=payload.location_group,
+            write_location_group="location_group" in fields,
+        )
+        db.commit()
+        return {"updated": updated}
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise handle_internal_error(str(e))
+
+
 @router.get("/{sales_agent_id}", response_model=SalesAgentResponse)
 async def get_sales_agent(
     sales_agent_id: str,
@@ -68,7 +109,7 @@ async def get_sales_agent(
 @router.patch("/{sales_agent_id}/annotation", response_model=SalesAgentResponse)
 async def annotate_sales_agent(
     sales_agent_id: str,
-    payload: MirrorAnnotationUpdate,
+    payload: SalesAgentAnnotationUpdate,
     current_user: dict = Depends(require_permission("master_data.sales_agents.edit")),
     db: Session = Depends(get_db),
 ):
@@ -89,6 +130,13 @@ async def annotate_sales_agent(
             contact_id=payload.contact_id,
             write_contact_id="contact_id" in fields,
         )
+        # Retiring a code. Written here rather than in `MirrorReadService.annotate`, which
+        # is shared with the entities whose `is_active` is synced - see
+        # `SalesAgentAnnotationUpdate` - and inside the same uncommitted transaction as the
+        # class above, so a refused class leaves the row active exactly as it was.
+        if "is_active" in fields:
+            agent.is_active = bool(payload.is_active)
+            db.flush()
         return service.annotate(
             SalesAgent, sales_agent_id, resource=_RESOURCE,
             internal_note=payload.internal_note, follow_up=payload.follow_up,

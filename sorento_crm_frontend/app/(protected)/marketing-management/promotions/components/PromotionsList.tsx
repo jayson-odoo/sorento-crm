@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { useQuery } from '@tanstack/react-query';
 import {
   ColumnDef,
   PaginationState,
@@ -13,7 +12,7 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { ChevronRight, Eye, FileText, Filter, Plus, RefreshCw, Search, Trash2, Users, X } from 'lucide-react';
+import { Eye, FileText, Filter, Plus, RefreshCw, Search, Trash2, Users, X } from 'lucide-react';
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -35,17 +34,18 @@ import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useTenantModules } from '@/hooks/useTenantModules';
 import AttachmentDetailModal from '@/app/(protected)/resource-management/attachments/components/AttachmentDetailModal';
-import { buildDetailSearch } from '@/lib/listNavQuery';
-import { getPromotions } from '../services/promotionService';
-import { useCompilePromotionsPdf } from '../hooks/usePromotions';
+import { buildDetailSearch, encodeAdvancedFilter } from '@/lib/listNavQuery';
+import { PromotionRowActions } from '../actions';
+import { useCompilePromotionsPdf, usePromotions } from '../hooks/usePromotions';
 import type { Promotion } from '../types/promotion.types';
 import { formatPromotionBoundaryInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
-import { postListQuerySearch, type ListQueryFilterGroup } from '@/lib/list-query/listQueryService';
+import type { ListQueryFilterGroup } from '@/lib/list-query/listQueryService';
 import PromotionBulkDeleteDialog from './PromotionBulkDeleteDialog';
 import PromotionBulkAccessLevelsDialog from './PromotionBulkAccessLevelsDialog';
 import PromotionBulkResubmitDialog from './PromotionBulkResubmitDialog';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { useContactAccessTypes } from '@/app/(protected)/user-management/contact-access-types/hooks/useContactAccessTypes';
+import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 
 export default function PromotionsList() {
   const router = useRouter();
@@ -78,55 +78,41 @@ export default function PromotionsList() {
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [filterAccessLevel, setFilterAccessLevel] = useState<string>('all');
   const [filterAttachmentState, setFilterAttachmentState] = useState<'all' | 'unlinked' | 'linked_to_trashed' | 'unlinked_or_trashed'>('all');
+
+  // Back hands the list its own query string back, and the pager keeps
+  // rewriting it, so the list reads it (S3-01). One hook, every list.
+  useListStateFromUrl((state) => {
+    setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
+    setSorting(state.sorting);
+    setSearchQuery(state.searchQuery);
+    setFilterStatus(state.filters.status ?? 'all');
+    setFilterAccessLevel(state.filters.user_type ?? 'all');
+    setFilterAttachmentState(
+      (state.filters.attachment_state as typeof filterAttachmentState) ?? 'all',
+    );
+  });
   const [advancedFilter, setAdvancedFilter] = useState<ListQueryFilterGroup | null>(null);
   const [viewerAttachmentId, setViewerAttachmentId] = useState<string | null>(null);
 
   const hasActiveQuickFilters = filterStatus !== 'all' || filterAccessLevel !== 'all' || filterAttachmentState !== 'all';
 
-  const { data, isLoading, refetch, isFetching } = useQuery({
-    queryKey: [
-      'promotions',
-      pagination.pageIndex,
-      pagination.pageSize,
-      sorting,
-      searchQuery,
-      filterStatus,
-      filterAccessLevel,
-      filterAttachmentState,
-      advancedFilter,
-      expiryNotifyBatchId,
-    ],
-    queryFn: async () => {
-      if (advancedFilter) {
-        const sortField = sorting?.[0]?.id || '';
-        const sortDirection = sorting?.[0]?.desc ? 'desc' : 'asc';
-        return postListQuerySearch<Promotion>({
-          resource: 'promotions',
-          filter: advancedFilter,
-          page: pagination.pageIndex + 1,
-          limit: pagination.pageSize,
-          sort: sortField || 'created_at',
-          dir: sortDirection,
-          quick_search: searchQuery || undefined,
-          promotion_status: filterStatus,
-          promotion_access_level: filterAccessLevel === 'all' ? undefined : filterAccessLevel,
-        });
-      }
-      return getPromotions({
-        pageIndex: pagination.pageIndex,
-        pageSize: pagination.pageSize,
-        sorting,
-        searchQuery,
-        status: filterStatus,
-        user_type: filterAccessLevel === 'all' ? undefined : filterAccessLevel,
-        attachment_state: filterAttachmentState === 'all' ? undefined : filterAttachmentState,
-        expiry_notify_batch_id: expiryNotifyBatchId,
-      });
-    },
-    staleTime: Infinity,
-    gcTime: 1000 * 60 * 60,
-    refetchOnWindowFocus: false,
-    retry: 1,
+  /**
+   * One query, one key, shared with the record page's pager (S3-03).
+   *
+   * This list used to hand-roll its own `useQuery` with a key of its own shape,
+   * so the pager's rebuilt key never matched: every promotion opened fired a
+   * second request and paged whatever THAT returned.
+   */
+  const { data, isLoading, refetch, isFetching } = usePromotions({
+    pageIndex: pagination.pageIndex,
+    pageSize: pagination.pageSize,
+    sorting,
+    searchQuery,
+    status: filterStatus,
+    user_type: filterAccessLevel === 'all' ? undefined : filterAccessLevel,
+    attachment_state: filterAttachmentState === 'all' ? undefined : filterAttachmentState,
+    expiry_notify_batch_id: expiryNotifyBatchId,
+    advancedFilter: advancedFilter ?? undefined,
   });
 
   useEffect(() => {
@@ -295,7 +281,7 @@ export default function PromotionsList() {
       {
         accessorKey: 'actions',
         header: '',
-        cell: () => <ChevronRight className="text-muted-foreground/70 size-3.5" />,
+        cell: ({ row }) => <PromotionRowActions promotionId={row.original.id} />,
         size: 40,
         enableHiding: false,
       },
@@ -303,12 +289,9 @@ export default function PromotionsList() {
     [accessLevelNameMap],
   );
 
-  const handleRowClick = (row: Promotion) => {
-    const promotionId = row.id;
-    // Carry the active list query (search/sort/filters) into the detail URL so the
-    // detail page's prev/next pager walks the same filtered+sorted set. Advanced
-    // (list-query) filters are not threaded - the neighbours endpoint mirrors the
-    // standard list GET params only.
+  // The whole row opens the record, carrying the list query the pager rebuilds
+  // its key from.
+  const rowHref = (row: Promotion) => {
     const search = buildDetailSearch(
       {
         pageIndex: pagination.pageIndex,
@@ -321,11 +304,13 @@ export default function PromotionsList() {
         user_type: filterAccessLevel !== 'all' ? filterAccessLevel : undefined,
         attachment_state:
           filterAttachmentState !== 'all' ? filterAttachmentState : undefined,
+        // Both narrow the set, so both have to ride along or the pager walks a
+        // wider one than the reader is looking at.
+        expiry_notify_batch_id: expiryNotifyBatchId,
+        advFilter: encodeAdvancedFilter(advancedFilter),
       },
     );
-    router.push(
-      `/marketing-management/promotions/${promotionId}${search ? `?${search}` : ''}`,
-    );
+    return `/marketing-management/promotions/${row.id}${search ? `?${search}` : ''}`;
   };
 
   const table = useReactTable({
@@ -370,7 +355,7 @@ export default function PromotionsList() {
       tableLayout={{ columnsVisibility: true }}
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
-      onRowClick={handleRowClick}
+      rowHref={rowHref}
       standardToolbar={false}
     >
       <Card>

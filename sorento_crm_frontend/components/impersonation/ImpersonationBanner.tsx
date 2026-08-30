@@ -58,7 +58,7 @@ export function ImpersonationBanner() {
       <button
         type="button"
         onClick={() => setCollapsed(false)}
-        className="fixed right-3 top-2 z-[60] flex items-center gap-1 rounded-full border border-amber-300 bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-900 shadow-sm hover:bg-amber-200"
+        className="fixed right-3 top-2 z-(--z-banner) flex items-center gap-1 rounded-full border border-amber-300 bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-900 shadow-sm hover:bg-amber-200"
         title="Show impersonation banner"
         data-testid="impersonation-banner-show"
       >
@@ -73,7 +73,7 @@ export function ImpersonationBanner() {
     <div
       role="status"
       data-testid="impersonation-banner"
-      className="fixed inset-x-0 top-0 z-[60] w-screen border-b border-amber-300 bg-amber-100 px-4 py-2 text-amber-900 shadow-sm"
+      className="fixed inset-x-0 top-0 z-(--z-banner) w-screen border-b border-amber-300 bg-amber-100 px-4 py-2 text-amber-900 shadow-sm"
     >
       <div className="flex items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2 text-sm">

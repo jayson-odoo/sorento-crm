@@ -613,3 +613,104 @@ describe('useConversationThread', () => {
     expect(result.current.hasMoreOlder).toBe(false);
   });
 });
+
+describe('useConversationThread pending sends (optimistic send)', () => {
+  let loadPage: ReturnType<typeof vi.fn<LoadPage>>;
+  let searchMessages: ReturnType<typeof vi.fn<SearchMessages>>;
+
+  beforeEach(() => {
+    loadPage = vi.fn<LoadPage>();
+    searchMessages = vi.fn<SearchMessages>();
+  });
+
+  const setup = (liveItems: RespondMessageRenderable[] = [msg(8), msg(9)], resetKey = 'a') =>
+    renderHook(
+      (props: { liveItems: RespondMessageRenderable[]; resetKey: string }) =>
+        useConversationThread({
+          liveItems: props.liveItems,
+          loadPage,
+          searchMessages,
+          searchDebounceMs: 0,
+          resetKey: props.resetKey,
+        }),
+      { initialProps: { liveItems, resetKey } },
+    );
+
+  it('shows the sent text at the tail with the sending clock before any refetch (AC-B1)', () => {
+    const { result } = setup();
+    act(() => {
+      result.current.addPending({ text: 'on my way' });
+    });
+    const last = result.current.items[result.current.items.length - 1];
+    expect(result.current.items).toHaveLength(3);
+    expect(last.traffic).toBe('outgoing');
+    expect(last.message?.text).toBe('on my way');
+    expect(last.messageId).toBeUndefined();
+    expect(last.status?.[0]?.value).toBe('pending');
+  });
+
+  it('one bubble per attachment plus the caption (AC-B4)', () => {
+    const { result } = setup();
+    act(() => {
+      result.current.addPending({
+        text: 'here you go',
+        files: [{ name: 'sink.jpg' }, { name: 'spec.pdf' }],
+      });
+    });
+    expect(result.current.items.slice(-3).map((m) => m.message?.text)).toEqual([
+      'here you go',
+      '[file] sink.jpg',
+      '[file] spec.pdf',
+    ]);
+  });
+
+  it('removePending takes down exactly the send that created it (AC-B2 / AC-B3)', () => {
+    const { result } = setup();
+    let first = '';
+    let second = '';
+    act(() => {
+      first = result.current.addPending({ text: 'one' });
+      second = result.current.addPending({ text: 'two' });
+    });
+    expect(result.current.items).toHaveLength(4);
+    act(() => {
+      result.current.removePending(first);
+    });
+    expect(result.current.items.map((m) => m.message?.text)).toEqual(['body 8', 'body 9', 'two']);
+    act(() => {
+      result.current.removePending(second);
+    });
+    expect(result.current.items).toHaveLength(2);
+  });
+
+  it('a blank text with no files adds nothing', () => {
+    const { result } = setup();
+    act(() => {
+      result.current.addPending({ text: '   ' });
+    });
+    expect(result.current.items).toHaveLength(2);
+  });
+
+  it('switching conversation discards pending bubbles (AC-B5)', () => {
+    const { result, rerender } = setup();
+    act(() => {
+      result.current.addPending({ text: 'for contact a' });
+    });
+    expect(result.current.items).toHaveLength(3);
+    rerender({ liveItems: [msg(1)], resetKey: 'b' });
+    expect(result.current.items.map((m) => m.message?.text)).toEqual(['body 1']);
+  });
+
+  it('pending bubbles never become the scroll-back cursor (AC-B6)', async () => {
+    loadPage.mockResolvedValue(page([msg(6), msg(7)]));
+    const { result } = setup();
+    act(() => {
+      result.current.addPending({ text: 'tail'});
+    });
+    act(() => {
+      result.current.loadOlder();
+    });
+    await waitFor(() => expect(loadPage).toHaveBeenCalled());
+    expect(loadPage.mock.calls[0][0].before).toBe(String(BASE_US + 8_000_000));
+  });
+});

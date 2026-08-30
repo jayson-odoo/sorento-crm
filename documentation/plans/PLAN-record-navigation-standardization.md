@@ -1,6 +1,6 @@
 # PLAN: Standardize list→detail record navigation (prev/next "X / Y" pager)
 
-**Status:** Approved - decisions locked, Phase 1 = Complaints
+**Status:** SUPERSEDED 2026-08-29 by `documentation/plans/design-system/PLAN-apple-alignment.md` S3 (pager is page-scoped client-side; neighbours endpoints deleted). Kept for history.
 **Owner:** jayson
 **Slug:** record-navigation-standardization
 

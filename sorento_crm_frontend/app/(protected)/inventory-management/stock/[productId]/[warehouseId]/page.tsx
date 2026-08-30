@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { MoveLeft } from 'lucide-react';
 import RecordNavigation from '@/components/common/RecordNavigation';
+import DetailActions from '@/components/common/DetailActions';
+import BackToList from '@/components/common/BackToList';
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -86,6 +88,15 @@ export default function StockDetailPage({ params }: StockDetailPageProps) {
     [sortedNavigationItems],
   );
   const currentRecordId = `${productId}/${warehouseId}`;
+  // A stock record is a product AND a warehouse, so its "id" is the pair. The
+  // pager is presentational here: the walk is this in-memory balance, not a
+  // paged list URL, so there is no list query to rebuild.
+  const stockIndex = navigationItemsForRecordNav.findIndex(
+    (item) => item.id === currentRecordId,
+  );
+  const goToStock = (item: { id: string } | undefined) => {
+    if (item) router.push(`/inventory-management/stock/${item.id}`);
+  };
 
   const columns = useMemo<ColumnDef<StockLedgerEntry>[]>(
     () => [
@@ -267,20 +278,9 @@ export default function StockDetailPage({ params }: StockDetailPageProps) {
             </Breadcrumb>
           </ToolbarHeading>
           <ToolbarActions>
-            <div className="flex items-center gap-2">
-              <RecordNavigation
-                basePath="/inventory-management/stock"
-                currentId={currentRecordId}
-                items={navigationItemsForRecordNav}
-                totalCount={navigationItemsForRecordNav.length}
-                ariaLabel="stock"
-              />
-              <Button asChild variant="outline">
-                <Link href="/inventory-management/stock">
-                  <MoveLeft /> Back to Stock
-                </Link>
-              </Button>
-            </div>
+            {/* One Back, and nothing else on this row (D6, S3-01). The pager moved
+                down onto the record card, where every other detail page keeps it. */}
+            <BackToList listPath="/inventory-management/stock" label="Back to stock" />
           </ToolbarActions>
         </Toolbar>
       </Container>
@@ -289,10 +289,12 @@ export default function StockDetailPage({ params }: StockDetailPageProps) {
         <div className="space-y-6">
           <Card>
             <CardHeader>
-              <div className="flex items-center justify-between">
-                <div className="space-y-1">
-                  <div className="flex items-center gap-3">
-                    <h1 className="text-2xl font-bold">{stock.product?.product_code || '-'}</h1>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div className="space-y-1 min-w-0">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <h1 className="text-2xl font-bold break-words min-w-0">
+                      {stock.product?.product_code || '-'}
+                    </h1>
                     {stock.product?.product_name && (
                       <Badge variant="secondary">
                         {stock.product.product_name}
@@ -303,6 +305,28 @@ export default function StockDetailPage({ params }: StockDetailPageProps) {
                     {stock.warehouse?.warehouse_name || 'No warehouse'} • Available: {stock.quantity_available ?? 0}
                   </p>
                 </div>
+                {/* Pager, gear, primary (D6). This record has neither a gear nor a
+                    primary: a stock balance is derived, so there is nothing to edit
+                    or delete here. The whole set it walks is already in memory, so
+                    it hands over a presentational RecordNavigation. */}
+                <DetailActions
+                  pagerNode={
+                    <RecordNavigation
+                      index={stockIndex >= 0 ? stockIndex + 1 : null}
+                      total={navigationItemsForRecordNav.length}
+                      hasPrevious={stockIndex > 0}
+                      hasNext={
+                        stockIndex >= 0 &&
+                        stockIndex < navigationItemsForRecordNav.length - 1
+                      }
+                      onPrevious={() =>
+                        goToStock(navigationItemsForRecordNav[stockIndex - 1])
+                      }
+                      onNext={() => goToStock(navigationItemsForRecordNav[stockIndex + 1])}
+                      ariaLabel="stock"
+                    />
+                  }
+                />
               </div>
             </CardHeader>
             <CardContent>

@@ -11,9 +11,10 @@ Four promises are pinned here.
 1. Every column in his file resolves (AC-1.1). The six that have nothing to write to are
    deliberately-ignored aliases, which is what makes them stop being reported.
 2. The agent code reaches the write path and lands on the order (AC-6.5).
-3. It is the FOURTH classifier, after the header's own type, the type stated in the file and
-   the customer's market segment - and only when all four miss is the document reported
-   (AC-3.1 / AC-3.2).
+3. It is the THIRD classifier, after the header's own type and the type stated in the file
+   and AHEAD of the customer's market segment (captain, 28 Aug 2026: the sales force is split
+   by channel, a debtor buys through both) - and only when all four miss is the document
+   reported (AC-3.1 / AC-3.2).
 4. An agent nobody holds is created and REPORTED, never guessed at and never a reason to
    refuse the file (AC-6.4 / AC-3.3).
 """
@@ -87,10 +88,15 @@ def _agent_code(stem: str = "SEAN") -> str:
     return f"{MARKER}-{stem}-{uuid.uuid4().hex[:6]} III".upper()
 
 
-def _upload(codes: Codes, doc: str, debtor: str, agent: str, *, qty: float = 40) -> bytes:
+def _upload(codes: Codes, doc: str, debtor: str, agent: str, *, qty: float = 40,
+            order_type=None) -> bytes:
+    """A one-line extract naming an agent, and stating an order type only when the case
+    calls for one - this file is about what the AGENT can answer, so the header stays
+    silent by default."""
     return workbook(
-        [(doc, debtor, agent, codes.item_rl, qty, date(2026, 7, 1), codes.loc_project)],
-        headers=AGENT_HEADERS,
+        [(doc, debtor, agent, codes.item_rl, qty, date(2026, 7, 1), codes.loc_project,
+          order_type)],
+        headers=AGENT_HEADERS + ("ORDER TYPE",),
     )
 
 
@@ -128,9 +134,15 @@ def _classified_agent(db, code: str, demand_class: str) -> str:
     return agent.sales_agent
 
 
+#: The last code `_unknown_debtor` handed out, so a test can assert the refusal names it
+#: without threading the value through three call sites.
+_last_debtor = [""]
+
+
 def _unknown_debtor() -> str:
     """A debtor code no customer holds, so the market-segment fallback cannot answer."""
-    return f"{MARKER}-NOCUST-{uuid.uuid4().hex[:8]}".upper()
+    _last_debtor[0] = f"{MARKER}-NOCUST-{uuid.uuid4().hex[:8]}".upper()
+    return _last_debtor[0]
 
 
 # --------------------------------------------------------------------------- #
@@ -177,8 +189,12 @@ def test_the_agent_column_reaches_the_write_path(db, seeded):
 
 def test_the_resolved_agent_is_stamped_on_the_sales_order(db, seeded):
     """Without the link the agent is a string in a spreadsheet: nothing can group demand by
-    salesperson, and the classification in AC-3 has no row to read a class off."""
-    code = _agent_code()
+    salesperson, and the classification in AC-3 has no row to read a class off.
+
+    The agent is CLASSIFIED here so the upload has an answer at all: since QP1 a file whose
+    order nothing can classify is refused, and this debtor carries no market segment. What
+    is under test is the link, not the classification."""
+    code = _classified_agent(db, _agent_code(), DEFAULT_DEMAND_CLASS)
 
     out = svc.apply(db, _upload(seeded, seeded.project_so, "300-T012", code), SO)
 
@@ -192,13 +208,19 @@ def test_the_resolved_agent_is_stamped_on_the_sales_order(db, seeded):
 def test_an_agent_code_nobody_holds_is_created_and_reported_never_blocked(db, seeded):
     """AC-6.4. The captain has 38 codes and no way to enter them before the first upload.
 
-    Refusing the file would make it unusable; creating them silently would leave nobody able
-    to tell which agents are still waiting for a demand class.
+    An UNKNOWN agent code never blocks anything: it is created and reported. What blocks a
+    file is an order nothing can classify (QP1), which is a different fact and is why the
+    order here states its own type - a brand-new agent beside a classifiable order must
+    still import.
     """
     code = _agent_code("BRANDNEW")
 
-    preview = svc.preview(db, _upload(seeded, seeded.project_so, "300-T012", code), SO).to_dict()
-    applied = svc.apply(db, _upload(seeded, seeded.project_so, "300-T012", code), SO)
+    preview = svc.preview(
+        db, _upload(seeded, seeded.project_so, "300-T012", code, order_type="DEALER"), SO,
+    ).to_dict()
+    applied = svc.apply(
+        db, _upload(seeded, seeded.project_so, "300-T012", code, order_type="DEALER"), SO,
+    )
 
     assert applied["ok"], "an unknown agent code refused the whole file"
     created = agents.resolve(db, code)
@@ -254,13 +276,15 @@ def test_the_agents_class_is_the_last_word_not_the_first(db, seeded):
     assert _row(db, seeded.dealer_so).demand_class == DEFAULT_DEMAND_CLASS
 
 
-def test_an_agent_with_no_class_reports_the_document_and_defaults_nothing(db, seeded):
-    """AC-3.2. All 38 codes ship with `demand_class` NULL, so this is the state on day one.
+def test_an_agent_with_no_class_refuses_the_file_and_names_the_document(db, seeded):
+    """AC-3.2, as QP1 leaves it. All 38 codes ship with `demand_class` NULL, so this is the
+    state on day one.
 
-    An agent nobody has classified contributes nothing, and the document falls through to the
-    report exactly as it did before the agent existed. Defaulting it to retail would
-    under-prioritise a project order invisibly, and the wrong answer would be stable, so no
-    later upload would surface it either.
+    An agent nobody has classified contributes nothing, and with the header, the file and
+    the debtor silent too there is no answer left - so the upload is REFUSED and nothing is
+    written. Defaulting it to retail would under-prioritise a project order invisibly, and
+    the wrong answer would be stable, so no later upload would surface it either; importing
+    it unclassified put a quantity on the plan in a column the captain has struck out.
     """
     code = _agent_code("UNCLASSIFIED")
     agents.resolve_or_create(db, code, source=agents.MANUAL_SOURCE)
@@ -269,11 +293,17 @@ def test_an_agent_with_no_class_reports_the_document_and_defaults_nothing(db, se
                           SO).to_dict()
     applied = svc.apply(db, _upload(seeded, seeded.project_so, _unknown_debtor(), code), SO)
 
-    assert _row(db, seeded.project_so).demand_class is None, "an unclassifiable order was defaulted"
+    assert not preview["ok"], "the confirm screen must say the file cannot go in"
+    assert preview["unclassified_documents"] == [seeded.project_so]
+    assert not applied["ok"] and applied["unclassified_documents"] == [seeded.project_so]
+    assert _row(db, seeded.project_so) is None, "a refused file wrote an order anyway"
+    # BOTH sources named, because either one is a fix the operator can make: give the
+    # customer a market segment, or give the agent a class. A message naming only one
+    # sends them to whichever desk happens to be mentioned.
+    assert any(code in line and _last_debtor[0] in line for line in _reported(applied)), (
+        f"the refusal named neither the debtor nor the agent: {_reported(applied)}")
     assert any(seeded.project_so in line for line in _reported(preview)), (
         f"the preview showed nothing about an order it cannot classify: {_reported(preview)}")
-    assert any(seeded.project_so in line for line in _reported(applied)), (
-        "the commit wrote an unclassifiable order without naming it")
     assert any(code in line for line in _reported(applied)), (
         "the report never named the agent that could have answered")
 
@@ -288,9 +318,30 @@ def test_an_agent_who_sells_retail_classifies_retail(db, seeded):
     assert _row(db, seeded.dealer_so).demand_class == DEFAULT_DEMAND_CLASS
 
 
-def test_the_market_segment_still_beats_the_agent(db, seeded):
-    """The third source keeps its place. The customer's segment is a fact about the buyer of
-    THIS order; the agent's class is a tendency of the seller."""
+def test_the_agents_class_beats_the_customers_market_segment(db, seeded):
+    """Captain, 28 Aug 2026: the seller decides before the buyer. The sales force is split
+    by channel, so a project agent's order IS project work - while one debtor buys through
+    both channels, so its segment is only a default about the account. This is SO381895:
+    customer master said retail, agent JUSTIN sells project, and the fulfilment board could
+    not see the order."""
+    seg = f"{MARKER}-RETAIL-{uuid.uuid4().hex[:6]}".lower()
+    db.add(MarketSegment(id=_u(), code=seg, name=seg, is_active=True))
+    db.flush()
+    debtor = f"{MARKER}-C-{uuid.uuid4().hex[:8]}".upper()
+    db.add(Customer(id=_u(), customer_code=debtor, customer_name=debtor,
+                    market_segment_code=seg, is_active=True))
+    db.flush()
+    code = _classified_agent(db, _agent_code("PROJECTSELLER"), PROJECT)
+
+    svc.apply(db, _upload(seeded, seeded.project_so, debtor, code), SO)
+
+    assert _row(db, seeded.project_so).demand_class == PROJECT
+
+
+def test_the_customers_market_segment_answers_when_the_agent_carries_no_class(db, seeded):
+    """The segment keeps its place as the LAST word, not no word: an agent nobody has
+    classified contributes nothing, and the buyer's segment then classifies the order
+    instead of the file being refused."""
     seg = f"{MARKER}-PROJECT-{uuid.uuid4().hex[:6]}".lower()
     db.add(MarketSegment(id=_u(), code=seg, name=seg, is_active=True))
     db.flush()
@@ -298,10 +349,12 @@ def test_the_market_segment_still_beats_the_agent(db, seeded):
     db.add(Customer(id=_u(), customer_code=debtor, customer_name=debtor,
                     market_segment_code=seg, is_active=True))
     db.flush()
-    code = _classified_agent(db, _agent_code("TRADESELLER"), DEFAULT_DEMAND_CLASS)
+    code = _agent_code("UNCLASSIFIED")
+    agents.resolve_or_create(db, code, source=agents.MANUAL_SOURCE)
 
-    svc.apply(db, _upload(seeded, seeded.project_so, debtor, code), SO)
+    out = svc.apply(db, _upload(seeded, seeded.project_so, debtor, code), SO)
 
+    assert out["ok"]
     assert _row(db, seeded.project_so).demand_class == PROJECT
 
 
@@ -423,3 +476,45 @@ def test_the_import_resolves_agents_through_the_masters_normaliser_not_a_copy(
         "the importer keyed the agent under a spelling the master does not answer to")
     assert db.query(SalesAgent).count() == before, (
         "the same agent, spelled differently, created a second master row")
+
+
+# --------------------------------------------------------------------------- #
+# 4b. the Friday shape: a real customer who simply states no segment
+# --------------------------------------------------------------------------- #
+#
+# The one migration 425 could not reach. 425 gave a segment to every customer a NULL-class
+# order named; a customer whose orders were all classified some other way still states
+# none, and the real export carries no order type column - so the AGENT is the only source
+# left, and JACKSON I / JACKSON IV are the two who cannot answer (migration 427).
+
+
+def test_a_customer_with_no_segment_is_carried_by_a_classified_agent(db, seeded):
+    """Accepted, and classified from the agent. No silent default anywhere: the class is
+    the agent's own stated one."""
+    debtor = f"{MARKER}-BLANKSEG-{uuid.uuid4().hex[:8]}".upper()
+    db.add(Customer(id=_u(), customer_code=debtor, customer_name=debtor, is_active=True))
+    db.flush()
+    code = _classified_agent(db, _agent_code("CARRIER"), DEFAULT_DEMAND_CLASS)
+
+    out = svc.apply(db, _upload(seeded, seeded.project_so, debtor, code), SO)
+
+    assert out["ok"], out.get("unclassified_documents")
+    assert _row(db, seeded.project_so).demand_class == DEFAULT_DEMAND_CLASS
+
+
+def test_a_customer_with_no_segment_and_a_blank_agent_refuses_and_names_both(db, seeded):
+    """Refused only when BOTH are blank, and the message has to name both - this is
+    JACKSON I on the live book, and neither half is guessable."""
+    debtor = f"{MARKER}-BLANKSEG-{uuid.uuid4().hex[:8]}".upper()
+    db.add(Customer(id=_u(), customer_code=debtor, customer_name=debtor, is_active=True))
+    db.flush()
+    code = _agent_code("ALSOBLANK")
+    agents.resolve_or_create(db, code, source=agents.MANUAL_SOURCE)
+
+    out = svc.apply(db, _upload(seeded, seeded.project_so, debtor, code), SO)
+
+    assert not out["ok"]
+    assert out["unclassified_documents"] == [seeded.project_so]
+    reported = " ".join(str(v) for p in out["row_problems"] for v in p.values())
+    assert debtor in reported, "the refusal never named the customer"
+    assert code in reported, "the refusal never named the agent"

@@ -21,23 +21,6 @@ export type PromotionsListParams = DataGridApiFetchParams & {
   expiry_notify_batch_id?: string;
 };
 
-/**
- * Path of the promotions neighbours endpoint. Consumed by `usePromotionNeighbours`
- * via the generic `useRecordNeighbours` hook.
- *
- * Contract:
- *   GET /api/v1/marketing/promotions/neighbours
- *   Query params: id=<uuid> + the SAME params the list GET accepts
- *                 (query, status, user_type, attachment_state, sort, dir).
- *                 page/limit are ignored.
- *   Auth: same dependency + module guard as the list GET.
- *   200:  { total: number, index: number|null, prev_id: string|null, next_id: string|null }
- *       - index is 1-based; null when the record is not in the filtered set
- *           (the backend then falls back to the unfiltered, default-sorted set).
- *       - prev_id/next_id wrap circularly; null only when total <= 1.
- */
-export const PROMOTION_NEIGHBOURS_PATH =
-  '/api/v1/marketing/promotions/neighbours';
 
 export async function getPromotions(
   params: PromotionsListParams,
@@ -144,7 +127,7 @@ export async function bulkUpdateAccessLevels(
 }
 
 export async function getPromotionProducts(promotionId: string): Promise<PromotionProduct[]> {
-  const response = await apiFetch(`/api/v1/marketing/promotions/${promotionId}/products`);
+  const response = await apiFetch(`/api/v1/marketing/promotions/${promotionId}/products/`);
   if (!response.ok) throw new Error('Failed to fetch promotion products');
   return response.json();
 }
@@ -165,7 +148,7 @@ export async function createPromotionGroup(
     foc_tiers?: FocTier[] | null;
   },
 ): Promise<PromotionGroup> {
-  const response = await apiFetch(`/api/v1/marketing/promotions/${promotionId}/groups`, {
+  const response = await apiFetch(`/api/v1/marketing/promotions/${promotionId}/groups/`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
@@ -219,7 +202,7 @@ export async function addPromotionProduct(
   promotionGroupId?: string,
   dealerDiscountPercent?: number | null,
 ): Promise<PromotionProduct> {
-  const response = await apiFetch(`/api/v1/marketing/promotions/${promotionId}/products`, {
+  const response = await apiFetch(`/api/v1/marketing/promotions/${promotionId}/products/`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({

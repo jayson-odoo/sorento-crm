@@ -36,6 +36,7 @@ from app.models.scm import ContainerSize, LoadingPlan
 from app.services.scm import (
     allocation_suggestion_service,
     consolidated_packing_list,
+    supplier_code_alias_service,
     loading_plan_service,
     packing_list_service,
     spo_conversion_service,
@@ -43,6 +44,7 @@ from app.services.scm import (
     supplier_notice_service,
 )
 from app.services.scm.upload_intake import read_upload, read_upload_retained
+from app.utils.http import content_disposition
 
 router = APIRouter()
 
@@ -59,12 +61,29 @@ def _actor(user: Optional[dict]) -> Optional[str]:
 
 
 def _plan_or_404(db: Session, plan_id: str) -> LoadingPlan:
+    try:
+        uuid.UUID(str(plan_id))
+    except (ValueError, AttributeError, TypeError):
+        # The column is a uuid, so a typo in the URL must be a 404 and not a database error.
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Loading plan not found")
     plan = db.query(LoadingPlan).filter(LoadingPlan.id == plan_id).first()
     if plan is None:
         # A 404 rather than an empty plan: the id came from somewhere, and rendering an empty
         # container for a plan that belongs to another company would be worse than saying no.
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Loading plan not found")
     return plan
+
+
+def _refuse_cancelled(plan: LoadingPlan) -> None:
+    """A cancelled plan is a record of what was asked, not a form (AC-A8)."""
+    if plan.status == "cancelled":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "plan_cancelled",
+                "message": "This plan is cancelled, so it can no longer be changed.",
+            },
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -198,6 +217,127 @@ def get_supplier_stock_list_file(
 # --------------------------------------------------------------------------- #
 
 
+class SupplierCodeAliasWrite(BaseModel):
+    supplier_id: str
+    #: The supplier's spelling, verbatim - it is what their file says.
+    supplier_code: str = Field(..., min_length=1, max_length=120)
+    #: Exactly one of the two (R19, R20). A supplier who sells the whole WC writes our SET
+    #: code, and no product carries it, so a picker that could only answer with a product
+    #: had no way to say what the code means. The service refuses both and neither.
+    product_id: Optional[str] = None
+    product_set_id: Optional[str] = None
+
+
+@router.get("/supplier-code-aliases")
+def list_supplier_code_aliases(
+    supplier_id: str = Query(..., description="Whose codes to show"),
+    _user: dict = Depends(_READ),
+    db: Session = Depends(get_db),
+):
+    """What this supplier's codes have been ruled to mean - automatic and by hand (R16)."""
+    return {"data": supplier_code_alias_service.list_for_supplier(db, supplier_id)}
+
+
+@router.get("/supplier-code-aliases/unmatched")
+def list_unmatched_supplier_codes(
+    supplier_id: str = Query(..., description="Whose unbound codes to show"),
+    _user: dict = Depends(_READ),
+    db: Session = Depends(get_db),
+):
+    """The codes this supplier sent that bind to nothing we hold - the list somebody comes
+    back to answer (R16). Declared before the `{alias_id}` routes so the literal path is not
+    swallowed by the parameter."""
+    return {"data": supplier_code_alias_service.unmatched_for_supplier(db, supplier_id)}
+
+
+@router.post("/supplier-code-aliases", status_code=status.HTTP_201_CREATED)
+def create_supplier_code_alias(
+    body: SupplierCodeAliasWrite,
+    current_user: dict = Depends(_WRITE),
+    db: Session = Depends(get_db),
+):
+    """"This code is that product" - or that SET. Replaces any earlier ruling and RE-BINDS
+    the rows already uploaded under it, so the loading plan and the PI convert show the
+    answer today rather than after the next upload."""
+    out = supplier_code_alias_service.create(
+        db,
+        supplier_id=body.supplier_id,
+        supplier_code=body.supplier_code,
+        product_id=body.product_id,
+        product_set_id=body.product_set_id,
+        actor=_actor(current_user),
+    )
+    db.commit()
+    return out
+
+
+class SupplierCodeDismiss(BaseModel):
+    supplier_id: str
+    supplier_code: str = Field(..., min_length=1, max_length=120)
+
+
+@router.post("/supplier-code-aliases/dismiss", status_code=status.HTTP_201_CREATED)
+def dismiss_supplier_code(
+    body: SupplierCodeDismiss,
+    current_user: dict = Depends(_WRITE),
+    db: Session = Depends(get_db),
+):
+    """"That code is not one of ours." Takes it out of the queue and UNBINDS the rows already
+    uploaded under it, so nothing goes on being offered to the plan under a code nobody
+    claims. Forget (the DELETE below) puts it back.
+
+    Declared before the `{alias_id}` route so the literal path is not swallowed by the
+    parameter."""
+    out = supplier_code_alias_service.dismiss(
+        db,
+        supplier_id=body.supplier_id,
+        supplier_code=body.supplier_code,
+        actor=_actor(current_user),
+    )
+    db.commit()
+    return out
+
+
+class SupplierCodeRematch(BaseModel):
+    supplier_id: str
+
+
+@router.post("/supplier-code-aliases/rematch")
+def rematch_supplier_codes(
+    body: SupplierCodeRematch,
+    current_user: dict = Depends(_WRITE),
+    db: Session = Depends(get_db),
+):
+    """Run the ladder again over what is still unbound (R18).
+
+    Master data moves after a file lands - a product added, an alias recorded elsewhere - and
+    the rows uploaded before it stay unbound under a code the ladder can now answer. Without
+    this the only way to make them catch up is to upload the same file again.
+
+    No `response_model`: the three counts ARE the answer the screen reports, and a model
+    would be one more place for them to be dropped. Declared before the `{alias_id}` route so
+    the literal path is not swallowed by the parameter."""
+    out = supplier_code_alias_service.rematch(
+        db, supplier_id=body.supplier_id, actor=_actor(current_user)
+    )
+    db.commit()
+    return out
+
+
+@router.delete("/supplier-code-aliases/{alias_id}")
+def delete_supplier_code_alias(
+    alias_id: str,
+    current_user: dict = Depends(_WRITE),
+    db: Session = Depends(get_db),
+):
+    """Forget the ruling, and put the rows back to whatever the ladder says now."""
+    out = supplier_code_alias_service.delete(
+        db, alias_id, actor=_actor(current_user)
+    )
+    db.commit()
+    return out
+
+
 @router.get("/container-sizes")
 def get_container_sizes(
     _user: dict = Depends(_READ),
@@ -211,7 +351,8 @@ class ContainerSizeWrite(BaseModel):
     code: str = Field(..., min_length=1, max_length=30)
     label: Optional[str] = None
     #: Internal LOADABLE volume, not the nominal external size. A 40HQ is sold as 76 cbm and
-    #: packs about 68, and planning to the brochure figure is how a container arrives short.
+    #: is planned to 65 here (the captain's ruling, 26 Aug), and planning to the brochure
+    #: figure is how a container arrives short.
     cbm: float = Field(..., gt=0)
     is_default: bool = False
     is_active: bool = True
@@ -303,98 +444,91 @@ def delete_container_size(
     db.commit()
 
 
-class LoadingPlanRequest(BaseModel):
+class LoadingPlanCreate(BaseModel):
+    """Start a plan: whose container, how far ahead, and which document it starts from."""
+
     supplier_id: str
-    container_count: int = Field(1, ge=1)
-    container_type: Optional[str] = None
-    #: An override for a container that is not one of the configured sizes. Rare, and never
-    #: the normal path: a size somebody keeps overriding belongs in the size table.
-    container_cbm: Optional[float] = Field(None, gt=0)
+    #: "Sales order cut-off". None means every open order counts - the same words and the
+    #: same rule the reorder run's own horizon uses.
+    plan_horizon_date: Optional[date] = None
+    document_kind: str = Field("none", pattern="^(stock_list|proforma|none)$")
+    #: The retained sheet this plan was started from, so the record can offer "View uploaded
+    #: list". Optional: the retain is itself best-effort, and a plan without it is still a plan.
+    source_attachment_id: Optional[str] = None
 
 
 @router.post("/loading-plans", status_code=status.HTTP_201_CREATED)
 def create_loading_plan(
-    body: LoadingPlanRequest,
+    body: LoadingPlanCreate,
     current_user: dict = Depends(_WRITE),
     db: Session = Depends(get_db),
 ):
+    """One plan row (R1). The suggestion behind it is computed on demand, never stored."""
     try:
-        plan = loading_plan_service.build(
+        plan = loading_plan_service.create_record(
             db,
             supplier_id=body.supplier_id,
-            container_count=body.container_count,
-            container_type=body.container_type,
-            container_cbm=body.container_cbm,
-            actor=current_user.get("id"),
+            plan_horizon_date=body.plan_horizon_date,
+            document_kind=body.document_kind,
+            source_attachment_id=body.source_attachment_id,
+            actor=_actor(current_user),
         )
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
-    out = loading_plan_service.serialize(db, plan)
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    out = loading_plan_service.record_dict(db, plan)
     db.commit()
     return out
 
 
 class LoadingPlanUpdate(BaseModel):
-    container_count: Optional[int] = Field(None, ge=1)
-    container_type: Optional[str] = None
-    container_cbm: Optional[float] = Field(None, gt=0)
+    """The only thing an open plan changes about itself: how far ahead it is planning."""
+
+    plan_horizon_date: Optional[date] = None
 
 
 @router.patch("/loading-plans/{plan_id}")
 def update_loading_plan(
     plan_id: str,
     body: LoadingPlanUpdate,
-    current_user: dict = Depends(_WRITE),
+    _user: dict = Depends(_WRITE),
     db: Session = Depends(get_db),
 ):
-    """Re-run this plan with a different container count or size (AC-E6).
+    """Change the sales order cut-off (the record's "Change cut-off").
 
-    In place, so one decision leaves one plan behind, and with no re-upload: the stock list
-    is already held.
+    A PATCH on the plan rather than a second plan: the buyer is narrowing the same ask, and
+    two rows for one container would have nothing to tell them apart.
     """
     plan = _plan_or_404(db, plan_id)
-    # What the caller did NOT change must survive the re-run. An explicit volume wins, then a
-    # named size, and otherwise the plan keeps the volume it was built with - without this
-    # last branch, changing only the container COUNT silently re-planned against the tenant
-    # default size and the capacity came back a different number than the one on screen.
-    if body.container_cbm is not None:
-        cbm, ctype = body.container_cbm, body.container_type or plan.container_type
-    elif body.container_type:
-        cbm, ctype = None, body.container_type
-    else:
-        cbm, ctype = float(plan.container_cbm), plan.container_type
-    try:
-        plan = loading_plan_service.build(
-            db,
-            supplier_id=str(plan.supplier_id),
-            container_count=body.container_count or plan.container_count,
-            container_type=ctype,
-            container_cbm=cbm,
-            actor=current_user.get("id"),
-            plan=plan,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
-    out = loading_plan_service.serialize(db, plan)
+    _refuse_cancelled(plan)
+    plan.plan_horizon_date = body.plan_horizon_date
+    db.flush()
+    out = loading_plan_service.record_dict(db, plan)
     db.commit()
     return out
 
 
 @router.get("/loading-plans")
 def list_loading_plans(
-    supplier_id: Optional[str] = Query(None),
+    page: int = Query(1, ge=1),
     limit: int = Query(25, ge=1, le=100),
+    sort: Optional[str] = Query(None),
+    dir: str = Query("desc", pattern="^(asc|desc)$"),
+    query: Optional[str] = Query(None),
+    #: "active" (the default chip) is planning + sent. A cancelled plan is a decision
+    #: already made, and a list that opens on it hides the work in front of somebody.
+    status_filter: Optional[str] = Query(None, alias="status"),
     _user: dict = Depends(_READ),
     db: Session = Depends(get_db),
 ):
-    q = db.query(LoadingPlan)
-    if supplier_id:
-        q = q.filter(LoadingPlan.supplier_id == supplier_id)
-    rows = q.order_by(LoadingPlan.computed_at.desc()).limit(limit).all()
-    return {
-        "data": [loading_plan_service.serialize(db, p, with_lines=False) for p in rows],
-        "total": len(rows),
-    }
+    return loading_plan_service.list_records(
+        db,
+        page=page,
+        limit=limit,
+        sort=sort,
+        direction=dir,
+        query=query,
+        status=status_filter,
+    )
 
 
 @router.get("/loading-plans/{plan_id}")
@@ -403,7 +537,46 @@ def get_loading_plan(
     _user: dict = Depends(_READ),
     db: Session = Depends(get_db),
 ):
-    return loading_plan_service.serialize(db, _plan_or_404(db, plan_id))
+    return loading_plan_service.record_dict(db, _plan_or_404(db, plan_id))
+
+
+@router.post("/loading-plans/{plan_id}/cancel")
+def cancel_loading_plan(
+    plan_id: str,
+    current_user: dict = Depends(_WRITE),
+    db: Session = Depends(get_db),
+):
+    """Stop working on this plan, and stop the supplier's link answering (Q4)."""
+    plan = _plan_or_404(db, plan_id)
+    loading_plan_service.cancel_record(db, plan, actor=_actor(current_user))
+    out = loading_plan_service.record_dict(db, plan)
+    db.commit()
+    return out
+
+
+class LoadingPlanEdits(BaseModel):
+    """The WHOLE map of typed quantities, `row_key -> qty` (R6).
+
+    Not a patch: what is not in the map is not an edit any more, so a cleared cell cannot
+    survive as a stale override, and one Save is one transaction.
+    """
+
+    line_edits: dict[str, float] = Field(default_factory=dict)
+
+
+@router.put("/loading-plans/{plan_id}/edits")
+def save_loading_plan_edits(
+    plan_id: str,
+    body: LoadingPlanEdits,
+    _user: dict = Depends(_WRITE),
+    db: Session = Depends(get_db),
+):
+    plan = _plan_or_404(db, plan_id)
+    _refuse_cancelled(plan)
+    loading_plan_service.save_edits(db, plan, body.line_edits)
+    out = loading_plan_service.record_dict(db, plan)
+    db.commit()
+    return out
 
 
 @router.delete("/loading-plans/{plan_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -412,8 +585,20 @@ def delete_loading_plan(
     _user: dict = Depends(_WRITE),
     db: Session = Depends(get_db),
 ):
-    """Hard delete, with its lines, per the CRUD standard."""
+    """Hard delete, with its lines, per the CRUD standard - unless it was already sent.
+
+    Q5: a notice is the record of what left the building, so deleting the plan under it would
+    leave that record pointing at nothing. A sent plan is cancelled instead.
+    """
     plan = _plan_or_404(db, plan_id)
+    if loading_plan_service.has_notices(db, plan_id):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "plan_sent",
+                "message": "Sent plans are cancelled, not deleted.",
+            },
+        )
     db.delete(plan)
     db.commit()
 
@@ -423,20 +608,12 @@ def delete_loading_plan(
 # --------------------------------------------------------------------------- #
 
 
-@router.post("/loading-plans/{plan_id}/notices", status_code=status.HTTP_201_CREATED)
-def approve_loading_plan(
-    plan_id: str,
-    _user: dict = Depends(_WRITE),
-    db: Session = Depends(get_db),
-):
-    """Approve the plan and tell the supplier: one action, every channel (AC-F1).
-
-    Behind the operator permission, not the read one: this sends mail to an outside party.
-    """
-    _plan_or_404(db, plan_id)
-    return supplier_notice_service.approve_and_notify(
-        db, plan_id, actor=_actor(_user)
-    )
+# `POST /loading-plans/{plan_id}/notices` (`approve_and_notify`) is gone. It was the stage-2
+# CBM-fit surface's send, it wrote one notice per channel, it never stamped the plan `sent`,
+# and after part 4 turned `scm.loading_plan` into the plan record nothing reached it: the
+# frontend panel that called it is mounted on no page. A route that cannot be reached and
+# would leave a plan lying about its own status is worse than no route. The service function
+# and its tests stay for now; issue #360 owns the rest of that dead surface.
 
 
 @router.get("/loading-plans/{plan_id}/notices")
@@ -453,22 +630,54 @@ def list_plan_notices(
 @router.get("/supplier-notices")
 def list_supplier_notices(
     supplier_id: str = Query(...),
+    loading_plan_id: Optional[str] = Query(
+        None, description="Only this plan's notices (the record page asks with its own id)"
+    ),
     limit: int = Query(50, ge=1, le=200),
     _user: dict = Depends(_READ),
     db: Session = Depends(get_db),
 ):
-    rows = supplier_notice_service.list_for_supplier(db, supplier_id, limit=limit)
+    rows = supplier_notice_service.list_for_supplier(
+        db, supplier_id, limit=limit, loading_plan_id=loading_plan_id
+    )
     return {"data": rows, "total": len(rows)}
+
+
+@router.get("/supplier-notices/chat-contacts")
+def supplier_chat_contacts(
+    supplier_id: str = Query(...),
+    query: Optional[str] = Query(None, description="Name, phone or Respond.io id"),
+    _user: dict = Depends(_READ),
+    db: Session = Depends(get_db),
+):
+    """Who a chat request can be sent to, the supplier's own number first (AC-C3).
+
+    Declared ahead of `/supplier-notices/{notice_id}/document` for readability; the two do
+    not shadow each other (one segment against two), and the trap the SLA lesson names is a
+    static segment sitting BEHIND a path parameter at the same depth.
+
+    Also states whether the workspace has a WeChat channel at all, so the send dialog can
+    disable the Chat option with the reason rather than offering a channel that cannot carry
+    the message (R10).
+    """
+    return supplier_notice_service.chat_contacts(
+        db, supplier_id=supplier_id, query=query
+    )
 
 
 @router.get("/supplier-notices/{notice_id}/document")
 def supplier_notice_document(
     notice_id: str,
+    kind: str = Query("pdf", pattern="^(pdf|xlsx)$"),
     _user: dict = Depends(_READ),
     db: Session = Depends(get_db),
 ):
-    """A short-lived link to the document, so Ms Tee can send it by hand too (AC-F3)."""
-    return supplier_notice_service.document_url(db, notice_id)
+    """A short-lived link to one of the notice's files, so Ms Tee can send it by hand (AC-F3).
+
+    `kind=xlsx` is the supplier's own stock list with the quantity to load filled in (AC-C4);
+    it exists on a container request and not on a loading notice.
+    """
+    return supplier_notice_service.document_url(db, notice_id, kind=kind)
 
 
 # --------------------------------------------------------------------------- #
@@ -511,6 +720,14 @@ class SpoLineConfirm(BaseModel):
     # single `warehouse_id` field the second amendment introduced is now the one-split case of
     # this list, not a separate field.
     location_splits: list[SpoLocationSplit] = Field(default_factory=list)
+    # Which PO takes to draw from (F7, AC-G1). None means "every take you re-derive", which
+    # is what every caller before this ask sent; a LIST narrows it, and the SPO quantity
+    # falls to what those takes cover.
+    po_take_ids: Optional[list[str]] = None
+    # Which demand this SPO is being pointed at - `so_coverage[].key` (F7, AC-G3). The
+    # project half is written as links; the retail half steers the split on screen and has
+    # no row of its own to hang a link on.
+    so_line_ids: list[str] = Field(default_factory=list)
 
 
 class SpoCreateRequest(BaseModel):
@@ -743,7 +960,7 @@ def export_consolidated_packing_list(
     return Response(
         content=consolidated_packing_list.to_xlsx(payload),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": content_disposition(filename)},
     )
 
 
@@ -841,5 +1058,5 @@ def export_spo_worksheet(
     return Response(
         content=spo_conversion_service.to_xlsx(payload),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": content_disposition(filename)},
     )

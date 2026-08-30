@@ -334,10 +334,15 @@ export function describeQuotedContext(item: RespondMessageRenderable): QuotedCon
       ? null
       : String(rawId).trim();
 
-  const quotedMessage = (reply.message ?? {}) as { type?: string; text?: string };
-  const text = (quotedMessage.text ?? '').replace(/\s+/g, ' ').trim();
+  // The quoted message is read the way its own bubble is: a quick_reply keeps
+  // its prose under `title` and its options under `replies`, so reading `text`
+  // alone showed a literal "[quick_reply]" for every option prompt quoted.
+  const quotedItem = { message: reply.message ?? {} } as RespondMessageRenderable;
+  const quotedMessage = quotedItem.message ?? {};
+  const text = getMessageBodyText(quotedItem).replace(/\s+/g, ' ').trim();
   const kind = (quotedMessage.type ?? '').trim();
   let excerpt = text;
+  if (!excerpt) excerpt = extractSelectionOptions(quotedItem).join(' | ');
   if (!excerpt) excerpt = kind && kind !== 'text' ? `[${kind}]` : '';
   if (!excerpt) excerpt = 'Quoted message';
   if (excerpt.length > QUOTED_CONTEXT_MAX_CHARS) {

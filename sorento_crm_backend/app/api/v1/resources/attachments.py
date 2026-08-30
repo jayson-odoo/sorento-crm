@@ -34,6 +34,7 @@ from app.services.excel_macro_stripper import (
 from app.services.image_normalizer import ensure_rgb_image
 from app.services.image_thumbnailer import store_thumbnail
 from app.services.n8n_webhook_settings import get_n8n_attachment_webhook_url
+from app.utils.http import content_disposition
 from app.schemas.resources import (
     AttachmentCreate,
     AttachmentUpdate,
@@ -346,80 +347,6 @@ async def get_attachments(
 
         result["data"] = enriched
         return result
-    except Exception as e:
-        raise handle_internal_error(str(e))
-
-
-@router.get("/neighbours")
-async def get_attachment_neighbours(
-    id: str = Query(..., description="Attachment id to resolve neighbours for"),
-    query: Optional[str] = Query(None),
-    entities: Optional[List[str]] = Query(None),
-    attachment_ids: Optional[List[str]] = Query(None),
-    sort: Optional[str] = Query(None),
-    dir: Optional[str] = Query(None),
-    entity_type: Optional[str] = Query(None),
-    entity_id: Optional[str] = Query(None),
-    directory_id: Optional[str] = Query(None),
-    is_deleted: Optional[bool] = Query(None),
-    attachment_type_id: Optional[str] = Query(None),
-    attachment_type_ids: Optional[List[str]] = Query(None),
-    attachment_type_code: Optional[str] = Query(None),
-    attachment_type_codes: Optional[List[str]] = Query(None),
-    mime_type: Optional[str] = Query(None),
-    mime_types: Optional[List[str]] = Query(None),
-    uploaded_by: Optional[str] = Query(None),
-    uploaded_at_from: Optional[datetime] = Query(None),
-    uploaded_at_to: Optional[datetime] = Query(None),
-    access_levels: Optional[List[str]] = Query(None),
-    access_levels_match: Optional[str] = Query("any"),
-    link_status: Optional[str] = Query(None),
-    storage_status: Optional[str] = Query(None),
-    direct_access_only: bool = Query(False),
-    current_user: dict = Depends(get_current_user_or_api_key),
-    db: Session = Depends(get_db),
-):
-    """Prev/next neighbours of an attachment within the active filtered+sorted list set.
-
-    Accepts the same filter/sort/search params as the list GET (page/limit are
-    irrelevant and ignored). Returns ``{total, index, prev_id, next_id}`` with the
-    1-based ``index`` and circular wrap-around neighbours. If the record is not in
-    the filtered set, falls back to the unfiltered, default-sorted set (D2).
-    """
-    try:
-        service = AttachmentService(db)
-        from app.services.entity_filter_helpers import (
-            normalize_entities_query_param,
-            normalize_list_query_param,
-        )
-        return service.neighbours(
-            attachment_id=id,
-            query=query,
-            sort=sort,
-            dir=dir or "desc",
-            entity_type=entity_type,
-            entity_id=entity_id,
-            directory_id=directory_id,
-            is_deleted=is_deleted,
-            attachment_type_id=attachment_type_id,
-            attachment_type_ids=parse_uuid_list(attachment_type_ids, param_name="attachment_type_ids"),
-            attachment_type_code=attachment_type_code,
-            attachment_type_codes=normalize_list_query_param(attachment_type_codes),
-            mime_type=mime_type,
-            mime_types=normalize_list_query_param(mime_types),
-            uploaded_by=uploaded_by,
-            uploaded_at_from=uploaded_at_from,
-            uploaded_at_to=uploaded_at_to,
-            access_levels=access_levels,
-            access_levels_match=access_levels_match,
-            link_status=link_status,
-            storage_status=storage_status,
-            entities=normalize_entities_query_param(entities),
-            attachment_ids=parse_uuid_list(attachment_ids, param_name="attachment_ids"),
-            direct_access_only=direct_access_only,
-        )
-    except HTTPException:
-        raise
     except Exception as e:
         raise handle_internal_error(str(e))
 
@@ -1483,7 +1410,9 @@ async def download_attachment(
             content=file_content,
             media_type=str(getattr(attachment, "mime_type", None) or "application/octet-stream"),
             headers={
-                "Content-Disposition": f'attachment; filename="{attachment.stored_filename or attachment.original_filename}"',
+                "Content-Disposition": content_disposition(
+                    attachment.stored_filename or attachment.original_filename or ""
+                ),
                 "Content-Length": str(attachment.file_size_bytes or len(file_content))
             }
         )

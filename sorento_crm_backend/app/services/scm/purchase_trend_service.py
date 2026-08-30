@@ -56,6 +56,7 @@ JOIN purchase_orders po ON po.id = pol.purchase_order_id
 JOIN pairs pr ON pr.product_id = pol.product_id
 WHERE po.issue_date >= :since AND po.issue_date < :until
   AND po.status NOT IN :not_a_purchase
+  {wh}
   {co}
 """
 
@@ -68,7 +69,7 @@ WITH pairs AS (
 purchases AS (
     SELECT pol.product_id::text AS product_id,
            s.supplier_code, s.supplier_name,
-           po.po_number, po.issue_date,
+           po.po_number, po.issue_date, po.expected_date, po.status,
            pol.qty_ordered::numeric AS qty,
            pol.unit_cost::numeric AS unit_cost,
            COALESCE(pol.currency, po.currency) AS currency,
@@ -82,10 +83,11 @@ purchases AS (
     LEFT JOIN suppliers s ON s.id = po.supplier_id
     JOIN pairs pr ON pr.product_id = pol.product_id
     WHERE po.status NOT IN :not_a_purchase
+      {wh}
       {co}
 )
-SELECT product_id, supplier_code, supplier_name, po_number, issue_date, qty, unit_cost,
-       currency
+SELECT product_id, supplier_code, supplier_name, po_number, issue_date, expected_date,
+       status, qty, unit_cost, currency
 FROM purchases
 WHERE rn <= :cap
 ORDER BY product_id, issue_date DESC NULLS LAST
@@ -93,7 +95,8 @@ ORDER BY product_id, issue_date DESC NULLS LAST
 
 
 def purchase_trend_for_run(
-    db: Session, run_id: str, *, as_of: Optional[date] = None
+    db: Session, run_id: str, *, as_of: Optional[date] = None,
+    warehouse_id: Optional[str] = None,
 ) -> dict[str, Any]:
     """Purchase facts for every product the run planned, keyed by product id.
 
@@ -101,6 +104,13 @@ def purchase_trend_for_run(
     supplier's price"), this is the whole buy-side story for the item across every
     supplier - the question the popup answers is "what have we been buying", not "is this
     one supplier's price still good".
+
+    `warehouse_id` (R15) narrows to ONE destination: the plan row's site pool. The PO cell
+    the dialog explains counts that location and nothing else - not its project bins, whose
+    stock an Order Inquiry already claims - so the receipts behind the number have to be
+    narrowed the same way. A line with no destination at all is excluded by the same test,
+    which is deliberate: it cannot be shown to have been bought for this pool. Omitting the
+    argument leaves the existing whole-product read byte-identical.
     """
     as_of = as_of or date.today()
     # The month the run sits in is excluded, same reasoning as the order trend: a window
@@ -111,9 +121,11 @@ def purchase_trend_for_run(
 
     co, co_params = company_sql_predicate(db, "po.company_id", param_prefix="pht")
     co_clause = f"AND {co}" if co else ""
+    wh_clause = "AND pol.warehouse_id = CAST(:warehouse_id AS uuid)" if warehouse_id else ""
+    wh_params = {"warehouse_id": warehouse_id} if warehouse_id else {}
     trend_params = {
         "run_id": run_id, "since": prev_start, "until": until,
-        "not_a_purchase": _NOT_A_PURCHASE, **co_params,
+        "not_a_purchase": _NOT_A_PURCHASE, **wh_params, **co_params,
     }
 
     products = {
@@ -126,21 +138,28 @@ def purchase_trend_for_run(
 
     recent: dict[str, float] = {}
     previous: dict[str, float] = {}
-    for r in db.execute(text(_TREND_SQL.format(co=co_clause)), trend_params).mappings().all():
+    for r in db.execute(text(_TREND_SQL.format(co=co_clause, wh=wh_clause)),
+                        trend_params).mappings().all():
         qty = float(r["qty"] or 0)
         bucket = recent if r["issue_date"] >= recent_start else previous
         bucket[r["product_id"]] = bucket.get(r["product_id"], 0.0) + qty
 
     lines: dict[str, list[dict[str, Any]]] = {}
     line_params = {
-        "run_id": run_id, "not_a_purchase": _NOT_A_PURCHASE, "cap": LINE_CAP, **co_params,
+        "run_id": run_id, "not_a_purchase": _NOT_A_PURCHASE, "cap": LINE_CAP,
+        **wh_params, **co_params,
     }
-    for r in db.execute(text(_LINES_SQL.format(co=co_clause)), line_params).mappings().all():
+    for r in db.execute(text(_LINES_SQL.format(co=co_clause, wh=wh_clause)),
+                        line_params).mappings().all():
         lines.setdefault(r["product_id"], []).append({
             "supplier_code": r["supplier_code"],
             "supplier_name": r["supplier_name"],
             "po_number": r["po_number"],
             "order_date": r["issue_date"].isoformat() if r["issue_date"] else None,
+            # The two columns the PO dialog's History tab shows beside the price: when it
+            # was promised, and what the document says it is now.
+            "expected_date": r["expected_date"].isoformat() if r["expected_date"] else None,
+            "status": r["status"],
             "qty": float(r["qty"] or 0),
             "unit_cost": float(r["unit_cost"]) if r["unit_cost"] is not None else None,
             "currency": r["currency"],

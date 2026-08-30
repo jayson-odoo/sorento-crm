@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 /**
  * The Conversations inbox thread pane (UAC AC-N2 / AC-N3 / AC-N4 / AC-K1).
@@ -119,7 +119,9 @@ vi.mock('@/components/common/conversation/SharedConversationComposer', () => ({
           type="button"
           data-testid="inbox-composer-send"
           data-snippet-tracking-id={snippetTrackingId ?? ''}
-          onClick={() => void sendAdapter?.({ text: 'hello', files: [] })}
+          // The real composer catches a failed send and toasts; the stub must
+          // swallow it the same way or a rejection test leaks an unhandled error.
+          onClick={() => void sendAdapter?.({ text: 'hello', files: [] }).catch(() => undefined)}
         >
           Send
         </button>
@@ -250,6 +252,41 @@ describe('ConversationThreadPane', () => {
     expect(toastSuccess).toHaveBeenCalledWith(
       'Sent - counted as the reply to your open enquiry.',
     );
+  });
+
+  it('shows the pending bubble while the send is in flight and drops it after the refetch (AC-B1 / AC-B2)', async () => {
+    let finishSend: (value: { sent_as: string; stamped_ticket_id: string | null }) => void = () => {};
+    replyMutateAsync.mockReturnValue(
+      new Promise((resolve) => {
+        finishSend = resolve;
+      }),
+    );
+    const refetch = vi.fn().mockResolvedValue({});
+    contactThread.mockReturnValue(queryState({ refetch }));
+    render(<ConversationThreadPane contact={contact()} canReply />);
+    expect(screen.getByTestId('chat-list')).toHaveTextContent('1 message(s)');
+
+    fireEvent.click(screen.getByTestId('inbox-composer-send'));
+
+    await waitFor(() => expect(screen.getByTestId('chat-list')).toHaveTextContent('2 message(s)'));
+    expect(refetch).not.toHaveBeenCalled();
+
+    await act(async () => {
+      finishSend({ sent_as: 'text', stamped_ticket_id: 'tkt-1' });
+    });
+
+    await waitFor(() => expect(screen.getByTestId('chat-list')).toHaveTextContent('1 message(s)'));
+    expect(refetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('a failed send takes the pending bubble down again (AC-B3)', async () => {
+    replyMutateAsync.mockRejectedValue(new Error('Respond is down'));
+    render(<ConversationThreadPane contact={contact()} canReply />);
+
+    fireEvent.click(screen.getByTestId('inbox-composer-send'));
+
+    await waitFor(() => expect(replyMutateAsync).toHaveBeenCalled());
+    await waitFor(() => expect(screen.getByTestId('chat-list')).toHaveTextContent('1 message(s)'));
   });
 
   it('an unstamped send still succeeds, quietly', async () => {

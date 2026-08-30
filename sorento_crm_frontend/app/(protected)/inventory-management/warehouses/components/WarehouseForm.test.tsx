@@ -7,7 +7,8 @@
  * the identical arrays):
  *
  *   Basic Information : System Location, System Location Description, Warehouse, Active Status
- *   Planning          : Available for planning (switch), Draws stock from (select)
+ *   Planning          : Available for planning (switch), Fulfilment planning (switch),
+ *                       Draws stock from (select)
  *
  * Plus two rules the current form breaks:
  * - "Draws stock from" is optional, so it must be clearable. The user-reported bug is that
@@ -42,6 +43,7 @@ const CURRENT: Warehouse = {
   created_at: new Date('2026-01-05T02:00:00Z'),
   updated_at: new Date('2026-02-09T04:30:00Z'),
   counts_as_available: true,
+  fulfilment_planning: false,
   pool_warehouse_id: POOL_ID,
   pool_warehouse_code: 'WH-POOL',
 };
@@ -56,6 +58,7 @@ const POOL: Warehouse = {
   created_at: new Date('2026-01-05T02:00:00Z'),
   updated_at: null,
   counts_as_available: true,
+  fulfilment_planning: false,
   pool_warehouse_id: null,
   pool_warehouse_code: null,
 };
@@ -70,6 +73,7 @@ const OTHER: Warehouse = {
   created_at: new Date('2026-01-05T02:00:00Z'),
   updated_at: null,
   counts_as_available: true,
+  fulfilment_planning: false,
   pool_warehouse_id: null,
   pool_warehouse_code: null,
 };
@@ -209,6 +213,9 @@ const FIELD_SPANS: Record<string, 'full' | 'half'> = {
   Warehouse: 'full',
   'Active Status': 'full',
   'Available for planning': 'full',
+  // Borrow ladder v7.1 S1 (AC-S1-3): the flag sits directly under `Available for planning`,
+  // full width, in BOTH views - the read view mirrors it in the same position.
+  'Fulfilment planning': 'full',
   'Draws stock from': 'half',
   'Sells to': 'half',
 };
@@ -291,9 +298,13 @@ describe('WarehouseForm - same layout as the read view', () => {
     renderForm();
     selectTab('Planning');
 
-    expectTextOrder(activePanel(), ['Available for planning', 'Draws stock from']);
-    // Availability is a switch; the pool is a select.
-    expect(screen.getByRole('switch')).toBeInTheDocument();
+    expectTextOrder(activePanel(), [
+      'Available for planning',
+      'Fulfilment planning',
+      'Draws stock from',
+    ]);
+    // Two switches now (availability, fulfilment planning); the pool is a select.
+    expect(screen.getAllByRole('switch')).toHaveLength(2);
     expect(poolTrigger()).toBeTruthy();
   });
 
@@ -315,7 +326,12 @@ describe('WarehouseForm - same layout as the read view', () => {
     selectTab('Planning');
 
     expect(gridSpans()).toEqual(
-      expectedSpans(['Available for planning', 'Draws stock from', 'Sells to']),
+      expectedSpans([
+        'Available for planning',
+        'Fulfilment planning',
+        'Draws stock from',
+        'Sells to',
+      ]),
     );
   });
 
@@ -341,6 +357,51 @@ describe('WarehouseForm - same layout as the read view', () => {
     for (const prose of BANNED_PROSE) {
       expect(page, `explanatory prose still in the UI: "${prose}"`).not.toContain(prose);
     }
+  });
+});
+
+describe('WarehouseForm - Fulfilment planning switch (AC-S1-3)', () => {
+  /** The switch inside the form item whose label matches, so the two switches never mix up. */
+  function switchFor(label: string): HTMLElement {
+    const item = screen
+      .getByText(label)
+      .closest('[data-slot="form-item"]') as HTMLElement | null;
+    const control = (item ?? document.body).querySelector(
+      '[role="switch"]',
+    ) as HTMLElement | null;
+    expect(control, `no switch beside "${label}"`).toBeTruthy();
+    return control!;
+  }
+
+  it('seeds Off from a record whose flag is off', () => {
+    renderForm();
+    selectTab('Planning');
+
+    expect(switchFor('Fulfilment planning')).toHaveAttribute('aria-checked', 'false');
+  });
+
+  it('defaults to Off on create - the column default, not its neighbour true', () => {
+    renderCreateForm();
+    selectTab('Planning');
+
+    expect(switchFor('Fulfilment planning')).toHaveAttribute('aria-checked', 'false');
+    // The neighbouring `counts_as_available` still defaults ON, so the two are not being
+    // read off one another.
+    expect(switchFor('Available for planning')).toHaveAttribute('aria-checked', 'true');
+  });
+
+  it('saves the flipped flag through the existing PUT', async () => {
+    renderForm();
+    selectTab('Planning');
+
+    fireEvent.click(switchFor('Fulfilment planning'));
+    fireEvent.click(screen.getByRole('button', { name: /save|update/i }));
+
+    await waitFor(() => expect(h.updateMutate).toHaveBeenCalledTimes(1));
+    expect(h.updateMutate.mock.calls[0][0]).toMatchObject({
+      id: CURRENT_ID,
+      data: expect.objectContaining({ fulfilment_planning: true }),
+    });
   });
 });
 

@@ -32,6 +32,16 @@ import {
   ORDER_INQUIRY_WORKLIST_SUMMARY_KEY,
 } from './useOrderInquiry';
 import { SALES_ORDERS_KEY, SALES_ORDER_KEY } from './useProjectSalesOrders';
+// The confirmation is what RAISES a stock transfer, so the Transfers page and the two
+// detail tabs reading it must not keep showing the previous revision's movements.
+import { STOCK_TRANSFERS_KEY } from '@/app/(protected)/inventory-management/stock-transfers/hooks/useStockTransfers';
+// The board's OWN transfers panel (D6) reads a different key from the transfers page, and it
+// is the one on screen when Confirm is pressed: without this the movements the press just
+// raised appear only after a reload, which is exactly the trip the panel exists to save.
+import { BOARD_TRANSFERS_KEY } from './useBoardTransfers';
+// A confirmation on a `?batch=` board APPLIES the planning change, so the batch's own record
+// (applied_at, applied_by, the per-row applied state) is stale the moment it returns.
+import { PLANNING_CHANGE_BATCH_KEY } from './usePlanningChanges';
 
 export const FULFILMENT_PLANNING_KEY = 'project-fulfilment-planning';
 export const PLANNING_BOARD_KEY = 'project-fulfilment-board';
@@ -202,12 +212,19 @@ export function useReconciliationMutations() {
       queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_WORKLIST_SUMMARY_KEY] });
       queryClient.invalidateQueries({ queryKey: [PILE_QUEUE_KEY] });
       queryClient.invalidateQueries({ queryKey: [STOCK_DETAIL_KEY] });
+      queryClient.invalidateQueries({ queryKey: [STOCK_TRANSFERS_KEY] });
+      queryClient.invalidateQueries({ queryKey: [BOARD_TRANSFERS_KEY] });
+      queryClient.invalidateQueries({ queryKey: [PLANNING_CHANGE_BATCH_KEY] });
       const rows = result.inquiry_rows_created;
       toast.success(
         `Confirmed as revision ${result.revision_no}. ${rows} purchase row${
           rows === 1 ? '' : 's'
         } handed over.`,
       );
+      // Only when something went wrong. The successful count is on the Transfers page and
+      // does not need saying twice; an unwritten movement has no other way to be noticed.
+      const failed = result.transfers_failed ?? 0;
+      if (failed > 0) toast.warning(`Transfers not written: ${failed}`);
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -297,11 +314,16 @@ export function useClassificationEvidence(productId?: string | null, enabled = t
  *
  * Addressed by ids: two products on the live book share the item code `B2155-NL-BLUE`, so a
  * lookup by code would answer confidently about the wrong one.
+ *
+ * `lineIds` are the cell's own contributing lines. Their rows come back marked, so a planner
+ * can find themselves in a list that is otherwise all other people's documents. Part of the
+ * key, because a different asker is a different answer.
  */
-export function useStockDetail(productId: string, warehouseId: string) {
+export function useStockDetail(productId: string, warehouseId: string, lineIds: string[] = []) {
+  const key = lineIds.join(',');
   return useQuery({
-    queryKey: [STOCK_DETAIL_KEY, productId, warehouseId],
-    queryFn: () => getStockDetail(productId, warehouseId),
+    queryKey: [STOCK_DETAIL_KEY, productId, warehouseId, key],
+    queryFn: () => getStockDetail(productId, warehouseId, lineIds),
     retry: 1,
     refetchOnWindowFocus: false,
   });
@@ -322,11 +344,13 @@ export function usePlans(params: PlanListParams = {}) {
 }
 
 /**
- * "Confirm all approved" (D3): one call, several orders, one result per order.
+ * The board's ONE Confirm (R11/D2): one call, several orders, one result per order.
  *
  * Invalidates the same query families the per-order `confirm` does - the board, the
  * worklist, the plans list itself (a newly confirmed decision belongs there now), the SO
- * detail and the order-inquiry lists a confirmed Buy hands off to.
+ * detail, the order-inquiry lists a confirmed Buy hands off to, the transfers a confirmed
+ * move raises (both the page's list and the board's own panel) and the planning-change batch
+ * the press may have applied.
  */
 export function useConfirmManyMutation() {
   const queryClient = useQueryClient();
@@ -347,13 +371,17 @@ export function useConfirmManyMutation() {
       queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_WORKLIST_SUMMARY_KEY] });
       queryClient.invalidateQueries({ queryKey: [PILE_QUEUE_KEY] });
       queryClient.invalidateQueries({ queryKey: [STOCK_DETAIL_KEY] });
+      queryClient.invalidateQueries({ queryKey: [STOCK_TRANSFERS_KEY] });
+      queryClient.invalidateQueries({ queryKey: [BOARD_TRANSFERS_KEY] });
+      queryClient.invalidateQueries({ queryKey: [PLANNING_CHANGE_BATCH_KEY] });
+      // NO SUCCESS TOAST HERE (D6). The board says what the press produced in the three
+      // numbers a planner acts on - "37 lines confirmed - 1 transfer proposed - 0 inquiry
+      // rows" - and a second toast counting ORDERS beside it made the screen shout twice and
+      // answer a question nobody asked. Only the partial refusal speaks, because the count of
+      // orders that would not go through is not on the panel's sentence.
       const succeeded = result.results.filter((entry) => entry.ok).length;
       const failed = result.results.length - succeeded;
-      if (failed === 0) {
-        toast.success(
-          `Confirmed ${succeeded} order${succeeded === 1 ? '' : 's'}.`,
-        );
-      } else {
+      if (failed > 0) {
         toast.warning(
           `Confirmed ${succeeded} order${succeeded === 1 ? '' : 's'}; ${failed} refused - see the results below.`,
         );

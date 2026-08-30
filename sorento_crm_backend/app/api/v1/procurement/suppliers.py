@@ -86,36 +86,6 @@ async def get_suppliers_select(
         raise handle_internal_error(str(e))
 
 
-@router.get("/neighbours")
-async def get_supplier_neighbours(
-    id: str = Query(..., description="Supplier id to resolve neighbours for"),
-    query: Optional[str] = Query(None),
-    sort: Optional[str] = Query("created_at"),
-    dir: Optional[str] = Query("asc"),
-    current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    """Prev/next neighbours of a supplier within the active filtered+sorted list set.
-
-    Accepts the same filter/sort/search params as the list GET (page/limit are
-    irrelevant and ignored). Returns ``{total, index, prev_id, next_id}`` with the
-    1-based ``index`` and circular wrap-around neighbours. If the record is not in
-    the filtered set, falls back to the unfiltered, default-sorted set.
-    """
-    try:
-        service = SupplierService(db)
-        return service.neighbours(
-            supplier_id=id,
-            query=query,
-            sort_field=sort or "created_at",
-            sort_dir=dir or "asc",
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise handle_internal_error(str(e))
-
-
 @router.get("/{supplier_id}", response_model=SupplierResponse)
 async def get_supplier(
     supplier_id: str,

@@ -89,6 +89,16 @@ async def _fetch_routing(
     return result
 
 
+#: Blocks that ARE the answer on a response whose `data` is deliberately empty.
+#: The stock-visibility policy (PLAN-stock-visibility-policy) clears `data` for
+#: its two summary modes - a row with the quantity stripped still names every
+#: location it came from, so empty is the only shape that cannot leak - and puts
+#: the reply in one of these instead. Reading `data` alone therefore called a
+#: contact's real stock answer "nothing found" and stapled the routing offer to
+#: it.
+_ANSWER_BLOCK_KEYS = ("stock_summary", "stock_availability")
+
+
 def _is_empty_response(data: Any) -> bool:
     """Detect empty list / not-found shapes returned by CRM tools.
 
@@ -109,6 +119,11 @@ def _is_empty_response(data: Any) -> bool:
 
     if data.get("error") == "ACCESS_DENIED":
         return False
+
+    for key in _ANSWER_BLOCK_KEYS:
+        block = data.get(key)
+        if isinstance(block, list) and block:
+            return False
 
     if "data" in data:
         d = data["data"]

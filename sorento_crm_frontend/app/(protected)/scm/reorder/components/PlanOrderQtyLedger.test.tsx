@@ -1,6 +1,8 @@
 /**
- * The order-qty ledger (S3, UAC B): THE LINE / COVER BEFORE BUYING / THE BUY, replacing the
- * old order-qty drill behind the "Explain order qty" trigger.
+ * The order-qty ledger: PROJECT DEMAND / RETAIL DEMAND / NET NOW / THE BUY / HISTORY
+ * (AC-R8), behind the "Explain order qty" trigger. Cover before buying sits between Net
+ * now and The buy on the forecast basis only - on the per-product level basis the stock is
+ * already inside the net.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -12,10 +14,33 @@ import { coverForLine, NO_COVER, type CoverProposal, type CoverSource } from '..
 import type { PoReceipt } from '../lib/poCover';
 import type { ProductEconomics } from '../lib/productHealth';
 import type { TrajectoryEntry } from '../lib/trajectory';
+import type { ProductPurchaseTrend } from '../lib/purchaseTrend';
 import { OrderQtyLedger } from './PlanOrderQtyLedger';
 
 Element.prototype.hasPointerCapture = Element.prototype.hasPointerCapture ?? (() => false);
 Element.prototype.scrollIntoView = Element.prototype.scrollIntoView ?? (() => {});
+
+/**
+ * The two demand blocks and the per-location expansion are react-query fetches. This suite
+ * renders the ledger bare, so the hooks are stubbed here rather than every case being
+ * wrapped in a provider - the same shape `PlanLinesGrid.test.tsx` already uses for
+ * `useLocationStock`. `demandByChannel` is what an individual case fills in.
+ */
+type StubQuery = { data?: unknown; isLoading: boolean; isError: boolean };
+const IDLE: StubQuery = { data: undefined, isLoading: false, isError: false };
+const demandByChannel: Record<string, StubQuery> = {};
+let locationStockState: StubQuery = IDLE;
+
+vi.mock('../hooks/useReorderRun', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../hooks/useReorderRun')>();
+  return {
+    ...actual,
+    useRecommendationDemand: (
+      _runId: string | null, _recId: string | null, _enabled: boolean, channel?: string,
+    ) => demandByChannel[channel ?? 'all'] ?? IDLE,
+    useLocationStock: () => locationStockState,
+  };
+});
 
 function rec(over: Partial<ReorderRecommendation> = {}): ReorderRecommendation {
   return {
@@ -50,6 +75,9 @@ function renderLedger(over: {
   economicsFor?: (l: PlanLine) => ProductEconomics | undefined;
   healthThresholds?: { margin_floor_pct: number; dead_turnover_months: number };
   trend?: TrajectoryEntry;
+  runId?: string | null;
+  purchaseTrend?: ProductPurchaseTrend;
+  purchaseTrendReady?: boolean;
 } = {}) {
   const onDecide = vi.fn();
   const l = over.line ?? line();
@@ -63,12 +91,19 @@ function renderLedger(over: {
       healthThresholds={over.healthThresholds ?? { margin_floor_pct: 15, dead_turnover_months: 6 }}
       trend={over.trend}
       onDecide={onDecide}
+      runId={over.runId}
+      purchaseTrend={over.purchaseTrend}
+      purchaseTrendReady={over.purchaseTrendReady}
     />,
   );
   return { onDecide, line: l };
 }
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  for (const key of Object.keys(demandByChannel)) delete demandByChannel[key];
+  locationStockState = IDLE;
+});
 
 describe('order-qty ledger - THE LINE varies by mode', () => {
   it('auto mode shows the ROP derivation, not a reorder level', () => {
@@ -87,6 +122,21 @@ describe('order-qty ledger - THE LINE varies by mode', () => {
     expect(screen.getByText(/buyer set/)).toBeInTheDocument();
     expect(screen.queryByText('Safety stock')).not.toBeInTheDocument();
     expect(screen.queryByText('ROP = safety stock + demand rate x lead time')).not.toBeInTheDocument();
+  });
+
+  it('names the AutoCount master as the source when the plan fell back to it (AC-R3)', () => {
+    // The engine decides on the master level itself now, so it arrives as `reorder_level`
+    // with its provenance beside it - the card must not present AutoCount's number as
+    // somebody's own decision.
+    renderLedger({
+      line: line({
+        policy_type: 'reorder_level', reorder_level: 500,
+        reorder_level_source: 'autocount_master', master_reorder_level: 500,
+      }),
+    });
+    expect(screen.getByText('500')).toBeInTheDocument();
+    expect(screen.getByText(/AutoCount master/)).toBeInTheDocument();
+    expect(screen.queryByText(/buyer set/)).not.toBeInTheDocument();
   });
 
   it('manual mode falls back to the AutoCount master level when no buyer level is set', () => {
@@ -340,16 +390,16 @@ describe('order-qty ledger - the buy', () => {
     ).toBeInTheDocument();
   });
 
-  it('manual mode names the cover-window source', () => {
+  it('manual mode names the days the level itself covers', () => {
     renderLedger({
       line: line({
         policy_type: 'reorder_level', reorder_level: 50, order_qty: 40, recommended_qty: 40,
-        forecast_daily_demand: 20, suggestion_basis: { cover_months: 2 },
+        forecast_daily_demand: 20, suggestion_basis: { lead_time_days: 30, safety_days: 14 },
       }),
     });
-    expect(screen.getByRole('checkbox', { name: 'Add 1,200' })).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: 'Add 880' })).toBeInTheDocument();
     expect(
-      screen.getByText('(next 60d demand at 20.0/day - cover window per policy)'),
+      screen.getByText('(next 44d demand at 20.0/day - lead time plus safety days)'),
     ).toBeInTheDocument();
   });
 
@@ -520,9 +570,11 @@ describe('order-qty ledger - shaped fixtures render coherently', () => {
  * >  editable per-location quantities feeding the buy qty."
  */
 describe('order-qty ledger - per-location use stock', () => {
+  // Site pools: after R18 a project bin is never offered as a source at all, so a
+  // per-location editing test built on bins would have no locations to edit.
   const twoSources: CoverSource[] = [
-    { warehouse_id: 'wh-BRW-BB', warehouse_code: 'BRW-BB', segment: 'project', qty: 5 },
-    { warehouse_id: 'wh-PJ-SR', warehouse_code: 'PJ-SR', segment: 'project', qty: 1 },
+    { warehouse_id: 'wh-BRW-BB', warehouse_code: 'BRW-BB', segment: 'dealer', qty: 5 },
+    { warehouse_id: 'wh-PJ-SR', warehouse_code: 'PJ-SR', segment: 'dealer', qty: 1 },
   ];
   const shortLine = () =>
     line({ order_qty: 20, recommended_qty: 20, moq: null, order_multiple: null });
@@ -639,8 +691,8 @@ describe('order-qty ledger - per-location use stock', () => {
  */
 describe('order-qty ledger - the offered locations, at what they hold', () => {
   const bigSources: CoverSource[] = [
-    { warehouse_id: 'wh-BRW-IB', warehouse_code: 'BRW-IB', segment: 'project', qty: 50 },
-    { warehouse_id: 'wh-BRW-NTC', warehouse_code: 'BRW-NTC', segment: 'project', qty: 30 },
+    { warehouse_id: 'wh-BRW-IB', warehouse_code: 'BRW-IB', segment: 'dealer', qty: 50 },
+    { warehouse_id: 'wh-BRW-NTC', warehouse_code: 'BRW-NTC', segment: 'dealer', qty: 30 },
   ];
   const gapLine = () =>
     line({ order_qty: 10, recommended_qty: 10, moq: null, order_multiple: null,
@@ -721,5 +773,211 @@ describe('order-qty ledger - the offered locations, at what they hold', () => {
     expect(screen.getByLabelText('Use from BRW-IB')).toBeInTheDocument();
     expect(screen.getByLabelText('Use from BRW-NTC')).toBeInTheDocument();
     expect(onDecide.mock.calls.at(-1)![0].buy).toBe(10);
+  });
+});
+
+describe('order-qty ledger - the card reads demand first and history last (AC-R8)', () => {
+  const CARD_ORDER = /^(Project demand|Retail demand|Net now|The buy|History)$/;
+
+  it('reads Project demand, Retail demand, Net now, The buy, History, in that order', () => {
+    renderLedger({
+      line: line({ policy_type: 'reorder_level', reorder_level: 12000 }),
+      runId: 'run-1',
+    });
+    expect(screen.getAllByText(CARD_ORDER).map((el) => el.textContent)).toEqual([
+      'Project demand',
+      'Retail demand',
+      'Net now',
+      'The buy',
+      'History',
+    ]);
+  });
+
+  it('keeps that order on the forecast basis, where the line and cover blocks also render', () => {
+    renderLedger({ line: line({ policy_type: 'reorder_point' }), runId: 'run-1' });
+    expect(screen.getAllByText(CARD_ORDER).map((el) => el.textContent)).toEqual([
+      'Project demand',
+      'Retail demand',
+      'Net now',
+      'The buy',
+      'History',
+    ]);
+    expect(screen.getByText('The line')).toBeInTheDocument();
+    expect(screen.getByText('Cover before buying')).toBeInTheDocument();
+  });
+
+  it('never offers cover on the per-product level basis - the stock is already in the net', () => {
+    renderLedger({
+      line: line({ policy_type: 'reorder_level', reorder_level: 12000 }),
+      runId: 'run-1',
+    });
+    expect(screen.queryByText('Cover before buying')).not.toBeInTheDocument();
+    expect(screen.queryByText('The line')).not.toBeInTheDocument();
+  });
+
+  it('nets the two demand channels separately when the run froze the split', () => {
+    renderLedger({
+      line: line({ project_committed: 150, retail_committed: 290, outstanding_sales: 440 }),
+      runId: 'run-1',
+    });
+    expect(screen.getByText('- Project demand')).toBeInTheDocument();
+    expect(screen.getByText('150')).toBeInTheDocument();
+    expect(screen.getByText('- Retail demand')).toBeInTheDocument();
+    expect(screen.getByText('290')).toBeInTheDocument();
+    expect(screen.queryByText('- SO (outstanding)')).not.toBeInTheDocument();
+  });
+
+  it('names the buy supplier, its price and the cash it draws', () => {
+    renderLedger({ line: line({ order_qty: 20, recommended_qty: 20 }), runId: 'run-1' });
+    expect(screen.getByText('Supplier')).toBeInTheDocument();
+    expect(screen.getByText('Acme')).toBeInTheDocument();
+    expect(screen.getByText('Price')).toBeInTheDocument();
+    expect(screen.getByText('Cash')).toBeInTheDocument();
+  });
+
+  it('states the purchase history last, and says so when there is none', () => {
+    renderLedger({ runId: 'run-1', purchaseTrendReady: true });
+    expect(screen.getByText('Never ordered in the imported history.')).toBeInTheDocument();
+    expect(screen.getByText('No purchases in the imported history.')).toBeInTheDocument();
+  });
+
+  it('does not read "never purchased" while the lazy purchase fetch is still out', () => {
+    renderLedger({ runId: 'run-1', purchaseTrendReady: false });
+    expect(screen.getByText('Loading purchases...')).toBeInTheDocument();
+    expect(screen.queryByText('Never ordered in the imported history.')).not.toBeInTheDocument();
+  });
+
+  it('shows the purchases when the trend arrives', () => {
+    renderLedger({
+      runId: 'run-1',
+      purchaseTrendReady: true,
+      purchaseTrend: {
+        recent_qty: 400,
+        previous_qty: 1200,
+        lines: [
+          { supplier_code: 'KLU', supplier_name: 'Kailu', po_number: 'PO-1',
+            order_date: '2026-07-02', qty: 400, unit_cost: 12.5, currency: 'MYR' },
+        ],
+      },
+    });
+    expect(
+      screen.getByText('Ordered 400 in the last 3 months, 1,200 in the 3 months before.'),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Kailu')).toBeInTheDocument();
+  });
+});
+
+describe('order-qty ledger - the orders behind the line (AC-R8)', () => {
+  const projectLine = {
+    so_id: 'so-1',
+    so_number: 'SO414285',
+    warehouse_code: 'BRW-IB',
+    is_unlocated: false,
+    order_type: null,
+    demand_class: 'project',
+    order_date: '2026-07-01',
+    required_date: '2026-09-30',
+    qty: 20,
+    linked_qty: 30,
+    customer_label: 'TUJU RESIDENCE',
+    unit_price: 12.5,
+  };
+
+  it('a project row carries the SO number, customer, delivery date, qty and linked', () => {
+    demandByChannel.project = {
+      data: { lines: [projectLine], total: 1 },
+      isLoading: false,
+      isError: false,
+    };
+    renderLedger({ runId: 'run-1' });
+
+    expect(screen.getByText('SO414285')).toBeInTheDocument();
+    expect(screen.getByText('TUJU RESIDENCE')).toBeInTheDocument();
+    expect(screen.getByText('30/09/2026')).toBeInTheDocument();
+    expect(screen.getByText('20')).toBeInTheDocument();
+    expect(screen.getByText('Linked')).toBeInTheDocument();
+    expect(screen.getByText('30')).toBeInTheDocument();
+  });
+
+  it('sorts the orders by when they are needed, undated last', () => {
+    demandByChannel.project = {
+      data: {
+        lines: [
+          { ...projectLine, so_number: 'SO-C', required_date: null },
+          { ...projectLine, so_number: 'SO-B', required_date: '2026-10-05' },
+          { ...projectLine, so_number: 'SO-A', required_date: '2026-09-01' },
+        ],
+        total: 3,
+      },
+      isLoading: false,
+      isError: false,
+    };
+    renderLedger({ runId: 'run-1' });
+    const shown = screen.getAllByText(/^SO-[ABC]$/).map((el) => el.textContent);
+    expect(shown).toEqual(['SO-A', 'SO-B', 'SO-C']);
+  });
+
+  it('a retail row has no linked column - there is no instruction to place', () => {
+    demandByChannel.retail = {
+      data: {
+        lines: [{ ...projectLine, so_number: 'SO-RETAIL', demand_class: 'retail',
+                  linked_qty: undefined }],
+        total: 1,
+      },
+      isLoading: false,
+      isError: false,
+    };
+    renderLedger({ runId: 'run-1' });
+    expect(screen.getByText('SO-RETAIL')).toBeInTheDocument();
+    expect(screen.queryByText('Linked')).not.toBeInTheDocument();
+  });
+
+  it('an empty channel says so rather than hiding the block', () => {
+    renderLedger({ runId: 'run-1' });
+    expect(screen.getByText('No acknowledged project orders')).toBeInTheDocument();
+    expect(screen.getByText('No outstanding retail orders')).toBeInTheDocument();
+  });
+
+  it('says the list is capped when the run holds more orders than are shown', () => {
+    demandByChannel.project = {
+      data: { lines: [projectLine], total: 12 },
+      isLoading: false,
+      isError: false,
+    };
+    renderLedger({ runId: 'run-1' });
+    expect(screen.getByText('Showing 1 of 12 orders')).toBeInTheDocument();
+  });
+});
+
+describe('order-qty ledger - on hand, expandable per location (AC-R8)', () => {
+  it('expands to the locations holding the stock, and fetches only when asked', () => {
+    locationStockState = {
+      data: {
+        locations: [
+          { warehouse_id: 'w1', warehouse_code: 'BRW', on_hand: 1296, reserved: 0,
+            held_by_decisions: 0, free: 1296, so_qty: 0, spo_qty: 0, available: 1296,
+            is_pool: true },
+          { warehouse_id: 'w2', warehouse_code: 'BRW-BB', on_hand: 0, reserved: 0,
+            held_by_decisions: 0, free: 0, so_qty: 0, spo_qty: 0, available: 0,
+            is_pool: false },
+          // Holding stock, but a project bin: it is not part of the figure above (R16).
+          { warehouse_id: 'w3', warehouse_code: 'BRW-IB', on_hand: 34, reserved: 0,
+            held_by_decisions: 0, free: 34, so_qty: 0, spo_qty: 0, available: 34,
+            is_pool: false },
+        ],
+      },
+      isLoading: false,
+      isError: false,
+    };
+    renderLedger({ line: line({ on_hand: 1296 }), runId: 'run-1' });
+
+    expect(screen.queryByText('BRW-BB')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /On hand/ }));
+    expect(screen.getByText('BRW')).toBeInTheDocument();
+    // A location holding nothing is not evidence of anything - only stock is listed.
+    expect(screen.queryByText('BRW-BB')).not.toBeInTheDocument();
+    // Nor is a project bin, however much it holds: this aside breaks down the pool-only
+    // figure above it, so a bin under it would not add up (R16).
+    expect(screen.queryByText('BRW-IB')).not.toBeInTheDocument();
   });
 });

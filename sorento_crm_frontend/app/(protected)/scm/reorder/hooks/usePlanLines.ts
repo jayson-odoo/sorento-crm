@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   amendLevelSuggestion,
@@ -32,12 +32,14 @@ import {
 } from '../lib/coverPlan';
 import { poolWarehouseIdOf } from '../lib/planLine';
 import {
+  DEFAULT_PRICE_MODE,
   planTotals,
   serverDecisionsToMap,
   toRecordPlanRowDecisionPayload,
   type PlanDecision,
   type PlanDecisionMap,
 } from '../lib/planDecisions';
+import type { PlanRowPriceMode } from '../types/decisions.types';
 import type { ProductEconomics } from '../lib/productHealth';
 import {
   cheaperAlternative,
@@ -49,7 +51,7 @@ import { trajectoryKey, type ChannelTrendEntry, type TrajectoryEntry } from '../
 import { isGroupedLine, type PlanChannel } from '../lib/planLineGrouping';
 import type { ProductPhotoStatus } from '../components/ProductPhotoPopover';
 import { levelKey, type LevelSuggestion } from '../lib/levelSuggestion';
-import type { PoReceipt } from '../lib/poCover';
+import { isProjectOnlyLine, type PoReceipt } from '../lib/poCover';
 import type { ProductPurchaseTrend } from '../lib/purchaseTrend';
 
 /**
@@ -69,6 +71,18 @@ import type { ProductPurchaseTrend } from '../lib/purchaseTrend';
 /** Cache key for the run's persisted row decisions (S16) - exported so a caller that
  *  clears a run's decisions server-side (the demo Reset action) can invalidate it. */
 export const planRowDecisionsKey = (runId: string | null) => ['plan-lines', runId, 'row-decisions'];
+
+/** A pending price/supplier change on a row, before (or alongside) its decision. */
+export interface PlanRowChoice {
+  priceMode?: PlanRowPriceMode;
+  supplierCode?: string;
+}
+
+/** The same pair, resolved: never undefined, so a control always has a value to show. */
+export interface ResolvedRowChoice {
+  priceMode: PlanRowPriceMode;
+  supplierCode: string | null;
+}
 
 export function usePlanLines(runId: string | null, enabled = true) {
   const on = Boolean(runId) && enabled;
@@ -239,6 +253,10 @@ export function usePlanLines(runId: string | null, enabled = true) {
     [planRowDecisions.data, lines, cover.data],
   );
 
+  // Read inside `chooseRow`, whose identity must not change with every decision fetch.
+  const decisionsRef = useRef(decisions);
+  decisionsRef.current = decisions;
+
   /** The header's own "N of Total made" - counted server-side, never off this session's
    *  own state (S16). */
   const decidedCount = planRowDecisions.data?.decided_count ?? 0;
@@ -254,12 +272,30 @@ export function usePlanLines(runId: string | null, enabled = true) {
    * actually changed; a failure is re-thrown (with the count, on a grouped line) for the
    * caller - which owns the control the buyer is looking at - to toast.
    */
+  /**
+   * The price call and the supplier the buyer made on a row BEFORE deciding it (AC-R13 /
+   * AC-R14). Held here rather than written straight through, because writing one would
+   * create a decision - and a row nobody has settled must not start counting as decided
+   * just because its supplier was changed. `decide` folds it into the payload; a row that
+   * is ALREADY decided is re-recorded on the spot, so the persisted decision keeps up.
+   */
+  const [rowChoices, setRowChoices] = useState<Record<string, PlanRowChoice>>({});
+  // Read through a ref inside `decide` so the callback's identity stays stable - the grid
+  // memoises whole columns on it (see `renderSuggestedQtyCell`).
+  const rowChoicesRef = useRef(rowChoices);
+  rowChoicesRef.current = rowChoices;
+
   const decide = useCallback(
     async (line: PlanLine, next: PlanDecision) => {
       const recIds = isGroupedLine(line)
         ? line.__group.members.map((m) => m.rec.id)
         : [line.rec.id];
-      const payload = toRecordPlanRowDecisionPayload(next);
+      const choice = rowChoicesRef.current[line.id];
+      const payload = toRecordPlanRowDecisionPayload({
+        ...next,
+        priceMode: next.priceMode ?? choice?.priceMode,
+        supplierCode: next.supplierCode ?? choice?.supplierCode,
+      });
       const results = await Promise.allSettled(
         recIds.map((id) => recordPlanRowDecision(id, payload)),
       );
@@ -277,6 +313,39 @@ export function usePlanLines(runId: string | null, enabled = true) {
       );
     },
     [qc, runId],
+  );
+
+  /**
+   * Change the price call or the supplier on a row. A row that already carries a decision
+   * is re-recorded immediately (so the persisted decision, and the draft PO it will raise,
+   * carry the change); an undecided row just remembers it until it IS decided.
+   */
+  const chooseRow = useCallback(
+    async (line: PlanLine, patch: PlanRowChoice) => {
+      const merged = { ...rowChoicesRef.current[line.id], ...patch };
+      rowChoicesRef.current = { ...rowChoicesRef.current, [line.id]: merged };
+      setRowChoices((prev) => ({ ...prev, [line.id]: merged }));
+      const existing = decisionsRef.current[line.id];
+      if (existing) await decide(line, { ...existing, ...merged });
+    },
+    [decide],
+  );
+
+  /**
+   * What the row's price + supplier controls should READ: the buyer's own pending choice
+   * first, then whatever their persisted decision carries, then the engine's proposal.
+   */
+  const choiceFor = useCallback(
+    (line: PlanLine): ResolvedRowChoice => {
+      const pending = rowChoices[line.id];
+      const decided = decisions[line.id];
+      return {
+        priceMode: pending?.priceMode ?? decided?.priceMode ?? DEFAULT_PRICE_MODE,
+        supplierCode:
+          pending?.supplierCode ?? decided?.supplierCode ?? line.supplier?.code ?? null,
+      };
+    },
+    [rowChoices, decisions],
   );
 
   /** Withdraw a row decision back to undecided - the same per-member fan-out as `decide`. */
@@ -429,18 +498,25 @@ export function usePlanLines(runId: string | null, enabled = true) {
    * figure is every member's own receipts concatenated - the same "what is actually
    * inbound across this product's locations" reading the summed `on_hand`/`net_position`
    * fields already give the row.
+   *
+   * A PROJECT row serves none (P8, `isProjectOnlyLine`): its purchase order is consumed by
+   * the Order Inquiry's own links, so offering it here would have the buyer net the same
+   * quantity a second time. Checked per MEMBER on a grouped row, so a product whose project
+   * bin and dealer bin are summed together still shows the dealer bin's receipts.
    */
   const poFor = useCallback(
     (line: PlanLine): PoReceipt[] => {
       if (isGroupedLine(line)) {
         const out: PoReceipt[] = [];
         for (const member of line.__group.members) {
+          if (isProjectOnlyLine(member)) continue;
           const key = levelKey(member.product_id, member.warehouse_id);
           const hit = key ? poBook.data?.po_book[key] : undefined;
           if (hit) out.push(...hit);
         }
         return out;
       }
+      if (isProjectOnlyLine(line)) return [];
       const key = levelKey(line.product_id, line.warehouse_id);
       return (key ? poBook.data?.po_book[key] : undefined) ?? [];
     },
@@ -545,6 +621,8 @@ export function usePlanLines(runId: string | null, enabled = true) {
     lines,
     decisions,
     decide,
+    chooseRow,
+    choiceFor,
     clear,
     // The "N of Total made" header's own server-counted figures (S16) - the caller no
     // longer derives them from `decisions`/`totals`, which count whatever is on screen
@@ -564,6 +642,10 @@ export function usePlanLines(runId: string | null, enabled = true) {
     // as a literal on the screen that renders it.
     trendSeriesMonths: trend.data?.series_months ?? 24,
     purchaseTrendWindowMonths: purchaseTrend.data?.window_months ?? 3,
+    // Whether the lazy fetch has ANSWERED. A product with no purchases and a fetch that
+    // has not run both read as `undefined` from `purchaseTrendFor`, and the ledger's
+    // History block must not print "never purchased" for the second one.
+    purchaseTrendReady: purchaseTrend.isSuccess,
     requestPurchaseTrend,
     hasPhotoFor,
     photoStatus,
@@ -573,6 +655,11 @@ export function usePlanLines(runId: string | null, enabled = true) {
     healthThresholds: economics.data?.thresholds ?? {
       margin_floor_pct: 15,
       dead_turnover_months: 6,
+    },
+    /** The movement windows the health class was judged on (AC-R12). */
+    healthWindows: {
+      sold_window_months: economics.data?.sold_window_months,
+      bought_window_months: economics.data?.bought_window_months,
     },
     amendLevel,
     updateMoq,

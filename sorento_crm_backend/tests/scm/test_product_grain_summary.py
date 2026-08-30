@@ -302,16 +302,18 @@ def test_write_rows_sums_project_and_retail_need_across_locations(db):
     run = _run(db, decision_grain="product", contract_version=1)
     brw, jb = _warehouse(db, "BRW"), _warehouse(db, "JB")
     _rec(db, run, product, brw, rounded_qty=1,
-         inputs={"project_need": 1, "retail_need": 0, "unclassified_need": 0})
+         inputs={"project_need": 1, "retail_need": 0})
     _rec(db, run, product, jb, rounded_qty=1,
-         inputs={"project_need": 0, "retail_need": 1, "unclassified_need": 2})
+         inputs={"project_need": 0, "retail_need": 1})
 
     assert svc.write_rows(db, run.id) == 1
     row = _row(db, run, product)
 
     assert float(row.project_buy_qty) == 1
     assert float(row.retail_replenishment_qty) == 1
-    assert float(row.unclassified_demand_qty) == 2
+    # 0 since P4: the plan row states no unclassified figure any more, and the column
+    # survives on `order_summary_row` only so an OLD run's report still reads back.
+    assert float(row.unclassified_demand_qty) == 0
 
 
 def test_a_run_frozen_before_plan_basis_existed_still_sums_its_rows(db):
@@ -323,16 +325,18 @@ def test_a_run_frozen_before_plan_basis_existed_still_sums_its_rows(db):
     run = _run(db, decision_grain="product", contract_version=1)
     brw, jb = _warehouse(db, "BRW"), _warehouse(db, "JB")
     _rec(db, run, product, brw, rounded_qty=1, canonical=False,
-         inputs={"project_need": 1, "retail_need": 0, "unclassified_need": 0})
+         inputs={"project_need": 1, "retail_need": 0})
     _rec(db, run, product, jb, rounded_qty=1, canonical=False,
-         inputs={"project_need": 0, "retail_need": 1, "unclassified_need": 2})
+         inputs={"project_need": 0, "retail_need": 1})
 
     assert svc.write_rows(db, run.id) == 1
     row = _row(db, run, product)
 
     assert float(row.project_buy_qty) == 1
     assert float(row.retail_replenishment_qty) == 1
-    assert float(row.unclassified_demand_qty) == 2
+    # 0 since P4: the plan row states no unclassified figure any more, and the column
+    # survives on `order_summary_row` only so an OLD run's report still reads back.
+    assert float(row.unclassified_demand_qty) == 0
     assert "plan_basis" not in (
         db.query(ReorderRecommendation)
         .filter(ReorderRecommendation.run_id == run.id).first().inputs
@@ -346,7 +350,7 @@ def test_earliest_project_need_date_is_null_when_project_buy_qty_is_zero(db):
     run = _run(db, decision_grain="product", contract_version=1)
     wh = _warehouse(db)
     _rec(db, run, product, wh, rounded_qty=3,
-         inputs={"project_need": 0, "retail_need": 3, "unclassified_need": 0})
+         inputs={"project_need": 0, "retail_need": 3})
 
     svc.write_rows(db, run.id)
     row = _row(db, run, product)
@@ -360,7 +364,7 @@ def test_uom_decimal_places_is_copied_from_the_products_base_uom(db):
     run = _run(db, decision_grain="product", contract_version=1)
     wh = _warehouse(db)
     _rec(db, run, product, wh, rounded_qty=1,
-         inputs={"project_need": 1, "retail_need": 0, "unclassified_need": 0})
+         inputs={"project_need": 1, "retail_need": 0})
 
     svc.write_rows(db, run.id)
     row = _row(db, run, product)
@@ -385,9 +389,9 @@ def test_suggested_qty_rounds_the_product_total_once_not_per_location(db):
     brw, jb = _warehouse(db, "BRW"), _warehouse(db, "JB")
     _supplier_link(db, product, moq=None, multiple=10)
     _rec(db, run, product, brw, rounded_qty=1,
-         inputs={"project_need": 1, "retail_need": 0, "unclassified_need": 0})
+         inputs={"project_need": 1, "retail_need": 0})
     _rec(db, run, product, jb, rounded_qty=1,
-         inputs={"project_need": 0, "retail_need": 1, "unclassified_need": 0})
+         inputs={"project_need": 0, "retail_need": 1})
 
     svc.write_rows(db, run.id)
     row = _row(db, run, product)
@@ -403,9 +407,9 @@ def test_suggested_qty_keeps_fractional_precision_with_no_supplier_constraint(db
     run = _run(db, decision_grain="product", contract_version=1)
     brw, jb = _warehouse(db, "BRW"), _warehouse(db, "JB")
     _rec(db, run, product, brw, rounded_qty=1.5,
-         inputs={"project_need": 1.5, "retail_need": 0, "unclassified_need": 0})
+         inputs={"project_need": 1.5, "retail_need": 0})
     _rec(db, run, product, jb, rounded_qty=1.0,
-         inputs={"project_need": 0, "retail_need": 1.0, "unclassified_need": 0})
+         inputs={"project_need": 0, "retail_need": 1.0})
 
     svc.write_rows(db, run.id)
     row = _row(db, run, product)
@@ -420,7 +424,7 @@ def test_an_ea_products_fractional_need_rounds_to_a_whole_unit_once(db):
     run = _run(db, decision_grain="product", contract_version=1)
     wh = _warehouse(db)
     _rec(db, run, product, wh, rounded_qty=2.5,
-         inputs={"project_need": 1.2, "retail_need": 1.3, "unclassified_need": 0})
+         inputs={"project_need": 1.2, "retail_need": 1.3})
 
     svc.write_rows(db, run.id)
     row = _row(db, run, product)
@@ -428,9 +432,32 @@ def test_an_ea_products_fractional_need_rounds_to_a_whole_unit_once(db):
     assert float(row.suggested_qty) == 3
 
 
-def test_unclassified_need_never_enters_the_suggested_quantity(db):
-    """AC-E06: unclassified demand stays visible on the row but is excluded from the
-    actionable total."""
+def test_an_OLD_runs_unclassified_figure_still_reaches_its_own_report(db):
+    """The one path that still reads `unclassified_need`, and the reason it was kept.
+
+    The current engine states no such figure and `order_summary_row` reports 0 for every
+    run it writes. But a run frozen BEFORE `plan_basis` existed is re-frozen through the
+    row-wise branch, and it did measure one - dropping the read would rewrite that run's
+    own report to say 0 for something it counted, which is the opposite of what a frozen
+    report is for.
+    """
+    product = _product(db)
+    run = _run(db, decision_grain="product", contract_version=1)
+    wh = _warehouse(db)
+    _rec(db, run, product, wh, rounded_qty=5, canonical=False,
+         inputs={"project_need": 2, "retail_need": 3, "unclassified_need": 100})
+
+    svc.write_rows(db, run.id)
+    row = _row(db, run, product)
+
+    assert float(row.unclassified_demand_qty) == 100
+    assert float(row.suggested_qty) == 5, "and it still never enters the actionable total"
+
+
+def test_the_suggested_quantity_is_project_plus_retail_and_nothing_else(db):
+    """AC-E06 as P4 leaves it: there is no third channel to exclude, so the actionable
+    total is the two the row states. A stale `unclassified_need` on an OLD run's snapshot
+    must not be read back into the total either - the freeze ignores it."""
     product = _product(db)
     run = _run(db, decision_grain="product", contract_version=1)
     wh = _warehouse(db)
@@ -440,8 +467,8 @@ def test_unclassified_need_never_enters_the_suggested_quantity(db):
     svc.write_rows(db, run.id)
     row = _row(db, run, product)
 
-    assert float(row.unclassified_demand_qty) == 100
-    assert float(row.suggested_qty) == 5, "unclassified must not inflate the actionable total"
+    assert float(row.unclassified_demand_qty) == 0
+    assert float(row.suggested_qty) == 5, "the stale figure must not inflate the total"
 
 
 def test_project_buy_is_not_suppressed_by_a_retail_reorder_trigger(db):
@@ -598,17 +625,18 @@ def test_a_legacy_run_reports_is_legacy_and_no_channel_fields(db):
 # svc.locations: the drill reconciles against the product row (AC-F07, F08)
 # =========================================================================== #
 
-def test_locations_drill_reconciles_the_product_rows_three_quantities(db):
+def test_locations_drill_reconciles_the_product_rows_quantities(db):
     """AC-F03/F07/F08: the per-location channel breakdown the drill opens to must sum back
-    to exactly the three quantities the product row carries - one calculation, two
-    presentations, never two different answers for the same number."""
+    to exactly the quantities the product row carries - one calculation, two presentations,
+    never two different answers for the same number. TWO channels since P4, and the drill
+    must not state a third."""
     product = _product(db)
     run = _run(db, decision_grain="product", contract_version=1)
     brw, jb = _warehouse(db, "BRW"), _warehouse(db, "JB")
     _rec(db, run, product, brw, rounded_qty=6,
-         inputs={"project_need": 4, "retail_need": 2, "unclassified_need": 1})
+         inputs={"project_need": 4, "retail_need": 2})
     _rec(db, run, product, jb, rounded_qty=5,
-         inputs={"project_need": 0, "retail_need": 3, "unclassified_need": 2})
+         inputs={"project_need": 0, "retail_need": 3})
     svc.write_rows(db, run.id)
     row = _row(db, run, product)
 
@@ -618,8 +646,8 @@ def test_locations_drill_reconciles_the_product_rows_three_quantities(db):
     assert sum(l["project_need"] for l in out["locations"]) == float(row.project_buy_qty) == 4
     assert (sum(l["retail_need"] for l in out["locations"])
             == float(row.retail_replenishment_qty) == 5)
-    assert (sum(l["unclassified_need"] for l in out["locations"])
-            == float(row.unclassified_demand_qty) == 3)
+    assert all("unclassified_need" not in l for l in out["locations"])
+    assert float(row.unclassified_demand_qty) == 0
     assert out["suggested_qty"] == float(row.suggested_qty)
     assert out["uom_decimal_places"] == row.uom_decimal_places
 
@@ -632,7 +660,7 @@ def test_locations_drill_earliest_need_date_is_null_when_project_buy_qty_is_zero
     run = _run(db, decision_grain="product", contract_version=1)
     wh = _warehouse(db)
     _rec(db, run, product, wh, rounded_qty=3,
-         inputs={"project_need": 0, "retail_need": 3, "unclassified_need": 0})
+         inputs={"project_need": 0, "retail_need": 3})
     svc.write_rows(db, run.id)
     row = _row(db, run, product)
 
@@ -751,9 +779,9 @@ def test_re_deciding_replaces_the_split_rather_than_rescaling_it(db):
     brw, jb = _warehouse(db, "BRW"), _warehouse(db, "JB")
     sup = _supplier_link(db, product)
     _rec(db, run, product, brw, rounded_qty=1, net_position=-10,
-         inputs={"project_need": 1, "retail_need": 0, "unclassified_need": 0})
+         inputs={"project_need": 1, "retail_need": 0})
     _rec(db, run, product, jb, rounded_qty=1, net_position=-10,
-         inputs={"project_need": 0, "retail_need": 1, "unclassified_need": 0})
+         inputs={"project_need": 0, "retail_need": 1})
     svc.write_rows(db, run.id)
     svc.record_decision(db, product.product_code, run_id=run.id, chosen_qty=2,
                         supplier_code=sup.supplier_code, actor="mr loo")

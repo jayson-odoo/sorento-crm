@@ -1,0 +1,264 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Fulfilment feedback plan</title>
+<style>
+:root{--bg:#fafaf9;--fg:#1c1917;--mut:#6b7280;--line:#e7e5e4;--card:#fff;--rose:#e11d48;--sky:#0284c7;--em:#059669;--amb:#d97706;--vio:#7c3aed}
+body{font:14px/1.5 -apple-system,Inter,system-ui,sans-serif;background:var(--bg);color:var(--fg);margin:0;padding:32px;max-width:1160px}
+h1{font-size:22px;margin:0 0 4px}h2{font-size:16px;margin:32px 0 8px;border-bottom:1px solid var(--line);padding-bottom:4px}h3{font-size:14px;margin:18px 0 6px}
+.sub{color:var(--mut);margin-bottom:24px}
+table{border-collapse:collapse;width:100%;background:var(--card);font-size:13px}th,td{border:1px solid var(--line);padding:6px 8px;text-align:left;vertical-align:top}th{background:#f5f5f4}
+td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin:10px 0}
+.card b{display:block;margin-bottom:4px}
+.q{background:#fffbeb;border-color:#fcd34d}
+.q label{display:block;margin:3px 0}
+.q button{margin-top:6px;font:inherit;font-size:12px;padding:4px 10px;border:1px solid #d6d3d1;border-radius:6px;background:#fff;cursor:pointer}
+.q textarea{width:100%;box-sizing:border-box;font:inherit;font-size:12px;margin-top:4px}
+.ruled{background:#ecfdf5;border-color:#a7f3d0}
+.badge{display:inline-block;font-size:11px;padding:1px 6px;border-radius:999px;border:1px solid var(--line);background:#f5f5f4;color:var(--mut);margin-left:4px}
+.badge.new{background:#ecfdf5;border-color:#a7f3d0;color:var(--em)}
+.badge.chg{background:#fffbeb;border-color:#fcd34d;color:var(--amb)}
+.badge.pi{background:#f5f3ff;border-color:#ddd6fe;color:var(--vio)}
+.badge.r2{background:#fff1f2;border-color:#fecdd3;color:var(--rose)}
+.mock{border:1px solid var(--line);border-radius:8px;background:#fff;padding:10px 12px;margin:8px 0;font-size:12px;overflow-x:auto}
+.mock table{font-size:12px}
+.mock th{font-weight:500;color:var(--mut);white-space:nowrap}
+.bar{display:flex;height:8px;border-radius:4px;overflow:hidden;background:#f1f5f9;width:220px}
+.bar>div{background:var(--sky)}.bar.over>div{background:var(--rose)}
+.bars{display:flex;align-items:flex-end;gap:2px;height:56px;margin:6px 0 14px}
+.bars>div{width:9px;background:#cbd5e1;border-radius:2px 2px 0 0;position:relative}
+.bars>div.p{background:#93c5fd}.bars>div.r{background:#fcd34d}
+.bars>div.pk.p{background:var(--sky)}.bars>div.pk.r{background:var(--amb)}
+.bars>div span{position:absolute;top:100%;left:0;font-size:9px;color:var(--mut);white-space:nowrap}
+.pop{border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:#fff;display:inline-block;vertical-align:top;margin:4px 12px 4px 0;min-width:220px;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+.pop .t{font-weight:600;font-size:12px;margin-bottom:4px}
+.muted{color:var(--mut)}.rose{color:var(--rose)}.em{color:var(--em)}.amb{color:var(--amb)}
+img{max-width:100%;border:1px solid var(--line);border-radius:8px}
+code{background:#f5f5f4;padding:1px 4px;border-radius:3px;font-size:12px}
+ol li,ul li{margin:3px 0}
+input[type=number]{width:64px;font:inherit;font-size:12px;padding:2px 4px;border:1px solid #d6d3d1;border-radius:4px}
+.sw{display:inline-block;width:10px;height:10px;border-radius:2px;vertical-align:middle;margin-right:4px}
+.public{border:1px solid var(--line);border-radius:10px;background:#fff;padding:18px 22px;max-width:640px;margin:8px 0}
+.public h4{margin:0 0 2px;font-size:15px}
+.tabs{display:flex;gap:14px;border-bottom:1px solid var(--line);margin-bottom:8px;font-size:12px}
+.tabs span{padding:4px 0}.tabs .on{border-bottom:2px solid var(--fg);font-weight:600}
+.btn{display:inline-block;font-size:12px;padding:3px 10px;border:1px solid #d6d3d1;border-radius:6px;background:#fff}
+.btn.pri{background:#1c1917;color:#fff;border-color:#1c1917}
+.field{display:grid;grid-template-columns:140px minmax(0,1fr);gap:4px 12px;font-size:12px;margin:4px 0}
+.field .k{color:var(--mut)}
+.screen{background:#fff;border:1px solid var(--line);border-radius:10px;padding:16px;box-shadow:0 1px 2px rgba(0,0,0,.04);font-size:12px}
+.crumb{font-size:12px;color:var(--mut);margin-bottom:8px}.ttl{font-size:15px;font-weight:600;margin-bottom:10px}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.btn.p{background:#2563eb;color:#fff;border-color:#2563eb}
+.input{border:1px solid var(--line);border-radius:6px;padding:5px 10px;color:var(--mut);font-size:12px;background:#fff;min-width:220px}
+.pill{display:inline-block;border-radius:999px;padding:1px 7px;font-size:11px;font-weight:500}.pill.g{background:#e5e7eb;color:#374151}.pill.b{background:#dbeafe;color:#1e40af}
+.legend{display:flex;gap:14px;font-size:12px;color:var(--mut);margin:8px 0;flex-wrap:wrap}
+.cards{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;margin:10px 0}
+.cards .card{margin:0;padding:8px 10px}.cards .card .k{font-size:11px;color:var(--mut)}.cards .card .v{font-size:15px;font-weight:600}.cards .card .v small{font-weight:400;color:var(--mut);font-size:11px}
+.grid{border-collapse:separate;border-spacing:0}.grid th{font-weight:600;background:#f3f4f6}.grid td{padding:0;border:0;border-bottom:1px solid var(--line)}.cell{padding:6px 8px;min-height:44px}
+.cell .n{font-weight:600}.cell .s{font-size:11px;color:var(--mut)}.cell .bar{height:5px;width:auto;margin:4px 0 2px}.faded{opacity:.45}
+.pop .ttl{font-size:14px}.two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.box{border:1px solid var(--line);border-radius:8px;padding:8px 10px}.box b{display:block;font-size:12px;margin-bottom:4px}.box .l{display:flex;justify-content:space-between;font-size:12px;padding:2px 0;gap:8px}
+</style></head><body>
+<h1>Fulfilment side: Ms Tee's feedback on the loading plan, PI and SPO planner</h1>
+<div class="sub">DRAFT r5, 26 Aug. 24 annotations applied; Q1-Q8 recorded as rulings (section 6). Three asks added from the review: <b>PI revisions with price</b>, <b>supplier link page</b>, <b>packing-list edit in place</b>. Plan: <code>documentation/plans/scm/PLAN-scm-fulfilment-feedback.md</code>, UAC alongside. Nothing built. Section 9 asks for the go. r5: PI to packing list visibility drawn (sections 4 and 5), Q9 in 8b.</div>
+
+<h2>1. The journey, one line per hand-off</h2>
+<table>
+<tr><th>#</th><th>Who</th><th>Does</th><th>System</th><th>Today</th></tr>
+<tr><td>1</td><td>Ms Tee</td><td>Opens Loading plan, picks the supplier. <b>Stock list optional.</b> With it, "They hold" = packed / unfinished. Without it, the newest un-converted PI stands in <span class="badge pi">PI 31/07</span>. With neither, "-" and the plan still builds.</td><td>Pure read. Universe = supplier's products with open need &cup; stock list &cup; newest PI</td><td class="rose">Empty state "No stock list yet". Universe = stock list only</td></tr>
+<tr><td>2</td><td>Ms Tee</td><td>Decides qty per row from Need, <b>On hand at site pools only</b>, <b>SPO at site pools only</b> <span class="badge r2">r2</span>, <b>Incoming PL</b> as a reference <span class="badge r2">r2</span>, <b>Sales history per product, project + retail</b> <span class="badge r2">r2</span></td><td>Suggested = need - pool on hand - pool SPO, floored 0. Incoming PL never subtracted</td><td class="rose">On hand and SPO = all 82 warehouses; no incoming PL; no history</td></tr>
+<tr><td>3</td><td>Ms Tee</td><td>Send to supplier</td><td>PDF + <b>xlsx in their stock-list layout</b> with Qty to load + <b>read-only tokenised link</b> <span class="badge r2">r2</span>, one email</td><td class="rose">PDF only</td></tr>
+<tr><td>4</td><td>Supplier</td><td>Replies with the pre-load list (one file, 5 container blocks)</td><td>Upload at Proforma invoices (exists). <b>Lines keep 箱数, cbm/unit, total cbm</b>; fill vs <b>65</b></td><td class="rose">cbm dropped at import; 40HQ = 68</td></tr>
+<tr><td>5</td><td>Ms Tee</td><td>Adjusts the PI to the container: edit qty, remove a line; supplier's figure kept beside; <b>export adjusted PI xlsx</b> back to them</td><td><code>qty</code> + frozen <code>supplier_qty</code> + adjusted by / at</td><td class="rose">PI read-only</td></tr>
+<tr><td>5b <span class="badge r2">r2</span></td><td>Supplier</td><td>Sends the updated PI: new qty, <b>new price</b></td><td>Uploaded as a <b>revision</b> of the PI; prior superseded; line diff (qty, price, amount); <b>current revision's price = the cost</b> "last incoming cost" reads</td><td class="rose">Re-upload = a second unrelated PI</td></tr>
+<tr><td>6</td><td>Ms Tee</td><td>Convert current revision to packing list (exists)</td><td>Draft shipment, <b>line cbm carried</b>; Lines tab shows CBM + total</td><td class="rose">cbm never shown</td></tr>
+<tr><td>6b <span class="badge r2">r2</span></td><td>Ms Tee</td><td>Edits the packing list</td><td><b>Edit in place on the detail tabs</b>, same fields same order; <code>/edit</code> page retired</td><td class="rose">Separate /edit page, 3-card form unlike the 5-tab detail</td></tr>
+<tr><td>7</td><td>Ms Tee</td><td>SPO planner: <b>PO covers by PO document date</b> (<code>order_date</code>), tickable. <b>SO covered with checkboxes</b>, project by delivery date first, then dealer; ticks drive split + qty</td><td><code>POST /spo</code> gains <code>po_take_ids</code> + <code>so_line_ids</code>; <b>link rows on the part 2 I table</b> so PO and SO both know the SPO <span class="badge r2">r2</span></td><td class="rose">PO takes by expected date, fixed; SO coverage computed; PO / SO have no SPO link</td></tr>
+</table>
+<div class="card"><b>The rule</b> The supplier's number is never overwritten. Stock list, every PI revision, packing list are their statements; our ask, our adjustment, our allocation sit beside them with actor + time.</div>
+
+<h2>2. Loading plan: today vs proposed, in the fulfilment-board vocabulary <span class="badge r2">r3</span></h2>
+<p class="muted">Today (your screenshot, JINBAICHUAN): 13 columns per product.</p>
+<img src="loading-plan-today.png" alt="loading plan today">
+<h3>Proposed: the cards from the board above, today's columns kept (Unclassified goes with part 2 P4; Incoming PL and Ordered 12 months added), the board-style popover behind the row <span class="badge r2">r4</span></h3>
+<div class="screen">
+<div class="crumb">SCM / Fulfilment / Loading plan</div>
+<div class="row"><span class="input" style="min-width:420px;color:var(--fg)">CHAOZHOU JINBAICHUAN SANITARY WARE TECHNOLOGY CO., LTD</span><span class="btn">Plan until: 30/09/2026</span><span class="pill b">Stock list 21/08</span><span class="btn">Refresh suggestion</span><span class="btn p">Send to supplier</span></div>
+<div class="muted" style="font-size:11px;margin:4px 0">SO book 21/08 8:33 &middot; PO book 21/08 8:23 &middot; SPO 21/08 8:05 &middot; Stock list 21/08 &middot; PI 31/07. Supplier name shown in full: every dropdown widens to its longest option (F0).</div>
+<div class="cards">
+<div class="card"><div class="k">Need <small>open SO, until 30/09</small></div><div class="v">61,802</div></div>
+<div class="card"><div class="k"><span class="sw" style="background:var(--em)"></span>From pool stock</div><div class="v">10,244</div></div>
+<div class="card"><div class="k"><span class="sw" style="background:var(--vio)"></span>From SPO on the water</div><div class="v">821</div></div>
+<div class="card"><div class="k"><span class="sw" style="background:var(--rose)"></span>To ask <small>your edits</small></div><div class="v">31,347 <small>est. 2,850 cbm</small></div></div>
+<div class="card"><div class="k">They can pack now</div><div class="v">6,290 <small>packed</small></div></div>
+</div>
+<table class="grid"><tr><th>Rank</th><th>Product</th><th>Suggested</th><th class="n">Need</th><th class="n">Project</th><th class="n">Retail</th><th class="n">On hand <span class="badge chg">pools</span></th><th class="n">SPO <span class="badge chg">pools</span></th><th class="n">Incoming PL <span class="badge new">ref</span></th><th class="n">PO</th><th>Earliest need-by</th><th class="n">Open SOs</th><th>They hold</th><th>Ordered 12 mo <span class="badge new">new</span></th></tr>
+<tr><td style="padding:6px 8px">1 <span class="muted">0.94</span></td><td style="padding:6px 8px"><b>SRTWB241</b></td><td style="padding:6px 8px"><input type="number" value="2426"></td><td class="n" style="padding:6px 8px">3,999</td><td class="n" style="padding:6px 8px">2,229</td><td class="n" style="padding:6px 8px">1,770</td><td class="n" style="padding:6px 8px">1,573</td><td class="n" style="padding:6px 8px">0</td><td class="n muted" style="padding:6px 8px">600</td><td class="n" style="padding:6px 8px">297</td><td style="padding:6px 8px">20/11/2024</td><td class="n" style="padding:6px 8px">37 <span class="muted">&#9432;</span></td><td style="padding:6px 8px">522 packed<br><span class="muted">1,411 unfinished</span></td><td style="padding:6px 8px"><span class="sw" style="background:#93c5fd"></span>P Apr 1,240<br><span class="sw" style="background:#fcd34d"></span>R Jun 320</td></tr>
+<tr><td style="padding:6px 8px">2 <span class="muted">0.93</span></td><td style="padding:6px 8px"><b>SRTWB243</b></td><td style="padding:6px 8px"><input type="number" value="2013"></td><td class="n" style="padding:6px 8px">3,991</td><td class="n" style="padding:6px 8px">3,515</td><td class="n" style="padding:6px 8px">476</td><td class="n" style="padding:6px 8px">1,798</td><td class="n" style="padding:6px 8px">180</td><td class="n muted" style="padding:6px 8px">0</td><td class="n" style="padding:6px 8px">1,631</td><td style="padding:6px 8px">08/01/2025</td><td class="n" style="padding:6px 8px">50 <span class="muted">&#9432;</span></td><td style="padding:6px 8px">1,615 packed<br><span class="muted">10,360 unfinished</span></td><td style="padding:6px 8px"><span class="sw" style="background:#93c5fd"></span>P Mar 980<br><span class="sw" style="background:#fcd34d"></span>R Feb 140</td></tr>
+<tr><td style="padding:6px 8px">3 <span class="muted">0.87</span></td><td style="padding:6px 8px"><b>SRTWB246</b></td><td style="padding:6px 8px"><input type="number" value="212"></td><td class="n" style="padding:6px 8px">307</td><td class="n" style="padding:6px 8px">153</td><td class="n" style="padding:6px 8px">154</td><td class="n" style="padding:6px 8px">95</td><td class="n" style="padding:6px 8px">0</td><td class="n muted" style="padding:6px 8px">0</td><td class="n" style="padding:6px 8px">176</td><td style="padding:6px 8px">05/03/2025</td><td class="n" style="padding:6px 8px">58 <span class="muted">&#9432;</span></td><td style="padding:6px 8px">408 <span class="badge pi">PI 31/07</span></td><td style="padding:6px 8px" class="muted">No orders</td></tr>
+<tr class="faded"><td style="padding:6px 8px" class="muted">-</td><td style="padding:6px 8px"><b>SRTSP131</b></td><td style="padding:6px 8px"><input type="number" value="0"></td><td class="n muted" style="padding:6px 8px">No open demand</td><td class="n" style="padding:6px 8px">0</td><td class="n" style="padding:6px 8px">0</td><td class="n" style="padding:6px 8px">12</td><td class="n" style="padding:6px 8px">0</td><td class="n muted" style="padding:6px 8px">0</td><td class="n" style="padding:6px 8px">0</td><td style="padding:6px 8px">-</td><td class="n" style="padding:6px 8px">0</td><td style="padding:6px 8px">2 packed</td><td style="padding:6px 8px" class="muted">-</td></tr>
+</table>
+</div>
+<h3>Row popover (click the product), same shape as the board cell popover</h3>
+<div class="pop" style="width:auto;max-width:760px">
+<div class="ttl">SRTWB241 &middot; rank 1 (0.94) &middot; needed by 20/11/2024</div>
+<div class="two">
+<div class="box"><b>Quantity needed</b><div class="l"><span>Project</span><span>2,229</span></div><div class="l"><span>Retail (dealer)</span><span>1,770</span></div><div class="l"><span>Open sales orders</span><span>37 <span class="muted">view</span></span></div><div class="l"><span>Earliest need-by</span><span>20/11/2024</span></div></div>
+<div class="box"><b>Suggestion</b><div class="l"><span><span class="sw" style="background:var(--rose)"></span>Ask supplier</span><span><b>2,426</b></span></div><div class="l muted"><span>= need 3,999 - pool stock 1,573 - SPO 0</span></div><div class="l"><span>Incoming PL <span class="muted">reference</span></span><span>600</span></div><div class="l"><span>Outstanding PO <span class="muted">not deducted</span></span><span>297</span></div><div class="l"><span>They hold</span><span>522 packed &middot; 1,411 unfinished</span></div></div>
+</div>
+<table style="margin-top:10px"><tr><th>Location</th><th>Where</th><th class="n">On hand</th><th class="n">SPO</th><th class="n">Counted</th></tr>
+<tr><td>BRW</td><td><span class="pill b">Shared pool</span></td><td class="n">1,573</td><td class="n">0</td><td class="n">1,573</td></tr>
+<tr><td>MWH</td><td><span class="pill b">Shared pool</span></td><td class="n">0</td><td class="n">0</td><td class="n">0</td></tr>
+<tr><td>WH3</td><td><span class="pill b">Shared pool</span></td><td class="n">0</td><td class="n">0</td><td class="n">0</td></tr>
+<tr><td>DC1</td><td><span class="pill b">Shared pool</span></td><td class="n">0</td><td class="n">0</td><td class="n">0</td></tr>
+<tr><td>RSW</td><td><span class="pill b">Shared pool</span></td><td class="n">0</td><td class="n">0</td><td class="n">0</td></tr>
+<tr class="muted"><td>BRW-BB, DC1-BB, ... (12)</td><td><span class="pill g">Group locations</span></td><td class="n">640</td><td class="n">0</td><td class="n">-</td></tr>
+</table>
+<div class="two" style="margin-top:10px">
+<div class="box"><b>Ordered, last 12 months <span class="muted">(SO booked)</span></b>
+<div class="bars"><div class="p" style="height:30%"><span>Sep</span></div><div class="r" style="height:12%"></div><div class="p" style="height:45%"></div><div class="r" style="height:10%"></div><div class="p" style="height:38%"></div><div class="r" style="height:8%"></div><div class="p" style="height:22%"></div><div class="r" style="height:14%"></div><div class="p" style="height:35%"></div><div class="r" style="height:9%"></div><div class="p" style="height:50%"></div><div class="r" style="height:11%"></div><div class="p" style="height:41%"></div><div class="r" style="height:13%"></div><div class="p pk" style="height:100%"><span>Apr</span></div><div class="r" style="height:16%"></div><div class="p" style="height:28%"></div><div class="r" style="height:12%"></div><div class="p" style="height:44%"></div><div class="r pk" style="height:26%"><span>Jun</span></div><div class="p" style="height:55%"></div><div class="r" style="height:10%"></div><div class="p" style="height:33%"><span>Aug</span></div><div class="r" style="height:9%"></div></div>
+<div class="l"><span><span class="sw" style="background:#93c5fd"></span>Project</span><span>peak Apr 1,240 &middot; avg 610</span></div><div class="l"><span><span class="sw" style="background:#fcd34d"></span>Retail</span><span>peak Jun 320 &middot; avg 140</span></div></div>
+<div class="box"><b>Incoming, for reference</b><div class="l"><span>PL 31/07 draft, JINBAICHUAN</span><span>400</span></div><div class="l"><span>FSCU8103365, ETA 27/07</span><span>200</span></div><div class="l"><span>PO 202607-S0105, due 30/09</span><span>297</span></div></div>
+</div>
+<table style="margin-top:10px"><tr><th>Contributing line</th><th>Customer &middot; agent</th><th class="n">Qty</th><th>Delivery</th><th>Location</th></tr>
+<tr><td>SO381895 L4</td><td>TUJU RESIDENCE &middot; CINDY LEE</td><td class="n">120</td><td>19/08/2026</td><td>BRW-BB</td></tr>
+<tr><td>SO409325 L2</td><td>KEE LIN TRADING</td><td class="n">25</td><td>15/09/2026</td><td>BRW</td></tr>
+<tr><td colspan="5" class="muted">... 37 lines, earliest first; Schedule view buckets these by week / month as today</td></tr></table>
+</div>
+<p class="muted">Kept from today: every column except Unclassified, rank + factors, editable Suggested, Table / Schedule toggle, unmatched-unfinished card, Send. Added: the five cards, Incoming PL, Ordered 12 months, the row popover.</p>
+<h2>3. Send to supplier: their sheet back, plus a link</h2>
+<div class="mock"><table>
+<tr><th>序号</th><th>型号</th><th>商标</th><th>规格</th><th>品名</th><th class="n">包装好库存</th><th class="n">空瓷</th><th class="n">体积(cbm)</th><th class="n">总体积(cbm)</th><th>备注</th><th class="n" style="background:#ecfdf5">需装数量 / Qty to load</th></tr>
+<tr><td>1</td><td>SRTWC286-SH-150NEW</td><td>S</td><td>150</td><td>连体马桶</td><td class="n">0</td><td class="n">0</td><td class="n">0.17</td><td class="n">540.43</td><td></td><td class="n" style="background:#ecfdf5"></td></tr>
+<tr><td></td><td>SRTWC286-SH-200NEW</td><td>S</td><td>200</td><td>连体马桶</td><td class="n">288</td><td class="n">243</td><td class="n"></td><td class="n"></td><td></td><td class="n" style="background:#ecfdf5">288</td></tr>
+<tr><td></td><td>SRTWC286-SH-250NEW</td><td>S</td><td>250NEW</td><td>连体马桶</td><td class="n">1509</td><td class="n"></td><td class="n"></td><td class="n"></td><td></td><td class="n" style="background:#ecfdf5">1200</td></tr>
+<tr><td colspan="11" class="muted">... every stock-list row in their order; requested rows not on their list appended below</td></tr>
+</table></div>
+<h3>Supplier link page <span class="badge r2">r2, Q6</span> <span class="muted">/c/sorento/supplier-request/{token}, no login, 30-day expiry, same pattern as the quotation sign page</span></h3>
+<div class="public">
+<h4>SORENTO SDN BHD &middot; 装柜需求 Container request</h4>
+<div class="muted" style="font-size:12px;margin-bottom:8px">致 To: 潮州市金百川卫浴科技有限公司 &middot; 21/08/2026 &middot; 有效期至 valid until 20/09/2026</div>
+<table style="font-size:12px"><tr><th>型号 Item</th><th>品名 Name</th><th class="n">需装数量 Qty to load</th><th class="n">贵司库存 You hold (packed / 空瓷)</th></tr>
+<tr><td>SRTWB241</td><td>SRTWB241</td><td class="n"><b>2,426</b></td><td class="n muted">522 / 1,411</td></tr>
+<tr><td>SRTWB243</td><td>SRTWB243</td><td class="n"><b>2,013</b></td><td class="n muted">1,615 / 10,360</td></tr>
+<tr><td>CWCY605</td><td>CWCY605</td><td class="n"><b>8,322</b></td><td class="n muted">377 / 52</td></tr>
+<tr><td colspan="4" class="muted">... 11 lines &middot; 合计 total 31,347</td></tr></table>
+<div style="margin-top:10px"><span class="btn pri">下载 Excel</span> <span class="btn">下载 PDF</span></div>
+<div class="muted" style="font-size:11px;margin-top:8px">No prices, no other suppliers, no navigation. Unknown and expired tokens show the same "link no longer available" page. Resend = new token, old one expires.</div>
+</div>
+
+<h2>4. PI: fit the container, adjust, then the supplier's revision</h2>
+<h3>PI list: see at a glance which PI is already in a packing list <span class="badge r2">r5</span></h3>
+<div class="screen">
+<div class="crumb">SCM / Fulfilment / Proforma invoices</div>
+<div class="row"><span class="input">Search PI, supplier</span><span class="btn">Packing list: Not converted</span><span class="btn">Supplier: All</span><span class="btn p">Convert 2 to packing list</span><span class="btn">Upload PI</span></div>
+<table style="margin-top:8px"><tr><th></th><th>PI number</th><th>Supplier</th><th>Invoice date</th><th class="n">Lines</th><th class="n">Volume</th><th class="n">Total</th><th>Revision</th><th>Packing list</th></tr>
+<tr><td><input type="checkbox"></td><td>PI-2026-7-31-1</td><td>JINBAICHUAN</td><td>31/07/2026</td><td class="n">1</td><td class="n">69.36 <span class="rose">/65</span></td><td class="n">RMB 102,000</td><td>1 of 1</td><td><span class="pill linked">FSCU8103365</span> <span class="muted">408 of 408 &middot; in transit</span></td></tr>
+<tr><td><input type="checkbox"></td><td>PI-2026-7-31-2</td><td>JINBAICHUAN</td><td>31/07/2026</td><td class="n">1</td><td class="n">67.68 <span class="rose">/65</span></td><td class="n">RMB 109,040</td><td>1 of 1</td><td><span class="pill partly">Split</span> <span class="muted">PL-D-0007 300 &middot; PL-D-0008 76</span></td></tr>
+<tr><td><input type="checkbox" checked></td><td>PI-2026-7-31-3</td><td>JINBAICHUAN</td><td>31/07/2026</td><td class="n">19</td><td class="n">63.9</td><td class="n">RMB 104,720</td><td><span class="pill b">2 of 2</span></td><td><span class="pill g">Not converted</span></td></tr>
+<tr class="faded"><td></td><td>PI-2026-7-31-3 <span class="muted">rev 1</span></td><td>JINBAICHUAN</td><td>31/07/2026</td><td class="n">19</td><td class="n">67.82</td><td class="n">RMB 106,880</td><td>Superseded</td><td class="muted">-</td></tr>
+<tr><td><input type="checkbox" checked></td><td>PI-2026-7-31-4</td><td>JINBAICHUAN</td><td>31/07/2026</td><td class="n">5</td><td class="n">67.4 <span class="rose">/65</span></td><td class="n">RMB 110,900</td><td>1 of 1</td><td><span class="pill g">Not converted</span></td></tr>
+<tr><td><input type="checkbox"></td><td>KL20260717</td><td>KAILU</td><td>17/07/2026</td><td class="n">19</td><td class="n muted">unmeasured</td><td class="n">RMB 239,975</td><td>1 of 1</td><td><span class="pill linked">FSCU8103365</span> <span class="muted">3,489 of 3,489</span></td></tr>
+</table>
+<div class="muted" style="margin-top:6px">Packing list column = the link rows. A converted PI cannot be ticked for Convert (tooltip names the packing list); the filter defaults to Not converted so the next choice is only among what is left. Superseded revisions sit faded under their current one.</div>
+</div>
+<h3>PI detail: adjust, revision, and where it went</h3>
+
+<div class="mock">
+<div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap"><b>PI-2026-7-31-3 &middot; JINBAICHUAN</b> <span class="badge">Revision 2 of 2 <span class="badge r2" style="margin-left:2px">r2</span></span> <span>Container <select><option>40HQ 65</option><option>40GP 58</option><option>20GP 28</option></select></span> <span>Volume <b>63.9</b> of 65 cbm <span class="em">98% full</span></span> <div class="bar"><div style="width:98%"></div></div> <span class="btn pri">Edit</span> <span class="btn">Export adjusted PI</span> <span class="btn">Convert to packing list</span></div>
+<div class="amb" style="margin:6px 0">Price changed on 4 lines vs revision 1 &middot; qty changed on 2 lines &middot; 1 line removed</div>
+<div style="margin:4px 0"><span class="pill g">Not converted</span> <span class="muted">Once converted this reads: In packing list <span class="pill linked">PL-D-0009</span> 1,442 of 1,442, or Split across PL-D-0009 1,000 / PL-D-0010 442. Each line below gains an "In packing list" column with the qty and the remainder.</span></div>
+<table style="margin-top:4px">
+<tr><th>#</th><th>产品型号</th><th class="n">Supplier qty</th><th class="n">Qty (ours)</th><th class="n">箱数</th><th class="n">cbm/unit</th><th class="n">Total cbm</th><th class="n">RMB <span class="muted">rev 1</span></th><th class="n">RMB <span class="muted">rev 2</span></th><th class="n">Amount</th><th>In packing list <span class="badge r2">r5</span></th></tr>
+<tr><td>1</td><td>CWB242</td><td class="n muted">200</td><td class="n">200</td><td class="n">200</td><td class="n">0.03</td><td class="n">6.00</td><td class="n muted">34.5</td><td class="n amb">36.0</td><td class="n">7,200</td><td class="muted">-</td></tr>
+<tr><td>5</td><td>SRTWC7405-RL-250</td><td class="n muted">198</td><td class="n">160</td><td class="n">160</td><td class="n">0.09</td><td class="n">14.40</td><td class="n">128</td><td class="n">128</td><td class="n">20,480</td><td class="muted">-</td></tr>
+<tr><td>9</td><td>CWC604-RL-250</td><td class="n muted">34</td><td class="n rose">removed</td><td class="n"></td><td class="n"></td><td class="n"></td><td class="n muted">128</td><td class="n"></td><td class="n"></td><td></td></tr>
+<tr><td colspan="11" class="muted">Revision 1 stays listed below, read-only. Convert works on the current revision only. "Last incoming cost" reads revision 2's price (36.0), never 34.5. Upload dialog proposes "Revision of PI-2026-7-31-3" when the supplier matches and &ge;50% item codes overlap; "Mark as revision of" on the detail fixes a wrong choice.</td></tr>
+</table></div>
+
+<h2>5. Packing list: edit in place, and where it came from <span class="badge r2">r2 / r5</span></h2>
+<div class="mock">
+<div class="tabs"><span>Timeline</span><span class="on">Details</span><span>Documents</span><span>Lines</span><span>SPO</span></div>
+<div style="display:flex;justify-content:space-between;align-items:center"><b>FSCU8103365 &middot; JINBAICHUAN</b> <span><span class="btn">Cancel</span> <span class="btn pri">Save</span></span></div>
+<div class="field"><span class="k">Container no.</span><span><input value="FSCU8103365" style="font:inherit;font-size:12px;padding:2px 4px;border:1px solid #d6d3d1;border-radius:4px"></span><span class="k">ETA</span><span><input value="27/07/2026" style="font:inherit;font-size:12px;padding:2px 4px;border:1px solid #d6d3d1;border-radius:4px"></span><span class="k">Seal no.</span><span><input value="J0713349" style="font:inherit;font-size:12px;padding:2px 4px;border:1px solid #d6d3d1;border-radius:4px"></span><span class="k">Delivery warehouse</span><span><select><option>BRW</option><option>MWH</option></select></span></div>
+<div class="muted" style="margin-top:6px">Same tab, same fields, same order as view; a value becomes an input. Lines tab: qty, supplier, cartons, cbm per row editable, add via the searchable product select, remove with confirm. <code>/edit</code> page retired; <code>/new</code> keeps the create form.</div>
+<div class="box" style="margin-top:10px"><b>Source proforma invoices <span class="badge r2">r5</span></b>
+<table style="font-size:12px"><tr><th>PI</th><th>Supplier</th><th>Invoice date</th><th>Revision</th><th class="n">Lines</th><th class="n">Qty from this PI</th><th class="n">Amount</th><th></th></tr>
+<tr><td>PI-2026-7-31-3</td><td>JINBAICHUAN</td><td>31/07/2026</td><td>2 of 2</td><td class="n">19</td><td class="n">1,442 <span class="muted">of 1,442</span></td><td class="n">RMB 104,720</td><td><span class="btn">Open</span></td></tr>
+<tr><td>PI-2026-7-31-2</td><td>JINBAICHUAN</td><td>31/07/2026</td><td>1 of 1</td><td class="n">1</td><td class="n">300 <span class="muted">of 376, rest in PL-D-0008</span></td><td class="n">RMB 87,000</td><td><span class="btn">Open</span></td></tr></table>
+<div class="muted" style="margin-top:4px">Card on the Details tab. Lines tab gains a "From PI" column (PI number + qty); Timeline shows "Created from PI-2026-7-31-3, PI-2026-7-31-2 by Ms Tee"; Documents tab lists the PI files. The Convert dialog can also "Add to existing draft packing list" so one container can be filled from PIs that arrived on different days.</div></div>
+</div>
+
+<h2>6. SPO planner: pick the PO and the SO, and park the links</h2>
+<div class="mock"><table>
+<tr><th>Product</th><th class="n">Packed</th><th class="n">PO covers</th><th class="n">On hand</th><th class="n">Incoming SPO</th><th class="n">SPO qty</th><th>SO covered</th><th>Location split</th></tr>
+<tr><td><b>SRTWC7405-RL-250</b> <span class="muted">&middot; JINBAICHUAN</span></td><td class="n">160</td><td class="n">160 <span class="muted">2 of 3 POs &#9432;</span></td><td class="n">95</td><td class="n">0</td><td class="n"><input type="number" value="160"></td><td>150 <span class="muted">3 of 6 lines &#9432;</span></td><td>BRW-BB 120 &middot; DC1-BB 30 &middot; <span class="muted">BRW 10 unassigned</span></td></tr>
+</table>
+<div style="margin-top:8px">
+<div class="pop"><div class="t">PO covers <span class="muted">by PO document date</span></div><table>
+<tr><td><input type="checkbox" checked></td><td>202605-S0060</td><td class="muted">doc 12/05 &middot; due 30/07</td><td class="n">100</td></tr>
+<tr><td><input type="checkbox" checked></td><td>202606-S0082</td><td class="muted">doc 03/06 &middot; due 15/08</td><td class="n">60</td></tr>
+<tr><td><input type="checkbox"></td><td>202607-S0105</td><td class="muted">doc 21/07 &middot; due 30/09</td><td class="n muted">80</td></tr>
+</table></div>
+<div class="pop"><div class="t">SO covered <span class="muted">project first by delivery date, then dealer</span></div><table>
+<tr><td><input type="checkbox" checked></td><td>SO381895 &middot; BRW-BB</td><td class="muted">project &middot; needed 19/08</td><td class="n">80</td></tr>
+<tr><td><input type="checkbox" checked></td><td>SO414033 &middot; BRW-BB</td><td class="muted">project &middot; needed 02/09</td><td class="n">40</td></tr>
+<tr><td><input type="checkbox" checked></td><td>SO416191 &middot; DC1-BB</td><td class="muted">project &middot; needed 10/09</td><td class="n">30</td></tr>
+<tr><td><input type="checkbox"></td><td>SO409325 &middot; BRW</td><td class="muted">dealer &middot; needed 15/09</td><td class="n muted">25</td></tr>
+<tr><td><input type="checkbox"></td><td>SO411133 &middot; BRW</td><td class="muted">dealer &middot; needed 28/09</td><td class="n muted">40</td></tr>
+</table><div class="muted" style="margin-top:4px">Ticked 150 of 160 packed; 10 unassigned at BRW.</div></div>
+</div>
+<h3>Where the SPO shows up afterwards <span class="badge r2">r4</span>: the same two tables part 1 G and I already give the PO and the SO</h3>
+<div class="screen">
+<div class="crumb">SCM / Purchase orders / 202605-S0060</div>
+<div class="tabs"><span>General</span><span class="on">Lines</span><span>Receipts</span></div>
+<table><tr><th>Item</th><th>Location</th><th class="n">Ordered</th><th class="n">Received</th><th class="n">Outstanding</th><th class="n">Allocated</th><th class="n">Free</th><th>Delivery date</th></tr>
+<tr><td>SRTWC7405-RL-250</td><td>BRW</td><td class="n">100</td><td class="n">0</td><td class="n">100</td><td class="n">100</td><td class="n">0</td><td>30/07/2026</td></tr></table>
+<div class="ttl" style="margin-top:14px;font-size:13px">Allocated to</div>
+<table><tr><th>PO line</th><th>Document</th><th>Order inquiry / S/O</th><th>Customer &middot; agent</th><th class="n">Qty</th><th>Needed at</th><th>Arrives</th><th></th></tr>
+<tr><td>L1 SRTWC7405-RL-250</td><td><span class="pill b">SPO</span> CRM-SPO-0012</td><td>-</td><td>JINBAICHUAN packing list 31/07</td><td class="n">100</td><td>BRW-BB 80 &middot; DC1-BB 20</td><td>31/08/2026</td><td><span class="btn">Unlink</span></td></tr>
+<tr><td>L1 SRTWC7405-RL-250</td><td><span class="pill g">OI</span> OI-000014</td><td>SO381895</td><td>TUJU RESIDENCE &middot; CINDY LEE</td><td class="n">80</td><td>BRW-BB</td><td>-</td><td></td></tr></table>
+<div class="muted" style="margin-top:6px">Same table as part 1 G, one more row kind: an SPO take, with the packing list it came from and the warehouses it lands at.</div>
+</div>
+<div class="screen" style="margin-top:10px">
+<div class="crumb">SCM / Sales orders / SO381895</div>
+<div class="tabs"><span>General</span><span class="on">Lines</span><span>Delivery</span><span>Transfers</span></div>
+<table><tr><th>#</th><th>Item</th><th class="n">Qty</th><th class="n">Outstanding</th><th>Delivery</th><th>Location</th><th>Decided</th><th>Order inquiry</th><th>Linked to</th></tr>
+<tr><td>4</td><td>SRTWC7405-RL-250</td><td class="n">80</td><td class="n">80</td><td>19/08/2026</td><td>BRW-BB</td><td><span class="sw" style="background:var(--rose)"></span>Buy 80 &middot; rev 1</td><td>OI-000014</td><td><span class="pill g">PO</span> 202605-S0060 L1 80<br><span class="pill b">SPO</span> CRM-SPO-0012 80 &middot; arrives 31/08 <span class="btn">Unlink</span></td></tr>
+<tr><td>5</td><td>C-FH14</td><td class="n">10</td><td class="n">10</td><td>19/08/2026</td><td>BRW-BB</td><td><span class="sw" style="background:var(--sky)"></span>Shared 10 (BRW)</td><td>-</td><td>-</td></tr></table>
+<div class="muted" style="margin-top:6px">Same Linked to column as part 1 I; an SPO link sits under the PO link it fulfils, with the arrival date. Unlink confirms, removes the link row, and reverses the qty on the SPO planner.</div>
+</div>
+<div class="muted" style="margin-top:6px">Both read the part 2 I links table: one row per (PO line, SPO allocation, qty) and per (SO line, SPO allocation, qty). Built last, after #322 merges.</div>
+
+<h2>7. Rulings recorded (26 Aug)</h2>
+<div class="card ruled"><b>Q1</b> Show Incoming PL, subtract SPO only. <b>Q2</b> Newest un-converted PI stands in. <b>Q3</b> 40HQ seed changed to 65. <b>Q4</b> Reading confirmed. <b>Q5</b> Two history series everywhere, per product. <b>Q6</b> Build the read-only tokenised page this round. <b>Q7</b> F7 last, on the part 2 I links table; PO and SO must see the SPO they are tied to. <b>Q8</b> <code>purchase_orders.order_date</code>.<br>Plus: SPO at site pools only; PI revisions with price = cost; packing-list edit redone to the design principle.<br><b>r3</b> Loading plan redrawn in the fulfilment-board vocabulary (section 2). SPO links are on SO and PO detail, yes (section 6, AC-G7). Every dropdown widens to its longest option: <b>F0</b>, global SearchableSelect fix.<br><b>r4</b> Columns stay as today (plus Incoming PL, Ordered 12 months, minus Unclassified); cards above carry the swatches, no separate legend; SPO links surface in the existing PO "Allocated to" table and SO "Linked to" column.<br><b>r5</b> PI to packing list must be visible both ways and in the list, so a converted PI is never chosen twice (F10, Q9 on partial).</div>
+
+<h2>8. Order of work and size</h2>
+<table><tr><th>Slot</th><th>Slice</th><th>What</th><th>Days</th></tr>
+<tr><td rowspan="6">A<br><span class="muted">container_request, notices, public</span></td><td>F0 <span class="badge r2">r3</span></td><td>SearchableSelect / SearchableMultiSelect: trigger and menu size to the longest option, no truncation (global)</td><td>0.5</td></tr>
+<tr><td>F2</td><td>Pool on hand + pool SPO + Incoming PL reference</td><td>1.5</td></tr>
+<tr><td>F3</td><td>History sidecar + row popover in the board vocabulary (cards, cell bar, Quantity needed / Suggestion boxes, location table, contributing lines)</td><td>3.5</td></tr>
+<tr><td>F1</td><td>Universe without stock list; PI stand-in</td><td>2</td></tr>
+<tr><td>F4</td><td>Supplier xlsx on send</td><td>1</td></tr>
+<tr><td>F8 <span class="badge r2">r2</span></td><td>Supplier link page (token, public route, page, email)</td><td>2.5</td></tr>
+<tr><td rowspan="6">B<br><span class="muted">PI, packing list, SPO</span></td><td>F5</td><td>PI cbm (one migration for F5 / F5b / F8) + adjust in place + export + 65 seed</td><td>3.5</td></tr>
+<tr><td>F5b <span class="badge r2">r2</span></td><td>PI revisions, diff, current-only cost</td><td>2.5</td></tr>
+<tr><td>F6</td><td>PI to packing list cbm; Lines tab CBM</td><td>1</td></tr>
+<tr><td>F9 <span class="badge r2">r2</span></td><td>Packing list edit in place; /edit retired</td><td>2</td></tr>
+<tr><td>F10 <span class="badge r2">r5</span></td><td>PI to packing list visibility: link qty (Q9), PI list Packing-list column + filter, PI detail In-packing-list, PL Source PIs card / From PI column / timeline, add-to-existing-draft in Convert</td><td>3</td></tr>
+<tr><td>F7</td><td>SPO planner ticks + links on the I table (after #322)</td><td>4</td></tr>
+</table>
+<p class="muted">~29 dev-days (r1 14.5; r2 +9.5; r3 +2; r5 +3 for F10). Two coder slots, no shared files. Lane: new worktree off main once #322 / #325 merge.</p>
+
+<h2>8b. One more to rule</h2>
+<form class="card q" data-lavish-question="q9" onsubmit="event.preventDefault();const v=new FormData(event.currentTarget).get('q9');if(v)window.lavish.queuePrompt('Q9 PI split across packing lists: '+v,{tag:'choice',text:'Q9: '+v,element:event.currentTarget,data:{question:'q9',answer:v}})"><b>Q9 One PI in two packing lists? Today the link is whole-line and a PI converts once. Proposed: yes, the link carries a qty; the Convert dialog pre-fills each line's remaining qty and lets Ms Tee take part of a line; the PI reads "Split" until every line is fully placed.</b>
+<label><input type="radio" name="q9" value="yes, partial: link carries qty, PI reads Split until fully placed"> Yes, allow partial (proposed)</label>
+<label><input type="radio" name="q9" value="no, whole PI converts once"> No, a PI converts whole, once</label>
+<button type="submit">Queue answer</button></form>
+
+<h2>9. Go?</h2>
+<form class="card q" data-lavish-question="go" onsubmit="event.preventDefault();const f=new FormData(event.currentTarget);const v=f.get('go');const n=f.get('note')||'';if(v)window.lavish.queuePrompt('Fulfilment plan r2 decision: '+v+(n?' | note: '+n:''),{tag:'choice',text:'Go: '+v,element:event.currentTarget,data:{question:'go',answer:v,note:n}})"><b>Journey r2 agreed, start building in the order above?</b>
+<label><input type="radio" name="go" value="go, build F2 first"> Go, start with slot A (F2)</label>
+<label><input type="radio" name="go" value="go, but reorder / cut per note"> Go with changes (note below)</label>
+<label><input type="radio" name="go" value="not yet, more annotations coming"> Not yet</label>
+<textarea name="note" rows="2" placeholder="anything to change first"></textarea>
+<button type="submit">Queue answer</button></form>
+</body></html>

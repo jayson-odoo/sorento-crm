@@ -7,7 +7,7 @@
  * asserts the identical arrays):
  *
  *   Basic Information : System Location, System Location Description, Warehouse, Active Status
- *   Planning          : Available for planning, Draws stock from
+ *   Planning          : Available for planning, Fulfilment planning, Draws stock from
  *
  * Plus the rules the current detail page breaks:
  * - Created / Last Updated are read-only metadata: page header or meta strip, never a tab body.
@@ -43,6 +43,7 @@ const CURRENT: Warehouse = {
   created_at: new Date('2026-01-05T02:00:00Z'),
   updated_at: new Date('2026-02-09T04:30:00Z'),
   counts_as_available: true,
+  fulfilment_planning: false,
   pool_warehouse_id: POOL_ID,
   pool_warehouse_code: 'WH-POOL',
 };
@@ -176,9 +177,13 @@ async function renderDetail(id: string = CURRENT_ID) {
   return { client, invalidate };
 }
 
-/** Open the confirmation dialog from the header, then confirm inside it. */
+/** Open the confirmation dialog from the header's gear, then confirm inside it. */
 async function confirmDelete() {
-  fireEvent.click(screen.getAllByRole('button', { name: /^delete$/i })[0]);
+  // Delete lives in the gear now, red and last (D6), not as a standing button.
+  const gear = screen.getByRole('button', { name: /warehouse options/i });
+  gear.focus();
+  fireEvent.keyDown(gear, { key: 'ArrowDown', code: 'ArrowDown' });
+  fireEvent.click(await screen.findByRole('menuitem', { name: /^delete warehouse$/i }));
   const dialog = await screen.findByRole('dialog');
   await act(async () => {
     fireEvent.click(within(dialog).getByRole('button', { name: /^delete$/i }));
@@ -241,6 +246,9 @@ const FIELD_SPANS: Record<string, 'full' | 'half'> = {
   Warehouse: 'full',
   'Active Status': 'full',
   'Available for planning': 'full',
+  // Borrow ladder v7.1 S1 (AC-S1-3): the flag sits directly under `Available for planning`,
+  // full width, in BOTH views - the read view mirrors it in the same position.
+  'Fulfilment planning': 'full',
   'Draws stock from': 'half',
   'Sells to': 'half',
 };
@@ -289,6 +297,17 @@ beforeEach(() => {
 // Tests
 // ---------------------------------------------------------------------------
 
+describe('Warehouse detail - Fulfilment planning (AC-S1-3)', () => {
+  it('reads Off for a record whose flag is off, in the Planning tab', async () => {
+    await renderDetail();
+    selectTab('Planning');
+
+    const panel = (activePanel().textContent ?? '').replace(/\s+/g, ' ');
+    expect(panel).toContain('Fulfilment planning');
+    expect(panel).toContain('Off');
+  });
+});
+
 describe('Warehouse detail - same layout as the edit view', () => {
   it('renders exactly two tabs: Basic Information then Planning', async () => {
     await renderDetail();
@@ -314,7 +333,11 @@ describe('Warehouse detail - same layout as the edit view', () => {
     await renderDetail();
     selectTab('Planning');
 
-    expectTextOrder(activePanel(), ['Available for planning', 'Draws stock from']);
+    expectTextOrder(activePanel(), [
+      'Available for planning',
+      'Fulfilment planning',
+      'Draws stock from',
+    ]);
     // Resolved to the code, never a UUID (cursor rule).
     expect(activePanel().textContent).toContain('WH-POOL');
     expect(activePanel().textContent).not.toContain(POOL_ID);
@@ -338,7 +361,12 @@ describe('Warehouse detail - same layout as the edit view', () => {
     selectTab('Planning');
 
     expect(gridSpans()).toEqual(
-      expectedSpans(['Available for planning', 'Draws stock from', 'Sells to']),
+      expectedSpans([
+        'Available for planning',
+        'Fulfilment planning',
+        'Draws stock from',
+        'Sells to',
+      ]),
     );
   });
 

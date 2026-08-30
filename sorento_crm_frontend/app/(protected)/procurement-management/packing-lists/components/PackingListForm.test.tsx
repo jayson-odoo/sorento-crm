@@ -18,31 +18,38 @@ vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), back: vi.fn() }),
 }));
 
+// Static AND async: the supplier picker is server-searched, so it hands over `fetchOptions`
+// and a `selectedOption` rather than a full `options` list.
 vi.mock('@/components/common/SearchableSelect', () => ({
   SearchableSelect: ({
     value,
     onChange,
     options,
+    selectedOption,
     placeholder,
   }: {
     value: string;
     onChange: (v: string) => void;
-    options: { value: string; label: string }[];
+    options?: { value: string; label: string }[];
+    selectedOption?: { value: string; label: string };
     placeholder?: string;
-  }) => (
-    <select
-      aria-label={placeholder ?? 'select'}
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-    >
-      <option value="">{placeholder ?? ''}</option>
-      {options.map((o) => (
-        <option key={o.value} value={o.value}>
-          {o.label}
-        </option>
-      ))}
-    </select>
-  ),
+  }) => {
+    const list = options ?? (selectedOption ? [selectedOption] : []);
+    return (
+      <select
+        aria-label={placeholder ?? 'select'}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+      >
+        <option value="">{placeholder ?? ''}</option>
+        {list.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+    );
+  },
 }));
 
 const state = {

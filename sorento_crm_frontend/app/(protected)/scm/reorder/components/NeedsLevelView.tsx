@@ -22,7 +22,7 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
-import { EM_DASH, fmtInt } from '../../lib/format';
+import { EM_DASH, fmtInt, fmtTrimmedDecimal } from '../../lib/format';
 import { acceptSuggestedLevel } from '../services/reorderRunService';
 import { todayRunKey } from '../hooks/useReorderRun';
 import type { ReorderRecommendation } from '../types/reorder.types';
@@ -45,13 +45,13 @@ const NO_COLUMN_PERSISTENCE = '';
 
 const numMeta = { headerClassName: 'text-end', cellClassName: 'text-end tabular-nums' };
 
-/** "40 a month over 3 months x 2 months cover" - the arithmetic, not just the answer. */
+/** "0.4 a day x 30 day lead + 14 days safety" - the arithmetic, not just the answer. */
 function basisText(r: ReorderRecommendation): string {
   const b = r.suggestion_basis;
   if (!b) return EM_DASH;
-  if (b.no_movement) return `Nothing moved in ${b.months_studied ?? 3} months`;
-  if (b.avg_monthly == null || b.cover_months == null) return EM_DASH;
-  return `${fmtInt(b.avg_monthly)} a month over ${b.months_studied ?? 3} months x ${b.cover_months} months cover`;
+  if (b.no_movement) return `Nothing moved in ${b.window_days ?? 90} days`;
+  if (b.adu == null || b.lead_time_days == null) return EM_DASH;
+  return `${fmtTrimmedDecimal(b.adu, 3)} a day x ${fmtInt(b.lead_time_days)} day lead + ${fmtInt(b.safety_days ?? 14)} days safety`;
 }
 
 export function NeedsLevelView({

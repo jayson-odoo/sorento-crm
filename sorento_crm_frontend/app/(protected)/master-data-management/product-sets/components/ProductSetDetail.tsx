@@ -24,9 +24,10 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
-import RecordNavigation from '@/components/common/RecordNavigation';
+import DetailActions from '@/components/common/DetailActions';
+import { productSetsPagerQuery } from '../hooks/useProductSets';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
-import { useProductSet, useProductSets, useUpdateProductSet } from '../hooks/useProductSets';
+import { useProductSet, useUpdateProductSet } from '../hooks/useProductSets';
 import { getProductSetMemberOptions, type ProductSetMemberOption } from '../services/productSetService';
 import type { ProductSetDetail as ProductSetDetailType, ProductSetMember } from '../types/productSet.types';
 
@@ -183,13 +184,6 @@ export default function ProductSetDetail({ id }: { id: string }) {
   // across both companies), so one unfiltered page in the list's own default
   // order is the honest and simplest source - see CertificateDetail for the
   // same shape.
-  const navigationList = useProductSets({
-    pageIndex: 0,
-    pageSize: 500,
-    sorting: [{ id: 'set_code', desc: false }],
-    searchQuery: '',
-  });
-  const navigationItems = navigationList.data?.data ?? [];
 
   if (isLoading) {
     return (
@@ -374,18 +368,19 @@ export default function ProductSetDetail({ id }: { id: string }) {
                 </Button>
               </div>
             ) : (
-              <div className="flex items-center gap-2">
-                <RecordNavigation
-                  basePath={LIST_PATH}
-                  currentId={set.id}
-                  items={navigationItems}
-                  totalCount={navigationList.data?.pagination?.total}
-                  ariaLabel="product set"
-                />
-                <Button variant="outline" onClick={startEdit}>
-                  <Pencil className="size-4" /> Edit
-                </Button>
-              </div>
+              <DetailActions
+                pager={{
+                  ...productSetsPagerQuery,
+                  detailPath: LIST_PATH,
+                  currentId: set.id,
+                  ariaLabel: 'product set',
+                }}
+                primary={
+                  <Button onClick={startEdit}>
+                    <Pencil className="size-4" /> Edit
+                  </Button>
+                }
+              />
             )}
           </div>
         </CardContent>

@@ -252,7 +252,8 @@ def test_unit_cost_and_currency_persist_when_the_file_supplies_them(db, seeded):
 
     unpriced = _po_lines(db, seeded.main_po, seeded.item_wt)
     assert unpriced[0]["unit_cost"] is None, "an empty unit cost became a number"
-    assert unpriced[0]["currency"] is None
+    # No stated currency on a PURCHASE line is CNY (captain, 28 Aug 2026), not "unknown".
+    assert unpriced[0]["currency"] == "CNY"
 
     foreign = _po_lines(db, seeded.alt_po, seeded.item_blue)
     assert (float(foreign[0]["unit_cost"]), foreign[0]["currency"]) == (0.85, "USD")

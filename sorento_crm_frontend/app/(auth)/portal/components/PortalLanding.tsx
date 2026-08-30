@@ -499,7 +499,7 @@ export function PortalLanding({ slug }: { slug?: string }) {
             label: LANDING_LABELS[t],
           }))}
           size="lg"
-          triggerClassName="flex-1 h-12 text-base"
+          triggerClassName="flex-1 min-h-12 text-base"
           renderTriggerLabel={(opt) => {
             const t = opt.value as PortalLandingKind;
             return (

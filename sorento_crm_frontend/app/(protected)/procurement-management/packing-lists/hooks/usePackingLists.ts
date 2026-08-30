@@ -1,10 +1,6 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { buildDataGridParams } from '@/lib/api-client';
-import {
-  useRecordNeighbours,
-  type RecordNeighboursResult,
-} from '@/hooks/useRecordNeighbours';
+
 import {
   getPackingLists,
   getPackingList,
@@ -12,40 +8,97 @@ import {
   updatePackingList,
   deletePackingList,
   bulkDeletePackingLists,
-  PACKING_LIST_NEIGHBOURS_PATH,
   getClearanceCheckpoints,
+  getPackingListSourceInvoices,
   type PackingListsListParams,
 } from '../services/packingListService';
+import { getAuditLogs } from '@/app/(protected)/system-management/audit-logs/services/auditLogService';
 import type { PackingListFormData } from '../types/packingList.types';
+import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
+
+/** `audit_logs.entity_type` for a container - `InboundShipment.__tablename__`. */
+const PACKING_LIST_ENTITY_TYPE = 'inbound_shipments';
 
 /**
- * Prev/next neighbours of a packing list within the active filtered+sorted list set.
- * Serializes the list query (search/sort/supplier/status) with `buildDataGridParams`
- * - the same serialization the list page uses - so the backend honours filters
- * identically. `page`/`limit` are sent but ignored by the neighbours endpoint.
+ * What has happened to this container, newest first (R17).
+ *
+ * The audit trail IS the timeline: `InboundShipment` is `__audit_track__`, so every save
+ * already writes a row, and the conversion's over-capacity reason is written there as one
+ * described entry rather than appended to the operator's own Notes field.
  */
-export function usePackingListNeighbours(
-  packingListId: string | null,
-  listParams: PackingListsListParams,
-): RecordNeighboursResult {
-  const params = buildDataGridParams(listParams, {
-    supplier_id: listParams.supplier_id,
-    shipment_status: listParams.shipment_status,
+export function usePackingListHistory(packingListId: string | null) {
+  return useQuery({
+    queryKey: ['packing-lists', 'history', packingListId],
+    queryFn: () =>
+      getAuditLogs({
+        entity_type: PACKING_LIST_ENTITY_TYPE,
+        entity_id: packingListId as string,
+        pageIndex: 0,
+        pageSize: 50,
+      }),
+    enabled: !!packingListId,
+    refetchOnWindowFocus: false,
   });
-  return useRecordNeighbours(PACKING_LIST_NEIGHBOURS_PATH, packingListId, params);
 }
+
+/**
+ * The proforma invoices this container's lines were charged on (F10).
+ *
+ * Read once for the whole page: the Details card, the Lines column, the Timeline entry and
+ * the Documents list are four readings of the same link rows, and four fetches of it would
+ * be four chances for them to disagree.
+ */
+export function usePackingListSourceInvoices(packingListId: string | null) {
+  return useQuery({
+    queryKey: ['packing-lists', 'source-proforma-invoices', packingListId],
+    queryFn: () => getPackingListSourceInvoices(packingListId as string),
+    enabled: !!packingListId,
+    refetchOnWindowFocus: false,
+  });
+}
+
+
+/**
+ * The list's React Query key. The detail page's pager rebuilds the SAME key from
+ * the URL, so it reads the page the list already fetched.
+ */
+export function packingListsListQueryKey(params: PackingListsListParams): QueryKey {
+  return [
+    'packing-lists',
+    params.pageIndex,
+    params.pageSize,
+    params.sorting,
+    params.searchQuery,
+    params.supplier_id,
+    params.shipment_status,
+  ];
+}
+
+/** The list query a detail URL describes, in the shape the list passes. */
+export function packingListsListParamsFromUrl(
+  params: ListPagerParams,
+): PackingListsListParams {
+  return {
+    pageIndex: params.pageIndex,
+    pageSize: params.pageSize,
+    sorting: params.sorting,
+    searchQuery: params.searchQuery,
+    supplier_id: params.filters.supplier_id,
+    shipment_status: params.filters.shipment_status,
+  };
+}
+
+/** The pager's two hooks into the packing lists list. */
+export const packingListsPagerQuery = {
+  listQueryKey: (params: ListPagerParams): QueryKey =>
+    packingListsListQueryKey(packingListsListParamsFromUrl(params)),
+  fetchPage: (params: ListPagerParams): Promise<ListPagerPage> =>
+    getPackingLists(packingListsListParamsFromUrl(params)),
+};
 
 export function usePackingLists(params: PackingListsListParams) {
   return useQuery({
-    queryKey: [
-      'packing-lists',
-      params.pageIndex,
-      params.pageSize,
-      params.sorting,
-      params.searchQuery,
-      params.supplier_id,
-      params.shipment_status,
-    ],
+    queryKey: packingListsListQueryKey(params),
     queryFn: () => getPackingLists(params),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,

@@ -1,8 +1,7 @@
 'use client';
 
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import {
-  CellContext,
   ColumnDef,
   ExpandedState,
   PaginationState,
@@ -14,8 +13,14 @@ import {
   getSortedRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { ChevronDown, ChevronRight, Info, Search, X } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
+import {
+  ChevronDown,
+  ChevronRight,
+  ChevronsDownUp,
+  ChevronsUpDown,
+  Search,
+  X,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
@@ -24,15 +29,11 @@ import { DataGridListToolbar, type ToolbarAction } from '@/components/ui/data-gr
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
-import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/components/ui/popover';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { cn } from '@/lib/utils';
-import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EM_DASH, fmtDecimal, fmtInt, fmtMoney, fmtSigned } from '../../lib/format';
-import { useLocationStock } from '../hooks/useReorderRun';
-import type { LocationStockLocation } from '../services/reorderRunService';
 import {
   PLAN_LINE_STATUS_LABEL,
   PLAN_LINE_STATUS_ORDER,
@@ -43,35 +44,30 @@ import {
   decidedCost,
   decidedQty,
   groupDecisionState,
-  type PlanDecision,
   type PlanDecisionMap,
 } from '../lib/planDecisions';
+import {
+  planPillReading,
+  suggestedDecisionFor,
+  type PlanRowEdit,
+  type PlanRowEditMap,
+} from '../lib/planEdits';
 import { NO_COVER, type CoverProposal } from '../lib/coverPlan';
 import {
   PRICE_ADVICE_LABEL,
-  PRICE_ADVICE_SORT,
   type CheaperAlternative,
   type PriceAdvice,
 } from '../lib/priceAdvice';
 import { levelActionLabel, type LevelSuggestion } from '../lib/levelSuggestion';
 import { poOffset, type PoReceipt } from '../lib/poCover';
-import { PlanLevelCell } from './PlanLevelCell';
-import { PlanMoqCell } from './PlanMoqCell';
 import type { TrajectoryEntry } from '../lib/trajectory';
 import type { ProductPurchaseTrend } from '../lib/purchaseTrend';
 import { PlanTrendPopover } from './PlanTrendPopover';
-import { PlanPurchaseTrendPopover } from './PlanPurchaseTrendPopover';
-import { PlanHealthCell } from './PlanHealthCell';
-import { PlanLineDecisionCell } from './PlanLineDecisionCell';
-import { PlanPriceCell } from './PlanPriceCell';
-import { PlanSupplierCell } from './PlanSupplierCell';
-import {
-  discontinueAdvice,
-  marginOf,
-  moqGap,
-  moqGapNote,
-  type ProductEconomics,
-} from '../lib/productHealth';
+import { PlanDecisionPill } from './PlanDecisionPill';
+import { PlanNumberButton } from './PlanNumberButton';
+import { PlanRowPanel } from './PlanRowPanel';
+import { PlanRowDialog, type PlanDialogRequest } from './PlanRowDialogs';
+import type { ProductEconomics } from '../lib/productHealth';
 import { PlanChecklistPopover } from './PlanChecklistPopover';
 import { PlanDemandPopover } from './PlanDemandPopover';
 import { ProductPhotoPopover, type ProductPhotoStatus } from './ProductPhotoPopover';
@@ -81,17 +77,13 @@ import {
   NetDrill,
 } from './PlanExplainDrills';
 import { OrderQtyLedger } from './PlanOrderQtyLedger';
-import { ReorderExplanationDialog } from './ReorderExplanationDialog';
-import type { ReorderRecommendation } from '../types/reorder.types';
 import {
   groupPlanLinesByChannel,
   isGroupedLine,
-  presentChannels,
+  PLAN_CHANNEL_ORDER,
   PLAN_CHANNEL_LABEL,
   type PlanChannel,
-  type PlanChannelGroupMeta,
 } from '../lib/planLineGrouping';
-import type { ChannelTrendEntry } from '../lib/trajectory';
 
 /**
  * ONE grid for every line of a plan.
@@ -147,10 +139,13 @@ function ChannelNeed({
   value,
   title,
   tone,
+  onOpen,
 }: {
   value: number | null | undefined;
   title: string;
   tone?: 'exception';
+  /** The number IS the trigger (plan 4.6) - no (i) icon beside it, no hover popover. */
+  onOpen?: () => void;
 }) {
   if (value === null || value === undefined) {
     return (
@@ -160,11 +155,13 @@ function ChannelNeed({
     );
   }
   return (
-    <span
-      className={cn('tabular-nums', tone === 'exception' && value > 0 && 'text-scm-overstock')}
-      title={title}
-    >
-      {fmtInt(value)}
+    <span className={cn(tone === 'exception' && value > 0 && 'text-scm-overstock')}>
+      <PlanNumberButton
+        value={fmtInt(value)}
+        label={title}
+        onClick={() => onOpen?.()}
+        disabled={!onOpen}
+      />
     </span>
   );
 }
@@ -189,14 +186,14 @@ function ChannelNeed({
 function ChannelColumnCell({
   value,
   confirmedNote,
-  drill,
+  label,
+  onOpen,
 }: {
   value: number | null | undefined;
   confirmedNote?: string | null;
-  /** The demand drill trigger for this cell (21 Aug follow-up: "where is the tooltip for
-   *  me to open at project and retail" - the TOP product-grain row had none). `undefined`
-   *  when no member recommendation exists to open one against. */
-  drill?: React.ReactNode;
+  label: string;
+  /** The number IS the trigger (plan 4.6): the (i) icon and its hover popover are gone. */
+  onOpen?: () => void;
 }) {
   if (value === null || value === undefined) {
     return (
@@ -206,14 +203,13 @@ function ChannelColumnCell({
     );
   }
   return (
-    <span className="inline-flex items-center gap-0.5 tabular-nums">
-      {fmtInt(value)}
-      {confirmedNote ? (
-        <span title={confirmedNote} className="text-muted-foreground/70">
-          <Info className="size-3" aria-hidden />
-        </span>
-      ) : null}
-      {drill}
+    <span className="inline-flex items-center gap-0.5" title={confirmedNote ?? undefined}>
+      <PlanNumberButton
+        value={fmtInt(value)}
+        label={label}
+        onClick={() => onOpen?.()}
+        disabled={!onOpen}
+      />
     </span>
   );
 }
@@ -227,253 +223,22 @@ function numCell(value: number | null | undefined) {
   );
 }
 
-/**
- * Whether this member has anything at all to show - either side of the channel split, or a
- * suggested qty. A location where every one of those reads zero adds nothing to the drill and
- * is noise on the way to the ones that do (captain, 19 Aug: "if 0 quantity why show here"). A
- * figure the run genuinely never populated (null/undefined) is NOT the same claim as a stated
- * zero - it counts as "nothing to show" here too, since a location with no stated data AND no
- * zero data still has nothing worth a drill row.
- *
- * N-1 (reviewer, 20 Aug): gated on the COLUMNS this panel actually renders - the three
- * `*_committed` splits and `order_qty` - not on `outstanding_sales`/`on_hand`/`incoming_spo`/
- * `outstanding_po`, which this rebuilt panel no longer shows at all (those moved to the LIVE
- * on-hand/SPO/available columns below, sourced from `useLocationStock`, not the frozen `rec`).
- * A member alive only via a frozen `outstanding_po` figure the panel never renders would
- * otherwise pass this gate and still show an all-dash row.
- */
-function memberHasActivity(m: PlanLine): boolean {
-  const figures = [
-    m.rec.project_committed,
-    m.rec.retail_committed,
-    m.rec.unclassified_committed,
-    m.order_qty,
-  ];
-  return figures.some((v) => typeof v === 'number' && v !== 0);
-}
-
-/** A live stock cell while the fetch is in flight, honest about not knowing yet. */
-function liveCellSkeleton() {
-  return <Skeleton className="ml-auto h-3 w-8" />;
-}
-
-/**
- * One LIVE figure for a member's warehouse, or an honest "nothing here" when the live
- * response never named this location at all (never a fabricated 0 - see the file's other
- * `numCell`, same reasoning). `negative` mirrors `CellStockTable`'s own tone for Available
- * (`app/(protected)/project-sales/fulfilment-planning/components/CellStockTable.tsx`):
- * signed and never clamped, coloured only when it actually runs below zero.
- */
-function liveCell(value: number | null | undefined, negative?: boolean) {
-  if (value === null || value === undefined) {
-    return (
-      <span className="text-muted-foreground" title="No live stock data for this location">
-        {EM_DASH}
-      </span>
-    );
-  }
-  return (
-    <span className={cn('tabular-nums', negative && value < 0 && 'text-destructive')}>
-      {fmtInt(value)}
-    </span>
-  );
-}
-
-/**
- * The drill under a grouped PRODUCT row - the per-warehouse rows it summed, unsummed, one
- * per line (5.3/5.4: Location grain stays a read and drill view under Product grain;
- * nothing here is a decision).
- *
- * The Project / Retail / Unclass. columns read the FROZEN COMMITTED split
- * (`project_committed` etc.), the same figures the group row's channel columns read - NOT
- * the engine's `project_need` / `retail_need`. Those two are different facts with
- * misleading names here: `project_need` is only the CONFIRMED-for-buy leg (0 with no CS
- * decision), and `retail_need` is the netted sized buy, which swallows the project SHEET
- * leg - so a location whose demand was 100% project-class read "Retail 1,872" (captain,
- * SRT-H3005 BRW-BB, 20 Aug). There is no SO column: the split sums to the SO figure by
- * construction, so stating both said the same thing twice (captain, same day). Unclass. is
- * rendered only when some visible member actually carries a nonzero figure for it - the
- * captain's own words are "nothing should be unclassified", so a column that would read all
- * zeros is a column that should not exist here at all.
- *
- * On hand / Reserved / Free / SPO / Available are a SEPARATE chapter: LIVE, fetched from
- * the location-stock endpoint the moment the panel mounts (which is to say, on expand -
- * `GroupMembersPanel` only ever renders under an expanded row). This is the "fulfilment
- * planning" read the captain asked for - what the book says RIGHT NOW, not what the plan
- * committed to when it ran - joined onto each frozen member row by warehouse id (falling
- * back to warehouse code for a payload that predates the id). A member the live response
- * never named is an honest dash, not a fabricated zero.
- *
- * All-zero locations are filtered out (`memberHasActivity`) - UNLESS filtering would empty
- * the panel entirely, in which case every member is shown anyway: a group row only exists
- * because something summed to a nonzero suggested qty, so an all-zero-looking group is far
- * more likely a stale/legacy fixture than a real one, and a panel with nothing in it reads
- * as broken rather than as "nothing to see here".
- */
-function GroupMembersPanel({
-  group,
-  runId,
-  onOpenMember,
-}: {
-  group: PlanChannelGroupMeta;
-  /** Threaded to each member's own demand popover (below), same as the ungrouped grid's
-   *  SO/product cells already do. */
-  runId: string | null;
-  onOpenMember: (rec: ReorderRecommendation) => void;
-}) {
-  const active = group.members.filter(memberHasActivity);
-  const visible = active.length > 0 ? active : group.members;
-  const showUnclassified = visible.some((m) => (m.rec.unclassified_committed ?? 0) !== 0);
-  const productId = group.members[0]?.product_id ?? null;
-  const { data: liveStock, isLoading: liveLoading } = useLocationStock(productId, true);
-
-  const liveByWarehouse = useMemo(() => {
-    const byId = new Map<string, LocationStockLocation>();
-    const byCode = new Map<string, LocationStockLocation>();
-    for (const loc of liveStock?.locations ?? []) {
-      if (loc.warehouse_id) byId.set(loc.warehouse_id, loc);
-      if (loc.warehouse_code) byCode.set(loc.warehouse_code, loc);
-    }
-    return { byId, byCode };
-  }, [liveStock]);
-
-  function liveFor(m: PlanLine): LocationStockLocation | undefined {
-    const id = m.warehouse_id ?? m.rec.warehouse_id ?? null;
-    if (id) {
-      const hit = liveByWarehouse.byId.get(id);
-      if (hit) return hit;
-    }
-    const code = m.rec.warehouse_code;
-    return code ? liveByWarehouse.byCode.get(code) : undefined;
-  }
-
-  return (
-    <div className="border-t bg-muted/30 px-5 py-3">
-      <div className="overflow-x-auto">
-        <table className="w-full text-xs">
-          <thead>
-            <tr className="text-muted-foreground">
-              <th className="max-w-28 px-2 py-1 text-left font-medium">Location</th>
-              <th className="px-2 py-1 text-right font-medium">Project</th>
-              <th className="px-2 py-1 text-right font-medium">Retail</th>
-              {showUnclassified ? (
-                <th className="px-2 py-1 text-right font-medium">Unclass.</th>
-              ) : null}
-              <th className="px-2 py-1 text-right font-medium">On hand</th>
-              <th className="px-2 py-1 text-right font-medium">Reserved</th>
-              <th className="px-2 py-1 text-right font-medium">Free</th>
-              <th className="px-2 py-1 text-right font-medium">SPO</th>
-              <th className="px-2 py-1 text-right font-medium">Available</th>
-              <th className="px-2 py-1 text-right font-medium">Suggested qty</th>
-            </tr>
-          </thead>
-          <tbody>
-            {visible.map((m) => {
-              const live = liveFor(m);
-              return (
-                <tr
-                  key={m.id}
-                  className="cursor-pointer border-t border-border/60 hover:bg-muted/60"
-                  onClick={() => onOpenMember(m.rec)}
-                >
-                  <td className="max-w-28 truncate px-2 py-1" title={m.warehouse}>
-                    {m.warehouse}
-                  </td>
-                  {/* Captain's own preferred fix (20 Aug, live diagnosis): "put the icon
-                      at project and retail separately then we don't need the open SOs".
-                      A single popover on the Project cell used to carry the WHOLE
-                      location's demand - order and retail mixed - so a captain reading a
-                      Retail-chipped SO under the Project number reasonably concluded
-                      retail was being counted as project. Each cell now opens ONLY its
-                      own channel, and the header inside says which one. */}
-                  <td className="px-2 py-1 text-right tabular-nums">
-                    <span className="inline-flex items-center justify-end gap-0.5">
-                      {numCell(m.rec.project_committed)}
-                      <StopClick>
-                        <PlanDemandPopover
-                          runId={runId}
-                          recId={m.id}
-                          channel="project"
-                          label={`Project demand at ${m.warehouse}`}
-                        />
-                      </StopClick>
-                    </span>
-                  </td>
-                  <td className="px-2 py-1 text-right tabular-nums">
-                    <span className="inline-flex items-center justify-end gap-0.5">
-                      {numCell(m.rec.retail_committed)}
-                      <StopClick>
-                        <PlanDemandPopover
-                          runId={runId}
-                          recId={m.id}
-                          channel="retail"
-                          label={`Retail demand at ${m.warehouse}`}
-                        />
-                      </StopClick>
-                    </span>
-                  </td>
-                  {showUnclassified ? (
-                    <td className="px-2 py-1 text-right tabular-nums">
-                      <span className="inline-flex items-center justify-end gap-0.5">
-                        {numCell(m.rec.unclassified_committed)}
-                        <StopClick>
-                          <PlanDemandPopover
-                            runId={runId}
-                            recId={m.id}
-                            channel="unclassified"
-                            label={`Unclassified demand at ${m.warehouse}`}
-                          />
-                        </StopClick>
-                      </span>
-                    </td>
-                  ) : null}
-                  <td className="px-2 py-1 text-right">
-                    {liveLoading ? liveCellSkeleton() : liveCell(live?.on_hand)}
-                  </td>
-                  <td className="px-2 py-1 text-right">
-                    {liveLoading ? liveCellSkeleton() : liveCell(live?.reserved)}
-                  </td>
-                  <td className="px-2 py-1 text-right">
-                    {liveLoading ? liveCellSkeleton() : liveCell(live?.free)}
-                  </td>
-                  <td className="px-2 py-1 text-right">
-                    {liveLoading ? liveCellSkeleton() : liveCell(live?.spo_qty)}
-                  </td>
-                  <td className="px-2 py-1 text-right">
-                    {liveLoading ? liveCellSkeleton() : liveCell(live?.available, true)}
-                  </td>
-                  <td className="px-2 py-1 text-right tabular-nums">{fmtInt(m.order_qty)}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-      {liveStock?.as_of ? (
-        <p className="mt-2 text-2xs text-muted-foreground">
-          Live stock as of {formatDateTimeInMalaysia(liveStock.as_of)}
-        </p>
-      ) : null}
-    </div>
-  );
-}
-
 export function PlanLinesGrid({
   lines,
   decisions,
-  onDecide,
-  onClear,
+  edits = {},
+  onRowEdit,
+  onResetRow,
+  toolbarPrimary,
   coverFor,
   priceFor,
   cheaperFor,
   levelFor,
-  onAmendLevel,
-  onAmendMoq,
   poFor,
   trendFor,
-  channelTrendFor,
   trendSeriesMonths = 24,
   purchaseTrendFor,
+  purchaseTrendReady,
   purchaseTrendWindowMonths = 3,
   onOpenPurchaseTrend,
   hasPhotoFor,
@@ -481,8 +246,7 @@ export function PlanLinesGrid({
   onOpenPhoto,
   economicsFor,
   healthThresholds = { margin_floor_pct: 15, dead_turnover_months: 6 },
-  onDecideLifecycle,
-  staleAfterDays = 180,
+  healthWindows,
   statusFilter: statusFilterProp = null,
   onStatusFilterChange,
   decidedFilter: decidedFilterProp,
@@ -496,10 +260,16 @@ export function PlanLinesGrid({
 }: {
   lines: PlanLine[];
   decisions: PlanDecisionMap;
-  onDecide: (line: PlanLine, next: PlanDecision) => Promise<void> | void;
-  /** Return a line to undecided. Separate from `onDecide` because undecided is the absence
-   *  of a decision, not a fourth kind of one. */
-  onClear: (line: PlanLine) => Promise<void> | void;
+  /** The unsaved drafts on this plan, keyed by ROW id (plan 4.5). Empty = nothing edited. */
+  edits?: PlanRowEditMap;
+  /** Write one field of a row's draft. Nothing on this grid writes to the backend any more:
+   *  the panel edits a draft and Save persists the lot in one request. */
+  onRowEdit?: (line: PlanLine, patch: PlanRowEdit) => void;
+  /** Drop a row's draft ("Use suggestion"). */
+  onResetRow?: (line: PlanLine) => void;
+  /** Save (N) and Confirm (N), rendered at the right end of the grid's own toolbar, after
+   *  Actions (R11). The SECTION owns them - it owns the draft map they act on. */
+  toolbarPrimary?: React.ReactNode;
   /** What the plan suggests for a line: buy, cover from elsewhere, or a split of the two. */
   coverFor?: (line: PlanLine) => CoverProposal;
   /** What we last paid this line's supplier, and how old that is. Undefined = no opinion. */
@@ -508,12 +278,6 @@ export function PlanLinesGrid({
   cheaperFor?: (line: PlanLine) => CheaperAlternative | null;
   /** S13f: the AutoCount level this run suggests for the line's product+location. */
   levelFor?: (line: PlanLine) => LevelSuggestion | undefined;
-  /** S14: record (or withdraw, with null) the buyer's own level figure. */
-  onAmendLevel?: (s: LevelSuggestion, amended: number | null) => Promise<void> | void;
-  /** 20 Aug live test: record (or withdraw, with null) the buyer's own MoQ for a line -
-   *  master data drifts and they should not have to wait for a re-run to fix it. Absent =
-   *  read-only (the MOQ cell then only ever shows the frozen master figure). */
-  onAmendMoq?: (line: PlanLine, moq: number | null) => Promise<void> | void;
   /** S15: the open PO lines already carrying this product to this warehouse. */
   poFor?: (line: PlanLine) => PoReceipt[];
   /** Is this product's demand sustaining or dying off, on this line's side. */
@@ -521,14 +285,14 @@ export function PlanLinesGrid({
   /** How far back that trend's series reaches, for the "no orders dated in the last N
    *  months" line. Off the payload, never a literal on the screen. */
   trendSeriesMonths?: number;
-  /** 5.3 follow-up (19-20 Aug): the order trend for one PRODUCT'S channel - drives the
-   *  trend subline under each dynamic channel column on the grouped grid. Undefined when
-   *  the caller has no opinion (ungrouped grid never reads this). */
-  channelTrendFor?: (productId: string | null, channel: PlanChannel) => ChannelTrendEntry | undefined;
   /** The mirror of `trendFor`, on the buy side: what we have actually purchased. */
   purchaseTrendFor?: (line: PlanLine) => ProductPurchaseTrend | undefined;
   /** The window the purchase-trend sentence compares (months). */
   purchaseTrendWindowMonths?: number;
+  /** Whether the lazy purchase-trend fetch has answered - "no purchases" and "not asked
+   *  yet" are the same `undefined` otherwise, and the ledger's History block must not
+   *  print the first for the second. */
+  purchaseTrendReady?: boolean;
   /** Fired the first time a PO cell's popover opens - lets the caller lazily start the
    *  purchase-trend fetch instead of it running for every product on plan mount. */
   onOpenPurchaseTrend?: () => void;
@@ -543,10 +307,8 @@ export function PlanLinesGrid({
   economicsFor?: (line: PlanLine) => ProductEconomics | undefined;
   /** The policy's lines for "thin margin" and "dead turnover". */
   healthThresholds?: { margin_floor_pct: number; dead_turnover_months: number };
-  /** Record (or withdraw) the buyer's keep-or-discontinue answer. Absent = read-only. */
-  onDecideLifecycle?: (productId: string, decision: 'keep' | 'discontinue' | null) => Promise<void> | void;
-  /** The age past which the business stops trusting a price. Shown, not implied. */
-  staleAfterDays?: number;
+  /** The windows the movement class was judged on, so the popup can say them. */
+  healthWindows?: { sold_window_months?: number; bought_window_months?: number };
   /** Status the list is narrowed to, or null for the whole plan. Controlled so the summary
    *  tiles can narrow it: they used to reveal a band, and there are no bands now. */
   statusFilter?: PlanLineStatus | null;
@@ -578,7 +340,7 @@ export function PlanLinesGrid({
   /**
    * Product-grain runs only (5.3, follow-up 19-20 Aug): group the fetched per-warehouse
    * rows into one row per PRODUCT - "1 line of retail, 1 line of project" folded into ONE
-   * line, with Project/Retail/Unclassified as dynamic COLUMNS on it instead of a row each -
+   * line, with Project/Retail as dynamic COLUMNS on it instead of a row each -
    * rather than one row per (product, warehouse). A group row sums the shared display
    * fields across its warehouses; every location-only fact (price, supplier, MOQ,
    * AutoCount level) stays on the per-warehouse rows reachable by expanding it. Omit or
@@ -610,14 +372,12 @@ export function PlanLinesGrid({
     (onDecidedFilterChange ?? setOwnDecidedFilter)(next as 'all' | 'undecided' | 'decided');
   // S14: one filter per suggestion column, so the buyer can work one question at a time
   // ("show me every stale price", "every level change", "project side only").
-  const [sideFilter, setSideFilter] = useState<string>('all');
   const [priceFilter, setPriceFilter] = useState<string>('all');
   const [actionFilter, setActionFilter] = useState<string>('all');
   const [levelFilter, setLevelFilter] = useState<string>('all');
-  // Row click opens the full derivation, as it did before the grid was rebuilt. The pager
-  // steps through the rows in the order they are currently sorted and filtered, so "next"
-  // means the next line the buyer is actually looking at.
-  const [detailRec, setDetailRec] = useState<ReorderRecommendation | null>(null);
+  // Which number a buyer pressed, and on which row (plan 4.6). ONE dialog per grid: only
+  // one can be open at a time, and six mounted bodies per row is what the popovers cost.
+  const [dialogRequest, setDialogRequest] = useState<PlanDialogRequest | null>(null);
 
   const filtered = useMemo(() => {
     const needle = searchQuery.trim().toLowerCase();
@@ -625,7 +385,6 @@ export function PlanLinesGrid({
       if (statusFilter !== 'all' && l.status !== statusFilter) return false;
       if (decidedFilter === 'undecided' && decisions[l.id]) return false;
       if (decidedFilter === 'decided' && !decisions[l.id]) return false;
-      if (sideFilter !== 'all' && (l.rec.segment ?? 'project') !== sideFilter) return false;
       if (priceFilter !== 'all') {
         const advice = l.purchasable ? priceFor?.(l)?.advice : undefined;
         if ((advice ?? 'none') !== priceFilter) return false;
@@ -657,7 +416,7 @@ export function PlanLinesGrid({
         l.supplier.name.toLowerCase().includes(needle)
       );
     });
-  }, [lines, searchQuery, statusFilter, decidedFilter, sideFilter, priceFilter,
+  }, [lines, searchQuery, statusFilter, decidedFilter, priceFilter,
       actionFilter, levelFilter, decisions, priceFor, coverFor, levelFor, poFor]);
 
   // Undecided first, decided sunk to the bottom (user markup, 2026-08-12: "so they can decide
@@ -678,13 +437,16 @@ export function PlanLinesGrid({
     [groupByChannel, ordered],
   );
 
-  // The channel COLUMN set (5.3 follow-up, 19-20 Aug): dynamic, off the whole run's rows
-  // (`lines`, unfiltered - a column must not appear/disappear as the buyer searches or
-  // filters), never hardcoded to two. Empty on the ungrouped grid, which has no channel
-  // columns at all.
+  // The channel COLUMN set: Project and Retail, always (captain, 28 Aug 2026: "where is my
+  // project quantity column" on a run whose rows were all retail). The 19-20 Aug rule
+  // derived the set from the WAREHOUSE SEGMENTS the run happened to touch, so Project
+  // vanished for a whole plan with no project demand - a missing column, where the answer
+  // was a zero. R17 ended the derivation outright: a demand channel is the sales order's
+  // own class, never where the stock sits. Empty on the ungrouped grid, which has no
+  // channel columns at all.
   const dynamicChannels = useMemo<PlanChannel[]>(
-    () => (groupByChannel ? presentChannels(lines) : []),
-    [groupByChannel, lines],
+    () => (groupByChannel ? PLAN_CHANNEL_ORDER : []),
+    [groupByChannel],
   );
 
   // Channel-column totals (captain follow-up, 2026-08-20: "I wonder what is the total for
@@ -708,73 +470,27 @@ export function PlanLinesGrid({
   }, [groupByChannel, tableData, dynamicChannels]);
 
   /**
-   * The Suggested-qty popover's own open/close bug (user feedback, 2026-08-12: "after I
-   * tick, it shouldn't close the popup").
-   *
-   * `columns` below is recreated on every `decisions` change - it has to be, every OTHER
-   * column reads `decisions` too - which recreates every inline cell FUNCTION along with
-   * it. React identifies a functional component's fiber by (function reference, tree
-   * position); a fresh function reference is a different component type as far as
-   * reconciliation is concerned, so React unmounts and remounts the whole cell subtree on
-   * every toggle, discarding the ledger Popover's own open state with it. Not a Radix bug -
-   * confirmed by reproduction: the Popover trigger's DOM node is a literally different
-   * element after a decision commit.
-   *
-   * The fix is a STABLE cell renderer for this one column, built once via `useCallback`
-   * with an empty dependency list, reading its live inputs off a ref instead of closing
-   * over them - so `columnDef.cell` for 'suggested' never changes identity and the Popover
-   * survives a decision toggle, regardless of how often `columns` itself is rebuilt.
+   * The engine's own mixture for a row, and the pill that reports where it stands. Read from
+   * ONE derivation (`suggestedDecisionFor`) so the pill, the panel and Confirm can never
+   * disagree about what "the suggestion" is.
    */
-  const suggestedQtyCellInputsRef = useRef({
-    decisions, coverFor, poFor, economicsFor, healthThresholds, trendFor, onDecide,
-  });
-  suggestedQtyCellInputsRef.current = {
-    decisions, coverFor, poFor, economicsFor, healthThresholds, trendFor, onDecide,
-  };
-  const renderSuggestedQtyCell = useCallback((ctx: CellContext<PlanLine, unknown>) => {
-    const original = ctx.row.original;
-    if (!original.purchasable) {
-      return <span className="text-muted-foreground">{EM_DASH}</span>;
-    }
-    const {
-      decisions: liveDecisions, coverFor: liveCoverFor, poFor: livePoFor,
-      economicsFor: liveEconomicsFor, healthThresholds: liveHealthThresholds,
-      trendFor: liveTrendFor, onDecide: liveOnDecide,
-    } = suggestedQtyCellInputsRef.current;
-    return (
-      <span className="inline-flex items-center gap-1">
-        <span className="tabular-nums">{fmtInt(original.order_qty)}</span>
-        <StopClick>
-          <Popover>
-            <PopoverTrigger asChild>
-              <button
-                type="button"
-                title="How we got this qty"
-                aria-label={`Explain order qty for ${original.sku}`}
-                className="rounded-sm text-muted-foreground/70 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              >
-                <Info className="size-3.5" aria-hidden />
-              </button>
-            </PopoverTrigger>
-            <PopoverPortal>
-              <PopoverContent align="end" collisionPadding={8} className="w-80 p-0 text-sm">
-                <OrderQtyLedger
-                  line={original}
-                  decision={liveDecisions[original.id]}
-                  cover={liveCoverFor?.(original) ?? NO_COVER}
-                  poReceipts={livePoFor?.(original) ?? []}
-                  economicsFor={liveEconomicsFor}
-                  healthThresholds={liveHealthThresholds}
-                  trend={liveTrendFor?.(original)}
-                  onDecide={(next) => liveOnDecide(original, next)}
-                />
-              </PopoverContent>
-            </PopoverPortal>
-          </Popover>
-        </StopClick>
-      </span>
-    );
-  }, []);
+  const readingFor = useCallback(
+    (line: PlanLine) => {
+      const suggested = suggestedDecisionFor(line, coverFor?.(line) ?? NO_COVER, poFor?.(line) ?? []);
+      const { decision } = isGroupedLine(line)
+        ? groupDecisionState(line.__group.members.map((m) => m.id), decisions)
+        : { decision: decisions[line.id] };
+      return planPillReading(edits[line.id], decision, suggested);
+    },
+    [coverFor, poFor, decisions, edits],
+  );
+
+  /** Open one of the six lightboxes on a row (plan 4.6). */
+  const openDialog = useCallback(
+    (kind: PlanDialogRequest['kind'], line: PlanLine) => setDialogRequest({ kind, line }),
+    [],
+  );
+
 
   const columns = useMemo<ColumnDef<PlanLine>[]>(
     () => [
@@ -789,7 +505,10 @@ export function PlanLinesGrid({
           ) : (
             <span className="tabular-nums">{row.original.rankOrder}</span>
           ),
-        size: 64,
+        // Wide enough for a four-digit rank: it is the FIRST column, so it carries the
+        // grid's edge padding too, and at 36 a plan of more than 99 rows truncated its
+        // own rank to "1...".
+        size: 60,
         enableSorting: true,
         meta: { headerTitle: 'Priority', skeleton: <Skeleton className="h-4 w-6" /> },
       },
@@ -802,15 +521,14 @@ export function PlanLinesGrid({
           return (
             <div className="min-w-0 space-y-px">
               <div className="flex items-center gap-1.5">
-                {/* 5.3: the chevron is purely a state indicator - the whole row already
-                    toggles the drill open (`onRowClick`), same as any other row opens the
-                    explanation dialog. */}
-                {group && (
-                  row.getIsExpanded() ? (
-                    <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
-                  ) : (
-                    <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
-                  )
+                {/* The chevron is purely a state indicator - the whole row toggles the
+                    decision panel open (`onRowClick`). EVERY row carries one now: the panel
+                    is where a decision is made, and a per-warehouse row is as decidable as a
+                    grouped product row. */}
+                {row.getIsExpanded() ? (
+                  <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+                ) : (
+                  <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
                 )}
                 <span className="truncate text-sm font-medium" title={row.original.sku}>
                   {row.original.sku}
@@ -845,7 +563,7 @@ export function PlanLinesGrid({
             </div>
           );
         },
-        size: 240,
+        size: 150,
         enableSorting: true,
         enableHiding: false,
         meta: {
@@ -856,18 +574,32 @@ export function PlanLinesGrid({
               <Skeleton className="h-3 w-24" />
             </div>
           ),
-          // The per-warehouse rows a grouped row summed (5.3/5.4) - a read and drill panel,
-          // never a decision surface. `DataGridTable` renders this full-width below any row
-          // whose `getIsExpanded()` is true, same mechanism as `POIntakeLinesGrid`'s note
-          // panel; only a group row (below) ever turns that on.
-          expandedContent: (line: PlanLine) =>
-            isGroupedLine(line) ? (
-              <GroupMembersPanel
-                group={line.__group}
-                runId={runId ?? null}
-                onOpenMember={(rec) => setDetailRec(rec)}
-              />
-            ) : null,
+          // The decision itself (plan 4.4). `DataGridTable` renders this full-width below
+          // any row whose `getIsExpanded()` is true, same mechanism as `POIntakeLinesGrid`'s
+          // note panel. Every row can open it, and several can be open at once - Expand all
+          // needs that, and a buyer comparing two products should not have to close one.
+          expandedContent: (line: PlanLine) => (
+            <PlanRowPanel
+              line={line}
+              edit={edits[line.id]}
+              decision={
+                isGroupedLine(line)
+                  ? groupDecisionState(line.__group.members.map((m) => m.id), decisions).decision
+                  : decisions[line.id]
+              }
+              cover={coverFor?.(line) ?? NO_COVER}
+              poReceipts={poFor?.(line) ?? []}
+              price={priceFor?.(line)}
+              cheaper={cheaperFor?.(line) ?? null}
+              levelSuggestion={levelFor?.(line)}
+              economics={economicsFor?.(line)}
+              healthWindows={healthWindows}
+              disabled={decisionsReadOnly}
+              lockReason={decisionsReadOnly ? readOnlyReason : null}
+              onEdit={(patch) => onRowEdit?.(line, patch)}
+              onUseSuggestion={() => onResetRow?.(line)}
+            />
+          ),
         },
       },
       // Grouped mode drops the Location column entirely (19-20 Aug follow-up, captain:
@@ -884,35 +616,19 @@ export function PlanLinesGrid({
             {row.original.warehouse}
           </span>
         ),
-        size: 130,
+        size: 110,
         enableSorting: true,
         meta: { headerTitle: 'Location', skeleton: <Skeleton className="h-4 w-20" /> },
       } satisfies ColumnDef<PlanLine>] : []),
-      // The Order-type chip and the SO/Project/Retail/Unclassified columns are an
-      // UNGROUPED-only chapter (5.3 follow-up, 19-20 Aug): grouped mode replaces all five
-      // with the dynamic channel columns below - "instead of 1 column SO, 1 column
-      // project, 1 column retail, it should be 2 columns" - so a channel is never both a
-      // chip AND a column at once.
-      ...(!groupByChannel ? [{
-        id: 'side',
-        accessorFn: (row) => row.rec.segment ?? '',
-        header: ({ column }) => <DataGridColumnHeader title="Order type" visibility column={column} />,
-        // Project vs Retail, off the warehouse's segment. Never merged into one figure
-        // anywhere on this screen (S13b): project demand is erratic and retail stable, so a
-        // number spanning both describes neither. "Retail" not "Dealer" - the user's word.
-        cell: ({ row }) => {
-          const seg = row.original.rec.segment;
-          if (!seg) return <span className="text-muted-foreground">{EM_DASH}</span>;
-          return (
-            <Badge variant={seg === 'project' ? 'info' : 'success'} appearance="light" size="sm">
-              {seg === 'project' ? 'Project' : 'Retail'}
-            </Badge>
-          );
-        },
-        size: 100,
-        enableSorting: true,
-        meta: { headerTitle: 'Order type', skeleton: <Skeleton className="h-5 w-14" /> },
-      } satisfies ColumnDef<PlanLine>] : []),
+      // The SO and Project/Retail columns are an UNGROUPED-only chapter (5.3 follow-up,
+      // 19-20 Aug): grouped mode replaces them with the channel columns below - "instead
+      // of 1 column SO, 1 column project, 1 column retail, it should be 2 columns".
+      //
+      // There is no "Order type" chip beside them any more (R17, captain 28 Aug). It read
+      // Project or Retail off the WAREHOUSE'S SEGMENT, which is a fact about where stock
+      // sits, not about who ordered it - so a retail order into a project bin was labelled
+      // Project beside a Retail column that counted it correctly. A demand channel is
+      // `sales_orders.demand_class` on this screen and nothing else.
       ...(!groupByChannel ? [{
         id: 'needed',
         accessorFn: (row) => row.rec.outstanding_sales ?? 0,
@@ -957,14 +673,14 @@ export function PlanLinesGrid({
             ) : null}
           </div>
         ),
-        size: 130,
+        size: 90,
         enableSorting: true,
         meta: { headerTitle: 'SO (needed)', skeleton: <Skeleton className="h-4 w-10" /> },
       } satisfies ColumnDef<PlanLine>,
-      // The SO column's channel split (AC-F05 / AC-F07). Three DEMAND columns; the
-      // supply columns below stay single shared facts of this product-location and
-      // are deliberately NOT repeated per channel. Unclassified is visible and is
-      // excluded from the actionable need until somebody classifies it.
+      // The SO column's channel split (AC-F05 / AC-F07). TWO demand columns; the supply
+      // columns below stay single shared facts of this product-location and are
+      // deliberately NOT repeated per channel. There is no third: a sales order with no
+      // class reads as retail and the SO import refuses a file that would create one (P4).
       {
         id: 'project_need',
         accessorFn: (row) => row.rec.project_need ?? -1,
@@ -972,20 +688,13 @@ export function PlanLinesGrid({
           <DataGridColumnHeader title="Project" visibility column={column} />
         ),
         cell: ({ row }) => (
-          <span className="inline-flex items-center gap-0.5">
-            <ChannelNeed
-              value={row.original.rec.project_need}
-              title="Confirmed unplaced Project Buy. Firm: Retail netting never reduces it"
-            />
-            {/* Same drill the per-location group panel already has (21 Aug follow-up:
-                "where is the tooltip for me to open at project and retail") - the row
-                IS one location at this grain, so no `scope` widening is needed. */}
-            <StopClick>
-              <PlanDemandPopover runId={runId ?? null} recId={row.original.id} channel="project" />
-            </StopClick>
-          </span>
+          <ChannelNeed
+            value={row.original.rec.project_need}
+            title="Project demand - open the orders behind it"
+            onOpen={() => openDialog('project', row.original)}
+          />
         ),
-        size: 90,
+        size: 74,
         enableSorting: true,
         meta: { headerTitle: 'Project need', skeleton: <Skeleton className="h-4 w-10" /> },
       } satisfies ColumnDef<PlanLine>,
@@ -996,45 +705,15 @@ export function PlanLinesGrid({
           <DataGridColumnHeader title="Retail" visibility column={column} />
         ),
         cell: ({ row }) => (
-          <span className="inline-flex items-center gap-0.5">
-            <ChannelNeed
-              value={row.original.rec.retail_need}
-              title="Retail-class need, after the normal netting of free supply"
-            />
-            <StopClick>
-              <PlanDemandPopover runId={runId ?? null} recId={row.original.id} channel="retail" />
-            </StopClick>
-          </span>
+          <ChannelNeed
+            value={row.original.rec.retail_need}
+            title="Retail demand - open the orders behind it"
+            onOpen={() => openDialog('retail', row.original)}
+          />
         ),
-        size: 90,
+        size: 74,
         enableSorting: true,
         meta: { headerTitle: 'Retail need', skeleton: <Skeleton className="h-4 w-10" /> },
-      } satisfies ColumnDef<PlanLine>,
-      {
-        id: 'unclassified_need',
-        accessorFn: (row) => row.rec.unclassified_need ?? -1,
-        header: ({ column }) => (
-          <DataGridColumnHeader title="Unclass." visibility column={column} />
-        ),
-        cell: ({ row }) => (
-          <span className="inline-flex items-center gap-0.5">
-            <ChannelNeed
-              value={row.original.rec.unclassified_need}
-              title="Demand whose sales order carries no demand class. Not in the actionable need"
-              tone="exception"
-            />
-            <StopClick>
-              <PlanDemandPopover
-                runId={runId ?? null}
-                recId={row.original.id}
-                channel="unclassified"
-              />
-            </StopClick>
-          </span>
-        ),
-        size: 90,
-        enableSorting: true,
-        meta: { headerTitle: 'Unclassified need', skeleton: <Skeleton className="h-4 w-10" /> },
       } satisfies ColumnDef<PlanLine>] : []),
       // The dynamic channel columns (5.3 follow-up, 19-20 Aug): one per channel present in
       // the run (`dynamicChannels`), each showing that channel's WHOLE open demand
@@ -1075,31 +754,19 @@ export function PlanLinesGrid({
                 channel === 'project' && (line.__group.projectConfirmedQty ?? 0) > 0
                   ? `${fmtInt(line.__group.projectConfirmedQty as number)} confirmed for buy`
                   : null;
-              // Any one member's recommendation id opens the drill - the backend
-              // resolves the product+run off it and unions every sibling recommendation
-              // itself (`scope="product"`), so which member is "first" here is not a
-              // decision that changes what the drill shows.
-              const anyMemberId = line.__group.members[0]?.id;
+              // Only the two demand channels open a document list - `unclassified` has no
+              // configured window and no book of its own to show.
+              const openable = channel === 'project' || channel === 'retail';
               return (
                 <ChannelColumnCell
                   value={value}
                   confirmedNote={confirmed}
-                  drill={
-                    anyMemberId ? (
-                      <StopClick>
-                        <PlanDemandPopover
-                          runId={runId ?? null}
-                          recId={anyMemberId}
-                          channel={channel}
-                          scope="product"
-                        />
-                      </StopClick>
-                    ) : undefined
-                  }
+                  label={`${PLAN_CHANNEL_LABEL[channel]} demand - open the orders behind it`}
+                  onOpen={openable ? () => openDialog(channel, line) : undefined}
                 />
               );
             },
-            size: 110,
+            size: 74,
             enableSorting: true,
             meta: {
               headerTitle: `${PLAN_CHANNEL_LABEL[channel]} (open demand)`,
@@ -1113,47 +780,67 @@ export function PlanLinesGrid({
       {
         id: 'on_hand',
         accessorFn: (row) => row.rec.on_hand ?? 0,
-        header: ({ column }) => <DataGridColumnHeader title="On hand" visibility column={column} />,
-        cell: ({ row }) => <span className="tabular-nums">{numCell(row.original.rec.on_hand)}</span>,
-        size: 90,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="On hand BRW" visibility column={column} />
+        ),
+        cell: ({ row }) =>
+          row.original.rec.on_hand === null || row.original.rec.on_hand === undefined ? (
+            <span className="text-muted-foreground">{EM_DASH}</span>
+          ) : (
+            <PlanNumberButton
+              value={fmtInt(row.original.rec.on_hand)}
+              label="On hand in the site pool - open the stock by location"
+              onClick={() => openDialog('on_hand', row.original)}
+              disabled={!row.original.product_id}
+            />
+          ),
+        size: 74,
         enableSorting: true,
-        meta: { headerTitle: 'On hand', skeleton: <Skeleton className="h-4 w-10" /> },
+        meta: { headerTitle: 'On hand BRW', skeleton: <Skeleton className="h-4 w-10" /> },
       },
       {
         id: 'incoming_spo',
         accessorFn: (row) => row.rec.incoming_spo ?? 0,
         header: ({ column }) => <DataGridColumnHeader title="SPO" visibility column={column} />,
-        cell: ({ row }) => (
-          <span className="tabular-nums" title="On the water - incoming SPO quantity">
-            {numCell(row.original.rec.incoming_spo)}
-          </span>
-        ),
-        size: 80,
+        // On the water. The figure opens the shipments themselves (plan 4.6) rather than
+        // linking out to the SPO allocations list, which answered a wider question than the
+        // one this cell asks and lost the product's own context on the way.
+        cell: ({ row }) =>
+          row.original.rec.incoming_spo === null || row.original.rec.incoming_spo === undefined ? (
+            <span className="text-muted-foreground">{EM_DASH}</span>
+          ) : (
+            <PlanNumberButton
+              value={fmtInt(row.original.rec.incoming_spo)}
+              label="SPO - open the shipments arriving"
+              onClick={() => openDialog('spo', row.original)}
+              disabled={!row.original.product_id}
+            />
+          ),
+        size: 56,
         enableSorting: true,
         meta: { headerTitle: 'SPO (incoming)', skeleton: <Skeleton className="h-4 w-10" /> },
       },
       {
         id: 'outstanding_po',
         accessorFn: (row) => row.rec.outstanding_po ?? 0,
-        header: ({ column }) => (
-          <DataGridColumnHeader title="PO outstanding" visibility column={column} />
-        ),
-        // The mirror of the SO cell's order-trend popup: who we bought it from, when, and
-        // at what cost - the same interaction, on the buy side.
-        cell: ({ row }) => (
-          <StopClick>
-            <PlanPurchaseTrendPopover
-              qty={row.original.rec.outstanding_po}
-              trend={purchaseTrendFor?.(row.original)}
-              windowMonths={purchaseTrendWindowMonths}
-              price={priceFor?.(row.original)}
-              onOpen={onOpenPurchaseTrend}
+        // R13: "PO", not "PO outstanding" - the column already sits among the other supply
+        // offsets, and the longer name was the only one on the row needing two lines.
+        header: ({ column }) => <DataGridColumnHeader title="PO" visibility column={column} />,
+        cell: ({ row }) =>
+          row.original.rec.outstanding_po === null ||
+          row.original.rec.outstanding_po === undefined ? (
+            <span className="text-muted-foreground">{EM_DASH}</span>
+          ) : (
+            <PlanNumberButton
+              value={fmtInt(row.original.rec.outstanding_po)}
+              label="PO - open what is already ordered"
+              onClick={() => openDialog('po', row.original)}
+              disabled={!row.original.product_id}
             />
-          </StopClick>
-        ),
-        size: 80,
+          ),
+        size: 56,
         enableSorting: true,
-        meta: { headerTitle: 'PO outstanding (on order)', skeleton: <Skeleton className="h-4 w-10" /> },
+        meta: { headerTitle: 'PO (on order)', skeleton: <Skeleton className="h-4 w-10" /> },
       },
       {
         id: 'suggested',
@@ -1161,10 +848,23 @@ export function PlanLinesGrid({
         header: ({ column }) => (
           <DataGridColumnHeader title="Suggested qty" visibility column={column} />
         ),
-        // Stable renderer (see `renderSuggestedQtyCell` above) - keeps the ledger Popover
-        // open across a decision toggle.
-        cell: renderSuggestedQtyCell,
-        size: 120,
+        // The number opens the ledger in a dialog (plan 4.6). A covered row is telling the
+        // buyer they already have it, so the quantity it SUGGESTS is 0 - never the rounded
+        // "buy anyway" offer, which the engine still stores on the row for the Covered-by-
+        // stock view and for the decision the buyer records if they take it.
+        cell: ({ row }) => {
+          const line = row.original;
+          if (!line.purchasable) return <span className="text-muted-foreground">{EM_DASH}</span>;
+          const suggested = line.status === 'covered_by_stock' ? 0 : line.order_qty;
+          return (
+            <PlanNumberButton
+              value={fmtInt(suggested)}
+              label="Suggested qty - open how we got it"
+              onClick={() => openDialog('suggested', line)}
+            />
+          );
+        },
+        size: 84,
         enableSorting: true,
         meta: { headerTitle: 'Suggested qty', skeleton: <Skeleton className="h-4 w-10" /> },
       },
@@ -1179,7 +879,7 @@ export function PlanLinesGrid({
             </ExplainNumber>
           </StopClick>
         ),
-        size: 110,
+        size: 96,
         enableSorting: true,
         meta: { headerTitle: 'Net', skeleton: <Skeleton className="h-4 w-10" /> },
       },
@@ -1197,7 +897,7 @@ export function PlanLinesGrid({
             </ExplainNumber>
           </StopClick>
         ),
-        size: 110,
+        size: 96,
         enableSorting: true,
         meta: { headerTitle: 'Runway', skeleton: <Skeleton className="h-4 w-10" /> },
       },
@@ -1208,83 +908,35 @@ export function PlanLinesGrid({
         cell: ({ row }) => {
           const line = row.original;
           if (!line.purchasable) return <span className="text-muted-foreground">{EM_DASH}</span>;
-          const qty = decidedQty(line, decisions[line.id]) || line.order_qty;
-          const cost = decidedCost({ ...line }, { buy: qty });
+          const edit = edits[line.id];
+          const decided = edit?.decision ?? decisions[line.id];
+          const qty = decidedQty(line, decided) || line.order_qty;
+          // A row waiting on a new price has no cost yet either - a figure here beside the
+          // panel's own "Line cost -" would put two answers on one row.
+          const asking =
+            (edit?.priceMode ?? decided?.priceMode ?? 'use_last') === 'ask_new';
+          const cost = asking ? null : decidedCost({ ...line }, { buy: qty });
           // A price we do not hold is never rendered as a number: it is the reason the line
           // cannot be weighed against a budget. A dash rather than the words, so the row does
           // not repeat "No price" twice; the title carries the detail.
           return cost === null ? (
-            <span className="text-muted-foreground" title="No price on file, so this line cannot be costed">
+            <span
+              className="text-muted-foreground"
+              title={
+                asking
+                  ? 'Waiting on a new price, so this line cannot be costed yet'
+                  : 'No price on file, so this line cannot be costed'
+              }
+            >
               {EM_DASH}
             </span>
           ) : (
             <span className="tabular-nums">{fmtMoney(cost)}</span>
           );
         },
-        size: 120,
+        size: 104,
         enableSorting: true,
         meta: { headerTitle: 'Total cost', skeleton: <Skeleton className="h-4 w-16" /> },
-      },
-      {
-        id: 'price',
-        // Sorted by how urgent the price question is, not alphabetically: a line costing at
-        // zero has to be reachable in one click from the top of the column.
-        accessorFn: (row) => {
-          const p = priceFor?.(row);
-          return p ? PRICE_ADVICE_SORT[p.advice] : 99;
-        },
-        header: ({ column }) => (
-          <DataGridColumnHeader title="Suggested price" visibility column={column} />
-        ),
-        cell: ({ row }) => (
-          <StopClick>
-            <PlanPriceCell
-              unitCost={row.original.unit_cost}
-              currency={row.original.currency}
-              price={priceFor?.(row.original)}
-              cheaper={cheaperFor?.(row.original) ?? null}
-              staleAfterDays={staleAfterDays}
-              purchasable={row.original.purchasable}
-            />
-          </StopClick>
-        ),
-        size: 150,
-        enableSorting: true,
-        meta: { headerTitle: 'Suggested price', skeleton: <Skeleton className="h-4 w-24" /> },
-      },
-      {
-        id: 'supplier',
-        accessorFn: (row) => row.supplier?.name ?? '',
-        header: ({ column }) => (
-          <DataGridColumnHeader title="Suggested supplier" visibility column={column} />
-        ),
-        cell: ({ row }) =>
-          isGroupedLine(row.original) &&
-          row.original.supplier?.code === '' &&
-          row.original.__group.conflicts.has('supplier') ? (
-            // Supplier is a PRODUCT fact carried through when every location agrees
-            // (captain's 20 Aug ruling) - this dash means the group's own locations
-            // genuinely disagree on supplier, a real conflict rather than a suppressed fact.
-            // When no member carries a supplier at all (not a conflict), fall through to
-            // `PlanSupplierCell`, whose own fallback already reads "No supplier linked to
-            // this product" - the same data-gap wording an ungrouped row gets.
-            <span className="text-muted-foreground" title="Varies by location - expand to see each one">
-              {EM_DASH}
-            </span>
-          ) : (
-            <StopClick>
-              <PlanSupplierCell
-                supplier={row.original.supplier ?? null}
-                alternatives={row.original.alternatives ?? []}
-                price={priceFor?.(row.original)}
-                cheaper={cheaperFor?.(row.original) ?? null}
-                purchasable={row.original.purchasable}
-              />
-            </StopClick>
-          ),
-        size: 180,
-        enableSorting: true,
-        meta: { headerTitle: 'Suggested supplier', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
         id: 'reorder_level',
@@ -1309,7 +961,7 @@ export function PlanLinesGrid({
             </span>
           );
         },
-        size: 110,
+        size: 82,
         enableSorting: true,
         meta: { headerTitle: 'Reorder level', skeleton: <Skeleton className="h-4 w-10" /> },
       },
@@ -1327,142 +979,22 @@ export function PlanLinesGrid({
             {numCell(row.original.rec.master_reorder_quantity)}
           </span>
         ),
-        size: 100,
+        size: 82,
         enableSorting: true,
         meta: { headerTitle: 'Reorder qty', skeleton: <Skeleton className="h-4 w-10" /> },
       },
       {
-        id: 'level',
-        // The changes float to the top: a column of "still fits" is a column nobody reads.
-        accessorFn: (row) => {
-          const s = levelFor?.(row);
-          if (!s) return 2;
-          return levelActionLabel(s).changed ? 0 : 1;
-        },
-        header: ({ column }) => (
-          <DataGridColumnHeader title="AutoCount level + qty" visibility column={column} />
-        ),
-        cell: ({ row }) => (
-          <StopClick>
-            <PlanLevelCell suggestion={levelFor?.(row.original)} onAmend={onAmendLevel} />
-          </StopClick>
-        ),
-        size: 200,
-        enableSorting: true,
-        meta: { headerTitle: 'AutoCount level + qty', skeleton: <Skeleton className="h-4 w-24" /> },
-      },
-      {
-        id: 'health',
-        // The rows the buyer should re-question float up: discontinue candidates first,
-        // then the margin problems, then the healthy book.
-        accessorFn: (row) => {
-          const econ = economicsFor?.(row);
-          if (!econ) return 9;
-          const margin = marginOf(row.unit_cost_base, econ, healthThresholds.margin_floor_pct);
-          const advice = discontinueAdvice(econ, margin, trendFor?.(row), healthThresholds);
-          if (advice?.consider) return 0;
-          return { negative: 1, thin: 2, unknown: 3, healthy: 4 }[margin.tone];
-        },
-        header: ({ column }) => (
-          <DataGridColumnHeader title="Product health" visibility column={column} />
-        ),
-        cell: ({ row }) => {
-          const econ = economicsFor?.(row.original);
-          if (!econ) return <span className="text-muted-foreground">{EM_DASH}</span>;
-          const margin = marginOf(
-            row.original.unit_cost_base, econ, healthThresholds.margin_floor_pct);
-          const advice = discontinueAdvice(
-            econ, margin, trendFor?.(row.original), healthThresholds);
-          return (
-            <StopClick>
-              <PlanHealthCell
-                margin={margin}
-                advice={advice}
-                econ={econ}
-                onDecideLifecycle={onDecideLifecycle}
-              />
-            </StopClick>
-          );
-        },
-        size: 170,
-        enableSorting: true,
-        meta: { headerTitle: 'Product health', skeleton: <Skeleton className="h-5 w-20" /> },
-      },
-      {
-        id: 'moq',
-        accessorFn: (row) => row.order_qty_inputs?.moq ?? -1,
-        header: ({ column }) => <DataGridColumnHeader title="MOQ" visibility column={column} />,
-        // The supplier's minimum, and - when it forces more than the need - the pump-up
-        // with its sell-through odds. The engine floors at the MOQ silently; this column
-        // is where the silence ends.
-        cell: ({ row }) => {
-          const line = row.original;
-          const moq = line.order_qty_inputs?.moq ?? null;
-          const masterMoq = line.order_qty_inputs?.master_moq ?? null;
-          const isOverride = line.order_qty_inputs?.moq_is_override ?? false;
-          // Only a buy/covered row carries a real recommendation for the write to land on;
-          // a grouped row edits every member at once, so every member has to qualify.
-          const editable = isGroupedLine(line)
-            ? line.__group.members.every((m) => m.rec.type === 'buy' || m.rec.type === 'covered')
-            : line.rec.type === 'buy' || line.rec.type === 'covered';
-          if (isGroupedLine(line) && moq === null && line.__group.conflicts.has('moq')) {
-            // MOQ is a PRODUCT fact carried through when every location agrees (captain's
-            // 20 Aug ruling) - this dash means the group's own locations genuinely disagree,
-            // a real conflict rather than a suppressed fact. When no member carries an MOQ
-            // at all (not a conflict), fall through to the shared "no MOQ on file" branch
-            // below - the same data-gap wording an ungrouped row gets.
-            return (
-              <span className="text-muted-foreground" title="Varies by location - expand to see each one">
-                {EM_DASH}
-              </span>
-            );
-          }
-          if (!line.purchasable) {
-            return (
-              <span className="text-muted-foreground" title="No MOQ on file for this supplier">
-                {EM_DASH}
-              </span>
-            );
-          }
-          const gap = moq !== null
-            ? moqGap(
-                // The PRE-round need: what the engine computed before the MOQ floor.
-                line.rec.recommended_qty ?? line.order_qty,
-                moq,
-                Math.ceil(line.order_qty),
-                economicsFor?.(line),
-                healthThresholds.dead_turnover_months,
-              )
-            : null;
-          return (
-            <StopClick>
-              <PlanMoqCell
-                moq={moq}
-                masterMoq={masterMoq}
-                isOverride={isOverride}
-                disabled={!editable}
-                onChange={onAmendMoq ? (value) => onAmendMoq(line, value) : undefined}
-                note={gap ? { text: moqGapNote(gap, fmtInt), warn: gap.verdict !== 'clears', title: gap.sentence } : null}
-              />
-            </StopClick>
-          );
-        },
-        size: 140,
-        enableSorting: true,
-        meta: { headerTitle: 'MOQ', skeleton: <Skeleton className="h-4 w-10" /> },
-      },
-      {
         id: 'decision',
-        // The merged "Suggested action" + "Decision" column (user markup, 2026-08-12): one
-        // place to see the suggestion and take it. Wider than either of the two columns it
-        // replaces used to be alone, since it now carries what both of them said.
+        // A STATUS, not a control (plan 4.3, C6). Deciding happens in the expanded row,
+        // where the numbers behind the decision are on screen; this cell answers the one
+        // question the collapsed row can usefully answer - where is this up to - and carries
+        // the mixture in words so reading down the column still says what was decided.
         header: ({ column }) => <DataGridColumnHeader title="Decision" visibility column={column} />,
         cell: ({ row }) => {
           const line = row.original;
-          // S16 (captain, 21 Aug, 3rd time requested): the row IS the decision surface, on
-          // every grain - grouped included. The ONE thing that still locks it is a legacy
-          // run (`decisionsReadOnly`, stamped by the caller off `isLegacyRun` - its
-          // decisions are history and nothing here may rewrite them).
+          // A legacy run's decisions are history: the panel still renders, every input in it
+          // is dead, and the cell says so once rather than showing a pill that invites a
+          // change nothing can accept.
           if (decisionsReadOnly) {
             return (
               <span
@@ -1474,40 +1006,20 @@ export function PlanLinesGrid({
               </span>
             );
           }
-          // A grouped (product-grain) row fans the SAME decision out to every member behind
-          // it (`usePlanLines.decide`, mirroring `updateMoq`'s own fan-out) - its cell shows
-          // the unanimous result, or `mixed` when the members disagree (5.3).
-          const { decision, mixed } = isGroupedLine(line)
-            ? groupDecisionState(line.__group.members.map((m) => m.id), decisions)
-            : { decision: decisions[line.id], mixed: false };
-          return (
-            <StopClick>
-              <PlanLineDecisionCell
-                line={line}
-                decision={decision}
-                mixed={mixed}
-                cover={coverFor?.(line) ?? NO_COVER}
-                poReceipts={poFor?.(line) ?? []}
-                trend={trendFor?.(line)}
-                economics={economicsFor?.(line)}
-                healthThresholds={healthThresholds}
-                onDecide={(next) => onDecide(line, next)}
-                onClear={() => onClear(line)}
-              />
-            </StopClick>
-          );
+          return <PlanDecisionPill reading={readingFor(line)} />;
         },
-        size: 340,
+        size: 170,
         enableSorting: false,
         enableHiding: false,
-        meta: { headerTitle: 'Decision', skeleton: <Skeleton className="h-8 w-40" /> },
+        meta: { headerTitle: 'Decision', skeleton: <Skeleton className="h-5 w-32" /> },
       },
     ],
-    [decisions, onDecide, onClear, runId, decisionsReadOnly, readOnlyReason,
-     coverFor, priceFor, cheaperFor, trendFor, channelTrendFor, groupByChannel, dynamicChannels,
-     levelFor, onAmendLevel, onAmendMoq, poFor, purchaseTrendFor, purchaseTrendWindowMonths,
-     onOpenPurchaseTrend, hasPhotoFor, photoStatus, onOpenPhoto, economicsFor, healthThresholds,
-     onDecideLifecycle, staleAfterDays, renderSuggestedQtyCell, channelTotals],
+    [decisions, edits, runId, decisionsReadOnly, readOnlyReason,
+     coverFor, priceFor, cheaperFor, levelFor, economicsFor, healthWindows,
+     trendFor, trendSeriesMonths, groupByChannel, dynamicChannels,
+     poFor,
+     hasPhotoFor, photoStatus, onOpenPhoto,
+     onRowEdit, onResetRow, openDialog, readingFor, channelTotals],
   );
 
   // The story order (see the header comment): each chapter leads with its result and is
@@ -1519,28 +1031,31 @@ export function PlanLinesGrid({
   const [columnOrder, setColumnOrder] = useState<string[]>(() =>
     groupByChannel
       ? [
-          'rank', 'sku', 'warehouse',
-          'suggested', ...dynamicChannels.map((c) => `channel_${c}`),
+          'rank', 'sku',
+          'suggested', 'reorder_level', 'reorder_qty',
+          ...dynamicChannels.map((c) => `channel_${c}`),
           'on_hand', 'incoming_spo', 'outstanding_po',
           'decision',
-          'price', 'supplier', 'moq', 'cost',
-          'reorder_level', 'reorder_qty', 'level', 'health',
-          'net', 'days_cover',
+          'cost', 'warehouse', 'net', 'days_cover',
         ]
       : [
-          'rank', 'side', 'sku', 'warehouse',
-          'suggested', 'needed', 'project_need', 'retail_need', 'unclassified_need',
+          'rank', 'sku', 'warehouse',
+          'suggested', 'reorder_level', 'reorder_qty',
+          'project_need', 'retail_need',
           'on_hand', 'incoming_spo', 'outstanding_po',
           'decision',
-          'price', 'supplier', 'moq', 'cost',
-          'reorder_level', 'reorder_qty', 'level', 'health',
-          'net', 'days_cover',
+          'cost', 'needed', 'net', 'days_cover',
         ],
   );
-  // Computed steps, not decisions: off by default, one columns-menu click to bring back.
+  // Off by default, one columns-menu click to bring back. `cost` joins them (plan 4.3): the
+  // panel states the line cost where the buy is actually decided, so a column repeating it
+  // on every row is a second place to read the same figure. `net`/`days_cover` are computed
+  // steps rather than decisions, and `needed` restates the two channel columns beside it.
   const [columnVisibility, setColumnVisibility] = useState<Record<string, boolean>>({
+    cost: false,
     net: false,
     days_cover: false,
+    needed: false,
   });
 
   const table = useReactTable({
@@ -1562,18 +1077,11 @@ export function PlanLinesGrid({
     getPaginationRowModel: getPaginationRowModel(),
   });
 
-  // Never a group row's own synthetic `rec` (5.3: it exists to feed the grid's cells, not
-  // to be explained on its own) - Next/Prev inside the detail dialog must only ever land
-  // on a real per-warehouse recommendation.
-  const pageRecs = useMemo<ReorderRecommendation[]>(
-    () =>
-      table
-        .getRowModel()
-        .rows.filter((r) => !isGroupedLine(r.original))
-        .map((r) => r.original.rec),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [table, tableData, pagination, sorting, expanded],
-  );
+  /** Whether Expand all / Collapse all have anything to do (C3). A control that is always
+   *  live tells the reader nothing about the state it would change. */
+  const pageRows = table.getRowModel().rows;
+  const anyCollapsed = pageRows.some((r) => !r.getIsExpanded());
+  const anyExpanded = pageRows.some((r) => r.getIsExpanded());
 
   const statusOptions = useMemo(
     () => [
@@ -1591,6 +1099,35 @@ export function PlanLinesGrid({
       <DataGridListToolbar
         table={table}
         secondaryActions={secondaryActions}
+        primaryAction={toolbarPrimary}
+        leftActions={
+          <div className="flex items-center">
+            <Button
+              variant="outline"
+              size="sm"
+              mode="icon"
+              className="h-8 w-8"
+              onClick={() => table.toggleAllRowsExpanded(true)}
+              disabled={!anyCollapsed}
+              title="Expand all"
+              aria-label="Expand all"
+            >
+              <ChevronsUpDown className="size-4" />
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              mode="icon"
+              className="h-8 w-8"
+              onClick={() => table.toggleAllRowsExpanded(false)}
+              disabled={!anyExpanded}
+              title="Collapse all"
+              aria-label="Collapse all"
+            >
+              <ChevronsDownUp className="size-4" />
+            </Button>
+          </div>
+        }
         searchSlot={
           <div className="relative">
             <Search className="absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -1615,9 +1152,9 @@ export function PlanLinesGrid({
         }
         filters={{
           kind: 'custom',
-          active: [statusFilter, decidedFilter, sideFilter, priceFilter, actionFilter,
+          active: [statusFilter, decidedFilter, priceFilter, actionFilter,
                    levelFilter].some((f) => f !== 'all'),
-          activeCount: [statusFilter, decidedFilter, sideFilter, priceFilter, actionFilter,
+          activeCount: [statusFilter, decidedFilter, priceFilter, actionFilter,
                         levelFilter].filter((f) => f !== 'all').length,
           content: (
             <div className="space-y-3">
@@ -1637,16 +1174,6 @@ export function PlanLinesGrid({
                   { value: 'decided', label: 'Already decided' },
                 ]}
                 placeholder="Decision"
-              />
-              <SearchableSelect
-                value={sideFilter}
-                onChange={setSideFilter}
-                options={[
-                  { value: 'all', label: 'Both order types' },
-                  { value: 'project', label: 'Project' },
-                  { value: 'dealer', label: 'Retail' },
-                ]}
-                placeholder="Order type"
               />
               <SearchableSelect
                 value={priceFilter}
@@ -1705,18 +1232,19 @@ export function PlanLinesGrid({
         columnsMovable: true,
         columnsVisibility: true,
       }}
+      // Saved column order/visibility belongs to the SCREEN, not to one plan: defaulted to
+      // the pathname it keyed off `/scm/reorder/{run_id}`, so every plan a buyer opened
+      // started from the defaults again and their own layout was never seen twice.
+      listingKey="scm.dashboard.view::reorder-plan-lines"
       tableClassNames={{ edgeCell: 'px-5' }}
       onRowClick={(row) => {
-        // A group row has no single recommendation to explain (5.3) - clicking it opens
-        // its per-warehouse drill instead of the explanation dialog.
-        if (isGroupedLine(row)) {
-          setExpanded((prev) => {
-            const current = typeof prev === 'boolean' ? {} : prev;
-            return { ...current, [row.id]: !current[row.id] };
-          });
-          return;
-        }
-        setDetailRec(row.rec);
+        // The whole row toggles its decision panel (D1). Several may be open at once -
+        // Expand all needs that, and there is no unsaved-edit prompt between rows because
+        // the drafts live in a page-level map rather than inside the open panel.
+        setExpanded((prev) => {
+          const current = typeof prev === 'boolean' ? {} : prev;
+          return { ...current, [row.id]: !current[row.id] };
+        });
       }}
     >
       <Card>
@@ -1732,14 +1260,35 @@ export function PlanLinesGrid({
         </CardFooter>
       </Card>
 
-      <ReorderExplanationDialog
-        rec={detailRec}
-        open={!!detailRec}
-        onOpenChange={(o) => !o && setDetailRec(null)}
-        recs={pageRecs}
-        totalCount={filtered.length}
-        pageItemOffset={pagination.pageIndex * pagination.pageSize}
-        onNavigate={setDetailRec}
+      {/* The one lightbox (plan 4.6). The Suggested-qty body is the existing ledger, built
+          here because only this component holds the plan context it reads; its own cover
+          toggles write to the DRAFT, never straight to the backend. */}
+      <PlanRowDialog
+        request={dialogRequest}
+        onOpenChange={(o) => !o && setDialogRequest(null)}
+        runId={runId ?? null}
+        poReceipts={dialogRequest ? (poFor?.(dialogRequest.line) ?? []) : []}
+        ledger={
+          dialogRequest?.kind === 'suggested' ? (
+            <OrderQtyLedger
+              line={dialogRequest.line}
+              decision={
+                edits[dialogRequest.line.id]?.decision ?? decisions[dialogRequest.line.id]
+              }
+              cover={coverFor?.(dialogRequest.line) ?? NO_COVER}
+              poReceipts={poFor?.(dialogRequest.line) ?? []}
+              economicsFor={economicsFor}
+              healthThresholds={healthThresholds}
+              trend={trendFor?.(dialogRequest.line)}
+              onDecide={(next) => onRowEdit?.(dialogRequest.line, { decision: next })}
+              runId={runId ?? null}
+              purchaseTrend={purchaseTrendFor?.(dialogRequest.line)}
+              purchaseWindowMonths={purchaseTrendWindowMonths}
+              purchaseTrendReady={purchaseTrendReady}
+              onNeedPurchaseTrend={onOpenPurchaseTrend}
+            />
+          ) : null
+        }
       />
     </DataGrid>
   );

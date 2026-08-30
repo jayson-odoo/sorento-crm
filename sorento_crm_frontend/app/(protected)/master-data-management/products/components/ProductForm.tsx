@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -22,7 +22,7 @@ import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { toast } from 'sonner';
-import { useCreateProduct, useUpdateProduct, useProduct, useProducts } from '../hooks/useProducts';
+import { useCreateProduct, useUpdateProduct, useProduct } from '../hooks/useProducts';
 import { ProductSchema, type ProductSchemaType } from '../forms/product-schema';
 import type { Product, ProductFormData } from '../types/product.types';
 import { useProductCategorySelectQuery } from '../../shared/hooks/use-product-category-select-query';
@@ -33,7 +33,8 @@ import { useUOMSelectQuery } from '../../shared/hooks/use-uom-select-query';
 import { PriceFloorPanel } from '@/app/(protected)/project-sales/_shared/components/PriceFloorPanel';
 import ProductSuppliersSection from './ProductSuppliersSection';
 import ProductAttachmentsTab from './ProductAttachmentsTab';
-import RecordNavigation from '@/components/common/RecordNavigation';
+import ListPager from '@/components/common/ListPager';
+import { productsPagerQuery } from '../lib/listQuery';
 
 /** The tab values `?tab=` may name, so a stray query string cannot land on an empty panel. */
 const PRODUCT_FORM_TABS = [
@@ -55,7 +56,7 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
   const router = useRouter();
   const searchParams = useSearchParams();
   const isEditMode = !!productId;
-  const { data: productFromQuery, isLoading: isLoadingProduct } = useProduct(productId || null);
+  const { data: productFromQuery } = useProduct(productId || null);
   /** Use initialProduct when passed (from Edit page); otherwise use query result */
   const product = initialProduct ?? productFromQuery;
   const { data: categories } = useProductCategorySelectQuery();
@@ -64,44 +65,7 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
   const createMutation = useCreateProduct();
   const updateMutation = useUpdateProduct();
 
-  const navigationParams = useMemo(() => {
-    // Param names match the list GET (carried into the detail/edit URL by
-    // buildDetailSearch): query / category_id / brand_id / status / sort+dir /
-    // page (1-based) + limit.
-    const search = searchParams.get('query') ?? '';
-    const category = searchParams.get('category_id') ?? undefined;
-    const brand = searchParams.get('brand_id') ?? undefined;
-    const statusParam = searchParams.get('status') ?? 'all';
-    const sortField = searchParams.get('sort') ?? 'created_at';
-    const sortDir = searchParams.get('dir') ?? 'desc';
-    const page = parseInt(searchParams.get('page') ?? '1', 10);
-    const pageSize = parseInt(searchParams.get('limit') ?? '50', 10);
-    return {
-      pageIndex: Number.isNaN(page) ? 0 : Math.max(0, page - 1),
-      pageSize: Number.isNaN(pageSize) || pageSize < 1 ? 50 : Math.min(pageSize, 500),
-      sorting: [{ id: sortField, desc: sortDir === 'desc' }],
-      searchQuery: search,
-      category_id: category || undefined,
-      brand_id: brand || undefined,
-      status: (statusParam === 'active' || statusParam === 'inactive'
-        ? statusParam
-        : 'all') as 'active' | 'inactive' | 'all',
-      price_min: undefined,
-      price_max: undefined,
-      item_type: undefined,
-    };
-  }, [searchParams]);
-
-  const { data: navigationData } = useProducts(navigationParams);
-  const navigationItems = navigationData?.data ?? [];
-
   const navigationBasePath = '/master-data-management/products';
-  const navigationQueryString = searchParams.toString();
-  const handleNavigate = (id: string) => {
-    router.push(
-      `${navigationBasePath}/${id}/edit${navigationQueryString ? `?${navigationQueryString}` : ''}`,
-    );
-  };
 
   const form = useForm<ProductSchemaType>({
     resolver: zodResolver(ProductSchema),
@@ -113,6 +77,7 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
       brand_id: null,
       item_type: null,
       is_active: true,
+      is_searchable: true,
       list_price: 0,
       cost_price: null,
       invoice_price: null,
@@ -169,6 +134,7 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
       brand_id: brandId,
       item_type: product.item_type || null,
       is_active: product.is_active,
+      is_searchable: product.is_searchable ?? true,
       list_price: product.list_price,
       cost_price: product.cost_price || null,
       invoice_price: product.invoice_price || null,
@@ -231,6 +197,7 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
         reorder_quantity: data.reorder_quantity,
         item_type: data.item_type ?? (isEditMode ? null : undefined),
         is_active: data.is_active,
+        is_searchable: data.is_searchable,
       };
 
       if (isEditMode && productId) {
@@ -273,11 +240,14 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
       >
         {isEditMode && productId && (
           <div className="flex justify-end">
-            <RecordNavigation
+            <ListPager
+              {...productsPagerQuery}
+              detailPath={navigationBasePath}
               currentId={productId}
-              items={navigationItems}
-              basePath={navigationBasePath}
-              onSelect={handleNavigate}
+              ariaLabel="product"
+              hrefFor={(id, search) =>
+                `${navigationBasePath}/${id}/edit${search ? `?${search}` : ''}`
+              }
             />
           </div>
         )}
@@ -288,7 +258,7 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
         <Tabs defaultValue={PRODUCT_FORM_TABS.includes(searchParams.get('tab') ?? '')
             ? (searchParams.get('tab') as string)
             : 'basic'} className="w-full">
-          <TabsList className="grid w-full grid-cols-5">
+          <TabsList variant="default" className="grid w-full grid-cols-5">
             <TabsTrigger value="basic">Basic Information</TabsTrigger>
             <TabsTrigger value="pricing">Pricing</TabsTrigger>
             <TabsTrigger value="specifications">Specifications</TabsTrigger>
@@ -474,6 +444,27 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
                           <FormLabel className="text-base">Active Status</FormLabel>
                           <FormDescription>
                             Enable or disable this product
+                          </FormDescription>
+                        </div>
+                        <FormControl>
+                          <Switch
+                            checked={field.value}
+                            onCheckedChange={field.onChange}
+                          />
+                        </FormControl>
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="is_searchable"
+                    render={({ field }) => (
+                      <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
+                        <div className="space-y-0.5">
+                          <FormLabel className="text-base">Chat Search</FormLabel>
+                          <FormDescription>
+                            Allow the chatbot to answer with this product
                           </FormDescription>
                         </div>
                         <FormControl>

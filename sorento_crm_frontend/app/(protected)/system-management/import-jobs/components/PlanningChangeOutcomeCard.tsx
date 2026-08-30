@@ -36,8 +36,11 @@ export function PlanningChangeOutcomeCard({
               batch.order_count === 1 ? '' : 's'
             }`}
           </p>
+          {/* The LIST, not a batch page: a book upload moves lines on many orders at once,
+              and the board is addressed with the orders it is to show (AC-P3-1). The list row
+              carries them and its Plan action opens the board on them. */}
           <Button asChild variant="outline" size="sm">
-            <Link href={`/project-sales/planning-changes/${batch.id}`}>Review</Link>
+            <Link href="/project-sales/planning-changes">Review</Link>
           </Button>
         </div>
       </CardContent>

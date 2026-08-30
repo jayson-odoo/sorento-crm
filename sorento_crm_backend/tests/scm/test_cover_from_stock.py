@@ -26,13 +26,14 @@ from app.services.scm.cover_service import CoverSource, propose_cover, sources_i
 MARKER = "ZZTCOV"
 
 
-def src(code: str, qty: float, segment: str = "project", wid: str | None = None) -> CoverSource:
+def src(code: str, qty: float, segment: str | None = None, wid: str | None = None) -> CoverSource:
+    """A site-pool source unless a test says otherwise: a location nobody has classified
+    counts as pool, the same call `reorder_run_service._planning_rows` makes."""
     return CoverSource(
         warehouse_id=wid or f"wh-{code}",
         warehouse_code=code,
         segment=segment,
         qty=qty,
-        cross_segment=False,
     )
 
 
@@ -41,7 +42,7 @@ def src(code: str, qty: float, segment: str = "project", wid: str | None = None)
 # --------------------------------------------------------------------------- #
 
 def test_a_shortage_smaller_than_the_free_stock_is_covered_outright():
-    p = propose_cover(1, "wh-BRW-IB", "project", [src("BRW-BB", 5), src("PJ-SR", 1)])
+    p = propose_cover(1, "wh-BRW-IB", [src("BRW-BB", 5), src("PJ-SR", 1)])
 
     assert p.cover_qty == 1
     assert p.buy_qty == 0
@@ -51,7 +52,7 @@ def test_a_shortage_smaller_than_the_free_stock_is_covered_outright():
 
 def test_a_shortage_larger_than_the_free_stock_becomes_a_split():
     """The live DC1-BB case: 6 units exist anywhere else, so cover 6 and buy the other 182."""
-    p = propose_cover(188, "wh-DC1-BB", "project", [src("BRW-BB", 5), src("PJ-SR", 1)])
+    p = propose_cover(188, "wh-DC1-BB", [src("BRW-BB", 5), src("PJ-SR", 1)])
 
     assert p.cover_qty == 6
     assert p.buy_qty == 182
@@ -60,7 +61,7 @@ def test_a_shortage_larger_than_the_free_stock_becomes_a_split():
 
 
 def test_nothing_free_anywhere_is_a_plain_buy():
-    p = propose_cover(188, "wh-DC1-BB", "project", [])
+    p = propose_cover(188, "wh-DC1-BB", [])
 
     assert p.cover_qty == 0
     assert p.buy_qty == 188
@@ -68,7 +69,7 @@ def test_nothing_free_anywhere_is_a_plain_buy():
 
 
 def test_a_line_that_is_not_short_proposes_nothing():
-    assert propose_cover(0, "wh-A", "project", [src("B", 50)]).sources == []
+    assert propose_cover(0, "wh-A", [src("B", 50)]).sources == []
 
 
 # --------------------------------------------------------------------------- #
@@ -78,7 +79,7 @@ def test_a_line_that_is_not_short_proposes_nothing():
 def test_the_lines_own_location_is_never_offered_as_a_source():
     """Its stock is already inside the net. Offering it back would count it twice and is what
     made the old button read as "use the 1 on hand here", which was never a decision."""
-    p = propose_cover(10, "wh-BRW-BB", "project", [src("BRW-BB", 5), src("PJ-SR", 1)])
+    p = propose_cover(10, "wh-BRW-BB", [src("BRW-BB", 5), src("PJ-SR", 1)])
 
     assert [s.warehouse_code for s in p.sources] == ["PJ-SR"]
     assert p.cover_qty == 1
@@ -92,53 +93,55 @@ def test_the_lines_own_location_is_never_offered_as_a_source():
 def test_stock_already_taken_by_an_earlier_decision_is_not_offered_again():
     free = [src("BRW-BB", 5)]
 
-    first = propose_cover(3, "wh-A", "project", free)
+    first = propose_cover(3, "wh-A", free)
     assert first.cover_qty == 3
 
     second = propose_cover(
-        3, "wh-B", "project", free, already_taken={"wh-BRW-BB": first.cover_qty}
+        3, "wh-B", free, already_taken={"wh-BRW-BB": first.cover_qty}
     )
     assert second.cover_qty == 2
     assert second.buy_qty == 1
 
 
 def test_a_fully_consumed_source_disappears_rather_than_offering_zero():
-    p = propose_cover(5, "wh-A", "project", [src("BRW-BB", 5)], already_taken={"wh-BRW-BB": 5})
+    p = propose_cover(5, "wh-A", [src("BRW-BB", 5)], already_taken={"wh-BRW-BB": 5})
 
     assert p.sources == []
     assert p.buy_qty == 5
 
 
 # --------------------------------------------------------------------------- #
-# segments are crossed deliberately, never silently
+# a project bin is never a source
 # --------------------------------------------------------------------------- #
+#
+# R18 (captain, 28 Aug): "From stock" offers POOL locations only. Project stock is already
+# claimed by an Order Inquiry, so offering it to a reorder promises the same units twice -
+# and the cross-segment idea (offer it, but flag it) went with the ruling.
 
-def test_same_segment_stock_is_preferred_over_a_bigger_cross_segment_pile():
-    """A smaller same-segment source beats a larger one across the boundary: crossing is a
-    decision the business tracks, so it is the fallback, not the first answer."""
+def test_a_project_bin_is_never_offered_however_much_it_holds():
+    p = propose_cover(4, "wh-A", [src("BRW-IB", 100, segment="project")])
+
+    assert p.sources == []
+    assert p.cover_qty == 0
+    assert p.buy_qty == 4
+
+
+def test_a_pool_source_beside_a_project_bin_is_the_only_one_offered():
     p = propose_cover(
-        4,
+        10,
         "wh-A",
-        "project",
-        [src("DEALER-BIG", 100, segment="dealer"), src("PROJ-SMALL", 3, segment="project")],
+        [src("BRW-IB", 100, segment="project"), src("DC1", 3, segment="dealer")],
     )
 
-    assert [s.warehouse_code for s in p.sources] == ["PROJ-SMALL", "DEALER-BIG"]
-    assert p.sources[0].cross_segment is False
-    assert p.sources[1].cross_segment is True
+    assert [(s.warehouse_code, s.qty) for s in p.sources] == [("DC1", 3)]
+    assert p.buy_qty == 7
 
 
-def test_a_cross_segment_source_is_flagged_so_it_is_never_mixed_in_silently():
-    p = propose_cover(2, "wh-A", "dealer", [src("PROJ", 10, segment="project")])
-
+def test_an_unclassified_location_still_counts_as_pool():
+    # A site nobody has tagged is not assumed to be a project bin - the same call the
+    # engine's own on-hand makes (COALESCE(segment, 'dealer')).
+    p = propose_cover(2, "wh-A", [src("X", 10, segment=None)])
     assert p.cover_qty == 2
-    assert p.sources[0].cross_segment is True
-
-
-def test_an_unknown_segment_is_not_treated_as_a_crossing():
-    # Absent data is not evidence of a boundary being crossed, so it must not be flagged as one.
-    p = propose_cover(2, "wh-A", None, [src("X", 10, segment=None)])
-    assert p.sources[0].cross_segment is False
 
 
 # --------------------------------------------------------------------------- #
@@ -160,6 +163,64 @@ def test_free_stock_includes_a_location_with_stock_and_no_plan_row(db_free_world
     to read as zero demand rather than as absence of stock."""
     codes = {s.warehouse_code: s.qty for s in db_free_world["free"]}
     assert codes[f"{MARKER}-SPARE"] == 5
+
+
+def test_a_project_bin_holding_the_lot_offers_nothing_and_the_gap_is_bought():
+    """The live shape R18 was written for: 34 units sit in BRW-IB (a project bin) and the
+    BRW pool holds none. The plan offered "Stock 34" off the bin, which is stock an Order
+    Inquiry has already claimed - so the row promised units it could not move.
+
+    Now the bin is not a source, the pool has nothing to give, and the whole gap is a buy.
+    """
+    from app.services.scm.cover_service import free_stock_by_product, propose_cover
+    from app.models.product import Product, ProductCategory, UnitOfMeasure
+    from sqlalchemy import text as _t
+    from tests._pg_fixture import pg_session, unique_code
+
+    def _u() -> str:
+        return str(uuid.uuid4())
+
+    with pg_session() as db:
+        cat = ProductCategory(id=_u(), category_code=unique_code(MARKER),
+                              category_name=f"{MARKER} cat")
+        uom = UnitOfMeasure(id=_u(), uom_code=unique_code("U")[:20], uom_name=f"{MARKER} u")
+        db.add_all([cat, uom])
+        db.flush()
+        product = Product(id=_u(), product_code=unique_code("P"), product_name=f"{MARKER} p",
+                          category_id=cat.id, base_uom_id=uom.id, list_price=0,
+                          is_active=True, is_discontinued=False)
+        db.add(product)
+        db.flush()
+
+        run_id = _u()
+        db.execute(_t(
+            "INSERT INTO scm.reorder_run (id, status, include_market, created_at) "
+            "VALUES (:id, 'complete', false, now())"), {"id": run_id})
+
+        pool_id, bin_id = _u(), _u()
+        pool_code, bin_code = f"{MARKER}-BRW", f"{MARKER}-BRW-IB"
+        for wid, code, segment in ((pool_id, pool_code, "dealer"),
+                                   (bin_id, bin_code, "project")):
+            db.execute(_t(
+                "INSERT INTO warehouses (id, warehouse_code, warehouse_name, is_active, "
+                "counts_as_available, segment, pool_warehouse_id) "
+                "VALUES (:id, :c, :c, true, true, :s, :pool)"),
+                {"id": wid, "c": code, "s": segment,
+                 "pool": pool_id if segment == "project" else None})
+        # 34 free in the bin, nothing in the pool.
+        db.execute(_t(
+            "INSERT INTO stock (id, product_id, warehouse_id, quantity_on_hand, "
+            "synced_to_excel) VALUES (:id, :p, :w, 34, false)"),
+            {"id": _u(), "p": product.id, "w": bin_id})
+        db.flush()
+
+        free = free_stock_by_product(db, run_id, [str(product.id)]).get(str(product.id), [])
+
+        assert free == [], "a project bin is not free stock for a reorder"
+        p = propose_cover(100, pool_id, free,
+                          cover_scope="own_pool", line_pool_warehouse_id=pool_id)
+        assert p.cover_qty == 0
+        assert p.buy_qty == 100
 
 
 @pytest.fixture()
@@ -193,6 +254,8 @@ def db_free_world():
             "VALUES (:id, 'complete', false, now())"), {"id": run_id})
 
         wh_ids = {}
+        # Site pools, not project bins: after R18 a project bin is never a source at all,
+        # and these two rows are here to pin the free = on_hand - own demand rule.
         for code, on_hand, demand in (
             (f"{MARKER}-SHORT", 231, 419),   # holds stock, short of its own demand
             (f"{MARKER}-SPARE", 5, 0),       # holds stock, no demand, no plan row
@@ -202,7 +265,7 @@ def db_free_world():
             db.execute(_t(
                 "INSERT INTO warehouses (id, warehouse_code, warehouse_name, "
                 "is_active, counts_as_available, segment) "
-                "VALUES (:id, :c, :c, true, true, 'project')"),
+                "VALUES (:id, :c, :c, true, true, 'dealer')"),
                 {"id": wid, "c": code})
             db.execute(_t(
                 "INSERT INTO stock (id, product_id, warehouse_id, quantity_on_hand, "
@@ -232,13 +295,12 @@ def db_free_world():
 # Three warehouses: A and B share pool A (one site), C is its own site. A row sitting at A
 # may take from B under `own_pool`, and from B or C under `all_locations`.
 
-def scoped(code: str, qty: float, pool: str, segment: str = "project") -> CoverSource:
+def scoped(code: str, qty: float, pool: str, segment: str | None = None) -> CoverSource:
     return CoverSource(
         warehouse_id=f"wh-{code}",
         warehouse_code=code,
         segment=segment,
         qty=qty,
-        cross_segment=False,
         pool_warehouse_id=pool,
     )
 
@@ -246,7 +308,7 @@ def scoped(code: str, qty: float, pool: str, segment: str = "project") -> CoverS
 def test_own_pool_offers_only_the_rows_own_site():
     free = [scoped("B", 5, "wh-A"), scoped("C", 50, "wh-C")]
 
-    p = propose_cover(60, "wh-A", "project", free,
+    p = propose_cover(60, "wh-A", free,
                       cover_scope="own_pool", line_pool_warehouse_id="wh-A")
 
     assert [s.warehouse_code for s in p.sources] == ["B"]
@@ -257,7 +319,7 @@ def test_own_pool_offers_only_the_rows_own_site():
 def test_all_locations_offers_every_site():
     free = [scoped("B", 5, "wh-A"), scoped("C", 50, "wh-C")]
 
-    p = propose_cover(60, "wh-A", "project", free,
+    p = propose_cover(60, "wh-A", free,
                       cover_scope="all_locations", line_pool_warehouse_id="wh-A")
 
     assert [s.warehouse_code for s in p.sources] == ["C", "B"]
@@ -266,13 +328,12 @@ def test_all_locations_offers_every_site():
 
 
 def test_a_source_with_no_pool_of_its_own_is_its_own_pool():
-    loose = CoverSource(warehouse_id="wh-D", warehouse_code="D", segment="project",
-                        qty=9, cross_segment=False)
+    loose = CoverSource(warehouse_id="wh-D", warehouse_code="D", segment=None, qty=9)
 
-    assert propose_cover(9, "wh-A", "project", [loose],
+    assert propose_cover(9, "wh-A", [loose],
                          cover_scope="own_pool",
                          line_pool_warehouse_id="wh-A").sources == []
-    assert propose_cover(9, "wh-A", "project", [loose],
+    assert propose_cover(9, "wh-A", [loose],
                          cover_scope="own_pool",
                          line_pool_warehouse_id="wh-D").cover_qty == 9
 
@@ -282,7 +343,7 @@ def test_a_row_with_no_pool_is_not_scoped_to_nothing():
     it to nothing would silently withdraw every option rather than narrow them."""
     free = [scoped("B", 5, "wh-A"), scoped("C", 50, "wh-C")]
 
-    p = propose_cover(60, None, "project", free,
+    p = propose_cover(60, None, free,
                       cover_scope="own_pool", line_pool_warehouse_id=None)
 
     assert [s.warehouse_code for s in p.sources] == ["C", "B"]
@@ -297,7 +358,7 @@ def test_an_absent_scope_falls_closed_to_the_rows_own_pool():
     """
     free = [scoped("B", 5, "wh-A"), scoped("C", 50, "wh-C")]
 
-    p = propose_cover(60, "wh-A", "project", free, line_pool_warehouse_id="wh-A")
+    p = propose_cover(60, "wh-A", free, line_pool_warehouse_id="wh-A")
 
     assert [s.warehouse_code for s in p.sources] == ["B"]
     assert p.cover_qty == 5
@@ -316,7 +377,7 @@ def test_own_pool_still_excludes_the_lines_own_warehouse():
     inside the net."""
     free = [scoped("A", 100, "wh-A"), scoped("B", 5, "wh-A")]
 
-    p = propose_cover(60, "wh-A", "project", free,
+    p = propose_cover(60, "wh-A", free,
                       cover_scope="own_pool", line_pool_warehouse_id="wh-A")
 
     assert [s.warehouse_code for s in p.sources] == ["B"]
@@ -363,14 +424,15 @@ def db_pooled_world():
             "VALUES (:id, 'complete', false, now())"), {"id": run_id})
 
         wh_ids: dict[str, str] = {}
-        # A is the pool root; B points at it; C is its own site.
+        # A is the pool root; B points at it; C is its own site. All three are site pools:
+        # after R18 a project bin is never offered, so scoping it would prove nothing.
         for code in (f"{MARKER}-A", f"{MARKER}-B", f"{MARKER}-C"):
             wid = _u()
             wh_ids[code] = wid
             db.execute(_t(
                 "INSERT INTO warehouses (id, warehouse_code, warehouse_name, "
                 "is_active, counts_as_available, segment) "
-                "VALUES (:id, :c, :c, true, true, 'project')"),
+                "VALUES (:id, :c, :c, true, true, 'dealer')"),
                 {"id": wid, "c": code})
         db.execute(_t("UPDATE warehouses SET pool_warehouse_id = :root WHERE id = :id"),
                    {"root": wh_ids[f"{MARKER}-A"], "id": wh_ids[f"{MARKER}-B"]})

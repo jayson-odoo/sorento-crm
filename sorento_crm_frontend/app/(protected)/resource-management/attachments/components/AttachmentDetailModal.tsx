@@ -28,7 +28,7 @@ import {
   useUpdateAttachment,
 } from '../hooks/useAttachments';
 import { getAttachmentMetadata } from '../services/attachmentService';
-import type { Attachment } from '../types/attachment.types';
+import { attachmentCompanyLabel, type Attachment } from '../types/attachment.types';
 import type { LinkedEntityRef } from '../types/attachment.types';
 import RecordNavigation from '@/components/common/RecordNavigation';
 import AttachmentDeleteDialog from './attachment-delete-dialog';
@@ -296,7 +296,7 @@ function LinkagesTabs({
   return (
     <>
       <Tabs defaultValue="products" className="w-full">
-        <TabsList className="grid h-auto w-full grid-cols-2 gap-1 sm:grid-cols-3 lg:grid-cols-5">
+        <TabsList variant="default" className="grid h-auto w-full grid-cols-2 gap-1 sm:grid-cols-3 lg:grid-cols-5">
           <TabsTrigger value="products">
             Products {products.length > 0 && `(${products.length})`}
           </TabsTrigger>
@@ -757,6 +757,10 @@ export default function AttachmentDetailModal({
   neighbourItems = [],
   onAttachmentChange,
 }: AttachmentDetailModalProps) {
+  // Where the open attachment sits in the page the modal was opened from.
+  const modalIndex = attachmentId
+    ? neighbourItems.findIndex((item) => item.id === attachmentId)
+    : -1;
   const queryClient = useQueryClient();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -850,11 +854,13 @@ export default function AttachmentDetailModal({
             </DialogTitle>
             {neighbourItems.length > 0 && onAttachmentChange && attachmentId && (
               <RecordNavigation
-                basePath=""
-                currentId={attachmentId}
-                items={neighbourItems}
+                index={modalIndex + 1}
+                total={neighbourItems.length}
+                hasPrevious={modalIndex > 0}
+                hasNext={modalIndex >= 0 && modalIndex < neighbourItems.length - 1}
+                onPrevious={() => onAttachmentChange!(neighbourItems[modalIndex - 1].id)}
+                onNext={() => onAttachmentChange!(neighbourItems[modalIndex + 1].id)}
                 ariaLabel="attachment"
-                onSelect={onAttachmentChange}
               />
             )}
           </DialogHeader>
@@ -1001,6 +1007,10 @@ export default function AttachmentDetailModal({
                             attachment.uploaded_by ??
                             '-'}
                         </p>
+                      </div>
+                      <div>
+                        <p className="text-sm text-muted-foreground">Company</p>
+                        <p className="font-medium">{attachmentCompanyLabel(attachment)}</p>
                       </div>
                       <div>
                         <p className="text-sm text-muted-foreground">Uploaded</p>

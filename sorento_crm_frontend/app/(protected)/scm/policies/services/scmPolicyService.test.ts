@@ -29,6 +29,8 @@ import {
   getProductScopeOptions,
   getClassScopeOptions,
   getWarehouseScopeOptions,
+  getFulfilmentPriority,
+  saveFulfilmentPriority,
 } from './scmPolicyService';
 import type { ReorderPolicyWrite } from '../types/policy.types';
 
@@ -280,5 +282,47 @@ describe('scope-option mappers hold the resolver key as the hidden value (AC-NAV
   it('option sources throw the extracted message on failure', async () => {
     apiFetch.mockResolvedValue(fail('boom', 500));
     await expect(getProductScopeOptions()).rejects.toThrow();
+  });
+});
+
+
+describe('fulfilment priority carries `tba_date_from` (borrow ladder v7.1 S1)', () => {
+  const POLICY = {
+    name: 'Fair fulfilment priority',
+    factors: { need_by_date: 3 },
+    demand_class_weights: { project: 1 },
+    reorder_coverage_until: '2026-10-31',
+    tba_date_from: '2030-06-30',
+    exists: true,
+  };
+
+  it('reads the field the backend sends', async () => {
+    apiFetch.mockResolvedValue(ok(POLICY));
+    const got = await getFulfilmentPriority();
+    expect(lastUrl().pathname).toBe('/api/v1/scm/policies/fulfilment-priority');
+    expect(got.tba_date_from).toBe('2030-06-30');
+  });
+
+  it('sends the date on a PUT and reads back what the new revision holds', async () => {
+    apiFetch.mockResolvedValue(ok({ ...POLICY, tba_date_from: '2029-01-01' }));
+    const saved = await saveFulfilmentPriority({
+      factors: { need_by_date: 3 },
+      demand_class_weights: { project: 1 },
+      reorder_coverage_until: null,
+      tba_date_from: '2029-01-01',
+    });
+    expect(lastInit().method).toBe('PUT');
+    expect(JSON.parse(String(lastInit().body))).toEqual({
+      factors: { need_by_date: 3 },
+      demand_class_weights: { project: 1 },
+      reorder_coverage_until: null,
+      tba_date_from: '2029-01-01',
+    });
+    expect(saved.tba_date_from).toBe('2029-01-01');
+  });
+
+  it('throws the extracted message on failure', async () => {
+    apiFetch.mockResolvedValue(fail('TBA date from must be today or later.', 422));
+    await expect(getFulfilmentPriority()).rejects.toThrow('TBA date from must be today or later.');
   });
 });

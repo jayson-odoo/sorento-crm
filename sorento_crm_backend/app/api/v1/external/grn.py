@@ -3,7 +3,7 @@ from datetime import date
 from typing import Union, List as ListType
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, or_
+from sqlalchemy import and_, func, nullslast, or_
 
 from app.database import get_db
 from app.dependencies import get_external_api_user
@@ -117,6 +117,26 @@ def create_grn(
                         SPOAllocation.spo_number == sn,
                         SPOAllocation.product_id == pid,
                         SPOAllocation.warehouse_id == wid,
+                        # Rows this system raised, which is the ownership rule the other
+                        # two writers of this table follow (`upsert_allocation`, the
+                        # external bulk create). An imported SPO document is matched by
+                        # `grn_spo_matching` on the SPO NUMBER, with capacity, which is the
+                        # path built for it; letting this triple lookup reach one as well
+                        # would give a GRN two different answers depending on which route
+                        # it arrived by.
+                        SPOAllocation.source_system.is_(None),
+                    )
+                    # The triple stopped being unique at migration 420: one SPO can state
+                    # the same product at the same location on two lines, two containers
+                    # at a time. A line with capacity left is preferred over one already
+                    # fully received, and the line number breaks the tie - `.first()` with
+                    # no ORDER BY would attach the GRN to whichever row Postgres returned.
+                    .order_by(
+                        (
+                            SPOAllocation.allocated_quantity
+                            > func.coalesce(SPOAllocation.quantity_received, 0)
+                        ).desc(),
+                        nullslast(SPOAllocation.spo_line_number.asc()),
                     )
                     .first()
                 )

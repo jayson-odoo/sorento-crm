@@ -8,6 +8,7 @@ import {
   BreadcrumbSeparator,
 } from '@/components/ui/breadcrumb';
 import { Container } from '@/components/common/container';
+import BackToList from '@/components/common/BackToList';
 import AttachmentDetail from '../components/AttachmentDetail';
 
 export const metadata: Metadata = {
@@ -32,23 +33,30 @@ export default async function AttachmentDetailPage({
 
   return (
     <Container>
-      <Breadcrumb>
-        <BreadcrumbList>
-          <BreadcrumbItem>
-            <BreadcrumbLink href="/">Home</BreadcrumbLink>
-          </BreadcrumbItem>
-          <BreadcrumbSeparator />
-          <BreadcrumbItem>
-            <BreadcrumbLink href={backUrl}>
-              {fromDirectories ? 'Files' : 'Attachments'}
-            </BreadcrumbLink>
-          </BreadcrumbItem>
-          <BreadcrumbSeparator />
-          <BreadcrumbItem>
-            <BreadcrumbPage>Details</BreadcrumbPage>
-          </BreadcrumbItem>
-        </BreadcrumbList>
-      </Breadcrumb>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <Breadcrumb>
+          <BreadcrumbList>
+            <BreadcrumbItem>
+              <BreadcrumbLink href="/">Home</BreadcrumbLink>
+            </BreadcrumbItem>
+            <BreadcrumbSeparator />
+            <BreadcrumbItem>
+              <BreadcrumbLink href={backUrl}>
+                {fromDirectories ? 'Files' : 'Attachments'}
+              </BreadcrumbLink>
+            </BreadcrumbItem>
+            <BreadcrumbSeparator />
+            <BreadcrumbItem>
+              <BreadcrumbPage>Details</BreadcrumbPage>
+            </BreadcrumbItem>
+          </BreadcrumbList>
+        </Breadcrumb>
+        <BackToList
+          listPath={backUrl}
+          label={fromDirectories ? 'Back to files' : 'Back to attachments'}
+          appendListState={!fromDirectories}
+        />
+      </div>
       <div className="mt-6">
         <AttachmentDetailWrapper params={params} fromDirectories={fromDirectories} directoryId={directoryId} />
       </div>

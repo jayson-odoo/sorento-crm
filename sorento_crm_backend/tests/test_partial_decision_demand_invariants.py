@@ -10,7 +10,19 @@ WHOLE order out of the sheet leg. Confirming one line of a twelve-line order wou
 made the other eleven invisible to the reorder engine - uncovered demand nobody buys, and
 the precise opposite of what partial confirmation is for. The two failure modes are
 DISAPPEARING DEMAND and DOUBLE COUNTING, and both are pinned here, on the reorder engine's
-own read path rather than on a table:
+own read path rather than on a table.
+
+P3 (`PLAN-scm-purchasing-uat-journey.md`, captain 26 Aug 2026) retired the sheet leg, and
+that moved where the undecided line lives without changing either failure mode. Project
+demand now has ONE source, the un-linked Order Inquiry row, so the confirmed line flows to
+planning as its Buy and the undecided one is AWAITING CS - counted and named by
+`demand_source_service.set_aside_project_demand` rather than netted. Disappearing demand is
+therefore still what these tests refuse: the undecided quantity has to be somewhere a
+planner can see it, and it must never be in the plan twice.
+
+The handshake (`PLAN-scm-oi-handshake.md`, captain 27 Aug) adds the second gate the engine
+test below now walks: the VIEW counts a Buy the moment CS confirms it, because the customer
+is owed it; the PLAN counts it only once purchasing has ACKNOWLEDGED the row.
 
 * `reorder_run_service._planning_rows` is what the engine plans from. It reads
   `scm.net_position_v` and `scm.committed_v`, so a number that is wrong in the view is
@@ -68,8 +80,11 @@ class _World:
 def _seed(db):
     """One sheet-named project order, two lines of one product at one location.
 
-    Line A is open for 50 and line B for 45, so the sheet leg, the confirmed leg and a
-    double count are three different numbers and the assertions cannot pass by accident.
+    Line A is open for 50 and line B for 45, so the confirmed leg, the set-aside remainder
+    and a double count are three different numbers and the assertions cannot pass by
+    accident. The `demand_origin` stamp below is what the retired sheet leg read; it is
+    kept because this is the exact shape P3 was ruled against - an order the old Joey feed
+    named that nobody has confirmed - and it must now count for nothing.
 
     Ladder v2 (section E rule 7): the own location is never a Reserve source any more, so
     line A's Reserve component draws from a POOL wired to the line's own warehouse
@@ -133,76 +148,133 @@ def _confirm(db, world, payload_lines):
         _restore(originals)
 
 
+def _acknowledge(db, world, row_ids):
+    """Purchasing takes the rows on (AC-H2), through the service the route calls.
+
+    The route itself is exercised by `tests/test_order_inquiry_handshake.py`; what this
+    file needs is the state change, so it goes straight at the service rather than
+    re-plumbing a permissioned client for one call.
+    """
+    from app.models.base import company_scope
+    from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+
+    with company_scope(db, frozenset({world.company_id})):
+        result = ProjectOrderInquiryService(db).acknowledge_rows(
+            row_ids, actor_user_id=world.user_id
+        )
+    db.commit()
+    return result
+
+
 # ------------------------------------------------- the invariant the captain asked for
 
 
 def test_the_undecided_lines_of_a_partly_confirmed_order_are_still_demand():
-    """One line of a two-line order is confirmed. The other must still be planned for.
+    """One line of a two-line order is confirmed. The other must still be accounted for.
 
-    Numbers: line A open 50, confirmed as Reserve 20 + Buy 30. Line B open 45, undecided.
+    Numbers: line A open 50, confirmed as a whole-line Buy 50. Line B open 45, undecided.
 
-    * 75 = the undecided 45 through the sheet leg + the confirmed Buy 30. Correct.
-    * 30 = the per-ORDER `decided` CTE this slice replaces: line B vanished.
-    * 125 = line A counted through both legs at once.
+    * 50 = the confirmed Buy, counted once. Correct since P3.
+    * 95 = line B netted through the retired sheet leg as well.
+    * 100 = line A counted through two legs at once.
+
+    Line B's 45 does not vanish: it is reported as awaiting CS, which is the half of
+    "disappearing demand" that survived the sheet leg.
     """
+    from app.models.base import company_scope
+    from app.services.scm import demand_source_service
+
     with pg_session() as db:
         world = _seed(db)
         before = _committed(db, world)
-        assert before["project_committed"] == Decimal("95"), (
-            "unconfirmed, the sheet leg counts both lines"
+        assert before["project_committed"] == Decimal("0"), (
+            "unconfirmed, neither line is demand: a project-class book line becomes "
+            "demand when CS raises the Buy for it, and not before (P3)"
         )
 
         _confirm(
             db,
             world,
             [
-                _line_payload(
-                    world.line_a.id,
-                    reserve=[{"warehouse_id": world.pool_warehouse.id, "qty": "20"}],
-                    buy_qty="30",
-                )
+                # Wholly bought (AC-L5): a line is met entirely from stock or entirely
+                # bought, so a "Reserve 20 + Buy 30" composition can no longer be confirmed.
+                _line_payload(world.line_a.id, buy_qty="50")
             ],
         )
 
         after = _committed(db, world)
-        assert after["project_committed"] == Decimal("75"), (
-            "the undecided line must keep flowing to reorder planning, and the confirmed "
-            "line must be counted once, as its Buy residual"
+        assert after["project_committed"] == Decimal("50"), (
+            "the confirmed line flows to planning as its Buy, counted exactly once"
         )
-        assert after["confirmed"] == Decimal("30"), (
-            "only the confirmed Buy is firm; the sheet remainder is netted like any other "
-            "commitment"
+        assert after["confirmed"] == Decimal("50")
+        assert after["committed"] == Decimal("50")
+
+        with company_scope(db, frozenset({world.company_id})):
+            aside = demand_source_service.set_aside_project_demand(
+                db, product_ids=[str(world.product.id)]
+            )
+        assert Decimal(str(aside["quantity"])) == Decimal("45"), (
+            "the undecided line is not demand, but it is not gone either: it is on CS's "
+            "desk and the planner is told so by name"
         )
-        assert after["committed"] == Decimal("75")
+        assert aside["lines"] == 1
 
 
-def test_the_reorder_engine_reads_the_undecided_demand_through_its_own_path():
-    """Not merely present in the view: present in the rows the engine plans from."""
+def test_the_reorder_engine_reads_the_confirmed_demand_only_once_it_is_acknowledged():
+    """Not merely present in the view: present in the rows the engine plans from.
+
+    And the two are deliberately different, which is the handshake
+    (`PLAN-scm-oi-handshake.md`): `scm.committed_v` counts CS's Buy immediately, because
+    the customer is owed it, while `horizon_committed_select_sql` - the only thing a plan
+    run reads - counts `PLANNED_ACK_STATES` alone. An instruction purchasing has not taken
+    on yet may still be amended or refused, so buying against it is buying against a
+    question. The engine therefore sees nothing until the row is acknowledged, and the
+    plan page shows the difference as its awaiting count.
+    """
     from app.models.base import company_scope
+    from app.models.project_so import OrderInquiryRow
 
-    with pg_session() as db:
-        world = _seed(db)
-        _confirm(
-            db,
-            world,
-            [
-                _line_payload(
-                    world.line_a.id,
-                    reserve=[{"warehouse_id": world.pool_warehouse.id, "qty": "20"}],
-                    buy_qty="30",
-                )
-            ],
-        )
-
+    def _planning_row(db, world):
         with company_scope(db, frozenset({world.company_id})):
             rows = reorder_run_service._planning_rows(
                 db, [str(world.warehouse.id)], product_ids=[str(world.product.id)]
             )
         assert len(rows) == 1, "the engine must still see this product at this location"
-        row = rows[0]
-        assert Decimal(str(row["project_committed"])) == Decimal("75")
-        assert Decimal(str(row["project_confirmed_committed"])) == Decimal("30")
-        assert Decimal(str(row["committed"])) == Decimal("75")
+        return rows[0]
+
+    with pg_session() as db:
+        world = _seed(db)
+        _confirm(
+            db,
+            world,
+            [
+                # Wholly bought (AC-L5): a line is met entirely from stock or entirely
+                # bought, so a "Reserve 20 + Buy 30" composition can no longer be confirmed.
+                _line_payload(world.line_a.id, buy_qty="50")
+            ],
+        )
+
+        awaiting = _planning_row(db, world)
+        assert Decimal(str(awaiting["project_committed"])) == Decimal("0"), (
+            "the row is awaiting acknowledgement, so the plan must not buy against it"
+        )
+        assert _committed(db, world)["project_committed"] == Decimal("50"), (
+            "the VIEW counts it all the same - it is owed to the customer either way"
+        )
+
+        row_ids = [
+            str(row_id)
+            for (row_id,) in db.query(OrderInquiryRow.id)
+            .filter(OrderInquiryRow.so_line_id == world.line_a.id)
+            .all()
+        ]
+        assert row_ids, "the confirmation must have raised the Buy as an inquiry row"
+        _acknowledge(db, world, row_ids)
+
+        acknowledged = _planning_row(db, world)
+        assert Decimal(str(acknowledged["project_committed"])) == Decimal("50")
+        assert Decimal(str(acknowledged["project_confirmed_committed"])) == Decimal("50")
+        assert Decimal(str(acknowledged["committed"])) == Decimal("50")
 
 
 def test_a_fully_confirmed_order_counts_its_buy_once_and_its_sheet_quantity_never():
@@ -213,57 +285,88 @@ def test_a_fully_confirmed_order_counts_its_buy_once_and_its_sheet_quantity_neve
             db,
             world,
             [
-                _line_payload(
-                    world.line_a.id,
-                    reserve=[{"warehouse_id": world.pool_warehouse.id, "qty": "20"}],
-                    buy_qty="30",
-                ),
+                _line_payload(world.line_a.id, buy_qty="50"),
                 _line_payload(world.line_b.id, buy_qty="45"),
             ],
         )
 
         after = _committed(db, world)
-        assert after["project_committed"] == Decimal("75"), (
-            "30 + 45 of confirmed Buy, and not one unit of the 95 the sheet named"
+        assert after["project_committed"] == Decimal("95"), (
+            "50 + 45 of confirmed Buy, counted once each and never through the sheet leg"
         )
-        assert after["confirmed"] == Decimal("75")
+        assert after["confirmed"] == Decimal("95")
 
 
-def test_a_partly_confirmed_order_is_still_a_plan_demand_order():
-    """The order-level half. It used to stop being demand the moment ANY decision existed,
-    which is what took its undecided lines with it."""
-    from app.models.order import SalesOrder
-    from app.services.scm.demand import is_plan_demand_order
+def test_the_order_half_never_speaks_for_a_project_order_and_the_line_half_still_does():
+    """The order-level half, and what P3 left of it.
 
-    with pg_session() as db:
-        world = _seed(db)
-        _confirm(
-            db,
-            world,
-            [
-                _line_payload(
-                    world.line_a.id,
-                    reserve=[{"warehouse_id": world.pool_warehouse.id, "qty": "20"}],
-                    buy_qty="30",
-                )
-            ],
-        )
-        db.expire_all()
+    It used to stop being demand the moment ANY decision existed, which is what took the
+    order's undecided lines with it; 13.4 moved that question to the LINE. P3 then took
+    the order half out of the argument entirely - it excludes project class whether the
+    order is untouched, partly confirmed or fully confirmed - so the answer can no longer
+    depend on how far CS has got. The line half is what still varies, and it is what the
+    fulfilment board reads as "covered".
+    """
+    from app.models.order import SalesOrder, SalesOrderLine
+    from app.services.scm.demand import is_plan_demand_line, is_plan_demand_order
 
-        core_so_id = (
+    def counted_order(db, world):
+        return (
             db.query(SalesOrder.id)
             .filter(SalesOrder.id == world.order.so_id, is_plan_demand_order())
             .first()
         )
-        assert core_so_id is not None, (
-            "an order with an undecided line is still demand; which of its LINES count is "
-            "the line rule's question, not this one's"
+
+    def undecided_core_lines(db, world):
+        return {
+            str(line_id)
+            for (line_id,) in db.query(SalesOrderLine.id)
+            .filter(
+                SalesOrderLine.sales_order_id == world.order.so_id,
+                is_plan_demand_line(),
+            )
+            .all()
+        }
+
+    with pg_session() as db:
+        world = _seed(db)
+        assert counted_order(db, world) is None, (
+            "untouched, a project order is not book demand"
         )
+        assert undecided_core_lines(db, world) == {
+            str(world.line_a.core_sales_order_line_id),
+            str(world.line_b.core_sales_order_line_id),
+        }
+
+        _confirm(
+            db,
+            world,
+            [
+                # Wholly bought (AC-L5): a line is met entirely from stock or entirely
+                # bought, so a "Reserve 20 + Buy 30" composition can no longer be confirmed.
+                _line_payload(world.line_a.id, buy_qty="50")
+            ],
+        )
+        db.expire_all()
+
+        assert counted_order(db, world) is None, (
+            "partly confirmed changes nothing at the order level: the book does not speak "
+            "for a project order at all"
+        )
+        assert undecided_core_lines(db, world) == {
+            str(world.line_b.core_sales_order_line_id)
+        }, "only the decided line becomes covered, and it does so per LINE"
 
 
 def test_the_python_twin_and_the_view_agree_about_which_lines_are_decided():
     """`demand.py` exists so the netting engine and the view cannot drift. A per-line rule
-    in one and a per-order rule in the other is exactly that drift."""
+    in one and a per-order rule in the other is exactly that drift.
+
+    Since P3 the two agree on a shorter statement, and this is it: NEITHER line of a
+    project order reaches the plan through the book, and the view counts the decided one
+    exactly once, through the confirmed leg, as its Buy. The Python twin says the same by
+    saying the book counts nothing here.
+    """
     from app.models.order import SalesOrder, SalesOrderLine
     from app.services.scm.demand import (
         demand_qty,
@@ -278,11 +381,9 @@ def test_the_python_twin_and_the_view_agree_about_which_lines_are_decided():
             db,
             world,
             [
-                _line_payload(
-                    world.line_a.id,
-                    reserve=[{"warehouse_id": world.pool_warehouse.id, "qty": "20"}],
-                    buy_qty="30",
-                )
+                # Wholly bought (AC-L5): a line is met entirely from stock or entirely
+                # bought, so a "Reserve 20 + Buy 30" composition can no longer be confirmed.
+                _line_payload(world.line_a.id, buy_qty="50")
             ],
         )
         db.expire_all()
@@ -304,8 +405,15 @@ def test_the_python_twin_and_the_view_agree_about_which_lines_are_decided():
 
         decided_core = str(world.line_a.core_sales_order_line_id)
         undecided_core = str(world.line_b.core_sales_order_line_id)
-        assert undecided_core in by_line and by_line[undecided_core] == Decimal("45")
         assert decided_core not in by_line, (
-            "the decided line reaches the plan as confirmed Buy, so counting its sheet "
+            "the decided line reaches the plan as confirmed Buy, so counting its book "
             "quantity here would be the double count"
         )
+        assert undecided_core not in by_line, (
+            "and the undecided one is awaiting CS, not book demand: the book leg speaks "
+            "for retail alone (P3)"
+        )
+
+        committed = _committed(db, world)
+        assert committed["project_committed"] == Decimal("50")
+        assert committed["confirmed"] == Decimal("50")

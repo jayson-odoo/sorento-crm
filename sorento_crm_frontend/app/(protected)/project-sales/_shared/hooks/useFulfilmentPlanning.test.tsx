@@ -25,6 +25,7 @@ const rerunReconciliation = vi.fn();
 const getSupply = vi.fn();
 const confirmSupply = vi.fn();
 const getStockDetail = vi.fn();
+const confirmMany = vi.fn();
 
 vi.mock('../services/fulfilmentPlanningService', () => ({
   listFulfilmentPlanning: (...args: unknown[]) => listFulfilmentPlanning(...args),
@@ -33,6 +34,7 @@ vi.mock('../services/fulfilmentPlanningService', () => ({
   getSupply: (...args: unknown[]) => getSupply(...args),
   confirmSupply: (...args: unknown[]) => confirmSupply(...args),
   getStockDetail: (...args: unknown[]) => getStockDetail(...args),
+  confirmMany: (...args: unknown[]) => confirmMany(...args),
 }));
 
 const toastSuccess = vi.fn();
@@ -49,15 +51,19 @@ vi.mock('sonner', () => ({
 import {
   FULFILMENT_PLANNING_KEY,
   PILE_QUEUE_KEY,
+  PLANNING_BOARD_KEY,
   RECONCILIATION_KEY,
   STOCK_DETAIL_KEY,
   SUPPLY_KEY,
+  useConfirmManyMutation,
   useFulfilmentPlanning,
   useReconciliation,
   useReconciliationMutations,
   useStockDetail,
   useSupply,
 } from './useFulfilmentPlanning';
+import { BOARD_TRANSFERS_KEY } from './useBoardTransfers';
+import { PLANNING_CHANGE_BATCH_KEY } from './usePlanningChanges';
 import {
   ORDER_INQUIRY_ROWS_KEY,
   ORDER_INQUIRY_SUMMARY_KEY,
@@ -372,6 +378,9 @@ describe('useReconciliationMutations', () => {
       ORDER_INQUIRY_WORKLIST_SUMMARY_KEY,
       PILE_QUEUE_KEY,
       STOCK_DETAIL_KEY,
+      // The board's own transfers panel (D6): the movements this confirmation raised are on
+      // screen beside it, and a panel that fills only after a reload is a panel nobody uses.
+      BOARD_TRANSFERS_KEY,
     ]) {
       expect(flattened.some((entry) => entry.includes(key))).toBe(true);
     }
@@ -391,6 +400,43 @@ describe('useReconciliationMutations', () => {
     expect(toastSuccess).toHaveBeenCalledWith(
       'Confirmed as revision 3. 2 purchase rows handed over.',
     );
+  });
+
+  /**
+   * PLAN-scm-cs-planning-uat.md section E: the transfer write is best-effort on the
+   * server, so a failure cannot fail a promise already made - but a movement nobody was
+   * told about is a movement nobody makes.
+   */
+  it('says nothing about transfers when they were all written', async () => {
+    confirmSupply.mockResolvedValue({
+      revision_no: 4,
+      confirmed_at: '2026-08-18T02:00:00',
+      review_state: 'confirmed',
+      inquiry_rows_created: 0,
+      exceptions: [],
+      transfers_written: 3,
+      transfers_failed: 0,
+    });
+
+    await confirmOn('pso-1');
+
+    expect(toastWarning).not.toHaveBeenCalled();
+  });
+
+  it('says how many movements went unwritten, rather than swallowing the failure', async () => {
+    confirmSupply.mockResolvedValue({
+      revision_no: 4,
+      confirmed_at: '2026-08-18T02:00:00',
+      review_state: 'confirmed',
+      inquiry_rows_created: 0,
+      exceptions: [],
+      transfers_written: 0,
+      transfers_failed: 2,
+    });
+
+    await confirmOn('pso-1');
+
+    expect(toastWarning).toHaveBeenCalledWith('Transfers not written: 2');
   });
 
   it('says "1 purchase row" rather than "1 purchase rows"', async () => {
@@ -423,17 +469,92 @@ describe('useReconciliationMutations', () => {
   });
 });
 
+/**
+ * The board's ONE Confirm (R11/D6).
+ *
+ * Two things are pinned: the transfers panel on the same screen is invalidated, so the
+ * movements the press raised appear on the press; and the hook says NOTHING on success -
+ * the board's own "N lines confirmed - T transfers proposed - I inquiry rows" is the
+ * sentence, and a second toast counting orders beside it answered a question nobody asked.
+ */
+describe('useConfirmManyMutation', () => {
+  async function confirmAll() {
+    let mutation: ReturnType<typeof useConfirmManyMutation> | null = null;
+    function Harness({ onReady }: { onReady: (api: typeof mutation) => void }) {
+      const api = useConfirmManyMutation();
+      React.useEffect(() => {
+        onReady(api);
+      }, [api, onReady]);
+      return null;
+    }
+    render(
+      <QueryClientProvider client={client}>
+        <Harness onReady={(value) => (mutation = value)} />
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(mutation).not.toBeNull());
+    await mutation!.mutateAsync({ orders: [{ pso_id: 'pso-1', lines: [] }] });
+    return mutation!;
+  }
+
+  it('invalidates the board transfers panel, the batch and the transfers page', async () => {
+    confirmMany.mockResolvedValue({
+      results: [{ pso_id: 'pso-1', ok: true, decision_revision: 2, transfers_written: 1 }],
+    });
+
+    await confirmAll();
+
+    const flattened = invalidated.map((key) => JSON.stringify(key));
+    for (const key of [
+      PLANNING_BOARD_KEY,
+      BOARD_TRANSFERS_KEY,
+      PLANNING_CHANGE_BATCH_KEY,
+      STOCK_DETAIL_KEY,
+    ]) {
+      expect(flattened.some((entry) => entry.includes(key))).toBe(true);
+    }
+  });
+
+  it('says nothing on success: the board states what the press produced', async () => {
+    confirmMany.mockResolvedValue({
+      results: [{ pso_id: 'pso-1', ok: true, decision_revision: 2 }],
+    });
+
+    await confirmAll();
+
+    expect(toastSuccess).not.toHaveBeenCalled();
+  });
+
+  it('still names a partial refusal, which the board sentence does not carry', async () => {
+    confirmMany.mockResolvedValue({
+      results: [
+        { pso_id: 'pso-1', ok: true, decision_revision: 2 },
+        { pso_id: 'pso-2', ok: false, error: 'refused' },
+      ],
+    });
+
+    await confirmAll();
+
+    expect(toastWarning).toHaveBeenCalledWith(
+      'Confirmed 1 order; 1 refused - see the results below.',
+    );
+  });
+});
+
 describe('useStockDetail', () => {
   it('reads the detail by ids under the exported key, so a confirmation can invalidate it', async () => {
     getStockDetail.mockResolvedValue({ product_id: 'prod-1', warehouse_id: 'wh-1' });
 
-    const { result } = renderHook(() => useStockDetail('prod-1', 'wh-1'), {
+    const { result } = renderHook(() => useStockDetail('prod-1', 'wh-1', ['line-a']), {
       wrapper: wrapper(),
     });
 
-    await waitFor(() => expect(getStockDetail).toHaveBeenCalledWith('prod-1', 'wh-1'));
+    await waitFor(() =>
+      expect(getStockDetail).toHaveBeenCalledWith('prod-1', 'wh-1', ['line-a']),
+    );
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(client.getQueryData([STOCK_DETAIL_KEY, 'prod-1', 'wh-1'])).toEqual({
+    // The asking lines are part of the key: a different asker is a different answer.
+    expect(client.getQueryData([STOCK_DETAIL_KEY, 'prod-1', 'wh-1', 'line-a'])).toEqual({
       product_id: 'prod-1',
       warehouse_id: 'wh-1',
     });

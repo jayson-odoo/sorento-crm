@@ -33,6 +33,9 @@ const listingKeys: (string | null | undefined)[] = [];
 vi.mock('next/navigation', () => ({
   usePathname: () => '/project-sales/leads',
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  // The list restores its page, sort and filters from the query string Back hands
+  // it (S3-01), so it reads the URL on every render.
+  useSearchParams: () => new URLSearchParams(''),
 }));
 
 // The DataGrid persists column preferences over the network; stub that away, and

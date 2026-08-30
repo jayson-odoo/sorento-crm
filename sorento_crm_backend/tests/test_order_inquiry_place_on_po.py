@@ -32,6 +32,8 @@ from app.models.procurement import PurchaseOrder, PurchaseOrderLine, Supplier
 from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.models.inventory import Warehouse
 from app.models.project_so import (
+    ACK_ACKNOWLEDGED,
+    ACK_AWAITING,
     INQUIRY_ACTIONED,
     INQUIRY_PLACED,
     INQUIRY_RAISED,
@@ -163,8 +165,15 @@ def _po_line(
 def _row(
     db, company_id: str, inquiry: OrderInquiry, *,
     verb=IV_ORDER, state=INQUIRY_RAISED, qty="10", item_code=None,
-    po_ref=None, po_line_id=None, note=None,
+    po_ref=None, po_line_id=None, note=None, ack_state=ACK_ACKNOWLEDGED,
 ) -> OrderInquiryRow:
+    """One instruction, ACKNOWLEDGED by default (`PLAN-scm-oi-handshake.md`).
+
+    Linking is purchasing's word since the handshake, and the cascade this file exercises
+    refuses a row nobody has taken on. These rows stand for instructions a buyer is
+    working, so they are seeded as such; `ack_state` is a parameter for the test that
+    wants an awaiting one.
+    """
     row = OrderInquiryRow(
         id=_uid(),
         company_id=company_id,
@@ -173,6 +182,7 @@ def _row(
         qty=Decimal(str(qty)),
         verb=verb,
         state=state,
+        ack_state=ack_state,
         po_ref=po_ref,
         po_line_id=po_line_id,
         note=note,
@@ -455,7 +465,7 @@ def test_placing_sets_the_tag_appends_the_note_and_writes_one_resolved_claim(api
     assert body["state"] == INQUIRY_PLACED
     assert body["po_ref"] == world["po"].po_number
     assert body["po_line_id"] == line.id
-    assert body["note"].startswith("Already had a note; Placed on")
+    assert body["note"].startswith("Already had a note; Linked to")
     assert world["po"].po_number in body["note"]
     assert world["supplier"].supplier_name in body["note"]
     assert "2026-09-20" in body["note"]
@@ -599,7 +609,7 @@ def test_unplacing_reverts_the_row_and_deletes_the_claim(api):
     assert body["state"] == INQUIRY_RAISED
     assert body["po_ref"] is None
     assert body["po_line_id"] is None
-    assert f"Unplaced from {world['po'].po_number}" in body["note"]
+    assert f"Unlinked from {world['po'].po_number}" in body["note"]
 
     claims = (
         db.query(OrderLinkClaim)
@@ -635,14 +645,19 @@ def test_a_reader_cannot_unplace_a_row(reader_api):
 
 
 def test_the_worklist_reads_po_no_and_supplier_off_the_direct_tag(api):
+    """Off the LINK since section 3.I, not off the row's own `po_line_id`: a row holds
+    many links now and the scalar is the derived display of the first."""
     client, db, world, _user_id = api
     line = _po_line(
         db, world["company_id"], world["po"], world["product"], world["warehouse"], qty_ordered="50",
     )
     row = _row(
         db, world["company_id"], world["inquiry"], qty="10", item_code=world["product"].product_code,
-        state=INQUIRY_PLACED, po_ref=world["po"].po_number, po_line_id=line.id,
     )
+    response = client.post(
+        f"{BASE}/order-inquiry-rows/{row.id}/place-on-po", json={"po_line_id": line.id}
+    )
+    assert response.status_code == 200, response.text
 
     response = client.get(f"{BASE}/order-inquiries", params={"query": row.item_code})
 
@@ -672,10 +687,10 @@ def test_the_worklist_state_filter_placed_returns_only_placed_rows(api):
     assert raised_row.id not in ids
 
 
-# ---------------------------------------------------------- has_open_po_line
+# ---------------------------------------------------------- has_link_candidate
 
 
-def test_has_open_po_line_is_true_on_the_per_project_listing_and_flips_false_once_placed(api):
+def test_has_link_candidate_is_true_on_the_per_project_listing_and_flips_false_once_placed(api):
     """The per-project OI rows listing (`GET .../order-inquiry-rows`): true while the
     row's own product still has an open PO line with remaining balance, false once a
     placement consumes it - the same predicate `po-candidates` answers, computed once for
@@ -690,7 +705,7 @@ def test_has_open_po_line_is_true_on_the_per_project_listing_and_flips_false_onc
     before = client.get(f"{BASE}/projects/{world['project'].id}/order-inquiry-rows")
     assert before.status_code == 200, before.text
     row_a_out = next(r for r in before.json()["data"] if r["id"] == row_a.id)
-    assert row_a_out["has_open_po_line"] is True
+    assert row_a_out["has_link_candidate"] is True
 
     placed = client.post(
         f"{BASE}/order-inquiry-rows/{row_a.id}/place-on-po", json={"po_line_id": line.id}
@@ -701,12 +716,12 @@ def test_has_open_po_line_is_true_on_the_per_project_listing_and_flips_false_onc
     after = client.get(f"{BASE}/projects/{world['project'].id}/order-inquiry-rows")
     assert after.status_code == 200, after.text
     row_b_out = next(r for r in after.json()["data"] if r["id"] == row_b.id)
-    assert row_b_out["has_open_po_line"] is False, (
+    assert row_b_out["has_link_candidate"] is False, (
         "the line's whole remaining balance is already claimed by row_a"
     )
 
 
-def test_has_open_po_line_is_false_for_a_product_with_no_open_po_line_at_all(api):
+def test_has_link_candidate_is_false_for_a_product_with_no_open_po_line_at_all(api):
     client, db, world, _user_id = api
     row = _row(
         db, world["company_id"], world["inquiry"], qty="5",
@@ -717,10 +732,10 @@ def test_has_open_po_line_is_false_for_a_product_with_no_open_po_line_at_all(api
 
     assert response.status_code == 200, response.text
     row_out = next(r for r in response.json()["data"] if r["id"] == row.id)
-    assert row_out["has_open_po_line"] is False
+    assert row_out["has_link_candidate"] is False
 
 
-def test_has_open_po_line_on_the_cross_project_worklist_flips_false_once_placed(api):
+def test_has_link_candidate_on_the_cross_project_worklist_flips_false_once_placed(api):
     """The same flag, on the cross-project worklist (`GET /order-inquiries`) purchasing
     actually works from - it must never disagree with the per-project listing."""
     client, db, world, _user_id = api
@@ -736,7 +751,7 @@ def test_has_open_po_line_on_the_cross_project_worklist_flips_false_once_placed(
     before = client.get(f"{BASE}/order-inquiries", params={"query": world["product"].product_code})
     assert before.status_code == 200, before.text
     row_a_out = next(r for r in before.json()["data"] if r["id"] == row_a.id)
-    assert row_a_out["has_open_po_line"] is True
+    assert row_a_out["has_link_candidate"] is True
 
     placed = client.post(
         f"{BASE}/order-inquiry-rows/{row_a.id}/place-on-po", json={"po_line_id": line.id}
@@ -747,7 +762,7 @@ def test_has_open_po_line_on_the_cross_project_worklist_flips_false_once_placed(
     after = client.get(f"{BASE}/order-inquiries", params={"query": world["product"].product_code})
     assert after.status_code == 200, after.text
     row_b_out = next(r for r in after.json()["data"] if r["id"] == row_b.id)
-    assert row_b_out["has_open_po_line"] is False
+    assert row_b_out["has_link_candidate"] is False
 
 
 # -------------------------------------------------------------- netting proof
@@ -797,7 +812,7 @@ def test_placing_leaves_committed_v_confirmed_leg_and_unplacing_restores_it():
         row = OrderInquiryRow(
             id=_uid(), company_id=company_id, order_inquiry_id=inquiry.id, so_line_id=line.id,
             item_code=product.product_code, qty=Decimal("40"), verb=IV_ORDER, state=INQUIRY_RAISED,
-            supply_decision_id=decision.id,
+            supply_decision_id=decision.id, ack_state=ACK_ACKNOWLEDGED,
         )
         db.add(row)
 
@@ -894,7 +909,7 @@ def test_spo_prefixed_documents_are_never_candidates_the_flag_or_the_cascade(api
     listing = client.get(f"{BASE}/projects/{world['project'].id}/order-inquiry-rows")
     assert listing.status_code == 200, listing.text
     row_out = next(r for r in listing.json()["data"] if r["id"] == row.id)
-    assert row_out["has_open_po_line"] is False
+    assert row_out["has_link_candidate"] is False
 
     from app.models.base import company_scope
     from app.services.project_order_inquiry_service import ProjectOrderInquiryService
@@ -904,15 +919,18 @@ def test_spo_prefixed_documents_are_never_candidates_the_flag_or_the_cascade(api
             [world["product"].id], actor_user_id=user_id, trigger="test"
         )
     db.commit()
-    assert result == {"placed_rows": 0, "allocations": 0, "products_touched": 0}
+    assert result == {"placed_rows": 0, "allocations": 0, "products_touched": 0,
+                      "after_horizon": 0, "link_up_to": None,
+                      "link_horizon": "none"}
     db.refresh(row)
     assert row.state == INQUIRY_RAISED
 
 
-def test_allocations_cascade_earliest_first_and_split_the_row(api):
-    """G2 rule 2: "take from the earliest PO, then subsequently from subsequent PO".
-    Multi-line coverage shape: the row SPLITS - the first allocation reuses the row
-    already raised, every further allocation is a brand-new row of its own."""
+def test_allocations_cascade_earliest_first_and_link_without_splitting(api):
+    """AC-I6, the captain's ruling of 25 August 2026: "1 line here should correspond to 1
+    line in sales order, so 1 line can be placed by multiple PO and SPO". The row KEEPS
+    its full quantity and gains one link per allocation - the split this test used to
+    assert is what turned nine sales-order lines into eleven instructions."""
     client, db, world, _user_id = api
     early = _po_line(
         db, world["company_id"], world["po"], world["product"], world["warehouse"],
@@ -936,24 +954,22 @@ def test_allocations_cascade_earliest_first_and_split_the_row(api):
 
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body["id"] == row.id, "the first allocation reuses the row already raised"
-    assert body["po_line_id"] == early.id
-    assert body["qty"] == "15"
+    assert body["id"] == row.id, "the row is the subject, whatever it took"
+    assert body["qty"] == "25", "the row keeps its own quantity"
+    assert body["state"] == INQUIRY_PLACED, "25 of 25 is wholly linked"
+    assert body["linked_qty"] == "25"
+    assert [(link["qty"], link["kind"]) for link in body["links"]] == [
+        ("15", "po"),
+        ("10", "po"),
+    ]
+    assert body["po_line_id"] == early.id, "the first link is the derived display"
 
     rows = (
         db.query(OrderInquiryRow)
         .filter(OrderInquiryRow.order_inquiry_id == world["inquiry"].id)
         .all()
     )
-    assert len(rows) == 2
-    split = next(r for r in rows if r.id != row.id)
-    assert split.state == INQUIRY_PLACED
-    assert split.po_line_id == later.id
-    assert split.qty == Decimal("10")
-    assert split.so_line_id == row.so_line_id
-    assert split.item_code == row.item_code
-    reused = next(r for r in rows if r.id == row.id)
-    assert reused.qty + split.qty == Decimal("25"), "the split never drops or invents quantity"
+    assert len(rows) == 1, "one instruction per sales-order line, never a split"
 
 
 def test_allocations_over_the_rows_own_need_are_refused(api):
@@ -980,7 +996,7 @@ def test_allocations_over_the_rows_own_need_are_refused(api):
     assert response.json()["code"] == "order_inquiry_over_allocated"
 
 
-def test_unplacing_one_split_row_leaves_the_other_placed(api):
+def test_unlinking_one_link_leaves_the_row_partly_linked(api):
     client, db, world, _user_id = api
     early = _po_line(
         db, world["company_id"], world["po"], world["product"], world["warehouse"],
@@ -1003,22 +1019,26 @@ def test_unplacing_one_split_row_leaves_the_other_placed(api):
     )
     assert placed.status_code == 200, placed.text
 
-    split = (
+    # No split to find: the two allocations are two LINKS on the one row (AC-I6), and
+    # giving one back leaves the row partly linked rather than raised.
+    assert (
         db.query(OrderInquiryRow)
-        .filter(
-            OrderInquiryRow.order_inquiry_id == world["inquiry"].id,
-            OrderInquiryRow.id != row.id,
-        )
-        .first()
+        .filter(OrderInquiryRow.order_inquiry_id == world["inquiry"].id)
+        .count()
+        == 1
     )
-    assert split is not None
+    links = placed.json()["links"]
+    assert [link["qty"] for link in links] == ["10", "10"]
 
-    unplaced = client.post(f"{BASE}/order-inquiry-rows/{split.id}/unplace")
+    unplaced = client.post(
+        f"{BASE}/order-inquiry-rows/{row.id}/unplace", json={"link_id": links[1]["id"]}
+    )
     assert unplaced.status_code == 200, unplaced.text
-    assert unplaced.json()["state"] == INQUIRY_RAISED
+    assert unplaced.json()["state"] == "partly_linked"
+    assert unplaced.json()["linked_qty"] == "10"
 
     db.refresh(row)
-    assert row.state == INQUIRY_PLACED
+    assert row.qty == Decimal("20"), "the row never gave up its own quantity"
     assert row.po_line_id == early.id
 
 
@@ -1043,8 +1063,12 @@ def test_auto_place_for_products_is_idempotent(api):
         )
         db.commit()
 
-    assert first == {"placed_rows": 1, "allocations": 1, "products_touched": 1}
-    assert second == {"placed_rows": 0, "allocations": 0, "products_touched": 0}
+    assert first == {"placed_rows": 1, "allocations": 1, "products_touched": 1,
+                     "after_horizon": 0, "link_up_to": None,
+                     "link_horizon": "none"}
+    assert second == {"placed_rows": 0, "allocations": 0, "products_touched": 0,
+                      "after_horizon": 0, "link_up_to": None,
+                      "link_horizon": "none"}
     db.refresh(row)
     assert row.state == INQUIRY_PLACED
     assert "auto: test" in (row.note or "")
@@ -1062,7 +1086,9 @@ def test_auto_place_route_places_raised_rows_and_reports_totals(api):
 
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body == {"placed_rows": 1, "allocations": 1, "products_touched": 1}
+    assert body == {"placed_rows": 1, "allocations": 1, "products_touched": 1,
+                    "after_horizon": 0, "link_up_to": None,
+                    "link_horizon": "none"}
     db.refresh(row)
     assert row.state == INQUIRY_PLACED
 
@@ -1075,11 +1101,15 @@ def test_a_reader_cannot_trigger_auto_place(reader_api):
     assert response.status_code == 403
 
 
-def test_a_decision_confirm_auto_places_the_buy_row_it_raises():
-    """G2 rule 4, second of the three triggers: a decision confirm that raises a Buy
-    cascades it against the product's own open PO lines in the SAME transaction, best
-    effort. No `pg_session` needed here - only the row's own state is asserted, not
-    `committed_v`, which the netting tests above already prove independently."""
+def test_a_decision_confirm_raises_the_buy_row_awaiting_with_a_draft_link():
+    """REVERSED AGAIN by `PLAN-scm-oi-draft-links.md` R6 (captain, 27 Aug 2026).
+
+    G2's original trigger linked at the decision confirm; the handshake took it away
+    because a buyer found their own documents dealt out to instructions they had never
+    read; this restores the pass and answers that objection with what the link MEANS. The
+    row comes out `awaiting` - nobody has confirmed anything - and the link on it is a
+    DRAFT (R1), which is precisely "here is what could cover this, say the word".
+    """
     from app.models.base import company_scope
     from app.services.project_service import register_project
 
@@ -1124,15 +1154,16 @@ def test_a_decision_confirm_auto_places_the_buy_row_it_raises():
             .first()
         )
         assert row is not None
-        assert row.state == INQUIRY_PLACED, "the confirm hook must cascade the Buy it just raised"
-        assert row.po_line_id == po_line.id
-        assert "auto: decision_confirm" in (row.note or "")
+        assert row.ack_state == ACK_AWAITING, "a draft is not a confirmation"
+        assert row.state == INQUIRY_PLACED, "the 30-line covers the whole 20"
+        assert str(row.po_line_id) == str(po_line.id), "the draft names the open line"
 
 
 def test_partial_allocation_leaves_the_remainder_raised_and_in_committed_v():
-    """Partial coverage (G2 rule 2) proven against the view the reorder engine actually
-    reads: 40 owed, only 25 on an open PO line - the placed 25 leaves the confirmed leg,
-    the still-needed 15 stays in it, and the split never drops or invents quantity."""
+    """AC-I7, proven against the view the reorder engine actually reads: 40 owed, only 25
+    on an open PO line. The row keeps its 40 and reads PARTLY LINKED; the confirmed leg
+    nets `qty - linked` and carries the still-needed 15 (migration 422). Before the links
+    table the row had to be SPLIT for the same arithmetic to come out."""
     from app.models.base import company_scope
     from app.services.project_order_inquiry_service import ProjectOrderInquiryService
 
@@ -1174,7 +1205,7 @@ def test_partial_allocation_leaves_the_remainder_raised_and_in_committed_v():
         row = OrderInquiryRow(
             id=_uid(), company_id=company_id, order_inquiry_id=inquiry.id, so_line_id=line.id,
             item_code=product.product_code, qty=Decimal("40"), verb=IV_ORDER, state=INQUIRY_RAISED,
-            supply_decision_id=decision.id,
+            supply_decision_id=decision.id, ack_state=ACK_ACKNOWLEDGED,
         )
         db.add(row)
 
@@ -1204,13 +1235,15 @@ def test_partial_allocation_leaves_the_remainder_raised_and_in_committed_v():
             )
         db.commit()
         assert len(written) == 1
-        assert written[0]["state"] == INQUIRY_PLACED
-        assert written[0]["qty"] == "25"
+        assert written[0]["id"] == row.id
+        assert written[0]["state"] == "partly_linked"
+        assert written[0]["qty"] == "40", "the row keeps its own quantity"
+        assert written[0]["linked_qty"] == "25"
 
         db.expire_all()
         assert confirmed_committed() == Decimal("15"), (
-            "only the still-raised remainder counts toward the confirmed leg once part of "
-            "the row is placed"
+            "the confirmed leg nets qty minus linked, so only the 15 nobody has covered "
+            "still counts as demand"
         )
 
         rows = (
@@ -1218,13 +1251,8 @@ def test_partial_allocation_leaves_the_remainder_raised_and_in_committed_v():
             .filter(OrderInquiryRow.order_inquiry_id == inquiry.id)
             .all()
         )
-        assert len(rows) == 2
-        raised = next(r for r in rows if r.state == INQUIRY_RAISED)
-        placed = next(r for r in rows if r.state == INQUIRY_PLACED)
-        assert raised.id == row.id
-        assert raised.qty == Decimal("15")
-        assert placed.qty == Decimal("25")
-        assert raised.qty + placed.qty == Decimal("40"), "the split never drops or invents quantity"
+        assert len(rows) == 1, "one instruction per sales-order line, never a split"
+        assert rows[0].qty == Decimal("40")
 
 
 # ---------------------------------------------------------------- G/AC-H5 demand ranking
@@ -1278,6 +1306,9 @@ def _competing_row(
     row = OrderInquiryRow(
         id=_uid(), company_id=company_id, order_inquiry_id=inquiry.id, item_code=item_code,
         qty=Decimal(qty), delivery_date=delivery_date, verb=IV_ORDER, state=INQUIRY_RAISED,
+        # Acknowledged, because the cascade this ranks is the one that runs when a buyer
+        # takes an instruction on (`PLAN-scm-oi-handshake.md`).
+        ack_state=ACK_ACKNOWLEDGED,
     )
     db.add(row)
     db.flush()
@@ -1316,7 +1347,9 @@ def test_auto_place_ranks_by_the_active_policys_document_age_over_the_old_delive
         )
         db.commit()
 
-    assert result == {"placed_rows": 1, "allocations": 1, "products_touched": 1}
+    assert result == {"placed_rows": 1, "allocations": 1, "products_touched": 1,
+                      "after_horizon": 0, "link_up_to": None,
+                      "link_horizon": "none"}
     db.refresh(older)
     db.refresh(newer)
     assert older.state == INQUIRY_PLACED, "the older document must draw the scarce quantity"
@@ -1353,7 +1386,9 @@ def test_auto_place_ranks_by_the_active_policys_need_by_date_over_the_old_delive
         )
         db.commit()
 
-    assert result == {"placed_rows": 1, "allocations": 1, "products_touched": 1}
+    assert result == {"placed_rows": 1, "allocations": 1, "products_touched": 1,
+                      "after_horizon": 0, "link_up_to": None,
+                      "link_horizon": "none"}
     db.refresh(older)
     db.refresh(newer)
     assert newer.state == INQUIRY_PLACED, "the sooner delivery date must draw the scarce quantity"
@@ -1488,5 +1523,11 @@ def test_auto_place_resolves_the_active_policy_once_not_once_per_product(api):
 
     assert result["products_touched"] == 2
     # Two products competed for two scarce PO lines, so the ranking ran twice - but the
-    # policy behind it is resolved once, not once per product.
+    # policy behind it is resolved ONCE, not once per product (and not once per row, which
+    # would be eight here).
+    #
+    # One read, not the two it briefly counted: the link horizon at the top of the pass
+    # used to resolve the active policy as well, and since S2 (code review 27 Aug 2026) it
+    # reads the reorder RUN instead - `reorder_coverage_until` was never the right date to
+    # link to. Only the ranking's own weights come off the policy now.
     assert spy.call_count == 1, "the active policy must be resolved once per auto-place run"

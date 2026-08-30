@@ -212,7 +212,7 @@ describe('reorderRunService - getRecommendations', () => {
     expect(u.searchParams.get('query')).toBeNull();
   });
 
-  it("returns each row's project_need / retail_need / unclassified_need / decisions_read_only UNTOUCHED (Stage 2)", async () => {
+  it("returns each row's project_need / retail_need / decisions_read_only UNTOUCHED (Stage 2)", async () => {
     apiFetch.mockResolvedValue(
       ok({
         data: [
@@ -220,8 +220,6 @@ describe('reorderRunService - getRecommendations', () => {
             id: 'rec-1',
             project_need: 120,
             retail_need: 55,
-            unclassified_need: 12,
-            project_sheet_need: 0,
             decisions_read_only: true,
           },
           {
@@ -229,7 +227,6 @@ describe('reorderRunService - getRecommendations', () => {
             // NULL on a legacy row - the service must not coerce this to 0.
             project_need: null,
             retail_need: null,
-            unclassified_need: null,
             decisions_read_only: false,
           },
         ],
@@ -240,13 +237,11 @@ describe('reorderRunService - getRecommendations', () => {
     expect(page.data[0]).toMatchObject({
       project_need: 120,
       retail_need: 55,
-      unclassified_need: 12,
       decisions_read_only: true,
     });
     expect(page.data[1]).toMatchObject({
       project_need: null,
       retail_need: null,
-      unclassified_need: null,
       decisions_read_only: false,
     });
   });
@@ -277,11 +272,20 @@ describe('reorderRunService - listReorderRuns', () => {
         pagination: { page: 2, limit: 8, total: 12, total_pages: 2 },
       }),
     );
-    const page = await listReorderRuns(2, 8);
+    const page = await listReorderRuns({
+      pageIndex: 1,
+      pageSize: 8,
+      sorting: [{ id: 'started_at', desc: true }],
+      searchQuery: 'BRW',
+    });
     const u = calledUrl();
     expect(u.pathname).toBe('/api/v1/scm/reorder-runs');
-    expect(u.searchParams.get('page')).toBe('2'); // 1-based page → page param
+    expect(u.searchParams.get('page')).toBe('2'); // 0-based index -> 1-based page param
     expect(u.searchParams.get('limit')).toBe('8');
+    // A1/A4: the plans list is a DataGrid, so sort/dir/query travel like every other one.
+    expect(u.searchParams.get('sort')).toBe('started_at');
+    expect(u.searchParams.get('dir')).toBe('desc');
+    expect(u.searchParams.get('query')).toBe('BRW');
     expect(page.pagination.total).toBe(12);
     expect(page.data[0].run_id).toBe('run-b');
     expect(page.data[0].warehouse_codes).toEqual(['WH-KL', 'WH-JB']);
@@ -320,7 +324,7 @@ describe('reorderRunService - listReorderRuns', () => {
         pagination: { page: 1, limit: 8, total: 2, total_pages: 1 },
       }),
     );
-    const page = await listReorderRuns(1, 8);
+    const page = await listReorderRuns({ pageIndex: 0, pageSize: 8 });
     expect(page.data[0].decision_grain).toBe('location');
     expect(page.data[0].front_planning_contract_version).toBe(1);
     // The legacy row is not backfilled to today's default grain.

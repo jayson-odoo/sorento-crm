@@ -16,7 +16,11 @@ Three behaviours are pinned here:
     catalogue noise and stops headlining, while an exact full code still resolves.
 
 Counterweights: junk beats silence (nothing is suppressed when the ranker found
-nothing), and an exact code is still a code.
+nothing), and an exact code is still a code - PROVIDED the product is one the
+chatbot may answer with at all. Since #300 a product in a non-searchable
+category (SRT-ACC here) never resolves, exact code or not, so the two
+counterweight tests seed their subjects in the searchable sink category and a
+third test pins the #300 inverse on the SRT-ACC rows.
 
 Plan: documentation/plans/PLAN-spec-raw-text-search.md (S2).
 """
@@ -207,23 +211,32 @@ def test_a_sentence_naming_no_brand_binds_none(db):
 # --------------------------------------------------------------------------- #
 # counterweights                                                                #
 # --------------------------------------------------------------------------- #
-def test_an_exact_full_code_still_resolves_as_a_code(client):
+def _brand_word_code_in_a_searchable_category(db, code: str) -> None:
+    """A code that merely CONTAINS a brand word, sitting where the chatbot may
+    answer from (the sink category). No brand word in the description, so the
+    ranker cannot bind the brand off the text and answer with it by accident."""
+    _product(db, code, "PAPER BOX (SAMPLE USE ONLY)", category=_REFS["cat"])
+
+
+def test_an_exact_full_code_still_resolves_as_a_code(client, db):
+    _brand_word_code_in_a_searchable_category(db, "SORENTOBOX")
     body = client.post(
         RESOLVE,
         json={
-            "query": "SORENTOBAG",
-            "tokens": ["SORENTOBAG"],
+            "query": "SORENTOBOX",
+            "tokens": ["SORENTOBOX"],
             "match_mode": "or",
             "spec_fallback": True,
         },
     ).json()
-    assert "SORENTOBAG" in _codes_in_resolutions(body)
+    assert "SORENTOBOX" in _codes_in_resolutions(body)
 
 
-def test_junk_stays_when_the_ranker_answered_nothing(client):
+def test_junk_stays_when_the_ranker_answered_nothing(client, db):
     # Nothing in the catalog carries the CABANA brand, and "flux capacitor" names
     # no class, so the ranker has nothing to offer. Junk beats silence: the brand
     # token keeps the rows the code probes found.
+    _brand_word_code_in_a_searchable_category(db, "CABANABOX")
     body = client.post(
         RESOLVE,
         json={
@@ -234,7 +247,26 @@ def test_junk_stays_when_the_ranker_answered_nothing(client):
         },
     ).json()
     assert not body.get("spec_candidates")
-    assert "CABANABAG" in _codes_in_resolutions(body)
+    assert "CABANABOX" in _codes_in_resolutions(body)
+
+
+def test_an_exact_code_in_a_non_searchable_category_does_not_resolve(client):
+    """#300: SORENTOBAG sits in SRT-ACC, a category with no class meaning
+    (`is_searchable=false` after `backfill_category_signals`). Before #300 its
+    exact code resolved and the placeholder was shown to the customer; now it is
+    not a chat answer at all, exact code or not, and the token is reported as
+    unresolved so the caller can say so."""
+    body = client.post(
+        RESOLVE,
+        json={
+            "query": "SORENTOBAG",
+            "tokens": ["SORENTOBAG"],
+            "match_mode": "or",
+            "spec_fallback": True,
+        },
+    ).json()
+    assert "SORENTOBAG" not in _codes_in_resolutions(body)
+    assert "SORENTOBAG" in (body.get("unresolved_tokens") or [])
 
 
 # --------------------------------------------------------------------------- #

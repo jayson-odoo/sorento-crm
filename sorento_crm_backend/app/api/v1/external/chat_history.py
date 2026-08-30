@@ -23,6 +23,8 @@ from app.schemas.integration import IntegrationLogCreate
 from app.schemas.ticket_comment import (
     TicketCommentIngestRequest,
     TicketCommentIngestResponse,
+    TicketCommentExternalCreate,
+    TicketCommentExternalResponse,
 )
 from app.models.access import RespondContact
 from app.services import conversation_event_bus
@@ -343,6 +345,43 @@ def ingest_respond_comment(
 
     return TicketCommentIngestResponse(
         id=str(comment.id), status="duplicate" if already_existed else "created"
+    )
+
+
+@router.post(
+    "/{contact_ref}/comments",
+    response_model=TicketCommentExternalResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_contact_comment_from_integration(
+    contact_ref: str,
+    payload: TicketCommentExternalCreate,
+    current_user: dict = Depends(get_external_api_user),
+    db: Session = Depends(get_db),
+):
+    """Write a flow-authored comment on a contact: CRM first, Respond second.
+
+    This is what n8n's ``sub-add-comment-respond`` calls instead of Respond's
+    own comment endpoint, so a bot / routing note lands in the CRM (and in
+    every open ticket drawer for the contact) and is then mirrored to the
+    Respond inbox best-effort (AC-L2). ``contact_ref`` is the Respond contact
+    id, the phone number or the ``respond_contacts.id``.
+
+    Mentions are Respond user ids (what the flow holds). Each maps to a CRM
+    user where ``users.respond_user_id`` is set - those get the in-app mention
+    notification - and every id is tagged in the mirror regardless, so the
+    Respond agent is notified exactly as before. The ids that matched nobody
+    come back as ``unmapped_respond_user_ids``.
+    """
+    comment, unmapped = TicketCommentService(db).create_for_contact_from_integration(
+        contact_ref,
+        author_user_id=str(current_user["id"]),
+        body=payload.body,
+        mentioned_respond_user_ids=payload.mentioned_respond_user_ids,
+        author_name=payload.author_name,
+    )
+    return TicketCommentExternalResponse(
+        **comment.model_dump(), unmapped_respond_user_ids=unmapped
     )
 
 

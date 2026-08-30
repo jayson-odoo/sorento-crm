@@ -59,8 +59,34 @@ vi.mock('../../_shared/services/fulfilmentPlanningService', () => ({
   },
 }));
 
+const getPlanningChangeBatch = vi.fn();
+vi.mock('../../_shared/services/planningChangeService', () => ({
+  listPlanningChangeBatches: vi.fn(),
+  getPlanningChangeBatch: (...args: unknown[]) => getPlanningChangeBatch(...args),
+  updatePlanningChangeRow: vi.fn(),
+  applyPlanningChanges: vi.fn(),
+}));
+
 vi.mock('sonner', () => ({
   toast: { success: vi.fn(), warning: vi.fn(), error: vi.fn() },
+}));
+
+/**
+ * `BoardTransfersPanel` (D4) is on this screen now, above the matrix. Its own behaviour is
+ * `BoardTransfersPanel.test.tsx`'s; what this file owes is a harmless mock so the board can
+ * render without a real query or a real permission check.
+ */
+vi.mock('@/hooks/usePermissions', () => ({
+  useHasPermission: () => false,
+}));
+vi.mock('../../_shared/hooks/useBoardTransfers', () => ({
+  // The real key, because the confirm hook invalidates it by name (D6).
+  BOARD_TRANSFERS_KEY: 'board-stock-transfers',
+  useBoardTransfers: () => ({ data: { data: [] }, isLoading: false, error: undefined }),
+  useBoardTransferMutations: () => ({
+    approve: { mutate: vi.fn(), isPending: false },
+    approveAll: { mutate: vi.fn(), isPending: false },
+  }),
 }));
 
 vi.mock('@/components/common/SearchableSelect', () => ({
@@ -89,8 +115,8 @@ vi.mock('@/components/common/SearchableSelect', () => ({
   ),
 }));
 
-import { ConfirmSupplyError } from '../../_shared/services/fulfilmentPlanningService';
-import { FulfilmentBoardPanel } from './FulfilmentBoardPanel';
+import { toast } from 'sonner';
+import { FulfilmentBoardPanel, unpostableNotices } from './FulfilmentBoardPanel';
 import { buildBoard, type BoardDemandLine } from '../../_shared/lib/__testsupport__/boardFixture';
 import type {
   BoardContribution,
@@ -145,13 +171,17 @@ function withContribution(
   };
 }
 
-function renderPanel(soNumbers = ['SO403340', 'SO398322'], onBack: () => void = vi.fn()) {
+function renderPanel(
+  soNumbers = ['SO403340', 'SO398322'],
+  onBack: () => void = vi.fn(),
+  batchId: string | null = null,
+) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } },
   });
   return render(
     <QueryClientProvider client={client}>
-      <FulfilmentBoardPanel soNumbers={soNumbers} onBack={onBack} />
+      <FulfilmentBoardPanel soNumbers={soNumbers} onBack={onBack} batchId={batchId} />
     </QueryClientProvider>,
   );
 }
@@ -179,26 +209,33 @@ beforeEach(() => {
  * responsive-header rule in CLAUDE.md exists to prevent.
  */
 describe('FulfilmentBoardPanel: the header', () => {
-  it('puts Back to the worklist in the actions on the right, after the granularity control', async () => {
+  /**
+   * R12/D2: "Back to sales orders" moved off the header row and under the gear on the action
+   * bar, beside Undo all - the header row is now only the controls that decide what the board
+   * SHOWS, and the way off the screen no longer competes with them for the same glance.
+   */
+  it('has no Back to sales orders button in the header actions any more', async () => {
     getPlanningBoard.mockResolvedValue(boardOf([demand()]));
 
     renderPanel();
     await screen.findByTestId('fulfilment-board-matrix');
 
     const actions = screen.getByTestId('board-header-actions');
-    const back = within(actions).getByRole('button', { name: 'Back to the worklist' });
-    const granularity = within(actions).getByLabelText('granularity');
-    expect(back.compareDocumentPosition(granularity)).toBe(Node.DOCUMENT_POSITION_PRECEDING);
+    expect(
+      within(actions).queryByRole('button', { name: 'Back to sales orders' }),
+    ).not.toBeInTheDocument();
   });
 
-  it('still returns to the worklist', async () => {
+  it('calls back from the gear on the action bar, which is now the sales-order list', async () => {
     getPlanningBoard.mockResolvedValue(boardOf([demand()]));
     const onBack = vi.fn();
 
     renderPanel(['SO403340'], onBack);
     await screen.findByTestId('fulfilment-board-matrix');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Back to the worklist' }));
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Board actions' }), { key: 'Enter' });
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Back to sales orders' }));
+
     expect(onBack).toHaveBeenCalledTimes(1);
   });
 
@@ -342,54 +379,9 @@ describe('FulfilmentBoardPanel: the axes', () => {
     expect(matrix.querySelector('[data-bucket="2026-08-17"]')?.getAttribute('data-past')).toBe(
       'false',
     );
-    expect(
-      screen.getByText('1 of 2 lines are already past their delivery date'),
-    ).toBeInTheDocument();
-  });
-
-  /**
-   * The banner counts the SELECTION, not the columns on screen. The server sends
-   * `past_line_count` / `line_count` at the top level for exactly this reason: summing
-   * `cell.past_count` counts only what a window happens to be showing, so the same board read
-   * differently on day than on week. The per-cell count stays correct for the cell itself.
-   */
-  it('reads the selection-scoped totals rather than summing the cells on screen', async () => {
-    const board = boardOf([
-      demand({ line_no: 1, required_date: '2022-07-03' }),
-      demand({ line_no: 2, required_date: '2026-09-04' }),
-    ]);
-    getPlanningBoard.mockResolvedValue({
-      ...board,
-      // What the server counted over the whole selection; the two cells on screen are a
-      // fraction of it, and summing them would report "1 of 2".
-      line_count: 161,
-      past_line_count: 130,
-    });
-
-    renderPanel();
-
-    expect(
-      await screen.findByText('130 of 161 lines are already past their delivery date'),
-    ).toBeInTheDocument();
-  });
-
-  it('states plainly how much of the selection is already past, and explains nothing', async () => {
-    getPlanningBoard.mockResolvedValue(
-      boardOf([
-        demand({ line_no: 1, required_date: '2022-07-03' }),
-        demand({ line_no: 2, required_date: '2026-09-04' }),
-      ]),
-    );
-
-    renderPanel();
-
-    expect(
-      await screen.findByText('1 of 2 lines are already past their delivery date'),
-    ).toBeInTheDocument();
-    // The old copy described a column that no longer exists, and a tint that needs a
-    // paragraph is a tint that failed. No feature explanations in the UI (CLAUDE.md).
-    expect(screen.queryByText(/Overdue column/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/rather than spread/)).not.toBeInTheDocument();
+    // AC-C5 (26 August 2026): the banner that used to say so is gone. What remains is the
+    // per-bucket tint, which is what the header already announces.
+    expect(screen.queryByText(/lines are already past their delivery date/)).toBeNull();
   });
 
   it('renders the products down the side', async () => {
@@ -462,7 +454,12 @@ describe('FulfilmentBoardPanel: the cells', () => {
 
     renderPanel();
 
-    expect(await screen.findByText('1 contested')).toBeInTheDocument();
+    // The matrix cell never printed a sales-order number - this waited for text that could
+    // never appear, and timed out instead of asserting anything. `fulfilment-board-matrix`
+    // is what the other tests in this file already wait on.
+    await screen.findByTestId('fulfilment-board-matrix');
+    // The count is gone from the cell (the captain, 27 Aug); the flag stays in the data.
+    expect(screen.queryByText('1 contested')).toBeNull();
   });
 
   it('leaves a product-and-date nobody owes blank, because a blank cell is not a zero', async () => {
@@ -483,121 +480,62 @@ describe('FulfilmentBoardPanel: the cells', () => {
   });
 });
 
-describe('FulfilmentBoardPanel: the commit rail (13.4)', () => {
-  it('shows the decided counter per order, as information', async () => {
+/**
+ * NO COMMIT SECTION (R13, UAC D5). The per-order commit cards, their own "N of M lines
+ * decided" counter and "Confirms N, leaves M undecided" copy are gone with it: the one counter
+ * left is the board-wide bar (`board-confirm-summary`, UAC D1/D3), and a plannable line nobody
+ * touches is confirmed as the engine's own suggestion (R11) rather than needing an explicit
+ * Approve to count.
+ */
+describe('FulfilmentBoardPanel: no commit section (D5)', () => {
+  it('carries no per-order commit card, decided counter or "this order" Confirm button', async () => {
     getPlanningBoard.mockResolvedValue(
       boardOf([
         demand({ sales_order_id: 'so-a', so_number: 'SO403340', line_no: 1 }),
-        demand({ sales_order_id: 'so-a', so_number: 'SO403340', line_no: 2, required_date: '2026-12-01' }),
-        demand({ sales_order_id: 'so-b', so_number: 'SO398322', line_no: 3 }),
+        demand({ sales_order_id: 'so-b', so_number: 'SO398322', line_no: 2 }),
       ]),
     );
 
     renderPanel();
+    await screen.findByTestId('fulfilment-board-matrix');
 
-    expect(await screen.findByText('0 of 2 lines decided')).toBeInTheDocument();
-    expect(screen.getByText('0 of 1 lines decided')).toBeInTheDocument();
-  });
-
-  it('offers nothing to confirm before anything is decided, and says so', async () => {
-    getPlanningBoard.mockResolvedValue(
-      boardOf([demand({ sales_order_id: 'so-a', so_number: 'SO403340', line_no: 1 })]),
-    );
-
-    renderPanel(['SO403340']);
-
-    expect(await screen.findByText('Nothing decided yet on this order.')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Confirm this order' })).toBeDisabled();
-  });
-
-  it('ENABLES Confirm on a partial decision, and states what it leaves behind', async () => {
-    // The captain's decision (13.4), and the reason for it: undecided lines must keep flowing
-    // to reorder planning, so a partly-decided order must be committable.
-    getPlanningBoard.mockResolvedValue(
-      boardOf([
-        demand({ sales_order_id: 'so-a', so_number: 'SO403340', line_no: 1, item_code: 'WESERP10B' }),
-        demand({ sales_order_id: 'so-a', so_number: 'SO403340', line_no: 2, item_code: 'TPE-9204' }),
-      ]),
-    );
-
-    renderPanel(['SO403340']);
-
-    fireEvent.click(await screen.findByRole('button', { name: /TPE-9204, 100 across 1 sales order/ }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Approve' }));
-    closeDialog();
-
-    await waitFor(() => expect(screen.getByText('1 of 2 lines decided')).toBeInTheDocument());
+    expect(screen.queryByText(/lines decided/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Confirms .* leaves/)).not.toBeInTheDocument();
     expect(
-      screen.getByText('Confirms 1, leaves 1 undecided for reorder planning.'),
-    ).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Confirm 1 line' })).toBeEnabled();
-  });
-
-  it('says it confirms everything once the whole order is decided', async () => {
-    getPlanningBoard.mockResolvedValue(
-      boardOf([demand({ sales_order_id: 'so-a', so_number: 'SO403340', line_no: 1 })]),
-    );
-
-    renderPanel(['SO403340']);
-
-    fireEvent.click(await screen.findByRole('button', { name: /WESERP10B, 100 across 1 sales order/ }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Approve' }));
-    closeDialog();
-
-    await waitFor(() => expect(screen.getByText('Confirms all 1.')).toBeInTheDocument());
-    expect(screen.getByRole('button', { name: 'Confirm this order' })).toBeEnabled();
-  });
-
-  it('names the lines that can never be decided here inside what is left behind', async () => {
-    getPlanningBoard.mockResolvedValue(
-      boardOf([
-        demand({ sales_order_id: 'so-a', so_number: 'SO366992', line_no: 1, item_code: 'WESERP10B' }),
-        demand({
-          sales_order_id: 'so-a',
-          so_number: 'SO366992',
-          line_no: 2,
-          item_code: 'TPE-9204',
-          fulfilment_location: null,
-        }),
-      ]),
-    );
-
-    renderPanel(['SO366992']);
-
-    fireEvent.click(await screen.findByRole('button', { name: /WESERP10B, 100 across 1 sales order/ }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Approve' }));
-    closeDialog();
-
-    await waitFor(() =>
-      expect(
-        screen.getByText(
-          'Confirms 1, leaves 1 undecided for reorder planning (1 of them need a location on the sales order).',
-        ),
-      ).toBeInTheDocument(),
-    );
+      screen.queryByRole('button', { name: 'Confirm this order' }),
+    ).not.toBeInTheDocument();
   });
 });
 
 /**
- * The counter the captain asked to see, at the granularity that used to lie about it.
+ * The counter the captain asked to see (D1/D3), at the granularity that used to lie about it.
  *
- * The standings were built from the cells on screen, so at day granularity a forty-line order
- * read "3 of 3 lines decided" and Confirm promised to leave nothing behind. The server's
- * `orders[]` is selection-scoped; only the verdicts are the client's.
+ * The board-wide bar is built off `board.data.contributions` - the SELECTION, never `cells`,
+ * which at day granularity is a 30-day window. So a forty-line order reads "40 to confirm" at
+ * both granularities, never "3 to confirm" because only three cells made it onto the day view.
  */
-describe('FulfilmentBoardPanel: the commit rail is selection-scoped, not window-scoped', () => {
+describe('FulfilmentBoardPanel: the confirm counter is selection-scoped, not window-scoped', () => {
   /** Three lines inside the first day window, thirty-seven far outside it. */
   function fortyLines() {
     const inside = Array.from({ length: 3 }, (_unused, index) =>
       demand({ line_no: index + 1, item_code: `IN-${index}`, required_date: '2026-09-04' }),
     );
+    // A Monday: `weekStart` of a Monday is itself, so the day and week bucket keys for this
+    // date coincide and a contribution's `key` (which embeds the bucket key) survives the
+    // granularity switch below - a Tuesday would not (bucketKeyFor: 3 Jan / 4 Jan bucket
+    // themselves differently for day vs week), and the verdict would silently un-decide.
     const outside = Array.from({ length: 37 }, (_unused, index) =>
-      demand({ line_no: 100 + index, item_code: `OUT-${index}`, required_date: '2028-01-04' }),
+      demand({ line_no: 100 + index, item_code: `OUT-${index}`, required_date: '2028-01-03' }),
     );
     return [...inside, ...outside];
   }
 
-  it('counts all forty lines at day granularity, where only three are on screen', async () => {
+  /** Expands the one row of the just-opened cell dialog - every line here is on SO403340. */
+  function expandRow() {
+    fireEvent.click(screen.getByText('SO403340'));
+  }
+
+  it('counts all forty lines to confirm at day granularity, where only three are on screen', async () => {
     const lines = fortyLines();
     getPlanningBoard.mockImplementation((_orders: unknown, granularity: BoardGranularity) =>
       Promise.resolve(boardOf(lines, {}, granularity)),
@@ -605,7 +543,10 @@ describe('FulfilmentBoardPanel: the commit rail is selection-scoped, not window-
 
     renderPanel(['SO403340']);
     await screen.findByTestId('fulfilment-board-matrix');
-    expect(screen.getByText('0 of 40 lines decided')).toBeInTheDocument();
+    // R11: every plannable line is a suggestion nobody has rejected, so all forty count.
+    expect(screen.getByTestId('board-confirm-summary')).toHaveTextContent(
+      '40 to confirm · 0 rejected',
+    );
 
     fireEvent.change(screen.getByLabelText('granularity'), { target: { value: 'day' } });
     await waitFor(() =>
@@ -615,10 +556,14 @@ describe('FulfilmentBoardPanel: the commit rail is selection-scoped, not window-
     // The window shows three of the forty; the counter must still say forty.
     const matrix = await screen.findByTestId('fulfilment-board-matrix');
     expect(within(matrix).getAllByRole('button')).toHaveLength(3);
-    await waitFor(() => expect(screen.getByText('0 of 40 lines decided')).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByTestId('board-confirm-summary')).toHaveTextContent(
+        '40 to confirm · 0 rejected',
+      ),
+    );
   });
 
-  it('states what a decision leaves behind against the whole order, not the window', async () => {
+  it('counts a rejection against the whole selection, not the window', async () => {
     const lines = fortyLines();
     getPlanningBoard.mockImplementation((_orders: unknown, granularity: BoardGranularity) =>
       Promise.resolve(boardOf(lines, {}, granularity)),
@@ -633,17 +578,21 @@ describe('FulfilmentBoardPanel: the commit rail is selection-scoped, not window-
     );
 
     fireEvent.click(await screen.findByRole('button', { name: /IN-0, 100 across 1 sales order/ }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Approve' }));
+    expandRow();
+    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+      target: { value: 'This line is being replaced.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Reject' }));
     closeDialog();
 
     await waitFor(() =>
-      expect(
-        screen.getByText('Confirms 1, leaves 39 undecided for reorder planning.'),
-      ).toBeInTheDocument(),
+      expect(screen.getByTestId('board-confirm-summary')).toHaveTextContent(
+        '39 to confirm · 1 rejected',
+      ),
     );
   });
 
-  it('keeps a verdict counted after the window scrolls past the cell it was made on', async () => {
+  it('keeps a rejected verdict counted after the window scrolls past the cell it was made on', async () => {
     const lines = fortyLines();
     getPlanningBoard.mockImplementation((_orders: unknown, granularity: BoardGranularity) =>
       Promise.resolve(boardOf(lines, {}, granularity)),
@@ -656,16 +605,28 @@ describe('FulfilmentBoardPanel: the commit rail is selection-scoped, not window-
     fireEvent.click(
       await screen.findByRole('button', { name: /OUT-0, 100 across 1 sales order/ }),
     );
-    fireEvent.click(await screen.findByRole('button', { name: 'Approve' }));
+    expandRow();
+    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+      target: { value: 'This line is being replaced.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Reject' }));
     closeDialog();
-    await waitFor(() => expect(screen.getByText('1 of 40 lines decided')).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByTestId('board-confirm-summary')).toHaveTextContent(
+        '39 to confirm · 1 rejected',
+      ),
+    );
 
     // ...then move to a window that does not contain it. The verdict is still the planner's.
     fireEvent.change(screen.getByLabelText('granularity'), { target: { value: 'day' } });
     await waitFor(() =>
       expect(getPlanningBoard).toHaveBeenCalledWith(['SO403340'], 'day', false, {}),
     );
-    await waitFor(() => expect(screen.getByText('1 of 40 lines decided')).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByTestId('board-confirm-summary')).toHaveTextContent(
+        '39 to confirm · 1 rejected',
+      ),
+    );
   });
 });
 
@@ -859,7 +820,7 @@ describe('FulfilmentBoardPanel: the calendar control (13.3)', () => {
         dayWindow: '2026-11-03',
       }),
     );
-    await screen.findByText('Nothing is owed in these dates');
+    await screen.findByText('Nothing is outstanding in these dates');
 
     fireEvent.click(screen.getByRole('button', { name: 'Earlier days' }));
     await waitFor(() =>
@@ -901,7 +862,7 @@ describe('FulfilmentBoardPanel: states', () => {
     renderPanel();
 
     expect(
-      await screen.findByText('These sales orders owe nothing that can be planned'),
+      await screen.findByText('Nothing is outstanding on these sales orders that can be planned'),
     ).toBeInTheDocument();
   });
 
@@ -922,7 +883,7 @@ describe('FulfilmentBoardPanel: states', () => {
 
     renderPanel();
 
-    expect(await screen.findByText('Nothing is owed in these dates')).toBeInTheDocument();
+    expect(await screen.findByText('Nothing is outstanding in these dates')).toBeInTheDocument();
     expect(
       screen.queryByText('These sales orders owe nothing that can be planned'),
     ).not.toBeInTheDocument();
@@ -949,14 +910,12 @@ describe('FulfilmentBoardPanel: states', () => {
  * The two things worth pinning hardest are what happens when it goes wrong: a refusal must not
  * cost the planner the work they did, and it must say which lines were refused and why.
  */
+/**
+ * ONE CONFIRM (R11, UAC D1/D2/D4/D6). The board no longer builds its body from ticked rows;
+ * `confirmLinesFor` posts every plannable, non-rejected line as its own suggestion once the
+ * planner presses the single header button, and every order writes in ONE `confirmMany` call.
+ */
 describe('FulfilmentBoardPanel: Confirm actually confirms', () => {
-  async function decideFirstCell() {
-    fireEvent.click(await screen.findByRole('button', { name: /WESERP10B, 100 across 1 sales order/ }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Approve' }));
-    closeDialog();
-    await waitFor(() => expect(screen.getByText('1 of 2 lines decided')).toBeInTheDocument());
-  }
-
   function twoLineOrder() {
     return boardOf([
       demand({ line_no: 1, item_code: 'WESERP10B' }),
@@ -964,105 +923,141 @@ describe('FulfilmentBoardPanel: Confirm actually confirms', () => {
     ]);
   }
 
-  it('posts the decided lines to the order’s own planning record', async () => {
+  async function openConfirmDialog() {
+    fireEvent.click(await screen.findByTestId('board-confirm'));
+    await screen.findByRole('alertdialog');
+  }
+
+  it('posts every plannable line as the engine’s own suggestion, in one confirmMany call (D2)', async () => {
     getPlanningBoard.mockResolvedValue(twoLineOrder());
-    confirmSupply.mockResolvedValue({
-      revision_no: 1,
-      review_state: 'confirmed',
-      inquiry_rows_created: 1,
-      exceptions: [],
+    confirmMany.mockResolvedValue({
+      results: [
+        {
+          pso_id: 'pso-so-a',
+          ok: true,
+          decision_revision: 1,
+          inquiry_rows_created: 0,
+          transfers_written: 0,
+        },
+      ],
     });
 
     renderPanel(['SO403340']);
-    await decideFirstCell();
+    await openConfirmDialog();
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
 
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm 1 line' }));
-
-    await waitFor(() => expect(confirmSupply).toHaveBeenCalledTimes(1));
-    const [psoId, body] = confirmSupply.mock.calls[0];
-    expect(psoId).toBe('pso-so-a');
-    expect(body.lines).toHaveLength(1);
-    expect(body.lines[0].project_line_id).toBe('pl-so-a-1');
+    await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
+    const [body] = confirmMany.mock.calls[0];
+    expect(body.orders).toHaveLength(1);
+    expect(body.orders[0].pso_id).toBe('pso-so-a');
+    expect(body.orders[0].lines.map((line: { project_line_id: string }) => line.project_line_id).sort()).toEqual([
+      'pl-so-a-1',
+      'pl-so-a-2',
+    ]);
   });
 
-  it('clears the confirmed lines from the draft and refetches the board', async () => {
+  it('names the D6 toast numbers: lines confirmed, transfers proposed, inquiry rows', async () => {
     getPlanningBoard.mockResolvedValue(twoLineOrder());
-    confirmSupply.mockResolvedValue({
-      revision_no: 1,
-      review_state: 'confirmed',
-      inquiry_rows_created: 1,
-      exceptions: [],
+    confirmMany.mockResolvedValue({
+      results: [
+        {
+          pso_id: 'pso-so-a',
+          ok: true,
+          decision_revision: 1,
+          inquiry_rows_created: 1,
+          transfers_written: 1,
+        },
+      ],
     });
 
     renderPanel(['SO403340']);
-    await decideFirstCell();
+    await openConfirmDialog();
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith(
+        '2 lines confirmed · 1 transfer proposed · 1 inquiry row',
+      ),
+    );
+  });
+
+  it('names the movements it KEPT beside the ones it raised (R16)', async () => {
+    getPlanningBoard.mockResolvedValue(twoLineOrder());
+    confirmMany.mockResolvedValue({
+      results: [
+        {
+          pso_id: 'pso-so-a',
+          ok: true,
+          decision_revision: 2,
+          inquiry_rows_created: 0,
+          transfers_written: 1,
+          transfers_kept: 3,
+        },
+      ],
+    });
+
+    renderPanel(['SO403340']);
+    await openConfirmDialog();
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith(
+        '2 lines confirmed · 1 transfer proposed · 3 kept · 0 inquiry rows',
+      ),
+    );
+  });
+
+  it('refetches the board once the confirmation lands', async () => {
+    getPlanningBoard.mockResolvedValue(twoLineOrder());
+    confirmMany.mockResolvedValue({
+      results: [{ pso_id: 'pso-so-a', ok: true, decision_revision: 1 }],
+    });
+
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
     const boardCallsBefore = getPlanningBoard.mock.calls.length;
 
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm 1 line' }));
+    await openConfirmDialog();
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
 
-    // The verdict is spent: it is in the database now, not in the draft.
-    await waitFor(() => expect(screen.getByText('0 of 2 lines decided')).toBeInTheDocument());
+    await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
     await waitFor(() =>
       expect(getPlanningBoard.mock.calls.length).toBeGreaterThan(boardCallsBefore),
     );
   });
 
-  it('keeps the draft and names the refused lines when the server refuses', async () => {
+  it('keeps the draft and shows the order’s own refusal when the server refuses it', async () => {
     getPlanningBoard.mockResolvedValue(twoLineOrder());
-    confirmSupply.mockRejectedValue(
-      new ConfirmSupplyError('The sales order moved on underneath this plan.', [
-        { line_no: 1, item_code: 'WESERP10B', reason: 'Only 40 free at BRW-BB now.' },
-      ]),
+    confirmMany.mockResolvedValue({
+      results: [
+        {
+          pso_id: 'pso-so-a',
+          ok: false,
+          error: 'The sales order moved on underneath this plan.',
+        },
+      ],
+    });
+
+    renderPanel(['SO403340']);
+    await openConfirmDialog();
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+
+    expect(
+      await screen.findByText('SO403340: The sales order moved on underneath this plan.'),
+    ).toBeInTheDocument();
+    // The planner does not lose their work to a refusal: still 2 plannable to confirm.
+    expect(screen.getByTestId('board-confirm-summary')).toHaveTextContent(
+      '2 to confirm · 0 rejected',
     );
-
-    renderPanel(['SO403340']);
-    await decideFirstCell();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm 1 line' }));
-
-    expect(await screen.findByText('Line 1, WESERP10B: Only 40 free at BRW-BB now.')).toBeInTheDocument();
-    // The planner does not lose their work to a refusal.
-    expect(screen.getByText('1 of 2 lines decided')).toBeInTheDocument();
-  });
-
-  /**
-   * Where the confirmed Buy rows go, and what still does not happen.
-   *
-   * This sentence used to say "on the sales order itself" and warn that an adopted order was
-   * absent from the Order Inquiry list, because that list was project-scoped. A cross-project
-   * Order Inquiries page now carries adopted orders' rows, so the warning is spent and the
-   * destination is a real place to send somebody.
-   */
-  it('sends the planner to Order Inquiries, where the rows now actually appear', async () => {
-    getPlanningBoard.mockResolvedValue(twoLineOrder());
-
-    renderPanel(['SO403340']);
-    await screen.findByTestId('fulfilment-board-matrix');
-
-    const link = screen.getByRole('link', { name: 'Order Inquiries' });
-    expect(link).toHaveAttribute('href', '/project-sales/order-inquiries');
-    expect(screen.getByText(/confirmed Buy rows go to/)).toBeInTheDocument();
-    // The old caveat is gone with the reason for it.
-    expect(screen.queryByText(/on the sales order itself/)).not.toBeInTheDocument();
-  });
-
-  it('keeps the commit header to one hint, not a paragraph teaching the feature', async () => {
-    getPlanningBoard.mockResolvedValue(twoLineOrder());
-
-    renderPanel(['SO403340']);
-    await screen.findByTestId('fulfilment-board-matrix');
-
-    expect(screen.queryByText(/keeps flowing to reorder planning/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/raises no purchasing task/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/grouped by delivery month/)).not.toBeInTheDocument();
   });
 
   /**
    * Adoption mirrored the order's open lines when it ran, so a later upload can add a core line
-   * with no mirror. The order is still confirmable; that line is not, and the planner may well
-   * have approved it - so it is NAMED rather than silently dropped.
+   * with no mirror. The order is still confirmable; that line is not, and it is NAMED rather
+   * than silently dropped. R11: no manual Approve is needed for either line to be posted or
+   * for the unpostable one to be caught - untouched is a suggestion, same as approved.
    */
-  it('names a decided line that has no mirror, and does not count it in the Confirm', async () => {
+  it('names a plannable line that has no mirror, and leaves it out of the Confirm count', async () => {
     const board = twoLineOrder();
     getPlanningBoard.mockResolvedValue(
       withContribution(
@@ -1071,43 +1066,39 @@ describe('FulfilmentBoardPanel: Confirm actually confirms', () => {
         (entry) => ({ ...entry, project_line_id: null }),
       ),
     );
-    confirmSupply.mockResolvedValue({
-      revision_no: 1,
-      review_state: 'confirmed',
-      inquiry_rows_created: 1,
-      exceptions: [],
+    confirmMany.mockResolvedValue({
+      results: [{ pso_id: 'pso-so-a', ok: true, decision_revision: 1 }],
     });
 
     renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
 
-    // Decide BOTH lines, including the one with no mirror.
-    fireEvent.click(await screen.findByRole('button', { name: /WESERP10B, 100 across 1 sales order/ }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Approve' }));
-    closeDialog();
-    fireEvent.click(await screen.findByRole('button', { name: /TPE-9204, 100 across 1 sales order/ }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Approve' }));
-    closeDialog();
-
-    await waitFor(() => expect(screen.getByText('2 of 2 lines decided')).toBeInTheDocument());
-    // Two decided, but only one can be posted, and the button says the number it will post.
+    // UNTOUCHED, so it is COUNTED rather than named (R11): silence is agreement, so the
+    // population that can be left out is every plannable line, and a notice naming hundreds
+    // of them one by one is a wall nobody reads.
     expect(
       await screen.findByText(
-        'TPE-9204 line 2 is not on the planning record yet, so this confirmation leaves it out. Re-sync the sales order to add it.',
+        '1 untouched line is not on the planning record yet; open it to decide.',
       ),
     ).toBeInTheDocument();
-    const confirm = screen.getByRole('button', { name: 'Confirm 1 line' });
+    // `plannedLineCount` still counts it here: it cannot tell "adopted, but this one line's
+    // mirror lags" from "not adopted at all", where the count DOES have to include a
+    // not-yet-mirrored line (see "adopts, refetches, then posts..." below) - so the aggregate
+    // reads 2 while the notice above still names the one line that will not post.
+    expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (2)');
 
-    fireEvent.click(confirm);
-    await waitFor(() => expect(confirmSupply).toHaveBeenCalledTimes(1));
-    expect(confirmSupply.mock.calls[0][1].lines).toHaveLength(1);
+    await openConfirmDialog();
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
+    expect(confirmMany.mock.calls[0][0].orders[0].lines).toHaveLength(1);
   });
 
   /**
-   * The other two ways a decided line cannot be posted used to be SILENT: the body left the
-   * line out and the button said "Confirm 7 lines" beside eight verdicts, with nothing on the
-   * rail saying which one was missing or why. Both are named now, and the count agrees.
+   * The other two ways a line cannot be posted used to be SILENT: the body left the line out
+   * and the button said "Confirm 7 lines" beside eight verdicts, with nothing saying which one
+   * was missing or why. Both are named now, and the count agrees.
    */
-  it('names a decided line whose Reserve the board cannot address, and does not count it', async () => {
+  it('names a plannable line whose Reserve the board cannot address, and leaves it out', async () => {
     const board = twoLineOrder();
     getPlanningBoard.mockResolvedValue(
       withContribution(
@@ -1125,24 +1116,17 @@ describe('FulfilmentBoardPanel: Confirm actually confirms', () => {
     );
 
     renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
 
-    fireEvent.click(await screen.findByRole('button', { name: /WESERP10B, 100 across 1 sales order/ }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Approve' }));
-    closeDialog();
-    fireEvent.click(await screen.findByRole('button', { name: /TPE-9204, 100 across 1 sales order/ }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Approve' }));
-    closeDialog();
-
-    await waitFor(() => expect(screen.getByText('2 of 2 lines decided')).toBeInTheDocument());
     expect(
       await screen.findByText(
-        'TPE-9204 line 2 reserves at a warehouse the board cannot address, so this confirmation leaves it out. Amend it to place the Reserve.',
+        '1 untouched line reserves at a warehouse the board cannot address; open it to decide.',
       ),
     ).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Confirm 1 line' })).toBeInTheDocument();
+    expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (1)');
   });
 
-  it('names an approved Buy of a discontinued product that carries no reason, and does not count it', async () => {
+  it('names an approved-as-is Buy of a discontinued product that carries no reason, and leaves it out', async () => {
     const board = twoLineOrder();
     getPlanningBoard.mockResolvedValue(
       withContribution(
@@ -1165,21 +1149,14 @@ describe('FulfilmentBoardPanel: Confirm actually confirms', () => {
     );
 
     renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
 
-    fireEvent.click(await screen.findByRole('button', { name: /WESERP10B, 100 across 1 sales order/ }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Approve' }));
-    closeDialog();
-    fireEvent.click(await screen.findByRole('button', { name: /TPE-9204, 100 across 1 sales order/ }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Approve' }));
-    closeDialog();
-
-    await waitFor(() => expect(screen.getByText('2 of 2 lines decided')).toBeInTheDocument());
     expect(
       await screen.findByText(
-        'TPE-9204 line 2 buys a discontinued product with no reason given, so this confirmation leaves it out. Amend it to give one.',
+        '1 untouched line buys a discontinued product with no reason given; open it to decide.',
       ),
     ).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Confirm 1 line' })).toBeInTheDocument();
+    expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (1)');
   });
 
   // The "no planning record, so no Confirm" state is deliberately GONE: pressing Confirm on
@@ -1219,22 +1196,20 @@ describe('FulfilmentBoardPanel: Confirm adopts first when it has to', () => {
     ]);
   }
 
-  async function approveOne() {
-    fireEvent.click(await screen.findByRole('button', { name: /WESERP10B, 100 across 1 sales order/ }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Approve' }));
-    closeDialog();
-    await waitFor(() => expect(screen.getByText('1 of 2 lines decided')).toBeInTheDocument());
+  async function openConfirmDialog() {
+    fireEvent.click(await screen.findByTestId('board-confirm'));
+    await screen.findByRole('alertdialog');
   }
 
   it('offers Confirm on an order nobody has adopted, and never says planning has not started', async () => {
     getPlanningBoard.mockResolvedValue(unadopted());
 
     renderPanel(['SO403340']);
-    await approveOne();
+    await screen.findByTestId('fulfilment-board-matrix');
 
-    expect(screen.getByRole('button', { name: 'Confirm 1 line' })).toBeEnabled();
-    // The old copy contradicted the counter beside it: "1 of 2 lines decided" and "nobody has
-    // started planning" in the same breath, when the planner plainly had.
+    // R11: both plannable lines post as their own suggestion, no manual Approve needed.
+    expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (2)');
+    expect(screen.getByTestId('board-confirm')).toBeEnabled();
     expect(
       screen.queryByText('Nobody has started planning this sales order yet.'),
     ).not.toBeInTheDocument();
@@ -1248,43 +1223,40 @@ describe('FulfilmentBoardPanel: Confirm adopts first when it has to', () => {
       review_state: 'needs_cs_review',
       already_adopted: false,
     });
-    confirmSupply.mockResolvedValue({
-      revision_no: 1,
-      review_state: 'confirmed',
-      inquiry_rows_created: 1,
-      exceptions: [],
+    confirmMany.mockResolvedValue({
+      results: [{ pso_id: 'pso-so-a', ok: true, decision_revision: 1 }],
     });
 
     renderPanel(['SO403340']);
-    await approveOne();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm 1 line' }));
+    await openConfirmDialog();
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
 
     await waitFor(() => expect(adoptSalesOrder).toHaveBeenCalledWith('so-a'));
-    await waitFor(() => expect(confirmSupply).toHaveBeenCalledTimes(1));
-    const [psoId, body] = confirmSupply.mock.calls[0];
-    expect(psoId).toBe('pso-so-a');
+    await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
+    const [body] = confirmMany.mock.calls[0];
     // Built from the REFETCHED board: guessing an id before the mirror exists names nothing.
-    expect(body.lines).toEqual([
-      expect.objectContaining({ project_line_id: 'pl-so-a-1' }),
+    expect(body.orders).toEqual([
+      expect.objectContaining({
+        pso_id: 'pso-so-a',
+        lines: expect.arrayContaining([
+          expect.objectContaining({ project_line_id: 'pl-so-a-1' }),
+          expect.objectContaining({ project_line_id: 'pl-so-a-2' }),
+        ]),
+      }),
     ]);
   });
 
   it('does not adopt an order that already has a planning record', async () => {
     getPlanningBoard.mockResolvedValue(adopted());
-    confirmSupply.mockResolvedValue({
-      revision_no: 2,
-      review_state: 'confirmed',
-      inquiry_rows_created: 0,
-      exceptions: [],
+    confirmMany.mockResolvedValue({
+      results: [{ pso_id: 'pso-so-a', ok: true, decision_revision: 2 }],
     });
 
     renderPanel(['SO403340']);
-    await approveOne();
+    await openConfirmDialog();
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
 
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm 1 line' }));
-
-    await waitFor(() => expect(confirmSupply).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
     expect(adoptSalesOrder).not.toHaveBeenCalled();
   });
 
@@ -1293,25 +1265,22 @@ describe('FulfilmentBoardPanel: Confirm adopts first when it has to', () => {
     adoptSalesOrder.mockRejectedValue(new Error('Another planning record already holds SO403340.'));
 
     renderPanel(['SO403340']);
-    await approveOne();
+    await openConfirmDialog();
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
 
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm 1 line' }));
-
-    expect(
-      await screen.findByText(
-        'Could not start planning this sales order: Another planning record already holds SO403340.',
-      ),
-    ).toBeInTheDocument();
-    expect(confirmSupply).not.toHaveBeenCalled();
+    await waitFor(() => expect(adoptSalesOrder).toHaveBeenCalledWith('so-a'));
+    expect(confirmMany).not.toHaveBeenCalled();
     // Nothing was committed, so the work is still the planner's.
-    expect(screen.getByText('1 of 2 lines decided')).toBeInTheDocument();
+    expect(screen.getByTestId('board-confirm-summary')).toHaveTextContent(
+      '2 to confirm · 0 rejected',
+    );
   });
 
   it('shows no unmirrored notice on an order that was simply never adopted', async () => {
     getPlanningBoard.mockResolvedValue(unadopted());
 
     renderPanel(['SO403340']);
-    await approveOne();
+    await screen.findByTestId('fulfilment-board-matrix');
 
     // That notice is for a mirror that is genuinely missing a line, which is a different
     // problem with a different fix. On a not-yet-adopted order it would name every line.
@@ -1397,21 +1366,18 @@ describe('FulfilmentBoardPanel: searching the product rows', () => {
     expect(await screen.findByText('1 of 3 products')).toBeInTheDocument();
   });
 
-  it('leaves the selection-scoped totals exactly where they were', async () => {
+  it('leaves the selection-scoped sentence exactly where it was', async () => {
     const board = catalogue();
     getPlanningBoard.mockResolvedValue({ ...board, line_count: 161, past_line_count: 130 });
 
     renderPanel();
     await screen.findByTestId('fulfilment-board-matrix');
-    const banner = '130 of 161 lines are already past their delivery date';
-    expect(screen.getByText(banner)).toBeInTheDocument();
 
     await searchFor('tpe');
 
-    // The banner describes the SELECTION, not the rows on screen. Moving it with the filter
-    // would be the day-window mistake again, in a different corner.
+    // The product filter narrows the GRID and nothing else: the selection sentence describes
+    // what is being planned, not what a search is showing.
     await waitFor(() => expect(productRows()).toEqual(['TPE-9204']));
-    expect(screen.getByText(banner)).toBeInTheDocument();
     expect(screen.getByText('Planning 2 sales orders together')).toBeInTheDocument();
   });
 
@@ -1701,19 +1667,36 @@ describe('FulfilmentBoardPanel: pivoting the rows', () => {
   it('keeps a decision made under one axis visible under another', async () => {
     getPlanningBoard.mockResolvedValue(twoOrders());
 
-    renderPanel(['SO000001']);
+    renderPanel(['SO000001', 'SO000002']);
     await screen.findByTestId('fulfilment-board-matrix');
 
     // Decide a line while the rows are products. BBB is owed by one order only, so the cell
-    // holds exactly the line this test is deciding.
+    // holds exactly the line this test is deciding. Rejected, not approved: under R11 an
+    // approval leaves the board-wide counter unchanged (silence already agreed with it), so
+    // only a rejection gives this test a number that actually moves.
     fireEvent.click(await screen.findByRole('button', { name: /BBB, 20 across 1 sales order/ }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Approve' }));
+    fireEvent.click(screen.getByText('SO000001'));
+    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+      target: { value: 'The tower plan changed.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Reject' }));
     closeDialog();
-    await waitFor(() => expect(screen.getByText('1 of 2 lines decided')).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByTestId('board-confirm-summary')).toHaveTextContent(
+        '2 to confirm · 1 rejected',
+      ),
+    );
 
-    // ...and it is the same line's decision when the rows become sales orders.
+    // ...and it is still the same line's decision when the rows become sales orders: the
+    // aggregate stays the count, and the row itself still reads Rejected under the pivot.
     await pivotTo('sales_order');
-    await waitFor(() => expect(screen.getByText('1 of 2 lines decided')).toBeInTheDocument());
+    expect(screen.getByTestId('board-confirm-summary')).toHaveTextContent(
+      '2 to confirm · 1 rejected',
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: /30 across 1 sales order/ }));
+    const bbbRow = screen.getByText('Line 2').closest('tr') as HTMLElement;
+    expect(within(bbbRow).getByText('Rejected')).toBeInTheDocument();
   });
 
   it('carries the axis in the URL, absent when it is the default', async () => {
@@ -1797,7 +1780,14 @@ describe('FulfilmentBoardPanel: pivoting the rows', () => {
  * anything ("Confirm N decisions across M orders?"), and the write is ONE
  * `confirmMany` call grouped per order - never one call per order from the panel.
  */
-describe('FulfilmentBoardPanel: Approve all / Confirm all approved', () => {
+/**
+ * NO APPROVE ALL, NO CONFIRM ALL APPROVED (R11, UAC D1). Silence on a plannable line already
+ * agrees with the suggestion, so there is nothing left for a bulk "approve everything" to do,
+ * and the header carries one Confirm rather than a second all-approved button beside it. What
+ * survives from the old flow - one `confirmMany` call grouped per order, a per-order result,
+ * and a selection- not window-scoped population - is exercised through the single Confirm (N).
+ */
+describe('FulfilmentBoardPanel: one Confirm, not Approve all (D1, D4)', () => {
   function twoUndecidedOrders() {
     return boardOf([
       demand({
@@ -1815,30 +1805,30 @@ describe('FulfilmentBoardPanel: Approve all / Confirm all approved', () => {
     ]);
   }
 
-  it('flips every undecided approvable line when Approve all is pressed', async () => {
+  it('carries no Approve all and no Confirm all approved button anywhere', async () => {
     getPlanningBoard.mockResolvedValue(twoUndecidedOrders());
 
     renderPanel();
     await screen.findByTestId('fulfilment-board-matrix');
 
-    expect(screen.getByText('0 approved · 2 undecided')).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Approve all' }));
-
-    expect(screen.getByText('2 approved · 0 undecided')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Approve all' })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Confirm all approved' }),
+    ).not.toBeInTheDocument();
   });
 
-  it('opens the confirm dialog naming how many decisions across how many orders', async () => {
+  it('opens the confirm dialog naming how many lines across how many orders (D4)', async () => {
     getPlanningBoard.mockResolvedValue(twoUndecidedOrders());
 
     renderPanel();
     await screen.findByTestId('fulfilment-board-matrix');
-    fireEvent.click(screen.getByRole('button', { name: 'Approve all' }));
+    // Both lines are already suggestions nobody has touched (R11): Confirm (2) from the start.
+    expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (2)');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm all approved' }));
+    fireEvent.click(screen.getByTestId('board-confirm'));
 
     expect(
-      await screen.findByText('Confirm 2 decisions across 2 orders?'),
+      await screen.findByText('Confirm 2 lines across 2 orders?'),
     ).toBeInTheDocument();
   });
 
@@ -1851,8 +1841,6 @@ describe('FulfilmentBoardPanel: Approve all / Confirm all approved', () => {
           ok: true,
           decision_revision: 1,
           inquiry_rows_created: 0,
-          lines_decided: 1,
-          lines_undecided: 0,
         },
         {
           pso_id: 'pso-so-b',
@@ -1864,9 +1852,8 @@ describe('FulfilmentBoardPanel: Approve all / Confirm all approved', () => {
 
     renderPanel();
     await screen.findByTestId('fulfilment-board-matrix');
-    fireEvent.click(screen.getByRole('button', { name: 'Approve all' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm all approved' }));
-    await screen.findByText('Confirm 2 decisions across 2 orders?');
+    fireEvent.click(screen.getByTestId('board-confirm'));
+    await screen.findByText('Confirm 2 lines across 2 orders?');
 
     fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
 
@@ -1884,7 +1871,7 @@ describe('FulfilmentBoardPanel: Approve all / Confirm all approved', () => {
     ]);
 
     expect(
-      await screen.findByText('Confirm all: 1 of 2 orders confirmed'),
+      await screen.findByText('1 of 2 orders confirmed'),
     ).toBeInTheDocument();
     expect(
       screen.getByText('SO403340: confirmed as revision 1 (0 purchase rows handed over)'),
@@ -1894,28 +1881,33 @@ describe('FulfilmentBoardPanel: Approve all / Confirm all approved', () => {
     ).toBeInTheDocument();
   });
 
-  it('leaves Approve all and Confirm all approved disabled with nothing to act on', async () => {
-    getPlanningBoard.mockResolvedValue(twoUndecidedOrders());
+  it('leaves Confirm disabled at Confirm (0) once the one plannable line is rejected', async () => {
+    getPlanningBoard.mockResolvedValue(boardOf([demand()]));
 
     renderPanel();
     await screen.findByTestId('fulfilment-board-matrix');
+    expect(screen.getByTestId('board-confirm')).toBeEnabled();
 
-    expect(screen.getByRole('button', { name: 'Confirm all approved' })).toBeDisabled();
+    fireEvent.click(await screen.findByRole('button', { name: /WESERP10B, 100 across 1 sales order/ }));
+    fireEvent.click(screen.getByText('SO403340'));
+    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+      target: { value: 'Cancelled by the customer.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Reject' }));
+    closeDialog();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Approve all' }));
-
-    expect(screen.getByRole('button', { name: 'Approve all' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Confirm all approved' })).not.toBeDisabled();
+    expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (0)');
+    expect(screen.getByTestId('board-confirm')).toBeDisabled();
   });
 
   /**
-   * BLOCKER (review): at day granularity `cells` only covers the visible 30-day window
-   * (`DAY_WINDOW_COLUMNS`), so a line dated outside it used to be invisible to `allContributions`
-   * (it flattened `cells`), and Approve all, the strip and Confirm all approved all silently
-   * skipped it. The server's top-level `contributions` carries every line of the selection
-   * regardless of the window; the panel must read that, not the cells.
+   * BLOCKER (review, still true under the single Confirm): at day granularity `cells` only
+   * covers the visible 30-day window (`DAY_WINDOW_COLUMNS`), so a line dated outside it is
+   * invisible to `cells` - the panel has to read the server's top-level `contributions` for
+   * the count AND for the body Confirm posts, or a line the window scrolled past is silently
+   * left out of both.
    */
-  it('approves and confirms a line the day window has scrolled away from, not only the ones on screen', async () => {
+  it('confirms a line the day window has scrolled away from, not only the ones on screen', async () => {
     const board = buildBoard(
       [
         demand({
@@ -1943,19 +1935,371 @@ describe('FulfilmentBoardPanel: Approve all / Confirm all approved', () => {
     expect(board.contributions).toHaveLength(2);
     getPlanningBoard.mockResolvedValue(board);
     currentSearchParams = new URLSearchParams('granularity=day');
+    confirmMany.mockResolvedValue({
+      results: [
+        { pso_id: 'pso-so-a', ok: true, decision_revision: 1 },
+        { pso_id: 'pso-so-b', ok: true, decision_revision: 1 },
+      ],
+    });
 
     renderPanel();
     await screen.findByTestId('fulfilment-board-matrix');
 
-    // The strip counts both lines, not only the one the window shows.
-    expect(screen.getByText('0 approved · 2 undecided')).toBeInTheDocument();
+    // The counter reads both lines, not only the one the window shows.
+    expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (2)');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Approve all' }));
-    expect(screen.getByText('2 approved · 0 undecided')).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm all approved' }));
+    fireEvent.click(screen.getByTestId('board-confirm'));
     expect(
-      await screen.findByText('Confirm 2 decisions across 2 orders?'),
+      await screen.findByText('Confirm 2 lines across 2 orders?'),
     ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
+    const body = confirmMany.mock.calls[0][0] as { orders: { pso_id: string }[] };
+    expect(body.orders.map((order) => order.pso_id).sort()).toEqual([
+      'pso-so-a',
+      'pso-so-b',
+    ]);
+  });
+});
+
+/**
+ * AC-C5 (retired 26 August 2026): NO legend row, and NO "already past" banner. The decision
+ * strip's cards carry every label in its own colour, and the column headers already say
+ * "Already past" over the periods they mean - so both were the screen restated in words.
+ */
+/**
+ * Undo all throws away every decision taken since the board was opened and there is no way
+ * back to them, so it asks first, with the count - PRINCIPLES: never one click, never
+ * `confirm()`.
+ */
+describe('FulfilmentBoardPanel: Undo all asks first (D2)', () => {
+  async function decideOneLineInTheList() {
+    getPlanningBoard.mockResolvedValue(boardOf([demand()]));
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
+    fireEvent.click(screen.getByRole('button', { name: 'List' }));
+    // The list's own rows: click one to open its decision panel, then Save the suggestion it
+    // opens on, which is the approval.
+    fireEvent.click(await screen.findByText('WESERP10B'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Save' }));
+  }
+
+  it('opens a confirmation naming how many drafts would go, and keeps them on Cancel', async () => {
+    await decideOneLineInTheList();
+
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Board actions' }), { key: 'Enter' });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Undo all' }));
+
+    expect(await screen.findByRole('alertdialog')).toHaveTextContent(
+      'Discard 1 draft decision?',
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Keep them' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
+    expect(await screen.findByTestId(/^decision-pill-/)).toHaveTextContent('Approved');
+  });
+
+  it('clears every draft decision once the discard is confirmed', async () => {
+    await decideOneLineInTheList();
+
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Board actions' }), { key: 'Enter' });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Undo all' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Discard' }));
+
+    await waitFor(() =>
+      expect(screen.getByTestId(/^decision-pill-/)).toHaveTextContent('Suggested'),
+    );
+  });
+});
+
+/**
+ * A planning change already applied to ONE sales order is not applied to it twice (AC-P3-4).
+ * The board-wide block only reads `applied_at` on the batch itself, which is set by the LAST
+ * press, so without this an order whose own rows already read applied went back up with the
+ * next one.
+ */
+describe('FulfilmentBoardPanel: an order whose change is already applied is not sent again', () => {
+  it('leaves it out of the post and says so in the results', async () => {
+    getPlanningBoard.mockResolvedValue(boardOf([demand()]));
+    getPlanningChangeBatch.mockResolvedValue({
+      id: 'pcb-1',
+      applied_at: null,
+      applied_by_name: null,
+      orders: [
+        {
+          so_number: 'SO403340',
+          rows: [{ id: 'pcr-1', applied_state: 'applied' }],
+        },
+      ],
+    });
+
+    renderPanel(['SO403340'], vi.fn(), 'pcb-1');
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    fireEvent.click(screen.getByTestId('board-confirm'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Confirm' }));
+
+    expect(
+      await screen.findByText(
+        /This planning change was already applied to this sales order\./,
+      ),
+    ).toBeInTheDocument();
+    expect(confirmMany).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The notice beside the button (R11): a line the planner composed is NAMED, capped at five,
+ * and the lines nobody touched are counted - there can be hundreds of those, and a wall of
+ * names is read by nobody.
+ */
+describe('unpostableNotices', () => {
+  function line(lineNo: number, touched: boolean) {
+    return {
+      contribution: {
+        item_code: 'TPE-9204',
+        line_no: lineNo,
+      } as unknown as BoardContribution,
+      reason: 'buy_reason_missing' as const,
+      touched,
+    };
+  }
+
+  it('names a touched line and states the fix', () => {
+    expect(unpostableNotices('buy_reason_missing', [line(2, true)])).toEqual([
+      'TPE-9204 line 2 buys a discontinued product with no reason given, so this confirmation leaves it out. Amend it to give one.',
+    ]);
+  });
+
+  it('caps the names at five and counts the rest', () => {
+    const [sentence] = unpostableNotices(
+      'buy_reason_missing',
+      [1, 2, 3, 4, 5, 6, 7].map((no) => line(no, true)),
+    );
+    expect(sentence).toContain('line 5 and 2 more');
+    expect(sentence).not.toContain('line 6');
+  });
+
+  it('counts untouched lines instead of naming them, in one sentence', () => {
+    expect(
+      unpostableNotices('buy_reason_missing', [1, 2, 3].map((no) => line(no, false))),
+    ).toEqual([
+      '3 untouched lines buy a discontinued product with no reason given; open them to decide.',
+    ]);
+  });
+
+  it('says both when the reason catches touched and untouched lines together', () => {
+    expect(
+      unpostableNotices('no_mirror', [line(2, true), line(3, false)]).length,
+    ).toBe(2);
+  });
+});
+
+describe('FulfilmentBoardPanel: what was taken off the page', () => {
+  it('shows no legend row on either view', async () => {
+    getPlanningBoard.mockResolvedValue(boardOf([demand()]));
+
+    renderPanel();
+    await screen.findByTestId('fulfilment-board-matrix');
+    expect(screen.queryByTestId('supply-legend')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'List' }));
+    await waitFor(() =>
+      expect(screen.queryByTestId('fulfilment-board-matrix')).not.toBeInTheDocument(),
+    );
+    expect(screen.queryByTestId('supply-legend')).not.toBeInTheDocument();
+  });
+
+  it('shows no "already past" banner, and the strip still carries the labels', async () => {
+    getPlanningBoard.mockResolvedValue(boardOf([demand()]));
+
+    renderPanel();
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    expect(screen.queryByText(/lines are already past their delivery date/)).toBeNull();
+    const strip = screen.getByTestId('decision-strip');
+    expect(strip.textContent).toContain('Buy');
+    expect(strip.textContent).toContain('Use BRW');
+    expect(strip.textContent).toContain('Use own location');
+  });
+});
+
+/**
+ * AC-D2: the decision strip.
+ *
+ * The captain asked for "one page that shows, per line, what was SUGGESTED and what was
+ * DECIDED, in the same words", and ruled that the page is this board, with cards.
+ */
+describe('FulfilmentBoardPanel: the decision strip', () => {
+  /** The engine offered the pool; the planner bought the line whole. */
+  const amendedBoard = () =>
+    withContribution(
+      boardOf([demand({ item_code: 'SRT382-6-DIY', qty: '71' })], {}),
+      () => true,
+      (entry) => ({
+        ...entry,
+        covered: true,
+        proposed: {
+          components: [
+            {
+              kind: 'reserve',
+              rung: 'pool',
+              qty: '71',
+              location: 'BRW',
+              warehouse_id: 'wh-BRW',
+              reason: 'Free stock at BRW covers the need.',
+            },
+          ],
+        },
+        sources: [
+          { kind: 'buy', rung: 'buy', qty: '71', location: null, reason: 'Bought, as confirmed.' },
+        ],
+        decision: {
+          revision_no: 1,
+          timely_spo_qty: '0',
+          reserve: [],
+          borrow: [],
+          buy_qty: '71',
+        },
+      }),
+    );
+
+  it('states both figures per kind and marks the pair that moved', async () => {
+    getPlanningBoard.mockResolvedValue(amendedBoard());
+
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    const shared = screen.getByTestId('decision-strip-shared');
+    expect(within(shared).getByText('71')).toBeInTheDocument();
+    expect(screen.getByTestId('decision-strip-changed-shared')).toBeInTheDocument();
+
+    const buy = screen.getByTestId('decision-strip-buy');
+    expect(within(buy).getByText('71')).toBeInTheDocument();
+    expect(screen.getByTestId('decision-strip-changed-buy')).toBeInTheDocument();
+  });
+
+  it('sits above whichever view is on screen', async () => {
+    getPlanningBoard.mockResolvedValue(amendedBoard());
+
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    const strip = screen.getByTestId('decision-strip');
+    const matrix = screen.getByTestId('fulfilment-board-matrix');
+    expect(strip.compareDocumentPosition(matrix)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+
+  it('filters the grid to the cells carrying that kind, and clears on a second press', async () => {
+    // Two products: one bought, one covered from the pool. Pressing Shared has to leave the
+    // pooled one and take the bought one away.
+    const board = withContribution(
+      boardOf(
+        [
+          demand({ line_no: 1, item_code: 'SRT382-6-DIY', qty: '71' }),
+          demand({ line_no: 2, item_code: 'WESERP10B', qty: '10' }),
+        ],
+        { 'WESERP10B|BRW-BB': '999' },
+      ),
+      () => true,
+      (entry) => entry,
+    );
+    getPlanningBoard.mockResolvedValue(board);
+
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
+    expect(screen.getByText('SRT382-6-DIY')).toBeInTheDocument();
+    expect(screen.getByText('WESERP10B')).toBeInTheDocument();
+
+    // WESERP10B has free stock at its own location, so the ladder takes it on the group rung
+    // and SRT382-6-DIY is bought. Own keeps the first and drops the second.
+    fireEvent.click(screen.getByTestId('decision-strip-own'));
+    await waitFor(() => {
+      expect(screen.queryByText('SRT382-6-DIY')).not.toBeInTheDocument();
+    });
+    expect(screen.getByText('WESERP10B')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('decision-strip-own'));
+    await waitFor(() => {
+      expect(screen.getByText('SRT382-6-DIY')).toBeInTheDocument();
+    });
+  });
+});
+
+/**
+ * The card, the figures above it and BOTH views are one reading or they are none.
+ *
+ * Two ways they came apart, both found in review: the list view ignored the pressed card
+ * entirely (it kept receiving every contribution while the card sat aria-pressed), and the
+ * strip was summed over the whole selection while the grid was filtered over its cells - which
+ * at day granularity is a 30-day window, so a card could read a figure off lines the board
+ * could not show and then empty itself when pressed.
+ */
+describe('FulfilmentBoardPanel: the strip and the views agree', () => {
+  /** One bought line, one covered from its own location. */
+  const mixedBoard = () =>
+    boardOf(
+      [
+        demand({ line_no: 1, item_code: 'SRT382-6-DIY', qty: '71' }),
+        demand({ line_no: 2, item_code: 'WESERP10B', qty: '10' }),
+      ],
+      { 'WESERP10B|BRW-BB': '999' },
+    );
+
+  it('filters the LIST view by the pressed card, not only the grid', async () => {
+    getPlanningBoard.mockResolvedValue(mixedBoard());
+
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    fireEvent.click(screen.getByRole('button', { name: 'List' }));
+    await screen.findByText('SRT382-6-DIY');
+    expect(screen.getByText('WESERP10B')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('decision-strip-own'));
+    await waitFor(() => {
+      expect(screen.queryByText('SRT382-6-DIY')).not.toBeInTheDocument();
+    });
+    expect(screen.getByText('WESERP10B')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('decision-strip-own'));
+    await waitFor(() => {
+      expect(screen.getByText('SRT382-6-DIY')).toBeInTheDocument();
+    });
+  });
+
+  it('never shows a figure the view cannot produce: pressing a card leaves something on screen', async () => {
+    getPlanningBoard.mockResolvedValue(mixedBoard());
+
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    // Every card carrying a figure must leave at least one product row when pressed. A card
+    // that empties the board is the exact defect this rule exists to prevent.
+    for (const kind of ['buy', 'own']) {
+      fireEvent.click(screen.getByTestId(`decision-strip-${kind}`));
+      await waitFor(() => {
+        expect(screen.getByTestId('fulfilment-board-matrix')).toBeInTheDocument();
+      });
+      expect(screen.queryByText('No products match')).not.toBeInTheDocument();
+      fireEvent.click(screen.getByTestId(`decision-strip-${kind}`));
+    }
+  });
+
+  it('disables a card nothing on the board is that kind of supply', async () => {
+    getPlanningBoard.mockResolvedValue(mixedBoard());
+
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    // Nothing here is borrowed, so that card reads 0 / 0 and cannot be pressed - it keeps
+    // its place, because it stands for one of the ladder's four questions and a card that
+    // came and went would move every card beside it.
+    expect(screen.getByTestId('decision-strip-borrow_order')).toBeDisabled();
+    expect(screen.getByTestId('decision-strip-buy')).not.toBeDisabled();
+    // `incoming` is the exception (ruled 27 August 2026): it is not a question, it is what
+    // a decision frozen under an older ladder carries, so at 0 / 0 it is not shown at all.
+    expect(screen.queryByTestId('decision-strip-incoming')).not.toBeInTheDocument();
   });
 });

@@ -60,6 +60,13 @@ import { FulfilmentPlanningSheet } from './FulfilmentPlanningSheet';
  */
 const MAX_BOARD_SELECTION = 50;
 
+/**
+ * Where the board's own "Back" goes. The sales-order list, because that is the screen the
+ * Plan action opens a board FROM; the worklist stays exactly where it is and is simply no
+ * longer the way back out of a board.
+ */
+const SALES_ORDERS_PATH = '/scm/sales-orders';
+
 /** What the server can order by, and so the only columns that offer a sort. */
 const SORTABLE_COLUMNS = new Set<string>(FULFILMENT_PLANNING_SORT_FIELDS);
 
@@ -122,12 +129,29 @@ export function FulfilmentPlanningClient() {
         .filter(Boolean),
     [searchParams],
   );
+  /**
+   * The planning-change batch the board was opened ON (AC-P3-1), from the same URL as the
+   * selection: `?orders=SO381895&batch=<id>`. The Planning changes list and the sales-order
+   * list's Changed badge both address the board this way, so a board on a change is one link
+   * and can be sent to somebody.
+   */
+  const batchId = React.useMemo(
+    () => searchParams.get('batch')?.trim() || null,
+    [searchParams],
+  );
   const [boardOrders, setBoardOrders] = React.useState<string[] | null>(() =>
-    urlOrders.length > 0 && urlOrders.length <= MAX_BOARD_SELECTION ? urlOrders : null,
+    // THE CAP DOES NOT APPLY TO A BATCH. It exists because a selection the sender did not
+    // choose is not the set they meant to share - but a batch IS a chosen set: one book
+    // upload, the orders it moved, and the only screen those changes can be decided on. A
+    // 60-order upload dead-ended on "too many orders" with nowhere else to go, because the
+    // separate batch page is retired.
+    urlOrders.length > 0 && (batchId !== null || urlOrders.length <= MAX_BOARD_SELECTION)
+      ? urlOrders
+      : null,
   );
   /** A link that asked for too many, so the refusal can be stated on the worklist. */
   const [refusedLink] = React.useState(() =>
-    urlOrders.length > MAX_BOARD_SELECTION ? urlOrders.length : 0,
+    urlOrders.length > MAX_BOARD_SELECTION && batchId === null ? urlOrders.length : 0,
   );
   const [pagination, setPagination] = React.useState<PaginationState>({
     pageIndex: 0,
@@ -583,26 +607,40 @@ export function FulfilmentPlanningClient() {
   );
 
   /**
-   * Back to the worklist, and the whole board leaves the URL with it - selection, granularity
-   * and the product filter. Leaving any of them behind would make the next link carry a board
-   * the sender was no longer looking at. The worklist's own sort and filter stay.
+   * Back to the SALES ORDER LIST, which is where a board is opened from.
+   *
+   * It used to drop the board out of this URL and land on the worklist underneath it. The
+   * board is reached from the sales-order list now (its Plan action), so returning to a
+   * different screen than the one the reader left is a step they did not ask for - and the
+   * worklist is not going anywhere, it is simply no longer the way back.
+   *
+   * A board opened FROM the sales-order list carries that list's query, and it rides along
+   * (minus the board's own `orders` / `granularity` / `product`) so the reader lands back on
+   * the page and filter they left. A board opened from the worklist carries the WORKLIST's
+   * query instead - `sort=earliest_required_date` and the rest - which means something else
+   * on the sales-order screen, so it is dropped rather than forwarded into a URL where it is
+   * a different fact under the same name.
+   *
+   * `page` / `limit` are what tell the two apart: the sales-order list always writes them
+   * (`buildDetailSearch`) and the worklist never does.
    */
   const closeBoard = React.useCallback(() => {
-    setBoardOrders(null);
     const next = new URLSearchParams(searchParams.toString());
+    const fromSalesOrders = next.has('page') || next.has('limit');
     next.delete('orders');
+    next.delete('batch');
     next.delete('granularity');
     next.delete('product');
-    const query = next.toString();
-    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
-  }, [pathname, router, searchParams]);
+    const query = fromSalesOrders ? next.toString() : '';
+    router.push(query ? `${SALES_ORDERS_PATH}?${query}` : SALES_ORDERS_PATH);
+  }, [router, searchParams]);
 
   // The board replaces the worklist in place rather than sitting under it: they answer the
   // same question at two grains, and showing both at once would ask the reader which one is
   // the current subject. Phase 2 puts the selection in the URL so a board can be linked.
   if (boardOrders) {
     return (
-      <FulfilmentBoardPanel soNumbers={boardOrders} onBack={closeBoard} />
+      <FulfilmentBoardPanel soNumbers={boardOrders} batchId={batchId} onBack={closeBoard} />
     );
   }
 

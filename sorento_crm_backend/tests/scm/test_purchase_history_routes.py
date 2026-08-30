@@ -92,6 +92,22 @@ def _orders(db) -> int:
     return db.execute(text("SELECT count(*) FROM purchase_orders")).scalar()
 
 
+def _spo_lines(db, spo_number: str) -> int:
+    """The other book this feed writes, asked about ONE document.
+
+    Since migration 420 an `SPO-` document is filed in `spo_allocations` and never in
+    `purchase_orders` (`scm.on_order_v` reads that table and nothing else), so the
+    channel's `orders_created` counts documents across BOTH books and `purchase_orders`
+    alone cannot answer for it. Asked per document rather than as a total because the
+    shared development database is a copy of production and already holds this fixture's
+    SPO number, so a count of the whole table proves nothing either way.
+    """
+    return db.execute(
+        text("SELECT count(*) FROM spo_allocations WHERE spo_number = :n"),
+        {"n": spo_number},
+    ).scalar()
+
+
 # --------------------------------------------------------------------------- #
 # purchase history
 # --------------------------------------------------------------------------- #
@@ -141,7 +157,15 @@ def test_apply_queues_the_book_and_the_job_writes_it_with_its_links(scm_app, mon
     assert row.status == "finished", row
     upload = row.result["upload"]
     assert upload["orders_created"] >= 1
-    assert _orders(db) == before + upload["orders_created"]
+    # Counted per BOOK, because the fixture carries one of each and they land in different
+    # tables (migration 420). `orders_created` against `purchase_orders` alone read the SPO
+    # document as a purchase order the job had failed to write.
+    assert upload["orders_created"] == upload["orders_po"] + upload["orders_spo"]
+    assert _orders(db) == before + upload["orders_po"]
+    shipping_orders = [d for d in upload["documents"] if str(d).startswith("SPO-")]
+    assert len(shipping_orders) == upload["orders_spo"]
+    for number in shipping_orders:
+        assert _spo_lines(db, number) >= 1, f"{number} reached neither book"
     assert "resolved" in upload["links"]
 
 

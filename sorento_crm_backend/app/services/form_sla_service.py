@@ -161,6 +161,17 @@ def _full_form_link(source_entity_type: str, source_entity_id: str) -> str:
     return f"{base}{path}" if base else path
 
 
+def _ticket_deep_link(base_url: Optional[str], tracking_id) -> str:
+    """The CRM deep link for a conversation ticket: ``{base}/?ticket=<id>``.
+
+    Same target the dashboard "My Pending" drawer opens and the email / in-app
+    notification links to (UAC AC-G1). Relative when no frontend base URL is
+    configured, never empty and never the Respond inbox.
+    """
+    base = (base_url or "").strip().rstrip("/")
+    return f"{base}/?ticket={tracking_id}"
+
+
 def _fmt_due(due_at) -> Optional[str]:
     """Format a naive-UTC due_at as readable KL wall time, e.g. '22 May 2026, 10:00 AM'."""
     if due_at is None:
@@ -271,17 +282,11 @@ def build_sla_whatsapp_data(
     if s_type in FORM_SLA_TYPES:
         form_url = _full_form_link(s_type, s_id)
     else:
-        from app.services.respond_identifier import format_respond_inbox_url
-
-        _rio = getattr(getattr(tracking, "contact", None), "respond_io_id", None)
-        form_url = (
-            format_respond_inbox_url(
-                getattr(_settings, "respond_app_base_url", None),
-                getattr(_settings, "respond_space_id", None),
-                str(_rio) if _rio else None,
-            )
-            or (f"{base_url}/sla-management/conversation-sla-tracking/{getattr(tracking, 'id', '')}" if base_url else "")
-        )
+        # Conversation ticket: the same "/?ticket=<id>" deep link the email and
+        # in-app notification carry (UAC AC-G1) - the assignee answers from the
+        # CRM's My Pending drawer, not the Respond inbox. Form-SLA rows above are
+        # untouched: for them {{form_url}} is, and stays, the form record.
+        form_url = _ticket_deep_link(base_url, getattr(tracking, "id", ""))
     context_vars = {
         "contact_name": contact_name,
         "entity_number": number,
@@ -1326,23 +1331,15 @@ class FormSLAOrchestrator:
             (_assignee.name or _assignee.email or "there") if _assignee else "there"
         )
         # Destination link mirroring the pending-tasks row click: routed form types open
-        # their in-system record; others (e.g. ticket) open the Respond conversation.
+        # their in-system record; others (e.g. ticket) open the ticket in the CRM.
         # _FE_RECORD_ROUTES must match MyPendingSLAWidget.ENTITY_ROUTES.
         _FE_RECORD_ROUTES = {"stock_inquiry", "complaint", "purchase_request", "sponsorship_form"}
         if s_type in _FE_RECORD_ROUTES:
             form_url = full_link
         else:
-            from app.services.respond_identifier import format_respond_inbox_url
-
-            _rio = getattr(getattr(tracker, "contact", None), "respond_io_id", None)
-            form_url = (
-                format_respond_inbox_url(
-                    getattr(_settings, "respond_app_base_url", None),
-                    getattr(_settings, "respond_space_id", None),
-                    str(_rio) if _rio else None,
-                )
-                or full_link
-            )
+            # Ticket-shaped rows deep-link to the ticket in the CRM (AC-G1), never
+            # the Respond inbox.
+            form_url = _ticket_deep_link(_base_url, tracker.id)
 
         if kind == "assigned":
             title = f"New SLA assignment: {number}"

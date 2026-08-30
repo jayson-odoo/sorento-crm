@@ -60,12 +60,12 @@ from app.schemas.project_sales_order import (
     UnpublishResponse,
 )
 from app.services import project_po_service as po_svc
-from app.services import project_record_navigation as record_nav
 from app.services import project_service as projects
 from app.services.error_handler import AppException, handle_internal_error
 from app.services.project_so_delta_service import ProjectSODeltaService
 from app.services.project_so_draft_service import ProjectSODraftService
 from app.services.uuid_path_param import validate_uuid_path
+from app.utils.http import content_disposition
 
 logger = logging.getLogger(__name__)
 
@@ -299,28 +299,6 @@ async def list_project_sales_orders(
             "pagination": {"total": total, "page": page, "limit": limit},
             "empty": total == 0,
         }
-    except Exception as exc:
-        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
-
-
-@router.get("/projects/{project_id}/sales-orders/neighbours")
-async def get_sales_order_neighbours(
-    project_id: str,
-    id: str = Query(..., description="Sales order id to resolve neighbours for"),
-    _user: dict = Depends(require_permission_with_api_key(VIEW)),
-    db: Session = Depends(get_db),
-):
-    """Prev/next of one order within this project's sales orders.
-
-    The same set, in the same order, the list above returns unfiltered - so the detail
-    pager and the tab the user came from cannot disagree. Returns
-    ``{total, index, prev_id, next_id}`` with a 1-based ``index`` and circular neighbours.
-    """
-    try:
-        validate_uuid_path(project_id, resource="Project")
-        validate_uuid_path(id, resource="Sales order")
-        projects.get_project_or_404(db, project_id)
-        return record_nav.sales_order_neighbours(db, project_id=project_id, pso_id=id)
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
@@ -809,7 +787,7 @@ def sales_order_import_file(
         return Response(
             content=body,
             media_type="text/csv",
-            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+            headers={"Content-Disposition": content_disposition(filename)},
         )
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
@@ -970,7 +948,7 @@ async def export_autocount_change_list(
         return Response(
             content=body,
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+            headers={"Content-Disposition": content_disposition(filename)},
         )
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))

@@ -274,10 +274,6 @@ def _access_agent_route_specs(db):
             "/api/v1/user-management/access-agents/contact-access",
             ACCESS_AGENTS_VIEW,
             lambda r: "data" in r.json() and "pagination" in r.json()),
-        ("GET /access-agents/neighbours",
-            f"/api/v1/user-management/access-agents/neighbours?id={agent_id}",
-            ACCESS_AGENTS_VIEW,
-            lambda r: {"total", "index", "prev_id", "next_id"} <= set(r.json())),
         ("GET /access-agents/{id}",
             f"/api/v1/user-management/access-agents/{agent_id}",
             ACCESS_AGENTS_VIEW,
@@ -414,17 +410,18 @@ class TestPerRouteGates:
     @pytest.fixture(autouse=True)
     def _specs(self, db):
         self.specs = _all_route_specs(db)
-        # 26 routes are gated by this PR series; 25 are in this table.
-        # `GET /settings/` is the twenty-sixth and lives in
+        # 25 routes are gated by this PR series; 24 are in this table (the
+        # access-agents prev/next endpoint went with S3's page-scoped pager).
+        # `GET /settings/` is the twenty-fifth and lives in
         # tests/test_settings_app_config_gate.py, where the settings singleton is
         # seeded with non-null sensitive values so its 200 body and its
         # /app-config sibling can be asserted together. (The structural sweep
-        # below covers 44 gated routes in total - the other 18 are the 12
+        # below covers 42 gated routes in total - the other 17 are the 12
         # users/roles/permissions reads that were already gated before this work,
-        # the 4 onboarding reads, the teams member-brands read from the
+        # the 3 onboarding reads, the teams member-brands read from the
         # brand-aware escalation PR (#197) and the contact media-access read from
         # the chatbot media PR, all of which have their own tests.)
-        assert len(self.specs) == 25, "one entry per gated route except GET /settings/"
+        assert len(self.specs) == 24, "one entry per gated route except GET /settings/"
 
     def test_denied_without_permission(self, api):
         client, allow, _caller = api
@@ -630,8 +627,9 @@ class TestStructuralCoverage:
         table (13), the Q1/Q2/Q3 decisions (8 contacts GETs + the settings blob +
         2 reference catalogs) and the 2 system-logs reads - the 12 in
         `users.py` / `roles.py` / `permissions.py` that were already correctly
-        gated before any of it, the 4 onboarding reads (the review queue, its
-        neighbours, one request, and the access templates), the member-level
+        gated before any of it, the 3 onboarding reads (the review queue, one
+        request, and the access templates; the queue's prev/next endpoint went
+        with S3's page-scoped pager), the member-level
         brands read on teams (`/teams/{team_id}/members/{user_id}/brands`), added
         by the brand-aware escalation routing PR (#197) alongside its
         market-segments sibling, and the per-contact media-access read
@@ -643,7 +641,7 @@ class TestStructuralCoverage:
         below so the gate is stated rather than counted.
         """
         gated_paths = {r.path for r in _mounted_get_routes() if _is_gated(r)}
-        assert len(gated_paths) == 44
+        assert len(gated_paths) == 42
         assert gated_paths == {
             "/api/v1/user-management/teams/",
             "/api/v1/user-management/teams/{team_id}",
@@ -652,7 +650,6 @@ class TestStructuralCoverage:
             "/api/v1/user-management/teams/{team_id}/members/{user_id}/brands",
             "/api/v1/user-management/access-agents/",
             "/api/v1/user-management/access-agents/contact-access",
-            "/api/v1/user-management/access-agents/neighbours",
             "/api/v1/user-management/access-agents/{agent_id}",
             "/api/v1/user-management/access-agents/{agent_id}/teams",
             "/api/v1/user-management/access-agents/{agent_id}/field-access",
@@ -701,12 +698,8 @@ class TestStructuralCoverage:
             "/api/v1/user-management/permissions/",
             "/api/v1/user-management/permissions/select",
             "/api/v1/user-management/permissions/{permission_id}",
-            # Onboarding review. Reads carry `.view`; `neighbours` is listed in its
-            # own right because it is declared before `{request_id}` so the router
-            # cannot swallow it as an id, and a gate lost there would leak the
-            # queue's shape.
+            # Onboarding review. Reads carry `.view`.
             "/api/v1/user-management/onboarding/requests",
-            "/api/v1/user-management/onboarding/requests/neighbours",
             "/api/v1/user-management/onboarding/requests/{request_id}",
             "/api/v1/user-management/onboarding/templates",
         }

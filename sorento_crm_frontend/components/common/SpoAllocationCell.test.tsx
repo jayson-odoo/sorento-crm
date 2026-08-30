@@ -107,6 +107,16 @@ describe('SpoAllocationCell', () => {
 // --------------------------------------------------------------------------
 
 const pushMock = vi.fn();
+// The GRN detail renders its gear, which resolves permissions; this test has no
+// session or query client, and RBAC has its own tests.
+// The pager has its own tests (hooks/useListPager.test.ts).
+vi.mock('@/components/common/ListPager', () => ({ __esModule: true, default: () => null }));
+
+vi.mock('@/hooks/usePermissions', () => ({
+  useHasPermission: () => true,
+  usePermissions: () => ({ permissions: [], permissionSet: new Set(), isLoading: false }),
+}));
+
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: pushMock }),
   useSearchParams: () => new URLSearchParams(''),
@@ -126,6 +136,11 @@ vi.mock(
 
 const grnMock = vi.fn();
 vi.mock('@/app/(protected)/procurement-management/grn/hooks/useGRN', () => ({
+  // The pager reads the list page through the entity's shared key + fetch (S3-03).
+  grnPagerQuery: {
+    listQueryKey: () => ['grn'],
+    fetchPage: async () => ({ data: [], pagination: { total: 0 } }),
+  },
   useGRN: () => grnMock(),
   useUpdateGRN: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));

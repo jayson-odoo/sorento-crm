@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { buildDetailSearch } from '@/lib/listNavQuery';
+import { RowActionsMenu } from '@/components/common/RowActionsMenu';
 import {
   ColumnDef,
   PaginationState,
@@ -14,7 +15,7 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { ChevronRight, Download, Eye, Plus, RefreshCw, Search, Trash2, Upload, X } from 'lucide-react';
+import { Download, Eye, Plus, RefreshCw, Search, Trash2, Upload, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { getLatestContainerStatusDocument } from '../services/packingListService';
 import { Button } from '@/components/ui/button';
@@ -39,6 +40,7 @@ import ContainerStatusImportDialog from './ContainerStatusImportDialog';
 import AttachmentPreviewModal, {
   type AttachmentPreviewItem,
 } from '@/components/common/AttachmentPreviewModal';
+import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 
 export default function PackingListsList() {
   const router = useRouter();
@@ -59,6 +61,14 @@ export default function PackingListsList() {
     { id: 'created_at', desc: true },
   ]);
   const [searchQuery, setSearchQuery] = useState('');
+
+  // Back hands the list its own query string back, and the pager keeps
+  // rewriting it, so the list reads it (S3-01). One hook, every list.
+  useListStateFromUrl((state) => {
+    setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
+    setSorting(state.sorting);
+    setSearchQuery(state.searchQuery);
+  });
   /**
    * Clearance columns are OFF by default. There are 17 of them; showing them all
    * would bury the eight columns everyone already uses. Each user turns on the ones
@@ -97,10 +107,9 @@ export default function PackingListsList() {
     searchQuery,
   });
 
-  const handleRowClick = (row: PackingList) => {
-    const packingListId = row.id;
-    // Carry the active list query into the detail URL so its prev/next pager
-    // walks the same filtered+sorted set.
+  // The whole row opens the record, carrying the list query the pager rebuilds
+  // its key from.
+  const rowHref = (row: PackingList) => {
     const search = buildDetailSearch({
       pageIndex: pagination.pageIndex,
       pageSize: pagination.pageSize,
@@ -108,7 +117,7 @@ export default function PackingListsList() {
       searchQuery,
     });
     const qs = search ? `?${search}` : '';
-    router.push(`/procurement-management/packing-lists/${packingListId}${qs}`);
+    return `/procurement-management/packing-lists/${row.id}${qs}`;
   };
 
   /** Open the latest imported workbook, either inline or as a download.
@@ -301,24 +310,20 @@ export default function PackingListsList() {
         accessorKey: 'actions',
         header: '',
         cell: ({ row }) => (
-          <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
-            <Button
-              mode="icon"
-              variant="dim"
-              size="sm"
-              className="size-8"
-              onClick={(e) => {
-                e.stopPropagation();
-                setPackingListToDelete(row.original);
-              }}
-              aria-label="Delete packing list"
-            >
-              <Trash2 className="size-4 text-destructive" />
-            </Button>
-            <ChevronRight className="text-muted-foreground/70 size-3.5" />
-          </div>
+          <RowActionsMenu
+            ariaLabel="packing list"
+            actions={[
+              {
+                key: 'packing_list.delete',
+                label: 'Delete packing list',
+                icon: Trash2,
+                kind: 'destructive',
+                run: () => setPackingListToDelete(row.original),
+              },
+            ]}
+          />
         ),
-        size: 80,
+        size: 60,
         enableHiding: false,
       },
     ];
@@ -349,7 +354,7 @@ export default function PackingListsList() {
       table={table}
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
-      onRowClick={handleRowClick}
+      rowHref={rowHref}
       standardToolbar={false}
       tableLayout={{ width: 'fixed', columnsVisibility: true, columnsResizable: true }}
     >

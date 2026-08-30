@@ -132,6 +132,16 @@ def _supplier_id_for_code(db: Session, code: Optional[str]) -> Optional[str]:
     return sup.id if sup else None
 
 
+def _supplier_code_for_id(db: Session, supplier_id: Optional[str]) -> Optional[str]:
+    """The CODE a stored supplier id names. `_resolve_choice` is keyed by code (the frozen
+    candidates carry codes, never ids), and the decision stores an id because that is what
+    a foreign key can hold - so a decided supplier round-trips through here."""
+    if not supplier_id:
+        return None
+    sup = db.query(Supplier).filter(Supplier.id == supplier_id).first()
+    return sup.supplier_code if sup else None
+
+
 def _resolve_choice(
     db: Session, rec: ReorderRecommendation, override_supplier_code: Optional[str]
 ) -> dict:
@@ -580,14 +590,50 @@ def _confirm_location_grain(
         _remove_rec_line(db, rec.id)
         if buy_qty <= 0:
             continue  # use_stock / use_po / skip / an all-non-buy mixture - nothing to draft
+        supplier_id, unit_cost, lead_days = _decision_line_inputs(db, rec, decision)
+        po = _draft_po_for_supplier(db, supplier_id, rec.currency)
+        _upsert_line(
+            db, po, product_id=rec.product_id, warehouse_id=rec.warehouse_id,
+            source_ref=rec.id, qty=buy_qty, unit_cost=unit_cost,
+            lead_days=lead_days,
+        )
+        touched.add(po.id)
+        confirmed += 1
+
+    # The rows NOBODY touched (R3), which carries no grain qualifier: "Confirm covers
+    # untouched rows as the engine suggestion". A location run's buyer who leaves a row
+    # alone expects the same "make this plan" behaviour a product run gives them, and
+    # before this an untouched rec matched neither loop above (status still `proposed`,
+    # no `PlanRowDecision`) and was silently left out. Only a BUY the engine sized counts,
+    # and a skipped or otherwise decided row has a decision already, so it never reaches
+    # here.
+    decided_ids = plan_row_rec_ids | {rec.id for rec in recs}
+    untouched_q = db.query(ReorderRecommendation).filter(
+        ReorderRecommendation.run_id == run_id,
+        ReorderRecommendation.rec_type == "buy",
+    )
+    if ids:
+        untouched_q = untouched_q.filter(ReorderRecommendation.id.in_(ids))
+    for rec in untouched_q.all():
+        if rec.id in decided_ids:
+            continue
+        qty = float(rec.rounded_qty or 0)
+        if qty <= 0:
+            continue  # the engine saying "do not buy this", not an absent decision
+        # The rec's own proposed supplier and frozen price - the same resolution the
+        # product-grain untouched branch uses, since nobody chose anything else.
         choice = _resolve_choice(db, rec, None)
+        _remove_rec_line(db, rec.id)
         po = _draft_po_for_supplier(db, choice["supplier_id"], rec.currency)
         _upsert_line(
             db, po, product_id=rec.product_id, warehouse_id=rec.warehouse_id,
-            source_ref=rec.id, qty=buy_qty, unit_cost=choice["unit_cost"],
+            source_ref=rec.id, qty=qty, unit_cost=choice["unit_cost"],
             lead_days=choice["lead_time_days"],
         )
         touched.add(po.id)
+        # Recorded like any other decision, so the pill reads Confirmed and the counts
+        # catch up with the purchase order that was just drafted (same as product grain).
+        _record_confirmed_suggestion(db, [rec], qty, actor)
         confirmed += 1
 
     db.flush()
@@ -659,6 +705,41 @@ def _grid_member_split(
             "demand_rate": float(rec.forecast_daily_demand or 0.0),
         })
     return eng_allocate(qty, inputs, decimal_places=0)
+
+
+def _record_confirmed_suggestion(
+    db: Session, members: list[ReorderRecommendation], qty: float, actor: Optional[str]
+) -> None:
+    """Write the decision an UNTOUCHED row was just confirmed at (R3).
+
+    Confirm is the buyer saying "make this plan", so a product nobody touched is bought at
+    exactly what the engine sized - and that IS a decision, which has to be recorded like
+    any other or the screen keeps saying nobody made one: the pill stayed on Suggested,
+    the tiles and the list's Decided column stayed short, and Confirm (N) stayed live over
+    rows that had already been drafted into a purchase order.
+
+    ``buy_qty`` is the PRODUCT's whole quantity on every member, never that member's share
+    of the split. That is the same shape ``usePlanLines.decide`` writes when a person
+    decides a grouped row (the SAME decision fanned onto every member, consolidated back
+    to one on confirm - see ``_confirm_product_grain``), so a re-confirm reads this back
+    through the grid path and drafts exactly the lines this one did.
+
+    Nothing else is stored: no supplier (the rec's proposed one stands, which is what
+    ``_resolve_choice(rec, None)`` answered above) and no unit cost (``use_last`` re-reads
+    the same frozen figure). A row that already carries a decision never reaches here.
+    """
+    now = datetime.utcnow()
+    for member in members:
+        db.add(PlanRowDecision(
+            id=str(uuid.uuid4()),
+            recommendation_id=member.id,
+            kind="buy",
+            buy_qty=qty,
+            price_mode=DEFAULT_PRICE_MODE,
+            decided_by=actor,
+            decided_at=now,
+        ))
+    db.flush()
 
 
 def _confirm_product_grain(
@@ -749,7 +830,31 @@ def _confirm_product_grain(
         ).all()
     }
 
-    product_ids = set(grid_repr_for_product) | set(summary_rows)
+    # 3) the products NOBODY touched (R3, revamp plan 4.5). Confirm is the buyer saying
+    # "make this plan", so a product they left alone is bought at exactly what the engine
+    # sized - before this they had to open and re-record every row they already agreed
+    # with in order to buy any of it. Only a BUY the engine sized counts: a `covered` row
+    # is the engine saying the stock is already there, and a rounded quantity of zero is it
+    # saying do not buy this, so neither becomes a purchase for want of a decision. A
+    # SKIPPED product is excluded by construction - it HAS a decision, which is the grid
+    # path above, and that path drafts nothing for it.
+    untouched: dict[str, list] = {}
+    for rec in (
+        db.query(ReorderRecommendation)
+        .filter(
+            ReorderRecommendation.run_id == run_id,
+            ReorderRecommendation.rec_type == "buy",
+        )
+        .all()
+    ):
+        pid = str(rec.product_id)
+        if pid in grid_repr_for_product or pid in summary_rows:
+            continue
+        if float(rec.rounded_qty or 0) <= 0:
+            continue
+        untouched.setdefault(pid, []).append(rec)
+
+    product_ids = set(grid_repr_for_product) | set(summary_rows) | set(untouched)
     if ids:
         wanted = set(ids)
 
@@ -760,7 +865,9 @@ def _confirm_product_grain(
             if row is not None and row.id in wanted:
                 return True
             gd = grid_repr_for_product.get(pid)
-            return gd is not None and gd[0].id in wanted
+            if gd is not None and gd[0].id in wanted:
+                return True
+            return any(rec.id in wanted for rec in untouched.get(pid, []))
 
         product_ids = {pid for pid in product_ids if _matches(pid)}
 
@@ -788,11 +895,40 @@ def _confirm_product_grain(
             qty = float(decision.buy_qty or 0)
             if qty <= 0:
                 continue  # use_stock / use_po / skip / a non-buy mixture - nothing to draft
-            choice = _resolve_choice(db, rec, None)
-            po = _draft_po_for_supplier(db, choice["supplier_id"], rec.currency)
+            supplier_id, unit_cost, lead_days = _decision_line_inputs(db, rec, decision)
+            po = _draft_po_for_supplier(db, supplier_id, rec.currency)
             members = [r for r, _d in by_product[pid]]
             split = _grid_member_split(members, qty)
             members_by_wh = {str(r.warehouse_id): r for r in members}
+            for wid, share_qty in split.items():
+                if share_qty <= 0:
+                    continue
+                member_rec = members_by_wh.get(wid)
+                if member_rec is None:
+                    continue  # defensive - every split key comes from `members` itself
+                _upsert_line(
+                    db, po, product_id=member_rec.product_id,
+                    warehouse_id=member_rec.warehouse_id, source_ref=member_rec.id,
+                    qty=share_qty, unit_cost=unit_cost,
+                    lead_days=lead_days, source_system=_SRC_PRODUCT,
+                )
+                touched.add(po.id)
+            confirmed += 1
+            continue
+
+        members = untouched.get(pid)
+        if members:
+            # The engine's own suggestion, drafted the SAME way a decided product is: one
+            # draft PO per chosen supplier, the quantity split back across the group's real
+            # member warehouses so every line names one.
+            qty = float(sum(float(m.rounded_qty or 0) for m in members))
+            if qty <= 0:
+                continue
+            anchor = members[0]
+            choice = _resolve_choice(db, anchor, None)
+            po = _draft_po_for_supplier(db, choice["supplier_id"], anchor.currency)
+            split = _grid_member_split(members, qty)
+            members_by_wh = {str(m.warehouse_id): m for m in members}
             for wid, share_qty in split.items():
                 if share_qty <= 0:
                     continue
@@ -806,6 +942,7 @@ def _confirm_product_grain(
                     lead_days=choice["lead_time_days"], source_system=_SRC_PRODUCT,
                 )
                 touched.add(po.id)
+            _record_confirmed_suggestion(db, members, qty, actor)
             confirmed += 1
             continue
 
@@ -873,9 +1010,16 @@ def reset_run_decisions(db: Session, run_id: str, actor: Optional[str]) -> dict:
         .filter(PlanRowDecision.recommendation_id.in_(rec_ids))
         .count()
     )
-    # 1) Detach every rec's draft-PO line (deletes drafts that empty out).
+    # 1) Detach every rec's draft-PO line (deletes drafts that empty out). BOTH stamps:
+    # a location-grain confirm keys its line by the rec id under `scm_recommendation`, and
+    # a product-grain confirm keys ITS line by the same rec id under
+    # `scm_order_summary_row` (`_confirm_product_grain`). Clearing only the first left
+    # every product-grain draft line behind, so a reset run still read as Confirmed on the
+    # plans list (`_product_counts` counts a product with a line in a draft PO) and the
+    # pill on the row stayed Confirmed with it.
     for rec in recs:
         _remove_rec_line(db, rec.id)
+        _remove_source_line(db, rec.id, _SRC_PRODUCT)
     # 2) Drop the override overlay (adjust/reject reason rows).
     overrides_cleared = (
         db.query(RecommendationOverride)
@@ -973,13 +1117,20 @@ def list_decisions(db: Session, run_id: str) -> list[dict]:
 
 def _po_for_rec(db: Session, rec_id: str) -> Optional[PurchaseOrder]:
     """The (draft or now-active) PO a rec's line lives in - resolved via the line's
-    ``source_ref`` (= rec id), which survives a confirm renumber."""
+    ``source_ref`` (= rec id), which survives a confirm renumber.
+
+    BOTH source systems, not just the location-grain one. `_confirm_product_grain` keys its
+    lines by the SAME member recommendation id but stamps `scm_order_summary_row`, so a
+    `_SRC`-only lookup answered "no PO" for every product-grain run - and the Decision pill,
+    which reads Confirmed off exactly this field, stayed on Saved after a confirm that had
+    plainly drafted the purchase order. Verified on the plan screen, 28 Aug 2026.
+    """
     line = (
         db.query(PurchaseOrderLine)
         .options(joinedload(PurchaseOrderLine.purchase_order))
         .filter(
             PurchaseOrderLine.source_ref == rec_id,
-            PurchaseOrderLine.source_system == _SRC,
+            PurchaseOrderLine.source_system.in_((_SRC, _SRC_PRODUCT)),
         )
         .order_by(PurchaseOrderLine.created_at.desc())
         .first()
@@ -1050,6 +1201,14 @@ def decide_covered(db: Session, rec_id: str, choice: str,
 #: than one of buy/stock/po at once - distinct from picking exactly one of the first
 #: three; `skip` is deliberately doing nothing this round.
 _PLAN_ROW_KINDS = {"buy", "use_stock", "use_po", "skip", "mixture"}
+
+#: The price the row is costed at (AC-R13). `use_last` = what we last paid this supplier;
+#: `ask_new` = the price is still a question, so the drafted line carries none rather than
+#: a stale figure dressed up as a quote.
+PRICE_MODE_USE_LAST = "use_last"
+PRICE_MODE_ASK_NEW = "ask_new"
+_PRICE_MODES = (PRICE_MODE_USE_LAST, PRICE_MODE_ASK_NEW)
+DEFAULT_PRICE_MODE = PRICE_MODE_USE_LAST
 
 #: Every rec_type this decision may be recorded on. Wider than `_get_buy_rec`'s buy-only
 #: gate on purpose (S16 gap #2) - a needs_level or covered row the buyer overrides with
@@ -1132,6 +1291,10 @@ def record_plan_row_decision(
     po_refs: Optional[list[str]],
     reason_text: Optional[str],
     actor: Optional[str],
+    *,
+    price_mode: Optional[str] = None,
+    supplier_code: Optional[str] = None,
+    unit_cost: Optional[float] = None,
 ) -> dict:
     """Record (replacing, if one already exists) the buyer's decision on ONE row.
 
@@ -1140,7 +1303,14 @@ def record_plan_row_decision(
     NOT touch ``rec.status`` - that column stays the legacy accept/adjust/reject/covered
     vocabulary for whatever screen still reads it; this is a parallel, row-scoped record
     that ``confirm_decisions`` treats as authoritative for a rec the moment it exists
-    (see that function's docstring)."""
+    (see that function's docstring).
+
+    The PRICE and the SUPPLIER are the buyer's too (AC-R13 / AC-R14). `supplier_code`
+    (never an id - no UUID crosses the wire, same as a stock take's warehouse code)
+    switches the row onto another of the product's suppliers and RE-READS that supplier's
+    last price and lead time off the recommendation's frozen candidates. `price_mode`
+    decides whether the row is costed at all: `use_last` stores the price, `ask_new`
+    stores none, and the drafted PO line follows."""
     rec = _get_decidable_rec(db, rec_id)
     _assert_not_legacy(db, str(rec.run_id))
 
@@ -1149,6 +1319,25 @@ def record_plan_row_decision(
     stock_total = sum(t["qty"] for t in resolved_takes)
     po_qty_f = float(po_qty or 0)
     _validate_plan_row_decision(kind, buy_qty_f, stock_total, po_qty_f)
+
+    mode = (price_mode or DEFAULT_PRICE_MODE).strip()
+    if mode not in _PRICE_MODES:
+        raise AppException(
+            status_code=422,
+            message="Price must be either the last price or a new one to ask for.",
+        )
+    if unit_cost is not None and float(unit_cost) < 0:
+        raise AppException(status_code=422, message="A price cannot be negative.")
+    choice = _resolve_choice(db, rec, supplier_code)
+    if supplier_code and choice["supplier_id"] is None:
+        raise AppException(status_code=422,
+                           message="That supplier is not on file for this product.")
+    # `ask_new` is the absence of a price, not a price of zero: the drafted line goes out
+    # unpriced and the buyer fills it in when the quote comes back.
+    resolved_cost = (
+        None if mode == PRICE_MODE_ASK_NEW
+        else (float(unit_cost) if unit_cost is not None else choice["unit_cost"])
+    )
 
     existing = (
         db.query(PlanRowDecision)
@@ -1164,10 +1353,15 @@ def record_plan_row_decision(
     existing.po_qty = po_qty_f or None
     existing.po_refs = [r for r in (po_refs or []) if r] or None
     existing.reason_text = (reason_text or "").strip() or None
+    existing.price_mode = mode
+    # Only a buyer's OWN switch is stored. Left NULL, the rec's proposed supplier stands,
+    # which is what `_resolve_choice(rec, None)` already answers everywhere else.
+    existing.supplier_id = choice["supplier_id"] if supplier_code else None
+    existing.unit_cost = resolved_cost
     existing.decided_by = actor
     existing.decided_at = datetime.utcnow()
     db.flush()
-    return _plan_row_decision_dict(existing, _po_for_rec(db, rec.id))
+    return _plan_row_decision_dict(db, existing, _po_for_rec(db, rec.id))
 
 
 def clear_plan_row_decision(db: Session, rec_id: str, actor: Optional[str]) -> dict:
@@ -1197,30 +1391,61 @@ def clear_plan_row_decision(db: Session, rec_id: str, actor: Optional[str]) -> d
 
 def list_plan_row_decisions(db: Session, run_id: str) -> dict:
     """Every persisted row decision on a run, across every decidable rec_type, plus the
-    counts the results-grid header ("N of Total made") counts against - computed off
-    what is actually persisted, never off a client's own session state."""
+    counts the header ("N of Total made") counts against - computed off what is actually
+    persisted, never off a client's own session state.
+
+    **The counts are by DISTINCT PRODUCT (R14), the rows are per recommendation.** The
+    plan decides one product at a time: a product-grain row is several recommendations
+    underneath and the screen fans the SAME decision onto every one of them, so counting
+    recommendations read a product held in three bins as three decisions out of three rows
+    when the buyer had made one (plan fact F2 - `decided_count = len(data)`). The rows
+    stay per recommendation because that is what each pill reads.
+    """
     total = (
-        db.query(ReorderRecommendation)
+        db.query(ReorderRecommendation.product_id)
         .filter(
             ReorderRecommendation.run_id == run_id,
             ReorderRecommendation.rec_type.in_(_PLAN_ROW_DECIDABLE_TYPES),
         )
+        .distinct()
         .count()
     )
-    pairs = (
-        db.query(PlanRowDecision, ReorderRecommendation.id)
+    triples = (
+        db.query(PlanRowDecision, ReorderRecommendation.id,
+                 ReorderRecommendation.product_id)
         .join(ReorderRecommendation, ReorderRecommendation.id == PlanRowDecision.recommendation_id)
         .filter(ReorderRecommendation.run_id == run_id)
         .all()
     )
     data = [
-        _plan_row_decision_dict(decision, _po_for_rec(db, rec_id))
-        for decision, rec_id in pairs
+        _plan_row_decision_dict(db, decision, _po_for_rec(db, rec_id))
+        for decision, rec_id, _pid in triples
     ]
-    return {"data": data, "decided_count": len(data), "total_count": total}
+    decided = {str(pid) for _d, _rid, pid in triples}
+    return {"data": data, "decided_count": len(decided), "total_count": total}
 
 
-def _plan_row_decision_dict(decision: PlanRowDecision, po: Optional[PurchaseOrder]) -> dict:
+def _plan_row_decision_dict(
+    db: Session, decision: PlanRowDecision, po: Optional[PurchaseOrder]
+) -> dict:
+    supplier = (
+        db.query(Supplier).filter(Supplier.id == decision.supplier_id).first()
+        if decision.supplier_id else None
+    )
+    lead = None
+    if supplier is not None:
+        ps = _product_supplier_choice(
+            db, decision.recommendation.product_id, decision.supplier_id
+        ) or {}
+        lead = ps.get("lead_time_days")
+        if lead is None:
+            # The frozen candidate the UI offered carries the lead time when
+            # `product_suppliers` has none of its own.
+            inp = (decision.recommendation.inputs or {})
+            for cand in [inp.get("supplier") or {}] + list(inp.get("alternatives") or []):
+                if cand and cand.get("supplier_code") == supplier.supplier_code:
+                    lead = cand.get("lead_time_days")
+                    break
     return {
         "recommendation_id": decision.recommendation_id,
         "kind": decision.kind,
@@ -1229,6 +1454,28 @@ def _plan_row_decision_dict(decision: PlanRowDecision, po: Optional[PurchaseOrde
         "po_qty": _f(decision.po_qty),
         "po_refs": decision.po_refs or [],
         "reason_text": decision.reason_text,
+        # The buyer's price + supplier calls (AC-R13 / AC-R14). No UUID on the wire: the
+        # supplier travels as its code, the way a stock take travels as a warehouse code.
+        "price_mode": decision.price_mode or DEFAULT_PRICE_MODE,
+        "supplier_code": supplier.supplier_code if supplier else None,
+        "supplier_name": supplier.supplier_name if supplier else None,
+        "unit_cost": _f(decision.unit_cost),
+        "lead_time_days": _f(lead),
         "draft_po_number": po.po_number if po else None,
         "draft_po_id": po.id if po else None,
     }
+
+
+def _decision_line_inputs(
+    db: Session, rec: ReorderRecommendation, decision: PlanRowDecision
+) -> tuple[Optional[str], Optional[float], Optional[float]]:
+    """`(supplier_id, unit_cost, lead_days)` a decided row's draft-PO line is raised with.
+
+    The buyer's supplier wins over the engine's; `ask_new` leaves the line unpriced so the
+    quote that comes back is what fills it, never a figure the plan invented."""
+    code = _supplier_code_for_id(db, decision.supplier_id)
+    choice = _resolve_choice(db, rec, code)
+    if (decision.price_mode or DEFAULT_PRICE_MODE) == PRICE_MODE_ASK_NEW:
+        return choice["supplier_id"], None, choice["lead_time_days"]
+    cost = _f(decision.unit_cost) if decision.unit_cost is not None else choice["unit_cost"]
+    return choice["supplier_id"], cost, choice["lead_time_days"]

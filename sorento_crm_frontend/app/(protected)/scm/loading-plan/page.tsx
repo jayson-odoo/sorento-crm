@@ -15,11 +15,11 @@ import {
   ToolbarTitle,
 } from '@/components/common/toolbar';
 import RequireAccess from '@/app/components/common/RequireAccess';
-import LoadingPlanView from './components/LoadingPlanView';
+import LoadingPlansGrid from './components/LoadingPlansGrid';
 
 export const metadata: Metadata = {
   title: 'Loading Plan',
-  description: 'Fill the next container from a supplier, by priority and volume.',
+  description: 'Every container plan, newest first.',
 };
 
 export default function LoadingPlanPage() {
@@ -50,7 +50,7 @@ export default function LoadingPlanPage() {
       </Container>
 
       <Container>
-        <LoadingPlanView />
+        <LoadingPlansGrid />
       </Container>
     </RequireAccess>
   );

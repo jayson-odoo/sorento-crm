@@ -26,7 +26,8 @@ function row(over: Partial<ReorderRecommendation> = {}): ReorderRecommendation {
     on_hand: 8,
     outstanding_sales: 2,
     suggested_level: 80,
-    suggestion_basis: { avg_monthly: 40, cover_months: 2, months_studied: 3, no_movement: false },
+    suggestion_basis: { adu: 1.333, lead_time_days: 30, safety_days: 14, window_days: 90,
+                        window_qty: 120, no_movement: false },
     reason_label: 'no reorder level set',
     rank: null,
     ...over,
@@ -70,17 +71,17 @@ describe('NeedsLevelView', () => {
 
   it('shows the arithmetic behind the suggestion, not just the number', () => {
     renderView([row()]);
-    expect(screen.getByText(/40 a month over 3 months x 2 months cover/i)).toBeInTheDocument();
+    expect(screen.getByText(/1.333 a day x 30 day lead \+ 14 days safety/i)).toBeInTheDocument();
   });
 
   it('says nothing moved rather than showing an unexplained zero', () => {
     renderView([
       row({
         suggested_level: 0,
-        suggestion_basis: { months_studied: 3, no_movement: true },
+        suggestion_basis: { window_days: 90, no_movement: true },
       }),
     ]);
-    expect(screen.getByText(/nothing moved in 3 months/i)).toBeInTheDocument();
+    expect(screen.getByText(/nothing moved in 90 days/i)).toBeInTheDocument();
   });
 
   it('accepts the suggestion for the row product and location', async () => {

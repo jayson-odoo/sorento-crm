@@ -146,6 +146,12 @@ export interface PlanningChangeInquiryRow {
  */
 export interface PlanningChangeRow {
   id: string;
+  /**
+   * The planning mirror line this row is about, so a board cell can be matched EXACTLY rather
+   * than by product and sales order (AC-P3-2). `null` on an `added` row - the mirror does not
+   * exist yet - and on a line whose order has no planning record.
+   */
+  project_line_id?: string | null;
   line_no: number;
   item_code: string;
   product_name?: string | null;
@@ -164,6 +170,13 @@ export interface PlanningChangeRow {
   composition?: ConfirmLine | null;
   applied_state: PlanningChangeAppliedState;
   applied_reason?: string | null;
+  /**
+   * A transfer already MOVED for this line, in one phrase: `10 moved BRW -> BRW-IB, line
+   * cancelled` (AC-P3-9). Stock that is physically somewhere else is a fact a person has to
+   * act on, so it is stated rather than reversed automatically. `null` on every row with no
+   * moved transfer, which is nearly all of them.
+   */
+  moved_transfer?: string | null;
   /** Deep link to the cell of this line on the board (AC-R04's "Open on the board"). */
   board_link: string;
 }
@@ -271,6 +284,12 @@ export interface PlanningChangeBatchSummary {
   failed_count: number;
   applied_at?: string | null;
   applied_by_name?: string | null;
+  /**
+   * The sales orders this batch touched, by NUMBER (AC-P3-1). What the row's Plan action
+   * addresses the board with - `?orders=SO381895&batch=<id>` - so the list needs no second
+   * call to open the batch on the board it will be decided on.
+   */
+  so_numbers: string[];
 }
 
 export interface PlanningChangeListParams {

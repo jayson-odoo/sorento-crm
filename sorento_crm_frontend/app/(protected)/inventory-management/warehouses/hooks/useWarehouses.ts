@@ -1,12 +1,45 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 import { getWarehouses, getWarehouse, createWarehouse, updateWarehouse, bulkDeleteWarehouses } from '../services/warehouseService';
 import type { WarehouseFormData } from '../types/warehouse.types';
+import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
+
+/**
+ * The list's React Query key. The detail page's pager rebuilds the SAME key from
+ * the URL, so it reads the page the list already fetched.
+ */
+export function warehousesListQueryKey(params: DataGridApiFetchParams): QueryKey {
+  return [
+    'warehouses',
+    params.pageIndex,
+    params.pageSize,
+    params.sorting,
+    params.searchQuery,
+  ];
+}
+
+/** The list query a detail URL describes, in the shape the list passes. */
+export function warehousesListParamsFromUrl(params: ListPagerParams): DataGridApiFetchParams {
+  return {
+    pageIndex: params.pageIndex,
+    pageSize: params.pageSize,
+    sorting: params.sorting,
+    searchQuery: params.searchQuery,
+  };
+}
+
+/** The pager's two hooks into the warehouses list. */
+export const warehousesPagerQuery = {
+  listQueryKey: (params: ListPagerParams): QueryKey =>
+    warehousesListQueryKey(warehousesListParamsFromUrl(params)),
+  fetchPage: (params: ListPagerParams): Promise<ListPagerPage> =>
+    getWarehouses(warehousesListParamsFromUrl(params)),
+};
 
 export function useWarehouses(params: DataGridApiFetchParams) {
   return useQuery({
-    queryKey: ['warehouses', params.pageIndex, params.pageSize, params.sorting, params.searchQuery],
+    queryKey: warehousesListQueryKey(params),
     queryFn: () => getWarehouses(params),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,

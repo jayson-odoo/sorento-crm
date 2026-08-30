@@ -457,13 +457,23 @@ def test_clear_plan_row_decision_then_confirm_line_gone(db):
     assert _line_for_product(db, product.id) is not None
 
     dsvc.clear_plan_row_decision(db, rec.id, actor="tester")
-    # clear retracts the line immediately - the next confirm has nothing left to undo,
-    # and the "then confirm" in the name proves that re-running finds it already gone.
+    # clear retracts the line immediately, so the buyer's own 40 is gone at once rather
+    # than surviving until somebody confirms again.
     assert _line_for_product(db, product.id) is None
+
+    # R3 (`PLAN-scm-reorder-revamp.md`, captain 27 Aug 2026): the NEXT confirm buys this
+    # product at the ENGINE's suggestion, because withdrawing a decision returns the row
+    # to undecided and Confirm covers an undecided row as the plan proposed it. Saying
+    # "do not buy this" is what Skip is for - and a skipped row still drafts nothing (see
+    # `tests/scm/test_plan_product_counts_and_confirm.py`). Before that ruling this
+    # confirmed nothing, which is why the assertion moved rather than the behaviour being
+    # a regression.
     out = dsvc.confirm_decisions(db, run.id, ids=None, actor="tester")
-    assert out["confirmed_count"] == 0
-    assert out["po_count"] == 0
-    assert _line_for_product(db, product.id) is None
+    assert out["confirmed_count"] == 1
+    assert out["po_count"] == 1
+    line = _line_for_product(db, product.id)
+    assert line is not None
+    assert float(line["qty_ordered"]) == 50, "the engine's own rounded quantity, not the 40"
 
 
 # =========================================================================== #
@@ -473,7 +483,7 @@ def test_clear_plan_row_decision_then_confirm_line_gone(db):
 
 def test_bulk_confirm_auto_places_a_raised_order_inquiry_buy_row():
     """Confirming a draft PO (either grain) is now a THIRD trigger of the same
-    idempotent cascade `project_supply_service._auto_place_after_confirm` already
+    idempotent cascade `project_supply_service.auto_place_for_confirmed_products` already
     runs on decision confirm - a RAISED buy row for the same product claims the
     line the confirm just opened, in the same run, best-effort."""
     with blank_session() as db:

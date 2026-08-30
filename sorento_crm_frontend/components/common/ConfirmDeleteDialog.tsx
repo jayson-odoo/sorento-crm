@@ -29,6 +29,8 @@ export interface ConfirmDeleteDialogProps {
   successMessage?: string;
   /** Called after successful delete (before closing) */
   onSuccess?: () => void;
+  /** The destructive button's own verb, when it is not a delete ("Reset planning"). */
+  confirmLabel?: string;
 }
 
 export function ConfirmDeleteDialog({
@@ -40,6 +42,7 @@ export function ConfirmDeleteDialog({
   queryKeysToInvalidate = [],
   successMessage = 'Deleted successfully',
   onSuccess,
+  confirmLabel = 'Delete',
 }: ConfirmDeleteDialogProps) {
   const queryClient = useQueryClient();
 
@@ -99,7 +102,7 @@ export function ConfirmDeleteDialog({
             disabled={mutation.isPending}
           >
             {mutation.isPending && <LoaderCircleIcon className="animate-spin me-2 size-4" />}
-            Delete
+            {confirmLabel}
           </Button>
         </DialogFooter>
       </DialogContent>

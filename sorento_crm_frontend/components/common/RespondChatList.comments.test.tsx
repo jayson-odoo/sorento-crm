@@ -54,6 +54,46 @@ describe('RespondChatList internal notes (AC-L1)', () => {
     expect(notes[0]).toHaveTextContent('Waiting on the warehouse.');
   });
 
+  it('shows who the note tags, the way the Respond inbox does', () => {
+    render(
+      <RespondChatList
+        items={[]}
+        comments={[
+          note('2026-08-15T02:05:00', 'Team: it_admin', {
+            author_name: 'Sorento Bot',
+            mentioned_names: ['Jayson Foundryx', 'Manager KDS'],
+          }),
+        ]}
+      />,
+    );
+
+    const mentions = screen.getByTestId('chat-internal-note-mentions');
+    expect(mentions).toHaveTextContent('@Jayson Foundryx');
+    expect(mentions).toHaveTextContent('@Manager KDS');
+  });
+
+  it('a CRM note whose body already names the tagged user draws no duplicate mention row', () => {
+    render(
+      <RespondChatList
+        items={[]}
+        comments={[
+          note('2026-08-15T02:05:00', '@Kia Yee Please assist on this', {
+            author_name: 'Tay Zhi Yang',
+            source: 'crm',
+            mentioned_names: ['Kia Yee'],
+          }),
+        ]}
+      />,
+    );
+    expect(screen.queryByTestId('chat-internal-note-mentions')).toBeNull();
+    expect(screen.getByTestId('chat-internal-note')).toHaveTextContent('@Kia Yee Please assist on this');
+  });
+
+  it('a note tagging nobody draws no mention row', () => {
+    render(<RespondChatList items={[]} comments={[note('2026-08-15T02:05:00', 'plain')]} />);
+    expect(screen.queryByTestId('chat-internal-note-mentions')).toBeNull();
+  });
+
   it('styles the note amber, so it can never read as a message to the contact', () => {
     render(<RespondChatList items={[]} comments={[note('2026-08-15T02:05:00', 'internal')]} />);
 

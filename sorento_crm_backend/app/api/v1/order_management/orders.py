@@ -346,6 +346,15 @@ async def get_orders(
             "'belum hantar', 'not delivered yet'. AND'd with the other filters."
         ),
     ),
+    include_summary: bool = Query(
+        False,
+        description=(
+            "true = also return `summary`: filter-wide measures (order/delivered/pending "
+            "counts, customers, delivered date span, per-product delivered/pending quantity "
+            "when product_ids is given). Send it when the user asks HOW MANY / how much was "
+            "taken; omit for a plain DO list."
+        ),
+    ),
     has_order_lines: Optional[str] = Query(
         None,
         description="Filter by lines: 'yes' = at least one line, 'no' = no lines, omit = all",
@@ -417,6 +426,7 @@ async def get_orders(
             customer_id=customer_id,
             order_status_id=order_status_id,
             order_status=order_status,
+            include_summary=include_summary,
             has_order_lines=has_order_lines,
             has_actual_delivery_date=has_actual_delivery_date,
             order_date_from=_parse_flex_date(order_date_from),
@@ -571,6 +581,22 @@ async def get_orders_by_product(
         None,
         description="Filter by actual delivery date: 'yes' = has date, 'no' = missing date, omit = all",
     ),
+    order_status: Optional[str] = Query(
+        None,
+        description=(
+            "Delivery bucket filter, same semantics as the orders list: 'outstanding' = "
+            "orders NOT yet delivered, 'delivered' = status delivered/completed AND "
+            "actual_delivery_date set, omit/null = all."
+        ),
+    ),
+    include_summary: bool = Query(
+        False,
+        description=(
+            "true = also return `summary`: filter-wide measures (order/delivered/pending "
+            "counts, customers, delivered date span, per-product delivered/pending quantity). "
+            "Send it when the user asks HOW MANY / how much was taken; omit for a plain DO list."
+        ),
+    ),
     order_date_from: Optional[str] = Query(
         None,
         description=(
@@ -648,66 +674,14 @@ async def get_orders_by_product(
             product_query=product_query,
             product_id=product_id,
             has_actual_delivery_date=has_actual_delivery_date,
+            order_status=order_status,
+            include_summary=include_summary,
             order_date_from=_parse_flex_date(order_date_from),
             order_date_to=_parse_flex_date(order_date_to, end_of_day=True),
             actual_delivery_date_from=_parse_flex_date(actual_delivery_date_from),
             actual_delivery_date_to=_parse_flex_date(actual_delivery_date_to, end_of_day=True),
             sort_field=sort or "order_date",
             sort_dir=dir or "desc",
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise handle_internal_error(str(e))
-
-
-@router.get("/neighbours")
-async def get_order_neighbours(
-    id: str = Query(..., description="Order id (UUID or order_number) to resolve neighbours for"),
-    query: Optional[str] = Query(None),
-    customer_id: Optional[str] = Query(None),
-    order_status_id: Optional[str] = Query(None),
-    order_status: Optional[str] = Query(None),
-    has_order_lines: Optional[str] = Query(None),
-    has_actual_delivery_date: Optional[str] = Query(None),
-    order_date_from: Optional[str] = Query(None),
-    order_date_to: Optional[str] = Query(None),
-    actual_delivery_date_from: Optional[str] = Query(None),
-    actual_delivery_date_to: Optional[str] = Query(None),
-    customer_query: Optional[str] = Query(None),
-    product_query: Optional[str] = Query(None),
-    transporter_query: Optional[str] = Query(None),
-    sort: Optional[str] = Query("created_at"),
-    dir: Optional[str] = Query("asc"),
-    current_user: dict = Depends(get_current_user_or_api_key),
-    db: Session = Depends(get_db),
-):
-    """Prev/next neighbours of an order within the active filtered+sorted list set.
-
-    Accepts the same filter/sort/search params as the list GET (page/limit are
-    irrelevant and ignored). Returns ``{total, index, prev_id, next_id}`` with the
-    1-based ``index`` and circular wrap-around neighbours. If the record is not in
-    the filtered set, falls back to the unfiltered, default-sorted set (D2).
-    """
-    try:
-        service = OrderService(db)
-        return service.order_neighbours(
-            order_id=id,
-            query=query,
-            customer_id=customer_id,
-            order_status_id=order_status_id,
-            order_status=order_status,
-            has_order_lines=has_order_lines,
-            has_actual_delivery_date=has_actual_delivery_date,
-            order_date_from=_parse_flex_date(order_date_from),
-            order_date_to=_parse_flex_date(order_date_to, end_of_day=True),
-            actual_delivery_date_from=_parse_flex_date(actual_delivery_date_from),
-            actual_delivery_date_to=_parse_flex_date(actual_delivery_date_to, end_of_day=True),
-            customer_query=customer_query,
-            product_query=product_query,
-            transporter_query=transporter_query,
-            sort_field=sort or "created_at",
-            sort_dir=dir or "asc",
         )
     except HTTPException:
         raise

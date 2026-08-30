@@ -48,12 +48,12 @@ export function LevelChangesPanel({
 
   const download = () => {
     const header =
-      'Item Code,Item Name,Location,Current Level,Set Level To,Engine Suggested,Orders';
+      'Item Code,Item Name,Location,Current Level,Set Level To,Engine Suggested,ADU,Lead Days';
     const cell = (v: string | number | null) =>
       v === null ? '' : /[",\n]/.test(String(v)) ? `"${String(v).replaceAll('"', '""')}"` : String(v);
     const lines = changes.map((c) =>
       [c.product_code, c.product_name, c.warehouse, c.current_level, c.suggested_level,
-       c.engine_level, c.trend ?? ''].map(cell).join(','),
+       c.engine_level, c.adu, c.lead_time_days].map(cell).join(','),
     );
     const blob = new Blob([[header, ...lines].join('\n')], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
@@ -89,7 +89,7 @@ export function LevelChangesPanel({
                   <th className="py-1.5 pr-3 text-right font-medium">Now</th>
                   <th className="py-1.5 pr-3 text-right font-medium">Set to</th>
                   <th className="py-1.5 pr-3 text-right font-medium">Engine</th>
-                  <th className="py-1.5 font-medium">Orders</th>
+                  <th className="py-1.5 font-medium">Lead time</th>
                 </tr>
               </thead>
               <tbody>
@@ -165,10 +165,12 @@ function LevelChangeRow({
       <td className="py-1.5 pr-3 text-right tabular-nums text-muted-foreground">
         {amended ? s.suggested_level : EM_DASH}
       </td>
+      {/* What SIZED the level, not a mood: the lead time it covers. A trend badge used
+          to sit here, back when a trajectory verdict leaned the rounding. */}
       <td className="py-1.5">
-        {s.basis.trend ? (
+        {s.basis.lead_time_days ? (
           <Badge variant="secondary" appearance="light" size="sm">
-            {s.basis.trend}
+            {`${s.basis.lead_time_days} day lead`}
           </Badge>
         ) : (
           EM_DASH

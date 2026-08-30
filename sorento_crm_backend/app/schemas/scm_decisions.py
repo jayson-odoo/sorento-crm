@@ -110,6 +110,12 @@ class RecordPlanRowDecisionRequest(BaseModel):
     po_qty: Optional[float] = Field(None, ge=0)
     po_refs: List[str] = Field(default_factory=list)  # existing PO numbers, display-only
     reason_text: Optional[str] = None
+    # AC-R13 / AC-R14 - the price and the supplier the buyer chose. `use_last` (default)
+    # costs the row at what we last paid; `ask_new` leaves it unpriced. The supplier
+    # travels as a CODE, never an id.
+    price_mode: Optional[str] = None  # use_last | ask_new
+    supplier_code: Optional[str] = None
+    unit_cost: Optional[float] = Field(None, ge=0)
 
 
 class PlanRowDecision(BaseModel):
@@ -120,6 +126,13 @@ class PlanRowDecision(BaseModel):
     po_qty: Optional[float] = None
     po_refs: List[str] = Field(default_factory=list)
     reason_text: Optional[str] = None
+    # The buyer's price + supplier calls, echoed back so the row can render what it
+    # actually carries rather than what the engine proposed.
+    price_mode: str = "use_last"
+    supplier_code: Optional[str] = None
+    supplier_name: Optional[str] = None
+    unit_cost: Optional[float] = None
+    lead_time_days: Optional[float] = None
     # Staged like Accept/Adjust - populated only once Confirm decisions has drafted the
     # buy portion into a PO.
     draft_po_number: Optional[str] = None
@@ -132,3 +145,48 @@ class PlanRowDecisionListResponse(BaseModel):
     # is actually persisted (not client session state).
     decided_count: int
     total_count: int
+
+
+# ---------------------------------------------------------------------------
+# Reorder revamp (PLAN-scm-reorder-revamp.md 4.5) - Save (N): every drafted edit on a
+# plan, in one request. Mirrors `reorder/services/planEditsService.ts` (PlanEditRow).
+# ---------------------------------------------------------------------------
+
+class PlanEditDecisionIn(BaseModel):
+    """The cover mixture as the panel's three inputs left it, plus the price call."""
+    kind: str  # buy | use_stock | use_po | skip | mixture
+    buy_qty: Optional[float] = Field(None, ge=0)
+    stock_takes: List[StockTakeIn] = Field(default_factory=list)
+    po_qty: Optional[float] = Field(None, ge=0)
+    po_refs: List[str] = Field(default_factory=list)
+    reason_text: Optional[str] = None
+    price_mode: Optional[str] = None  # use_last | ask_new
+    supplier_code: Optional[str] = None
+    unit_cost: Optional[float] = Field(None, ge=0)
+
+
+class PlanEditRowIn(BaseModel):
+    """One RECOMMENDATION's drafted edit. A grouped product row is expanded to one entry
+    per member before it is sent, the same fan-out the per-row endpoints already take.
+
+    Every field is optional and an ABSENT key means "not edited"; an explicit `null` is a
+    withdrawal (clear the MoQ override, the amendment, the answer). `model_fields_set` is
+    what tells the two apart, so the service is handed a dict built from it.
+    """
+    rec_id: str
+    decision: Optional[PlanEditDecisionIn] = None
+    moq: Optional[float] = None
+    level: Optional[float] = None
+    reorder_qty: Optional[float] = None
+    lifecycle: Optional[str] = None  # keep | discontinue | null to withdraw
+
+
+class PlanEditsRequest(BaseModel):
+    rows: List[PlanEditRowIn] = Field(default_factory=list)
+
+
+class PlanEditsResult(BaseModel):
+    #: Recommendation rows the save touched.
+    saved_rows: int
+    #: Distinct PRODUCTS those rows belong to (R14) - what the Save (N) button counted.
+    saved_products: int

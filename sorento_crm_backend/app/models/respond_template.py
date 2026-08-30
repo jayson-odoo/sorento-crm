@@ -89,6 +89,10 @@ TEMPLATE_DEFAULT_USE_CASES = (
     # 24h window is closed (the usual case). Map params to ``discontinued_count`` +
     # ``discontinued_link`` (deep link to the product list filtered to that batch).
     "product_discontinued",
+    # One closing message per resolved conversation ticket
+    # (PLAN-ticket-resolved-closing-message). Sent to the CONTACT. Map params to
+    # ``contact_name`` + ``message`` (the enquiry excerpt) at minimum.
+    "ticket_resolved",
     # Chat reply templates (PLAN-unified-conversation-composer-smart-send). Sent when
     # an admin types a free message in an entity's chat composer while the contact's
     # 24h window is CLOSED - the typed text is wrapped into these per-form templates
@@ -101,6 +105,12 @@ TEMPLATE_DEFAULT_USE_CASES = (
     "purchase_request_chat",
     "sponsorship_form_chat",
     "conversation_chat",
+    # Supplier container request over WeChat (PLAN-scm-fulfilment-feedback-p4, R10). Sent to
+    # the SUPPLIER's chat contact when their 24h window is closed; the body carries the
+    # bilingual ask and the public link, so map a slot to ``message`` at minimum. Nothing is
+    # seeded: connecting the WeChat channel and approving its template is a Respond.io task
+    # with its own go, and until then an out-of-window send is refused with a reason.
+    "supplier_request_chat",
 )
 
 # Chat reply use cases - a *_chat / conversation_chat default MUST map a slot to the
@@ -111,6 +121,7 @@ CHAT_TEMPLATE_USE_CASES = (
     "purchase_request_chat",
     "sponsorship_form_chat",
     "conversation_chat",
+    "supplier_request_chat",
 )
 
 

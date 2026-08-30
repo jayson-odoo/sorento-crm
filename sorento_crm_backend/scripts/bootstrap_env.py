@@ -139,11 +139,21 @@ def create_views() -> None:
     # placed, not stock incoming) and adds po_ordered_v under the old body's honest name.
     _m337 = _load("337_scm_on_order_from_spo.py")
     ordered.extend([_m337.ON_ORDER_FROM_SPO, _m337.PO_ORDERED_V])
+    # 420 moved every SPO document into `spo_allocations` and redefines on_order_v to match:
+    # a LEFT JOIN to the shipment (a shipping order with no container booked yet is still
+    # stock on its way, and 337's inner join dropped every one of them) plus
+    # `warehouse_id IS NOT NULL`. Its body is a function of the bind rather than a constant,
+    # so it is emitted inside the connection below instead of joining `ordered`. Without this
+    # replay a bootstrapped database keeps 337's body while every migrated database holds
+    # 420's, and the two disagree by the whole unshipped book - which is how CI read 90 units
+    # on order where the dev database read 115.
+    _m420 = _load("420_spo_docs_in_allocations.py")
     with engine.begin() as conn:
         for ddl in ordered:
             # The migration's DDL uses bare CREATE VIEW; make re-runs idempotent.
             conn.execute(text(ddl.replace("CREATE VIEW", "CREATE OR REPLACE VIEW", 1)))
-    log.info("scm views created (%d)", len(ordered))
+        conn.execute(text(_m420.on_order_from_spo_documents(conn)))
+    log.info("scm views created (%d)", len(ordered) + 1)
     _fix_committed_v()
 
 
@@ -162,8 +172,10 @@ def _fix_committed_v() -> None:
     ``app.services.scm.demand.COMMITTED_V_SQL`` - the single source of truth the demand
     service itself relies on - and lays it down with ``CREATE OR REPLACE``. That module
     is edited whenever the view changes, so this call always reflects the latest rule
-    with no migration bookkeeping required. Verified by asserting ``demand_origin``
-    (the newest rule) actually appears in the resulting view definition.
+    with no migration bookkeeping required. Verified by asserting the newest rule's
+    marker actually appears in the resulting view definition: ``ack_state`` (migration
+    428, the order-inquiry handshake; ``demand_origin`` was the marker until migration
+    426 dropped the sheet leg). Move the marker when the view gains a newer rule.
     """
     from sqlalchemy import text
 
@@ -177,12 +189,12 @@ def _fix_committed_v() -> None:
             "SELECT definition FROM pg_views WHERE schemaname = 'scm' "
             "AND viewname = 'committed_v'"
         )).scalar()
-    if not definition or "demand_origin" not in definition:
+    if not definition or "ack_state" not in definition:
         raise SystemExit(
-            "bootstrap: scm.committed_v fix did not take effect (no demand_origin rule "
+            "bootstrap: scm.committed_v fix did not take effect (no ack_state rule "
             "in the view definition)."
         )
-    log.info("scm.committed_v is current (demand_origin rule present)")
+    log.info("scm.committed_v is current (ack_state rule present)")
 
 
 def apply_migration_only_ddl() -> None:
@@ -385,6 +397,51 @@ def seed_scm_module_data() -> None:
     module_kailu = importlib.util.module_from_spec(spec_kailu)
     spec_kailu.loader.exec_module(module_kailu)
 
+    # 415 adds the rest of the purchase book's money line (`DISCOUNT` / `TOTAL (INC)` on the
+    # `outstanding_po` doc type). Same create_all gap as 311/338/347/357/358: migration 414's
+    # `discount` / `line_total` columns ARE ORM columns, so create_all produces them, but
+    # nothing resolves a header to either without the alias row - so on a bootstrapped
+    # database the columns exist and every upload leaves them empty for ever.
+    spec_415 = importlib.util.spec_from_file_location(
+        "_scm_seed_415", versions / "415_po_money_aliases.py"
+    )
+    module_415 = importlib.util.module_from_spec(spec_415)
+    spec_415.loader.exec_module(module_415)
+
+    # 428 adds the volume spellings to the `proforma_invoice` doc type (`体积(cbm)` /
+    # `总体积(cbm)`). Same create_all gap as every one above: migration 428's `cbm_per_unit`
+    # / `cbm_total` columns ARE ORM columns, so create_all produces them, but no header
+    # resolves to either without the alias row - the container fill would read "unmeasured"
+    # on a document that states the volume on every line.
+    spec_428 = importlib.util.spec_from_file_location(
+        "_scm_seed_428", versions / "428_scm_pi_cbm_adjust_revision.py"
+    )
+    module_428 = importlib.util.module_from_spec(spec_428)
+    spec_428.loader.exec_module(module_428)
+    # 435 / 436 add the weight (`净重(kg)` / `毛重(kg)` / N.W. / G.W.) and measurement
+    # (材质 / 装箱数 / 外箱尺寸, L / W / H) spellings to the `proforma_invoice` doc type. Same
+    # gap again: the columns are ORM columns, the header aliases are rows, and without them
+    # a CI database reads every weight and carton size as absent.
+    spec_435 = importlib.util.spec_from_file_location(
+        "_scm_seed_435", versions / "435_proforma_line_weights.py"
+    )
+    module_435 = importlib.util.module_from_spec(spec_435)
+    spec_435.loader.exec_module(module_435)
+    spec_436 = importlib.util.spec_from_file_location(
+        "_scm_seed_436", versions / "436_packing_list_workbook_fields.py"
+    )
+    module_436 = importlib.util.module_from_spec(spec_436)
+    spec_436.loader.exec_module(module_436)
+    # 440 seeds the `inbound_shipment_draft` numbering rule (`PL-{YYMM}-{NNN}`). Nothing in
+    # the ORM produces a `document_numbering_rules` ROW, and without it every packing list
+    # created by a convert - or by `/new` without a number - is refused for having no series
+    # to draw from.
+    spec_440 = importlib.util.spec_from_file_location(
+        "_scm_seed_440", versions / "440_seed_inbound_shipment_draft_numbering.py"
+    )
+    module_440 = importlib.util.module_from_spec(spec_440)
+    spec_440.loader.exec_module(module_440)
+
     with engine.begin() as conn:
         aliases = module.seed_import_field_aliases(conn)
         policies = module.seed_priority_policy(conn)
@@ -393,6 +450,11 @@ def seed_scm_module_data() -> None:
         aliases += module_358.seed(conn)
         aliases += module_proforma.seed(conn)
         aliases += module_kailu.seed(conn)
+        aliases += module_415.seed(conn)
+        aliases += module_428.seed(conn)
+        aliases += module_435.seed(conn)
+        aliases += module_436.seed(conn)
+        module_440.seed_inbound_shipment_draft_rule(conn)
         for field, alias in module_347._ALIASES:
             conn.execute(_text(
                 "INSERT INTO import_field_alias (doc_type, field, alias, locale) "
@@ -401,6 +463,62 @@ def seed_scm_module_data() -> None:
             ), {"f": field, "a": alias})
             aliases += 1
     log.info("scm module data seeded -> aliases=%d priority_policy=%d", aliases, policies)
+
+
+def seed_fulfilment_planning_flags() -> None:
+    """Replay migration 443's warehouse seed, which create_all cannot produce.
+
+    Same create_all gap as 311/338/347: `create_all` builds the COLUMN from the ORM and
+    knows nothing about rows, so the one-off "turn the flag on for the active
+    `-BB/-IB/-IR/-NTC/-AM` bins" UPDATE does not happen on a freshly built database. Without
+    it every warehouse reads `fulfilment_planning = false`, which is "nothing is planned
+    against anything" - the ladder proposes Buy for every line and the board's verdict is
+    `Outside fulfilment planning` on all of them.
+
+    Calls the migration's own function rather than restating the predicate, so the two paths
+    cannot drift.
+
+    Runs ONLY on the FIRST bootstrap of a database, which is the same guard the migration
+    states with its `add_column` branch: the seed is a one-off STARTING POSITION and the
+    flag is configuration an admin edits on the Warehouses screen from then on. Bootstrap
+    re-runs on every deploy, so replaying it unconditionally would turn back on every bin
+    somebody had deliberately turned off.
+
+    "First bootstrap" is read off `alembic_version`, which `stamp_head()` writes at the end
+    of this same run: absent or empty means this database has never been bootstrapped, and
+    that is the only moment the column can have been created by the `create_all` above.
+    """
+    import importlib.util
+    from pathlib import Path
+
+    from sqlalchemy import text
+
+    from app.database import engine
+
+    versions = Path(__file__).resolve().parent.parent / "alembic" / "versions"
+    spec = importlib.util.spec_from_file_location(
+        "_seed_443", versions / "443_fulfilment_planning_flag_tba_date.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    with engine.begin() as conn:
+        # Two statements, not one CASE: Postgres plans a subquery even on the branch it
+        # will not take, so a single expression referencing `alembic_version` fails
+        # outright on the fresh database this guard exists to recognise.
+        has_version_table = conn.execute(
+            text("SELECT to_regclass('alembic_version') IS NOT NULL")
+        ).scalar()
+        stamped = (
+            conn.execute(text("SELECT count(*) FROM alembic_version")).scalar()
+            if has_version_table
+            else 0
+        )
+        if stamped:
+            log.info("fulfilment planning flags left as configured -> seed skipped")
+            return
+        flagged = module.seed_fulfilment_planning_flags(conn)
+    log.info("fulfilment planning flags seeded -> warehouses=%d", flagged)
 
 
 def seed_customer_import_aliases() -> None:
@@ -571,6 +689,7 @@ def main() -> int:
     if not args.skip_seed:
         seed_reference_data()
         seed_scm_module_data()
+        seed_fulfilment_planning_flags()
         seed_customer_import_aliases()
     stamp_head()
     log.info("bootstrap complete")

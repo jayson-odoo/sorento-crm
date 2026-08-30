@@ -252,18 +252,28 @@ def test_the_clients_excerpt_reads_with_no_missing_columns(resolver):
 
 
 def test_the_clients_file_states_no_outstanding_demand_at_all(resolver):
-    """The answer to "can we upload this to get the demand", and it is no.
+    """The answer to "can we upload this to get the demand", and it is still no.
 
     Every line in the excerpt - and every one of the 81,361 lines in the file it came from -
-    has been fully delivered. So the reader yields nothing, which is correct and is the whole
-    point: this is delivered sales HISTORY, not the outstanding order book. Uploading it
-    through this channel adds no committed demand. A test that quietly expected some lines
-    would be asserting a hope.
+    has been fully delivered. Not one of them adds a unit of committed demand, which is what
+    this test has always been for: `qty` is the OUTSTANDING figure, and every line reads 0.
+
+    What changed on 25 Aug 2026 is that the rows are no longer thrown away. The upload is the
+    order book, outstanding or completed, so a delivered line is read with its ordered and
+    delivered quantities intact and written closed. The captain's whole-year purchase book
+    (21,445 rows, every `Remaining Qty` 0) is the same shape and used to import literally
+    nothing.
     """
     res = read_workbook(
         (_FIX / "autocount_so_detail_excerpt.xlsx").read_bytes(), SO, resolver)
 
-    assert res.lines == []
+    assert len(res.lines) == 7
+    assert [l.qty for l in res.lines] == [0.0] * 7, "a delivered line is not demand"
+    first = res.lines[0]
+    extra = res.extras[str(first.row_ref)]
+    assert extra["qty_ordered"] == extra["qty_fulfilled"], \
+        "the ordered and delivered figures the row states were lost"
+    assert extra["qty_ordered"] > 0
     # The caption row is layout; the transport charge and the totals row are named.
     assert res.layout_rows == 1
     assert sorted(p.reason for p in res.problems) == [

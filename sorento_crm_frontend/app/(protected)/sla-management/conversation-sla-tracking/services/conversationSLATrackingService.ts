@@ -54,23 +54,6 @@ export type ConversationSLATrackingListParams = DataGridApiFetchParams & {
   resolved_by?: string;
 };
 
-/**
- * Path of the conversation SLA tracking neighbours endpoint. Consumed by
- * `useConversationSLATrackingNeighbours` via the generic `useRecordNeighbours` hook.
- *
- * Contract (see docs/plans/PLAN-record-navigation-standardization.md §7):
- *   GET /api/v1/sla-management/conversation-sla-tracking/neighbours
- *   Query params: id=<uuid> + the SAME params the list GET accepts
- *                 (query, policy_id, assigned_to, sort, dir). page/limit are ignored.
- *                 scope is fixed to conversation server-side (form SLA rows are excluded).
- *   Auth: same dependency + module guard as the list GET.
- *   200:  { total: number, index: number|null, prev_id: string|null, next_id: string|null }
- *       - index is 1-based; null when the record is not in the filtered set
- *           (the backend then falls back to the unfiltered, default-sorted set).
- *       - prev_id/next_id wrap circularly; null only when total <= 1.
- */
-export const CONVERSATION_SLA_TRACKING_NEIGHBOURS_PATH =
-  '/api/v1/sla-management/conversation-sla-tracking/neighbours';
 
 export async function getConversationSLATracking(params: ConversationSLATrackingListParams): Promise<DataGridApiResponse<ConversationSLATracking>> {
   const {

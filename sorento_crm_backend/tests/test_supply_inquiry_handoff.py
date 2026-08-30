@@ -92,7 +92,10 @@ def _product(db) -> Product:
 
 
 def _warehouse(db, code: str) -> Warehouse:
-    row = Warehouse(id=_uid(), warehouse_code=code, warehouse_name=code, location="ZZT", is_active=True)
+    row = Warehouse(
+        id=_uid(), warehouse_code=code, warehouse_name=code, location="ZZT",
+        is_active=True, fulfilment_planning=True,
+    )
     db.add(row)
     db.flush()
     return row
@@ -323,11 +326,17 @@ def test_inquiry_row_quantity_equals_the_confirmed_buy_residual_exactly_and_zero
 # --------------------------------------------------------------------------- AC-D03
 
 
-def test_reserve_borrow_timely_and_late_incoming_never_inflate_the_inquiry_row_quantity(api):
-    """A line with Reserve AND a Buy residual must raise a row for the Buy amount only."""
+def test_a_wholly_reserved_line_raises_nothing_for_purchasing_at_all(api):
+    """A Reserve is not purchasing demand, and under the whole-line rule (AC-L5) a line
+    carrying one carries nothing else - so a reserved line raises no Order Inquiry row.
+
+    This used to be stated as "a Reserve 30 beside a Buy 20 raises a row for 20 only"; that
+    composition can no longer be confirmed, and the invariant it protected (a Reserve never
+    reaches purchasing) is what survives.
+    """
     client, world = api
     db = world.db
-    _stock(db, world.product, world.pool_wh, on_hand=30)
+    _stock(db, world.product, world.pool_wh, on_hand=50)
     order = _project_so(db, world.project)
     core_so = _core_so(db, world.company_id)
     core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="50")
@@ -340,16 +349,16 @@ def test_reserve_borrow_timely_and_late_incoming_never_inflate_the_inquiry_row_q
             "lines": [
                 _line_payload(
                     line.id,
-                    reserve=[{"warehouse_id": world.pool_wh.id, "qty": "30"}],
-                    buy_qty="20",
+                    reserve=[{"warehouse_id": world.pool_wh.id, "qty": "50"}],
                 )
             ]
         },
     )
     assert response.status_code == 200, response.text
+    assert response.json()["inquiry_rows_created"] == 0
 
-    row = db.query(OrderInquiryRow).filter(OrderInquiryRow.so_line_id == line.id).one()
-    assert row.qty == Decimal("20"), "the Reserve 30 must not leak into purchasing demand"
+    rows = db.query(OrderInquiryRow).filter(OrderInquiryRow.so_line_id == line.id).all()
+    assert rows == [], "a Reserve must not leak into purchasing demand"
 
 
 # --------------------------------------------------------------------------- AC-D05
@@ -486,6 +495,15 @@ def test_reconfirming_with_a_lower_need_after_a_real_place_on_po_flags_a_cancel_
     db.add(po_line)
     db.commit()
     ProjectOrderInquiryService(db).place_on_po(placed_row.id, po_line.id, actor_user_id=world.eling)
+    # ... and purchasing CONFIRMS it, which is what turns the link from a draft into
+    # supply (`PLAN-scm-oi-draft-links.md` R1, review round 28 Aug). Without the press the
+    # row is an instruction nobody has answered: a lower reconfirm then re-raises it at the
+    # new quantity rather than raising an exception about a purchase nobody agreed to, and
+    # the rule this test is about - that `placed` counts as supply, not only `actioned` -
+    # is the rule for a CONFIRMED row.
+    ProjectOrderInquiryService(db).acknowledge_rows(
+        [str(placed_row.id)], actor_user_id=world.eling
+    )
     db.commit()
     db.expire_all()
     placed_row = db.get(OrderInquiryRow, placed_row.id)
@@ -549,17 +567,23 @@ def test_confirmed_unplaced_buy_rows_reader_counts_raised_order_rows_directly(ap
 
 
 def test_the_sheet_leg_predicate_excludes_a_core_so_once_its_project_so_holds_an_active_decision(api):
-    """PLAN section 4: the sheet leg keeps counting a sheet-named project SO until it is
-    confirmed, then the confirmed Buy replaces it -- never both.
+    """"Never both", and since P3 it is structural rather than timed.
 
-    The CLAIM is unchanged; the LEVEL it is answered at moved, and this test moved with it.
-    `is_plan_demand_order()` alone used to say it, because a confirmation had to cover
-    every line of its order. Since partial confirmation
-    (`PLAN-fulfilment-planning-from-autocount-so.md` 13.4) it takes both halves of the
-    rule: the order half says the sheet speaks for this order, the LINE half says which of
-    its lines CS has already decided. Deciding it per order again would take an order's
-    undecided lines out of the plan with its decided one, which is the defect 13.4 exists
-    to prevent (`tests/test_partial_decision_demand_invariants.py`).
+    The CLAIM this test was written for is unchanged: a sheet-named project SO and the
+    confirmed Buy that replaces it must never be counted at the same time. What answers it
+    moved twice. `is_plan_demand_order()` alone used to, because a confirmation had to
+    cover every line of its order; partial confirmation
+    (`PLAN-fulfilment-planning-from-autocount-so.md` 13.4) split the rule in two. P3
+    (`PLAN-scm-purchasing-uat-journey.md`, 26 Aug 2026) then deleted the first half
+    outright: project demand has ONE source, the un-linked Order Inquiry row, so the ORDER
+    half excludes project class whatever its origin stamp says and there is no sheet
+    quantity left for a confirmation to displace. Counted BEFORE the confirmation is now
+    the failure, not counted after.
+
+    The LINE half outlived it and is checked here beside it, because it is what the
+    fulfilment board reads as "covered": which of an order's lines an active decision
+    already accounts for, per LINE, so a partly confirmed order says which of its lines are
+    done (`project_fulfilment_board_service`).
     """
     from app.models.order import SalesOrder, SalesOrderLine
     from app.services.scm.demand import is_plan_demand_line, is_plan_demand_order
@@ -586,7 +610,22 @@ def test_the_sheet_leg_predicate_excludes_a_core_so_once_its_project_so_holds_an
             .all()
         )
 
-    assert counted_lines(), "unconfirmed, the sheet leg must still count"
+    def undecided_lines():
+        """The LINE half on its own: the lines no active decision covers yet."""
+        return (
+            db.query(SalesOrderLine.id)
+            .filter(
+                SalesOrderLine.sales_order_id == core_so.id,
+                is_plan_demand_line(),
+            )
+            .all()
+        )
+
+    assert not counted_lines(), (
+        "unconfirmed, a project-class book line is still not demand: the Order Inquiry "
+        "row is the one source of project demand (P3)"
+    )
+    assert undecided_lines(), "nothing has decided this line yet"
 
     response = client.post(
         f"{BASE}/sales-orders/{order.id}/confirm",
@@ -596,7 +635,10 @@ def test_the_sheet_leg_predicate_excludes_a_core_so_once_its_project_so_holds_an
 
     db.expire_all()
     assert not counted_lines(), (
-        "confirmed, the sheet leg must stop counting a second time"
+        "confirmed, the book still does not count it - the confirmed Buy is the only leg"
+    )
+    assert not undecided_lines(), (
+        "the active decision covers this line, which is what the board reads as covered"
     )
 
 
@@ -627,7 +669,7 @@ def test_committed_v_excludes_a_confirmed_project_sos_line_from_its_committed_su
         own_wh.pool_warehouse_id = pool_wh.id
         _stock(db, product, pool_wh, on_hand=5)
         core_so = _core_so(db, company_id, demand_class="project", demand_origin="scm_order_inquiry")
-        core_line = _core_line(db, core_so, product, own_wh, qty_ordered="9")
+        core_line = _core_line(db, core_so, product, own_wh, qty_ordered="4")
         order = _project_so(db, project, so_id=core_so.id)
         line = _project_line(db, order, line_no=10, product=product, core_line=core_line)
         db.commit()
@@ -635,21 +677,13 @@ def test_committed_v_excludes_a_confirmed_project_sos_line_from_its_committed_su
         client, originals = _client(db, eling)
         try:
             with company_scope(db, frozenset({company_id})):
-                # 9 on the sheet, of which CS reserves 5 (from the pool - ladder v2 has no
-                # own-location Reserve any more) and buys 4. The two figures are
-                # deliberately different, so "the sheet leg is gone" and "the confirmed
-                # Buy is counted" are distinguishable in the one number below.
+                # 4 on the sheet, wholly bought (AC-L5: a line is met entirely from stock or
+                # entirely bought). The pool holds 5 and is deliberately not drawn on, so
+                # "the sheet leg is gone" and "the confirmed Buy is counted" stay
+                # distinguishable in the one number below.
                 response = client.post(
                     f"{BASE}/sales-orders/{order.id}/confirm",
-                    json={
-                        "lines": [
-                            _line_payload(
-                                line.id,
-                                reserve=[{"warehouse_id": pool_wh.id, "qty": "5"}],
-                                buy_qty="4",
-                            )
-                        ]
-                    },
+                    json={"lines": [_line_payload(line.id, buy_qty="4")]},
                 )
                 assert response.status_code == 200, response.text
         finally:
@@ -666,12 +700,12 @@ def test_committed_v_excludes_a_confirmed_project_sos_line_from_its_committed_su
                 ).scalar()
             )
         )
-        # The sheet's 9 must be gone whatever else the view carries. This slice's view
+        # The sheet's 4 must be gone whatever else the view carries. This slice's view
         # answers 0 (the confirmed Buy reaches SCM through
         # `confirmed_unplaced_buy_rows`, and the committed Buy LEG is Stage 2's own
         # addition to this view); a database that already has Stage 2's version answers 4,
         # the confirmed Buy residual. Both count the requirement exactly once, which is
-        # the criterion. 9 or 13 would be the double count this exists to stop.
+        # the criterion. 8 would be the double count this exists to stop.
         assert committed in (Decimal("0"), Decimal("4")), (
             "the sheet leg must stop being counted once the project SO is confirmed, "
             f"and the view answered {committed}"

@@ -54,6 +54,18 @@ class Warehouse(Base, CompanyScopedMixin):
     # that convention and then never parsed again, same reasoning as pool_warehouse_id: a
     # client whose codes look nothing like Sorento's repoints rows instead of needing code.
     segment = Column(String(20), nullable=True)
+    # Whether this bin takes part in fulfilment planning at all (borrow ladder v7.1, R17).
+    # A bin that is OFF is outside fulfilment planning entirely: its on hand, its incoming
+    # and its sales-order lines are invisible to the ladder, the board and the Stock Debt
+    # view - which is a stronger statement than `counts_as_available`, where the stock is
+    # merely not sellable but the location's demand still counts. Seeded by migration 443
+    # for the ACTIVE `-BB/-IB/-IR/-NTC/-AM` bins and then CONFIG, like every other flag on
+    # this row: an admin turns one on or off on the Warehouses screen. The site pools are
+    # off - a pool is reached through `pool_warehouse_id`, never as an ownership group.
+    # One predicate spells the test: `app.services.scm.planning_predicate`.
+    fulfilment_planning = Column(
+        Boolean, default=False, server_default=text("false"), nullable=False
+    )
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), nullable=True)
     

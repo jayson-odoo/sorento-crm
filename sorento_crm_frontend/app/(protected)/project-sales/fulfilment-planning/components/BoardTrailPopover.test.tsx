@@ -1,13 +1,15 @@
 /**
- * The ladder as it was walked for one line, rung by rung (PLAN 13.5, S4 and S13 of the 19
- * August review findings).
+ * The proof behind one line: ladder v5's four questions plus Buy
+ * (`PLAN-scm-cs-planning-uat.md` section 1e, AC-V1).
  *
- * Two things are pinned here, isolated from the wider cell breakdown (`BoardCellBreakdownDialog
- * .test.tsx` covers the arithmetic through a real board): every rung carries its own label, in
- * the ladder's own order, and `aheadOf` (the "who is in front of me" reading) renders on the
- * ONE rung that carries a queue - the read-only own-location rung, `reserve_own` - and reads
- * "-" everywhere else, because no other rung queues: the pool nets its own book before it is
- * offered, and incoming and Buy have none.
+ * Three things are pinned here, isolated from the wider cell breakdown
+ * (`BoardCellBreakdownDialog.test.tsx` covers the arithmetic through a real board):
+ *
+ * * FIVE rows, in order, showing the QUESTION and never the engine's internal rung name -
+ *   a reader is asked "can we take from the pool?", not shown the word `cross_group_borrow`;
+ * * each row answers Yes or No, with what it took and where from;
+ * * the queue ("who is in front of me") hangs off the ONE question that has one - question 1,
+ *   our own location - because `QueueLink`'s dialog opens exactly that warehouse.
  */
 import React from 'react';
 import { fireEvent, render, screen } from '@testing-library/react';
@@ -19,15 +21,17 @@ import type {
 
 import { BoardTrailPopover } from './BoardTrailPopover';
 
-/** The seven rungs, ladder v2's own order (section E), each carrying enough to render. Only
- * `reserve_own` names a queue - the fact under test. */
+/** The five rows, in the order the server sends them. Only question 1 carries a queue. */
 const TRAIL: BoardTrailStep[] = [
   {
     step: 1,
-    kind: 'reserve_own',
+    kind: 'own',
+    question: 'Can we use our location?',
+    answer: 'no',
+    took: '0',
+    from: null,
     location: 'BRW-BB',
     warehouse_id: 'wh-brw-bb',
-    opening: '627',
     ahead_qty: '388',
     ahead_lines: 6,
     ahead: [
@@ -43,73 +47,41 @@ const TRAIL: BoardTrailStep[] = [
     ],
     ahead_more: 3,
     ahead_by_factor: { need_by_date: 5, line_order: 1 },
-    offered: '627',
-    taken: '0',
-    remaining_after: '43',
-    outcome: 'not_eligible',
-    why:
-      '627 left at BRW-BB after 388 owed to 6 lines ranked ahead of this line. Never ' +
-      'reserved: stock at BRW-BB is committed to whichever sales order is queued for it - ' +
-      'borrow from another sales order instead.',
+    why: 'The BB group nets -969, so there is nothing left for this line.',
   },
   {
     step: 2,
-    kind: 'incoming',
-    location: 'BRW-BB',
-    warehouse_id: 'wh-brw-bb',
-    opening: '0',
-    offered: '0',
-    taken: '0',
-    remaining_after: '43',
-    outcome: 'nothing_left',
-    why: 'No supplier PO arrives by 3 Sep 2026.',
+    kind: 'pool',
+    question: 'Can we take from the pool?',
+    answer: 'yes',
+    took: '43',
+    from: 'BRW',
+    location: 'BRW',
+    warehouse_id: 'wh-brw',
+    why: 'Cold at retail, so BRW is offered: 43 left after its own queue ahead of this line; this line takes 43.',
   },
   {
     step: 3,
-    kind: 'pool',
-    location: 'BRW',
-    warehouse_id: 'wh-brw',
-    opening: '43',
-    offered: '43',
-    taken: '43',
-    remaining_after: '0',
-    outcome: 'took',
-    why: 'BRW offers 43; this line takes 43.',
+    kind: 'cross_group_borrow',
+    question: 'Can we borrow from another location?',
+    answer: 'no',
+    took: '0',
+    why: 'Fully covered before this rung.',
   },
   {
     step: 4,
-    kind: 'group_take',
-    offered: '0',
-    taken: '0',
-    remaining_after: '0',
-    outcome: 'none_needed',
-    why: 'Fully covered before this rung.',
+    kind: 'group_borrow',
+    question: "Can we borrow from the same agent's other order in this group?",
+    answer: 'no',
+    took: '0',
+    why: "SO000009 line 2 holds this in the group. Borrowing from another sales order is a person's pick in Amend.",
   },
   {
     step: 5,
-    kind: 'group_borrow',
-    offered: '0',
-    taken: '0',
-    remaining_after: '0',
-    outcome: 'none_needed',
-    why: 'Fully covered before this rung.',
-  },
-  {
-    step: 6,
-    kind: 'cross_group_borrow',
-    offered: '0',
-    taken: '0',
-    remaining_after: '0',
-    outcome: 'none_needed',
-    why: 'Fully covered before this rung.',
-  },
-  {
-    step: 7,
     kind: 'buy',
-    offered: '0',
-    taken: '0',
-    remaining_after: '0',
-    outcome: 'none_needed',
+    question: 'Buy the rest?',
+    answer: 'no',
+    took: '0',
     why: 'Fully covered before this rung.',
   },
 ];
@@ -150,79 +122,79 @@ function stepCells(key: string, kind: string): (string | null)[] {
   ].map((node) => node.textContent);
 }
 
-describe('BoardTrailPopover: the rung labels', () => {
-  it('shows a label per rung, in the ladder’s own order', () => {
+describe('BoardTrailPopover: the four questions and Buy', () => {
+  it('shows five rows, in order, reading as questions rather than rung names', () => {
     const contribution = contributionOf();
     render(<BoardTrailPopover contribution={contribution} />);
     openTrail(contribution.key);
 
-    const sources = [
+    const questions = [
       ...screen.getByTestId(`trail-${contribution.key}`).querySelectorAll('tbody tr[data-step]'),
     ].map((row) => row.querySelectorAll('td')[1]?.textContent);
-    expect(sources).toEqual([
-      'This location (BRW-BB)',
-      'Incoming (SPO)',
-      'Pool BRW',
-      'Group take',
-      'Group borrow',
-      'Cross-group borrow',
-      'Buy',
+    expect(questions).toEqual([
+      'Can we use our location?',
+      'Can we take from the pool?',
+      'Can we borrow from another location?',
+      "Can we borrow from the same agent's other order in this group?",
+      'Buy the rest?',
     ]);
   });
 
-  it('names the own location even when the trail carries no code for a rung', () => {
-    const contribution = contributionOf({
-      trail: [{ ...TRAIL[3], location: null }],
-    });
-    render(<BoardTrailPopover contribution={contribution} />);
-    openTrail(contribution.key);
-
-    expect(stepCells(contribution.key, 'group_take')[1]).toBe('Group take');
-  });
-});
-
-describe('BoardTrailPopover: aheadOf renders the queue on the rung that carries it', () => {
-  it('names the queue on the read-only own-location rung', () => {
+  it('never renders the engine’s internal rung names', () => {
     const contribution = contributionOf();
     render(<BoardTrailPopover contribution={contribution} />);
     openTrail(contribution.key);
 
-    expect(stepCells(contribution.key, 'reserve_own')[3]).toBe('388 across 6 lines');
-  });
-
-  it('reads "-" on every other rung, because no other rung queues', () => {
-    const contribution = contributionOf();
-    render(<BoardTrailPopover contribution={contribution} />);
-    openTrail(contribution.key);
-
-    for (const kind of [
-      'incoming',
-      'pool',
-      'group_take',
-      'group_borrow',
-      'cross_group_borrow',
-      'buy',
-    ]) {
-      expect(stepCells(contribution.key, kind)[3]).toBe('-');
+    const text = screen.getByTestId(`trail-${contribution.key}`).textContent ?? '';
+    for (const internal of ['cross_group_borrow', 'group_borrow', 'group_take', 'Incoming']) {
+      expect(text).not.toContain(internal);
     }
   });
 
-  it('counts a single line ahead in the singular', () => {
-    const contribution = contributionOf({
-      trail: [{ ...TRAIL[0], ahead_qty: '60', ahead_lines: 1 }, ...TRAIL.slice(1)],
-    });
+  it('answers each question Yes or No, with what it took and where from', () => {
+    const contribution = contributionOf();
     render(<BoardTrailPopover contribution={contribution} />);
     openTrail(contribution.key);
 
-    expect(stepCells(contribution.key, 'reserve_own')[3]).toBe('60 across 1 line');
+    const pool = stepCells(contribution.key, 'pool');
+    expect(pool[2]).toBe('Yes');
+    expect(pool[3]).toBe('43');
+    expect(pool[4]).toBe('BRW');
+
+    const own = stepCells(contribution.key, 'own');
+    expect(own[2]).toBe('No');
+    expect(own[3]).toBe('0');
+    expect(own[4]).toBe('-');
   });
 
-  it('opens the whole queue from the rung that names it', () => {
+  it('puts the deciding figure in the sentence under the row', () => {
+    const contribution = contributionOf();
+    render(<BoardTrailPopover contribution={contribution} />);
+    openTrail(contribution.key);
+
+    expect(screen.getByTestId(`trail-why-${contribution.key}-own`).textContent).toContain(
+      'The BB group nets -969',
+    );
+  });
+});
+
+describe('BoardTrailPopover: the queue hangs off question 1', () => {
+  it('opens the whole queue from the question that names it', () => {
     const contribution = contributionOf();
     render(<BoardTrailPopover contribution={contribution} />);
     openTrail(contribution.key);
 
     const button = screen.getByTestId(`trail-queue-${contribution.key}`);
     expect(button.textContent).toBe('View the queue (6 ahead)');
+  });
+
+  it('offers no queue link on any other question', () => {
+    const contribution = contributionOf();
+    render(<BoardTrailPopover contribution={contribution} />);
+    openTrail(contribution.key);
+
+    // One link, on one row: `QueueLink` renders only where `ahead` is non-empty, and no
+    // question but the first carries one.
+    expect(screen.getAllByTestId(`trail-queue-${contribution.key}`)).toHaveLength(1);
   });
 });

@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { extractApiError } from '@/lib/api-client';
-import { useRouter } from 'next/navigation';
+
 import {
   ColumnDef,
   PaginationState,
@@ -11,26 +11,14 @@ import {
   useReactTable,
   getCoreRowModel,
 } from '@tanstack/react-table';
-import {
-  ChevronRight,
-  Copy,
-  LoaderCircleIcon,
-  MessageCircle,
-  MessageCircleOff,
-  Plus,
-  RefreshCw,
-  Search,
-  Trash2,
-  UserCog,
-  X,
-} from 'lucide-react';
+import { Copy, MessageCircle, MessageCircleOff, Plus, RefreshCw, Search, Trash2, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
-import { DataGrid, DataGridApiResponse } from '@/components/ui/data-grid';
+import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
-import { buildSelectColumn, selectedRowIds } from '@/components/ui/data-grid-select-column';
+import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
@@ -50,31 +38,28 @@ import ContactOutboundCell from '@/components/contacts/ContactOutboundCell';
 import ContactOutboundDisableDialog from '@/components/contacts/ContactOutboundDisableDialog';
 import ContactOutboundSummary from '@/components/contacts/ContactOutboundSummary';
 import { useRespondContactOutboundMutations } from '@/hooks/useRespondContactOutbound';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
-import { startContactImpersonation } from '@/services/contactImpersonationService';
 
-interface ContactsListProps {
-  pageIndex?: number;
-  pageSize?: number;
-  sorting?: SortingState;
-  searchQuery?: string;
-}
+
+import { buildDetailSearch } from '@/lib/listNavQuery';
+import { contactsListQueryKey, fetchContactsPage } from '../lib/listQuery';
+import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
+import { RowActionsMenu } from '@/components/common/RowActionsMenu';
+import { contactActions } from '../actions';
+import { ContactImpersonateDialog } from './ContactImpersonateDialog';
 
 export default function ContactsList() {
-  const router = useRouter();
   const queryClient = useQueryClient();
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [sorting, setSorting] = useState<SortingState>([{ id: 'created_at', desc: true }]);
   const [searchQuery, setSearchQuery] = useState('');
+
+  // Back hands the list its own query string back, and the pager keeps
+  // rewriting it, so the list reads it (S3-01). One hook, every list.
+  useListStateFromUrl((state) => {
+    setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
+    setSorting(state.sorting);
+    setSearchQuery(state.searchQuery);
+  });
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [contactToDelete, setContactToDelete] = useState<RespondContact | null>(null);
@@ -82,27 +67,24 @@ export default function ContactsList() {
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
   const [bulkCopyDialogOpen, setBulkCopyDialogOpen] = useState(false);
   const [impersonateTarget, setImpersonateTarget] = useState<RespondContact | null>(null);
-  const [impersonateStarting, setImpersonateStarting] = useState(false);
   const [bulkDisableOutboundOpen, setBulkDisableOutboundOpen] = useState(false);
 
-  const fetchContacts = async (): Promise<DataGridApiResponse<RespondContact>> => {
-    const sortField = sorting?.[0]?.id || 'created_at';
-    const sortDirection = sorting?.[0]?.desc ? 'desc' : 'asc';
-    const params = new URLSearchParams({
-      page: String(pagination.pageIndex + 1),
-      limit: String(pagination.pageSize),
-      sort: sortField,
-      dir: sortDirection,
-      ...(searchQuery ? { query: searchQuery } : {}),
-    });
-    const response = await apiFetch(`/api/user-management/contacts?${params.toString()}`);
-    if (!response.ok) throw new Error('Failed to fetch contacts');
-    return response.json();
-  };
+  // The list query, built through the shared key + fetch so the detail shell's
+  // pager reads THIS cache entry instead of its own 100 newest contacts.
+  const listParams = useMemo(
+    () => ({
+      pageIndex: pagination.pageIndex,
+      pageSize: pagination.pageSize,
+      sorting,
+      searchQuery,
+      filters: {},
+    }),
+    [pagination, sorting, searchQuery],
+  );
 
   const { data, isLoading, refetch, isFetching } = useQuery({
-    queryKey: ['respond-contacts', pagination, sorting, searchQuery],
-    queryFn: fetchContacts,
+    queryKey: contactsListQueryKey(listParams),
+    queryFn: () => fetchContactsPage(listParams),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,
     refetchOnWindowFocus: false,
@@ -184,15 +166,13 @@ export default function ContactsList() {
     bulkSyncMutation.mutate(selectedContactIds);
   };
 
-  const handleRowClick = (contact: RespondContact) => {
-    router.push(`/user-management/contacts/${contact.id}`);
+  // The whole row opens the record, carrying the list query the pager rebuilds
+  // its key from.
+  const rowHref = (contact: RespondContact) => {
+    const search = buildDetailSearch(listParams);
+    return `/user-management/contacts/${contact.id}${search ? `?${search}` : ''}`;
   };
 
-  const handleDeleteClick = (e: React.MouseEvent, contact: RespondContact) => {
-    e.stopPropagation();
-    setContactToDelete(contact);
-    setDeleteDialogOpen(true);
-  };
 
   const columns = useMemo<ColumnDef<RespondContact>[]>(
     () => [
@@ -301,42 +281,24 @@ export default function ContactsList() {
         header: '',
         enableHiding: false,
         cell: ({ row }) => (
-          <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+          <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
             <PortalLinkButton
               contactId={row.original.id}
               contactLabel={row.original.name ?? row.original.phone_number ?? row.original.id}
               canSendViaRespondIo={!!row.original.respond_io_id}
               variant="icon"
             />
-            <Button
-              variant="ghost"
-              size="sm"
-              title="Impersonate in portal"
-              onClick={(e) => {
-                e.stopPropagation();
-                setImpersonateTarget(row.original);
-              }}
-            >
-              <UserCog className="size-4" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              title="Delete contact"
-              onClick={(e) => handleDeleteClick(e, row.original)}
-            >
-              <Trash2 className="size-4 text-destructive" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={(e) => {
-                e.stopPropagation();
-                handleRowClick(row.original);
-              }}
-            >
-              <ChevronRight className="size-4" />
-            </Button>
+            {/* The record's own set, in the row's "..." (D15). */}
+            <RowActionsMenu
+              ariaLabel="contact"
+              actions={contactActions(row.original, {
+                impersonate: () => setImpersonateTarget(row.original),
+                remove: () => {
+                  setContactToDelete(row.original);
+                  setDeleteDialogOpen(true);
+                },
+              })}
+            />
           </div>
         ),
         size: 90,
@@ -354,7 +316,7 @@ export default function ContactsList() {
   const table = useReactTable({
     columns,
     data: data?.data || [],
-    pageCount: Math.ceil((data?.pagination.total || 0) / pagination.pageSize),
+    pageCount: Math.ceil((data?.pagination?.total || 0) / pagination.pageSize),
     getRowId: (row) => row.id,
     state: { pagination, sorting, rowSelection },
     onPaginationChange: setPagination,
@@ -365,9 +327,6 @@ export default function ContactsList() {
     manualSorting: true,
     manualFiltering: true,
     enableRowSelection: true,
-    meta: {
-      onRowClick: handleRowClick,
-    },
   });
 
   const clearSelection = () => setRowSelection({});
@@ -382,8 +341,9 @@ export default function ContactsList() {
     <DataGrid
       table={table}
       tableLayout={{ columnsVisibility: true }}
-      recordCount={data?.pagination.total || 0}
+      recordCount={data?.pagination?.total || 0}
       isLoading={isLoading}
+      rowHref={rowHref}
     >
       <Card>
         <CardHeader className="block">
@@ -511,67 +471,10 @@ export default function ContactsList() {
         onSuccess={clearSelection}
       />
 
-      <AlertDialog
-        open={!!impersonateTarget}
-        onOpenChange={(open) => {
-          if (!open && !impersonateStarting) setImpersonateTarget(null);
-        }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Confirm Impersonation</AlertDialogTitle>
-            <AlertDialogDescription>
-              You will browse the portal as{' '}
-              <strong>
-                {impersonateTarget?.name ||
-                  impersonateTarget?.phone_number ||
-                  impersonateTarget?.id ||
-                  ''}
-              </strong>{' '}
-              with their access rights. All records you create or modify will
-              still be attributed to you. Continue?
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={impersonateStarting}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              disabled={impersonateStarting}
-              onClick={async (e) => {
-                e.preventDefault();
-                if (!impersonateTarget) return;
-                setImpersonateStarting(true);
-                try {
-                  const session = await startContactImpersonation(impersonateTarget.id);
-                  toast.success(
-                    `Now impersonating ${
-                      impersonateTarget.name || impersonateTarget.phone_number || impersonateTarget.id
-                    }`,
-                  );
-                  setImpersonateTarget(null);
-                  if (typeof window !== 'undefined') {
-                    window.open(session.portalUrl, '_blank', 'noopener,noreferrer');
-                  }
-                } catch (err) {
-                  toast.error(
-                    err instanceof Error ? err.message : 'Failed to start impersonation',
-                  );
-                } finally {
-                  setImpersonateStarting(false);
-                }
-              }}
-            >
-              {impersonateStarting ? (
-                <>
-                  <LoaderCircleIcon className="size-4 animate-spin" />
-                  Starting...
-                </>
-              ) : (
-                'Impersonate'
-              )}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <ContactImpersonateDialog
+        contact={impersonateTarget}
+        onClose={() => setImpersonateTarget(null)}
+      />
     </DataGrid>
   );
 }

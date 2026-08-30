@@ -27,9 +27,10 @@ export async function systemLog(
   try {
     // Determine if we're in server or client context
     const isServer = typeof window === 'undefined';
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? '';
+    const apiUrl =
+      process.env.FASTAPI_INTERNAL_URL ?? process.env.NEXT_PUBLIC_API_URL ?? '';
     if (isServer && !apiUrl) {
-      console.error('[LOG] NEXT_PUBLIC_API_URL not set; cannot post system log from server context');
+      console.error('[LOG] FASTAPI_INTERNAL_URL / NEXT_PUBLIC_API_URL not set; cannot post system log from server context');
       return;
     }
 

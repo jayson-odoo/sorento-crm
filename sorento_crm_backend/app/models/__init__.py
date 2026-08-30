@@ -31,7 +31,7 @@ from app.models.ticket_comment import ConversationTicketComment
 from app.models.message_snippet import MessageSnippet
 from app.models.resources import Attachment, AttachmentType
 from app.models.certificate import Certificate, CertificateRevision, CertificateProduct
-from app.models.access import AccessAgent, ContactAgentAccess, ContactAccessType, RespondContact, RespondContactCustomer, respond_contact_access_types, MarketSegment, respond_contact_market_segments, team_member_market_segments, team_member_brands
+from app.models.access import AccessAgent, ContactAgentAccess, ContactAccessType, RespondContact, RespondContactCustomer, StockVisibilityPolicy, respond_contact_access_types, MarketSegment, respond_contact_market_segments, team_member_market_segments, team_member_brands
 from app.models.respond_workspace import RespondWorkspace
 from app.models.respond_template import (
     RespondChannel,
@@ -61,6 +61,7 @@ from app.models.import_alias import ImportFieldAlias
 from app.models.calendar import PublicHoliday, WorkCalendarConfig
 from app.models.job import ImportJob, ImportJobRow
 from app.models.download import UserDownload, DownloadStatus
+from app.models.report_view import ReportView
 from app.models.audit import AuditLog
 from app.models.notification import Notification, NotificationDelivery, PushSubscription
 from app.models.scheduled_task import ScheduledTask, ScheduledTaskRun
@@ -164,6 +165,7 @@ from app.models.project_so import (  # noqa: F401
     OrderInquiry,
     OrderInquiryRow,
 )
+from app.models.stock_transfer import StockTransfer  # noqa: F401
 from app.models.planning_change import PlanningChangeBatch, PlanningChangeRow  # noqa: F401
 
 __all__ = [
@@ -196,6 +198,7 @@ __all__ = [
     "OrderLine",
     "SalesOrder",
     "SalesOrderLine",
+    "StockTransfer",
     "SalesAgent",
     "Warehouse",
     "StorageZone",
@@ -255,6 +258,7 @@ __all__ = [
     "RespondContact",
     "RespondContactCustomer",
     "respond_contact_access_types",
+    "StockVisibilityPolicy",
     "RespondWorkspace",
     "RespondChannel",
     "RespondMessageTemplate",
@@ -279,6 +283,7 @@ __all__ = [
     "ImportJob",
     "ImportJobRow",
     "UserDownload",
+    "ReportView",
     "DownloadStatus",
     "VerificationToken",
     "PublicHoliday",

@@ -33,7 +33,9 @@ function pct(v: number | null): string {
  * `PopoverContent` is wrapped in `PopoverPortal` (captain, live test): both grids render this
  * trigger inside a `DataGrid` cell, whose sticky/pinned columns paint OVER an un-portaled
  * popover - a sibling `position: sticky` cell wins the cell's own stacking context. Portaling
- * to `document.body` escapes it. See `SoLinesDrillPopover.tsx` for the same fix, same cause.
+ * to `document.body` escapes it. The LAST popover on this screen (S2 R7 turned every drilled
+ * figure into a dialog): a rank score is four numbers and a sentence, not a document table,
+ * so a dialog would be a bigger interruption than the thing it explains.
  */
 export interface RankedLine {
   rank_score: number | null;

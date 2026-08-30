@@ -23,6 +23,7 @@ import type { PlanLine } from './planLine';
 import type {
   PlanRowDecision as ServerPlanDecision,
   PlanRowDecisionKind,
+  PlanRowPriceMode,
   RecordPlanRowDecisionPayload,
 } from '../types/decisions.types';
 
@@ -52,7 +53,27 @@ export interface PlanDecision {
   skip?: boolean;
   /** Why the buyer departed from the suggestion, carried onto the adjustment. */
   reason?: string;
+  /**
+   * How the buy is priced (AC-R13). `use_last` costs it at what we last paid the chosen
+   * supplier; `ask_new` says the price is still a question, so the drafted PO line goes
+   * out unpriced rather than carrying a figure nobody quoted. Absent = `use_last`.
+   */
+  priceMode?: PlanRowPriceMode;
+  /**
+   * The supplier the buyer chose (AC-R14), as its CODE. Absent = the engine's own
+   * proposal stands. Switching it re-reads that supplier's last price and lead time.
+   */
+  supplierCode?: string;
+  /**
+   * The decision has already been confirmed into a draft purchase order - the server
+   * stamped `draft_po_number` on it. Read-only here: nothing on the FE sets it, and the
+   * status pill needs it to say "Confirmed" rather than "Saved" (plan 4.3).
+   */
+  confirmed?: boolean;
 }
+
+/** The default price call, so "not stated" and "use the last price" never diverge. */
+export const DEFAULT_PRICE_MODE: PlanRowPriceMode = 'use_last';
 
 export type PlanDecisionMap = Readonly<Record<string, PlanDecision | undefined>>;
 
@@ -236,6 +257,10 @@ export function toRecordPlanRowDecisionPayload(d: PlanDecision): RecordPlanRowDe
     stock_takes: (d.stock?.sources ?? []).map((s) => ({ location: s.warehouse_code, qty: s.qty })),
     po_qty: d.po,
     reason_text: d.reason,
+    price_mode: d.priceMode ?? DEFAULT_PRICE_MODE,
+    // Omitted rather than sent empty: the backend reads "no code" as "the engine's
+    // supplier stands", and an empty string would be a supplier nobody has.
+    ...(d.supplierCode ? { supplier_code: d.supplierCode } : {}),
   };
 }
 
@@ -251,8 +276,13 @@ export function fromServerPlanDecision(
   sd: ServerPlanDecision,
   resolveWarehouseId: (code: string) => string | undefined,
 ): PlanDecision {
-  if (sd.kind === 'skip') return { skip: true };
-  const out: PlanDecision = {};
+  const priced = {
+    priceMode: sd.price_mode ?? DEFAULT_PRICE_MODE,
+    ...(sd.supplier_code ? { supplierCode: sd.supplier_code } : {}),
+    ...(sd.draft_po_number ? { confirmed: true } : {}),
+  };
+  if (sd.kind === 'skip') return { skip: true, ...priced };
+  const out: PlanDecision = { ...priced };
   if ((sd.buy_qty ?? 0) > 0) out.buy = sd.buy_qty as number;
   const takenSources = sd.stock_takes
     .filter((t) => t.qty > 0)
@@ -304,6 +334,8 @@ export function planDecisionsEqual(
   b: PlanDecision | undefined,
 ): boolean {
   if (!a || !b) return a === b;
+  if ((a.priceMode ?? DEFAULT_PRICE_MODE) !== (b.priceMode ?? DEFAULT_PRICE_MODE)) return false;
+  if ((a.supplierCode ?? null) !== (b.supplierCode ?? null)) return false;
   if (!!a.skip !== !!b.skip) return false;
   if (a.skip) return true;
   if ((a.buy ?? 0) !== (b.buy ?? 0)) return false;

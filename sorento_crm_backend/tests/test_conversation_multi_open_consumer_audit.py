@@ -303,6 +303,13 @@ def test_sync_assignee_from_respond_still_works_for_form_sla_row(db):
 # ---------------------------------------------------------------------------
 
 
+def _enqueued(enqueue, job) -> list:
+    """The enqueue calls that queued THIS job. A resolve fires more than one
+    post-commit job onto the same queue, so a total call count says nothing
+    about the one under test."""
+    return [call for call in enqueue.call_args_list if call.args and call.args[0] is job]
+
+
 def test_resolve_skips_respond_close_when_sibling_ticket_still_open(db):
     seed = _seed(db)
     t1, t2 = _two_open_tickets(db, seed)
@@ -311,7 +318,18 @@ def test_resolve_skips_respond_close_when_sibling_ticket_still_open(db):
     with patch("app.services.queue_service.enqueue_job") as enqueue:
         service.update_tracking(str(t1.id), ConversationSLATrackingUpdate(is_resolved=True))
 
-    enqueue.assert_not_called()  # T2 still open - Respond conversation must stay open
+    from app.tasks.respond_io_tasks import (
+        close_respond_conversation,
+        send_ticket_resolved_message,
+    )
+
+    # T2 still open - the Respond conversation must stay open.
+    assert _enqueued(enqueue, close_respond_conversation) == []
+    # PLAN-ticket-resolved-closing-message: the closing message is per TICKET, so
+    # T1 still gets exactly one while its sibling stays open.
+    closing = _enqueued(enqueue, send_ticket_resolved_message)
+    assert len(closing) == 1
+    assert closing[0].args[1] == str(t1.id)
     db.refresh(t1)
     db.refresh(t2)
     assert t1.is_resolved is True
@@ -328,9 +346,19 @@ def test_resolve_still_closes_respond_when_last_open_ticket_for_contact(db):
     with patch("app.services.queue_service.enqueue_job") as enqueue:
         service.update_tracking(str(t1.id), ConversationSLATrackingUpdate(is_resolved=True))
 
-    enqueue.assert_called_once()
-    assert enqueue.call_args.args[0].__name__ == "close_respond_conversation"
-    assert enqueue.call_args.args[1] == str(t1.id)
+    from app.tasks.respond_io_tasks import (
+        close_respond_conversation,
+        send_ticket_resolved_message,
+    )
+
+    close_calls = _enqueued(enqueue, close_respond_conversation)
+    assert len(close_calls) == 1
+    assert close_calls[0].args[1] == str(t1.id)
+    # PLAN-ticket-resolved-closing-message: one closing message for the ticket,
+    # alongside (not instead of) the Respond close.
+    closing = _enqueued(enqueue, send_ticket_resolved_message)
+    assert len(closing) == 1
+    assert closing[0].args[1] == str(t1.id)
 
 
 # ---------------------------------------------------------------------------

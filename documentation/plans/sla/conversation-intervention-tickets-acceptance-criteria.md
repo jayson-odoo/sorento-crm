@@ -487,6 +487,17 @@ channel - quote-prefix emulation stays), sticker sends.
   Respond contact, Then the comment is best-effort mirrored to Respond's comment endpoint
   (with `{{@user.<id>}}` for mentioned users that have a Respond mapping) so staff still
   living in the Respond inbox see it; mirror failure logs and never fails the save.
+- **AC-L2b [BE][T]** (added 2026-08-26, user direction) Given n8n's `sub-add-comment-respond`
+  wants to leave a comment on a contact, When it calls
+  `POST /api/v1/external/chat-history/{contact_ref}/comments` (X-API-Key; body,
+  `mentioned_respond_user_ids`, `author_name`), Then the comment is saved in the CRM FIRST
+  (contact-scoped, source `crm`, author label = the flow's) and only then mirrored to the
+  Respond inbox via AC-L2; Respond user ids that map to `users.respond_user_id` become real
+  CRM mentions (in-app notification), and every id is still tagged `{{@user.<id>}}` in the
+  mirror so the Respond agent is notified as before; unmapped ids come back as
+  `unmapped_respond_user_ids`. Pinned by `test_ticket_comment_external_create.py`. The n8n sub
+  keeps its inputs (`contact_id`, `user_id`, `comment`) and falls back to Respond's own
+  comment endpoint on a CRM error, so callers are unchanged.
 - **AC-L3 [BE][FE][T]** Given comments were made in Respond's own inbox, When n8n forwards
   `comment.created` events to the CRM ingest, Then they appear in the ticket thread too -
   both surfaces converge going forward (no backfill: Respond has no comment list API).
@@ -815,6 +826,11 @@ closes, so it WILL fire on our close once live. Two consequences need explicit h
   Deviation: the body is a single JSON OBJECT, not the single-element array the send
   lane uses - that array exists only to mimic Respond's own webhook shape, which this
   lane does not mirror.
+
+  **Launch wiring (2026-08-25).** URL moved to `system_settings.n8n_close_convo_webhook_url`
+  (Settings > Integrations), env fallback kept; pinned by
+  `test_the_settings_page_url_wins_over_the_env_fallback`. n8n receiving lane built as a
+  draft on `respond-close-convo` (see PLAN S4.5 "LAUNCH"), awaiting publish.
 
 - **AC-M4 [DECIDED 2026-08-14: KEEP]** The contact-facing "your conversation is marked as
   closed and resolved" message stays, gated on "contact has no open tickets" (already the

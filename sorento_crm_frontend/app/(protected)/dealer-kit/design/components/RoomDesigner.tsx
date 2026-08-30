@@ -781,7 +781,7 @@ export function RoomDesigner() {
           </CardHeader>
           <CardContent>
             <Tabs defaultValue="plan">
-              <TabsList>
+              <TabsList variant="default">
                 <TabsTrigger value="plan">Plan</TabsTrigger>
                 <TabsTrigger value="3d">3D</TabsTrigger>
               </TabsList>

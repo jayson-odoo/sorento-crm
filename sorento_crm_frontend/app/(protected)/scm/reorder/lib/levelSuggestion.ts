@@ -9,22 +9,38 @@
  * buyer's, and applying a change in AutoCount is the buyer's job. So every sentence here
  * is an ASK ("Set AutoCount level to 24"), never a claim that anything was changed.
  *
+ * The number itself is `ADU x lead time + ADU x 14 days of safety` (AC-R11): ADU is what
+ * left every warehouse over the last 90 days, divided by 90.
+ *
  * Mirrors `app/services/scm/level_suggestion_service.py`, which decides the numbers; this
  * file only turns them into words.
  */
 import { fmtTrimmedDecimal } from '../../lib/format';
 
+/**
+ * The three terms behind the suggestion (AC-R11), plus the evidence bars.
+ *
+ *     level = adu x lead_time_days + adu x safety_days
+ */
 export interface LevelBasis {
-  months: { month: string; qty: number }[];
-  months_studied: number;
-  total_qty: number;
-  avg_monthly: number;
-  cover_months: number;
+  /** Average daily usage: delivery-order quantity over `window_days` / `window_days`. */
+  adu: number;
+  /** The product's supplier lead time in days. 30 when nobody knows one. */
+  lead_time_days: number;
+  /** Where that lead time came from: the plan's own supplier, product_suppliers, or the default. */
+  lead_time_source?: string | null;
+  /** Days of safety stock carried on top of the lead time's demand. 14 today. */
+  safety_days: number;
+  /** `adu x safety_days`, the safety half of the level. */
+  safety_stock: number;
+  /** The study window ADU was averaged over. 90 days today. */
+  window_days: number;
+  /** Units delivered inside that window. Null on a suggestion stored before it existed. */
+  window_qty: number | null;
+  /** The level before it was rounded up to a whole unit. */
   raw_level: number;
-  moq: number | null;
-  order_multiple: number | null;
-  /** The trajectory verdict that shaped the rounding, or null when none was consulted. */
-  trend: string | null;
+  /** Monthly bars behind the average. Evidence only - the arithmetic reads the window. */
+  months: { month: string; qty: number }[];
   no_movement: boolean;
 }
 
@@ -44,12 +60,15 @@ export interface LevelSuggestion {
    *  Null = no amendment; a fresh planning run clears it. */
   amended_level: number | null;
   amended_at: string | null;
-  /** The lot to order when stock hits the level: one cover of demand rounded up to a
-   *  purchasable pack. Null on suggestions stored before it existed - "not computed",
-   *  never "order nothing". */
+  /** AutoCount's own reorder-quantity suggestion. The engine no longer computes one -
+   *  the plan orders `level - net` - so this reads null on a fresh suggestion. */
   suggested_quantity: number | null;
   /** AutoCount's own reorder quantity as uploaded, beside the engine's. */
   master_reorder_quantity: number | null;
+  /** The reorder quantity the BUYER set, or the level upload last stated (R5). It sits
+   *  beside `master_reorder_quantity` the way `amended_level` sits beside
+   *  `suggested_level` - never merged into it. */
+  reorder_qty?: number | null;
   basis: LevelBasis;
 }
 
@@ -65,6 +84,8 @@ export interface LevelSuggestionsPayload {
 }
 
 const n = (v: number) => fmtTrimmedDecimal(v, 2);
+/** ADU is a fraction of a unit a day on most items, so it needs more places than a level. */
+const rate = (v: number) => fmtTrimmedDecimal(v, 3);
 
 /** The row's action, with both numbers: "set to 24" means nothing without "now 20". */
 export function levelActionLabel(s: LevelSuggestion): {
@@ -116,28 +137,30 @@ export function describeLevelSuggestion(s: LevelSuggestion | undefined): string 
   const b = s.basis;
 
   if (b.no_movement) {
-    return `Nothing left this location in the last ${b.months_studied} months, so the suggested level is 0. A level above that is a judgement call the numbers cannot make.`;
+    return `Nothing left the warehouses in the last ${n(b.window_days)} days, so the suggested level is 0. A level above that is a judgement call the numbers cannot make.`;
   }
 
   const parts = [
-    `Averaged ${n(b.avg_monthly)} a month over the last ${b.months_studied} months; ${n(b.cover_months)} months of cover makes ${n(b.raw_level)}.`,
+    b.window_qty !== null
+      ? `${n(b.window_qty)} left the warehouses over the last ${n(b.window_days)} days, so ${rate(b.adu)} a day.`
+      : `${rate(b.adu)} a day over the last ${n(b.window_days)} days.`,
+    `A ${n(b.lead_time_days)} day lead needs ${n(b.adu * b.lead_time_days)}, and ${n(b.safety_days)} days of safety adds ${n(b.safety_stock)}: ${n(b.raw_level)}, rounded up to ${n(s.suggested_level)}.`,
   ];
-  if (b.trend === 'rising') {
-    parts.push('Orders are rising, so it rounds up.');
-  } else if (b.trend === 'falling' || b.trend === 'quiet') {
-    parts.push(b.trend === 'falling' ? 'Orders are falling, so it rounds down.' : 'Orders went quiet, so it rounds down.');
-  }
-  if (b.moq !== null && s.suggested_level >= b.moq && b.raw_level < b.moq) {
-    parts.push(`The supplier's minimum order of ${n(b.moq)} lifts it to ${n(s.suggested_level)}.`);
-  } else if (b.order_multiple && s.suggested_level !== Math.ceil(b.raw_level)) {
-    parts.push(`Rounded to the supplier's pack of ${n(b.order_multiple)}.`);
-  }
-  if (s.suggested_quantity !== null) {
-    parts.push(
-      `When it fires, order ${n(s.suggested_quantity)}: one cover of demand, rounded up to what the supplier sells.`,
-    );
+  if (b.lead_time_source === 'default') {
+    parts.push(`No lead time is on file for this product, so ${n(b.lead_time_days)} days stands in.`);
   }
   return parts.join(' ');
+}
+
+/** The three terms, each as its own labelled figure - the popover shows them beside the
+ *  sentence so the arithmetic can be checked without reading prose. */
+export function levelTerms(s: LevelSuggestion): { label: string; value: string }[] {
+  const b = s.basis;
+  return [
+    { label: 'ADU', value: `${rate(b.adu)} / day` },
+    { label: 'Lead time', value: `${n(b.lead_time_days)} d` },
+    { label: 'Safety', value: `${n(b.safety_stock)} (${n(b.safety_days)} d)` },
+  ];
 }
 
 /** The key both the plan row and the suggestion map agree on. Warehouse optional. */
@@ -156,7 +179,9 @@ export function levelRowsForExport(suggestions: Record<string, LevelSuggestion>)
   suggested_level: number;
   /** The engine's own figure, only when an amendment displaced it. */
   engine_level: number | null;
-  trend: string | null;
+  /** The two terms that sized it, so the change list can be argued with in a spreadsheet. */
+  adu: number;
+  lead_time_days: number;
 }[] {
   return Object.values(suggestions)
     .filter((s) => levelActionLabel(s).changed)
@@ -170,6 +195,7 @@ export function levelRowsForExport(suggestions: Record<string, LevelSuggestion>)
         s.amended_level !== null && s.amended_level !== s.suggested_level
           ? s.suggested_level
           : null,
-      trend: s.basis.trend,
+      adu: s.basis.adu,
+      lead_time_days: s.basis.lead_time_days,
     }));
 }

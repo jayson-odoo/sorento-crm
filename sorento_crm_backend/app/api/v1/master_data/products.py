@@ -12,7 +12,14 @@ from app.services.product_service import ProductService
 from app.services import product_purchase_history_service
 from app.services.attachment_field_link_service import AttachmentFieldLinkService
 from app.services.uuid_list_param import parse_uuid_list
-from app.schemas.product import ProductCreate, ProductUpdate, ProductResponse, BulkImportProductsRequest, BulkDeleteProductsRequest
+from app.schemas.product import (
+    ProductCreate,
+    ProductUpdate,
+    ProductResponse,
+    BulkImportProductsRequest,
+    BulkDeleteProductsRequest,
+    BulkUpdateProductsRequest,
+)
 from app.schemas.common import ListResponse, ErrorResponse, ValidateImportResponse
 from app.services.error_handler import handle_internal_error
 
@@ -207,69 +214,6 @@ def get_products(
         raise handle_internal_error(str(e))
 
 
-@router.get("/neighbours")
-def get_product_neighbours(
-    id: str = Query(..., description="Product id (or SKU) to resolve neighbours for"),
-    query: Optional[str] = Query(None),
-    category_id: Optional[str] = Query(None),
-    brand_id: Optional[str] = Query(None),
-    status: Optional[str] = Query(None),
-    discontinued_batch_id: Optional[str] = Query(None),
-    price_min: Optional[float] = Query(None),
-    price_max: Optional[float] = Query(None),
-    item_type: Optional[str] = Query(None),
-    length_min: Optional[float] = Query(None),
-    length_max: Optional[float] = Query(None),
-    width_min: Optional[float] = Query(None),
-    width_max: Optional[float] = Query(None),
-    height_min: Optional[float] = Query(None),
-    height_max: Optional[float] = Query(None),
-    any_dimension_min: Optional[float] = Query(None),
-    any_dimension_max: Optional[float] = Query(None),
-    sort: Optional[str] = Query("created_at"),
-    dir: Optional[str] = Query("asc"),
-    current_user: dict = Depends(get_current_user_or_api_key),
-    db: Session = Depends(get_db),
-):
-    """Prev/next neighbours of a product within the active filtered+sorted list set.
-
-    Accepts the same filter/sort/search params as the list GET (page/limit are
-    irrelevant and ignored). Returns ``{total, index, prev_id, next_id}`` with the
-    1-based ``index`` and circular wrap-around neighbours. If the record is not in
-    the filtered set, falls back to the unfiltered, default-sorted set (D2).
-
-    Declared BEFORE ``/{product_id}`` so the literal path is not captured as a
-    product id by the parametric route.
-    """
-    try:
-        service = ProductService(db)
-        return service.neighbours(
-            product_id=id,
-            query=query,
-            category_id=category_id,
-            brand_id=brand_id,
-            status=status,
-            discontinued_batch_id=discontinued_batch_id,
-            price_min=price_min,
-            price_max=price_max,
-            item_type=item_type,
-            length_min=length_min,
-            length_max=length_max,
-            width_min=width_min,
-            width_max=width_max,
-            height_min=height_min,
-            height_max=height_max,
-            any_dimension_min=any_dimension_min,
-            any_dimension_max=any_dimension_max,
-            sort_field=sort or "created_at",
-            sort_dir=dir or "asc",
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise handle_internal_error(str(e))
-
-
 @router.get("/{product_id}", response_model=ProductResponse)
 def get_product(
     product_id: str,
@@ -322,6 +266,25 @@ async def create_product(
         service = ProductService(db)
         product = service.create_product(product_data, current_user["id"])
         return product
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+# Declared BEFORE `PUT /{product_id}`: FastAPI matches routes in order, and the
+# path parameter would otherwise swallow the literal "bulk" (the DELETE pair
+# below is ordered the same way for the same reason).
+@router.put("/bulk", status_code=status.HTTP_200_OK)
+def bulk_update_products(
+    body: BulkUpdateProductsRequest = Body(...),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Bulk update products by ID. Body: { ids: string[], updates: { is_searchable } }."""
+    try:
+        service = ProductService(db)
+        return service.bulk_update_products(body.ids, body.updates, current_user["id"])
     except HTTPException:
         raise
     except Exception as e:

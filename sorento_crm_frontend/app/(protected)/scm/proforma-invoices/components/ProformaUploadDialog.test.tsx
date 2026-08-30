@@ -1,12 +1,21 @@
 /**
- * The proforma-invoice upload dialog: supplier chosen HERE (not read off the page behind it,
- * see the file header on the component), currency asked for last and only when nothing else
- * says (AC-P3.1), and the preview names a derived PI number and a stated-vs-computed total
- * mismatch rather than letting either pass silently.
+ * The proforma-invoice upload dialog, AFTER R24: the same two-step shape as the
+ * purchase-order and sales-order uploads.
+ *
+ * What this pins, and what each pin replaces:
+ *
+ * - Picking a file runs NOTHING. The old dialog read the file on drop to find a revision
+ *   candidate, which made this the only channel that fetched before it was asked to.
+ * - Test renders the STANDARD `{valid, errors, warnings, summary}` card, derived from the
+ *   preview, in place of the per-invoice card list with a currency box and a tickbox on each.
+ * - There is no Currency field at all. The document or the price list answers it; where
+ *   NEITHER does, the verdict names the invoices and Confirm is refused.
+ * - Revision candidates are filed as revisions BY DEFAULT, and Confirm takes the read it
+ *   needs for that itself when the operator never pressed Test.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 if (!window.matchMedia) {
@@ -32,12 +41,9 @@ vi.mock('sonner', () => ({
 }));
 
 // The real SearchableSelect drives a cmdk popover; this test cares which supplier ends up
-// picked, not popover mechanics, so it stands in for a native <select> (same pattern as
-// PlanLinesGrid.test.tsx / AdjustRecommendationModal.test.tsx). The supplier picker is
-// server-searched now (S8-followup): the stub resolves `fetchOptions('', 0)` once, the same
-// as the real component's own eager first-page fetch on open, so `options` callers and
-// `fetchOptions` callers both render a populated <select> without reproducing the real
-// debounce/pagination machinery.
+// picked, not popover mechanics, so it stands in for a native <select>. The supplier picker
+// is server-searched (S8-followup): the stub resolves `fetchOptions('', 0)` once, the same as
+// the real component's own eager first-page fetch on open.
 vi.mock('@/components/common/SearchableSelect', () => ({
   SearchableSelect: ({
     id,
@@ -59,7 +65,9 @@ vi.mock('@/components/common/SearchableSelect', () => ({
     ) => Promise<Array<{ value: string; label: string }>>;
     placeholder?: string;
   }) => {
-    const [asyncOptions, setAsyncOptions] = React.useState<Array<{ value: string; label: string }>>([]);
+    const [asyncOptions, setAsyncOptions] = React.useState<
+      Array<{ value: string; label: string }>
+    >([]);
     React.useEffect(() => {
       if (!fetchOptions) return;
       void fetchOptions('', 0).then(setAsyncOptions);
@@ -88,12 +96,10 @@ vi.mock('@/components/common/SearchableSelect', () => ({
 
 const previewProformaInvoice = vi.fn();
 const applyProformaInvoice = vi.fn();
-const testProformaInvoice = vi.fn();
 
 vi.mock('../../services/proformaInvoiceService', () => ({
   previewProformaInvoice: (...a: unknown[]) => previewProformaInvoice(...a),
   applyProformaInvoice: (...a: unknown[]) => applyProformaInvoice(...a),
-  testProformaInvoice: (...a: unknown[]) => testProformaInvoice(...a),
 }));
 
 vi.mock('../../reorder/services/outstandingImportService', () => ({
@@ -108,7 +114,7 @@ vi.mock('../../services/fulfilmentService', () => ({
   getFulfilmentSuppliers: (query?: string) => getFulfilmentSuppliers(query),
 }));
 
-import { ProformaUploadDialog } from './ProformaUploadDialog';
+import { ProformaUploadDialog, verdictFromPreview } from './ProformaUploadDialog';
 
 const PREVIEW = {
   ok: true,
@@ -132,6 +138,7 @@ const PREVIEW = {
       unmatched_items: [],
       currency: 'CNY',
       currency_source: 'document' as const,
+      revision_candidate: null,
     },
   ],
   document_count: 1,
@@ -145,6 +152,22 @@ const PREVIEW = {
   currency_source: 'document' as const,
   priced_lines_without_currency: 0,
 };
+
+const CANDIDATE = {
+  invoice_id: 'pi-earlier',
+  pi_number: 'PI-2026-7-31-1',
+  invoice_date: '2026-07-31',
+  overlap_pct: 100,
+  matched_items: 5,
+  lines: 5,
+};
+
+function previewWithCandidate(candidate: typeof CANDIDATE | null = CANDIDATE) {
+  return {
+    ...PREVIEW,
+    documents: [{ ...PREVIEW.documents[0], revision_candidate: candidate }],
+  };
+}
 
 function xlsx(name = 'proforma.xlsx'): File {
   return new File([new Uint8Array([1, 2, 3])], name, {
@@ -184,9 +207,8 @@ function openDialog() {
   return { onApplied };
 }
 
-// The supplier list is server-searched (S8-followup, async `fetchOptions`) - the mocked
-// promise resolves after a microtask, so this waits for the option to actually land before
-// picking it, rather than racing the resolve like a synchronous `options` list never did.
+// The supplier list is server-searched (async `fetchOptions`) - the mocked promise resolves
+// after a microtask, so this waits for the option to land before picking it.
 async function chooseSupplier() {
   await waitFor(() =>
     expect(supplierSelect().querySelector('option[value="sup-1"]')).toBeInTheDocument(),
@@ -194,10 +216,16 @@ async function chooseSupplier() {
   fireEvent.change(supplierSelect(), { target: { value: 'sup-1' } });
 }
 
+const APPLIED_ONE = {
+  documents_created: 1,
+  documents_updated: 0,
+  results: [],
+  summary: {},
+};
+
 beforeEach(() => {
   previewProformaInvoice.mockReset().mockResolvedValue(PREVIEW);
-  applyProformaInvoice.mockReset();
-  testProformaInvoice.mockReset().mockResolvedValue(null);
+  applyProformaInvoice.mockReset().mockResolvedValue(APPLIED_ONE);
 });
 
 describe('ProformaUploadDialog - supplier gates everything (AC journey step 1)', () => {
@@ -217,116 +245,219 @@ describe('ProformaUploadDialog - supplier gates everything (AC journey step 1)',
     expect(testButton()).toBeEnabled();
     expect(confirmButton()).toBeEnabled();
   });
+});
 
-  it('carries the chosen supplier on the preview/test/apply calls', async () => {
+describe('ProformaUploadDialog - the same three presses as every other upload (R24)', () => {
+  it('reads NOTHING when a file is picked', async () => {
+    openDialog();
+    await chooseSupplier();
+    pickFile();
+
+    // Deliberately not `waitFor`: a read that has not started is the assertion, and a
+    // read that starts one microtask later would still be a read on pick.
+    await Promise.resolve();
+    expect(previewProformaInvoice).not.toHaveBeenCalled();
+  });
+
+  it('reads the file on Test, carrying the chosen supplier and no currency', async () => {
     openDialog();
     await chooseSupplier();
     const file = pickFile();
 
     fireEvent.click(testButton());
 
-    await waitFor(() => expect(previewProformaInvoice).toHaveBeenCalledWith(file, 'sup-1', null));
-    expect(testProformaInvoice).toHaveBeenCalledWith(file, 'sup-1', null);
+    await waitFor(() => expect(previewProformaInvoice).toHaveBeenCalledWith(file, 'sup-1'));
   });
-});
 
-describe('ProformaUploadDialog - the preview names what the file left ambiguous', () => {
-  it('marks a PI number the file never stated as derived', async () => {
-    previewProformaInvoice.mockResolvedValue({
-      ...PREVIEW,
-      documents: [{ ...PREVIEW.documents[0], pi_number_stated: false }],
-    });
+  it('asks for no currency at all - the document or the price list answers it', async () => {
+    openDialog();
+    await chooseSupplier();
+    pickFile();
+
+    expect(screen.queryByLabelText('Currency')).not.toBeInTheDocument();
+  });
+
+  it('prints the standard verdict rather than a card per invoice', async () => {
     openDialog();
     await chooseSupplier();
     pickFile();
     fireEvent.click(testButton());
 
-    expect(await screen.findByText('PI-2026-001')).toBeInTheDocument();
-    expect(screen.getByText('(derived)')).toBeInTheDocument();
-  });
-
-  it('does not mark a PI number the file actually stated', async () => {
-    openDialog();
-    await chooseSupplier();
-    pickFile();
-    fireEvent.click(testButton());
-
-    expect(await screen.findByText('PI-2026-001')).toBeInTheDocument();
+    expect(await screen.findByText('No errors')).toBeInTheDocument();
+    expect(screen.getByText(/Invoices: 1/)).toBeInTheDocument();
+    expect(screen.getByText(/Rows: 5/)).toBeInTheDocument();
+    // The old per-invoice list is gone: no tickbox, no "(derived)", no container line.
+    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
     expect(screen.queryByText('(derived)')).not.toBeInTheDocument();
   });
+});
 
-  it('says which currency was resolved and names its source in words', async () => {
-    openDialog();
-    await chooseSupplier();
-    pickFile();
-    fireEvent.click(testButton());
+describe('verdictFromPreview - what Test says about the file', () => {
+  it('is valid, with nothing to report, on a clean file', () => {
+    const v = verdictFromPreview(PREVIEW);
 
-    expect(await screen.findByText(/Priced in CNY \(stated by the file\)/)).toBeInTheDocument();
+    expect(v.valid).toBe(true);
+    expect(v.errors).toEqual([]);
+    expect(v.warnings).toEqual([]);
+    expect(v.summary).toMatchObject({ document_count: 1, total_rows: 5, would_apply: 5 });
   });
 
-  it('says nothing states the currency when the document left it ambiguous', async () => {
-    previewProformaInvoice.mockResolvedValue({
+  it('names a missing column as an error that blocks the file', () => {
+    const v = verdictFromPreview({ ...PREVIEW, ok: false, missing_columns: ['unit_price'] });
+
+    expect(v.valid).toBe(false);
+    expect(v.errors[0]).toContain('unit_price');
+  });
+
+  it('says so when the workbook holds no invoice at all', () => {
+    const v = verdictFromPreview({ ...PREVIEW, ok: false, documents: [], document_count: 0 });
+
+    expect(v.valid).toBe(false);
+    expect(v.errors).toContain('No proforma invoice was found in this file.');
+  });
+
+  it('NAMES the invoices nothing can price, rather than asking for a currency', () => {
+    const v = verdictFromPreview({
       ...PREVIEW,
-      documents: [{ ...PREVIEW.documents[0], currency: null, currency_source: 'none' as const }],
+      priced_lines_without_currency: 5,
+      documents: [
+        { ...PREVIEW.documents[0], currency: null, currency_source: 'none' as const },
+      ],
     });
-    openDialog();
-    await chooseSupplier();
-    pickFile();
-    fireEvent.click(testButton());
 
-    expect(
-      await screen.findByText(/Nothing states which money this invoice is in/),
-    ).toBeInTheDocument();
+    expect(v.valid).toBe(false);
+    expect(v.errors[0]).toContain('PI-2026-001');
   });
 
-  it('flags a document total that does not match the summed lines', async () => {
-    previewProformaInvoice.mockResolvedValue({
+  it('leaves an UNPRICED document alone - it has nothing to denominate', () => {
+    const v = verdictFromPreview({
       ...PREVIEW,
-      documents: [{ ...PREVIEW.documents[0], total: 950, stated_total: 1000 }],
+      priced_lines: 0,
+      documents: [
+        {
+          ...PREVIEW.documents[0],
+          total: null,
+          stated_total: null,
+          currency: null,
+          currency_source: 'none' as const,
+        },
+      ],
     });
-    openDialog();
-    await chooseSupplier();
-    pickFile();
-    fireEvent.click(testButton());
 
-    expect(await screen.findByText(/does not match the lines/)).toBeInTheDocument();
-    expect(screen.getByText(/stated RMB 1,000\.00|stated.*1,000/)).toBeInTheDocument();
+    expect(v.valid).toBe(true);
   });
 
-  it('does not flag a document total that matches the summed lines', async () => {
-    openDialog();
-    await chooseSupplier();
-    pickFile();
-    fireEvent.click(testButton());
-
-    expect(await screen.findByText(/Total/)).toBeInTheDocument();
-    expect(screen.queryByText(/does not match the lines/)).not.toBeInTheDocument();
-  });
-
-  it('names unmatched item codes rather than dropping them silently', async () => {
-    previewProformaInvoice.mockResolvedValue({
+  it('counts codes that bind to nothing as a WARNING, never an error', () => {
+    const v = verdictFromPreview({
       ...PREVIEW,
-      unmatched_items: 1,
-      unmatched_item_codes: ['ZZ-NOPE'],
-      documents: [{ ...PREVIEW.documents[0], unmatched_items: ['ZZ-NOPE'] }],
+      unmatched_items: 2,
+      unmatched_item_codes: ['ZZ-NOPE', 'ZZ-ALSO'],
     });
-    openDialog();
-    await chooseSupplier();
-    pickFile();
-    fireEvent.click(testButton());
 
-    expect((await screen.findAllByText(/ZZ-NOPE/)).length).toBeGreaterThan(0);
+    expect(v.valid).toBe(true);
+    expect(v.warnings[0]).toContain('ZZ-NOPE');
+    expect(v.warnings[0]).toContain('2 codes are');
+  });
+
+  it('says which invoices will supersede an earlier version', () => {
+    const v = verdictFromPreview(previewWithCandidate());
+
+    expect(v.warnings.some((w) => /1 invoice updates an earlier version: PI-2026-001/.test(w))).toBe(
+      true,
+    );
+  });
+
+  it('carries the reader\'s own row complaints through as warnings', () => {
+    const v = verdictFromPreview({ ...PREVIEW, problems: ['Row 12: skipped ABC'] });
+
+    expect(v.warnings).toContain('Row 12: skipped ABC');
+    expect(v.valid).toBe(true);
   });
 });
 
-describe('ProformaUploadDialog - apply', () => {
-  it('reports invoices created', async () => {
-    applyProformaInvoice.mockResolvedValue({
-      documents_created: 1,
-      documents_updated: 0,
-      results: [],
-      summary: {},
+describe('ProformaUploadDialog - a file the verdict blocks', () => {
+  it('disables Confirm and says why, once Test has read it as unusable', async () => {
+    previewProformaInvoice.mockResolvedValue({
+      ...PREVIEW,
+      ok: false,
+      missing_columns: ['unit_price'],
     });
+    openDialog();
+    await chooseSupplier();
+    pickFile();
+    fireEvent.click(testButton());
+
+    await waitFor(() => expect(confirmButton()).toBeDisabled());
+    expect(confirmButton()).toHaveAttribute(
+      'title',
+      expect.stringContaining('no unit_price column'),
+    );
+  });
+
+  it('refuses a priced file nothing can price, naming the invoice', async () => {
+    previewProformaInvoice.mockResolvedValue({
+      ...PREVIEW,
+      priced_lines_without_currency: 5,
+      documents: [
+        { ...PREVIEW.documents[0], currency: null, currency_source: 'none' as const },
+      ],
+    });
+    openDialog();
+    await chooseSupplier();
+    pickFile();
+    fireEvent.click(testButton());
+
+    expect(await screen.findByText(/Nothing says which money this invoice is in/)).toBeInTheDocument();
+    expect(confirmButton()).toBeDisabled();
+  });
+});
+
+describe('ProformaUploadDialog - revisions are the default, not a question', () => {
+  it('files the candidate as a revision without asking, on a Confirm with no Test', async () => {
+    previewProformaInvoice.mockResolvedValue(previewWithCandidate());
+    openDialog();
+    await chooseSupplier();
+    const file = pickFile();
+
+    fireEvent.click(confirmButton());
+
+    await waitFor(() => expect(applyProformaInvoice).toHaveBeenCalledTimes(1));
+    expect(applyProformaInvoice).toHaveBeenCalledWith(file, 'sup-1', { '0': 'pi-earlier' });
+    // The read Confirm needed, taken on the Confirm press - never on the file being picked.
+    expect(previewProformaInvoice).toHaveBeenCalledTimes(1);
+  });
+
+  it('reuses the read Test already took rather than reading the file twice', async () => {
+    previewProformaInvoice.mockResolvedValue(previewWithCandidate());
+    openDialog();
+    await chooseSupplier();
+    const file = pickFile();
+
+    fireEvent.click(testButton());
+    // Wait for the read to LAND, not just to start: Confirm is disabled while the preview
+    // is in flight, and a click on a disabled button is a silent no-op (CI flaked here).
+    await waitFor(() => expect(confirmButton()).toBeEnabled());
+    expect(previewProformaInvoice).toHaveBeenCalledTimes(1);
+    fireEvent.click(confirmButton());
+
+    await waitFor(() => expect(applyProformaInvoice).toHaveBeenCalledTimes(1));
+    expect(applyProformaInvoice).toHaveBeenCalledWith(file, 'sup-1', { '0': 'pi-earlier' });
+    expect(previewProformaInvoice).toHaveBeenCalledTimes(1);
+  });
+
+  it('sends an empty selection when the file revises nothing on record', async () => {
+    openDialog();
+    await chooseSupplier();
+    const file = pickFile();
+
+    fireEvent.click(confirmButton());
+
+    await waitFor(() => expect(applyProformaInvoice).toHaveBeenCalledWith(file, 'sup-1', {}));
+  });
+});
+
+describe('ProformaUploadDialog - what the apply reports', () => {
+  it('reports invoices created', async () => {
     const { onApplied } = openDialog();
     await chooseSupplier();
     pickFile();
@@ -350,14 +481,31 @@ describe('ProformaUploadDialog - apply', () => {
 
     fireEvent.click(confirmButton());
 
-    expect(await screen.findByText(/Created 1 invoice, updated 2\./)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/Created 1 invoice\. Updated 2 in place\./),
+    ).toBeInTheDocument();
   });
 
-  it('reports nothing new when every document in the file already existed', async () => {
+  it('names the invoice a re-upload landed on, rather than "nothing new"', async () => {
     applyProformaInvoice.mockResolvedValue({
       documents_created: 0,
-      documents_updated: 3,
-      results: [],
+      documents_updated: 1,
+      results: [
+        {
+          index: 0,
+          invoice_id: 'pi-1',
+          pi_number: 'PI-2026-7-31-1',
+          invoice_date: '2026-07-31',
+          currency: 'CNY',
+          currency_source: 'document',
+          lines: 5,
+          revision_no: 1,
+          revision_of_id: null,
+          total_amount: 1000,
+          unmatched_items: [],
+          created: false,
+        },
+      ],
       summary: {},
     });
     openDialog();
@@ -366,10 +514,58 @@ describe('ProformaUploadDialog - apply', () => {
 
     fireEvent.click(confirmButton());
 
-    expect(await screen.findByText(/Nothing new was created, updated 3\./)).toBeInTheDocument();
+    expect(await screen.findByText(/Updated PI-2026-7-31-1/)).toBeInTheDocument();
   });
 
-  it('shows the server\'s refusal and keeps the dialog open', async () => {
+  it('says how many landed as revisions', async () => {
+    applyProformaInvoice.mockResolvedValue({
+      documents_created: 1,
+      documents_updated: 0,
+      results: [
+        {
+          index: 0,
+          invoice_id: 'pi-new',
+          pi_number: 'PI-2026-001-R2',
+          invoice_date: '2026-08-01',
+          currency: 'CNY',
+          currency_source: 'document',
+          lines: 5,
+          revision_no: 2,
+          revision_of_id: 'pi-earlier',
+          total_amount: 1000,
+          unmatched_items: [],
+          created: true,
+        },
+      ],
+      summary: {},
+    });
+    openDialog();
+    await chooseSupplier();
+    pickFile();
+
+    fireEvent.click(confirmButton());
+
+    expect(await screen.findByText(/1 filed as a revision/)).toBeInTheDocument();
+  });
+
+  it('replaces the verdict with the result rather than showing both', async () => {
+    openDialog();
+    await chooseSupplier();
+    pickFile();
+    fireEvent.click(testButton());
+    await screen.findByText('No errors');
+
+    fireEvent.click(confirmButton());
+
+    await screen.findByText(/Created 1 invoice/);
+    expect(screen.queryByText('No errors')).not.toBeInTheDocument();
+    // And the footer is done: Cancel becomes Close, and Test and Confirm are gone.
+    expect(screen.queryByRole('button', { name: /^Confirm$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Test$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Cancel$/i })).not.toBeInTheDocument();
+  });
+
+  it("shows the server's refusal and keeps the dialog open", async () => {
     applyProformaInvoice.mockRejectedValue(new Error('supplier_id is required'));
     openDialog();
     await chooseSupplier();
@@ -382,51 +578,55 @@ describe('ProformaUploadDialog - apply', () => {
   });
 });
 
-describe('ProformaUploadDialog - currency, the last resort (AC-P3.1)', () => {
-  function currencyField(): HTMLInputElement {
-    return screen.getByLabelText('Currency') as HTMLInputElement;
+/**
+ * Opened from the loading plan, the supplier is already known - the plan was built for it,
+ * and the proforma is what stands in for a missing stock list (Q2). Asking again would let
+ * the document be filed against a supplier the plan behind the dialog knows nothing about.
+ */
+describe('ProformaUploadDialog - a supplier the caller already knows', () => {
+  function openDialogForSupplier() {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const onApplied = vi.fn();
+    render(
+      <QueryClientProvider client={qc}>
+        <ProformaUploadDialog
+          open
+          onOpenChange={() => {}}
+          onApplied={onApplied}
+          supplierId="sup-1"
+          supplierOption={{ value: 'sup-1', label: 'Kailu Hardware Factory' }}
+        />
+      </QueryClientProvider>,
+    );
+    return { onApplied };
   }
 
-  it('sends no currency at all when the field is left empty', async () => {
-    openDialog();
-    await chooseSupplier();
-    const file = pickFile();
+  it('states the supplier instead of offering the picker', () => {
+    openDialogForSupplier();
 
-    fireEvent.click(testButton());
-
-    await waitFor(() => expect(previewProformaInvoice).toHaveBeenCalledWith(file, 'sup-1', null));
-  });
-
-  it('upper-cases what is typed and caps it at three letters', () => {
-    openDialog();
-
-    fireEvent.change(currencyField(), { target: { value: 'usdx' } });
-
-    expect(currencyField().value).toBe('USD');
-  });
-
-  it('carries the typed currency on preview, test and apply', async () => {
-    applyProformaInvoice.mockResolvedValue({
-      documents_created: 1,
-      documents_updated: 0,
-      results: [],
-      summary: {},
-    });
-    openDialog();
-    await chooseSupplier();
-    const file = pickFile();
-    await act(async () => {
-      fireEvent.change(currencyField(), { target: { value: 'usd' } });
-    });
-
-    fireEvent.click(testButton());
-    await waitFor(() =>
-      expect(previewProformaInvoice).toHaveBeenCalledWith(file, 'sup-1', 'USD'),
+    expect(screen.queryByLabelText('Supplier')).not.toBeInTheDocument();
+    expect(screen.getByTestId('proforma-fixed-supplier')).toHaveTextContent(
+      'Kailu Hardware Factory',
     );
+  });
+
+  it('lets the file be dropped straight away, with no pick to make first', () => {
+    openDialogForSupplier();
+    pickFile();
+
+    expect(testButton()).toBeEnabled();
+    expect(confirmButton()).toBeEnabled();
+  });
+
+  it('still reads nothing on pick, and carries that supplier on the apply', async () => {
+    openDialogForSupplier();
+    const file = pickFile();
+
+    await Promise.resolve();
+    expect(previewProformaInvoice).not.toHaveBeenCalled();
 
     fireEvent.click(confirmButton());
-    await waitFor(() =>
-      expect(applyProformaInvoice).toHaveBeenCalledWith(file, 'sup-1', 'USD'),
-    );
+
+    await waitFor(() => expect(applyProformaInvoice).toHaveBeenCalledWith(file, 'sup-1', {}));
   });
 });

@@ -441,6 +441,14 @@ class SalesOrderLine(Base, CompanyScopedMixin):
     # did not carry it at all. Mapped now because the demand drill quotes it: "who ordered
     # it and at what price" is the question the buyer opens that popover with.
     unit_price = Column(Numeric(15, 2), nullable=True)
+    # The rest of the money the sales book states per line, and the reason the detail page
+    # could only ever print a unit price beside a quantity. Both NULL when the file said
+    # nothing: a discount of 0 claims a discount of nothing was given, and a line total of
+    # 0 claims the line was free - neither is a fact any export handed us.
+    # `line_total` is the file's `Total (Inc)` - what the customer was actually charged
+    # for the line, after the discount - and it is what the header's `total_amount` sums.
+    discount = Column(Numeric(15, 2), nullable=True)
+    line_total = Column(Numeric(15, 2), nullable=True)
     priority = Column(String(20), nullable=True)  # inherit from header / override
     # When this line's quantity must be on hand. PER LINE, not per header: the order
     # inquiry the business works from states a delivery date per line and one SO routinely

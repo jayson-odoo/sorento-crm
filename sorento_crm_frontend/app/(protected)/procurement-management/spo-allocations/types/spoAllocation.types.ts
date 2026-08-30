@@ -2,8 +2,12 @@ export interface SPOAllocation {
   id: string;
   spo_number?: string | null;
   spo_line_number?: number | null;
-  inbound_shipment_id: string;
-  warehouse_id: string;
+  /** Null until a container is booked: an imported SPO document has no shipment yet. */
+  inbound_shipment_id?: string | null;
+  /** Null where the book names a stock location we do not hold; `location_code` keeps it. */
+  warehouse_id?: string | null;
+  /** The stock location exactly as the book spelled it, held or not. */
+  location_code?: string | null;
   storage_zone_id?: string | null;
   allocated_quantity: number;
   uom_id?: string | null;
@@ -35,6 +39,16 @@ export interface SPOAllocation {
   grn_lines_count?: number;
   /** GRN headers linked to this SPO (same spo_number); for quick navigation. */
   linked_grns?: LinkedGRNSimple[];
+  /** Which feed wrote the row; null for one this system raised itself. */
+  source_system?: string | null;
+  /** `open` / `closed`, the same word a purchase-order line carries. */
+  line_status?: string | null;
+  /** The SPO's document date, and the line's promised arrival. */
+  issue_date?: string | null;
+  expected_date?: string | null;
+  supplier_id?: string | null;
+  unit_cost?: number | string | null;
+  currency?: string | null;
 }
 
 export interface LinkedGRNSimple {

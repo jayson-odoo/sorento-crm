@@ -110,8 +110,8 @@ export interface MixtureResult {
  * Recompute the buy after toggling which cover parts are in play.
  *
  * `needed` is the same base every other cover surface on the row uses - `Math.ceil(order_qty)`
- * (see `PlanLineDecisionCell`) - so a toggle here can never disagree with the Decision cell or
- * the Suggested-action column reading the same line.
+ * (see `planEdits.suggestedDecisionFor`) - so a toggle here can never disagree with the
+ * decision panel or the Decision pill reading the same line.
  */
 export function composeMixture(
   needed: number,
@@ -132,20 +132,17 @@ export function composeMixture(
   return { stockQty, usePo, buy };
 }
 
-/** Matches `scm.reorder_policy.level_cover_months`'s column default (migration 273_scm_
- *  module_schema). Used only as a fallback when a row's own `suggestion_basis` never ran
- *  (no movement history yet) - the live policy value is not threaded onto the frozen row. */
-const DEFAULT_LEVEL_COVER_MONTHS = 2;
-
-/** Days in a month, for turning a cover-months horizon into the "next Xd" the ledger states -
- *  matches how `suggest_level`'s own `cover_months` is a month count, not a day count. */
-const DAYS_PER_MONTH = 30;
+/** The days a manual level covers when the row's own `suggestion_basis` never ran (no
+ *  movement history yet): the engine's own lead-time and safety-day fallbacks
+ *  (`reorder_level_service.DEFAULT_LEAD_TIME_DAYS` + `LEVEL_SAFETY_DAYS`). */
+const DEFAULT_LEVEL_LEAD_DAYS = 30;
+const DEFAULT_LEVEL_SAFETY_DAYS = 14;
 
 /** Named per mode, so the "+ Add" label can say WHERE its horizon came from rather than
  *  leaving the buyer to trust a bare day count (user feedback: "the label must name its
  *  source"). */
 const FORECAST_SOURCE_LABEL = {
-  manual: 'cover window per policy',
+  manual: 'lead time plus safety days',
   auto: 'review period per policy',
 } as const;
 
@@ -175,7 +172,7 @@ export interface ForecastAddOn {
  * Auto mode uses the policy's own review window (`rec.review_days`, the same window the
  * order-up-to derivation already folds in). Manual mode has no review window - the level
  * basis exists specifically because a forecast term is not part of its trigger - so it
- * borrows the level suggestion's own cover-months horizon instead, converted to days.
+ * borrows the days the LEVEL itself covers: its lead time plus its safety days (AC-R11).
  *
  * `qty` can come back `0` (a falling trend that ate the whole flat proposal) - that is
  * DIFFERENT from returning `null` (no measurable demand at all, so there is nothing to
@@ -187,7 +184,7 @@ export function forecastAddOn(
     policy_type?: string | null;
     forecast_daily_demand?: number | null;
     review_days?: number | null;
-    suggestion_basis?: { cover_months?: number } | null;
+    suggestion_basis?: { lead_time_days?: number; safety_days?: number } | null;
   },
   trend?: TrajectoryEntry,
 ): ForecastAddOn | null {
@@ -195,7 +192,10 @@ export function forecastAddOn(
   if (rate == null || rate <= 0) return null;
   const manual = rec.policy_type === 'reorder_level';
   const horizonDays = manual
-    ? Math.round((rec.suggestion_basis?.cover_months ?? DEFAULT_LEVEL_COVER_MONTHS) * DAYS_PER_MONTH)
+    ? Math.round(
+        (rec.suggestion_basis?.lead_time_days ?? DEFAULT_LEVEL_LEAD_DAYS) +
+          (rec.suggestion_basis?.safety_days ?? DEFAULT_LEVEL_SAFETY_DAYS),
+      )
     : Math.round(rec.review_days ?? 0);
   if (!(horizonDays > 0)) return null;
   const flatQty = Math.round(rate * horizonDays);
@@ -224,6 +224,55 @@ export function forecastAddOn(
   };
 }
 
+/** One order behind a line, in the shape the ledger's demand blocks render.
+ *
+ *  `linked` is the part of an Order Inquiry instruction already placed on a purchase or
+ *  shipping order; `qty` is what is still owed. Null on a retail line, which has no
+ *  instruction to place (AC-R8). */
+export interface LedgerDemandRow {
+  key: string;
+  soId: string | null;
+  soNumber: string;
+  customer: string;
+  deliveryDate: string | null;
+  qty: number;
+  linked: number | null;
+}
+
+/** The demand drill's lines, as the ledger's Project / Retail blocks read them.
+ *
+ *  Soonest needed first - the order a buyer reads them in - and undated last, because a
+ *  line with no date is not urgent, it is unscheduled. */
+export function ledgerDemandRows(
+  lines:
+    | {
+        so_id?: string | null;
+        so_number: string;
+        customer_label: string;
+        required_date: string | null;
+        qty: number;
+        linked_qty?: number | null;
+      }[]
+    | undefined,
+): LedgerDemandRow[] {
+  return [...(lines ?? [])]
+    .sort((a, b) => {
+      if (a.required_date === b.required_date) return a.so_number.localeCompare(b.so_number);
+      if (!a.required_date) return 1;
+      if (!b.required_date) return -1;
+      return a.required_date.localeCompare(b.required_date);
+    })
+    .map((l, i) => ({
+      key: `${l.so_number}-${l.required_date ?? 'undated'}-${i}`,
+      soId: l.so_id ?? null,
+      soNumber: l.so_number,
+      customer: l.customer_label,
+      deliveryDate: l.required_date,
+      qty: l.qty,
+      linked: l.linked_qty ?? null,
+    }));
+}
+
 export interface LevelLine {
   level: number | null;
   sourceLabel: string;
@@ -235,6 +284,10 @@ export interface LevelLine {
 const LEVEL_SOURCE_LABEL: Record<string, string> = {
   manual: 'buyer set',
   accepted_suggestion: 'buyer accepted the suggestion',
+  // The plan fell back to the item master because nobody has set a level of their own
+  // (`reorder_run_service.MASTER_LEVEL_SOURCE`). Named rather than shown as somebody's
+  // decision, so a buyer can tell AutoCount's number from their own (AC-R3).
+  autocount_master: 'AutoCount master (no buyer level set)',
 };
 
 /** THE LINE, manual mode: the level a buyer owns, its source, and (when the backend ever
