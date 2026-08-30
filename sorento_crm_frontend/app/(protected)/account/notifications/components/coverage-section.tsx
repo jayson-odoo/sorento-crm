@@ -210,9 +210,9 @@ export function CoverageSection() {
                     </p>
                     <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                       {c.is_active ? (
-                        <Badge variant="success" appearance="ghost">Active</Badge>
+                        <Badge variant="success">Active</Badge>
                       ) : (
-                        <Badge variant="secondary" appearance="ghost">Inactive</Badge>
+                        <Badge variant="secondary">Inactive</Badge>
                       )}
                       {editing ? (
                         <span className="flex items-center gap-1.5">
@@ -225,12 +225,12 @@ export function CoverageSection() {
                           <span>{editRedirect ? 'Auto-assign' : 'Notify only'}</span>
                         </span>
                       ) : c.redirect_assignments ? (
-                        <Badge variant="primary" appearance="ghost">Auto-assign</Badge>
+                        <Badge variant="primary">Auto-assign</Badge>
                       ) : (
-                        <Badge variant="secondary" appearance="ghost">Notify only</Badge>
+                        <Badge variant="secondary">Notify only</Badge>
                       )}
                       {c.assigned_by_hod && (
-                        <Badge variant="warning" appearance="ghost">
+                        <Badge variant="warning">
                           Assigned by {c.assigned_by_name ?? 'manager'}
                         </Badge>
                       )}

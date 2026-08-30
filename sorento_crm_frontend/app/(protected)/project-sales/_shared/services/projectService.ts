@@ -1091,20 +1091,6 @@ export async function listPurchaseOrders(
   return body.data;
 }
 
-/**
- * Prev/next neighbours of a customer PO within its project's PO list - the same set, in the
- * same order, that `/projects/{id}/purchase-orders` returns. Read by the generic
- * `useRecordNeighbours` hook.
- *
- *   GET /api/v1/project-sales/projects/{project_id}/purchase-orders/neighbours?id=<po_id>
- *   200 { total, index, prev_id, next_id }
- *     - index is 1-based, null when the PO belongs to another project.
- *     - prev_id/next_id wrap circularly; null only when total <= 1.
- *   404 when the project or the PO id names nothing.
- */
-export function purchaseOrderNeighboursPath(projectId: string): string {
-  return `${BASE}/projects/${projectId}/purchase-orders/neighbours`;
-}
 
 export async function createPurchaseOrder(
   projectId: string,

@@ -11,7 +11,6 @@ import { Card, CardHeader } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EM_DASH, fmtDecimal, fmtInt } from '../../lib/format';
 import { useConsolidatedPackingList } from '../../hooks/useFulfilment';
@@ -231,10 +230,7 @@ function FactorySection({ factory }: { factory: PackingListFactory }) {
         emptyMessage="Nothing from this factory on this container."
       >
         <div className="overflow-hidden rounded-lg border">
-          <ScrollArea>
-            <DataGridTable />
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
+          <DataGridTable />
         </div>
       </DataGrid>
     </section>

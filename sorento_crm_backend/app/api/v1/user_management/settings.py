@@ -1,6 +1,7 @@
 """System settings API routes."""
 import logging
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from starlette.datastructures import UploadFile as StarletteUploadFile
 from sqlalchemy.orm import Session
 from typing import Literal, Optional
 from pydantic import BaseModel, Field
@@ -9,6 +10,7 @@ from app.dependencies import get_current_user, require_permission
 from app.models.product import UnitOfMeasure
 from app.models.user import SystemSetting, User, UserRole
 from app.services.error_handler import handle_internal_error
+from app.services.signin_background import resolve_signin_background_url
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +74,11 @@ class SystemSettingUpdate(BaseModel):
     # Global default grace window for form-SLA actions. 0 = nothing defers, which is
     # what ships; a stage may override it (form_sla_configs.grace_seconds).
     form_sla_grace_seconds: Optional[int] = Field(None, ge=0, le=600)
+    # The two deferred-action windows (D16). `ge=1`, not `ge=0`: zero would apply a
+    # delete with no way back, which is the confirmation dialog's failure mode wearing
+    # the new model's clothes. Both must appear here AND in the GET dict below.
+    deferred_delete_seconds: Optional[int] = Field(None, ge=1, le=600)
+    deferred_action_seconds: Optional[int] = Field(None, ge=1, le=600)
     n8n_attachment_webhook_url: Optional[str] = None
     n8n_crm_chat_outbound_webhook_url: Optional[str] = None
     n8n_stock_inquiry_revise_webhook_url: Optional[str] = None
@@ -202,6 +209,10 @@ async def get_settings(
                 "id": settings.id if settings else None,
                 "name": settings.name if settings else None,
                 "logo": settings.logo if settings else None,
+                # A new settings column reaches the FE only if it is on this manual dict.
+                # Signed here, not raw: the stored value is a non-signed CDN URL and the
+                # settings screen renders it straight into an <img>.
+                "signin_background": resolve_signin_background_url(settings),
                 "active": settings.active if settings else None,
                 "address": settings.address if settings else None,
                 "website_url": settings.website_url if settings else None,
@@ -221,6 +232,19 @@ async def get_settings(
                 "default_uom_code": default_uom.uom_code if default_uom else None,
                 "form_sla_grace_seconds": (
                     getattr(settings, "form_sla_grace_seconds", 0) if settings else 0
+                ),
+                # The two deferred-action windows (D16). Defaults stated here as well as
+                # on the column, so a settings row that predates the migration still
+                # renders 10 and 5 rather than an empty field.
+                "deferred_delete_seconds": (
+                    getattr(settings, "deferred_delete_seconds", 10) or 10
+                    if settings
+                    else 10
+                ),
+                "deferred_action_seconds": (
+                    getattr(settings, "deferred_action_seconds", 5) or 5
+                    if settings
+                    else 5
                 ),
                 "takeover_cooldown_seconds": (
                     getattr(settings, "takeover_cooldown_seconds", 60) if settings else None
@@ -641,3 +665,138 @@ async def test_smtp_connection(
         return SmtpTestResult(success=success, message=message)
     except Exception as e:
         raise handle_internal_error(str(e))
+
+
+# ---------------------------------------------------------------------------
+# Sign-in background
+# ---------------------------------------------------------------------------
+#
+# Its own multipart endpoint rather than a field on `PUT /general`, for two reasons:
+# the general update is a JSON body and threading a file through it would turn every
+# save of an unrelated field into a multipart request, and the write path here has to
+# be the ONLY way this column is set. `signin_background` is deliberately absent from
+# `SystemSettingUpdate` above: it holds a URL that the sign-in page loads for anonymous
+# visitors, so letting a client PUT an arbitrary string into it would let an admin point
+# the login screen at somebody else's server. The bytes come to us or they do not go in.
+#
+# Read side: the column is on the GET dict (resolved to a signed URL, see above) and on
+# `GET /api/v1/public/branding` for the unauthenticated sign-in page.
+
+SIGNIN_BACKGROUND_MAX_BYTES = 5 * 1024 * 1024
+SIGNIN_BACKGROUND_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp"}
+SIGNIN_BACKGROUND_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
+
+
+class SigninBackgroundResponse(BaseModel):
+    """The URL the settings screen previews, or null once it has been removed."""
+
+    signin_background_url: Optional[str] = None
+
+
+@router.post(
+    "/signin-background",
+    status_code=status.HTTP_200_OK,
+    response_model=SigninBackgroundResponse,
+)
+async def update_signin_background(
+    request: Request,
+    current_user: dict = Depends(require_permission("user_management.settings.edit")),
+    db: Session = Depends(get_db),
+):
+    """Upload or clear the photograph behind the sign-in card.
+
+    Multipart form:
+      backgroundAction = "save" | "remove"
+      backgroundFile   = the image, required when saving
+
+    Removing clears the columns and the sign-in page falls back to its designed default
+    wash, which is why there is no confirmation of a "nothing set" state to worry about:
+    the screen it returns to is a finished one.
+    """
+    import re
+    import uuid as _uuid
+    from pathlib import Path
+
+    settings = db.query(SystemSetting).first()
+    if not settings:
+        raise HTTPException(status_code=404, detail="Settings not found")
+
+    form = await request.form()
+    raw_action = form.get("backgroundAction")
+    action = (raw_action if isinstance(raw_action, str) else str(raw_action or "")).strip()
+
+    if action == "remove":
+        # Shared with the deferred `signin_background.remove` record action, so the two
+        # paths cannot drift about which columns "removed" means.
+        from app.services.signin_background import clear_signin_background
+
+        clear_signin_background(db)
+        return SigninBackgroundResponse(signin_background_url=None)
+
+    if action != "save":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="backgroundAction must be 'save' or 'remove'",
+        )
+
+    upload = form.get("backgroundFile")
+    # A multipart field can arrive as a plain string, so narrow before reading it rather
+    # than trusting that a field named `backgroundFile` carried a file.
+    # request.form() hands back starlette's UploadFile, of which fastapi's is a
+    # subclass - so the check must be against the starlette class or it never passes.
+    filename = upload.filename if isinstance(upload, StarletteUploadFile) else None
+    if not isinstance(upload, StarletteUploadFile) or not filename:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="An image is required when saving a sign-in background",
+        )
+
+    content = await upload.read()
+    if len(content) > SIGNIN_BACKGROUND_MAX_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The sign-in background must be 5MB or smaller",
+        )
+
+    content_type = getattr(upload, "content_type", None) or "application/octet-stream"
+    if content_type not in SIGNIN_BACKGROUND_CONTENT_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only JPG, PNG or WebP images are allowed",
+        )
+
+    original = Path(filename).name or "signin-background.jpg"
+    stem = re.sub(r"[^a-zA-Z0-9._-]", "_", Path(original).stem)[:80] or "signin-background"
+    ext = (Path(original).suffix[:10] or ".jpg").lower()
+    if ext not in SIGNIN_BACKGROUND_EXTENSIONS:
+        ext = ".jpg"
+    storage_path = f"branding/signin-background/{_uuid.uuid4().hex}_{stem}{ext}"
+
+    try:
+        from app.services.storage_router import (
+            cdn_base_url,
+            default_provider,
+            get_backend,
+        )
+
+        provider = default_provider()
+        key, _ = get_backend(provider).upload_file(content, storage_path, content_type=content_type)
+        setattr(settings, "signin_background", cdn_base_url(provider, key))
+        setattr(settings, "signin_background_storage_provider", provider)
+    except ValueError as cfg_err:
+        logger.error("Sign-in background upload configuration error: %s", cfg_err)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="File storage is not configured. Contact an administrator.",
+        )
+    except Exception as upload_err:  # noqa: BLE001
+        logger.exception("Sign-in background upload failed: %s", upload_err)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to upload the sign-in background. Please try again.",
+        )
+
+    db.commit()
+    return SigninBackgroundResponse(
+        signin_background_url=resolve_signin_background_url(settings)
+    )

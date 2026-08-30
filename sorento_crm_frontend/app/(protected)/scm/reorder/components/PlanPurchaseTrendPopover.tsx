@@ -8,6 +8,7 @@ import {
   type PurchaseTrendLine,
 } from '../lib/purchaseTrend';
 import { humanAge, type PriceAdvice } from '../lib/priceAdvice';
+import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 
 /**
  * Supplier, date, quantity, unit cost - the receipts behind the trend sentence.
@@ -21,33 +22,36 @@ export function RecentPurchasesTable({ lines }: { lines: PurchaseTrendLine[] }) 
     return <p className="text-muted-foreground">No purchases in the imported history.</p>;
   }
   return (
-    <table className="mt-0.5 w-full text-muted-foreground">
-      <thead>
-        <tr className="text-2xs uppercase text-muted-foreground/70">
-          <th className="pb-0.5 text-left font-normal">Supplier</th>
-          <th className="pb-0.5 text-right font-normal">Date</th>
-          <th className="pb-0.5 text-right font-normal">Qty</th>
-          <th className="pb-0.5 text-right font-normal">Unit cost</th>
-        </tr>
-      </thead>
-      <tbody>
-        {lines.map((l, i) => (
-          <tr key={`${l.po_number ?? 'po'}-${l.order_date ?? 'date'}-${i}`}>
-            <td
-              className="max-w-32 truncate py-0.5"
-              title={l.supplier_name ?? l.supplier_code ?? undefined}
-            >
-              {l.supplier_name ?? l.supplier_code ?? EM_DASH}
-            </td>
-            <td className="py-0.5 text-right tabular-nums">{fmtDate(l.order_date)}</td>
-            <td className="py-0.5 text-right tabular-nums">{fmtInt(l.qty)}</td>
-            <td className="py-0.5 text-right tabular-nums">
-              {fmtSupplierCost(l.unit_cost, l.currency)}
-            </td>
+    <ScrollArea>
+      <table className="mt-0.5 w-auto min-w-full text-muted-foreground">
+        <thead>
+          <tr className="text-2xs uppercase text-muted-foreground/70">
+            <th className="pb-0.5 text-left font-normal">Supplier</th>
+            <th className="pb-0.5 text-right font-normal">Date</th>
+            <th className="pb-0.5 text-right font-normal">Qty</th>
+            <th className="pb-0.5 text-right font-normal">Unit cost</th>
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {lines.map((l, i) => (
+            <tr key={`${l.po_number ?? 'po'}-${l.order_date ?? 'date'}-${i}`}>
+              <td
+                className="max-w-32 truncate py-0.5"
+                title={l.supplier_name ?? l.supplier_code ?? undefined}
+              >
+                {l.supplier_name ?? l.supplier_code ?? EM_DASH}
+              </td>
+              <td className="py-0.5 text-right tabular-nums">{fmtDate(l.order_date)}</td>
+              <td className="py-0.5 text-right tabular-nums">{fmtInt(l.qty)}</td>
+              <td className="py-0.5 text-right tabular-nums">
+                {fmtSupplierCost(l.unit_cost, l.currency)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <ScrollBar orientation="horizontal" />
+    </ScrollArea>
   );
 }
 

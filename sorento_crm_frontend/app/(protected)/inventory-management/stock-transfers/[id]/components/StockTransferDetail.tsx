@@ -2,21 +2,7 @@
 
 import * as React from 'react';
 import Link from 'next/link';
-import { ArrowLeft, FileText, History, Settings } from 'lucide-react';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
+import { FileText, History } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardHeading, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -28,13 +14,13 @@ import {
   TRANSFER_KIND_LABEL,
   type StockTransfer,
 } from '../../types/stockTransfer.types';
-import {
-  StockTransferActionDialogs,
-  availableActions,
-  type TransferAction,
-} from '../../components/StockTransferActions';
+import { StockTransferActionDialogs, type TransferAction } from '../../components/StockTransferActions';
 import { TransferStatePill } from '../../components/StockTransfersPanel';
-import StockTransferNavigation from '../../components/StockTransferNavigation';
+import DetailActions from '@/components/common/DetailActions';
+import { stockTransferActions } from '../../actions';
+import BackToList from '@/components/common/BackToList';
+import { PageHeader } from '@/components/common/PageHeader';
+import { stockTransfersPagerQuery } from '../../hooks/useStockTransfers';
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -57,42 +43,33 @@ export function StockTransferDetail({ id }: { id: string }) {
   const { data, isLoading, isError } = useStockTransfer(id);
   const [tab, setTab] = React.useState('general');
   const [action, setAction] = React.useState<TransferAction | null>(null);
-
-  const backLink = (
-    <Button variant="outline" size="sm" asChild>
-      <Link href="/inventory-management/stock-transfers">
-        <ArrowLeft className="size-4" />
-        Back to transfers
-      </Link>
-    </Button>
+  // One definition of what can be done to a transfer, shown here and on the row.
+  const transferActions = React.useMemo(
+    () =>
+      data
+        ? stockTransferActions(data, setAction)
+        : { approve: null, actions: [] },
+    [data],
   );
 
-  /** The leaf is the transfer NUMBER, never the id: no UUID reaches a screen. */
-  const crumbs = (leaf: string) => (
-    <Breadcrumb>
-      <BreadcrumbList>
-        <BreadcrumbItem>
-          <BreadcrumbLink href="/">Home</BreadcrumbLink>
-        </BreadcrumbItem>
-        <BreadcrumbSeparator />
-        <BreadcrumbItem>
-          <BreadcrumbLink href="/inventory-management/stock-transfers">
-            Stock Transfers
-          </BreadcrumbLink>
-        </BreadcrumbItem>
-        <BreadcrumbSeparator />
-        <BreadcrumbItem>
-          <BreadcrumbPage>{leaf}</BreadcrumbPage>
-        </BreadcrumbItem>
-      </BreadcrumbList>
-    </Breadcrumb>
+  // Back carries the list query the row click wrote, so the reader returns to the
+  // page, sort and filters they left (S3-01).
+  const backLink = (
+    <BackToList
+      listPath="/inventory-management/stock-transfers"
+      label="Back to transfers"
+    />
+  );
+
+  /** The title is the transfer NUMBER, never the id: no UUID reaches a screen. */
+  const header = (title: string) => (
+    <PageHeader title={title} actions={backLink} />
   );
 
   if (isLoading) {
     return (
       <div className="space-y-4">
-        {crumbs('Loading')}
-        <div className="flex justify-end">{backLink}</div>
+        {header('Stock Transfer')}
         <Skeleton className="h-32 w-full rounded-xl" />
         <Skeleton className="h-64 w-full rounded-xl" />
       </div>
@@ -102,8 +79,7 @@ export function StockTransferDetail({ id }: { id: string }) {
   if (isError || !data) {
     return (
       <div className="space-y-4">
-        {crumbs('Not found')}
-        <div className="flex justify-end">{backLink}</div>
+        {header('Stock Transfer')}
         <Card className="flex flex-col items-center gap-3 p-10 text-center">
           <div className="text-sm font-semibold">Stock transfer not found</div>
           <p className="max-w-md text-sm text-muted-foreground">
@@ -116,11 +92,10 @@ export function StockTransferDetail({ id }: { id: string }) {
   }
 
   const transfer: StockTransfer = data;
-  const can = availableActions(transfer.state);
 
   return (
     <div className="space-y-4">
-      {crumbs(transfer.transfer_no)}
+      {header(transfer.transfer_no)}
       <Card>
         <CardHeader className="block py-4">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -128,30 +103,27 @@ export function StockTransferDetail({ id }: { id: string }) {
               <CardTitle className="text-lg">{transfer.transfer_no}</CardTitle>
               <TransferStatePill state={transfer.state} />
             </div>
-            <div className="flex shrink-0 flex-wrap items-center gap-2">
-              <StockTransferNavigation transferId={transfer.id} />
-              {/* One verb on the header (the captain, 27 Aug): Approve. "Mark moved" is
-                  bookkeeping nobody presses here, and Cancel sits behind the gear so the
-                  header does not offer the undoing beside the doing. */}
-              {can.approve ? (
-                <Button size="sm" onClick={() => setAction('approve')}>
-                  Approve
-                </Button>
-              ) : null}
-              {can.cancel ? (
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="outline" size="sm" aria-label="More actions">
-                      <Settings className="size-4" aria-hidden />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuItem onSelect={() => setAction('cancel')}>Cancel</DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              ) : null}
-              {backLink}
-            </div>
+            {/* One verb on the header (the captain, 27 Aug): Approve. "Mark moved" is
+                bookkeeping nobody presses here, and Cancel sits behind the gear so the
+                header does not offer the undoing beside the doing. The same set is what
+                a list row's "..." shows (D15). */}
+            <DetailActions
+              pager={{
+                ...stockTransfersPagerQuery,
+                detailPath: '/inventory-management/stock-transfers',
+                currentId: transfer.id,
+                ariaLabel: 'stock transfer',
+              }}
+              actions={transferActions.actions}
+              gearLabel="Stock transfer options"
+              primary={
+                transferActions.approve ? (
+                  <Button size="sm" onClick={transferActions.approve.run}>
+                    {transferActions.approve.label}
+                  </Button>
+                ) : null
+              }
+            />
           </div>
         </CardHeader>
       </Card>

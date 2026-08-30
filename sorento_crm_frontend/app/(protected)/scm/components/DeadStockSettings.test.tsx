@@ -46,7 +46,7 @@ describe('DeadStockSettings', () => {
   it('disables Save until the value changes', async () => {
     render(<DeadStockSettings />);
     await openPopover();
-    const save = screen.getByRole('button', { name: /^Save$/i });
+    const save = screen.getByRole('button', { name: /^Save dead stock window$/i });
     expect(save).toBeDisabled();
     fireEvent.change(screen.getByLabelText('Dead-stock threshold in days'), { target: { value: '90' } });
     expect(save).toBeEnabled();
@@ -57,14 +57,14 @@ describe('DeadStockSettings', () => {
     await openPopover();
     fireEvent.change(screen.getByLabelText('Dead-stock threshold in days'), { target: { value: '0' } });
     expect(screen.getByText(/between 1 and 3650/i)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^Save$/i })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /^Save dead stock window$/i })).toBeDisabled();
   });
 
   it('saves a valid new value', async () => {
     render(<DeadStockSettings />);
     await openPopover();
     fireEvent.change(screen.getByLabelText('Dead-stock threshold in days'), { target: { value: '90' } });
-    fireEvent.click(screen.getByRole('button', { name: /^Save$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^Save dead stock window$/i }));
     await waitFor(() => expect(mutateAsync).toHaveBeenCalledWith(90));
   });
 });

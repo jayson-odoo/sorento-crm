@@ -1,48 +1,30 @@
 'use client';
 
 import * as React from 'react';
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { MoveLeft, Settings2, Trash2 } from 'lucide-react';
+import { Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Container } from '@/components/common/container';
+import { PageHeader } from '@/components/common/PageHeader';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import RecordNavigation from '@/components/common/RecordNavigation';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
-import {
-  Toolbar,
-  ToolbarActions,
-  ToolbarHeading,
-  ToolbarTitle,
-} from '@/components/common/toolbar';
 import { useBrandSelectQuery } from '@/app/(protected)/master-data-management/shared/hooks/use-brand-select-query';
 import { useProductCategorySelectQuery } from '@/app/(protected)/master-data-management/shared/hooks/use-product-category-select-query';
 import { useProjectSeries, useSeriesMutations } from '../../../_shared/hooks/useProjects';
 import type { ProjectSeries } from '../../../_shared/types/project.types';
 import { SeriesProductsTable } from './SeriesProductsTable';
 import { SeriesSheetLoader } from './SeriesSheetLoader';
+import BackToList, { useBackToListHref } from '@/components/common/BackToList';
+import DetailActions from '@/components/common/DetailActions';
 
 const NEW = 'new';
 
@@ -59,8 +41,12 @@ const NEW = 'new';
  */
 export function SeriesDetailClient({ seriesId }: { seriesId: string }) {
   const router = useRouter();
+  const backHref = useBackToListHref('/project-sales/series');
   const isNew = seriesId === NEW;
   const series = useProjectSeries(true);
+  // The whole series book is in memory (it is short and unpaged), so the pager is
+  // presentational: position and ends computed here, no list query to rebuild.
+  const seriesIndex = (series.data ?? []).findIndex((item) => item.id === seriesId);
   const { create, update, remove } = useSeriesMutations();
   const brands = useBrandSelectQuery();
   const categories = useProductCategorySelectQuery();
@@ -152,70 +138,51 @@ export function SeriesDetailClient({ seriesId }: { seriesId: string }) {
 
   return (
     <Container>
-      <Toolbar>
-        <ToolbarHeading>
-          <ToolbarTitle>{isNew ? 'New series' : row?.name || 'Series'}</ToolbarTitle>
-          <Breadcrumb>
-            <BreadcrumbList>
-              <BreadcrumbItem>
-                <BreadcrumbLink href="/">Home</BreadcrumbLink>
-              </BreadcrumbItem>
-              <BreadcrumbSeparator />
-              <BreadcrumbItem>
-                <BreadcrumbPage>Project Sales</BreadcrumbPage>
-              </BreadcrumbItem>
-              <BreadcrumbSeparator />
-              <BreadcrumbItem>
-                <BreadcrumbLink href="/project-sales/series">Series</BreadcrumbLink>
-              </BreadcrumbItem>
-            </BreadcrumbList>
-          </Breadcrumb>
-        </ToolbarHeading>
-        <ToolbarActions>
-          {/* Step through the series without going back to the list, the way the users
-              detail does. List mode rather than a neighbours endpoint: the whole series
-              list is already in memory here (it is what resolves this page's row), so
-              asking the server for two ids would be a round trip to learn what we hold. */}
-          {!isNew && row && (series.data ?? []).length > 1 && (
-            <RecordNavigation
-              basePath="/project-sales/series"
-              currentId={seriesId}
-              items={series.data ?? []}
-              ariaLabel="series"
-            />
-          )}
-          <Button asChild variant="outline">
-            <Link href="/project-sales/series">
-              <MoveLeft /> Back to series
-            </Link>
-          </Button>
-          {/* Destructive actions live behind the gear, not beside Back: Delete sat one
-              button away from the thing people click to leave the page. */}
-          {!isNew && row && (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="outline" mode="icon" aria-label="Series actions">
-                  <Settings2 className="size-4" aria-hidden />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem
-                  variant="destructive"
-                  onSelect={(event) => {
-                    // The menu closes on select and would unmount the dialog's trigger
-                    // context mid-open; defer so the confirmation actually appears.
-                    event.preventDefault();
-                    setConfirmingDelete(true);
-                  }}
-                >
-                  <Trash2 className="size-4" aria-hidden />
-                  Delete
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          )}
-        </ToolbarActions>
-      </Toolbar>
+      <PageHeader
+        title={isNew ? 'New series' : row?.name || 'Series'}
+        actions={
+          <BackToList listPath="/project-sales/series" label="Back to series" />
+        }
+      />
+
+      {/* The record's own actions: pager, gear, primary (D6). Step through the series
+          without going back to the list, the way the users detail does; the whole
+          series list is already in memory here, so the pager is presentational and
+          asks the server for nothing. Delete lives behind the gear, not beside Back. */}
+      {!isNew && row ? (
+        <DetailActions
+          className="mb-5"
+          pagerNode={
+            (series.data ?? []).length > 1 ? (
+              <RecordNavigation
+                index={seriesIndex >= 0 ? seriesIndex + 1 : null}
+                total={(series.data ?? []).length}
+                hasPrevious={seriesIndex > 0}
+                hasNext={
+                  seriesIndex >= 0 && seriesIndex < (series.data ?? []).length - 1
+                }
+                onPrevious={() =>
+                  router.push(`/project-sales/series/${(series.data ?? [])[seriesIndex - 1].id}`)
+                }
+                onNext={() =>
+                  router.push(`/project-sales/series/${(series.data ?? [])[seriesIndex + 1].id}`)
+                }
+                ariaLabel="series"
+              />
+            ) : null
+          }
+          gearLabel="Series actions"
+          actions={[
+            {
+              key: 'series.delete',
+              label: 'Delete series',
+              icon: Trash2,
+              kind: 'destructive' as const,
+              run: () => setConfirmingDelete(true),
+            },
+          ]}
+        />
+      ) : null}
 
       <div className="space-y-6">
         <Card>
@@ -327,7 +294,7 @@ export function SeriesDetailClient({ seriesId }: { seriesId: string }) {
           description={`Delete the series "${row.name}"? This action cannot be undone. A series still used by a quotation cannot be deleted, so deactivate it instead.`}
           onDelete={async () => {
             await remove.mutateAsync(row.id);
-            router.push('/project-sales/series');
+            router.push(backHref);
           }}
         />
       )}

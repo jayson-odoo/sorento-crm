@@ -10,6 +10,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useMyTasks } from '../../_shared/hooks/useProjects';
 import { bucketTasksByUrgency } from '../../_shared/lib/taskUrgency';
 import type { ProjectTask } from '../../_shared/types/project.types';
+import { PageHeader } from '@/components/common/PageHeader';
 
 /**
  * One person's open project work, across every project they are on (AC-N9).
@@ -27,23 +28,24 @@ export function MyTasksClient() {
 
   return (
     <div className="space-y-5">
-      <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0">
-          <h1 className="text-xl font-semibold">My tasks</h1>
-          <p className="text-sm text-muted-foreground">
-            Open project work assigned to you, or escalated to you, soonest first.
-          </p>
-        </div>
-        <label className="flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={includeOwned}
-            onChange={(event) => setIncludeOwned(event.target.checked)}
-            className="size-4 rounded border-border"
-          />
-          Include unassigned work on my projects
-        </label>
-      </header>
+      <PageHeader
+        title="My tasks"
+        actions={
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={includeOwned}
+              onChange={(event) => setIncludeOwned(event.target.checked)}
+              className="size-4 rounded border-border"
+            />
+            Include unassigned work on my projects
+          </label>
+        }
+      >
+        <p className="text-sm text-muted-foreground">
+          Open project work assigned to you, or escalated to you, soonest first.
+        </p>
+      </PageHeader>
 
       {query.isLoading ? (
         <div className="space-y-2">

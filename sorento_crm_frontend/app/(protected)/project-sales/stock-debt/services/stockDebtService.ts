@@ -38,7 +38,10 @@
  *           groups:    ['BB', ...]         what the flag admits, for the select
  *         }
  *
- *      `data[].months` carries one entry per axis key, in axis order.
+ *      `data[].months` carries one entry per axis key, in axis order. A month states its
+ *      OWN month (R37, 30 Aug 2026): the supply dated in it that is still free once the
+ *      assignment walk is over, less what the lines due in it went short of on their own
+ *      dates. Nothing carries, so a month with nothing due and nothing arriving reads 0.
  *      Rows are sorted by EARLIEST RED MONTH, then product code; a row with no red
  *      month sorts after every row that has one.
  *      `tba`, `undated` and `unlocated` are plain signed totals - the demand dated on
@@ -61,10 +64,11 @@
  *
  *      -> 200 {
  *           demand: [{ so_number, agent_code, warehouse_code, required_date, open_qty,
- *                      assigned_qty, assigned_source,
+ *                      assigned_qty, assigned_source, short_qty,
  *                      status: 'covered'|'late'|'short'|'pinned' }],
  *           supply: [{ kind: 'on_hand'|'spo'|'po', ref, warehouse_code, date,
- *                      bought_for, qty, overdue, assigned_to: [{ so_number, qty }] }]
+ *                      bought_for, qty, free_qty, overdue,
+ *                      assigned_to: [{ so_number, qty }] }]
  *         }
  *
  *      `demand` = the lines whose required date falls in that month, or every TBA /
@@ -72,7 +76,12 @@
  *      on hand by bin for the current month, an SPO at its arrival, a PO line at
  *      `issue + lead` (R29) carrying its `expected_date` as `bought_for` (display
  *      only, R30). An event whose arrival has passed with nothing received is listed
- *      with `overdue: true` and counted as nothing (R31).
+ *      with `overdue: true` and counted as nothing (R31), so its `free_qty` is 0.
+ *
+ *      The drill FOOTS with the cell that opened it (R37): `sum(free_qty)` less
+ *      `sum(short_qty)` over these rows IS that month's balance, which is what the two
+ *      tab footers print. `short_qty` is what a line went short of on its own date, so a
+ *      `late` line ends covered and still carries one.
  *
  * The shapes are typed field for field in `types/stockDebt.types.ts`; they are not
  * restated here, so the two cannot drift.

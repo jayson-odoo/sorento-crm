@@ -2,23 +2,6 @@ import { apiFetch } from '@/lib/api';
 import type { Order, OrderFormData, OrderDetail, OrderLine, OrderLineFormData } from '../types/order.types';
 import type { DataGridApiFetchParams, DataGridApiResponse } from '@/components/ui/data-grid';
 
-/**
- * Path of the orders neighbours endpoint. Consumed by `useOrderNeighbours`
- * via the generic `useRecordNeighbours` hook.
- *
- * Contract (see docs/plans/PLAN-record-navigation-standardization.md):
- *   GET /api/v1/order-management/orders/neighbours
- *   Query params: id=<uuid|order_number> + the SAME params the list GET accepts
- *                 (query, order_status_id, has_order_lines, sort, dir, ...).
- *                 page/limit are ignored.
- *   Auth: same dependency + module guard as the list GET.
- *   200:  { total: number, index: number|null, prev_id: string|null, next_id: string|null }
- *       - index is 1-based; null when the record is not in the filtered set
- *           (the backend then falls back to the unfiltered, default-sorted set).
- *       - prev_id/next_id wrap circularly; null only when total <= 1.
- */
-export const ORDER_NEIGHBOURS_PATH =
-  '/api/v1/order-management/orders/neighbours';
 
 export async function getOrders(
   params: DataGridApiFetchParams & {
@@ -84,18 +67,9 @@ export async function deleteOrder(id: string): Promise<void> {
   }
 }
 
-export async function bulkDeleteOrders(ids: string[]): Promise<{ message: string; deleted_count: number }> {
-  const response = await apiFetch('/api/v1/order-management/orders/bulk', {
-    method: 'DELETE',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ids }),
-  });
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: 'Failed to bulk delete delivery orders' }));
-    throw new Error(error.message);
-  }
-  return response.json();
-}
+// No bulk-delete client: the list parks one `order.delete` per selected row through
+// `/pending-actions` (D7), so this route has no frontend caller. The route itself still
+// stands for the API and n8n.
 
 /**
  * Export all orders to Excel (fetches all data by paginating through all pages)

@@ -23,6 +23,9 @@ class ResizeObserverStub {
 Element.prototype.scrollIntoView = Element.prototype.scrollIntoView ?? (() => {});
 Element.prototype.hasPointerCapture = Element.prototype.hasPointerCapture ?? (() => false);
 
+// The pager has its own tests (hooks/useListPager.test.ts).
+vi.mock('@/components/common/ListPager', () => ({ __esModule: true, default: () => null }));
+
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), custom: vi.fn() } }));
 
 const useProductSet = vi.hoisted(() => vi.fn());
@@ -30,6 +33,11 @@ const useProductSets = vi.hoisted(() => vi.fn());
 const useUpdateProductSet = vi.hoisted(() => vi.fn());
 
 vi.mock('../hooks/useProductSets', () => ({
+  // The pager reads the list page through the entity's shared key + fetch (S3-03).
+  productSetsPagerQuery: {
+    listQueryKey: () => ['product-sets'],
+    fetchPage: async () => ({ data: [], pagination: { total: 0 } }),
+  },
   useProductSet,
   useProductSets,
   useUpdateProductSet,
@@ -146,7 +154,7 @@ describe('ProductSetDetail - editing members', () => {
 
     enterEdit();
     fireEvent.click(screen.getByRole('checkbox', { name: /SRTWCX8608-RL sets the price/i }));
-    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^Save product set$/i }));
 
     await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
     const [{ data: payload }] = mutateAsync.mock.calls[0];
@@ -164,7 +172,7 @@ describe('ProductSetDetail - editing members', () => {
     enterEdit();
     const qtyInput = screen.getByRole('spinbutton', { name: /quantity for SRTWCX8608-RL/i });
     fireEvent.change(qtyInput, { target: { value: '3' } });
-    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^Save product set$/i }));
 
     await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
     const [{ data: payload }] = mutateAsync.mock.calls[0];
@@ -190,7 +198,7 @@ describe('ProductSetDetail - editing members', () => {
     expect(screen.queryAllByRole('checkbox')).toHaveLength(0);
   });
 
-  it('removing a member still goes through the confirmation dialog', async () => {
+  it('removing a member drops it from the draft, asking nothing (S6-10)', async () => {
     const mutateAsync = vi.fn().mockResolvedValue(set());
     useUpdateProductSet.mockReturnValue({ mutateAsync, isPending: false });
 
@@ -199,16 +207,11 @@ describe('ProductSetDetail - editing members', () => {
     enterEdit();
     fireEvent.click(screen.getByRole('button', { name: /remove srtwcx8608-rl from set/i }));
 
-    const dialog = await screen.findByText('Remove this member from the set?');
-    expect(dialog).toBeInTheDocument();
-    // Not removed from the table yet - the dialog has not been confirmed.
-    expect(screen.getByText('SRTWCX8608-RL')).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: /^delete$/i }));
-
+    // D7: neither confirmed nor deferred, because the row leaves the DRAFT and not
+    // the set. Cancel on the edit form is the way back, and until Save nothing has
+    // reached the server to take back - which is what the last assertion pins.
     await waitFor(() => expect(screen.queryByText('SRTWCX8608-RL')).not.toBeInTheDocument());
-    // The removal only lands in the array Save sends; confirming it alone
-    // writes nothing on its own.
+    expect(screen.queryByText('Remove this member from the set?')).not.toBeInTheDocument();
     expect(mutateAsync).not.toHaveBeenCalled();
   });
 });
@@ -228,7 +231,7 @@ describe('ProductSetDetail - price override', () => {
     enterEdit();
     const overrideInput = screen.getByLabelText('Price override');
     fireEvent.change(overrideInput, { target: { value: '1500' } });
-    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^Save product set$/i }));
 
     await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
     const [{ data: payload }] = mutateAsync.mock.calls[0];
@@ -257,7 +260,7 @@ describe('ProductSetDetail - price override', () => {
     const overrideInput = screen.getByLabelText('Price override') as HTMLInputElement;
     expect(overrideInput.value).toBe('1150');
     fireEvent.change(overrideInput, { target: { value: '' } });
-    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^Save product set$/i }));
 
     await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
     const [{ data: payload }] = mutateAsync.mock.calls[0];

@@ -40,8 +40,10 @@ vi.mock('../reorder/hooks/useReorderRun', () => ({
 }));
 
 vi.mock('../../project-sales/fulfilment-planning/components/StockDocumentsPanel', () => ({
-  StockDocumentsPanel: ({ locationCode }: { locationCode: string }) => (
-    <div data-testid="stock-documents">{`documents for ${locationCode}`}</div>
+  // Addressed by ids: the panel no longer takes a code at all, since the heading block that
+  // printed one was removed (captain, 30 August 2026).
+  StockDocumentsPanel: ({ warehouseId }: { warehouseId: string }) => (
+    <div data-testid="stock-documents">{`documents for ${warehouseId}`}</div>
   ),
 }));
 
@@ -278,7 +280,7 @@ describe('OnHandTable', () => {
       isLoading: false,
     });
 
-    render(<OnHandTable productId="p1" itemCode="SRTWB241" />);
+    render(<OnHandTable productId="p1" />);
 
     expect(screen.getByText('BRW')).toBeTruthy();
     expect(screen.queryByText('BRW-BB')).toBeNull();
@@ -309,12 +311,12 @@ describe('OnHandTable', () => {
       isLoading: false,
     });
 
-    render(<OnHandTable productId="p1" itemCode="SRTWB241" />);
+    render(<OnHandTable productId="p1" />);
     expect(screen.queryByTestId('stock-documents')).toBeNull();
 
     fireEvent.click(screen.getByText('BRW'));
 
-    expect(screen.getByTestId('stock-documents').textContent).toBe('documents for BRW');
+    expect(screen.getByTestId('stock-documents').textContent).toBe('documents for w1');
   });
 
   it('says so when the product has no stock row anywhere', () => {
@@ -323,7 +325,7 @@ describe('OnHandTable', () => {
       isLoading: false,
     });
 
-    render(<OnHandTable productId="p1" itemCode="SRTWB241" />);
+    render(<OnHandTable productId="p1" />);
 
     expect(screen.getByText('No stock rows for this product.')).toBeTruthy();
   });

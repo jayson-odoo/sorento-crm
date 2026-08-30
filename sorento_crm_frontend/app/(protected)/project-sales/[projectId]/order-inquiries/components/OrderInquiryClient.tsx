@@ -24,7 +24,6 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
@@ -417,12 +416,21 @@ export function OrderInquiryClient({ projectId }: { projectId: string }) {
 
   const filtersActiveCount = (verbFilter ? 1 : 0) + (stateFilter ? 1 : 0);
 
+  // The one offer this listing makes, in both places it belongs: the
+  // toolbar, and the empty state's next step (S5-06).
+  const listPrimaryAction = (
+    <Button type="button" onClick={() => void handleExport()} disabled={exporting}>
+      <Download className="size-4" aria-hidden />
+      {exporting ? 'Preparing…' : 'Export Excel'}
+    </Button>
+  );
+
   return (
     <div className="space-y-5">
       <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0 break-words">
           <div className="flex items-center gap-1">
-            <h1 className="text-xl font-semibold">Order inquiry</h1>
+            <h2 className="text-xl font-semibold">Order inquiry</h2>
             <InfoHint label="About the order inquiry">
               <p>
                 Rows are derived when a sales order or an amendment publishes. Quantity a
@@ -481,6 +489,7 @@ export function OrderInquiryClient({ projectId }: { projectId: string }) {
             )}
           </div>
         }
+        emptyAction={listPrimaryAction}
       >
         <Card>
           <CardHeader className="block">
@@ -559,12 +568,7 @@ export function OrderInquiryClient({ projectId }: { projectId: string }) {
               // selection-scoped one is replaced rather than offered beside it.
               exportConfig={false}
               bulkActions={bulkActions}
-              primaryAction={
-                <Button type="button" onClick={() => void handleExport()} disabled={exporting}>
-                  <Download className="size-4" aria-hidden />
-                  {exporting ? 'Preparing…' : 'Export Excel'}
-                </Button>
-              }
+              primaryAction={listPrimaryAction}
               onRefresh={() => {
                 void inquiry.refetch();
                 void summary.refetch();
@@ -583,10 +587,7 @@ export function OrderInquiryClient({ projectId }: { projectId: string }) {
                 </p>
               </div>
             ) : (
-              <ScrollArea>
-                <DataGridTable />
-                <ScrollBar orientation="horizontal" />
-              </ScrollArea>
+              <DataGridTable />
             )}
           </CardTable>
           <CardFooter>

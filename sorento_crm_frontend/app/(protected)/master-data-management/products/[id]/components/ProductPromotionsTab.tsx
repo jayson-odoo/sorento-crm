@@ -108,7 +108,7 @@ export default function ProductPromotionsTab({ productId, listPrice }: ProductPr
                       <div className="flex items-center gap-2">
                         <span>{desc}</span>
                         {promo?.is_active === false && (
-                          <Badge variant="secondary" appearance="ghost">
+                          <Badge variant="secondary">
                             Inactive
                           </Badge>
                         )}

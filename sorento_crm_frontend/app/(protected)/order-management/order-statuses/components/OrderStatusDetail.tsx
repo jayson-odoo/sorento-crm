@@ -46,8 +46,8 @@ export default function OrderStatusDetail({ orderStatusId }: OrderStatusDetailPr
       <div className="flex items-center justify-between">
         <div className="space-y-1">
           <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold">{orderStatus.status_name}</h1>
-            <Badge variant={orderStatus.is_final_status ? 'success' : 'secondary'} appearance="ghost">
+            <h2 className="text-2xl font-bold">{orderStatus.status_name}</h2>
+            <Badge variant={orderStatus.is_final_status ? 'success' : 'secondary'}>
               {orderStatus.is_final_status ? 'Final Status' : 'Intermediate Status'}
             </Badge>
           </div>
@@ -89,7 +89,7 @@ export default function OrderStatusDetail({ orderStatusId }: OrderStatusDetailPr
             <div>
               <p className="text-sm text-muted-foreground">Final Status</p>
               <p className="font-medium">
-                <Badge variant={orderStatus.is_final_status ? 'success' : 'secondary'} appearance="ghost">
+                <Badge variant={orderStatus.is_final_status ? 'success' : 'secondary'}>
                   {orderStatus.is_final_status ? 'Yes' : 'No'}
                 </Badge>
               </p>

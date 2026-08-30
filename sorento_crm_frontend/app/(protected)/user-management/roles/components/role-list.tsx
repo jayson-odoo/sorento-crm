@@ -41,11 +41,13 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { UserRole } from '@/app/models/user';
 import RoleDefaultDialog from './role-default-dialog';
-import RoleDeleteDialog from './role-delete-dialog';
+import {
+  useDeferredRowAction,
+  useRowPending,
+} from '@/hooks/useDeferredRowAction';
 import RoleEditDialog from './role-edit-dialog';
 
 const RoleList = () => {
@@ -61,11 +63,19 @@ const RoleList = () => {
 
   // Form state management
   const [editDialogOpen, setEditDialogOpen] = useState(false);
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [defaultDialogOpen, setDefaultDialogOpen] = useState(false);
 
   const [editRole, setEditRole] = useState<UserRole | null>(null);
-  const [deleteRole, setDeleteRole] = useState<UserRole | null>(null);
+  // Delete asks nothing (D7): the row dims and a toast counts down with Cancel.
+  // The old dialog re-read the role afterwards to check it had really gone; the
+  // server now answers that itself, through the pending action's outcome.
+  const deletion = useDeferredRowAction({
+    actionKey: 'role.delete',
+    entityType: 'role',
+    successMessage: 'Role deleted',
+    invalidateKeys: [['user-roles'], ['user-role-select']],
+  });
+  const rowPending = useRowPending<UserRole>('role');
   const [defaultRole, setDefaultRole] = useState<UserRole | null>(null);
 
   // Query state management
@@ -242,10 +252,9 @@ const RoleList = () => {
               <DropdownMenuSeparator />
               <DropdownMenuItem
                 variant="destructive"
-                onClick={() => {
-                  setDeleteRole(row.original);
-                  setDeleteDialogOpen(true);
-                }}
+                onClick={() =>
+                  deletion.run({ id: row.original.id, subject: row.original.name })
+                }
               >
                 Delete role
               </DropdownMenuItem>
@@ -261,7 +270,7 @@ const RoleList = () => {
         },
       },
     ],
-    [],
+    [deletion],
   );
 
   const table = useReactTable({
@@ -291,12 +300,28 @@ const RoleList = () => {
     setPagination((p) => ({ ...p, pageIndex: 0 }));
   };
 
+  // The one offer this listing makes, in both places it belongs: the
+  // toolbar, and the empty state's next step (S5-06).
+  const listPrimaryAction = (
+    <Button
+      disabled={isLoading}
+      onClick={() => {
+        setEditRole(null);
+        setEditDialogOpen(true);
+      }}
+    >
+      <Plus />
+      Add Role
+    </Button>
+  );
+
   return (
     <>
       <DataGrid
         table={table}
         recordCount={data?.pagination.total || 0}
         isLoading={isLoading}
+        rowPending={rowPending}
         tableLayout={{
           columnsResizable: true,
           columnsPinnable: true,
@@ -306,6 +331,7 @@ const RoleList = () => {
         tableClassNames={{
           edgeCell: 'px-5',
         }}
+        emptyAction={listPrimaryAction}
       >
         <Card>
           <CardHeader className="block">
@@ -333,25 +359,11 @@ const RoleList = () => {
                 </div>
               }
               exportConfig={{ filename: 'roles_export.xlsx' }}
-              primaryAction={
-                <Button
-                  disabled={isLoading}
-                  onClick={() => {
-                    setEditRole(null);
-                    setEditDialogOpen(true);
-                  }}
-                >
-                  <Plus />
-                  Add Role
-                </Button>
-              }
+              primaryAction={listPrimaryAction}
             />
           </CardHeader>
           <CardTable>
-            <ScrollArea>
-              <DataGridTable />
-              <ScrollBar orientation="horizontal" />
-            </ScrollArea>
+            <DataGridTable />
           </CardTable>
           <CardFooter>
             <DataGridPagination />
@@ -364,14 +376,6 @@ const RoleList = () => {
         closeDialog={() => setEditDialogOpen(false)}
         role={editRole}
       />
-
-      {deleteRole && (
-        <RoleDeleteDialog
-          open={deleteDialogOpen}
-          closeDialog={() => setDeleteDialogOpen(false)}
-          role={deleteRole}
-        />
-      )}
 
       {defaultRole && (
         <RoleDefaultDialog

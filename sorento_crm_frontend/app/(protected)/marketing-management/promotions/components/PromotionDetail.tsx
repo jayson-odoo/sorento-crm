@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Edit, Trash2, Plus, ExternalLink, Search, X, Layers, ChevronDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { useBackToListHref, useHrefWithListState } from '@/components/common/BackToList';
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -22,13 +23,10 @@ import { Label } from '@/components/ui/label';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import {
   usePromotion,
-  useDeletePromotion,
   useAddPromotionProduct,
-  useRemovePromotionProduct,
   useUpdatePromotionProductPrice,
   useCreatePromotionGroup,
   useUpdatePromotionGroup,
-  useDeletePromotionGroup,
 } from '../hooks/usePromotions';
 import { useProducts } from '../../../master-data-management/products/hooks/useProducts';
 import type { GetProductsParams } from '../../../master-data-management/products/services/productService';
@@ -36,7 +34,10 @@ import { formatDateInMalaysia } from '@/lib/helpers';
 import { toast } from 'sonner';
 import { LoaderCircleIcon } from 'lucide-react';
 import PromotionAttachmentsTab from './PromotionAttachmentsTab';
-import PromotionNavigation from './PromotionNavigation';
+import DetailActions from '@/components/common/DetailActions';
+import { usePromotionActions } from '../actions';
+import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
+import { promotionsPagerQuery } from '../hooks/usePromotions';
 import type { PromotionProduct, PromotionGroup } from '../types/promotion.types';
 import { useContactAccessTypes } from '@/app/(protected)/user-management/contact-access-types/hooks/useContactAccessTypes';
 
@@ -82,8 +83,12 @@ interface PromotionDetailProps {
 
 export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
   const router = useRouter();
+  const backHref = useBackToListHref('/marketing-management/promotions');
+  // Edit carries the list state too: the edit screen has a pager of its own.
+  const editHref = useHrefWithListState(
+    `/marketing-management/promotions/${promotionId}/edit`,
+  );
   const { data: promotion, isLoading } = usePromotion(promotionId);
-  const deleteMutation = useDeletePromotion();
   const { data: accessTypeOptions = [] } = useContactAccessTypes();
   const accessLevelNameMap = useMemo(() => {
     const m = new Map<string, string>();
@@ -91,13 +96,29 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
     return m;
   }, [accessTypeOptions]);
   const addProductMutation = useAddPromotionProduct();
-  const removeProductMutation = useRemovePromotionProduct();
+  // Removing a line and deleting a group ask nothing (D7): a toast counts down
+  // with Cancel while the row stays on screen, and the server applies it when
+  // the window lapses.
+  const lineRemoval = useDeferredRowAction({
+    actionKey: 'promotion_product.unlink',
+    entityType: 'promotion_product',
+    verb: 'Removing',
+    successMessage: 'Product line removed',
+    invalidateKeys: [['promotion', promotionId], ['promotion-products', promotionId]],
+  });
+  const groupDeletion = useDeferredRowAction({
+    actionKey: 'promotion_group.delete',
+    entityType: 'promotion_group',
+    successMessage: 'Group deleted',
+    invalidateKeys: [['promotion', promotionId], ['promotion-products', promotionId]],
+  });
   const updatePriceMutation = useUpdatePromotionProductPrice();
   const createGroupMutation = useCreatePromotionGroup();
   const updateGroupMutation = useUpdatePromotionGroup();
-  const deleteGroupMutation = useDeletePromotionGroup();
 
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const { actions, dialogs } = usePromotionActions(promotionId, {
+    onDeleted: () => router.push(backHref),
+  });
   const [addProductDialogOpen, setAddProductDialogOpen] = useState(false);
   const [addProductGroupId, setAddProductGroupId] = useState<string>('');
   const [groupDialogOpen, setGroupDialogOpen] = useState(false);
@@ -201,15 +222,6 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
     );
   }
 
-  const handleDelete = async () => {
-    try {
-      await deleteMutation.mutateAsync(promotionId);
-      router.push('/marketing-management/promotions');
-    } catch (error) {
-      // Error is handled by the mutation hook
-    }
-  };
-
   const handleAddProduct = async () => {
     if (!addProductGroupId) {
       toast.error('Select a promotion group');
@@ -244,7 +256,7 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
       setPromotionPrice('');
       setAddProductGroupId('');
       setAddProductDealerDiscount('');
-    } catch (error) {
+    } catch {
       // Error is handled by the mutation hook
     }
   };
@@ -295,24 +307,17 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
       setPromotionPrice('');
       setDealerDiscountInput('');
       setListPriceInput('');
-    } catch (error) {
+    } catch {
       // Error is handled by the mutation hook
     }
   };
 
-  const handleRemoveProduct = async (lineId: string) => {
-    if (!confirm('Are you sure you want to remove this product line from the promotion?')) {
-      return;
-    }
-
-    try {
-      await removeProductMutation.mutateAsync({
-        promotionId,
-        lineId,
-      });
-    } catch (error) {
-      // Error is handled by the mutation hook
-    }
+  const handleRemoveProduct = (line: PromotionProduct) => {
+    lineRemoval.run({
+      id: line.id,
+      subject: line.product?.product_name || line.product?.product_code || 'this line',
+      payload: { promotion_id: promotionId },
+    });
   };
 
   const openCreateGroupDialog = () => {
@@ -400,14 +405,11 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
   };
 
   const handleDeleteGroupClick = (g: PromotionGroup) => {
-    const full = sortedGroupsBase.find((x) => x.id === g.id);
-    const n = full?.promotion_products?.length ?? 0;
-    const msg =
-      n > 0
-        ? `Delete group "${g.group_name}"? This will remove ${n} product line(s) in this group. This cannot be undone.`
-        : `Delete group "${g.group_name}"? This cannot be undone.`;
-    if (!confirm(msg)) return;
-    deleteGroupMutation.mutate({ promotionId, groupId: g.id });
+    groupDeletion.run({
+      id: g.id,
+      subject: g.group_name,
+      payload: { promotion_id: promotionId },
+    });
   };
 
   const openAddProductForGroup = (groupId: string) => {
@@ -485,10 +487,11 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
               type="button"
               variant="ghost"
               size="sm"
-              onClick={() => handleRemoveProduct(pp.id)}
-              disabled={removeProductMutation.isPending}
+              aria-label={`Remove ${pp.product?.product_code ?? 'product'} from this promotion`}
+              onClick={() => handleRemoveProduct(pp)}
+              disabled={lineRemoval.targetId === pp.id && lineRemoval.isPending}
             >
-              {removeProductMutation.isPending ? (
+              {lineRemoval.targetId === pp.id && lineRemoval.isPending ? (
                 <LoaderCircleIcon className="size-4 animate-spin" />
               ) : (
                 <Trash2 className="size-4 text-destructive" />
@@ -517,27 +520,44 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="space-y-1">
-          <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold">{promotion.description?.trim() || `Promotion ${promotion.id.slice(0, 8)}`}</h1>
-            <Badge variant={promotion.is_active ? 'success' : 'secondary'} appearance="ghost">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="space-y-1 min-w-0">
+          <div className="flex flex-wrap items-center gap-3">
+            {/* A promotion with no description falls back to its type, then to
+                a plain "Untitled promotion" - never to a slice of its id, which
+                names nothing the user has ever seen (S5-05). */}
+            <h2 className="text-2xl font-bold break-words min-w-0">
+              {promotion.description?.trim() ||
+                promotion.promotion_type_name?.trim() ||
+                'Untitled promotion'}
+            </h2>
+            <Badge variant={promotion.is_active ? 'success' : 'secondary'}>
               <BadgeDot />
               {promotion.is_active ? 'Active' : 'Inactive'}
             </Badge>
           </div>
         </div>
-        <div className="flex gap-2">
-          <PromotionNavigation promotionId={promotionId} />
-          <Button variant="outline" onClick={() => router.push(`/marketing-management/promotions/${promotionId}/edit`)}>
-            <Edit className="size-4" />
-            Edit
-          </Button>
-          <Button variant="destructive" onClick={() => setDeleteDialogOpen(true)}>
-            <Trash2 className="size-4" />
-            Delete
-          </Button>
-        </div>
+        <DetailActions
+          pager={{
+            ...promotionsPagerQuery,
+            detailPath: '/marketing-management/promotions',
+            currentId: promotionId,
+            ariaLabel: 'promotion',
+          }}
+          actions={actions}
+          dialogs={dialogs}
+          gearLabel="Promotion options"
+          primary={
+            <Button
+              onClick={() =>
+                router.push(editHref)
+              }
+            >
+              <Edit className="size-4" />
+              Edit
+            </Button>
+          }
+        />
       </div>
 
       {/* Promotion Information */}
@@ -598,7 +618,7 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
                     Unclassified - follows the default type.
                   </p>
                   <Button variant="outline" size="sm" asChild>
-                    <Link href={`/marketing-management/promotions/${promotionId}/edit`}>
+                    <Link href={editHref}>
                       Set a type
                     </Link>
                   </Button>
@@ -718,7 +738,10 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
                               size="sm"
                               title="Delete group"
                               onClick={() => handleDeleteGroupClick(group)}
-                              disabled={deleteGroupMutation.isPending}
+                              disabled={
+                                groupDeletion.targetId === group.id &&
+                                groupDeletion.isPending
+                              }
                             >
                               <Trash2 className="size-4 text-destructive" />
                             </Button>
@@ -765,37 +788,6 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
           )}
         </CardContent>
       </Card>
-
-      {/* Delete Dialog */}
-      <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Confirm Delete</DialogTitle>
-            <DialogDescription>
-              Are you sure you want to delete this promotion? This action cannot be undone.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDeleteDialogOpen(false)}>
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={handleDelete}
-              disabled={deleteMutation.isPending}
-            >
-              {deleteMutation.isPending ? (
-                <>
-                  <LoaderCircleIcon className="size-4 animate-spin" />
-                  Deleting...
-                </>
-              ) : (
-                'Delete'
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       {/* Add Product Dialog */}
       <Dialog

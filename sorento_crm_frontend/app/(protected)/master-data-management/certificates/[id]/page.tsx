@@ -1,14 +1,8 @@
 import { Metadata } from 'next';
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
 import { Container } from '@/components/common/container';
+import { PageHeader } from '@/components/common/PageHeader';
 import CertificateDetail from '../components/CertificateDetail';
+import BackToList from '@/components/common/BackToList';
 
 export const metadata: Metadata = {
   title: 'Certificate Details',
@@ -24,23 +18,15 @@ export default async function CertificateDetailPage({
 
   return (
     <Container>
-      <Breadcrumb>
-        <BreadcrumbList>
-          <BreadcrumbItem>
-            <BreadcrumbLink href="/">Home</BreadcrumbLink>
-          </BreadcrumbItem>
-          <BreadcrumbSeparator />
-          <BreadcrumbItem>
-            <BreadcrumbLink href="/master-data-management/certificates">
-              Certificates
-            </BreadcrumbLink>
-          </BreadcrumbItem>
-          <BreadcrumbSeparator />
-          <BreadcrumbItem>
-            <BreadcrumbPage>Details</BreadcrumbPage>
-          </BreadcrumbItem>
-        </BreadcrumbList>
-      </Breadcrumb>
+      <PageHeader
+        title="Certificate"
+        actions={
+          <BackToList
+            listPath="/master-data-management/certificates"
+            label="Back to certificates"
+          />
+        }
+      />
       <div className="mt-6">
         <CertificateDetail certificateId={id} />
       </div>

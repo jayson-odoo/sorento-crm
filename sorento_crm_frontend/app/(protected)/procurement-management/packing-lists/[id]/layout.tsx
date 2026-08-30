@@ -1,7 +1,6 @@
 'use client';
 
 import React, { use, useEffect, useMemo, useState } from 'react';
-import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useMutation } from '@tanstack/react-query';
 import {
@@ -13,41 +12,30 @@ import {
   Files,
   History,
   Info,
-  MoveLeft,
   Settings,
   Trash2,
   Upload,
   X,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Container } from '@/components/common/container';
+import { PageHeader } from '@/components/common/PageHeader';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import {
-  Toolbar,
-  ToolbarActions,
-  ToolbarHeading,
-  ToolbarTitle,
-} from '@/components/common/toolbar';
 import { formatDate } from '@/lib/helpers';
 import { downloadPackingListExport } from '@/app/(protected)/scm/services/fulfilmentService';
-import PackingListNavigation from '../components/PackingListNavigation';
+import DetailActions from '@/components/common/DetailActions';
+import BackToList, { useBackToListHref } from '@/components/common/BackToList';
+import { packingListsPagerQuery } from '../hooks/usePackingLists';
 import PackingListDeleteDialog from '../components/packing-list-delete-dialog';
 import ContainerStatusImportDialog from '../components/ContainerStatusImportDialog';
 import {
@@ -90,6 +78,7 @@ const LEGACY_TAB_SEGMENT: Record<string, string> = {
 
 function PackingListToolbar({ id }: { id: string }) {
   const router = useRouter();
+  const backHref = useBackToListHref('/procurement-management/packing-lists');
   const {
     packingList,
     isLoading,
@@ -134,58 +123,47 @@ function PackingListToolbar({ id }: { id: string }) {
 
   return (
     <>
-      <Toolbar>
-        <ToolbarHeading>
-          <ToolbarTitle className="break-words">
-            {isLoading ? <Skeleton className="h-6 w-48" /> : title}
-          </ToolbarTitle>
-          {/* Read-only metadata belongs in the header, never inside a tab body: it has no
-              edit counterpart, and putting it in a tab would make view and edit differ. */}
-          <p className="text-sm text-muted-foreground break-words">{subtitle}</p>
-          <Breadcrumb>
-            <BreadcrumbList>
-              <BreadcrumbItem>
-                <BreadcrumbLink href="/">Home</BreadcrumbLink>
-              </BreadcrumbItem>
-              <BreadcrumbSeparator />
-              <BreadcrumbItem>
-                <BreadcrumbLink href="/procurement-management">Procurement</BreadcrumbLink>
-              </BreadcrumbItem>
-              <BreadcrumbSeparator />
-              <BreadcrumbItem>
-                <BreadcrumbLink href="/procurement-management/packing-lists">
-                  Packing Lists
-                </BreadcrumbLink>
-              </BreadcrumbItem>
-              <BreadcrumbSeparator />
-              <BreadcrumbItem>
-                <BreadcrumbPage>{title}</BreadcrumbPage>
-              </BreadcrumbItem>
-            </BreadcrumbList>
-          </Breadcrumb>
-        </ToolbarHeading>
-        <ToolbarActions>
-          {editing ? (
-            <>
-              <Button onClick={() => void saveEdit()} disabled={saving}>
-                Save
-              </Button>
-              <Button variant="outline" onClick={cancelEdit} disabled={saving}>
-                <X className="size-4" />
-                Cancel
-              </Button>
-            </>
-          ) : (
-            <>
-              <PackingListNavigation packingListId={id} />
-              {/* The one thing this page exists to produce. */}
-              <Button
-                onClick={() => exportWorkbook.mutate()}
-                disabled={exportWorkbook.isPending || !packingList}
-              >
-                <Download className="size-4" />
-                Download packing list
-              </Button>
+      <PageHeader
+        title={isLoading ? <Skeleton className="h-6 w-48" /> : title}
+        // The skeleton is a node, so the trail is told the container number
+        // separately: otherwise it ends on "Packing Lists" while the record
+        // loads and that crumb stops being a link.
+        crumbTitle={title}
+        actions={
+          <BackToList
+            listPath="/procurement-management/packing-lists"
+            label="Back to packing lists"
+          />
+        }
+      >
+        {/* Read-only metadata belongs in the header, never inside a tab body: it has no
+            edit counterpart, and putting it in a tab would make view and edit differ. */}
+        <p className="text-sm text-muted-foreground break-words">{subtitle}</p>
+      </PageHeader>
+
+      {/* The record's own actions: pager, gear, primary (D6). They sit under the
+          toolbar rather than on it, and wrap under the title at 375. */}
+      <div className="mb-5">
+        {editing ? (
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <Button onClick={() => void saveEdit()} disabled={saving}>
+              Save packing list
+            </Button>
+            <Button variant="outline" onClick={cancelEdit} disabled={saving}>
+              <X className="size-4" />
+              Cancel
+            </Button>
+          </div>
+        ) : (
+          <DetailActions
+            pager={{
+              ...packingListsPagerQuery,
+              detailPath: '/procurement-management/packing-lists',
+              currentId: id,
+              ariaLabel: 'packing list',
+            }}
+            gearLabel="Packing list options"
+            gear={
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button variant="outline" size="icon" aria-label="Packing list options">
@@ -201,6 +179,7 @@ function PackingListToolbar({ id }: { id: string }) {
                     <Upload className="size-4" />
                     Import Container Status workbook
                   </DropdownMenuItem>
+                  <DropdownMenuSeparator />
                   <DropdownMenuItem
                     variant="destructive"
                     onClick={() => setDeleteOpen(true)}
@@ -211,22 +190,26 @@ function PackingListToolbar({ id }: { id: string }) {
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
-              <Button asChild variant="outline">
-                <Link href="/procurement-management/packing-lists">
-                  <MoveLeft /> Back to packing lists
-                </Link>
+            }
+            primary={
+              <Button
+                onClick={() => exportWorkbook.mutate()}
+                disabled={exportWorkbook.isPending || !packingList}
+              >
+                <Download className="size-4" />
+                Download packing list
               </Button>
-            </>
-          )}
-        </ToolbarActions>
-      </Toolbar>
+            }
+          />
+        )}
+      </div>
 
       {packingList && (
         <PackingListDeleteDialog
           open={deleteOpen}
           closeDialog={() => setDeleteOpen(false)}
           packingList={packingList}
-          onSuccess={() => router.push('/procurement-management/packing-lists')}
+          onSuccess={() => router.push(backHref)}
         />
       )}
       <ContainerStatusImportDialog open={importOpen} onOpenChange={setImportOpen} />

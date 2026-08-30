@@ -4,7 +4,7 @@
  * ============================================================================
  * What is pinned here, and why each one matters:
  *
- *  1. TWO PRESSES, NEVER ONE. Test reads the file and writes nothing; only Confirm
+ *  1. TWO PRESSES, NEVER ONE. Test reads the file and writes nothing; only Import
  *     queues. `onUpload` must not be called while testing.
  *  2. EVERY COUNT, INCLUDING `unchanged`. A diff showing only changes is
  *     indistinguishable from one that silently failed to read the file.
@@ -133,9 +133,13 @@ describe('CustomerImportDialog', () => {
   it('opens empty: no counts, and neither action is available without a file', () => {
     renderDialog();
 
-    expect(screen.getByText('Import customers')).toBeInTheDocument();
+    // The dialog's own title; the button beneath it now reads the same words
+    // (S5-04), so this names the heading.
+    expect(
+      screen.getByRole('heading', { name: 'Import customers' }),
+    ).toBeInTheDocument();
     expect(button(/^Test/)).toBeDisabled();
-    expect(button(/^Confirm/)).toBeDisabled();
+    expect(button(/^Import customers/)).toBeDisabled();
     expect(screen.queryByText('New customers')).not.toBeInTheDocument();
   });
 
@@ -246,7 +250,7 @@ describe('CustomerImportDialog', () => {
     const { onUpload, onOpenChange } = renderDialog();
     choose(xlsx());
 
-    fireEvent.click(button(/^Confirm/));
+    fireEvent.click(button(/^Import customers/));
 
     await waitFor(() => expect(onUpload).toHaveBeenCalledTimes(1));
     expect(onOpenChange).toHaveBeenCalledWith(false);
@@ -256,7 +260,7 @@ describe('CustomerImportDialog', () => {
     const { onTest, onUpload } = renderDialog();
     choose(xlsx());
 
-    fireEvent.click(button(/^Confirm/));
+    fireEvent.click(button(/^Import customers/));
 
     await waitFor(() => expect(onUpload).toHaveBeenCalled());
     expect(onTest).toHaveBeenCalledTimes(1);
@@ -272,7 +276,7 @@ describe('CustomerImportDialog', () => {
     const { onUpload } = renderDialog({ onTest });
     choose(xlsx());
 
-    fireEvent.click(button(/^Confirm/));
+    fireEvent.click(button(/^Import customers/));
 
     await waitFor(() =>
       expect(screen.getByText('The file has no customer code column.')).toBeInTheDocument(),
@@ -296,7 +300,7 @@ describe('CustomerImportDialog', () => {
     const { onUpload } = renderDialog({ onTest });
     choose(xlsx());
 
-    fireEvent.click(button(/^Confirm/));
+    fireEvent.click(button(/^Import customers/));
 
     await waitFor(() => expect(screen.getByText('Import anyway?')).toBeInTheDocument());
     expect(onUpload).not.toHaveBeenCalled();
@@ -330,7 +334,7 @@ describe('CustomerImportDialog', () => {
     const { onUpload } = renderDialog({ onTest });
     choose(xlsx());
 
-    fireEvent.click(button(/^Confirm/));
+    fireEvent.click(button(/^Import customers/));
 
     await waitFor(() => expect(screen.getByText('Import anyway?')).toBeInTheDocument());
     const dialog = screen.getByRole('alertdialog');
@@ -366,7 +370,7 @@ describe('CustomerImportDialog', () => {
     renderDialog({ onUpload });
     choose(xlsx());
 
-    fireEvent.click(button(/^Confirm/));
+    fireEvent.click(button(/^Import customers/));
 
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Queue unavailable'));
   });
@@ -376,7 +380,7 @@ describe('CustomerImportDialog', () => {
     renderDialog();
     choose(xlsx());
 
-    fireEvent.click(button(/^Confirm/));
+    fireEvent.click(button(/^Import customers/));
 
     await waitFor(() => expect(toast.success).toHaveBeenCalled());
     const calls = vi.mocked(toast.success).mock.calls;

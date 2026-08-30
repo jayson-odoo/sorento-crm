@@ -11,13 +11,11 @@ import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { useScheduledTaskRuns } from '../hooks/useScheduledTasks';
 import type { ScheduledTaskRun as RunType } from '../types/scheduledTask.types';
-import { getStatusBadgeVariant } from '@/lib/status-badge';
 
 interface RunLogsTableProps {
   taskId: string;
@@ -52,7 +50,7 @@ export function RunLogsTable({ taskId }: RunLogsTableProps) {
         accessorKey: 'status',
         header: 'Status',
         cell: ({ row }) => (
-          <Badge variant={getStatusBadgeVariant(row.original.status)}>
+          <Badge status={row.original.status}>
             {row.original.status}
           </Badge>
         ),
@@ -124,10 +122,7 @@ export function RunLogsTable({ taskId }: RunLogsTableProps) {
       <Card>
         <CardHeader>
           <CardTable>
-            <ScrollArea className="w-full">
-              <DataGridTable />
-              <ScrollBar orientation="horizontal" />
-            </ScrollArea>
+            <DataGridTable />
           </CardTable>
         </CardHeader>
         <CardFooter className="flex justify-between border-t px-4 py-3">

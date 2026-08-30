@@ -34,6 +34,9 @@ vi.mock('../services/attachmentService', () => ({
   getAttachmentMetadata: (...args: unknown[]) => getAttachmentMetadata(...args),
 }));
 
+// The pager has its own tests (hooks/useListPager.test.ts).
+vi.mock('@/components/common/ListPager', () => ({ __esModule: true, default: () => null }));
+
 vi.mock('../hooks/useAttachments', () => {
   // Defined INSIDE the factory: vi.mock is hoisted above the module body, so a
   // top-level helper would not exist yet when this runs.
@@ -46,6 +49,11 @@ vi.mock('../hooks/useAttachments', () => {
     useUpdateAttachment: idle,
     useArchiveAttachment: idle,
     useAttachmentNeighbours: () => ({ data: undefined, isLoading: false }),
+    // The pager reads the list page through the entity's shared key + fetch (S3-03).
+    attachmentsPagerQuery: {
+      listQueryKey: () => ['attachments'],
+      fetchPage: async () => ({ data: [], pagination: { total: 0 } }),
+    },
   };
 });
 

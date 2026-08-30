@@ -147,9 +147,15 @@ def test_a_line_beyond_the_window_buys_whole_even_when_an_spo_would_cover_it():
 # --------------------------------------------------------------------------- AC-V7
 
 
-def test_the_pool_is_walked_before_another_group_and_takes_the_whole_line():
-    """AC-V7, the captain's own case: 24 needed, the site pools free 268, another group
-    holding 100 within the cap. The proposal is Pool 24, never Borrow 24."""
+def test_another_groups_free_pile_is_used_before_the_pool_under_v7():
+    """AC-V7 REVERSED by ladder v7.1 (R1, R5): the pool is the LAST stock step now, and
+    another PROJECT group's FREE pile is step 1's own second half.
+
+    Same case, same numbers - 24 needed, the site pools free 268, another group holding 100
+    - and the answer moves from the pool to the donor. Free stock is owed to nobody, so it
+    raises no order-back, and taking it before the shared pool is what keeps the pool for
+    the orders that have nowhere else to go.
+    """
     with blank_session() as db:
         company_id, _eling, project, product = _world(db)
         group, sites = _group_sites(db)
@@ -166,9 +172,10 @@ def test_the_pool_is_walked_before_another_group_and_takes_the_whole_line():
         components = _components(ProjectSupplyService(db).proposal_for(order))
 
     assert [(c["kind"], c["rung"], c["qty"]) for c in components] == [
-        ("reserve", "pool", "24"),
+        ("reserve", "group_take", "24"),
     ]
-    assert components[0]["source_location"] == pool.warehouse_code
+    assert components[0]["source_location"] == donor.warehouse_code
+    assert pool is not None, "the pool held 268 and was not reached"
 
 
 # --------------------------------------------------------------------------- AC-V6

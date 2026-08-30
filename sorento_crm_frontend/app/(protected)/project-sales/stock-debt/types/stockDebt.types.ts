@@ -9,7 +9,13 @@
 /** Where a month's balance sits against "can this still be bought in time" (AC-S2-6). */
 export type StockDebtTone = 'red' | 'amber' | 'green';
 
-/** One month cell of a product row. `balance` is the CUMULATIVE dated running balance. */
+/**
+ * One month cell of a product row, stating its OWN month and nothing else (R37).
+ *
+ * `balance` is the supply dated in the month that is still free once the whole assignment
+ * walk is over, less what the lines due in the month went short of on their own dates. It
+ * does not carry: a month with nothing due and nothing arriving reads 0.
+ */
 export interface StockDebtMonth {
   /** `YYYY-MM`. Always one of the axis keys in `StockDebtListResponse.months`. */
   key: string;
@@ -75,6 +81,12 @@ export interface StockDebtDemandLine {
   /** Human source of the assignment: `On hand DC1-BB`, `SPO 2026/08-0063`, `PO ... line 3`. */
   assigned_source: string | null;
   status: StockDebtDemandStatus;
+  /**
+   * What the line went short of ON ITS OWN DATE - the quantity its month books (R37).
+   * A `late` line ends covered and still carries one: it went without on the date it was
+   * promised, and that is the fact the month states.
+   */
+  short_qty: number;
 }
 
 /** What a supply event is: stock already held, a shipment arriving, or a PO on order. */
@@ -91,12 +103,19 @@ export interface StockDebtSupplyEvent {
   /** PO only: the SO delivery date the line was typed against. Display only (R30). */
   bought_for: string | null;
   qty: number;
+  /** What nobody took by the end of the walk - the quantity its month credits (R37). */
+  free_qty: number;
   /** Arrival passed with nothing received: listed, but counted as nothing (R31). */
   overdue: boolean;
   assigned_to: { so_number: string; qty: number }[];
 }
 
-/** The cell drill (R28): the two tables behind one product x month. */
+/**
+ * The cell drill (R28): the two tables behind one product x month.
+ *
+ * `sum(supply.free_qty) - sum(demand.short_qty)` is the balance of the cell that opened it
+ * (R37), which is what the two tab footers print.
+ */
 export interface StockDebtCell {
   demand: StockDebtDemandLine[];
   supply: StockDebtSupplyEvent[];

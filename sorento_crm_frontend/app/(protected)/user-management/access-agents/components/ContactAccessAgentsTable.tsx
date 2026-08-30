@@ -13,7 +13,6 @@ import { CardContent } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useContactAccessAgents, useDeleteContactAgentAccess } from '../hooks/useAccessAgents';
 import { formatDate } from '@/lib/helpers';
@@ -70,7 +69,7 @@ export default function ContactAccessAgentsTable({ accessAgentId }: ContactAcces
         accessorKey: 'is_allowed',
         header: ({ column }) => <DataGridColumnHeader title="Allowed" column={column} />,
         cell: ({ row }) => (
-          <Badge variant={row.original.is_allowed ? 'success' : 'secondary'} appearance="ghost">
+          <Badge variant={row.original.is_allowed ? 'success' : 'secondary'}>
             {row.original.is_allowed ? 'Yes' : 'No'}
           </Badge>
         ),
@@ -146,10 +145,13 @@ export default function ContactAccessAgentsTable({ accessAgentId }: ContactAcces
         {isLoading ? (
           <div className="text-center py-8 text-muted-foreground">Loading contact access agents...</div>
         ) : (
+          // A grant is edited in a lightbox and has no page of its own, so the
+          // row opens that lightbox (D3, second clause).
           <DataGrid
             table={table}
             recordCount={contactAccesses?.length || 0}
             isLoading={isLoading}
+            onRowClick={handleEdit}
             emptyMessage={
               <div className="text-center py-8 text-muted-foreground">
                 <p>No contact access agents yet.</p>
@@ -161,10 +163,7 @@ export default function ContactAccessAgentsTable({ accessAgentId }: ContactAcces
               </div>
             }
           >
-            <ScrollArea>
-              <DataGridTable />
-              <ScrollBar orientation="horizontal" />
-            </ScrollArea>
+            <DataGridTable />
           </DataGrid>
         )}
       </CardContent>

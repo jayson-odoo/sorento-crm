@@ -19,10 +19,24 @@ vi.mock('./grn-delete-dialog', () => ({
 
 const grnMock = vi.fn();
 const updateMutateAsync = vi.fn();
+// The gear resolves permissions; this test has no session or query client, and
+// RBAC has its own tests.
+vi.mock('@/hooks/usePermissions', () => ({
+  useHasPermission: () => true,
+  usePermissions: () => ({ permissions: [], permissionSet: new Set(), isLoading: false }),
+}));
+
 vi.mock('../hooks/useGRN', () => ({
   useGRN: () => grnMock(),
-  useUpdateGRN: () => ({ mutateAsync: updateMutateAsync, isPending: false }),
+  useUpdateGRN: () => ({ mutate: updateMutateAsync, mutateAsync: updateMutateAsync, isPending: false }),
+  grnPagerQuery: {
+    listQueryKey: () => ['grn'],
+    fetchPage: async () => ({ data: [], pagination: { total: 0 } }),
+  },
 }));
+
+// The pager has its own tests (hooks/useListPager.test.ts).
+vi.mock('@/components/common/ListPager', () => ({ __esModule: true, default: () => null }));
 
 import GRNDetail from './GRNDetail';
 
@@ -65,11 +79,14 @@ describe('GRNDetail header', () => {
     }
   });
 
-  it('offers a Back to GRN link, matching the users detail header', () => {
+  it('S3-02: leaves Back to the toolbar row and keeps only pager, gear and Edit', () => {
     render(<GRNDetail grnId="grn-1" />);
 
-    const back = screen.getByRole('link', { name: /back to grn/i });
-    expect(back).toHaveAttribute('href', '/procurement-management/grn');
+    // Back moved to the page's toolbar row (D6), so the record card no longer
+    // carries it; the page renders it beside the breadcrumb.
+    expect(screen.queryByRole('link', { name: /back to grn/i })).toBeNull();
+    expect(screen.getByRole('button', { name: /grn options/i })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /^edit$/i })).toBeTruthy();
   });
 
   it('keeps Delete out of the header and inside the gear menu', async () => {
@@ -134,17 +151,15 @@ describe('GRNDetail header', () => {
     expect(screen.getByText(/AutoCount \/ n8n integration/)).toBeInTheDocument();
   });
 
-  it('still exposes the status changes it always did', async () => {
+  it('S3-07: still exposes the status changes it always did, as the shared action set', async () => {
     render(<GRNDetail grnId="grn-1" />);
 
     openGearMenu();
 
-    expect(await screen.findByRole('menuitem', { name: 'Draft' })).toBeInTheDocument();
-    expect(screen.getByRole('menuitem', { name: 'Rejected' })).toBeInTheDocument();
-    // The current status is not offered as a change.
-    expect(screen.getByRole('menuitem', { name: 'Approved' })).toHaveAttribute(
-      'aria-disabled',
-      'true',
-    );
+    expect(await screen.findByRole('menuitem', { name: 'Mark as Draft' })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: 'Mark as Rejected' })).toBeInTheDocument();
+    // The status the GRN already has is not a change, so it is not offered at
+    // all rather than offered and disabled.
+    expect(screen.queryByRole('menuitem', { name: /Approved/ })).toBeNull();
   });
 });

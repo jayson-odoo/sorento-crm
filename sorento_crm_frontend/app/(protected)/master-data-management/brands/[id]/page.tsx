@@ -1,88 +1,109 @@
 'use client';
 
-import { use } from 'react';
+import { use, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import Link from 'next/link';
-import { MoveLeft, Edit, Trash2 } from 'lucide-react';
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
-import { Button } from '@/components/ui/button';
+import { Check, Loader2, Pencil, Trash2, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Switch } from '@/components/ui/switch';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Textarea } from '@/components/ui/textarea';
 import { Container } from '@/components/common/container';
-import {
-  Toolbar,
-  ToolbarActions,
-  ToolbarHeading,
-  ToolbarTitle,
-} from '@/components/common/toolbar';
-import { useBrand, useDeleteBrand } from '../hooks/useBrands';
+import { PageHeader } from '@/components/common/PageHeader';
+import BackToList, { useBackToListHref } from '@/components/common/BackToList';
+import DetailActions from '@/components/common/DetailActions';
+import type { RecordAction } from '@/components/common/recordActions';
+import { useContactAccessTypes } from '@/app/(protected)/user-management/contact-access-types/hooks/useContactAccessTypes';
+import { useBrand, useUpdateBrand } from '../hooks/useBrands';
+import { useDeferredAction } from '@/hooks/useDeferredAction';
 import { formatDate } from '@/lib/helpers';
-import { toast } from 'sonner';
 
-export default function BrandDetailPage({
-  params,
+const LIST_PATH = '/master-data-management/brands';
+
+/**
+ * The brand record: one page that reads and edits, in the same layout.
+ *
+ * A brand used to be edited in a lightbox opened from the row, which meant the
+ * record page could only ever be reached by typing a URL - and once there, Edit
+ * left for a separate `/edit` screen with a different field order. View and edit
+ * are the same layout now (ADR product standards): Edit swaps each value for its
+ * input where it stands, Save and Cancel take the primary slot, and the fields
+ * the API does not accept stay read-only in both modes rather than pretending.
+ */
+interface Draft {
+  brand_code: string;
+  brand_name: string;
+  description: string;
+  is_active: boolean;
+  access_levels: string[];
+}
+
+const Empty = ({ children = 'Not set' }: { children?: string }) => (
+  <span className="text-muted-foreground">{children}</span>
+);
+
+/** A label above its value, or above its input while editing. */
+function Field({
+  label,
+  htmlFor,
+  children,
 }: {
-  params: Promise<{ id: string }>;
+  label: string;
+  htmlFor?: string;
+  children: React.ReactNode;
 }) {
+  return (
+    <div className="grid gap-1.5">
+      <Label htmlFor={htmlFor} className="text-sm text-muted-foreground font-normal">
+        {label}
+      </Label>
+      <div className="text-sm font-medium">{children}</div>
+    </div>
+  );
+}
+
+export default function BrandDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
+  const backHref = useBackToListHref(LIST_PATH);
   const { data: brand, isLoading } = useBrand(id);
-  const deleteMutation = useDeleteBrand();
+  const { data: accessTypeOptions = [] } = useContactAccessTypes();
+  const update = useUpdateBrand();
 
-  const handleDelete = async () => {
-    if (!confirm('Are you sure you want to deactivate this brand?')) {
-      return;
-    }
-    try {
-      await deleteMutation.mutateAsync(id);
-      router.push('/master-data-management/brands');
-    } catch (error) {
-      // Error is handled by the mutation hook
-    }
-  };
+  // Delete asks nothing (D7). The countdown takes the primary button's place and
+  // Cancel is the way back; the server applies it when the window lapses, even if
+  // this tab is closed first.
+  const deletion = useDeferredAction({
+    actionKey: 'brand.delete',
+    entityType: 'brand',
+    entityId: id,
+    verb: 'Deleting',
+    subject: brand ? `${brand.brand_name} (${brand.brand_code})` : '',
+    surface: 'inline',
+    watchFromMount: true,
+    successMessage: 'Brand deleted',
+    invalidateKeys: [['brands'], ['brand-select']],
+    onCommitted: () => router.push(backHref),
+  });
+
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<Draft | null>(null);
+
+  const header = (
+    <PageHeader
+      title="Brand"
+      actions={<BackToList listPath={LIST_PATH} label="Back to brands" />}
+    />
+  );
 
   if (isLoading) {
     return (
       <>
-        <Container>
-          <Toolbar>
-            <ToolbarHeading>
-              <ToolbarTitle>Brand</ToolbarTitle>
-              <Breadcrumb>
-                <BreadcrumbList>
-                  <BreadcrumbItem>
-                    <BreadcrumbLink href="/">Home</BreadcrumbLink>
-                  </BreadcrumbItem>
-                  <BreadcrumbSeparator />
-                  <BreadcrumbItem>
-                    <BreadcrumbPage>Product Management</BreadcrumbPage>
-                  </BreadcrumbItem>
-                  <BreadcrumbSeparator />
-                  <BreadcrumbItem>
-                    <BreadcrumbLink href="/master-data-management/brands">
-                      Brands
-                    </BreadcrumbLink>
-                  </BreadcrumbItem>
-                </BreadcrumbList>
-              </Breadcrumb>
-            </ToolbarHeading>
-            <ToolbarActions>
-              <Button asChild variant="outline">
-                <Link href="/master-data-management/brands">
-                  <MoveLeft /> Back to brands
-                </Link>
-              </Button>
-            </ToolbarActions>
-          </Toolbar>
-        </Container>
+        <Container>{header}</Container>
         <Container>
           <div className="space-y-6">
             <Skeleton className="h-10 w-64" />
@@ -96,205 +117,247 @@ export default function BrandDetailPage({
   if (!brand) {
     return (
       <>
-        <Container>
-          <Toolbar>
-            <ToolbarHeading>
-              <ToolbarTitle>Brand</ToolbarTitle>
-              <Breadcrumb>
-                <BreadcrumbList>
-                  <BreadcrumbItem>
-                    <BreadcrumbLink href="/">Home</BreadcrumbLink>
-                  </BreadcrumbItem>
-                  <BreadcrumbSeparator />
-                  <BreadcrumbItem>
-                    <BreadcrumbPage>Product Management</BreadcrumbPage>
-                  </BreadcrumbItem>
-                  <BreadcrumbSeparator />
-                  <BreadcrumbItem>
-                    <BreadcrumbLink href="/master-data-management/brands">
-                      Brands
-                    </BreadcrumbLink>
-                  </BreadcrumbItem>
-                </BreadcrumbList>
-              </Breadcrumb>
-            </ToolbarHeading>
-            <ToolbarActions>
-              <Button asChild variant="outline">
-                <Link href="/master-data-management/brands">
-                  <MoveLeft /> Back to brands
-                </Link>
-              </Button>
-            </ToolbarActions>
-          </Toolbar>
-        </Container>
+        <Container>{header}</Container>
         <Container>
           <div className="text-center py-12">
             <p className="text-muted-foreground">Brand not found</p>
-            <Button
-              variant="outline"
-              onClick={() => router.push('/master-data-management/brands')}
-              className="mt-4"
-            >
-              <MoveLeft className="size-4" />
-              Back to Brands
-            </Button>
+            <div className="mt-4 flex justify-center">
+              <BackToList listPath={LIST_PATH} label="Back to brands" />
+            </div>
           </div>
         </Container>
       </>
     );
   }
 
+  const startEdit = () => {
+    setDraft({
+      brand_code: brand.brand_code,
+      brand_name: brand.brand_name,
+      description: brand.description ?? '',
+      is_active: brand.is_active,
+      access_levels: brand.access_levels ?? [],
+    });
+    setEditing(true);
+  };
+
+  const cancelEdit = () => {
+    setEditing(false);
+    setDraft(null);
+  };
+
+  const handleSave = async () => {
+    if (!draft) return;
+    await update.mutateAsync({
+      id,
+      data: {
+        brand_code: draft.brand_code.trim(),
+        brand_name: draft.brand_name.trim(),
+        description: draft.description.trim() || undefined,
+        is_active: draft.is_active,
+        access_levels: draft.access_levels,
+      },
+    });
+    cancelEdit();
+  };
+
+  const canSave =
+    !!draft &&
+    draft.brand_code.trim().length > 0 &&
+    draft.brand_name.trim().length > 0 &&
+    !update.isPending;
+
+  const actions: RecordAction[] = [
+    {
+      key: 'brand.delete',
+      label: 'Delete brand',
+      icon: Trash2,
+      kind: 'destructive',
+      disabled: deletion.isPending,
+      run: deletion.start,
+    },
+  ];
+
+  const accessLevelNames = (brand.access_levels ?? []).map(
+    (code) => accessTypeOptions.find((opt) => opt.code === code)?.name || code,
+  );
+
   return (
     <>
-      <Container>
-        <Toolbar>
-          <ToolbarHeading>
-            <ToolbarTitle>Brand</ToolbarTitle>
-            <Breadcrumb>
-              <BreadcrumbList>
-                <BreadcrumbItem>
-                  <BreadcrumbLink href="/">Home</BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbPage>Product Management</BreadcrumbPage>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbLink href="/master-data-management/brands">
-                    Brands
-                  </BreadcrumbLink>
-                </BreadcrumbItem>
-              </BreadcrumbList>
-            </Breadcrumb>
-          </ToolbarHeading>
-          <ToolbarActions>
-            <Button asChild variant="outline">
-              <Link href="/master-data-management/brands">
-                <MoveLeft /> Back to brands
-              </Link>
-            </Button>
-          </ToolbarActions>
-        </Toolbar>
-      </Container>
+      <Container>{header}</Container>
 
       <Container>
         <div className="space-y-6">
-          {/* Header */}
-          <div className="flex items-center justify-between">
-            <div className="space-y-1">
-              <div className="flex items-center gap-3">
-                <h1 className="text-2xl font-bold">{brand.brand_name}</h1>
-                <Badge
-                  variant={brand.is_active ? 'success' : 'secondary'}
-                  appearance="ghost"
-                >
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="space-y-1 min-w-0">
+              <div className="flex flex-wrap items-center gap-3">
+                <h2 className="text-2xl font-bold break-words min-w-0">{brand.brand_name}</h2>
+                <Badge variant={brand.is_active ? 'success' : 'secondary'}>
                   {brand.is_active ? 'Active' : 'Inactive'}
                 </Badge>
               </div>
-              <p className="text-sm text-muted-foreground">
-                Brand Code: {brand.brand_code}
-              </p>
+              <p className="text-sm text-muted-foreground">Brand code: {brand.brand_code}</p>
             </div>
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                onClick={() => router.push(`/master-data-management/brands/${id}/edit`)}
-              >
-                <Edit className="size-4" />
-                Edit
-              </Button>
-              <Button
-                variant="destructive"
-                onClick={handleDelete}
-                disabled={deleteMutation.isPending}
-              >
-                <Trash2 className="size-4" />
-                Delete
-              </Button>
-            </div>
+
+            {editing ? (
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <Button variant="outline" onClick={cancelEdit} disabled={update.isPending}>
+                  <X className="size-4" /> Cancel
+                </Button>
+                <Button onClick={() => void handleSave()} disabled={!canSave}>
+                  {update.isPending ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : (
+                    <Check className="size-4" />
+                  )}
+                  Save brand
+                </Button>
+              </div>
+            ) : (
+              <DetailActions
+                actions={actions}
+                gearLabel="Brand options"
+                pendingAction={deletion.countdown}
+                primary={
+                  <Button onClick={startEdit}>
+                    <Pencil className="size-4" /> Edit
+                  </Button>
+                }
+              />
+            )}
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
             <Card>
               <CardHeader>
-                <CardTitle>Basic Information</CardTitle>
+                <CardTitle>Basic information</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div>
-                  <p className="text-sm text-muted-foreground">Brand Code</p>
-                  <p className="font-medium">{brand.brand_code}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Brand Name</p>
-                  <p className="font-medium">{brand.brand_name}</p>
-                </div>
-                {brand.manufacturer && (
-                  <div>
-                    <p className="text-sm text-muted-foreground">Manufacturer</p>
-                    <p className="font-medium">{brand.manufacturer}</p>
-                  </div>
-                )}
-                {brand.website && (
-                  <div>
-                    <p className="text-sm text-muted-foreground">Website</p>
-                    <a
-                      href={brand.website}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="font-medium text-primary hover:underline"
-                    >
-                      {brand.website}
-                    </a>
-                  </div>
-                )}
-                {brand.logo_url && (
-                  <div>
-                    <p className="text-sm text-muted-foreground mb-2">Logo</p>
-                    <img
-                      src={brand.logo_url}
-                      alt={brand.brand_name}
-                      className="size-20 rounded object-contain"
+                <Field label="Brand code" htmlFor="brand-code">
+                  {editing && draft ? (
+                    <Input
+                      id="brand-code"
+                      value={draft.brand_code}
+                      onChange={(e) =>
+                        setDraft({ ...draft, brand_code: e.target.value })
+                      }
                     />
-                  </div>
-                )}
-                <div>
-                  <p className="text-sm text-muted-foreground">Status</p>
-                  <Badge
-                    variant={brand.is_active ? 'success' : 'secondary'}
-                    appearance="ghost"
-                  >
-                    {brand.is_active ? 'Active' : 'Inactive'}
-                  </Badge>
-                </div>
+                  ) : (
+                    brand.brand_code
+                  )}
+                </Field>
+
+                <Field label="Brand name" htmlFor="brand-name">
+                  {editing && draft ? (
+                    <Input
+                      id="brand-name"
+                      value={draft.brand_name}
+                      onChange={(e) =>
+                        setDraft({ ...draft, brand_name: e.target.value })
+                      }
+                    />
+                  ) : (
+                    brand.brand_name
+                  )}
+                </Field>
+
+                <Field label="Description" htmlFor="brand-description">
+                  {editing && draft ? (
+                    <Textarea
+                      id="brand-description"
+                      rows={3}
+                      value={draft.description}
+                      onChange={(e) =>
+                        setDraft({ ...draft, description: e.target.value })
+                      }
+                    />
+                  ) : brand.description ? (
+                    <span className="whitespace-pre-wrap font-normal">{brand.description}</span>
+                  ) : (
+                    <Empty>No description yet</Empty>
+                  )}
+                </Field>
+
+                <Field label="Status" htmlFor="brand-active">
+                  {editing && draft ? (
+                    <div className="flex items-center gap-2">
+                      <Switch
+                        id="brand-active"
+                        checked={draft.is_active}
+                        onCheckedChange={(value) => setDraft({ ...draft, is_active: value })}
+                      />
+                      <span>{draft.is_active ? 'Active' : 'Inactive'}</span>
+                    </div>
+                  ) : (
+                    <Badge variant={brand.is_active ? 'success' : 'secondary'}>
+                      {brand.is_active ? 'Active' : 'Inactive'}
+                    </Badge>
+                  )}
+                </Field>
               </CardContent>
             </Card>
 
             <Card>
               <CardHeader>
-                <CardTitle>Additional Information</CardTitle>
+                <CardTitle>Access</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
-                {brand.description && (
-                  <div>
-                    <p className="text-sm text-muted-foreground">Description</p>
-                    <p className="font-medium whitespace-pre-wrap">{brand.description}</p>
-                  </div>
-                )}
-                <div>
-                  <p className="text-sm text-muted-foreground">Created</p>
-                  <p className="font-medium text-sm">
-                    {formatDate(new Date(brand.created_at))}
-                  </p>
-                </div>
-                {brand.updated_at && (
-                  <div>
-                    <p className="text-sm text-muted-foreground">Last Updated</p>
-                    <p className="font-medium text-sm">
-                      {formatDate(new Date(brand.updated_at))}
-                    </p>
-                  </div>
-                )}
+                <Field label="Access levels">
+                  {editing && draft ? (
+                    accessTypeOptions.length === 0 ? (
+                      <Empty>No access types are configured yet</Empty>
+                    ) : (
+                      <div className="flex flex-wrap gap-3">
+                        {accessTypeOptions.map((opt) => (
+                          <label
+                            key={opt.code}
+                            className="flex items-center gap-2 text-sm font-normal"
+                          >
+                            <Checkbox
+                              checked={draft.access_levels.includes(opt.code)}
+                              onCheckedChange={(value) => {
+                                const next = new Set(draft.access_levels);
+                                if (value) next.add(opt.code);
+                                else next.delete(opt.code);
+                                setDraft({ ...draft, access_levels: Array.from(next) });
+                              }}
+                            />
+                            {opt.name || opt.code}
+                          </label>
+                        ))}
+                      </div>
+                    )
+                  ) : accessLevelNames.length > 0 ? (
+                    <div className="flex flex-wrap gap-1.5">
+                      {accessLevelNames.map((name) => (
+                        <Badge key={name} variant="secondary">
+                          {name}
+                        </Badge>
+                      ))}
+                    </div>
+                  ) : (
+                    <Empty>Open to everyone</Empty>
+                  )}
+                </Field>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Record</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <Field label="Created">{formatDate(new Date(brand.created_at))}</Field>
+                <Field label="Last updated">
+                  {brand.updated_at ? formatDate(new Date(brand.updated_at)) : <Empty />}
+                </Field>
+                <Field label="Products in this brand">
+                  {brand.product_count != null ? (
+                    brand.product_count
+                  ) : (
+                    <Empty>Not counted</Empty>
+                  )}
+                </Field>
               </CardContent>
             </Card>
           </div>

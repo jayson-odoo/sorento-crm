@@ -32,7 +32,6 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
@@ -198,6 +197,33 @@ export default function RespondContactsOutboundList() {
     setPending(null);
   };
 
+  // The one offer this listing makes, in both places it belongs: the
+  // toolbar, and the empty state's next step (S5-06).
+  const listPrimaryAction = (
+    <>
+      <Button
+        variant="outline"
+        size="sm"
+        className="gap-1.5"
+        disabled={busy || counts.disabled === 0}
+        onClick={() => setPending({ kind: 'enable-all', count: counts.disabled })}
+      >
+        <MessageCircle className="size-4" />
+        Enable all
+      </Button>
+      <Button
+        variant="outline"
+        size="sm"
+        className="gap-1.5 text-destructive border-destructive/50 hover:bg-destructive/10"
+        disabled={busy || counts.enabled === 0}
+        onClick={() => setPending({ kind: 'disable-all', count: counts.enabled })}
+      >
+        <MessageCircleOff className="size-4" />
+        Disable all
+      </Button>
+    </>
+  );
+
   return (
     <div className="space-y-5">
       <Card>
@@ -243,6 +269,7 @@ export default function RespondContactsOutboundList() {
             : 'No Respond.io contacts yet. They appear here once a contact messages us or is synced from Respond.io.'
         }
         tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
+        emptyAction={listPrimaryAction}
       >
         <Card>
           <CardHeader className="block">
@@ -303,30 +330,7 @@ export default function RespondContactsOutboundList() {
               // `secondaryActions` would collapse it into an unlabelled
               // "Actions" overflow at two entries, which is the wrong place for
               // the control this page exists to offer.
-              primaryAction={
-                <>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="gap-1.5"
-                    disabled={busy || counts.disabled === 0}
-                    onClick={() => setPending({ kind: 'enable-all', count: counts.disabled })}
-                  >
-                    <MessageCircle className="size-4" />
-                    Enable all
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="gap-1.5 text-destructive border-destructive/50 hover:bg-destructive/10"
-                    disabled={busy || counts.enabled === 0}
-                    onClick={() => setPending({ kind: 'disable-all', count: counts.enabled })}
-                  >
-                    <MessageCircleOff className="size-4" />
-                    Disable all
-                  </Button>
-                </>
-              }
+              primaryAction={listPrimaryAction}
               bulkActions={[
                 {
                   key: 'bulk-enable',
@@ -348,10 +352,7 @@ export default function RespondContactsOutboundList() {
             />
           </CardHeader>
           <CardTable>
-            <ScrollArea>
-              <DataGridTable />
-              <ScrollBar orientation="horizontal" />
-            </ScrollArea>
+            <DataGridTable />
           </CardTable>
           <CardFooter>
             <DataGridPagination />

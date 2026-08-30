@@ -838,54 +838,6 @@ async def get_sla_tracking(
         raise handle_internal_error(str(e))
 
 
-@router.get("/neighbours")
-async def get_sla_tracking_neighbours(
-    id: str = Query(..., description="Conversation SLA tracking id to resolve neighbours for"),
-    policy_id: Optional[str] = Query(None),
-    query: Optional[str] = Query(None),
-    tracking_ids: Optional[list[str]] = Query(
-        None,
-        description="Filter by canonical SLA tracking UUIDs (repeated / csv / JSON array).",
-    ),
-    sort: Optional[str] = Query(None),
-    dir: Optional[str] = Query(None),
-    assigned_to: Optional[str] = Query(None),
-    contact: Optional[str] = Query(None),
-    is_resolved: Optional[bool] = Query(None),
-    resolved_by: Optional[str] = Query(None),
-    current_user: dict = Depends(get_current_user_or_api_key),
-    db: Session = Depends(get_db),
-):
-    """Prev/next neighbours of a conversation SLA tracking row within the active
-    filtered+sorted list set.
-
-    Accepts the same filter/sort/search params as the list GET (page/limit are
-    irrelevant and ignored; ``scope`` is fixed to conversation here - form SLA rows
-    have their own list/detail flow). Returns ``{total, index, prev_id, next_id}``
-    with the 1-based ``index`` and circular wrap-around neighbours. If the record is
-    not in the filtered set, falls back to the unfiltered, default-sorted conversation
-    set (D2).
-    """
-    try:
-        service = ConversationSLATrackingService(db)
-        return service.neighbours(
-            tracking_id=id,
-            policy_id=policy_id,
-            query=query,
-            tracking_ids=parse_uuid_list(tracking_ids, param_name="tracking_ids"),
-            sort_field=sort or "created_at",
-            sort_dir=dir or "desc",
-            assigned_to=assigned_to,
-            contact=contact,
-            is_resolved=is_resolved,
-            resolved_by=_resolved_by_param(resolved_by, current_user),
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise handle_internal_error(str(e))
-
-
 @router.post("/", response_model=ConversationSLATrackingResponse, status_code=status.HTTP_201_CREATED)
 async def create_sla_tracking(
     tracking_data: ConversationSLATrackingCreate,
@@ -1817,28 +1769,19 @@ async def post_sla_tracking_test_overrides(
 @router.delete("/{tracking_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_sla_tracking(
     tracking_id: UUID,
-    request: Request,
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
-    """Delete an SLA tracking record."""
+    """Delete an SLA tracking record.
+
+    The integration log is the SERVICE's, not this route's: since S6b the same delete
+    is also reached by the deferred `sla_tracking.delete` record action, which commits
+    from a sweep or a poll with no request in sight, and a log written here would have
+    stopped being written for every deletion started from the UI.
+    """
     tracking_id_str = str(tracking_id)
-    log_service = IntegrationLogService(db)
     try:
-        service = ConversationSLATrackingService(db)
-        service.delete_tracking(tracking_id_str)
-        log_service.create_integration_log(
-            IntegrationLogCreate(
-                integration_channel="sla_management",
-                business_table="conversation_sla_tracking",
-                business_id=tracking_id_str,
-                external_reference=tracking_id_str,
-                direction="inbound",
-                endpoint=str(request.url),
-                http_method="DELETE",
-                status="success",
-            ),
-        )
+        ConversationSLATrackingService(db).delete_tracking(tracking_id_str)
         return None
     except HTTPException:
         raise
@@ -1851,22 +1794,6 @@ async def delete_sla_tracking(
         # The global handler in app/main.py still serialises it to the caller.
         raise
     except Exception as e:
-        try:
-            log_service.create_integration_log(
-                IntegrationLogCreate(
-                    integration_channel="sla_management",
-                    business_table="conversation_sla_tracking",
-                    business_id=tracking_id_str,
-                    external_reference=tracking_id_str,
-                    direction="inbound",
-                    endpoint=str(request.url),
-                    http_method="DELETE",
-                    status="failed",
-                    error_message=str(e),
-                ),
-            )
-        except Exception:
-            pass
         raise handle_internal_error(str(e))
 
 

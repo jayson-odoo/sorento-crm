@@ -14,7 +14,22 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+/* The grace window is the server's; what this file proves is that the control parks one. */
+const createPendingAction = vi.fn().mockResolvedValue({
+  id: 'pa-1',
+  action_key: 'proforma_invoice.delete',
+  entity_type: 'proforma_invoice',
+  entity_id: 'pi-1',
+  commit_at: '2026-08-30T10:00:10',
+  window_seconds: 10,
+});
+vi.mock('@/services/pendingActionService', () => ({
+  createPendingAction: (...args: unknown[]) => createPendingAction(...args),
+  cancelPendingAction: vi.fn(),
+  getCurrentPendingAction: vi.fn().mockResolvedValue({ pending: null, last_outcome: null }),
+}));
+
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ProformaInvoiceDetail as ProformaInvoiceDetailData } from '../../../services/proformaInvoiceService';
 
@@ -36,6 +51,8 @@ if (!window.ResizeObserver) {
   };
 }
 Element.prototype.scrollIntoView = Element.prototype.scrollIntoView ?? (() => {});
+
+vi.mock('@/components/common/ListPager', () => ({ __esModule: true, default: () => null }));
 
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
@@ -87,6 +104,11 @@ const writes = {
 };
 
 vi.mock('../../../hooks/useProformaInvoices', () => ({
+  // The pager reads the list page through the entity's shared key + fetch (S3-03).
+  proformaInvoicesPagerQuery: {
+    listQueryKey: () => ['scm-proforma-invoices'],
+    fetchPage: async () => ({ data: [], pagination: { total: 0 } }),
+  },
   useProformaInvoice: () => state,
   // The header's pager pulls the neighbour list through this hook - one row is not enough to
   // show a pager (RecordNavigation's `items.length < 2` guard), so it stays out of the way.
@@ -330,11 +352,15 @@ describe('ProformaInvoiceDetail - the record header', () => {
     expect(screen.getByRole('menuitem', { name: /delete invoice/i })).toBeInTheDocument();
   });
 
-  it('keeps Back to the list as the last thing on the row', () => {
+  it('S3-02: leaves Back to the toolbar row, so the record header ends with the primary', () => {
     state.data = detail();
     renderDetail();
 
-    expect(screen.getByRole('link', { name: /back to proforma invoices/i })).toBeInTheDocument();
+    // Back moved to the page's toolbar row (D6); the record header keeps pager,
+    // gear and the primary button only.
+    expect(
+      screen.queryByRole('link', { name: /back to proforma invoices/i }),
+    ).not.toBeInTheDocument();
   });
 
   it('offers "Convert the rest" while something is still to place', () => {
@@ -366,22 +392,27 @@ describe('ProformaInvoiceDetail - the record header', () => {
 });
 
 describe('ProformaInvoiceDetail - deleting the invoice', () => {
-  it('asks first, and routes back to the list once it is done', async () => {
+  it('parks the delete and stays put until the server applies it (S6-10)', async () => {
     state.data = detail();
     renderDetail();
 
     openActions();
     fireEvent.click(screen.getByRole('menuitem', { name: /delete invoice/i }));
 
-    expect(screen.getByText(/deletes proforma invoice PI-2026-001/)).toBeInTheDocument();
-    expect(writes.deleteInvoice).not.toHaveBeenCalled();
-
-    fireEvent.click(
-      within(screen.getByRole('dialog')).getByRole('button', { name: /^delete$/i }),
+    // D7: the menu item IS the action. The page must NOT leave on the click - a
+    // record page that returned to the list would be lying for ten seconds, and
+    // Cancel would have nowhere to put the reader back.
+    await waitFor(() =>
+      expect(createPendingAction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          actionKey: 'proforma_invoice.delete',
+          entityType: 'proforma_invoice',
+          entityId: 'pi-1',
+        }),
+      ),
     );
-
-    await waitFor(() => expect(writes.deleteInvoice).toHaveBeenCalledWith('pi-1'));
-    await waitFor(() => expect(push).toHaveBeenCalledWith('/scm/proforma-invoices'));
+    expect(writes.deleteInvoice).not.toHaveBeenCalled();
+    expect(push).not.toHaveBeenCalledWith('/scm/proforma-invoices');
   });
 
   it('refuses on an invoice already in a packing list, and says why', () => {
@@ -559,7 +590,7 @@ describe('ProformaInvoiceDetail - editing is a draft until Save', () => {
     beginEdit();
 
     expect(screen.getByText('Nothing is written until you press Save.')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^save$/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Save proforma invoice$/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /^cancel$/i })).toBeInTheDocument();
     // Nav and the way out act on the STORED invoice, so they are not offered over a screen
     // full of unsaved changes.
@@ -599,7 +630,7 @@ describe('ProformaInvoiceDetail - editing is a draft until Save', () => {
     beginEdit();
     openTab('Lines');
     fireEvent.change(screen.getByLabelText('Quantity for ITEM-1'), { target: { value: '8' } });
-    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^Save proforma invoice$/i }));
 
     await waitFor(() => expect(writes.save).toHaveBeenCalledTimes(1));
     const payload = lastSavePayload();
@@ -623,7 +654,7 @@ describe('ProformaInvoiceDetail - editing is a draft until Save', () => {
     renderDetail();
     beginEdit();
     fireEvent.change(screen.getByLabelText('PI number'), { target: { value: 'PI-REAL-9 ' } });
-    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^Save proforma invoice$/i }));
 
     await waitFor(() => expect(writes.save).toHaveBeenCalledTimes(1));
     expect(lastSavePayload().pi_number).toBe('PI-REAL-9');
@@ -634,7 +665,7 @@ describe('ProformaInvoiceDetail - editing is a draft until Save', () => {
     renderDetail();
     beginEdit();
     fireEvent.change(screen.getByLabelText('PI number'), { target: { value: '  ' } });
-    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^Save proforma invoice$/i }));
 
     await waitFor(() => expect(writes.save).not.toHaveBeenCalled());
     expect(screen.getByLabelText('PI number')).toBeInTheDocument();
@@ -673,7 +704,7 @@ describe('ProformaInvoiceDetail - editing is a draft until Save', () => {
     openTab('Lines');
 
     fireEvent.click(screen.getByRole('button', { name: /^remove$/i }));
-    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^Save proforma invoice$/i }));
 
     await waitFor(() => expect(writes.save).toHaveBeenCalledTimes(1));
     expect(lastSavePayload().lines).toEqual([]);
@@ -690,7 +721,7 @@ describe('ProformaInvoiceDetail - editing is a draft until Save', () => {
       target: { value: 'HAND-1' },
     });
     fireEvent.change(screen.getByLabelText('Quantity for HAND-1'), { target: { value: '4' } });
-    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^Save proforma invoice$/i }));
 
     await waitFor(() => expect(writes.save).toHaveBeenCalledTimes(1));
     const lines = lastSavePayload().lines ?? [];
@@ -709,7 +740,7 @@ describe('ProformaInvoiceDetail - editing is a draft until Save', () => {
     fireEvent.change(screen.getByLabelText('Item code for line 2'), {
       target: { value: 'HAND-1' },
     });
-    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^Save proforma invoice$/i }));
 
     await waitFor(() => expect(writes.save).not.toHaveBeenCalled());
   });
@@ -894,7 +925,7 @@ describe('F11 - answering a supplier code by hand', () => {
     expect(screen.queryByRole('button', { name: /^change$/i })).not.toBeInTheDocument();
   });
 
-  it('asks before forgetting a recorded match, and quotes both codes', () => {
+  it('parks the forget on the RULING, never on the line (S6-10)', async () => {
     state.data = detail({
       lines: [
         {
@@ -912,33 +943,19 @@ describe('F11 - answering a supplier code by hand', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /^forget$/i }));
 
-    expect(
-      screen.getByText(
-        /Forget that SRTWC8357-RL-300 means SRTWC8357-300-RL\? Next upload will match it again by the ladder\./,
+    // D7: the press IS the action, and the entity is the ALIAS row - forgetting is
+    // a ruling being withdrawn, not a line being edited.
+    await waitFor(() =>
+      expect(createPendingAction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          actionKey: 'supplier_code_alias.forget',
+          entityType: 'supplier_code_alias',
+          entityId: 'alias-1',
+        }),
       ),
-    ).toBeInTheDocument();
-    expect(writes.forgetMatch).not.toHaveBeenCalled();
-  });
-
-  it('forgets the recorded match on confirm, named by the ruling and never by the line', async () => {
-    state.data = detail({
-      lines: [
-        {
-          ...detail().lines[0],
-          match_source: 'auto',
-          matched_by: 'token_set',
-          match_id: 'alias-1',
-        },
-      ],
-    });
-    renderDetail();
-    openTab('Lines');
-
-    fireEvent.click(screen.getByRole('button', { name: /^forget$/i }));
-    fireEvent.click(
-      within(screen.getByRole('dialog')).getByRole('button', { name: /^forget$/i }),
     );
-
-    await waitFor(() => expect(writes.forgetMatch).toHaveBeenCalledWith('alias-1'));
+    expect(writes.forgetMatch).not.toHaveBeenCalled();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
+
 });

@@ -14,7 +14,6 @@ import { CardContent } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import {
   Sheet,
   SheetContent,
@@ -268,10 +267,7 @@ export default function SLAPolicyTiersTable({ policyId }: SLAPolicyTiersTablePro
           </div>
         ) : (
           <DataGrid table={table} recordCount={tiers?.length || 0} isLoading={isLoading}>
-            <ScrollArea>
-              <DataGridTable />
-              <ScrollBar orientation="horizontal" />
-            </ScrollArea>
+            <DataGridTable />
           </DataGrid>
         )}
       </CardContent>

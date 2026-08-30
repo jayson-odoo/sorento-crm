@@ -196,7 +196,7 @@ export function DesignSummary() {
                             {line.productName}
                           </span>
                           {!line.isAvailable && (
-                            <Badge variant="destructive" appearance="ghost" className="mt-1 text-xs">
+                            <Badge variant="destructive" className="mt-1 text-xs">
                               {line.unavailableReason ?? 'Cannot be ordered'}
                             </Badge>
                           )}

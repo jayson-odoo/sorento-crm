@@ -148,7 +148,7 @@ export default function MemberMarketSegmentEditor({
               Cancel
             </Button>
             <Button size="sm" onClick={save} disabled={setSegments.isPending}>
-              Save
+              Save segments
             </Button>
           </DialogFooter>
         </DialogContent>

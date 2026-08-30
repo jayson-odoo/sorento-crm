@@ -4,13 +4,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import {
-  useRecordNeighbours,
-  type RecordNeighboursResult,
-} from '@/hooks/useRecordNeighbours';
-import {
   acceptRevisionProposal,
   confirmDeliveryScheduleVersion,
-  DELIVERY_SCHEDULE_VERSION_NEIGHBOURS_PATH,
   deleteDeliverySchedule,
   deleteDeliveryScheduleVersion,
   dismissDeliveryScheduleColumn,
@@ -86,19 +81,6 @@ export function useDeliveryScheduleVersion(
   });
 }
 
-/**
- * Prev/next within this schedule's own revision history, so a reviewer can step from R2 to
- * R1 without going back to the project tab. Newest first, the order the versions grid uses.
- */
-export function useDeliveryScheduleVersionNeighbours(
-  versionId: string | undefined,
-  options: { enabled?: boolean } = {},
-): RecordNeighboursResult {
-  return useRecordNeighbours(
-    DELIVERY_SCHEDULE_VERSION_NEIGHBOURS_PATH,
-    options.enabled === false ? null : (versionId ?? null),
-  );
-}
 
 /**
  * The full version this one revises, for the was -> now diff (section 9.1).

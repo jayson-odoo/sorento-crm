@@ -44,7 +44,7 @@ export default function ContactOutboundCell({
         }
         onCheckedChange={onChange}
       />
-      <Badge variant={enabled ? 'secondary' : 'destructive'} appearance={enabled ? 'ghost' : 'light'}>
+      <Badge variant={enabled ? 'secondary' : 'destructive'}>
         {enabled ? 'Can be messaged' : 'Silenced'}
       </Badge>
     </div>

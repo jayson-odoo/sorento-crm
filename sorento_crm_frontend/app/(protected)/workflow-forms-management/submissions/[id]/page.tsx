@@ -1,18 +1,6 @@
 import { Metadata } from 'next';
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
 import { Container } from '@/components/common/container';
-import {
-  Toolbar,
-  ToolbarHeading,
-  ToolbarTitle,
-} from '@/components/common/toolbar';
+import { PageHeader } from '@/components/common/PageHeader';
 import { WorkflowSubmissionDetail } from '../../components/WorkflowSubmissionEditor';
 
 export const metadata: Metadata = {
@@ -24,26 +12,15 @@ export default async function WorkflowSubmissionPage({ params }: { params: Promi
   return (
     <>
       <Container>
-        <Toolbar>
-          <ToolbarHeading>
-            <ToolbarTitle>Submission</ToolbarTitle>
-            <Breadcrumb>
-              <BreadcrumbList>
-                <BreadcrumbItem>
-                  <BreadcrumbLink href="/">Home</BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbLink href="/workflow-forms-management/submissions">Submissions</BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbPage>Detail</BreadcrumbPage>
-                </BreadcrumbItem>
-              </BreadcrumbList>
-            </Breadcrumb>
-          </ToolbarHeading>
-        </Toolbar>
+        <PageHeader
+          title="Submission"
+          // The sidebar stops at Definitions, so the list this record came from
+          // has to be named here or the trail loses its only way back.
+          crumbs={[
+            { title: 'Workflow submissions', path: '/workflow-forms-management/submissions' },
+            { title: 'Submission' },
+          ]}
+        />
       </Container>
       <Container>
         <WorkflowSubmissionDetail submissionId={id} />

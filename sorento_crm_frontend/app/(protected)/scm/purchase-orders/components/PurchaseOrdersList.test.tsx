@@ -214,7 +214,10 @@ describe('PurchaseOrdersList - draft + active rows (AC-M4.6)', () => {
   it('renders the PO number as a hyperlink to the detail page', () => {
     mockList([po({ id: 'po-abc', po_number: 'PO-DRAFT-0002' })]);
     render(<PurchaseOrdersList />);
-    const link = screen.getByRole('link', { name: /PO-DRAFT-0002/ });
+    // The row is a link too now (S1-06 `rowHref`); the PO number stays its own anchor.
+    const link = screen
+      .getAllByRole('link', { name: /PO-DRAFT-0002/ })
+      .find((el) => el.tagName === 'A') as HTMLAnchorElement;
     // The link carries the active list query so the detail page's prev/next pager walks the
     // SAME filtered, sorted page the user was reading.
     const href = link.getAttribute('href') ?? '';

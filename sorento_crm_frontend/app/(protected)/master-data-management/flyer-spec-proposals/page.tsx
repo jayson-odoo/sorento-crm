@@ -1,19 +1,7 @@
 import { Metadata } from 'next';
 
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
 import { Container } from '@/components/common/container';
-import {
-  Toolbar,
-  ToolbarHeading,
-  ToolbarTitle,
-} from '@/components/common/toolbar';
+import { PageHeader } from '@/components/common/PageHeader';
 
 import { FlyerSpecBatchesList } from './components/FlyerSpecBatchesList';
 
@@ -26,26 +14,7 @@ export const metadata: Metadata = {
 export default function FlyerSpecProposalsPage() {
   return (
     <Container width="fluid">
-      <Toolbar>
-        <ToolbarHeading>
-          <ToolbarTitle>Flyer Spec Proposals</ToolbarTitle>
-          <Breadcrumb>
-            <BreadcrumbList>
-              <BreadcrumbItem>
-                <BreadcrumbLink href="/">Home</BreadcrumbLink>
-              </BreadcrumbItem>
-              <BreadcrumbSeparator />
-              <BreadcrumbItem>
-                <BreadcrumbPage>Master Data</BreadcrumbPage>
-              </BreadcrumbItem>
-              <BreadcrumbSeparator />
-              <BreadcrumbItem>
-                <BreadcrumbPage>Flyer Spec Proposals</BreadcrumbPage>
-              </BreadcrumbItem>
-            </BreadcrumbList>
-          </Breadcrumb>
-        </ToolbarHeading>
-      </Toolbar>
+      <PageHeader title="Flyer Spec Proposals" />
 
       <FlyerSpecBatchesList />
     </Container>

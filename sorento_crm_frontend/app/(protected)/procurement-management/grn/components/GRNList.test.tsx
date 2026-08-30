@@ -40,10 +40,20 @@ vi.mock('@/components/upload-activity', () => ({
 }));
 
 const useGRNsMock = vi.fn();
+// The row "..." menu resolves permissions; this test has no session or query
+// client, and RBAC has its own tests.
+vi.mock('@/hooks/usePermissions', () => ({
+  useHasPermission: () => true,
+  usePermissions: () => ({ permissions: [], permissionSet: new Set(), isLoading: false }),
+}));
+
 vi.mock('../hooks/useGRN', () => ({
   useGRNs: (...args: unknown[]) => useGRNsMock(...args),
   // The bulk-delete dialog renders with the list, so its hook has to exist.
   useBulkDeleteGRNs: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  // The row "..." menu shares the record's action set, which sets status.
+  useUpdateGRN: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
+  useDeleteGRN: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
 
 import GRNList from './GRNList';

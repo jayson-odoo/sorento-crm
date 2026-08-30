@@ -1,7 +1,6 @@
 'use client';
 
 import { useCallback, useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
@@ -15,8 +14,10 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Search, X, ChevronRight, Download, Eye, Trash2, Plus, RefreshCw, RotateCcw, FileArchive, Pencil, Tag } from 'lucide-react';
+import { Search, X, Trash2, Plus, RefreshCw, RotateCcw, FileArchive, Tag } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { RowActionsMenu } from '@/components/common/RowActionsMenu';
+import { useAttachmentActions } from '../actions';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
@@ -25,18 +26,9 @@ import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable, DataGridTableRowSelect, DataGridTableRowSelectAll } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useAttachments, useAttachmentTypesList, useDeleteAttachment, useDownloadAttachment, useRestoreAttachment, useBulkRestoreAttachments, useDirectoryTree, useUpdateAttachment } from '../hooks/useAttachments';
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
-import { Label } from '@/components/ui/label';
-import { getAttachmentPreviewUrl, resubmitAttachmentWebhook } from '../services/attachmentService';
+import { useAttachments, useAttachmentTypesList, useBulkRestoreAttachments, useDirectoryTree } from '../hooks/useAttachments';
+import { resubmitAttachmentWebhook } from '../services/attachmentService';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import type { Attachment } from '../types/attachment.types';
 import type { AttachmentDirectoryTreeNode } from '../services/directoryService';
@@ -50,24 +42,32 @@ function flattenDirectoryTree(nodes: AttachmentDirectoryTreeNode[], prefix = '')
 import { formatDateTime } from '@/lib/helpers';
 import AttachmentUploadDialog from './AttachmentUploadDialog';
 import AttachmentBulkImportDialog from './AttachmentBulkImportDialog';
-import AttachmentDeleteDialog from './attachment-delete-dialog';
 import AttachmentBulkDeleteDialog from './AttachmentBulkDeleteDialog';
 import EditAttachmentTypeDialog from './EditAttachmentTypeDialog';
+import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
+
+/**
+ * The row's "..." (D15): the same set the record's gear renders. Its own
+ * component because the action set is a hook.
+ */
+function AttachmentRowActions({ attachment }: { attachment: Attachment }) {
+  const { actions, dialogs } = useAttachmentActions(attachment);
+  return (
+    <>
+      <RowActionsMenu ariaLabel="file" actions={actions} />
+      {dialogs}
+    </>
+  );
+}
 
 export default function AttachmentBrowser() {
-  const router = useRouter();
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [sorting, setSorting] = useState<SortingState>([{ id: 'uploaded_at', desc: true }]);
   const [searchQuery, setSearchQuery] = useState('');
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
   const [bulkImportDialogOpen, setBulkImportDialogOpen] = useState(false);
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
   const [bulkEditTypeOpen, setBulkEditTypeOpen] = useState(false);
-  const [renameDialogOpen, setRenameDialogOpen] = useState(false);
-  const [renameTarget, setRenameTarget] = useState<Attachment | null>(null);
-  const [renameValue, setRenameValue] = useState('');
-  const [selectedAttachment, setSelectedAttachment] = useState<Attachment | null>(null);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [directoryId, setDirectoryId] = useState<string | null>(null);
   const [attachmentTypeId, setAttachmentTypeId] = useState<string>('__all__');
@@ -75,7 +75,22 @@ export default function AttachmentBrowser() {
   const [uploadedBy, setUploadedBy] = useState('');
   const [uploadedAtFrom, setUploadedAtFrom] = useState('');
   const [uploadedAtTo, setUploadedAtTo] = useState('');
-  const [pendingResubmitIds, setPendingResubmitIds] = useState<Set<string>>(new Set());
+
+  // Back hands the list its own query string back, and the pager keeps
+  // rewriting it, so the list reads it (S3-01). One hook, every list.
+  useListStateFromUrl((state) => {
+    setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
+    setSorting(state.sorting);
+    setSearchQuery(state.searchQuery);
+    setDirectoryId(state.filters.directory_id ?? null);
+    setAttachmentTypeId(state.filters.attachment_type_id ?? '__all__');
+    setLinkStatus(
+      (state.filters.link_status as 'linked' | 'unlinked') ?? '__all__',
+    );
+    setUploadedBy(state.filters.uploaded_by ?? '');
+    setUploadedAtFrom(state.filters.uploaded_at_from ?? '');
+    setUploadedAtTo(state.filters.uploaded_at_to ?? '');
+  });
 
   const queryClient = useQueryClient();
   const { data: directoryTree = [] } = useDirectoryTree();
@@ -134,96 +149,9 @@ export default function AttachmentBrowser() {
     ],
   );
 
-  const deleteMutation = useDeleteAttachment();
-  const restoreMutation = useRestoreAttachment();
   const bulkRestoreMutation = useBulkRestoreAttachments();
-  const downloadMutation = useDownloadAttachment();
-  const updateMutation = useUpdateAttachment();
-
-  const openRename = useCallback((attachment: Attachment) => {
-    setRenameTarget(attachment);
-    setRenameValue(attachment.stored_filename || attachment.original_filename || '');
-    setRenameDialogOpen(true);
-  }, []);
-
-  const submitRename = useCallback(async () => {
-    if (!renameTarget) return;
-    const next = renameValue.trim();
-    if (!next) {
-      toast.error('Filename cannot be empty.');
-      return;
-    }
-    if (next === (renameTarget.stored_filename || renameTarget.original_filename)) {
-      setRenameDialogOpen(false);
-      return;
-    }
-    try {
-      await updateMutation.mutateAsync({ attachmentId: renameTarget.id, data: { stored_filename: next } });
-      toast.success('Renamed.');
-      setRenameDialogOpen(false);
-      setRenameTarget(null);
-      queryClient.invalidateQueries({ queryKey: ['attachments'] });
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Rename failed.');
-    }
-  }, [renameTarget, renameValue, updateMutation, queryClient]);
 
   const [isResubmittingBulk, setIsResubmittingBulk] = useState(false);
-
-  const handleResubmit = useCallback(
-    async (attachment: Attachment) => {
-      const { id } = attachment;
-      setPendingResubmitIds((prev) => new Set(prev).add(id));
-      try {
-        await resubmitAttachmentWebhook(id);
-        toast.success('Resubmitted successfully');
-        queryClient.invalidateQueries({ queryKey: ['attachments'] });
-      } catch (error) {
-        toast.error(error instanceof Error ? error.message : 'Failed to resubmit');
-      } finally {
-        setPendingResubmitIds((prev) => {
-          const next = new Set(prev);
-          next.delete(id);
-          return next;
-        });
-      }
-    },
-    [queryClient]
-  );
-
-  const handleDownload = async (attachment: Attachment) => {
-    try {
-      const blob = await downloadMutation.mutateAsync(attachment.id);
-      
-      // Create a blob URL and trigger download
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = attachment.stored_filename || attachment.original_filename || 'download';
-      document.body.appendChild(a);
-      a.click();
-      window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
-    } catch {
-      // Error is handled by the mutation hook (toast)
-    }
-  };
-
-  const handlePreview = async (attachmentId: string) => {
-    try {
-      const previewUrl = await getAttachmentPreviewUrl(attachmentId);
-      if (previewUrl) {
-        window.open(previewUrl, '_blank');
-      }
-    } catch {
-      toast.error('Failed to open attachment preview');
-    }
-  };
-
-  const handleDelete = (attachment: Attachment) => {
-    setSelectedAttachment(attachment);
-    setDeleteDialogOpen(true);
-  };
 
   const formatFileSize = (bytes: number): string => {
     if (bytes < 1024) return bytes + ' B';
@@ -245,7 +173,6 @@ export default function AttachmentBrowser() {
     const ids = selectedDeletableIds;
     if (ids.length === 0) return;
     setIsResubmittingBulk(true);
-    setPendingResubmitIds((prev) => new Set(Array.from(prev).concat(ids)));
     let successCount = 0;
     let failCount = 0;
     for (const id of ids) {
@@ -254,12 +181,6 @@ export default function AttachmentBrowser() {
         successCount += 1;
       } catch {
         failCount += 1;
-      } finally {
-        setPendingResubmitIds((prev) => {
-          const next = new Set(Array.from(prev));
-          next.delete(id);
-          return next;
-        });
       }
     }
     setIsResubmittingBulk(false);
@@ -351,114 +272,15 @@ export default function AttachmentBrowser() {
       },
       {
         accessorKey: 'actions',
-        header: 'Actions',
-        cell: ({ row }) => (
-          <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-            <Button 
-              variant="ghost" 
-              size="sm" 
-              title="Preview"
-              onClick={(e) => {
-                e.stopPropagation();
-                handlePreview(row.original.id);
-              }}
-            >
-              <Eye className="size-4" />
-            </Button>
-            <Button 
-              variant="ghost" 
-              size="sm" 
-              title="Download"
-              onClick={(e) => {
-                e.stopPropagation();
-                handleDownload(row.original);
-              }}
-              disabled={downloadMutation.isPending}
-            >
-              <Download className="size-4" />
-            </Button>
-            {isTrashView ? (
-              <>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  title="Restore"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    restoreMutation.mutate(row.original.id);
-                  }}
-                  disabled={restoreMutation.isPending}
-                >
-                  <RotateCcw className="size-4" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  title="Permanently delete"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleDelete(row.original);
-                  }}
-                  disabled={deleteMutation.isPending}
-                >
-                  <Trash2 className="size-4 text-destructive" />
-                </Button>
-              </>
-            ) : (
-              <>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  title="Rename"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    openRename(row.original);
-                  }}
-                  disabled={row.original.is_deleted}
-                >
-                  <Pencil className="size-4" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  title="Resubmit to n8n"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleResubmit(row.original);
-                  }}
-                  disabled={pendingResubmitIds.has(row.original.id) || row.original.is_deleted}
-                >
-                  <RefreshCw className={`size-4 ${pendingResubmitIds.has(row.original.id) ? 'animate-spin' : ''}`} />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  title="Move to trash"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleDelete(row.original);
-                  }}
-                  disabled={deleteMutation.isPending || row.original.is_deleted}
-                >
-                  <Trash2 className="size-4" />
-                </Button>
-              </>
-            )}
-            <ChevronRight className="text-muted-foreground/70 size-3.5" />
-          </div>
-        ),
-        size: 220,
+        header: () => <span className="sr-only">Actions</span>,
+        // The row opens the record; everything else is one menu, the same one
+        // the record's gear renders (D15). It used to be five icon buttons.
+        cell: ({ row }) => <AttachmentRowActions attachment={row.original} />,
+        size: 60,
         enableHiding: false,
       },
     ],
-    [
-      isTrashView,
-      deleteMutation.isPending,
-      downloadMutation.isPending,
-      handleResubmit,
-      pendingResubmitIds,
-      restoreMutation.isPending,
-    ],
+    [],
   );
 
   const handleBulkDelete = () => {
@@ -557,10 +379,8 @@ export default function AttachmentBrowser() {
         table={table}
         recordCount={data?.pagination.total || 0}
         isLoading={isLoading}
-        onRowClick={(row) =>
-          router.push(
-            `/resource-management/attachments/${row.id}${detailSearch ? `?${detailSearch}` : ''}`,
-          )
+        rowHref={(row) =>
+          `/resource-management/attachments/${row.id}${detailSearch ? `?${detailSearch}` : ''}`
         }
         tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
       >
@@ -708,10 +528,7 @@ export default function AttachmentBrowser() {
             />
           </CardHeader>
         <CardTable>
-          <ScrollArea>
-            <DataGridTable />
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
+          <DataGridTable />
         </CardTable>
         <CardFooter>
           <DataGridPagination />
@@ -731,12 +548,6 @@ export default function AttachmentBrowser() {
       defaultParentDirectoryId={directoryId}
     />
 
-    <AttachmentDeleteDialog
-      open={deleteDialogOpen}
-      onOpenChange={setDeleteDialogOpen}
-      attachment={selectedAttachment}
-      permanent={isTrashView}
-    />
 
     <AttachmentBulkDeleteDialog
       open={bulkDeleteDialogOpen}
@@ -753,39 +564,6 @@ export default function AttachmentBrowser() {
       onSaved={() => setRowSelection({})}
     />
 
-    <Dialog open={renameDialogOpen} onOpenChange={setRenameDialogOpen}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>Rename file</DialogTitle>
-        </DialogHeader>
-        <div className="space-y-2">
-          <Label htmlFor="rename-input">
-            Filename <span className="text-destructive">*</span>
-          </Label>
-          <Input
-            id="rename-input"
-            value={renameValue}
-            onChange={(e) => setRenameValue(e.target.value)}
-            placeholder="new-filename.ext"
-            autoFocus
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !updateMutation.isPending) {
-                e.preventDefault();
-                submitRename();
-              }
-            }}
-          />
-        </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => setRenameDialogOpen(false)} disabled={updateMutation.isPending}>
-            Cancel
-          </Button>
-          <Button onClick={submitRename} disabled={updateMutation.isPending || !renameValue.trim()}>
-            {updateMutation.isPending ? 'Saving…' : 'Rename'}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
     </>
   );
 }

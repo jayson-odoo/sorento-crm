@@ -7,8 +7,6 @@ import {
   applyWorkflowTransition,
   createWorkflowDefinition,
   createWorkflowSubmission,
-  deleteWorkflowDefinition,
-  deleteWorkflowSubmission,
   fetchAllowedTransitions,
   fetchWorkflowDefinition,
   fetchPublishedWorkflowDefinitionsForSubmission,
@@ -206,18 +204,6 @@ export function usePublishWorkflowDefinition(id: string) {
   });
 }
 
-export function useDeleteWorkflowDefinition() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: deleteWorkflowDefinition,
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: wfKeys.definitions });
-      toast.success('Deleted');
-    },
-    onError: (e: Error) => toast.error(e.message),
-  });
-}
-
 export function useWorkflowSubmissionsQuery(params: {
   page?: number;
   limit?: number;
@@ -275,18 +261,6 @@ export function useUpdateWorkflowSubmission(id: string) {
       qc.invalidateQueries({ queryKey: wfKeys.submissions });
       qc.invalidateQueries({ queryKey: wfKeys.submission(id) });
       toast.success('Saved');
-    },
-    onError: (e: Error) => toast.error(e.message),
-  });
-}
-
-export function useDeleteWorkflowSubmission() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: deleteWorkflowSubmission,
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: wfKeys.submissions });
-      toast.success('Deleted');
     },
     onError: (e: Error) => toast.error(e.message),
   });

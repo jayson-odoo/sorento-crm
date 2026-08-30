@@ -34,16 +34,16 @@ import {
 } from '@/components/ui/alert-dialog';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
-import RecordNavigation from '@/components/common/RecordNavigation';
+import DetailActions from '@/components/common/DetailActions';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import {
   useAcknowledgeScheduleFinding,
   useProjectSalesOrder,
-  useProjectSalesOrderNeighbours,
   useScheduleFindings,
   useSalesOrderDelete,
   useSalesOrderImportFile,
   useSalesOrderMutations,
+  projectSalesOrdersPagerQuery,
 } from '../../../../_shared/hooks/useProjectSalesOrders';
 import { SalesOrderStockLocationBulkApply } from './SalesOrderStockLocationBulkApply';
 import { useProject } from '../../../../_shared/hooks/useProjects';
@@ -100,7 +100,6 @@ export function SalesOrderDetailClient({
     salesOrder.data ? { area_group: salesOrder.data.area_group } : undefined,
   );
   // The pager's set is the project's own sales orders, in the order the tab lists them.
-  const neighbours = useProjectSalesOrderNeighbours(projectId, psoId);
   // Called above the early returns, as every hook must be. Keyed on the order's
   // `updated_at` so an ingest or a publish refetches it: this is what disables the amend
   // button, and a stale answer either blocks a clean order or lets a wrong amendment past.
@@ -285,7 +284,7 @@ export function SalesOrderDetailClient({
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0 break-words">
           <div className="flex flex-wrap items-center gap-2">
-            <h1 className="text-xl font-semibold break-words">{reference}</h1>
+            <h2 className="text-xl font-semibold break-words">{reference}</h2>
             <SalesOrderStatusPill status={so.status} />
             {/* Beside the status rather than folded into it: an order can be published AND
                 still awaiting reconciliation, and the header has to be able to say both.
@@ -338,166 +337,170 @@ export function SalesOrderDetailClient({
               title={edit.isDirty ? undefined : 'Nothing has changed yet'}
               onClick={requestSave}
             >
-              {isSaving ? 'Saving...' : 'Save'}
+              {isSaving ? 'Saving...' : 'Save sales order'}
             </Button>
           </div>
         ) : (
-        <div className="flex flex-wrap items-center gap-2">
-          {/* Reviewing a project's orders one after another is the normal case, so the pager
-              comes first, the way it does on the user record. */}
-          <RecordNavigation
-            basePath={`/project-sales/${projectId}/sales-orders`}
-            prevId={neighbours.prevId}
-            nextId={neighbours.nextId}
-            currentIndex={neighbours.index != null ? neighbours.index - 1 : undefined}
-            totalCount={neighbours.total}
-            isLoading={neighbours.isLoading}
-            ariaLabel="sales order"
-          />
-          {/* ONE call to action stands in this header, and everything else is behind the
-              gear. The row of buttons this replaced competed with each other, so the thing
-              the reader actually came to do was the hardest to find. The gear always has
-              at least the revision review in it, so it is never an empty menu. */}
-          <DetailActionsMenu ariaLabel="Sales order actions">
-            {!worksheetIsPrimary && (
-              <DropdownMenuItem asChild>
-                <Link href={`/project-sales/${projectId}/sales-orders/${psoId}/worksheet`}>
-                  <Table2 className="size-4" aria-hidden />
-                  Worksheet
-                </Link>
-              </DropdownMenuItem>
-            )}
-            {/* Disabled rather than hidden while a difference is open: the reviewer has to
-                learn WHY they cannot amend, and an item that vanished teaches nothing.
-                The server refuses it too (AC-N5) - this only saves the round trip. */}
-            {divergence ? (
-              <DropdownMenuItem disabled>
-                <GitCompareArrows className="size-4" aria-hidden />
-                <span className="min-w-0">
-                  Review a revision
-                  <span className="block text-xs text-muted-foreground">
-                    Reconcile the AutoCount differences first
-                  </span>
-                </span>
-              </DropdownMenuItem>
-            ) : (
-              <DropdownMenuItem asChild>
-                <Link href={`/project-sales/${projectId}/sales-orders/${psoId}/revisions`}>
+        /* Pager, gear, primary (D6), through the shared group rather than a
+           hand-rolled row: the order is the same rule on all 39 detail pages, and
+           a copy of it here is a copy that can drift. */
+        <DetailActions
+          pager={{
+            ...projectSalesOrdersPagerQuery(projectId),
+            detailPath: `/project-sales/${projectId}/sales-orders`,
+            currentId: psoId,
+            ariaLabel: 'sales order',
+          }}
+          gear={
+            /* ONE call to action stands in this header, and everything else is behind the
+                gear. The row of buttons this replaced competed with each other, so the thing
+                the reader actually came to do was the hardest to find. The gear always has
+                at least the revision review in it, so it is never an empty menu. */
+            <DetailActionsMenu ariaLabel="Sales order actions">
+              {!worksheetIsPrimary && (
+                <DropdownMenuItem asChild>
+                  <Link href={`/project-sales/${projectId}/sales-orders/${psoId}/worksheet`}>
+                    <Table2 className="size-4" aria-hidden />
+                    Worksheet
+                  </Link>
+                </DropdownMenuItem>
+              )}
+              {/* Disabled rather than hidden while a difference is open: the reviewer has to
+                  learn WHY they cannot amend, and an item that vanished teaches nothing.
+                  The server refuses it too (AC-N5) - this only saves the round trip. */}
+              {divergence ? (
+                <DropdownMenuItem disabled>
                   <GitCompareArrows className="size-4" aria-hidden />
-                  Review a revision
-                </Link>
-              </DropdownMenuItem>
-            )}
-            {isPublished && (
-              <DropdownMenuItem asChild>
-                <Link href={`/project-sales/${projectId}/order-inquiries`}>
-                  <ClipboardList className="size-4" aria-hidden />
-                  Order inquiry
-                </Link>
-              </DropdownMenuItem>
-            )}
-            {/* Experimental at this stage (captain, 19 Aug 2026): a published or amended
-                order may go back to draft. The server refuses it 409 once anything has
-                already acted on the published state - the confirm names what that is. */}
-            {canEdit && isPublished && (
-              <DropdownMenuItem onSelect={() => setConfirmUnpublish(true)}>
-                <RotateCcw className="size-4" aria-hidden />
-                Unpublish
-              </DropdownMenuItem>
-            )}
-            {canEdit && !isPublished && (
-              <DropdownMenuItem
-                disabled={lines.length === 0}
-                onSelect={() => setRegrouping(true)}
-              >
-                <Shuffle className="size-4" aria-hidden />
-                Move lines
-              </DropdownMenuItem>
-            )}
-            {/* Offered while the order has a file, disabled while the server refuses it: the
-                route 422s an export the gate has not cleared, and an item that vanished
-                would not say that a blocking finding is what took it away. */}
-            {so.import_file_url && (
-              <DropdownMenuItem
-                disabled={!canExport || importFile.isPending}
-                onSelect={() => importFile.mutate(so.provisional_ref)}
-              >
-                <Download className="size-4" aria-hidden />
-                <span className="min-w-0">
-                  Import file
-                  {!canExport && (
+                  <span className="min-w-0">
+                    Review a revision
                     <span className="block text-xs text-muted-foreground">
-                      Clear the blocking findings first
+                      Reconcile the AutoCount differences first
                     </span>
-                  )}
-                </span>
-              </DropdownMenuItem>
-            )}
-            {/* Edit's ENTRY POINT. Only the way IN is here: once a session is open, Cancel
-                and Save are the header's controls, up above. */}
-            {canEdit && (
-              <DropdownMenuItem
-                disabled={isPublished}
-                onSelect={() => edit.begin()}
-              >
-                <SquarePen className="size-4" aria-hidden />
-                <span className="min-w-0">
-                  Edit this sales order
-                  {isPublished && (
-                    <span className="block text-xs text-muted-foreground">
-                      Published, so raise a revision instead
-                    </span>
-                  )}
-                </span>
-              </DropdownMenuItem>
-            )}
-            {/* Destructive last, and behind a separator. Disabled rather than absent on a
-                published order: the reviewer has to learn WHY it cannot be deleted, and a
-                menu that simply lacks the item reads as "this system cannot do it". The
-                server refuses it too. */}
-            {canEdit && <DropdownMenuSeparator />}
-            {canEdit && (
-              <DropdownMenuItem
-                variant="destructive"
-                disabled={isPublished}
-                onSelect={() => setConfirmDelete(true)}
-              >
-                <Trash2 className="size-4" aria-hidden />
-                <span className="min-w-0">
-                  Delete this sales order
-                  {isPublished && (
-                    <span className="block text-xs text-muted-foreground">
-                      In AutoCount, so amend it instead
-                    </span>
-                  )}
-                </span>
-              </DropdownMenuItem>
-            )}
-          </DetailActionsMenu>
-          {/* The one thing this status is waiting for: publish a draft somebody may edit,
-              answer AutoCount on a published order, and - for a reader who can do neither -
-              read the order as AutoCount will. */}
-          {canEdit && !isPublished ? (
-            <Button type="button" size="sm" onClick={() => setPublishing(true)}>
-              <Send className="size-4" aria-hidden />
-              Publish
-            </Button>
-          ) : isPublished ? (
-            <Button asChild size="sm">
-              <Link href={`/project-sales/${projectId}/sales-orders/${psoId}/divergence`}>
-                <FileDiff className="size-4" aria-hidden />
-                {divergence ? 'Reconcile AutoCount' : 'Compare with AutoCount'}
-              </Link>
-            </Button>
-          ) : (
-            <Button asChild size="sm">
-              <Link href={`/project-sales/${projectId}/sales-orders/${psoId}/worksheet`}>
-                <Table2 className="size-4" aria-hidden />
-                Worksheet
-              </Link>
-            </Button>
-          )}
-        </div>
+                  </span>
+                </DropdownMenuItem>
+              ) : (
+                <DropdownMenuItem asChild>
+                  <Link href={`/project-sales/${projectId}/sales-orders/${psoId}/revisions`}>
+                    <GitCompareArrows className="size-4" aria-hidden />
+                    Review a revision
+                  </Link>
+                </DropdownMenuItem>
+              )}
+              {isPublished && (
+                <DropdownMenuItem asChild>
+                  <Link href={`/project-sales/${projectId}/order-inquiries`}>
+                    <ClipboardList className="size-4" aria-hidden />
+                    Order inquiry
+                  </Link>
+                </DropdownMenuItem>
+              )}
+              {/* Experimental at this stage (captain, 19 Aug 2026): a published or amended
+                  order may go back to draft. The server refuses it 409 once anything has
+                  already acted on the published state - the confirm names what that is. */}
+              {canEdit && isPublished && (
+                <DropdownMenuItem onSelect={() => setConfirmUnpublish(true)}>
+                  <RotateCcw className="size-4" aria-hidden />
+                  Unpublish
+                </DropdownMenuItem>
+              )}
+              {canEdit && !isPublished && (
+                <DropdownMenuItem
+                  disabled={lines.length === 0}
+                  onSelect={() => setRegrouping(true)}
+                >
+                  <Shuffle className="size-4" aria-hidden />
+                  Move lines
+                </DropdownMenuItem>
+              )}
+              {/* Offered while the order has a file, disabled while the server refuses it: the
+                  route 422s an export the gate has not cleared, and an item that vanished
+                  would not say that a blocking finding is what took it away. */}
+              {so.import_file_url && (
+                <DropdownMenuItem
+                  disabled={!canExport || importFile.isPending}
+                  onSelect={() => importFile.mutate(so.provisional_ref)}
+                >
+                  <Download className="size-4" aria-hidden />
+                  <span className="min-w-0">
+                    Import file
+                    {!canExport && (
+                      <span className="block text-xs text-muted-foreground">
+                        Clear the blocking findings first
+                      </span>
+                    )}
+                  </span>
+                </DropdownMenuItem>
+              )}
+              {/* Edit's ENTRY POINT. Only the way IN is here: once a session is open, Cancel
+                  and Save are the header's controls, up above. */}
+              {canEdit && (
+                <DropdownMenuItem
+                  disabled={isPublished}
+                  onSelect={() => edit.begin()}
+                >
+                  <SquarePen className="size-4" aria-hidden />
+                  <span className="min-w-0">
+                    Edit this sales order
+                    {isPublished && (
+                      <span className="block text-xs text-muted-foreground">
+                        Published, so raise a revision instead
+                      </span>
+                    )}
+                  </span>
+                </DropdownMenuItem>
+              )}
+              {/* Destructive last, and behind a separator. Disabled rather than absent on a
+                  published order: the reviewer has to learn WHY it cannot be deleted, and a
+                  menu that simply lacks the item reads as "this system cannot do it". The
+                  server refuses it too. */}
+              {canEdit && <DropdownMenuSeparator />}
+              {canEdit && (
+                <DropdownMenuItem
+                  variant="destructive"
+                  disabled={isPublished}
+                  onSelect={() => setConfirmDelete(true)}
+                >
+                  <Trash2 className="size-4" aria-hidden />
+                  <span className="min-w-0">
+                    Delete this sales order
+                    {isPublished && (
+                      <span className="block text-xs text-muted-foreground">
+                        In AutoCount, so amend it instead
+                      </span>
+                    )}
+                  </span>
+                </DropdownMenuItem>
+              )}
+            </DetailActionsMenu>
+          }
+          primary={
+            <>
+              {/* The one thing this status is waiting for: publish a draft somebody may edit,
+                  answer AutoCount on a published order, and - for a reader who can do neither -
+                  read the order as AutoCount will. */}
+              {canEdit && !isPublished ? (
+                <Button type="button" size="sm" onClick={() => setPublishing(true)}>
+                  <Send className="size-4" aria-hidden />
+                  Publish
+                </Button>
+              ) : isPublished ? (
+                <Button asChild size="sm">
+                  <Link href={`/project-sales/${projectId}/sales-orders/${psoId}/divergence`}>
+                    <FileDiff className="size-4" aria-hidden />
+                    {divergence ? 'Reconcile AutoCount' : 'Compare with AutoCount'}
+                  </Link>
+                </Button>
+              ) : (
+                <Button asChild size="sm">
+                  <Link href={`/project-sales/${projectId}/sales-orders/${psoId}/worksheet`}>
+                    <Table2 className="size-4" aria-hidden />
+                    Worksheet
+                  </Link>
+                </Button>
+              )}
+            </>
+          }
+        />
         )}
       </div>
 

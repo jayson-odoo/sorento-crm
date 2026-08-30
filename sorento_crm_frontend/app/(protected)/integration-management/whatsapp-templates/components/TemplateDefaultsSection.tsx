@@ -65,12 +65,12 @@ export default function TemplateDefaultsSection() {
           <div className="flex items-center gap-2">
             <span className="font-medium text-sm">{useCase.label}</span>
             {!hasTemplate && (
-              <Badge variant="secondary" appearance="ghost">
+              <Badge variant="secondary">
                 Not set
               </Badge>
             )}
             {invalid && (
-              <Badge variant="destructive" appearance="ghost" className="gap-1">
+              <Badge variant="destructive" className="gap-1">
                 <AlertTriangle className="size-3" />
                 Template no longer approved
               </Badge>

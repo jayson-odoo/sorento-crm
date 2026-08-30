@@ -286,7 +286,7 @@ export function CustomerImportDialog({
           </Button>
           <Button onClick={() => void handleConfirm()} disabled={!file || busy}>
             {isQueueing ? <LoaderCircle className="size-4 animate-spin" aria-hidden /> : null}
-            Confirm
+            Import customers
           </Button>
         </DialogFooter>
       </DialogContent>

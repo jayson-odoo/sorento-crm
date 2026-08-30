@@ -198,6 +198,12 @@ export function ReportViewsMenu({
         </div>
       </FormDialogScaffold>
 
+      {/* KEPT as a dialog where S6b turned the rest into grace windows (D7). The
+          route's grant for a view is computed from the REPORT KEY at request time
+          (`_authorised(db, user, key)`), and a `FormAction` declares one static
+          slug, so parking this on `/pending-actions` would enforce the wrong grant
+          or none. A saved view is also the reader's own and is one click to
+          re-create from the config already on screen. */}
       <ConfirmDeleteDialog
         open={deleteOpen}
         onOpenChange={setDeleteOpen}

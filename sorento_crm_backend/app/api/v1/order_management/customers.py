@@ -41,36 +41,6 @@ async def get_customers(
         raise handle_internal_error(str(e))
 
 
-@router.get("/neighbours")
-async def get_customer_neighbours(
-    id: str = Query(..., description="Customer id to resolve neighbours for"),
-    query: Optional[str] = Query(None),
-    sort: Optional[str] = Query("created_at"),
-    dir: Optional[str] = Query("desc"),
-    current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    """Prev/next neighbours of a customer within the active filtered+sorted list set.
-
-    Accepts the same filter/sort/search params as the list GET (page/limit are
-    irrelevant and ignored). Returns ``{total, index, prev_id, next_id}`` with the
-    1-based ``index`` and circular wrap-around neighbours. If the record is not in
-    the filtered set, falls back to the unfiltered, default-sorted set.
-    """
-    try:
-        service = CustomerService(db)
-        return service.neighbours(
-            customer_id=id,
-            query=query,
-            sort_field=sort or "created_at",
-            sort_dir=dir or "desc",
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise handle_internal_error(str(e))
-
-
 @router.post("/import", status_code=status.HTTP_202_ACCEPTED)
 async def import_customers(
     file: UploadFile = File(..., description="Excel file: customer (debtor) listing"),

@@ -34,7 +34,6 @@ import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
@@ -1031,10 +1030,7 @@ export function ContainerRequestSection({
           {view === 'table' ? (
             <>
               <CardTable>
-                <ScrollArea>
-                  <DataGridTable />
-                  <ScrollBar orientation="horizontal" />
-                </ScrollArea>
+                <DataGridTable />
               </CardTable>
               <CardFooter>
                 <DataGridPagination />
@@ -1111,10 +1107,7 @@ export function ContainerRequestSection({
               loading={build.isFetching || (dialog.onHistory && history.isFetching)}
             />
           ) : dialog.kind === 'on_hand' ? (
-            <OnHandTable
-              productId={dialog.row.product_id}
-              itemCode={dialog.row.driver_item_code ?? dialog.row.item_code ?? ''}
-            />
+            <OnHandTable productId={dialog.row.product_id} />
           ) : dialog.kind === 'spo' ? (
             <SpoTabs supplierId={supplierId} productId={dialog.row.product_id} />
           ) : dialog.kind === 'incoming_pl' ? (

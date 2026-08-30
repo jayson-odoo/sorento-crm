@@ -159,7 +159,7 @@ export function BlockInspector({
       <CardHeader className="pb-3">
         <CardTitle className="flex items-center justify-between gap-2 text-sm">
           <span className="capitalize">{block.type}</span>
-          <Badge variant="outline" appearance="ghost" className="text-xs">
+          <Badge variant="outline" className="text-xs">
             block
           </Badge>
         </CardTitle>
@@ -406,7 +406,7 @@ export function BlockInspector({
                 }
               }}
             >
-              {saving ? 'Saving' : 'Save'}
+              {saving ? 'Saving' : 'Save block'}
             </Button>
           </DialogFooter>
         </DialogContent>

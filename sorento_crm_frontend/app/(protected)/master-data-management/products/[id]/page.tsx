@@ -2,24 +2,9 @@
 
 import { use } from 'react';
 import { useSearchParams } from 'next/navigation';
-import Link from 'next/link';
-import { MoveLeft } from 'lucide-react';
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
-import { Button } from '@/components/ui/button';
 import { Container } from '@/components/common/container';
-import {
-  Toolbar,
-  ToolbarActions,
-  ToolbarHeading,
-  ToolbarTitle,
-} from '@/components/common/toolbar';
+import { PageHeader } from '@/components/common/PageHeader';
+import BackToList from '@/components/common/BackToList';
 import ProductDetail from './components/ProductDetail';
 
 const WORKLIST_PATH = '/master-data-management/spec-verification';
@@ -46,49 +31,26 @@ export default function ProductDetailPage({
 }) {
   const { id } = use(params);
   const searchParams = useSearchParams();
-  const listQueryString = searchParams.toString();
   const worklistHref = worklistBackHref(searchParams.get('back'));
-  const backHref =
-    worklistHref ??
-    (listQueryString
-      ? `/master-data-management/products?${listQueryString}`
-      : '/master-data-management/products');
-  const backLabel = worklistHref
-    ? 'Back to spec verification'
-    : 'Back to products';
 
   return (
     <>
       <Container>
-        <Toolbar>
-          <ToolbarHeading>
-            <ToolbarTitle>Product</ToolbarTitle>
-            <Breadcrumb>
-              <BreadcrumbList>
-                <BreadcrumbItem>
-                  <BreadcrumbLink href="/">Home</BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbPage>Product Management</BreadcrumbPage>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbLink href="/master-data-management/products">
-                    Products
-                  </BreadcrumbLink>
-                </BreadcrumbItem>
-              </BreadcrumbList>
-            </Breadcrumb>
-          </ToolbarHeading>
-          <ToolbarActions>
-            <Button asChild variant="outline">
-              <Link href={backHref}>
-                <MoveLeft /> {backLabel}
-              </Link>
-            </Button>
-          </ToolbarActions>
-        </Toolbar>
+        <PageHeader
+          title="Product"
+          actions={worklistHref ? (
+              <BackToList
+                listPath={worklistHref}
+                label="Back to spec verification"
+                appendListState={false}
+              />
+            ) : (
+              <BackToList
+                listPath="/master-data-management/products"
+                label="Back to products"
+              />
+            )}
+        />
       </Container>
 
       <Container>

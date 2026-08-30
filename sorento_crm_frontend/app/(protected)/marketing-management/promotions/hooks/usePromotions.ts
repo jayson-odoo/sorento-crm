@@ -1,11 +1,14 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
-import { buildDataGridParams } from '@/lib/api-client';
+
+import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
+import type { DataGridApiResponse } from '@/components/ui/data-grid';
+import { decodeAdvancedFilter } from '@/lib/listNavQuery';
 import {
-  useRecordNeighbours,
-  type RecordNeighboursResult,
-} from '@/hooks/useRecordNeighbours';
+  postListQuerySearch,
+  type ListQueryFilterGroup,
+} from '@/lib/list-query/listQueryService';
+
 import {
   getPromotions,
   getPromotion,
@@ -22,35 +25,105 @@ import {
   updatePromotionGroup,
   deletePromotionGroup,
   compilePromotionsPdf,
-  PROMOTION_NEIGHBOURS_PATH,
   type PromotionsListParams,
 } from '../services/promotionService';
 import { resubmitAttachmentWebhook } from '@/app/(protected)/resource-management/attachments/services/attachmentService';
-import type { PromotionFormData } from '../types/promotion.types';
+import type { Promotion, PromotionFormData } from '../types/promotion.types';
+
+
+/** The list params, plus the advanced filter that decides which endpoint serves them. */
+export type PromotionsPageParams = PromotionsListParams & {
+  advancedFilter?: ListQueryFilterGroup;
+};
 
 /**
- * Prev/next neighbours of a promotion within the active filtered+sorted list set.
- * Serializes the list query (search/sort/status/user_type/attachment_state) with
- * `buildDataGridParams` - the same serialization the list page uses - so the
- * backend honours filters identically. `page`/`limit` are sent but ignored by the
- * neighbours endpoint.
+ * The list's React Query key. The detail page's pager rebuilds the SAME key from
+ * the URL, so it reads the page the list already fetched.
+ *
+ * Every value that narrows the set is in here, including the cleanup filter, the
+ * expiry-batch deep link and the advanced filter. `PromotionsList` built its own
+ * key inline for a while and the two drifted: the pager missed the cache on every
+ * promotion, fetched its own page, and paged a different set.
  */
-export function usePromotionNeighbours(
-  promotionId: string | null,
-  listParams: PromotionsListParams,
-): RecordNeighboursResult {
-  const params = buildDataGridParams(listParams, {
-    status: listParams.status,
-    user_type: listParams.user_type,
-    attachment_state: listParams.attachment_state,
-  });
-  return useRecordNeighbours(PROMOTION_NEIGHBOURS_PATH, promotionId, params);
+export function promotionsListQueryKey(params: PromotionsPageParams): QueryKey {
+  return [
+    'promotions',
+    params.pageIndex,
+    params.pageSize,
+    params.sorting,
+    params.searchQuery,
+    params.status,
+    params.date_from,
+    params.date_to,
+    params.user_type,
+    params.attachment_state,
+    params.expiry_notify_batch_id,
+    params.advancedFilter,
+  ];
 }
 
-export function usePromotions(params: DataGridApiFetchParams & { status?: string; date_from?: string; date_to?: string; user_type?: string }) {
+/** GET for a plain list, POST list-query when an advanced filter is on. */
+export function fetchPromotionsPage(
+  params: PromotionsPageParams,
+): Promise<DataGridApiResponse<Promotion>> {
+  if (params.advancedFilter) {
+    return postListQuerySearch<Promotion>({
+      resource: 'promotions',
+      filter: params.advancedFilter,
+      page: params.pageIndex + 1,
+      limit: params.pageSize,
+      sort: params.sorting?.[0]?.id || 'created_at',
+      dir: params.sorting?.[0]?.desc ? 'desc' : 'asc',
+      quick_search: params.searchQuery || undefined,
+      promotion_status: params.status,
+      promotion_access_level: params.user_type,
+    });
+  }
+  return getPromotions(params);
+}
+
+/** The list query a detail URL describes, in the shape the list passes. */
+export function promotionsListParamsFromUrl(
+  params: ListPagerParams,
+): PromotionsPageParams {
+  return {
+    pageIndex: params.pageIndex,
+    pageSize: params.pageSize,
+    sorting: params.sorting,
+    searchQuery: params.searchQuery,
+    /**
+     * The LIST's default, not the parser's absence.
+     *
+     * "All" is not a narrowing, so the row href does not write it; but the list
+     * passes `status: 'all'` and the backend, given no status at all, returns
+     * ACTIVE promotions only. Restoring `undefined` here paged four active rows
+     * beside a list of thirty-two, and hid the pager outright on any promotion
+     * that had expired.
+     */
+    status: params.filters.status ?? 'all',
+    date_from: params.filters.date_from,
+    date_to: params.filters.date_to,
+    user_type: params.filters.user_type,
+    attachment_state: params.filters
+      .attachment_state as PromotionsListParams['attachment_state'],
+    expiry_notify_batch_id: params.filters.expiry_notify_batch_id,
+    advancedFilter:
+      decodeAdvancedFilter<ListQueryFilterGroup>(params.filters.advFilter) ?? undefined,
+  };
+}
+
+/** The pager's two hooks into the promotions list. */
+export const promotionsPagerQuery = {
+  listQueryKey: (params: ListPagerParams): QueryKey =>
+    promotionsListQueryKey(promotionsListParamsFromUrl(params)),
+  fetchPage: (params: ListPagerParams): Promise<ListPagerPage> =>
+    fetchPromotionsPage(promotionsListParamsFromUrl(params)),
+};
+
+export function usePromotions(params: PromotionsPageParams) {
   return useQuery({
-    queryKey: ['promotions', params.pageIndex, params.pageSize, params.sorting, params.searchQuery, params.status, params.date_from, params.date_to, params.user_type],
-    queryFn: () => getPromotions(params),
+    queryKey: promotionsListQueryKey(params),
+    queryFn: () => fetchPromotionsPage(params),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,
     refetchOnWindowFocus: false,

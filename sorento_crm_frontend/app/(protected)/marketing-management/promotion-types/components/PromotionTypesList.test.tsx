@@ -2,7 +2,8 @@
  * PromotionTypesList - the admin screen behind per-type expiry behaviour.
  *
  * Covers loading / empty / error / data, the rule wording each row shows, and the
- * delete confirmation copy (which has to name the promotions that lose their type).
+ * delete, which asks nothing and parks itself on the server for its grace window
+ * instead (D7, S6-10).
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -19,6 +20,21 @@ vi.mock('next/navigation', () => ({
 // grid renders skeletons forever and no row can be asserted.
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: async () => {}, isLoading: false }),
+}));
+
+/* The grace window is the server's; what this file proves is that the row parks one. */
+const createPendingAction = vi.fn().mockResolvedValue({
+  id: 'pa-1',
+  action_key: 'promotion_type.delete',
+  entity_type: 'promotion_type',
+  entity_id: 'type-special',
+  commit_at: '2026-08-30T10:00:10',
+  window_seconds: 10,
+});
+vi.mock('@/services/pendingActionService', () => ({
+  createPendingAction: (...args: unknown[]) => createPendingAction(...args),
+  cancelPendingAction: vi.fn(),
+  getCurrentPendingAction: vi.fn().mockResolvedValue({ pending: null, last_outcome: null }),
 }));
 
 const getPromotionTypes = vi.fn();
@@ -141,14 +157,23 @@ describe('PromotionTypesList', () => {
     expect(rowOrder()[1]).toContain('Special Promo');
   });
 
-  it('delete confirmation names the promotions that lose their type', async () => {
+  it('parks the delete on the row that was pressed, with no dialog in the way', async () => {
     render();
     fireEvent.click(await screen.findByRole('button', { name: /delete special promo/i }));
 
-    expect(await screen.findByText('Confirm delete')).toBeInTheDocument();
-    expect(
-      screen.getByText(/3 promotions will become unclassified/i),
-    ).toBeInTheDocument();
-    expect(screen.getByText(/This action cannot be undone/i)).toBeInTheDocument();
+    // D7: the first press IS the action, and Cancel in the countdown is the way
+    // back. What happens to the promotions of a deleted type is the server's rule,
+    // whichever path the delete arrives on, so it is no longer copy in a dialog.
+    await waitFor(() =>
+      expect(createPendingAction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          actionKey: 'promotion_type.delete',
+          entityType: 'promotion_type',
+          entityId: 'type-special',
+        }),
+      ),
+    );
+    expect(deletePromotionType).not.toHaveBeenCalled();
+    expect(screen.queryByText('Confirm delete')).not.toBeInTheDocument();
   });
 });

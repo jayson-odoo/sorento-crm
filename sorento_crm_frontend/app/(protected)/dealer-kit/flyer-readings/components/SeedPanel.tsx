@@ -269,7 +269,7 @@ export function SeedResult({ result }: { result: FlyerSeedResult }) {
       <CardHeader>
         <CardTitle className="flex flex-wrap items-center gap-2">
           <span className="min-w-0 break-words">{result.name}</span>
-          <Badge variant="outline" appearance="ghost" className="font-normal">
+          <Badge variant="outline" className="font-normal">
             Draft v{result.version}
           </Badge>
         </CardTitle>

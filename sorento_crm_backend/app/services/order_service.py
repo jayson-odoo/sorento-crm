@@ -992,74 +992,6 @@ class OrderService:
         except Exception:
             order.remarks_cs_locked = False
 
-    def order_neighbours(
-        self,
-        order_id: str,
-        query: Optional[str] = None,
-        customer_id: Optional[str] = None,
-        order_status_id: Optional[str] = None,
-        order_status: Optional[str] = None,
-        has_order_lines: Optional[str] = None,
-        has_actual_delivery_date: Optional[str] = None,
-        order_date_from: Optional[datetime] = None,
-        order_date_to: Optional[datetime] = None,
-        actual_delivery_date_from: Optional[datetime] = None,
-        actual_delivery_date_to: Optional[datetime] = None,
-        customer_query: Optional[str] = None,
-        product_query: Optional[str] = None,
-        transporter_query: Optional[str] = None,
-        sort_field: str = "created_at",
-        sort_dir: str = "asc",
-    ) -> dict:
-        """Resolve prev/next neighbours for ``order_id`` within the active list query.
-
-        Reuses ``list_orders(ids_only=True)`` - the exact same filter+sort query the
-        paginated grid builds - so the pager and list can never drift. Selects only
-        the ordered ids, then defers the position/wrap math to the pure
-        ``compute_neighbours`` helper. If the record is not in the filtered set (deep
-        link, or filtered out after an edit), falls back to the unfiltered,
-        default-sorted set so the pager is never dead (D2).
-
-        ``order_id`` may be a UUID or an order_number; it is resolved to the canonical
-        UUID first so it matches the ids produced by the list query.
-        """
-        from app.services.record_navigation import compute_neighbours
-
-        resolved_ids = resolve_identifier(
-            self.db,
-            order_id,
-            Order,
-            code_fields=("order_number",),
-        )
-        current_id = resolved_ids[0] if resolved_ids else str(order_id)
-
-        filtered_ids = self.list_orders(
-            query=query,
-            customer_id=customer_id,
-            order_status_id=order_status_id,
-            order_status=order_status,
-            has_order_lines=has_order_lines,
-            has_actual_delivery_date=has_actual_delivery_date,
-            order_date_from=order_date_from,
-            order_date_to=order_date_to,
-            actual_delivery_date_from=actual_delivery_date_from,
-            actual_delivery_date_to=actual_delivery_date_to,
-            customer_query=customer_query,
-            product_query=product_query,
-            transporter_query=transporter_query,
-            sort_field=sort_field,
-            sort_dir=sort_dir,
-            ids_only=True,
-        )
-        result = compute_neighbours(filtered_ids, current_id)
-        if result["index"] is not None:
-            return result
-
-        # D2: current record not in the filtered set -> fall back to the unfiltered,
-        # default-sorted set so prev/next still works and total reflects all orders.
-        unfiltered_ids = self.list_orders(ids_only=True)
-        return compute_neighbours(unfiltered_ids, current_id)
-
     # ------------------------------------------------------------------ #
     # Aggregation / analytics
     # ------------------------------------------------------------------ #
@@ -3172,40 +3104,6 @@ class CustomerService:
             "pagination": {"total": total, "page": page, "limit": limit},
             "empty": total == 0
         }
-
-    def neighbours(
-        self,
-        customer_id: str,
-        query: Optional[str] = None,
-        sort_field: str = "created_at",
-        sort_dir: str = "desc",
-    ) -> dict:
-        """Resolve prev/next neighbours for ``customer_id`` within the active list
-        query.
-
-        Selects only the ordered ids (not full rows), then defers the position/wrap
-        math to the pure ``compute_neighbours`` helper. If the record is not in the
-        filtered set (deep link, or filtered out after an edit), falls back to the
-        unfiltered, default-sorted set so the pager is never dead (D2).
-        """
-        from app.services.record_navigation import compute_neighbours
-
-        def _ordered_ids(q) -> list[str]:
-            return [str(row[0]) for row in q.with_entities(Customer.id).all()]
-
-        filtered_q = self._build_customer_list_query(
-            query=query,
-            sort_field=sort_field,
-            sort_dir=sort_dir,
-        )
-        result = compute_neighbours(_ordered_ids(filtered_q), customer_id)
-        if result["index"] is not None:
-            return result
-
-        # D2: current record not in the filtered set -> fall back to the unfiltered,
-        # default-sorted set so prev/next still works and total reflects all customers.
-        unfiltered_q = self._build_customer_list_query()
-        return compute_neighbours(_ordered_ids(unfiltered_q), customer_id)
 
     def get_customer(self, customer_id: str):
         """Get a customer by ID."""

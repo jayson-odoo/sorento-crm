@@ -116,27 +116,27 @@ export function LaneChip({ label, step, error, note, deferred }: LaneChipProps) 
 export function ReviewStatusBadge({ status }: { status: string }) {
   if (status === 'approved') {
     return (
-      <Badge variant="success" appearance="ghost">
+      <Badge variant="success">
         Approved
       </Badge>
     );
   }
   if (status === 'rejected') {
     return (
-      <Badge variant="destructive" appearance="ghost">
+      <Badge variant="destructive">
         Rejected
       </Badge>
     );
   }
   if (status === 'on_hold') {
     return (
-      <Badge variant="warning" appearance="ghost">
+      <Badge variant="warning">
         On hold
       </Badge>
     );
   }
   return (
-    <Badge variant="secondary" appearance="ghost">
+    <Badge variant="secondary">
       Proposed
     </Badge>
   );

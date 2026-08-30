@@ -1,12 +1,31 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, fireEvent, waitFor, within } from '@testing-library/react';
+/* The grace window is the server's; what this file proves is that the control parks one. */
+const createPendingAction = vi.fn().mockResolvedValue({
+  id: 'pa-1',
+  action_key: 'market_segment.delete',
+  entity_type: 'market_segment',
+  entity_id: 'retail',
+  commit_at: '2026-08-30T10:00:10',
+  window_seconds: 10,
+});
+vi.mock('@/services/pendingActionService', () => ({
+  createPendingAction: (...args: unknown[]) => createPendingAction(...args),
+  cancelPendingAction: vi.fn(),
+  getCurrentPendingAction: vi.fn().mockResolvedValue({ pending: null, last_outcome: null }),
+}));
+
+import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import MarketSegmentsAdmin from './MarketSegmentsAdmin';
 import type { MarketSegment } from '../services/marketSegmentService';
 
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), custom: vi.fn() } }));
+vi.mock('sonner', () => ({
+  // `dismiss` is load-bearing: the countdown's toast is dismissed when the row
+  // unmounts, and a stub without it throws out of an effect no assertion catches.
+  toast: { success: vi.fn(), error: vi.fn(), custom: vi.fn(), dismiss: vi.fn() },
+}));
 
 const useMarketSegments = vi.fn();
 const create = { mutate: vi.fn(), isPending: false };
@@ -143,16 +162,23 @@ describe('MarketSegmentsAdmin', () => {
     });
   });
 
-  it('opens a delete confirmation with the standard copy', async () => {
+  it('parks the delete on the row that was pressed, keyed by its CODE (S6-10)', async () => {
     mockState({ data: SEGMENTS });
-    deleteMarketSegment.mockResolvedValue(undefined);
     renderWithClient(<MarketSegmentsAdmin />);
     fireEvent.click(screen.getAllByLabelText('Delete')[0]);
-    expect(screen.getByText('Confirm delete')).toBeInTheDocument();
-    expect(screen.getByText(/this action cannot be undone/i)).toBeInTheDocument();
-    // Confirming fires the hard-delete service call (scoped to the dialog).
-    const dialog = screen.getByRole('dialog');
-    fireEvent.click(within(dialog).getByRole('button', { name: /^delete$/i }));
-    await waitFor(() => expect(deleteMarketSegment).toHaveBeenCalledWith('retail'));
+
+    // D7: the press IS the action. The entity id here is the segment CODE, because
+    // that is this table's primary key and what the DELETE route takes.
+    await waitFor(() =>
+      expect(createPendingAction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          actionKey: 'market_segment.delete',
+          entityType: 'market_segment',
+          entityId: 'retail',
+        }),
+      ),
+    );
+    expect(deleteMarketSegment).not.toHaveBeenCalled();
+    expect(screen.queryByText('Confirm delete')).not.toBeInTheDocument();
   });
 });

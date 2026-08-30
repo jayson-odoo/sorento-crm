@@ -132,7 +132,7 @@ export function DeliveryScheduleConfirmDialog({
               Cancel
             </Button>
             <Button type="submit" disabled={blocked || pending}>
-              {pending ? 'Confirming…' : 'Confirm'}
+              {pending ? 'Confirming…' : 'Confirm schedule'}
             </Button>
           </DialogFooter>
         </form>

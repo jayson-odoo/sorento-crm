@@ -8,12 +8,15 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
+import { buildDetailSearch } from '@/lib/listNavQuery';
 import { useLeadMutations, useLeads } from '../../_shared/hooks/useProjects';
 import { useLeadAcceptanceMutations } from '../../_shared/hooks/useLeadAcceptance';
 import type { LeadWithAcceptance } from '../../_shared/types/leadAcceptance.types';
 import { AssignLeadDialog } from './AssignLeadDialog';
 import { LeadsGrid } from './LeadsGrid';
 import { LeadWizardDialog } from './LeadWizardDialog';
+import { PageHeader } from '@/components/common/PageHeader';
 
 const OUTCOME_OPTIONS = [
   { value: 'open', label: 'Open' },
@@ -59,6 +62,19 @@ export function LeadsClient() {
   const [sorting, setSorting] = React.useState<SortingState>([
     { id: 'created_at', desc: true },
   ]);
+
+  // Back hands the list its own query string back, and the pager keeps rewriting
+  // it, so the list reads it (S3-01). Below the state it writes: the hook applies
+  // during the render, and a const read above its own line throws.
+  useListStateFromUrl((urlState) => {
+    setPagination({ pageIndex: urlState.pageIndex, pageSize: urlState.pageSize });
+    setSorting(urlState.sorting);
+    setSearch(urlState.searchQuery);
+    setDebounced(urlState.searchQuery);
+    setOutcome(urlState.filters.outcome ?? '');
+    setSource(urlState.filters.source ?? '');
+  });
+
   const [assignTarget, setAssignTarget] = React.useState<LeadWithAcceptance | null>(null);
   const [deleteTarget, setDeleteTarget] = React.useState<LeadWithAcceptance | null>(null);
 
@@ -89,6 +105,26 @@ export function LeadsClient() {
   // ProjectLead type predates them, so the rows are read through the wider type.
   const rows: LeadWithAcceptance[] = leads.data?.data ?? [];
   const total = leads.data?.pagination.total ?? 0;
+
+  /**
+   * Carried into the record URL so the lead page's pager walks the SAME searched,
+   * sorted, filtered page the reader was on. The two filters ride along as well as
+   * the sort: a pager rebuilt from page and sort alone would step through every
+   * outcome, including the disqualified ones this list hides by default.
+   */
+  const detailSearch = React.useMemo(
+    () =>
+      buildDetailSearch(
+        {
+          pageIndex: pagination.pageIndex,
+          pageSize: pagination.pageSize,
+          sorting,
+          searchQuery: debounced,
+        },
+        { outcome, source },
+      ),
+    [debounced, outcome, pagination, sorting, source],
+  );
 
   const filtered = Boolean(debounced || source || outcome !== 'open');
   const activeFilterCount = (outcome !== 'open' ? 1 : 0) + (source ? 1 : 0);
@@ -122,19 +158,20 @@ export function LeadsClient() {
 
   return (
     <div className="space-y-5">
-      <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0 break-words">
-          <h1 className="text-xl font-semibold">Leads</h1>
-          <p className="text-sm text-muted-foreground">
-            Developments we have heard about. Nobody owns one until a salesperson
-            accepts it.
-          </p>
-        </div>
-        <Button type="button" onClick={() => setWizardOpen(true)}>
-          <Plus className="size-4" aria-hidden />
-          Record a lead
-        </Button>
-      </header>
+      <PageHeader
+        title="Leads"
+        actions={
+          <Button type="button" onClick={() => setWizardOpen(true)}>
+            <Plus className="size-4" aria-hidden />
+            Record a lead
+          </Button>
+        }
+      >
+        <p className="text-sm text-muted-foreground">
+          Developments we have heard about. Nobody owns one until a salesperson
+          accepts it.
+        </p>
+      </PageHeader>
 
       {leads.isError ? (
         <div className="rounded-lg border border-destructive/40 bg-destructive/5 px-6 py-10 text-center">
@@ -167,6 +204,9 @@ export function LeadsClient() {
           searchSlot={searchSlot}
           onAssign={setAssignTarget}
           onDelete={setDeleteTarget}
+          rowHref={(lead) =>
+            `/project-sales/leads/${lead.id}${detailSearch ? `?${detailSearch}` : ''}`
+          }
           filters={{
             kind: 'custom',
             active: activeFilterCount > 0,

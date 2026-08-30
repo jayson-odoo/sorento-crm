@@ -1,13 +1,12 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { useSession } from 'next-auth/react';
 import { useQuery } from '@tanstack/react-query';
 import { apiFetch } from '@/lib/api';
 import { isSuperadminUser } from '@/lib/is-superadmin';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { Badge, BadgeDot, BadgeProps } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { User, UserStatus } from '@/app/models/user';
@@ -17,7 +16,6 @@ import {
   describeScopeRow,
   scopesToRows,
 } from '../../lib/productDiscontinuedScopes';
-import UserProfileEditDialog from './user-profile-edit-dialog';
 
 const UserProfile = ({
   user,
@@ -26,8 +24,6 @@ const UserProfile = ({
   user: User;
   isLoading: boolean;
 }) => {
-  const [isEditDialogOpen, setEditDialogOpen] = useState(false);
-
   const Loading = () => (
     <Card>
       <CardContent>
@@ -113,7 +109,6 @@ const UserProfile = ({
             </dd>
           </div>
         </dl>
-        <Skeleton className="h-9 w-32" />
       </CardContent>
     </Card>
   );
@@ -201,7 +196,7 @@ const UserProfile = ({
               <dt>Status:</dt>
               <dd>
                 <div className="inline-flex gap-2.5">
-                  <Badge variant={statusVariant} appearance="ghost">
+                  <Badge variant={statusVariant}>
                     <BadgeDot />
                     {statusPros.label}
                   </Badge>
@@ -291,28 +286,14 @@ const UserProfile = ({
               </dd>
             </div>
           </dl>
-          <Button
-            variant="outline"
-            onClick={() => setEditDialogOpen(true)}
-          >
-            Edit user details
-          </Button>
         </CardContent>
       </Card>
     );
   };
 
-  return (
-    <>
-      {isLoading || !user ? <Loading /> : <Content />}
-
-      <UserProfileEditDialog
-        open={isEditDialogOpen}
-        closeDialog={() => setEditDialogOpen(false)}
-        user={user}
-      />
-    </>
-  );
+  // Edit opens from the record card's primary button (D6), not from the bottom
+  // of the profile card.
+  return isLoading || !user ? <Loading /> : <Content />;
 };
 
 export default UserProfile;

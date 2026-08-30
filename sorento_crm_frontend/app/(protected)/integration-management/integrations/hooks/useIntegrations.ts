@@ -5,11 +5,9 @@ import { toast } from 'sonner';
 
 import {
   createIntegration,
-  deleteIntegration,
   getIntegration,
   getIntegrations,
   issueKey,
-  revokeKey,
   rotateKey,
   updateIntegration,
 } from '../services/integrationService';
@@ -63,18 +61,6 @@ export function useUpdateIntegration() {
   });
 }
 
-export function useDeleteIntegration() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => deleteIntegration(id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: LIST_KEY });
-      toast.success('Integration deleted');
-    },
-    onError: (error: Error) => toast.error(error.message),
-  });
-}
-
 /**
  * Issuing and rotating return a plaintext key that exists nowhere else.
  *
@@ -101,15 +87,3 @@ export function useRotateKey() {
   });
 }
 
-export function useRevokeKey() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({ integrationId, keyId }: { integrationId: string; keyId: string }) =>
-      revokeKey(integrationId, keyId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: LIST_KEY });
-      toast.success('Key revoked');
-    },
-    onError: (error: Error) => toast.error(error.message),
-  });
-}

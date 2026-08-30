@@ -1,14 +1,8 @@
 import { Metadata } from 'next';
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
 import { Container } from '@/components/common/container';
+import { PageHeader } from '@/components/common/PageHeader';
 import RequireAccess from '@/app/components/common/RequireAccess';
+import BackToList from '@/components/common/BackToList';
 import { LeadDetailClient } from './components/LeadDetailClient';
 
 export const metadata: Metadata = {
@@ -25,21 +19,14 @@ export default async function ProjectLeadDetailPage({
   return (
     <RequireAccess permission="projects.projects.view">
       <Container className="space-y-6">
-        <Breadcrumb>
-          <BreadcrumbList>
-            <BreadcrumbItem>
-              <BreadcrumbLink href="/">Home</BreadcrumbLink>
-            </BreadcrumbItem>
-            <BreadcrumbSeparator />
-            <BreadcrumbItem>
-              <BreadcrumbLink href="/project-sales/leads">Leads</BreadcrumbLink>
-            </BreadcrumbItem>
-            <BreadcrumbSeparator />
-            <BreadcrumbItem>
-              <BreadcrumbPage>Lead</BreadcrumbPage>
-            </BreadcrumbItem>
-          </BreadcrumbList>
-        </Breadcrumb>
+        {/* Crumbs left, one Back right (D6, S3-01). The Back carries the list's
+            query string, so it returns to the page the reader left. */}
+        <PageHeader
+          title="Lead"
+          actions={
+            <BackToList listPath="/project-sales/leads" label="Back to leads" />
+          }
+        />
         <LeadDetailClient leadId={leadId} />
       </Container>
     </RequireAccess>

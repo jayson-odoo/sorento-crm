@@ -83,6 +83,7 @@ function DataGridTableDndHeader<TData>({
     <DataGridTableHeadRowCell
       header={header}
       dndStyle={style}
+      dndDragging={isDragging}
       dndRef={setNodeRef}
       rowSpan={rowSpan}
     >
@@ -118,7 +119,12 @@ function DataGridTableDndCell<TData>({ cell }: { cell: Cell<TData, unknown> }) {
   };
 
   return (
-    <DataGridTableBodyRowCell cell={cell} dndStyle={style} dndRef={setNodeRef}>
+    <DataGridTableBodyRowCell
+      cell={cell}
+      dndStyle={style}
+      dndDragging={isDragging}
+      dndRef={setNodeRef}
+    >
       {flexRender(cell.column.columnDef.cell, cell.getContext())}
     </DataGridTableBodyRowCell>
   );

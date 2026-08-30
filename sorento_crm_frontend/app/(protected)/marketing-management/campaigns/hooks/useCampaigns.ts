@@ -1,12 +1,61 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
-import { getCampaigns, getCampaign, getCampaignTypes, createCampaign, updateCampaign, deleteCampaign } from '../services/campaignService';
+import type { ListPagerPage, ListPagerParams } from '@/hooks/useListPager';
+import { getCampaigns, getCampaign, getCampaignTypes, createCampaign, updateCampaign } from '../services/campaignService';
 import type { CampaignFormData } from '../types/campaign.types';
 
-export function useCampaigns(params: DataGridApiFetchParams & { campaign_type_id?: string; status?: string; date_from?: string; date_to?: string; budget_min?: number; budget_max?: number }) {
+type CampaignsListParams = DataGridApiFetchParams & {
+  campaign_type_id?: string;
+  status?: string;
+  date_from?: string;
+  date_to?: string;
+  budget_min?: number;
+  budget_max?: number;
+};
+
+/**
+ * One key for the list and the pager, or they cache separately and the pager
+ * refetches a page the list is already holding.
+ */
+export function campaignsListQueryKey(params: CampaignsListParams): QueryKey {
+  return [
+    'campaigns',
+    params.pageIndex,
+    params.pageSize,
+    params.sorting,
+    params.searchQuery,
+    params.campaign_type_id,
+    params.status,
+    params.date_from,
+    params.date_to,
+    params.budget_min,
+    params.budget_max,
+  ];
+}
+
+/** The URL's own params, in the shape the list asks its questions in. */
+function campaignsListParamsFromUrl(params: ListPagerParams): CampaignsListParams {
+  return {
+    pageIndex: params.pageIndex,
+    pageSize: params.pageSize,
+    sorting: params.sorting,
+    searchQuery: params.searchQuery,
+    status: params.filters.status,
+  };
+}
+
+/** The pager's two hooks into the campaigns list. */
+export const campaignsPagerQuery = {
+  listQueryKey: (params: ListPagerParams): QueryKey =>
+    campaignsListQueryKey(campaignsListParamsFromUrl(params)),
+  fetchPage: (params: ListPagerParams): Promise<ListPagerPage> =>
+    getCampaigns(campaignsListParamsFromUrl(params)),
+};
+
+export function useCampaigns(params: CampaignsListParams) {
   return useQuery({
-    queryKey: ['campaigns', params.pageIndex, params.pageSize, params.sorting, params.searchQuery, params.campaign_type_id, params.status, params.date_from, params.date_to, params.budget_min, params.budget_max],
+    queryKey: campaignsListQueryKey(params),
     queryFn: () => getCampaigns(params),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,
@@ -63,14 +112,3 @@ export function useUpdateCampaign() {
   });
 }
 
-export function useDeleteCampaign() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => deleteCampaign(id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['campaigns'] });
-      toast.success('Campaign deleted successfully');
-    },
-    onError: (error: Error) => toast.error(error.message || 'Failed to delete campaign'),
-  });
-}

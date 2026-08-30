@@ -74,15 +74,12 @@ const WHERE_LABELS: Record<BoardLocationWhere, string> = {
  */
 export function CellStockTable({
   locations,
-  itemCode,
   groupNote,
   taken,
   lineIds,
   forLine,
 }: {
   locations: BoardCellLocation[];
-  /** What the expansion calls the product. The cell's own label, never re-derived from a code. */
-  itemCode: string;
   /**
    * Why this table is showing the line's own location and nothing else, when that is all there
    * is (`BoardCell.location_group_note`). The rows are normally the sales agent's whole
@@ -121,6 +118,12 @@ export function CellStockTable({
    * that closes one to open the other makes that comparison a memory test.
    */
   const [expanded, setExpanded] = React.useState<Record<string, boolean>>({});
+  /**
+   * Which SETS stand open. The group is the pile the ladder's first step actually draws -
+   * a `BRW-IB` line is fed by `MWH-IB` stock - so the running balance a planner needs is
+   * read here, under the subtotal, and never under one bin.
+   */
+  const [expandedSets, setExpandedSets] = React.useState<Record<string, boolean>>({});
 
   if (locations.length === 0) {
     // Rendered rather than hidden, per the CRUD standard. A pivoted cell holds several products,
@@ -276,8 +279,6 @@ export function CellStockTable({
                       <StockDocumentsPanel
                         productId={entry.product_id as string}
                         warehouseId={entry.warehouse_id as string}
-                        itemCode={itemCode}
-                        locationCode={entry.location ?? ''}
                         lineIds={lineIds}
                       />
                     </td>
@@ -293,7 +294,34 @@ export function CellStockTable({
           ...(showSubtotals && (section.rows.length > 1 || section.net !== null)
             ? [
                 <tr key={`subtotal-${section.key}`} data-testid={`stock-subtotal-${section.key}`}>
-                  <td className={cn(CHEVRON_COL, FOOT_CELL)} />
+                  <td className={cn(CHEVRON_COL, FOOT_CELL, 'px-1')}>
+                    {section.netOf && sectionProductId(section) ? (
+                      <Button
+                        type="button"
+                        mode="icon"
+                        variant="ghost"
+                        size="sm"
+                        className="size-5"
+                        data-testid={`stock-set-expand-${section.key}`}
+                        aria-label={`${
+                          expandedSets[section.key] ? 'Hide' : 'Show'
+                        } documents behind ${section.label}`}
+                        aria-expanded={Boolean(expandedSets[section.key])}
+                        onClick={() =>
+                          setExpandedSets((current) => ({
+                            ...current,
+                            [section.key]: !current[section.key],
+                          }))
+                        }
+                      >
+                        {expandedSets[section.key] ? (
+                          <ChevronDown className="size-3.5" aria-hidden />
+                        ) : (
+                          <ChevronRight className="size-3.5" aria-hidden />
+                        )}
+                      </Button>
+                    ) : null}
+                  </td>
                   <td className={cn(LOCATION_COL, FOOT_CELL, 'text-muted-foreground')}>
                     {section.label}
                   </td>
@@ -326,6 +354,29 @@ export function CellStockTable({
                     );
                   })}
                 </tr>,
+                ...(expandedSets[section.key] && section.netOf && sectionProductId(section)
+                  ? [
+                      // The SET's own documents, merged across its bins and walked in date
+                      // order: the pile the ladder's first step draws is the group's, so
+                      // this is the level at which "what was left when my line came round"
+                      // is a true question.
+                      <tr
+                        key={`set-expansion-${section.key}`}
+                        data-testid={`stock-set-expansion-${section.key}`}
+                      >
+                        <td
+                          colSpan={3 + NUMERIC_COLUMNS.length}
+                          className="border-b border-border p-0"
+                        >
+                          <StockDocumentsPanel
+                            productId={sectionProductId(section) as string}
+                            group={section.netOf}
+                            lineIds={lineIds}
+                          />
+                        </td>
+                      </tr>,
+                    ]
+                  : []),
               ]
             : []),
           ])}
@@ -427,6 +478,15 @@ function sectionsOf(locations: BoardCellLocation[]): StockSection[] {
     });
   });
   return sections;
+}
+
+/**
+ * The product a set's drill is opened by. Addressed by ID, never resolved from the item code:
+ * two products share `B2155-NL-BLUE` on the live book. Null for a set whose rows the server
+ * did not address, which is the one row a sales order gave no location.
+ */
+function sectionProductId(section: StockSection): string | null {
+  return section.rows.find((entry) => entry.product_id)?.product_id ?? null;
 }
 
 /**

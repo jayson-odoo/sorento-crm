@@ -23,14 +23,12 @@ import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useIntegrationLogs, useRetryIntegrationLog } from '@/app/(protected)/integration-management/integration-logs/hooks/useIntegrationLogs';
 import type { IntegrationLog } from '@/app/(protected)/integration-management/integration-logs/types/integrationLog.types';
 import { formatDistanceToNow } from 'date-fns';
 import { toast } from 'sonner';
-import { getStatusBadgeVariant } from '@/lib/status-badge';
 
 export default function SmartLinkageList() {
   const router = useRouter();
@@ -61,7 +59,7 @@ export default function SmartLinkageList() {
         accessorKey: 'integration_channel',
         header: ({ column }) => <DataGridColumnHeader title="Channel" column={column} />,
         cell: ({ row }) => (
-          <Badge variant="secondary" appearance="ghost">
+          <Badge variant="secondary">
             {row.original.integration_channel}
           </Badge>
         ),
@@ -83,7 +81,7 @@ export default function SmartLinkageList() {
         cell: ({ row }) => {
           const status = (row.original.status || 'pending') as string;
           return (
-            <Badge variant={getStatusBadgeVariant(status)} appearance="ghost" className="capitalize">
+            <Badge status={status} className="capitalize">
               {status.charAt(0).toUpperCase() + status.slice(1)}
             </Badge>
           );
@@ -258,10 +256,7 @@ export default function SmartLinkageList() {
           />
         </CardHeader>
         <CardTable>
-          <ScrollArea>
-            <DataGridTable />
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
+          <DataGridTable />
         </CardTable>
         <CardFooter>
           <DataGridPagination />

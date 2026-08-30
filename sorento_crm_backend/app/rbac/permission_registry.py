@@ -254,6 +254,12 @@ PERMISSION_REGISTRY.extend(_crud("marketing", "promotions", "Promotions"))
 PERMISSION_REGISTRY.extend(_crud("marketing", "promotion_attachments", "Promotion Attachments"))
 PERMISSION_REGISTRY.extend(_crud("marketing", "promotion_products", "Promotion Products"))
 PERMISSION_REGISTRY.extend(_crud("marketing", "campaigns", "Campaigns"))
+# Seeded in production by migration 362 but never added here, so a FRESH install (and
+# CI, which builds its permissions from this list rather than from migration seeds) had
+# four slugs its routes enforce and no role could ever hold. Found by
+# `tests/test_record_actions_s6b.py`, which asks of every deferred record action that the
+# grant it names is one a role can actually be given.
+PERMISSION_REGISTRY.extend(_crud("marketing", "promotion_types", "Promotion Types"))
 
 # Forms
 PERMISSION_REGISTRY.extend(_crud("forms", "forms", "Forms"))

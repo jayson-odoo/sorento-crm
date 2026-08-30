@@ -3,27 +3,14 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { RichTextEditor } from '@/components/ui/rich-text-editor';
 import { Container } from '@/components/common/container';
+import { PageHeader } from '@/components/common/PageHeader';
 import { FileDropzone } from '@/components/common/FileDropzone';
-import {
-  Toolbar,
-  ToolbarActions,
-  ToolbarHeading,
-  ToolbarTitle,
-} from '@/components/common/toolbar';
 import { uploadAttachment } from '@/app/(protected)/resource-management/attachments/services/attachmentService';
 import { createTicket } from '../services/ticketService';
 import {
@@ -96,29 +83,13 @@ export default function NewTicketPage() {
   return (
     <>
       <Container>
-        <Toolbar>
-          <ToolbarHeading>
-            <ToolbarTitle>Create ticket</ToolbarTitle>
-            <Breadcrumb>
-              <BreadcrumbList>
-                <BreadcrumbItem>
-                  <BreadcrumbLink href="/">Home</BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbLink href="/ticket-management/tickets">
-                    Ticket Management
-                  </BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbPage>New</BreadcrumbPage>
-                </BreadcrumbItem>
-              </BreadcrumbList>
-            </Breadcrumb>
-          </ToolbarHeading>
-          <ToolbarActions />
-        </Toolbar>
+        <PageHeader
+          title="Create ticket"
+          crumbs={[
+            { title: 'Tickets', path: '/ticket-management/tickets' },
+            { title: 'Create ticket' },
+          ]}
+        />
       </Container>
 
       <Container>
@@ -209,7 +180,7 @@ export default function NewTicketPage() {
                 Save Draft
               </Button>
               <Button disabled={submitting} onClick={() => submit(false)}>
-                {submitting ? 'Submitting…' : 'Submit'}
+                {submitting ? 'Submitting…' : 'Submit ticket'}
               </Button>
             </div>
           </div>
