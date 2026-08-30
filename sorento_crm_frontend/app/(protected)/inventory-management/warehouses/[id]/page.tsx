@@ -207,7 +207,7 @@ export default function WarehouseDetailPage({
               field that spans both columns there must span both here, or it lands in a
               different row and column between the two views. */}
           <Tabs defaultValue="basic">
-            <TabsList>
+            <TabsList variant="default">
               <TabsTrigger value="basic">Basic Information</TabsTrigger>
               <TabsTrigger value="planning">Planning</TabsTrigger>
             </TabsList>
@@ -240,6 +240,14 @@ export default function WarehouseDetailPage({
                       appearance="ghost"
                     >
                       {warehouse.counts_as_available === false ? 'Excluded' : 'Counted'}
+                    </Badge>
+                  </Field>
+                  <Field label="Fulfilment planning" className="md:col-span-2">
+                    <Badge
+                      variant={warehouse.fulfilment_planning ? 'success' : 'secondary'}
+                      appearance="ghost"
+                    >
+                      {warehouse.fulfilment_planning ? 'On' : 'Off'}
                     </Badge>
                   </Field>
                   <Field label="Draws stock from">{poolCode || 'Stands alone'}</Field>

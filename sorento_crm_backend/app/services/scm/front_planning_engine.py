@@ -391,12 +391,10 @@ def _cross_group_borrow_reason(location: str, qty: Decimal) -> str:
 
     Never "`{location}` has N free": the offer is capped by the donor group's whole net
     (section 1d rung 4), so a location holding far more than N would be described wrongly
-    by its own free balance.
+    by its own free balance. The small-quantity cap that used to be named here is gone
+    (v7.1, R5): any ownership group may donate.
     """
-    return (
-        f"{location} can lend {qty_text(qty)} from outside this group, within the "
-        "cross-group borrow limit"
-    )
+    return f"{location} can lend {qty_text(qty)} from outside this group"
 
 
 def _whole_line_buy_reason(covered: Decimal, open_qty: Decimal) -> str:

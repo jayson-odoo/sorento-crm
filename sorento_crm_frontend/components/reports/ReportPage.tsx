@@ -610,7 +610,7 @@ export function ReportPage({
 
           {!runError && result && result.row_count > 0 && detailLayout && summary && (
             <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-              <TabsList className="w-full justify-start overflow-x-auto">
+              <TabsList variant="default" className="w-full justify-start overflow-x-auto">
                 <TabsTrigger value="detail">
                   {detailTitle} ({result.row_count})
                 </TabsTrigger>

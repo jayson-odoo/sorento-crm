@@ -5,6 +5,7 @@ import { cn } from '@/lib/utils';
 import { cva, type VariantProps } from 'class-variance-authority';
 import { X } from 'lucide-react';
 import { Dialog as SheetPrimitive } from 'radix-ui';
+import { OVERLAY_CLASS } from '@/components/ui/primitive-classes';
 
 function Sheet({ ...props }: React.ComponentProps<typeof SheetPrimitive.Root>) {
   return <SheetPrimitive.Root data-slot="sheet" {...props} />;
@@ -26,23 +27,23 @@ function SheetOverlay({ className, ...props }: React.ComponentProps<typeof Sheet
   return (
     <SheetPrimitive.Overlay
       data-slot="sheet-overlay"
-      className={cn(
-        'fixed inset-0 z-50 bg-black/30 [backdrop-filter:blur(4px)] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0',
-        className,
-      )}
+      className={cn(OVERLAY_CLASS, className)}
       {...props}
     />
   );
 }
 
 const sheetVariants = cva(
-  'flex flex-col items-strech fixed z-50 gap-4 bg-background p-6 shadow-lg transition ease-(--ease-standard) duration-(--duration-slow) data-[state=open]:animate-in data-[state=closed]:animate-out',
+  // `overflow-y-auto` so a sheet with no SheetBody still reaches its footer.
+  'flex flex-col items-strech fixed z-50 gap-4 overflow-y-auto bg-background p-6 shadow-lg transition ease-(--ease-standard) data-[state=open]:animate-in data-[state=closed]:animate-out duration-(--duration-slow)',
   {
     variants: {
+      // A left/right sheet is `h-full`, which already caps it at the viewport; a
+      // top/bottom one is sized by its content and needs the explicit cap.
       side: {
-        top: 'inset-x-0 top-0 border-b data-[state=closed]:slide-out-to-top data-[state=open]:slide-in-from-top',
+        top: 'inset-x-0 top-0 max-h-[90dvh] border-b data-[state=closed]:slide-out-to-top data-[state=open]:slide-in-from-top',
         bottom:
-          'inset-x-0 bottom-0 border-t data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom',
+          'inset-x-0 bottom-0 max-h-[90dvh] border-t data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom',
         left: 'inset-y-0 start-0 h-full w-3/4 border-e data-[state=closed]:slide-out-to-left data-[state=open]:slide-in-from-left sm:max-w-sm rtl:data-[state=closed]:slide-out-to-right rtl:data-[state=open]:slide-in-from-right',
         right:
           'inset-y-0 end-0 h-full w-3/4  border-s data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right sm:max-w-sm rtl:data-[state=closed]:slide-out-to-left rtl:data-[state=open]:slide-in-from-left',
@@ -72,7 +73,11 @@ function SheetContent({
   return (
     <SheetPortal>
       {overlay && <SheetOverlay />}
-      <SheetPrimitive.Content data-slot="sheet-content" className={cn(sheetVariants({ side }), className)} {...props}>
+      <SheetPrimitive.Content
+        data-slot="sheet-content"
+        className={cn(sheetVariants({ side }), className)}
+        {...props}
+      >
         {children}
         {close && (
           <SheetPrimitive.Close
@@ -99,7 +104,9 @@ function SheetHeader({ className, ...props }: React.ComponentProps<'div'>) {
 }
 
 function SheetBody({ className, ...props }: React.ComponentProps<'div'>) {
-  return <div data-slot="sheet-body" className={cn('py-2.5', className)} {...props} />;
+  // The body is the part that scrolls, so the header and footer stay put and the
+  // submit button is reachable at phone height.
+  return <div data-slot="sheet-body" className={cn('min-h-0 flex-1 overflow-y-auto py-2.5', className)} {...props} />;
 }
 
 function SheetFooter({ className, ...props }: React.ComponentProps<'div'>) {

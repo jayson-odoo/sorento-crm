@@ -4,6 +4,7 @@ import * as React from 'react';
 import { cn } from '@/lib/utils';
 import { cva, type VariantProps } from 'class-variance-authority';
 import { Switch as SwitchPrimitive } from 'radix-ui';
+import { COARSE_HIT_TARGET_CLASS, PRESSED_CLASS } from '@/components/ui/primitive-classes';
 
 // Define a context for `permanent` state
 const SwitchContext = React.createContext<{ permanent: boolean }>({
@@ -26,7 +27,8 @@ const switchVariants = cva(
     disabled:cursor-not-allowed disabled:opacity-50 data-[state=unchecked]:bg-input
     aria-invalid:border aria-invalid:border-destructive/60 aria-invalid:ring-destructive/10 dark:aria-invalid:border-destructive dark:aria-invalid:ring-destructive/20
     [[data-invalid=true]_&]:border [[data-invalid=true]_&]:border-destructive/60 [[data-invalid=true]_&]:ring-destructive/10  dark:[[data-invalid=true]_&]:border-destructive dark:[[data-invalid=true]_&]:ring-destructive/20
-  `,
+  ` +
+    ` ${PRESSED_CLASS} ${COARSE_HIT_TARGET_CLASS}`,
   {
     variants: {
       shape: {

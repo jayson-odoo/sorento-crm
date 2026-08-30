@@ -79,6 +79,7 @@ def _warehouse(db, code: str) -> Warehouse:
         warehouse_name=code,
         is_active=True,
         segment="project",
+        fulfilment_planning=True,
     )
     db.add(row)
     db.flush()

@@ -4,9 +4,18 @@ import * as React from 'react';
 import { cn } from '@/lib/utils';
 import { cva, type VariantProps } from 'class-variance-authority';
 import { Tabs as TabsPrimitive } from 'radix-ui';
+import { useHorizontalOverflow } from '@/hooks/use-horizontal-overflow';
+import { PRESSED_CLASS } from '@/components/ui/primitive-classes';
 
 // Variants for TabsList
-const tabsListVariants = cva('flex items-center shrink-0', {
+const tabsListVariants = cva(
+  // The list owns its scroller. Without one, Settings hid 7 of its 10 tabs at
+  // 375 and the Product create strip overlapped five pills; with `max-w-full` +
+  // `min-w-0` the strip scrolls instead of widening the page. The scrollbar is
+  // hidden because it would sit on top of the tab labels, so the right-edge mask
+  // (driven by `data-fade`) is what says there is more to the right.
+  'flex items-center shrink-0 min-w-0 max-w-full overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden data-[fade=true]:[mask-image:linear-gradient(to_right,black_calc(100%-24px),transparent)]',
+  {
   variants: {
     variant: {
       default: 'bg-muted p-1',
@@ -71,15 +80,17 @@ const tabsListVariants = cva('flex items-center shrink-0', {
       className: 'rounded-full [&_[role=tab]]:rounded-full',
     },
   ],
-  defaultVariants: {
-    variant: 'default',
-    size: 'md',
+    defaultVariants: {
+      variant: 'line',
+      size: 'md',
+    },
   },
-});
+);
 
 // Variants for TabsTrigger
 const tabsTriggerVariants = cva(
-  'shrink-0 cursor-pointer whitespace-nowrap inline-flex justify-center items-center font-medium ring-offset-background transition-colors focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 data-disabled:pointer-events-none data-disabled:opacity-50 [&_svg]:shrink-0 [&_svg]:text-muted-foreground [&:hover_svg]:text-primary [&[data-state=active]_svg]:text-primary',
+  PRESSED_CLASS +
+    ' shrink-0 cursor-pointer whitespace-nowrap inline-flex justify-center items-center font-medium ring-offset-background focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 data-disabled:pointer-events-none data-disabled:opacity-50 [&_svg]:shrink-0 [&_svg]:text-muted-foreground [&:hover_svg]:text-primary [&[data-state=active]_svg]:text-primary',
   {
     variants: {
       variant: {
@@ -113,7 +124,7 @@ const tabsTriggerVariants = cva(
       { variant: 'line', size: 'xs', className: 'py-1.5' },
     ],
     defaultVariants: {
-      variant: 'default',
+      variant: 'line',
       size: 'md',
     },
   },
@@ -140,7 +151,7 @@ type TabsContextType = {
   size?: 'lg' | 'sm' | 'xs' | 'md';
 };
 const TabsContext = React.createContext<TabsContextType>({
-  variant: 'default',
+  variant: 'line',
   size: 'md',
 });
 
@@ -151,17 +162,33 @@ function Tabs({ className, ...props }: React.ComponentProps<typeof TabsPrimitive
 
 function TabsList({
   className,
-  variant = 'default',
+  variant = 'line',
   shape = 'default',
   size = 'md',
+  ref: callerRef,
   ...props
 }: React.ComponentProps<typeof TabsPrimitive.List> & VariantProps<typeof tabsListVariants>) {
+  const { ref: scrollerRef, isFading } = useHorizontalOverflow<HTMLDivElement>();
+
+  // The list needs its own ref to measure the overflow, but it is not entitled to
+  // the caller's: placing ours after {...props} silently dropped one.
+  const mergedRef = React.useCallback(
+    (node: HTMLDivElement | null) => {
+      scrollerRef.current = node;
+      if (typeof callerRef === 'function') callerRef(node);
+      else if (callerRef) callerRef.current = node;
+    },
+    [scrollerRef, callerRef],
+  );
+
   return (
-    <TabsContext.Provider value={{ variant: variant || 'default', size: size || 'md' }}>
+    <TabsContext.Provider value={{ variant: variant || 'line', size: size || 'md' }}>
       <TabsPrimitive.List
         data-slot="tabs-list"
+        data-fade={isFading}
         className={cn(tabsListVariants({ variant, shape, size }), className)}
         {...props}
+        ref={mergedRef}
       />
     </TabsContext.Provider>
   );

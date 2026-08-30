@@ -48,7 +48,7 @@ from ..test_so_supply_confirmation import (  # noqa: F401  (helpers, not fixture
     _user,
     _warehouse,
 )
-from .test_ladder_v5 import _cap
+from .test_ladder_v5 import _policy
 from .test_project_supply_service_ladder import (
     REQUIRED_DATE,
     _group_sites,
@@ -167,7 +167,7 @@ def test_two_lines_of_one_order_for_one_date_are_bought_as_one_quantity():
         own, _pool = sites["BRW"]
         donor = _warehouse(db, f"ZZTDC1-NT{_uid()[:3]}")
         _stock(db, product, donor, on_hand=12)
-        _cap(db, f"zzt-v6-{_uid()[:6]}")
+        _policy(db, f"zzt-v6-{_uid()[:6]}")
 
         _core_so, order, _mirrors = _seed_order(
             db, company_id, project, product,
@@ -196,7 +196,7 @@ def test_the_unit_is_covered_whole_when_the_ladder_reaches_the_whole_of_it():
         own, _pool = sites["BRW"]
         donor = _warehouse(db, f"ZZTDC1-NT{_uid()[:3]}")
         _stock(db, product, donor, on_hand=30)
-        _cap(db, f"zzt-v6-{_uid()[:6]}")
+        _policy(db, f"zzt-v6-{_uid()[:6]}")
 
         _core_so, order, _mirrors = _seed_order(
             db, company_id, project, product,
@@ -281,7 +281,7 @@ def test_two_delivery_dates_are_two_units_and_the_v5_answer_stands():
         own, _pool = sites["BRW"]
         donor = _warehouse(db, f"ZZTDC1-NT{_uid()[:3]}")
         _stock(db, product, donor, on_hand=12)
-        _cap(db, f"zzt-v6-{_uid()[:6]}")
+        _policy(db, f"zzt-v6-{_uid()[:6]}")
 
         _core_so, order, _mirrors = _seed_order(
             db, company_id, project, product,
@@ -314,7 +314,7 @@ def test_two_fulfilment_locations_are_two_units():
         sibling, _sibling_pool = sites["MWH"]
         donor = _warehouse(db, f"ZZTDC1-NT{_uid()[:3]}")
         _stock(db, product, donor, on_hand=12)
-        _cap(db, f"zzt-v6-{_uid()[:6]}")
+        _policy(db, f"zzt-v6-{_uid()[:6]}")
 
         _core_so, order, _mirrors = _seed_order(
             db, company_id, project, product,
@@ -504,7 +504,7 @@ def test_one_donor_is_borrowed_once_across_the_walk_and_the_later_dates_buy():
         own, _pool = sites["BRW"]
         donor = _warehouse(db, f"ZZTDC1-NT{_uid()[:3]}")
         _stock(db, product, donor, on_hand=10)
-        _cap(db, f"zzt-v6-{_uid()[:6]}")
+        _policy(db, f"zzt-v6-{_uid()[:6]}")
 
         core_so, order, _mirrors = _seed_order(
             db, company_id, project, product,
@@ -557,7 +557,7 @@ def test_the_pools_net_is_one_pile_across_the_walk_and_the_later_dates_buy():
             db, company_id, project, product, pool,
             qty_ordered="3334", required_date=REQUIRED_DATE + timedelta(days=60),
         )
-        _cap(db, f"zzt-v6-{_uid()[:6]}")
+        _policy(db, f"zzt-v6-{_uid()[:6]}")
 
         core_so, order, _mirrors = _seed_order(
             db, company_id, project, product,
@@ -606,7 +606,7 @@ def test_the_pools_net_ledger_holds_for_a_site_with_no_pool_of_its_own():
             db, company_id, project, product, pool,
             qty_ordered="3334", required_date=REQUIRED_DATE + timedelta(days=60),
         )
-        _cap(db, f"zzt-v6-{_uid()[:6]}")
+        _policy(db, f"zzt-v6-{_uid()[:6]}")
 
         core_so, order, _mirrors = _seed_order(
             db, company_id, project, product,
@@ -904,7 +904,7 @@ def test_the_proof_never_offers_a_donor_the_walk_has_already_spent():
         own, _pool = sites["BRW"]
         donor = _warehouse(db, f"ZZTDC1-NT{_uid()[:3]}")
         _stock(db, product, donor, on_hand=10)
-        _cap(db, f"zzt-v6-{_uid()[:6]}")
+        _policy(db, f"zzt-v6-{_uid()[:6]}")
 
         core_so, _order, _mirrors = _seed_order(
             db, company_id, project, product,

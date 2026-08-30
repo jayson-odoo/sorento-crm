@@ -5,6 +5,7 @@ import { cn } from '@/lib/utils';
 import { cva, VariantProps } from 'class-variance-authority';
 import { X } from 'lucide-react';
 import { Dialog as DialogPrimitive } from 'radix-ui';
+import { OVERLAY_CLASS } from '@/components/ui/primitive-classes';
 
 const dialogContentVariants = cva(
   // `overflow-y-auto` + a bounded `max-h` make EVERY modal scrollable - without
@@ -25,12 +26,13 @@ const dialogContentVariants = cva(
 );
 
 function Dialog({ modal, ...props }: React.ComponentProps<typeof DialogPrimitive.Root>) {
-  // Default to non-modal so the AI assistant bubble (rendered outside the
-  // dialog portal) stays scrollable / interactive while a dialog is open.
-  // Radix's modal mode wraps the tree in `react-remove-scroll` which blocks
-  // wheel/touch events on every element outside the dialog content.
-  // Callers can still opt back in by passing `modal={true}` explicitly.
-  return <DialogPrimitive.Root data-slot="dialog" modal={modal ?? false} {...props} />;
+  // A dialog is a lightbox: it owns the screen while it is open. Modal mode is
+  // what gives it the focus trap, the scroll lock and the aria-hidden page
+  // behind it; without those the page stayed tabbable and a stray wheel
+  // scrolled the list under the form. Radix inerts the AI assistant bubble
+  // along with everything else, which is correct for a modal surface.
+  // A caller with a genuinely modeless surface passes `modal={false}`.
+  return <DialogPrimitive.Root data-slot="dialog" modal={modal ?? true} {...props} />;
 }
 
 function DialogTrigger({ ...props }: React.ComponentProps<typeof DialogPrimitive.Trigger>) {
@@ -49,10 +51,7 @@ function DialogOverlay({ className, ...props }: React.ComponentProps<typeof Dial
   return (
     <DialogPrimitive.Overlay
       data-slot="dialog-overlay"
-      className={cn(
-        'fixed inset-0 z-50 bg-black/30 [backdrop-filter:blur(4px)] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0',
-        className,
-      )}
+      className={cn(OVERLAY_CLASS, className)}
       {...props}
     />
   );
@@ -77,6 +76,7 @@ function DialogContent({
   showCloseButton = true,
   overlay = true,
   variant,
+  onCloseAutoFocus,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> &
   VariantProps<typeof dialogContentVariants> & {
@@ -92,31 +92,73 @@ function DialogContent({
   // pointer/focus event from a DropdownMenu / Popover / Select / ContextMenu
   // item that just opened this dialog - those surfaces unmount during the
   // same click cycle and their last event would otherwise land outside the
-  // freshly-opened dialog and instantly close it (`modal={false}` is
-  // intentional so the AI assistant bubble outside the portal stays
-  // interactive).
+  // freshly-opened dialog and instantly close it.
   const mountedAtRef = React.useRef<number>(0);
+  // Where the keyboard was when this dialog opened.
+  //
+  // Radix hands focus back to its own DialogTrigger, and this product almost
+  // never uses one: 244 files render <Dialog>, 6 use <DialogTrigger>. Everywhere
+  // else a plain button flips state, so Radix has no trigger to return to and
+  // focus lands on <body> - after Escape the keyboard user is at the top of the
+  // document, having lost their place in the list they were working in. Captured
+  // in the ref callback because refs attach before Radix's focus effect runs, so
+  // this still sees the opener rather than the dialog.
+  const openerRef = React.useRef<HTMLElement | null>(null);
   const contentRefCallback = React.useCallback(
     (node: HTMLDivElement | null) => {
       if (node) {
         mountedAtRef.current = performance.now();
+        // Capture ONCE per open, and never something inside the dialog.
+        //
+        // Radix composes this ref, so React detaches and re-attaches it on every
+        // render of an open dialog. By the second attach the focus is already on
+        // the first control INSIDE the content, and capturing that overwrote the
+        // opener with a button that leaves the DOM a moment later - the restore
+        // then found a disconnected node and silently gave up, which is exactly
+        // the "focus lands on body" the tester saw.
+        const active = document.activeElement;
+        if (
+          openerRef.current === null &&
+          active instanceof HTMLElement &&
+          active !== document.body &&
+          !node.contains(active)
+        ) {
+          openerRef.current = active;
+        }
       } else {
         mountedAtRef.current = 0;
       }
     },
     [],
   );
+
+  const restoreFocusToOpener = (event: Event) => {
+    // Released FIRST, before anything can return early. This open is over either
+    // way, and a held opener makes the capture guard skip the next one - so the
+    // dialog after a caller-handled close would hand focus back to the button
+    // that opened the dialog before it.
+    const opener = openerRef.current;
+    openerRef.current = null;
+
+    // The caller decides next; if it took over, leave focus alone.
+    onCloseAutoFocus?.(event);
+    if (event.defaultPrevented) return;
+
+    // Gone from the DOM - the row that opened this dialog was just deleted - so
+    // let Radix do whatever it would have done.
+    if (!opener || !opener.isConnected) return;
+
+    // Where a DialogTrigger WAS used, the opener is that trigger, so this lands
+    // in the same place Radix would have.
+    event.preventDefault();
+    opener.focus();
+  };
   // Radix wraps these in a CustomEvent whose `target` is the DialogContent itself.
   // The actual click/pointer/focus target is on `event.detail.originalEvent.target`.
   const guardOutsideInteraction = (event: Event) => {
     const detail = (event as CustomEvent<{ originalEvent?: Event }>).detail;
     const original = detail?.originalEvent;
     const target = (original?.target ?? event.target) as Element | null;
-    // Keep the AI assistant bubble interactive while a dialog is open.
-    if (target && target.closest && target.closest('[data-ai-assistant-root]')) {
-      event.preventDefault();
-      return;
-    }
     // Ignore the trailing pointer/focus event from the Radix surface that
     // *opened* this dialog (dropdown menu / popover / select / context menu).
     // Those surfaces are unmounting during the same tick the dialog mounts;
@@ -124,11 +166,12 @@ function DialogContent({
     //
     // Also ignore interactions that land inside ANOTHER dialog stacked above
     // this one. Nested dialogs are portaled as React siblings (not DOM/React
-    // descendants), so non-modal Radix reads any click in the child dialog as
-    // "outside" the parent and would dismiss the parent - e.g. clicking Save in
-    // a child "Change attachment type" dialog closed the whole detail modal.
-    // Closing a stacked dialog must be explicit, never a side effect of the one
-    // beneath it.
+    // descendants), so Radix reads any click in the child dialog as "outside"
+    // the parent and would dismiss the parent - e.g. clicking Save in a child
+    // "Change attachment type" dialog closed the whole detail modal. Closing a
+    // stacked dialog must be explicit, never a side effect of the one beneath
+    // it. Kept until the attachment-type flow is browser-verified under the
+    // modal default (PLAN-apple-alignment 7, risk 1).
     if (
       target &&
       target.closest &&
@@ -158,6 +201,7 @@ function DialogContent({
         onPointerDownOutside={guardOutsideInteraction}
         onInteractOutside={guardOutsideInteraction}
         onFocusOutside={guardOutsideInteraction}
+        onCloseAutoFocus={restoreFocusToOpener}
         {...props}
       >
         {needsFallbackTitle ? (

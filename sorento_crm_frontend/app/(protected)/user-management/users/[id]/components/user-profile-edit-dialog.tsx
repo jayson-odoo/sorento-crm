@@ -133,6 +133,7 @@ const UserProfileEditDialog = ({
       notify_whatsapp_on_deadline_extended: Boolean(user?.notifyWhatsappOnDeadlineExtended),
       notify_email_on_handling: user?.notifyEmailOnHandling ?? true,
       notify_whatsapp_on_handling: Boolean(user?.notifyWhatsappOnHandling),
+      notify_email_on_mention: user?.notifyEmailOnMention ?? true,
       notify_email_on_product_discontinued: Boolean(user?.notifyEmailOnProductDiscontinued),
       notify_whatsapp_on_product_discontinued: Boolean(user?.notifyWhatsappOnProductDiscontinued),
     },
@@ -172,6 +173,7 @@ const UserProfileEditDialog = ({
       notify_whatsapp_on_deadline_extended: Boolean(user.notifyWhatsappOnDeadlineExtended),
       notify_email_on_handling: user.notifyEmailOnHandling ?? true,
       notify_whatsapp_on_handling: Boolean(user.notifyWhatsappOnHandling),
+      notify_email_on_mention: user.notifyEmailOnMention ?? true,
       notify_email_on_product_discontinued: Boolean(user.notifyEmailOnProductDiscontinued),
       notify_whatsapp_on_product_discontinued: Boolean(user.notifyWhatsappOnProductDiscontinued),
     });
@@ -326,6 +328,7 @@ const UserProfileEditDialog = ({
       profileData.notify_whatsapp_on_deadline_extended = Boolean(values.notify_whatsapp_on_deadline_extended);
       profileData.notify_email_on_handling = Boolean(values.notify_email_on_handling);
       profileData.notify_whatsapp_on_handling = Boolean(values.notify_whatsapp_on_handling);
+      profileData.notify_email_on_mention = Boolean(values.notify_email_on_mention);
       profileData.notify_email_on_product_discontinued = Boolean(values.notify_email_on_product_discontinued);
       profileData.notify_whatsapp_on_product_discontinued = Boolean(values.notify_whatsapp_on_product_discontinued);
       // Replace-all: whatever the editor shows is the user's full scope set. Sent
@@ -786,6 +789,7 @@ const UserProfileEditDialog = ({
               { name: 'notify_whatsapp_on_deadline_extended', label: 'WhatsApp on deadline extended', hint: 'Needs a linked WhatsApp contact.' },
               { name: 'notify_email_on_handling', label: 'Email on handling', hint: 'Emailed when a handling lock is claimed / taken over / released on a form you are eligible for.' },
               { name: 'notify_whatsapp_on_handling', label: 'WhatsApp on handling', hint: 'Needs a linked WhatsApp contact.' },
+              { name: 'notify_email_on_mention', label: 'Email on mention in a note', hint: 'Emailed when a teammate mentions you in an internal note.' },
               { name: 'notify_email_on_product_discontinued', label: 'Email on products discontinued', hint: 'Emailed when products are newly discontinued (batched).' },
               { name: 'notify_whatsapp_on_product_discontinued', label: 'WhatsApp on products discontinued', hint: 'Needs a linked WhatsApp contact.' },
             ] as const).map((t) => (

@@ -9,8 +9,9 @@ One test per criterion, each with the captain's own case where he gave one:
 * **AC-V1** five rows, in order, every one answered, and none of them named Incoming;
 * **AC-V3** a cited other-group site brings its WHOLE group, each row with its own signed
   available and the subtotal carrying `donor_group_net`;
-* **AC-V4** question 3 names the CAP when the cap is what refused the borrow, and the
-  suggestion note never claims borrowing is possible where the proof says nothing is left;
+* **AC-V4** question 3 offers the donor now that the cross-group cap is gone (v7.1, R5),
+  and the suggestion note never claims borrowing is possible where the proof says nothing
+  is left;
 * **AC-V5** question 4 is never proposed and names the donors it did not take from;
 * **AC-V6** dealer hot-selling refuses the whole pile, DC1 and MWH included;
 * **AC-V7** the pool is asked before another location: 24 needed, 268 free in the pile, 100
@@ -47,12 +48,15 @@ WHEN = date(2026, 9, 3)
 BUCKET = "2026-08-31"
 
 
-def _cap(db, *, max_qty=50, max_pct=10.0):
-    """The cross-group borrow limit, as the policy screen states it."""
+def _policy(db):
+    """An active fulfilment-priority policy, so the ladder ranks against a real row.
+
+    Was `_cap`: the cross-group borrow limit it used to set is gone with v7.1 (R5), and any
+    ownership group may donate now.
+    """
     priority.create_revision(
         db, name=f"{MARKER}-v5-{_uid()[:6]}", factors={}, demand_class_weights={},
         reorder_coverage_until=None,
-        cross_group_borrow_max_qty=max_qty, cross_group_borrow_max_pct=max_pct,
     )
     db.commit()
 
@@ -130,7 +134,7 @@ def test_the_pool_is_asked_before_another_location_and_answers_the_whole_line():
         _stock(db, product, own, on_hand=0)
         _stock(db, product, pool, on_hand=268)
         _stock(db, product, donor, on_hand=100)
-        _cap(db)
+        _policy(db)
         order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
         _line(db, order, product, qty="24", required_date=WHEN, warehouse=own)
 
@@ -216,58 +220,47 @@ def test_question_four_is_never_proposed_and_names_the_donors_it_did_not_take():
 # --------------------------------------------------------------------------- AC-V4
 
 
-def test_question_three_names_the_cap_when_the_cap_is_what_refused_the_borrow():
-    """The cap is measured against what is still NEEDED, so the sentence prints both: the
-    limit a person can change, and the quantity it was compared with."""
+def test_question_three_offers_the_donor_now_that_the_cap_is_gone():
+    """v7.1 R5, migration 443: the small-quantity cross-group cap is dropped, so a donor
+    group with the whole line in its net answers YES where it used to be refused.
+
+    The captain's own case, inverted: 60 needed, 500 at a `-NTC` site whose group owes
+    nothing. Under v5 the limit of 10 refused it; under v7.1 there is no limit and the
+    whole line is borrowed."""
     with blank_session() as db:
         product = _product(db, f"ZZT-{_uid()[:6]}")
         own = _warehouse(db, f"ZZTG{_uid()[:5]}-BB"[:20])
         donor = _warehouse(db, f"ZZTG{_uid()[:5]}-NTC"[:20])
         _stock(db, product, own, on_hand=0)
         _stock(db, product, donor, on_hand=500)
-        # 60 needed against a limit of 10, and 500 at the donor is far more than 10% of 60
-        # would allow either, so the CAP is unambiguously what refused it.
-        _cap(db, max_qty=10, max_pct=1.0)
+        _policy(db)
         order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
         _line(db, order, product, qty="60", required_date=WHEN, warehouse=own)
 
         contribution = _contribution(db, order, product)
 
         step = _step(contribution, "cross_group_borrow")
-        assert step["answer"] == "no"
-        assert "cross-group borrow limit is 10" in step["why"]
-        assert "60 is still needed" in step["why"]
+        assert step["answer"] == "yes"
+        assert step["took"] == "60"
         assert donor.warehouse_code in step["why"]
-
-
-def test_the_suggestion_note_never_offers_a_borrow_the_proof_has_refused():
-    """AC-V4's second half. ONE source of truth: a donor the cap refused is not a donor a
-    person may pick, so the Buy's own sentence must not name it while question 3 in the row
-    directly above says nothing outside the group may be drawn."""
-    with blank_session() as db:
-        product = _product(db, f"ZZT-{_uid()[:6]}")
-        own = _warehouse(db, f"ZZTH{_uid()[:5]}-BB"[:20])
-        donor = _warehouse(db, f"ZZTH{_uid()[:5]}-NTC"[:20])
-        _stock(db, product, own, on_hand=0)
-        _stock(db, product, donor, on_hand=500)
-        _cap(db, max_qty=10, max_pct=1.0)
-        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
-        _line(db, order, product, qty="60", required_date=WHEN, warehouse=own)
-
-        contribution = _contribution(db, order, product)
-
-        buy = next(s for s in contribution["sources"] if s["kind"] == "buy")
-        assert "Borrowing is possible" not in buy["reason"], buy["reason"]
+        # And no sentence claims a limit that no longer exists.
+        assert "cross-group borrow limit" not in step["why"]
 
 
 def test_the_suggestion_note_is_silent_about_a_donor_whose_own_group_nets_nothing():
-    """AC-V4's second half, the case the CAP filter never caught (review blocker B1).
+    """AC-V4's second half, WHOLE - one source of truth: a donor the proof refused is not a
+    donor a person may pick, so the Buy's own sentence must not name it while question 3 in
+    the row directly above says nothing outside the group may be drawn.
 
-    The donor site holds 500 and the cap is nowhere near binding, so `over_cap` is False on
-    it and a filter that only looked at the cap kept naming it. What actually refused it is
-    ladder v4's own rule: the NTC group as a whole nets -100, so nothing of it may be lent,
-    and question 3 says exactly that one row above. The note is written from what questions
-    3 and 4 offered, and they offered nothing.
+    It used to share this job with a sibling that made the CAP the refusal. The cap is gone
+    (v7.1, R5, migration 443), so the only refusal left at this rung is the one this test
+    already pinned, and the sibling retired into it rather than becoming a copy of it.
+
+    The case the cap filter never caught (review blocker B1): the donor site holds 500, so a
+    filter that only looked at the cap kept naming it. What refuses it is ladder v4's own
+    rule - the NTC group as a whole nets -100, so nothing of it may be lent, and question 3
+    says exactly that one row above. The note is written from what questions 3 and 4
+    offered, and they offered nothing.
     """
     with blank_session() as db:
         product = _product(db, f"ZZT-{_uid()[:6]}")
@@ -282,8 +275,7 @@ def test_the_suggestion_note_is_silent_about_a_donor_whose_own_group_nets_nothin
         # another, so the group nets -100 and lends nothing however much sits at `donor`.
         theirs = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
         _line(db, theirs, product, qty="600", required_date=WHEN, warehouse=elsewhere)
-        # Deliberately generous, so the cap is NOT what refuses the borrow.
-        _cap(db, max_qty=1000, max_pct=100.0)
+        _policy(db)
         order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
         _line(db, order, product, qty="60", required_date=WHEN, warehouse=own)
 
@@ -317,7 +309,7 @@ def test_a_cited_other_group_site_brings_its_whole_group_with_its_own_net():
         _stock(db, product, own, on_hand=0)
         _stock(db, product, drawn, on_hand=40)
         _stock(db, product, sibling, on_hand=7)
-        _cap(db, max_qty=100, max_pct=100.0)
+        _policy(db)
         order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
         _line(db, order, product, qty="10", required_date=WHEN, warehouse=own)
 

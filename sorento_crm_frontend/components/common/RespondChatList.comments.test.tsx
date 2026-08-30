@@ -72,6 +72,23 @@ describe('RespondChatList internal notes (AC-L1)', () => {
     expect(mentions).toHaveTextContent('@Manager KDS');
   });
 
+  it('a CRM note whose body already names the tagged user draws no duplicate mention row', () => {
+    render(
+      <RespondChatList
+        items={[]}
+        comments={[
+          note('2026-08-15T02:05:00', '@Kia Yee Please assist on this', {
+            author_name: 'Tay Zhi Yang',
+            source: 'crm',
+            mentioned_names: ['Kia Yee'],
+          }),
+        ]}
+      />,
+    );
+    expect(screen.queryByTestId('chat-internal-note-mentions')).toBeNull();
+    expect(screen.getByTestId('chat-internal-note')).toHaveTextContent('@Kia Yee Please assist on this');
+  });
+
   it('a note tagging nobody draws no mention row', () => {
     render(<RespondChatList items={[]} comments={[note('2026-08-15T02:05:00', 'plain')]} />);
     expect(screen.queryByTestId('chat-internal-note-mentions')).toBeNull();

@@ -27,6 +27,27 @@ if (!globalThis.ResizeObserver) {
   } as unknown as typeof ResizeObserver;
 }
 
+// Same story for matchMedia: jsdom has none, and the DataGrid asks it whether it
+// is under `sm` (to pin the identifier column) on every render. A test that never
+// mentions responsiveness would otherwise die in a passive effect. Defaults to
+// "no match", i.e. a desktop viewport; a test that cares overrides it.
+if (typeof window !== 'undefined' && !window.matchMedia) {
+  Object.defineProperty(window, 'matchMedia', {
+    writable: true,
+    configurable: true,
+    value: (query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      addListener: () => {},
+      removeListener: () => {},
+      dispatchEvent: () => false,
+    }),
+  });
+}
+
 if (typeof Element !== 'undefined') {
   Element.prototype.scrollIntoView ??= function scrollIntoView() {};
   Element.prototype.hasPointerCapture ??= function hasPointerCapture() {

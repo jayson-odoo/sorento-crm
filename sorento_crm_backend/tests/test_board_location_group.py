@@ -61,7 +61,7 @@ def _product(db) -> Product:
 def _warehouse(db, code: str) -> Warehouse:
     row = Warehouse(
         id=_uid(), warehouse_code=code, warehouse_name=code, is_active=True,
-        segment="project",
+        segment="project", fulfilment_planning=True,
     )
     db.add(row)
     db.flush()

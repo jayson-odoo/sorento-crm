@@ -310,6 +310,18 @@ function plannerLine(over: Record<string, unknown> = {}) {
   };
 }
 
+/*
+  A drill is a lightbox, and dialogs are modal since UAC S1-01: while one is open
+  the planner behind it is inert and the operator cannot reach Create SPO. So the
+  tests walk the real flow - open the drill, tick, CLOSE it, then send - which
+  also pins the thing that actually matters about the ticks: they survive the
+  drill closing.
+*/
+async function closeDrill() {
+  fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape', code: 'Escape' });
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+}
+
 describe('F7 - the SPO planner chooses its POs and its SOs', () => {
   beforeEach(() => {
     state.suggestion = suggestion({ lines: [plannerLine()] });
@@ -366,6 +378,7 @@ describe('F7 - the SPO planner chooses its POs and its SOs', () => {
     renderTable();
     await openPoDrill();
     fireEvent.click(screen.getByRole('checkbox', { name: 'Draw from 202605-S0060' }));
+    await closeDrill();
     fireEvent.click(screen.getByRole('button', { name: /create spo/i }));
 
     await waitFor(() => expect(state.create).toHaveBeenCalledTimes(1));
@@ -413,6 +426,7 @@ describe('F7 - the SPO planner chooses its POs and its SOs', () => {
     renderTable();
     await openSoDrill();
     fireEvent.click(screen.getByRole('checkbox', { name: 'Cover SO-2201' }));
+    await closeDrill();
     fireEvent.click(screen.getByRole('button', { name: /create spo/i }));
 
     await waitFor(() => expect(state.create).toHaveBeenCalledTimes(1));
@@ -433,6 +447,7 @@ describe('F7 - the SPO planner chooses its POs and its SOs', () => {
     expect(
       await screen.findByText(/160 ticked, 100 on this container - SO-2202 partly covered/),
     ).toBeInTheDocument();
+    await closeDrill();
     expect(screen.getByRole('button', { name: /create spo/i })).toBeEnabled();
   });
 });
@@ -553,6 +568,7 @@ describe('F7 - the SO-covered cell and the Create banner are one arithmetic', ()
     expect(
       await screen.findByText(/SO-2202 - this container has nothing left/),
     ).toBeInTheDocument();
+    await closeDrill();
     expect(screen.getByRole('button', { name: /create spo/i })).toBeDisabled();
   });
 
@@ -621,6 +637,7 @@ describe('F7 - unticking then re-ticking a take returns every figure', () => {
     await tick('Draw from 202606-S0099');
     await tick('Draw from 202606-S0099');
 
+    await closeDrill();
     fireEvent.click(screen.getByRole('button', { name: /create spo/i }));
 
     await waitFor(() => expect(state.create).toHaveBeenCalledTimes(1));

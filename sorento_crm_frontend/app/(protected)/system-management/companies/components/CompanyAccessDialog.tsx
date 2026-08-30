@@ -60,7 +60,7 @@ export default function CompanyAccessDialog({
         </DialogHeader>
 
         <Tabs defaultValue="users" className="w-full">
-          <TabsList>
+          <TabsList variant="default">
             <TabsTrigger value="users">
               <Users className="size-4" />
               Users
