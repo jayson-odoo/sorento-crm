@@ -12,56 +12,33 @@
  * active impersonation takes precedence in its tab.
  */
 import { extractApiError } from '@/lib/api-client';
+import type {
+  PortalLandingKind,
+  PortalSubmissionKind,
+} from '@/lib/portal-form-kinds';
 
 const TOKEN_KEY = 'sorento.portalToken';
 
-export type PortalSubmissionKind =
-  | 'complaint'
-  | 'stock_inquiry'
-  | 'purchase_request'
-  | 'sponsorship_form';
-
-/** Canonical kind list - single source for route guards, tab lists, labels. */
-export const SUBMISSION_KINDS: readonly PortalSubmissionKind[] = [
-  'complaint',
-  'stock_inquiry',
-  'purchase_request',
-  'sponsorship_form',
-] as const;
-
-export function isSubmissionKind(
-  value: string | null | undefined,
-): value is PortalSubmissionKind {
-  return (SUBMISSION_KINDS as readonly string[]).includes(value ?? '');
-}
-
-/**
- * Form types that join the landing dropdown beside the four legacy kinds, each
- * shown only to a contact whose `visible_form_types` grants it (D45).
- *
- * Deliberately NOT part of `SUBMISSION_KINDS`: that list is what the generic
- * `[type]` route guards read to decide what the shared submission pages may
- * render, and these forms have pages of their own. The next gated form joins
- * THIS list, plus a label below and a fetch in the landing's loader.
- */
-export const GATED_LANDING_KINDS = ['price_tag_request'] as const;
-
-export type PortalGatedKind = (typeof GATED_LANDING_KINDS)[number];
-
-/** Everything the landing dropdown can offer, gated or not. */
-export type PortalLandingKind = PortalSubmissionKind | PortalGatedKind;
-
-export function isGatedLandingKind(
-  value: string | null | undefined,
-): value is PortalGatedKind {
-  return (GATED_LANDING_KINDS as readonly string[]).includes(value ?? '');
-}
-
-export function isLandingKind(
-  value: string | null | undefined,
-): value is PortalLandingKind {
-  return isSubmissionKind(value) || isGatedLandingKind(value);
-}
+// The kind lists and their labels live in `lib/portal-form-kinds.ts` so the CRM's
+// Contact Access Types screen can offer the same five kinds with the same labels
+// (D61b) without importing this module's token storage. Re-exported here, so
+// every existing `from '.../portal-client'` import keeps working.
+export {
+  SUBMISSION_KINDS,
+  GATED_LANDING_KINDS,
+  LANDING_KINDS,
+  SUBMISSION_LABELS,
+  LANDING_LABELS,
+  isSubmissionKind,
+  isGatedLandingKind,
+  isLandingKind,
+  portalFormKindLabel,
+} from '@/lib/portal-form-kinds';
+export type {
+  PortalSubmissionKind,
+  PortalGatedKind,
+  PortalLandingKind,
+} from '@/lib/portal-form-kinds';
 
 export interface PortalImpersonationInfo {
   session_id: string;
@@ -825,19 +802,6 @@ export async function fetchTokenInfo(token: string): Promise<PortalTokenInfo> {
   );
   return unwrap(res, 'Could not look up portal token.');
 }
-
-export const SUBMISSION_LABELS: Record<PortalSubmissionKind, string> = {
-  complaint: 'Complaint',
-  stock_inquiry: 'Stock Inquiry',
-  purchase_request: 'Purchase Request',
-  sponsorship_form: 'Sponsorship Form',
-};
-
-/** Every kind the landing can list, legacy or gated (D45). */
-export const LANDING_LABELS: Record<PortalLandingKind, string> = {
-  ...SUBMISSION_LABELS,
-  price_tag_request: 'Price Tag Request',
-};
 
 // Friendly labels for backend status / approval_status values surfaced in the
 // portal. Falls back to the raw value when not in this map.
