@@ -57,7 +57,8 @@ const ROOT_CRUMB: PageHeaderCrumb = { title: 'Dashboards', path: '/' };
  */
 function dedupe(crumbs: PageHeaderCrumb[]): PageHeaderCrumb[] {
   return crumbs.filter(
-    (crumb, index) => index === 0 || crumbs[index - 1].title !== crumb.title,
+    (crumb, index) =>
+      index === crumbs.length - 1 || crumbs[index + 1].title !== crumb.title,
   );
 }
 
@@ -118,7 +119,10 @@ export function PageHeader({
     <Toolbar>
       <ToolbarHeading className="min-w-0 gap-1">
         {eyebrow && (
-          <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          <span
+            data-slot="page-header-eyebrow"
+            className="text-xs font-medium uppercase tracking-wide text-muted-foreground"
+          >
             {eyebrow}
           </span>
         )}
