@@ -2,8 +2,6 @@
 
 import { use } from 'react';
 import { useRouter } from 'next/navigation';
-import Link from 'next/link';
-import { MoveLeft } from 'lucide-react';
 import RecordNavigation from '@/components/common/RecordNavigation';
 import DetailActions from '@/components/common/DetailActions';
 import BackToList from '@/components/common/BackToList';
@@ -16,7 +14,6 @@ import {
   getCoreRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Button } from '@/components/ui/button';
 import { Container } from '@/components/common/container';
 import { PageHeader } from '@/components/common/PageHeader';
 import { Card, CardContent, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -148,6 +145,15 @@ export default function StockDetailPage({ params }: StockDetailPageProps) {
     [],
   );
 
+  const recordTitle = stock
+    ? [
+        stock.product?.product_code || stock.product?.product_name,
+        stock.warehouse?.warehouse_name,
+      ]
+        .filter(Boolean)
+        .join(' at ') || 'Stock Balance'
+    : 'Stock Balance';
+
   const table = useReactTable({
     columns,
     data: ledgerQuery.data?.data || [],
@@ -167,11 +173,7 @@ export default function StockDetailPage({ params }: StockDetailPageProps) {
           <PageHeader
             title="Stock"
             actions={
-              <Button asChild variant="outline">
-                <Link href="/inventory-management/stock">
-                  <MoveLeft /> Back to Stock
-                </Link>
-              </Button>
+              <BackToList listPath="/inventory-management/stock" label="Back to stock" />
             }
           />
         </Container>
@@ -192,20 +194,16 @@ export default function StockDetailPage({ params }: StockDetailPageProps) {
           <PageHeader
             title="Stock"
             actions={
-              <Button asChild variant="outline">
-                <Link href="/inventory-management/stock">
-                  <MoveLeft /> Back to Stock
-                </Link>
-              </Button>
+              <BackToList listPath="/inventory-management/stock" label="Back to stock" />
             }
           />
         </Container>
         <Container>
           <div className="text-center py-12">
             <p className="text-muted-foreground">Stock record not found</p>
-            <Button variant="outline" onClick={() => router.push('/inventory-management/stock')} className="mt-4">
-              Back to Stock
-            </Button>
+            <div className="mt-4 flex justify-center">
+              <BackToList listPath="/inventory-management/stock" label="Back to stock" />
+            </div>
           </div>
         </Container>
       </>
@@ -215,8 +213,11 @@ export default function StockDetailPage({ params }: StockDetailPageProps) {
   return (
     <>
       <Container>
+        {/* The title names the record the way a reader would: the product's own
+            code and the warehouse it sits in. Neither is an id (S5-05). */}
         <PageHeader
-          title="Stock Balance"
+          title={recordTitle}
+          crumbTitle={recordTitle}
           actions={
             <>
               {/* One Back, and nothing else on this row (D6, S3-01). The pager moved
