@@ -8,7 +8,8 @@
 **Status:** S0-S5 + S3b BUILT (PR #289). S3c (section 9, D33-D41) BUILT 2026-08-29 from the
 captain's test of the S3b bed; D42-D44 BUILT 2026-08-30 from the second round of that test;
 D45-D47 (section 10) BUILT 2026-08-30 from the captain's test of the PORTAL form; D48-D49
-(section 11) BUILT 2026-08-30 from the round that followed it.
+(section 11) BUILT 2026-08-30 from the round that followed it; D50-D52 (section 12) BUILT
+2026-08-30 from the captain's test of the CRM detail and design pages.
 **UAC:** `documentation/plans/dealer-kit/price-tag-request-acceptance-criteria.md`
 **Depends on:** `feat/product-sets` branch merged to main.
 **Branch:** TBD
@@ -712,3 +713,67 @@ app, not through the service, is the only thing that would have caught the shado
 Draft posts with a null debtor and a null date, Save Draft is disabled only while the form is
 completely empty, a Submit click with an empty debtor renders the inline error and posts nothing,
 and a server 422 naming `line:0` lands on the first row.
+
+---
+
+## 12. Round 5, 30 Aug: the CRM page wears the house chrome, and designing a request IS the editor
+
+**Status:** BUILT 2026-08-30. Two items from the captain's test of the CRM side. First, verbatim:
+"why is this one not having the same form design as other forms like complaint, stock inquiry...
+not necessarily same fields, the design taste: the CTA button, secondary buttons in gear dropdown,
+next/prev, back button." Second: "the design page is different from my template design... they
+should be the same layout, and how can I pull out the template from the template I have designed."
+
+### What was wrong
+
+`PriceTagRequestDetail` was written before the house pattern was read. It carried its own chrome:
+an "Back to list" ghost button in a row of its own, a `RecordNavigation` hard-wired to
+`prevId={null} nextId={null}` (so the chevrons were permanently dead), the document number inside
+a card body rather than in a page heading, and a **row of five peer buttons** in a second card,
+each of them equally loud, so nothing on the page said what to do next. Every other form detail
+page in this codebase - `stock-inquiries/[id]`, `complaints/[id]` - has the same shape and none of
+it was used.
+
+The design page had drifted the other way. `/design` was `TagSheetDesigner`: a lines rail on the
+left that PLACED a line on an A4 sheet, an imposition sidebar on the right, and tags that were
+**read-only objects on the sheet**. Nothing about a tag could be edited there, which is the one
+thing the page exists for. The editor that CAN edit a tag, `TagCanvasEditor` with the whole D33-D44
+interaction model, was reachable only from Tag Templates, where edits change the template for every
+future request instead of this one's tag.
+
+### Decisions
+
+| ID | Decision |
+|----|----------|
+| D50 | **The CRM request detail page is the same page as the other form details.** `Container` + breadcrumb (the page's own way back - the ad-hoc "Back to list" button is deleted, exactly as stock inquiries and complaints have none), then a header row: the document number as the `h1`, a `Created: ... - <status pill>` subline, and the read-only metadata (debtor, salesperson, promotion, needed by, assigned to) in the header, never in a tab body. On the right of that row, in this order: **ONE primary CTA**, the gear `DetailActionsMenu` holding every secondary action, and `RecordNavigation`. Sections below are cards in the house rhythm: Lines, PO attachments, Proof. Where the two references disagree the newer one wins: stock inquiries puts export in the gear and complaints leaves it out as a peer button, so **every** secondary action here is a gear item (Design tags when it is not the primary, Mark proof ready, Export PDF, Open proof, Void). Void keeps its `AlertDialog`. Prev/next stops being dead: there is no neighbours endpoint for this resource and one is not worth building, so `RecordNavigation` is used in its LIST mode over the request list the page already has a service for. |
+| D51 | **`/dealer-kit/price-tag-requests/{id}/design` IS the template editor, with a request rail.** Top: a slim request bar (document number, `Design | Arrange` segmented control, Save, Mark proof ready) above the unchanged `CanvasToolbar`. Left column: a "Lines" rail ABOVE the Layers panel - code, name, qty, family, and a check once that line's tag has been designed. Centre: `TagCanvasEditor` on the SELECTED line's tag. Right: the Inspector as it stands. A line's tag is a `PlacedTag`: on first selection of a line with no tag, its layers are cloned from its DEFAULT template (the family-prefix rule, `lineFamily`) through `bindTemplateLayers`, and the editor draws every layer against the LINE (`TagBindingData` kind `'line'`, which the resolver already answers), so the real code, photo and price show. Edits land in that `PlacedTag.layers`; **the template is never written from here**. "Use template..." on the rail row and in the Inspector opens a template picker (any family, the line's own family first) and re-clones; when the tag already has edits an `AlertDialog` confirms the replace. "Reset to template" is the same picker preselected on the current template. The artboard is the template's `print_size`. Sheet arrangement is DEMOTED to the `Arrange` half of the segmented control: the old sheet canvas and imposition controls, kept; on save every line's tag is laid out in line order, `quantity` times, on the request's preset, so nobody has to drag - and a manual drag in Arrange is kept, pinned by line and copy index. `TagSheetDoc`, the print page and the worker are untouched; only where the layers come from changed. |
+| D52 | **The primary CTA is the next lifecycle action.** `new` = Claim (Design is not offered before the claim); `designing` and `changes_requested` = Design tags; `proof_ready` = Open proof; `approved` and `ready` = Export PDF; `rejected` and `void` = none. Everything else that is legal at that status lives in the gear. |
+
+### What was deleted
+
+`TagSheetDesigner.tsx` in whole. Its read-only `SelectedTagInspector` and its drag-to-place lines
+rail are what D51 replaces, so leaving them would have shipped two designers for one job. The sheet
+canvas, the sheet tabs and `ImpositionControls` moved into `ArrangeSheetView.tsx` and are what the
+Arrange half renders; `computeImpositionSlots` moved into `lib/dealer-kit/request-tags.ts` where it
+is tested.
+
+### What is deliberately NOT built
+
+- No neighbours endpoint for price tag requests. The list is one call and already client-paginated,
+  so `RecordNavigation`'s list mode answers prev/next with no backend at all. The trigger for the
+  endpoint: a request list long enough that fetching it to navigate is felt.
+- No second editor and no shared "editor host" abstraction. `TagCanvasEditor` gained four optional
+  props (a left rail slot, the bound data to draw against, a layers-changed callback, and a
+  "Use template" hook for the Inspector) rather than being wrapped: one component, two callers.
+- No per-line undo history that survives switching lines. Switching remounts the editor on the new
+  tag, which is how a drawing tool behaves when the document changes.
+- No new backend route. The design document saves through the page/version route it already used.
+
+### Tests
+
+vitest: `lib/dealer-kit/request-tags.ts` golden tests - `defaultTemplateFor` over the family
+prefixes with the ala carte fallback, `tagForLine` cloning and binding without touching the
+template, `impositionSlots` per preset, and `autoArrange` laying out quantity copies in line order
+across sheets with pinned drags kept and everything else flowing around them. Component tests for
+the detail page: one primary CTA per status (table-driven over every status) and the secondary
+actions living in the gear. No pytest: no route changed.
