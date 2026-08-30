@@ -553,6 +553,25 @@ class PriceTagRequestService:
         marketing could claim one. The portal's own list leaves it True: a draft
         is the whole point of that screen.
         """
+        q = PriceTagRequestService._list_query(
+            db,
+            contact_id=contact_id,
+            status=status,
+            search=search,
+            include_drafts=include_drafts,
+        )
+        return q.order_by(PriceTagRequest.created_at.desc()).all()
+
+    @staticmethod
+    def _list_query(
+        db: Session,
+        *,
+        contact_id: str | None,
+        status: str | None,
+        search: str | None,
+        include_drafts: bool,
+    ):
+        """The filtered query both the whole-list and the paged reads run."""
         q = db.query(PriceTagRequest)
         if contact_id:
             q = q.filter(PriceTagRequest.contact_id == contact_id)
@@ -568,7 +587,69 @@ class PriceTagRequestService:
                     PriceTagRequest.debtor_name.ilike(like),
                 )
             )
-        return q.order_by(PriceTagRequest.created_at.desc()).all()
+        return q
+
+    # What the queue may sort by. Only real columns: the salesperson, the
+    # assignee, the promotion and the line count are RESOLVED per page rather
+    # than stored, so sorting on them would mean sorting something the query
+    # cannot see. The listing does not offer those as sortable either.
+    SORTABLE_COLUMNS = {
+        "doc_number": PriceTagRequest.doc_number,
+        "debtor_name": PriceTagRequest.debtor_name,
+        "debtor_code": PriceTagRequest.debtor_code,
+        "status": PriceTagRequest.status,
+        "needed_by_date": PriceTagRequest.needed_by_date,
+        "created_at": PriceTagRequest.created_at,
+    }
+
+    @staticmethod
+    def list_page(
+        db: Session,
+        *,
+        contact_id: str | None = None,
+        status: str | None = None,
+        search: str | None = None,
+        include_drafts: bool = True,
+        page: int = 1,
+        limit: int = 50,
+        sort: str | None = None,
+        direction: str = "asc",
+    ) -> tuple[list[PriceTagRequest], int]:
+        """One page of requests, and how many there are in total.
+
+        The listing used to answer the WHOLE table and let the browser cut the
+        page out of it: every keystroke shipped every request in the system, and
+        the record count under the grid was the length of whatever array had
+        arrived rather than what the table holds.
+        """
+        q = PriceTagRequestService._list_query(
+            db,
+            contact_id=contact_id,
+            status=status,
+            search=search,
+            include_drafts=include_drafts,
+        )
+        total = q.order_by(None).count()
+
+        column = PriceTagRequestService.SORTABLE_COLUMNS.get(sort or "")
+        if column is None:
+            # Newest first is the queue's own order, and it is what an unknown
+            # or a resolved-only column falls back to rather than a 400 the
+            # reader can do nothing about.
+            ordering = [PriceTagRequest.created_at.desc()]
+        else:
+            ordering = [column.desc() if direction == "desc" else column.asc()]
+        # Ends with the id, because created_at ties inside one transaction and a
+        # tie makes page 2 repeat a row page 1 already showed.
+        ordering.append(PriceTagRequest.id)
+
+        rows = (
+            q.order_by(*ordering)
+            .offset(max(0, (page - 1) * limit))
+            .limit(limit)
+            .all()
+        )
+        return rows, total
 
     @staticmethod
     def lookup_tag_items(

@@ -5,7 +5,7 @@
  */
 
 import { apiFetch } from '@/lib/api';
-import { extractApiError } from '@/lib/api-client';
+import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 import type { LineTagData, TagSheetDoc } from '@/lib/dealer-kit/tag-template-types';
 
 // ---------------------------------------------------------------------------
@@ -93,39 +93,42 @@ export interface PriceTagRequestListResult {
 export async function listPriceTagRequests(
   params: PriceTagRequestListParams,
 ): Promise<PriceTagRequestListResult> {
-  const usp = new URLSearchParams();
-  if (params.query) usp.set('q', params.query);
-  if (params.status) usp.set('status', params.status);
+  // Through `buildDataGridParams`, which is the one place page/limit/sort/dir/
+  // query are spelled. The list and the record pager both call this with the
+  // page-number shape, so it is translated here rather than in two callers.
+  const usp = buildDataGridParams(
+    {
+      pageIndex: params.page - 1,
+      pageSize: params.limit,
+      sorting: params.sort
+        ? [{ id: params.sort, desc: params.dir === 'desc' }]
+        : [],
+      searchQuery: params.query ?? '',
+    },
+    { status: params.status },
+  );
 
-  const qs = usp.toString();
-  const url = qs ? `${BASE}?${qs}` : BASE;
-  const response = await apiFetch(url);
+  const response = await apiFetch(`${BASE}?${usp.toString()}`);
   if (!response.ok) {
     throw new Error(await extractApiError(response, 'Failed to load price tag requests'));
   }
 
-  const items: PriceTagRequestSummary[] = await response.json();
-
-  // The backend returns a flat list without pagination. Apply client-side
-  // sorting and pagination to match the component contract.
-  if (params.sort) {
-    const key = params.sort;
-    const desc = params.dir === 'desc';
-    items.sort((a, b) => {
-      const av = (a as unknown as Record<string, unknown>)[key];
-      const bv = (b as unknown as Record<string, unknown>)[key];
-      const cmp = String(av ?? '').localeCompare(String(bv ?? ''));
-      return desc ? -cmp : cmp;
-    });
-  }
-
-  const total = items.length;
-  const start = (params.page - 1) * params.limit;
-  const page = items.slice(start, start + params.limit);
+  // The page and the true total, both counted by the server. This used to fetch
+  // the WHOLE table and sort and slice it here, so every keystroke shipped every
+  // request in the system and the record count under the grid was the length of
+  // the array that happened to arrive.
+  const body: {
+    data: PriceTagRequestSummary[];
+    pagination: { total: number; page: number; limit: number };
+  } = await response.json();
 
   return {
-    data: page,
-    pagination: { total, page: params.page, limit: params.limit },
+    data: body.data ?? [],
+    pagination: {
+      total: body.pagination?.total ?? 0,
+      page: body.pagination?.page ?? params.page,
+      limit: body.pagination?.limit ?? params.limit,
+    },
   };
 }
 

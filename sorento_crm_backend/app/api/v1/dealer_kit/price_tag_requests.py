@@ -13,6 +13,7 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, Body, Depends, Query, status
+from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -58,23 +59,52 @@ def _user_id(user: dict) -> str | None:
 # ---------------------------------------------------------------------------
 
 
-@router.get("", response_model=list[PriceTagRequestListItem])
+class PriceTagRequestPage(BaseModel):
+    """One page of the queue, and how many rows there are behind it.
+
+    The shape ``buildDataGridParams`` asks for and the grid reads: ``data`` plus
+    ``pagination``, the same envelope the other server-paged listings answer.
+    """
+
+    data: list[PriceTagRequestListItem]
+    pagination: dict
+
+
+@router.get("", response_model=PriceTagRequestPage)
 def list_price_tag_requests(
     status_filter: Optional[str] = Query(None, alias="status"),
-    q: Optional[str] = Query(None),
+    query: Optional[str] = Query(None),
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=200),
+    sort: Optional[str] = Query(None),
+    dir: str = Query("asc", pattern="^(asc|desc)$"),
     db: Session = Depends(get_db),
     _user: dict = Depends(_VIEW),
 ):
-    """Paginated listing of price tag requests.
+    """One page of price tag requests, searched, sorted and counted here.
 
-    Drafts are not in it. A request the salesperson has saved but not submitted
-    is not work yet, and it used to sit in this queue at status ``new`` looking
-    exactly like one that had been sent.
+    On the server, not in the browser: this used to answer the WHOLE table and
+    let the grid cut a page out of it, so every keystroke shipped every request
+    in the system and the record count was the length of the array that arrived.
+
+    Drafts are not in it either. A request the salesperson has saved but not
+    submitted is not work yet, and it used to sit in this queue at status ``new``
+    looking exactly like one that had been sent.
     """
-    results = PriceTagRequestService.list_requests(
-        db, status=status_filter, search=q, include_drafts=False,
+    rows, total = PriceTagRequestService.list_page(
+        db,
+        status=status_filter,
+        search=query,
+        include_drafts=False,
+        page=page,
+        limit=limit,
+        sort=sort,
+        direction=dir,
     )
-    return PriceTagRequestService.list_items(db, results)
+    return PriceTagRequestPage(
+        data=PriceTagRequestService.list_items(db, rows),
+        pagination={"total": total, "page": page, "limit": limit},
+    )
 
 
 # ---------------------------------------------------------------------------

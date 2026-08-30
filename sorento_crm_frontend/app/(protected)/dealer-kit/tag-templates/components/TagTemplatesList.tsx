@@ -154,6 +154,7 @@ export function TagTemplatesList() {
     onPaginationChange: setPagination,
     getCoreRowModel: getCoreRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
+    columnResizeMode: 'onChange',
   });
 
   return (

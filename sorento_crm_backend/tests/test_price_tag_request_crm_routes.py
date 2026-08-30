@@ -264,7 +264,7 @@ class TestTheListingCarriesWhatItDraws:
         promotion_id = _promotion(db, "ZZT Listing Promo")
         request, contact = _submitted_request(db, lines=3, promotion_id=promotion_id)
 
-        listed = client.get(_BASE, params={"q": request.doc_number})
+        listed = client.get(_BASE, params={"query": request.doc_number})
         assert listed.status_code == 200, listed.text
         rows = listed.json()
         row = next(r for r in _rows_of(rows) if r["id"] == request.id)
@@ -279,11 +279,78 @@ class TestTheListingCarriesWhatItDraws:
         request, _contact = _submitted_request(db)
         client.post(f"{_BASE}/{request.id}/claim")
 
-        listed = client.get(_BASE, params={"q": request.doc_number})
+        listed = client.get(_BASE, params={"query": request.doc_number})
         row = next(r for r in _rows_of(listed.json()) if r["id"] == request.id)
 
         assert row["assigned_to_id"] == _MARKETER_ID
         assert row["assigned_to_name"] == _MARKETER_NAME
+
+
+class TestTheQueuePagesOnTheServer:
+    """The listing answered the WHOLE table and the page was cut on the client.
+
+    Every keystroke and every page turn shipped every request in the system to
+    the browser, and the record count under the grid was the size of the array
+    that happened to arrive rather than what the table holds.
+    """
+
+    def test_the_answer_is_one_page_with_the_real_total(self, api):
+        client, db = api
+        for _ in range(3):
+            _submitted_request(db, lines=1)
+
+        first = client.get(_BASE, params={"page": 1, "limit": 2}).json()
+
+        assert len(first["data"]) == 2
+        assert first["pagination"]["total"] >= 3
+        assert first["pagination"]["page"] == 1
+        assert first["pagination"]["limit"] == 2
+
+    def test_the_second_page_carries_different_rows(self, api):
+        client, db = api
+        for _ in range(3):
+            _submitted_request(db, lines=1)
+
+        first = client.get(_BASE, params={"page": 1, "limit": 2}).json()
+        second = client.get(_BASE, params={"page": 2, "limit": 2}).json()
+
+        assert {row["id"] for row in first["data"]}.isdisjoint(
+            {row["id"] for row in second["data"]}
+        )
+
+    def test_it_sorts_by_the_column_it_is_asked_for(self, api):
+        client, db = api
+        for _ in range(3):
+            _submitted_request(db, lines=1)
+
+        ascending = client.get(
+            _BASE, params={"sort": "doc_number", "dir": "asc", "limit": 100}
+        ).json()["data"]
+        descending = client.get(
+            _BASE, params={"sort": "doc_number", "dir": "desc", "limit": 100}
+        ).json()["data"]
+
+        numbers = [row["doc_number"] for row in ascending]
+        assert numbers == sorted(numbers)
+        assert [row["doc_number"] for row in descending] == list(reversed(numbers))
+
+    def test_an_unknown_sort_column_falls_back_rather_than_failing(self, api):
+        client, db = api
+        _submitted_request(db, lines=1)
+
+        answered = client.get(_BASE, params={"sort": "nonsense", "dir": "asc"})
+
+        assert answered.status_code == 200, answered.text
+
+    def test_search_narrows_the_page_and_the_total(self, api):
+        client, db = api
+        wanted, _contact = _submitted_request(db, lines=1)
+        _submitted_request(db, lines=1)
+
+        answered = client.get(_BASE, params={"query": wanted.doc_number}).json()
+
+        assert [row["id"] for row in answered["data"]] == [wanted.id]
+        assert answered["pagination"]["total"] == 1
 
 
 def _rows_of(body):

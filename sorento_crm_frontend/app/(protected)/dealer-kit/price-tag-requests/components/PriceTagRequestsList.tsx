@@ -178,6 +178,8 @@ export default function PriceTagRequestsList() {
       },
       {
         accessorKey: 'contact_name',
+        // Resolved per page rather than stored, so the query cannot order by it.
+        enableSorting: false,
         header: ({ column }) => (
           <DataGridColumnHeader title="Salesperson" column={column} />
         ),
@@ -231,6 +233,8 @@ export default function PriceTagRequestsList() {
       },
       {
         accessorKey: 'line_count',
+        // Resolved per page rather than stored, so the query cannot order by it.
+        enableSorting: false,
         header: ({ column }) => (
           <DataGridColumnHeader title="Lines" column={column} />
         ),
@@ -258,6 +262,8 @@ export default function PriceTagRequestsList() {
       },
       {
         accessorKey: 'assigned_to_name',
+        // Resolved per page rather than stored, so the query cannot order by it.
+        enableSorting: false,
         header: ({ column }) => (
           <DataGridColumnHeader title="Assigned To" column={column} />
         ),
@@ -320,6 +326,7 @@ export default function PriceTagRequestsList() {
     manualPagination: true,
     manualSorting: true,
     manualFiltering: true,
+    columnResizeMode: 'onChange',
   });
 
   return (
