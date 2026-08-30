@@ -1,6 +1,7 @@
 """System settings API routes."""
 import logging
-from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from starlette.datastructures import UploadFile as StarletteUploadFile
 from sqlalchemy.orm import Session
 from typing import Literal, Optional
 from pydantic import BaseModel, Field
@@ -724,8 +725,10 @@ async def update_signin_background(
     upload = form.get("backgroundFile")
     # A multipart field can arrive as a plain string, so narrow before reading it rather
     # than trusting that a field named `backgroundFile` carried a file.
-    filename = upload.filename if isinstance(upload, UploadFile) else None
-    if not isinstance(upload, UploadFile) or not filename:
+    # request.form() hands back starlette's UploadFile, of which fastapi's is a
+    # subclass - so the check must be against the starlette class or it never passes.
+    filename = upload.filename if isinstance(upload, StarletteUploadFile) else None
+    if not isinstance(upload, StarletteUploadFile) or not filename:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="An image is required when saving a sign-in background",
