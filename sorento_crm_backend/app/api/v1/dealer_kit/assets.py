@@ -75,7 +75,7 @@ def list_assets(
 
 
 @router.post("", response_model=AssetResponse, status_code=status.HTTP_201_CREATED)
-async def upload_asset(
+def upload_asset(
     file: UploadFile = File(...),
     kind: str = Form(asset_service.DECORATIVE),
     name: Optional[str] = Form(None),
@@ -87,8 +87,16 @@ async def upload_asset(
 
     ``tags`` is a comma-separated list, which is what a multipart form can carry
     without inventing an encoding.
+
+    Plain ``def``, not ``async def`` (AC-J3): a library asset is a badge, icon
+    or font, not a 20 MB flyer, so there is no byte-by-byte size ceiling to
+    enforce while the upload streams in - the whole body, read + MIME sniff +
+    the storage PUT + the INSERT, is synchronous work, and FastAPI threadpools
+    a plain ``def`` route automatically. ``file.file.read()`` reads the
+    underlying ``SpooledTemporaryFile`` synchronously; ``await file.read()``
+    would need an event loop this handler no longer runs on.
     """
-    content = await file.read()
+    content = file.file.read()
     if not content:
         raise AppException(
             status_code=422, message="The uploaded file is empty.", code="EMPTY_FILE"
