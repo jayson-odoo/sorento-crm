@@ -206,6 +206,15 @@ class FulfilmentPriorityWrite(BaseModel):
     # field yet (an older bundle, a script, n8n) silently move the TBA line back to the
     # column default while saving something else entirely.
     #
+    # FRESHNESS is checked in the ROUTE, not here (fixed 30 Aug, review of S2). A TBA date
+    # in the past turns every open order into a placeholder overnight - every line dated on
+    # or after it stops taking supply, and "on or after yesterday" is the whole book - so
+    # SETTING one is refused with 422. But the rule is about a CHANGE: once a configured
+    # date has quietly passed, this panel saves weights, coverage dates and class weights
+    # too, and refusing all of them because a field nobody touched is now historic locked
+    # the whole screen. The comparison needs the active revision's value, which is a
+    # database read, so it cannot live in a schema validator.
+    #
     # `cross_group_borrow_max_qty` / `cross_group_borrow_max_pct` were dropped with the
     # cap they gated (R5): any ownership group may donate now.
     tba_date_from: Optional[date] = None
@@ -218,12 +227,9 @@ class FulfilmentPriorityWrite(BaseModel):
         for key, value in self.demand_class_weights.items():
             if value < 0:
                 raise ValueError(f"the demand-class weight for {key!r} must be >= 0")
-        # A TBA date in the PAST would turn every open order into a placeholder overnight:
-        # every line dated on or after it stops taking supply, and "on or after yesterday"
-        # is the whole book. Refused here rather than in the route so the same rule holds
-        # for any caller (AC-S1-2).
-        if self.tba_date_from is not None and self.tba_date_from < date.today():
-            raise ValueError("TBA date from must be today or later.")
+        # The TBA freshness rule is NOT here. It has to compare the submitted date with
+        # the ACTIVE policy's own, which needs the database, so it lives in the route
+        # (`policies.put_fulfilment_priority`). See the note on `tba_date_from` above.
         return self
 
 

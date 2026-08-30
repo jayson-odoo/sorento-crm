@@ -6238,15 +6238,19 @@ def test_the_pool_rung_names_the_pools_net_and_the_classification_in_front_of_it
 # --------------------------------------------------------------------------- #
 
 
-def test_a_covered_row_at_a_bin_outside_planning_still_prints_its_location_figures():
-    """A covered row is UNPLANNABLE once its bin is flagged out of fulfilment planning, and
-    it still counts towards the stock reads.
+def test_a_covered_row_at_a_bin_outside_planning_is_covered_not_unplannable():
+    """The flag verdict belongs to UNDECIDED lines only (review of S2, 30 Aug).
 
-    The board fixes its read set off the plannable rows, so widening `unplannable` with the
-    flag dropped a decided line's warehouse out of the set - and a location that was never
-    asked about prints dashes, not zeroes (`_counted_warehouses`). The frozen decision then
-    rendered beside a row of `-`, which reads as "we lost the figures" rather than as
-    "nobody plans here any more".
+    A line an active decision covers is covered: the stock was found, promised and
+    confirmed. Flagging the bin off afterwards says what may be PROPOSED next; it does not
+    retract what was decided. Reading `unplannable` off the flag alone turned a settled
+    order into `Needs a location` / `blocked`, took it out of the board's own
+    `unplannable_count` standing, and had the frontend's `confirmLinesFor` drop it.
+
+    It also kept its location in the counted read set only by a special case, because the
+    board fixes that set off the plannable rows - and a location never asked about prints
+    dashes, not zeroes (`_counted_warehouses`), so the frozen decision rendered beside a row
+    of `-`, which reads as "we lost the figures" rather than as "nobody plans here any more".
     """
     with blank_session() as db:
         world = _covered_world(db)
@@ -6266,10 +6270,27 @@ def test_a_covered_row_at_a_bin_outside_planning_still_prints_its_location_figur
             location for location in cell["locations"]
             if location["location"] == world["own"].warehouse_code
         )
+        standing = next(
+            entry for entry in board["orders"]
+            if entry["so_number"] == "ZZT-SO-COVER"
+        )
+        cell_unplannable = cell["unplannable_count"]
+        # The order's OTHER line, at the same bin and never decided: the verdict is still
+        # its verdict, which is what makes the covered line's exemption a rule rather than
+        # a hole.
+        sibling = next(
+            c for c in cell["contributions"]
+            if c["so_number"] == "ZZT-SO-COVER" and c["qty"] == "21"
+        )
 
-    # The decision is still what it says it is.
+    # The decision is still what it says it is, and the row is not blocked.
     assert contribution["covered"] is True
+    assert contribution["unplannable"] is False
     assert contribution["decision"]["borrow"][0]["qty"] == "43"
+    # The count and the standing agree with it: the undecided sibling, and only it.
+    assert sibling["unplannable"] is True
+    assert cell_unplannable == 1
+    assert standing["unplannable_count"] == 1
     # And its location was READ: every figure is a fact, none of them a dash.
     assert row["qty_on_hand"] == "20"
     assert row["qty_owed_all_orders"] is not None

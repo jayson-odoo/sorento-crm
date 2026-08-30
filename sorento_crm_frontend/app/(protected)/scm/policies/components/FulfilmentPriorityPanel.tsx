@@ -119,9 +119,14 @@ export function FulfilmentPriorityPanel() {
     // NULL - so an emptied field saves the default rather than nothing. This is the ONE
     // fallback on this screen: what the backend sends is rendered as it comes.
     const tba = tbaDateFrom || DEFAULT_TBA_DATE_FROM;
-    // The backend rejects a TBA date in the past with 422; mirrored here so the message
-    // arrives beside the field instead of as a toast after a round trip.
-    if (tba < todayIso()) {
+    // The backend rejects a CHANGE to a past TBA date with 422; mirrored here so the
+    // message arrives beside the field instead of as a toast after a round trip.
+    //
+    // Only when the field is DIRTY. Every save sends the whole record, so once a
+    // configured date had quietly passed this check refused the panel's own unchanged
+    // value - and with it every weight, coverage date and class weight on the screen. The
+    // rule is about moving the TBA line back, not about the age of a date nobody touched.
+    if (tba !== data?.tba_date_from && tba < todayIso()) {
       setFormError('TBA date from must be today or later.');
       return;
     }

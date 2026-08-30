@@ -156,6 +156,47 @@ describe('FulfilmentPriorityPanel', () => {
     expect(mutateAsync).not.toHaveBeenCalled();
   });
 
+  it('saves a weight over a stored TBA date that has since passed', async () => {
+    // The freshness rule is about a CHANGE, not about the value. A TBA date is legal the
+    // day it is saved and historic a year later, and the panel sends the stored date back
+    // with EVERY save - so checking the value rather than the edit locked the whole screen:
+    // no weight, no coverage date and no class weight could be saved again until somebody
+    // also picked a new TBA date.
+    const stale = isoDaysFromToday(-400);
+    hooks.useFulfilmentPriority.mockReturnValue({
+      data: { ...DATA, tba_date_from: stale },
+      isLoading: false,
+      isError: false,
+    });
+    render(<FulfilmentPriorityPanel />);
+
+    fireEvent.change(screen.getByLabelText(/Delivery date/i), { target: { value: '7' } });
+    fireEvent.click(screen.getByRole('button', { name: /Save fulfilment priority/i }));
+
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
+    expect(screen.queryByText('TBA date from must be today or later.')).not.toBeInTheDocument();
+    expect(mutateAsync.mock.calls[0][0].tba_date_from).toBe(stale);
+    expect(mutateAsync.mock.calls[0][0].factors.need_by_date).toBe(7);
+  });
+
+  it('still blocks MOVING the TBA date to a different past day', () => {
+    const stale = isoDaysFromToday(-400);
+    hooks.useFulfilmentPriority.mockReturnValue({
+      data: { ...DATA, tba_date_from: stale },
+      isLoading: false,
+      isError: false,
+    });
+    render(<FulfilmentPriorityPanel />);
+
+    fireEvent.change(screen.getByLabelText(/TBA date from/i), {
+      target: { value: isoDaysFromToday(-1) },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Save fulfilment priority/i }));
+
+    expect(screen.getByText('TBA date from must be today or later.')).toBeInTheDocument();
+    expect(mutateAsync).not.toHaveBeenCalled();
+  });
+
   it('accepts today itself - the boundary the backend allows', async () => {
     hooks.useFulfilmentPriority.mockReturnValue({ data: DATA, isLoading: false, isError: false });
     render(<FulfilmentPriorityPanel />);

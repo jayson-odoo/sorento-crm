@@ -90,9 +90,15 @@ _pool_predicate = site_pool_sql
 #: counts. Exposed rather than left inline because the lightbox behind that cell
 #: (`container_request_drill`) has to read the same rows or the cell and its own list of
 #: documents disagree, which is the AC-G3 failure this file already fixed for On hand.
+#: The status half of it, as VALUES, for a reader writing the same predicate through the
+#: ORM (`project_supply_service._po_rows`). The SQL below is built from this tuple so the
+#: two spellings cannot drift - which is the whole reason the string was exposed at all.
+OPEN_PO_STATUSES = ("active", "received", "partial", "closed")
+
 OPEN_PO_SQL = (
-    "po.status IN ('active', 'received', 'partial', 'closed') "
-    "AND pol.line_status = 'open' AND pol.qty_ordered > pol.qty_received"
+    "po.status IN ("
+    + ", ".join(f"'{status}'" for status in OPEN_PO_STATUSES)
+    + ") AND pol.line_status = 'open' AND pol.qty_ordered > pol.qty_received"
 )
 
 #: What is still to land on one packing-list line, floored at zero.

@@ -1,6 +1,6 @@
 # PLAN - Borrow ladder v7 and the Stock Debt view
 
-Status: **APPROVED 2026-08-29** (captain: "the logic is robust, let's proceed"; scenario table on SRTWB242 signed off). Grilled in session (R1-R23), lavish review rounds 1-6 (R24-R36). Tickets: S1 #385, S2 #386, S3 #387, S4 #388 (jayson-odoo/sorento-crm). Lane: `feat/scm-borrow-ladder-v7-stock-debt`. S1 = PR #389 (29 Aug, review-fixed, CI pending). S2 next. UAC: `scm-borrow-ladder-v7-stock-debt-acceptance-criteria.md`. Sits on `PLAN-scm-order-unit-ladder-v6.md` (units, donor ledger), `PLAN-demo-followups-19aug-ladder-v2.md` section E (ownership groups, window, coverage date), `PLAN-scm-planning-inline-decisions.md` (board editor, one Confirm), ADR-0011 (no bucketed arithmetic).
+Status: **APPROVED 2026-08-29** (captain: "the logic is robust, let's proceed"; scenario table on SRTWB242 signed off). Grilled in session (R1-R23), lavish review rounds 1-6 (R24-R36). Tickets: S1 #385, S2 #386, S3 #387, S4 #388 (jayson-odoo/sorento-crm). Lane: `feat/scm-borrow-ladder-v7-stock-debt`. S1 = PR #389 (29 Aug, CI green). S2 = PR #391 (30 Aug, stacked on #389: `supply_assignment`, `_po_rows`, the stock-debt service + routes, the page). S3 next. UAC: `scm-borrow-ladder-v7-stock-debt-acceptance-criteria.md`. Sits on `PLAN-scm-order-unit-ladder-v6.md` (units, donor ledger), `PLAN-demo-followups-19aug-ladder-v2.md` section E (ownership groups, window, coverage date), `PLAN-scm-planning-inline-decisions.md` (board editor, one Confirm), ADR-0011 (no bucketed arithmetic).
 
 ## 0. The captain's ask (29 Aug 2026, after the client demo)
 
@@ -58,12 +58,12 @@ assign(product, *, as_of, tba_from, lead_days, supply: [SupplyEvent], demand: [D
 
 - `SupplyEvent`: kind `on_hand | spo | po`, warehouse, date (on hand = as_of; SPO = arrival precedence above; PO = `issue_date + lead time`, R29), qty, ref (spo_number / po_number + line), and for a PO line `bought_for` = its `expected_date` (Q-D decides whether it pre-assigns). A PO line's qty is its open quantity minus the SPO already placed on it (R11, AC-S2-4).
 - `DemandLine`: so, line, warehouse (group derived), agent, required_date, open_qty, decided hold (qty + source) or none.
-- Walk: pinned holds first (a confirmed allocation binds its supply to its line, any date). Then events chronologically per ownership group: supply adds to that group's free pile; a demand line at its date draws from the pile oldest-first. A line that cannot draw at its date is `short`; if supply later covers it, `late`. Lines on/after `tba_from` and undated lines draw nothing and go to `tba` / `undated` (R14, AC-S2-3). Past-due uncovered demand lands in the current month (AC-S2-5).
-- Output: per line `{assigned: [(event, qty)], uncovered, status covered|late|short|pinned}`, per month cumulative balance + tone, `tba`, `undated`.
+- Walk: pinned holds first (a confirmed allocation binds its supply to its line, any date - and when the supply it names is outside the span, off the bin the hold itself carries, AC-S2-1b). Then ONE chronological walk with a pile per ownership group: supply adds to its own group's free pile; a demand line at its date draws from its OWN group's pile oldest-first, then from the other PROJECT groups' free piles oldest-first (ladder step 1; site pools never, in either direction). A line that cannot draw at its date is `short`; if supply later covers it, `late`. Lines on/after `tba_from` and undated lines draw nothing and go to `tba` / `undated` (R14, AC-S2-3). Past-due uncovered demand lands in the current month (AC-S2-5).
+- Output: per line `{assigned: [(event, qty)], uncovered, status covered|late|short|pinned}`, per month cumulative balance + tone, `tba`, `undated`, `unlocated` (demand at no warehouse: in no pile, so it draws nothing and is stated on its own).
 
 Months are display grouping of the dated arithmetic, as ADR-0011 requires; `group_by_month` finally gets its caller.
 
-Facts feeding it come from the readers that exist: `_stock_context` / `group_netting` for on hand, `_spo_rows` for SPO, a new `_po_rows` over `purchase_order_lines` net of `spo_allocations.po_line_id`, `_facts_for` for demand, `so_line_allocations` for pinned holds. One new predicate `fulfilment_planning_predicate` (in `pool_predicate.py`'s style) applied by every reader (AC-S1-5).
+Facts feeding it come from the readers that exist: `_stock_context` / `group_netting` for on hand, `_spo_rows` for SPO, a new `_po_rows` over `purchase_order_lines` net of `spo_allocations.po_line_id`, `_facts_for` for demand, `so_line_allocations` for pinned holds. `_po_rows` nets ON ORDER as `qty_ordered - qty_received` and EXCLUDES `crm_spo` documents: both writers of `spo_allocations.po_line_id` advance the source line's `qty_received` by what they placed, so subtracting the allocation as well counted the placement twice, and a CRM SPO document is the shipping leg `_spo_rows` already carries. One new predicate `fulfilment_planning_predicate` (in `pool_predicate.py`'s style) applied by every reader (AC-S1-5).
 
 ### 3.2 Ladder v7.1 (R1, R2, R13, R24, R32-R36)
 
@@ -86,7 +86,7 @@ On Confirm of a `supply_borrow`: an `order_inquiry_links` row for the asker's OR
 ### 3.4 Stock Debt view (S2, R15, R16, R22, R23)
 
 - Route `GET /api/v1/project-sales/stock-debt` (list, paginated by product, `query`, `group`, `only_debt`) and `GET /project-sales/stock-debt/{product_id}/cell?month=` returning `{demand: [...], supply: [...]}` (R28). Service `stock_debt_service.py` builds the supply/demand inputs for the page of products in one read each (no per-product queries) and calls `assign()`. Tone per month: `red` when the month starts before `as_of + lead` (cannot buy in time), `amber` when negative later, `green` otherwise. Permission `projects.stock_debt.view`, grant sweep from `projects.projects.view` (pattern of `419_stock_transfers.py`).
-- FE `app/(protected)/project-sales/stock-debt/`: `page.tsx` (RequireAccess), `StockDebtClient.tsx` (DataGrid, fixed layout, sticky product column, month columns generated from the payload, `useStockDebtQuery`, `stockDebtService.ts` with the contract at the top), `StockDebtCellDialog.tsx` (lightbox, two DataGrids: Demand with the Plan link, Supply with source, arrival and assigned-to). Menu entry under Project Demand after Fulfilment Planning (`menu.config.tsx:242` and the second nav at `:1829`). Empty state CTA flips `only_debt` off. No explanation copy on screen.
+- FE `app/(protected)/project-sales/stock-debt/`: `page.tsx` (RequireAccess), `StockDebtClient.tsx` (DataGrid, fixed layout, product column PINNED through the grid's own `columnPinning` with `columnsDraggable` off, in a plain `overflow-x-auto` container rather than the shared `ScrollArea`; month columns generated from the payload, then TBA / No date / No location; `useStockDebtQuery`, `stockDebtService.ts` with the contract at the top), `StockDebtCellDialog.tsx` (lightbox, two DataGrids: Demand with the Plan link and shared status pills, Supply with source, arrival and assigned-to; carries the board's `group` so the drill foots with the cell). Menu entry under Project Demand after Fulfilment Planning (`menu.config.tsx:242` and the second nav at `:1829`). Empty state CTA flips `only_debt` off. No explanation copy on screen.
 - Cell tone uses the DataGrid cell class, not a new component; the toggle and the group select are the shared toolbar's.
 
 ### 3.5 Flag and policy (S1, R17, R20)
@@ -97,7 +97,7 @@ Warehouse schema + `PUT /warehouses/{id}` gain the field; the Warehouses list ga
 
 ### 3.6 What is deliberately NOT built
 
-- No debt table. Debt is computed from the book, and the persisted parts (ORDER_BACK rows, links, allocations) already exist. Trigger for a table: the view is too slow over the whole catalogue after the one-read-per-input service (measure on the prod copy: ~4k flagged products).
+- No debt table. Debt is computed from the book, and the persisted parts (ORDER_BACK rows, links, allocations) already exist. Trigger for a table: the view is too slow over the whole catalogue after the one-read-per-input service. **Measured 30 Aug on the dev prod copy** (`GET /project-sales/stock-debt?limit=50&only_debt=true`, lane backend :8080): 1,201 flagged-bin products, 811 of them in debt, a 20-month axis - 1.26 s cold, then 0.56-0.69 s; the cell drill is 40 ms. The catalogue is a third of the ~4k estimated here because a product with nothing at a flagged bin has no row to state. The trigger has NOT fired; re-measure when the flag admits more bins.
 - No alert, email or job on "date nears" (R16): colours only.
 - No per-group table for the flag (R17): one boolean per bin.
 - No change to the reorder run: it already reads ORDER_BACK and committed demand.
@@ -120,7 +120,10 @@ S1 first (everything reads the flag). S2 before S3 (the ladder consumes a tested
 - Ladder: `tests/scm/test_ladder_v7_borrow.py` on Postgres (`tests/_pg_fixture.py`), seeded chain per test (CI DB is empty).
 - Routes: happy + permission denial + 422 on the policy date.
 - FE: vitest on `StockDebtClient` states (mock `useListingColumnPreferences` for DataGrid rows in jsdom), `StockDebtCellDialog`, `FulfilmentPriorityPanel`, Warehouses column.
-- E2E: agent-browser runs AC-S2-13, AC-S3-13, AC-S4-6 by sidebar from `/`, 375 + 1280.
+- E2E: agent-browser runs AC-S2-13, AC-S3-13, AC-S4-6 by sidebar from `/`, 375 + 1280. S2's run is
+  the NAVIGATION only (sidebar to list to cell to Plan); drill-vs-board parity waits for S3, because
+  until it lands the board walks the old ladder and the drill reads `assign()` - two deliberately
+  different answers. AC-S3-13 carries the parity assertion.
 
 ## 6. Risks and open points for the plan review
 

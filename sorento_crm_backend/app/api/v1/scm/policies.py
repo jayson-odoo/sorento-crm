@@ -11,6 +11,7 @@ an id (route-shadowing gotcha).
 """
 from __future__ import annotations
 
+from datetime import date
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, Response
@@ -30,6 +31,7 @@ from app.schemas.scm_policy import (
     SupplierScoringPolicy,
     SupplierScoringWrite,
 )
+from app.services.error_handler import AppException
 from app.services.scm import policy_service as svc
 from app.services.scm import priority as priority_svc
 
@@ -100,6 +102,23 @@ def put_fulfilment_priority(
     `priority.create_revision`), so switching back is "activate the previous revision",
     not "undo an edit"."""
     current = priority_svc.active_policy(db)
+    # The TBA freshness rule, and it applies to a CHANGE only (fixed 30 Aug, review of S2).
+    # A date in the past turns every open order into a placeholder - every line dated on or
+    # after it stops taking supply - so moving the line back is refused. But once a
+    # configured date has quietly passed, an UNCHANGED resubmission of it is not that move,
+    # and refusing it locked the whole panel: no weight, no coverage date and no class
+    # weight could be saved again until somebody also picked a new TBA date. The schema
+    # cannot make this call - it needs the active revision - so it is made here.
+    if (
+        body.tba_date_from is not None
+        and body.tba_date_from < date.today()
+        and (current is None or current.tba_date_from != body.tba_date_from)
+    ):
+        raise AppException(
+            status_code=422,
+            message="TBA date from must be today or later.",
+            code="tba_date_from_in_the_past",
+        )
     revision = priority_svc.create_revision(
         db,
         name=current.name if current is not None else priority_svc.FAIR_POLICY_NAME,
