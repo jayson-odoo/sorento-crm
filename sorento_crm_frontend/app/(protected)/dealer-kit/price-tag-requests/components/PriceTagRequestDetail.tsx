@@ -3,14 +3,19 @@
 /**
  * CRM price tag request detail view.
  *
- * Phase 1: mock data. Shows request header, status actions, lines table with
- * resolved prices, and PO attachments.
+ * The same page as every other form detail in this app (D50): breadcrumb as the
+ * way back, the document number as the heading with the status pill and the
+ * record metadata beside it, ONE primary CTA followed by the gear menu and the
+ * prev/next chevrons, then the request, its lines, its PO attachments and its
+ * proof as cards.
+ *
+ * Which action is primary and which are secondary is `priceTagActions`, so the
+ * page never has to decide twice.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
-  ArrowLeft,
   Download,
   Eye,
   FileText,
@@ -33,8 +38,10 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { Skeleton } from '@/components/ui/skeleton';
-import RecordNavigation from '@/components/common/RecordNavigation';
+import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
+import PriceTagRequestNavigation from './PriceTagRequestNavigation';
 import {
   priceTagStatusLabel,
   priceTagStatusPillClass,
@@ -47,6 +54,47 @@ import {
   exportTagSheet,
   type PriceTagRequestDetail as PriceTagRequestDetailType,
 } from '../../services/priceTagRequestService';
+import {
+  priceTagActions,
+  type PriceTagAction,
+  type PriceTagActionSpec,
+} from './priceTagRequestActions';
+
+const STATUS_PILL_BASE =
+  'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold';
+
+const ACTION_ICON: Record<PriceTagAction, typeof UserPlus> = {
+  claim: UserPlus,
+  design: Palette,
+  mark_proof_ready: Eye,
+  export: Download,
+  void: XCircle,
+};
+
+/** What the proof section says at each status. */
+function proofSummary(status: string): string {
+  switch (status) {
+    case 'new':
+    case 'draft':
+      return 'Nothing has been designed yet. Claim the request and design its tags.';
+    case 'designing':
+      return 'The tags are being designed. Mark the proof ready to send it to the salesperson.';
+    case 'proof_ready':
+      return 'The proof is with the salesperson, waiting to be approved.';
+    case 'changes_requested':
+      return 'The salesperson asked for changes. Design the tags again and mark a new proof ready.';
+    case 'approved':
+      return 'The proof was approved. Export the PDF to print it.';
+    case 'ready':
+      return 'The PDF has been exported. Look for it in My Downloads.';
+    case 'rejected':
+      return 'The request was rejected, so there is no proof to show.';
+    case 'void':
+      return 'The request was voided, so there is no proof to show.';
+    default:
+      return 'No proof has been produced for this request.';
+  }
+}
 
 interface Props {
   requestId: string;
@@ -54,9 +102,7 @@ interface Props {
 
 export default function PriceTagRequestDetail({ requestId }: Props) {
   const router = useRouter();
-  const [request, setRequest] = useState<PriceTagRequestDetailType | null>(
-    null,
-  );
+  const [request, setRequest] = useState<PriceTagRequestDetailType | null>(null);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [exportLoading, setExportLoading] = useState(false);
@@ -83,7 +129,6 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
     try {
       await claimPriceTagRequest(requestId);
       toast.success('Request claimed');
-      // Refetch
       const data = await getPriceTagRequest(requestId);
       setRequest(data);
     } catch {
@@ -93,22 +138,19 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
     }
   }, [requestId]);
 
-  const handleTransition = useCallback(
-    async (action: string, label: string) => {
-      setActionLoading(true);
-      try {
-        await transitionPriceTagRequest(requestId, action);
-        toast.success(`${label}`);
-        const data = await getPriceTagRequest(requestId);
-        setRequest(data);
-      } catch {
-        toast.error(`Failed: ${label}`);
-      } finally {
-        setActionLoading(false);
-      }
-    },
-    [requestId],
-  );
+  const handleMarkProofReady = useCallback(async () => {
+    setActionLoading(true);
+    try {
+      await transitionPriceTagRequest(requestId, 'mark_proof_ready');
+      toast.success('Proof marked as ready');
+      const data = await getPriceTagRequest(requestId);
+      setRequest(data);
+    } catch {
+      toast.error('Failed to mark the proof ready');
+    } finally {
+      setActionLoading(false);
+    }
+  }, [requestId]);
 
   const handleExport = useCallback(async () => {
     setExportLoading(true);
@@ -117,7 +159,7 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
       toast.success(
         `PDF export queued. Check My Downloads for "${result.filename}".`,
       );
-      // Refetch to reflect status change (approved -> ready on first export).
+      // Refetch to reflect the status change (approved -> ready on first export).
       const data = await getPriceTagRequest(requestId);
       setRequest(data);
     } catch {
@@ -141,10 +183,34 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
     }
   }, [requestId, router]);
 
+  const openDesigner = useCallback(() => {
+    router.push(`/dealer-kit/price-tag-requests/${requestId}/design`);
+  }, [requestId, router]);
+
+  const runAction = useCallback(
+    (action: PriceTagAction) => {
+      if (action === 'claim') return void handleClaim();
+      if (action === 'design') return openDesigner();
+      if (action === 'mark_proof_ready') return void handleMarkProofReady();
+      if (action === 'export') return void handleExport();
+      setVoidDialogOpen(true);
+    },
+    [handleClaim, openDesigner, handleMarkProofReady, handleExport],
+  );
+
+  const actions: PriceTagActionSpec[] = useMemo(
+    () => (request ? priceTagActions(request.status, request.assigned_to_id) : []),
+    [request],
+  );
+  const primary = actions[0] ?? null;
+  const secondary = actions.slice(1);
+
+  const busy = actionLoading || exportLoading;
+
   if (loading) {
     return (
-      <div className="space-y-4">
-        <Skeleton className="h-8 w-48" />
+      <div className="space-y-6">
+        <Skeleton className="h-10 w-64" />
         <Skeleton className="h-40 w-full" />
         <Skeleton className="h-60 w-full" />
       </div>
@@ -154,51 +220,102 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
   if (!request) {
     return (
       <div className="text-center py-12">
-        <p className="text-muted-foreground">Request not found.</p>
+        <p className="text-muted-foreground">Price tag request not found</p>
         <Button
-          variant="link"
+          variant="outline"
           onClick={() => router.push('/dealer-kit/price-tag-requests')}
-          className="mt-2"
+          className="mt-4"
         >
-          Back to list
+          Back to Price Tag Requests
         </Button>
       </div>
     );
   }
 
+  const PrimaryIcon = primary ? ACTION_ICON[primary.action] : null;
+
   return (
-    <div className="space-y-4">
-      {/* Back + navigation */}
+    <div className="space-y-6">
+      {/* Header */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => router.push('/dealer-kit/price-tag-requests')}
-        >
-          <ArrowLeft className="size-4 mr-1" /> Back to list
-        </Button>
-        <RecordNavigation
-          basePath="/dealer-kit/price-tag-requests"
-          prevId={null}
-          nextId={null}
-          ariaLabel="price tag request"
-        />
+        <div className="space-y-1 min-w-0">
+          <h1 className="text-2xl font-bold break-words">
+            Price Tag Request - {request.doc_number}
+          </h1>
+          <p className="text-sm text-muted-foreground">
+            Created: {formatDateTimeInMalaysia(request.created_at)}
+            {request.status && (
+              <>
+                {' · '}
+                <span
+                  className={`${STATUS_PILL_BASE} ${priceTagStatusPillClass(request.status)}`}
+                >
+                  {priceTagStatusLabel(request.status)}
+                </span>
+              </>
+            )}
+          </p>
+          <p className="text-sm text-muted-foreground">
+            Needed by:{' '}
+            {request.needed_by_date
+              ? formatDate(new Date(request.needed_by_date))
+              : '-'}
+            {' · '}
+            Assigned to: {request.assigned_to_name ?? 'Unclaimed'}
+          </p>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap sm:justify-end">
+          {primary && (
+            <Button
+              variant="primary"
+              size="sm"
+              disabled={busy}
+              onClick={() => runAction(primary.action)}
+              data-testid="price-tag-primary-cta"
+            >
+              {busy ? (
+                <Loader2 className="size-4 mr-1 animate-spin" />
+              ) : (
+                PrimaryIcon && <PrimaryIcon className="size-4 mr-1" />
+              )}
+              {primary.label}
+            </Button>
+          )}
+          {secondary.length > 0 && (
+            <DetailActionsMenu ariaLabel="Price tag request actions">
+              {secondary.map((spec) => {
+                const Icon = ACTION_ICON[spec.action];
+                return (
+                  <DropdownMenuItem
+                    key={spec.action}
+                    disabled={busy}
+                    className={
+                      spec.destructive
+                        ? 'text-destructive focus:text-destructive'
+                        : undefined
+                    }
+                    onSelect={(event) => {
+                      event.preventDefault();
+                      runAction(spec.action);
+                    }}
+                  >
+                    <Icon className="size-4" />
+                    {spec.label}
+                  </DropdownMenuItem>
+                );
+              })}
+            </DetailActionsMenu>
+          )}
+          <PriceTagRequestNavigation requestId={requestId} />
+        </div>
       </div>
 
-      {/* Header card */}
+      {/* Request */}
       <Card>
-        <CardContent className="pt-4 space-y-4">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex items-center gap-3">
-              <h2 className="text-xl font-semibold">{request.doc_number}</h2>
-              <span
-                className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ${priceTagStatusPillClass(request.status)}`}
-              >
-                {priceTagStatusLabel(request.status)}
-              </span>
-            </div>
-          </div>
-
+        <CardHeader className="py-3 px-4">
+          <CardTitle className="text-base">Request</CardTitle>
+        </CardHeader>
+        <CardContent className="px-4 pb-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 text-sm">
             <div>
               <span className="text-muted-foreground block">Debtor</span>
@@ -214,124 +331,27 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
               <span className="text-muted-foreground block">Salesperson</span>
               <p className="font-medium">{request.contact_name ?? '-'}</p>
             </div>
-            {request.promotion_name && (
-              <div>
-                <span className="text-muted-foreground block">Promotion</span>
-                <p className="font-medium">{request.promotion_name}</p>
-              </div>
-            )}
             <div>
-              <span className="text-muted-foreground block">Deadline</span>
-              <p className="font-medium">
-                {request.needed_by_date
-                  ? formatDate(new Date(request.needed_by_date))
-                  : '-'}
-              </p>
-            </div>
-            <div>
-              <span className="text-muted-foreground block">Created</span>
-              <p className="font-medium">
-                {formatDateTimeInMalaysia(request.created_at)}
-              </p>
-            </div>
-            <div>
-              <span className="text-muted-foreground block">Assigned to</span>
-              <p className="font-medium">
-                {request.assigned_to_name ?? 'Unclaimed'}
-              </p>
+              <span className="text-muted-foreground block">Promotion</span>
+              <p className="font-medium">{request.promotion_name ?? '-'}</p>
             </div>
           </div>
-
-          {request.notes && (
-            <div>
-              <span className="text-sm text-muted-foreground block">Notes</span>
-              <p className="text-sm mt-1">{request.notes}</p>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Status actions */}
-      <Card>
-        <CardContent className="pt-4">
-          <div className="flex flex-wrap gap-2">
-            {request.status === 'new' && !request.assigned_to_id && (
-              <Button
-                onClick={handleClaim}
-                disabled={actionLoading}
-                size="sm"
-              >
-                {actionLoading ? (
-                  <Loader2 className="size-4 mr-1 animate-spin" />
-                ) : (
-                  <UserPlus className="size-4 mr-1" />
-                )}
-                Claim
-              </Button>
-            )}
-            {(request.status === 'designing' ||
-              request.status === 'changes_requested') && (
-              <Button
-                variant="primary"
-                size="sm"
-                onClick={() =>
-                  router.push(
-                    `/dealer-kit/price-tag-requests/${requestId}/design`,
-                  )
-                }
-              >
-                <Palette className="size-4 mr-1" />
-                Design Tags
-              </Button>
-            )}
-            {request.status === 'designing' && (
-              <Button
-                onClick={() =>
-                  handleTransition('mark_proof_ready', 'Proof marked as ready')
-                }
-                disabled={actionLoading}
-                size="sm"
-                variant="outline"
-              >
-                {actionLoading ? (
-                  <Loader2 className="size-4 mr-1 animate-spin" />
-                ) : (
-                  <Eye className="size-4 mr-1" />
-                )}
-                Mark Proof Ready
-              </Button>
-            )}
-            {(request.status === 'approved' ||
-              request.status === 'ready') && (
-              <Button
-                onClick={handleExport}
-                disabled={exportLoading || actionLoading}
-                size="sm"
-              >
-                {exportLoading ? (
-                  <Loader2 className="size-4 mr-1 animate-spin" />
-                ) : (
-                  <Download className="size-4 mr-1" />
-                )}
-                Export PDF
-              </Button>
-            )}
-            {!['void', 'ready', 'rejected'].includes(request.status) && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setVoidDialogOpen(true)}
-                disabled={actionLoading}
-              >
-                <XCircle className="size-4 mr-1" />
-                Void
-              </Button>
-            )}
+          <div className="mt-4">
+            <span className="text-sm text-muted-foreground block">Notes</span>
+            <p className="text-sm mt-1">
+              {request.notes ? (
+                request.notes
+              ) : (
+                <span className="text-muted-foreground">
+                  The salesperson left no notes.
+                </span>
+              )}
+            </p>
           </div>
         </CardContent>
       </Card>
 
-      {/* Lines table */}
+      {/* Lines */}
       <Card>
         <CardHeader className="py-3 px-4">
           <CardTitle className="text-base">
@@ -373,7 +393,10 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
                         {line.code}
                       </td>
                       <td className="py-2 pr-3">
-                        <span className="truncate block max-w-[200px]" title={line.name}>
+                        <span
+                          className="truncate block max-w-[200px]"
+                          title={line.name}
+                        >
                           {line.name}
                         </span>
                         {line.alternatives.length > 0 && (
@@ -415,7 +438,7 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
         </CardContent>
       </Card>
 
-      {/* PO Attachments */}
+      {/* PO attachments */}
       <Card>
         <CardHeader className="py-3 px-4">
           <CardTitle className="text-base">PO Attachments</CardTitle>
@@ -448,7 +471,30 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
         </CardContent>
       </Card>
 
-      {/* Void confirmation dialog */}
+      {/* Proof */}
+      <Card>
+        <CardHeader className="py-3 px-4">
+          <CardTitle className="text-base">Proof</CardTitle>
+        </CardHeader>
+        <CardContent className="px-4 pb-4">
+          <p className="text-sm text-muted-foreground">
+            {proofSummary(request.status)}
+          </p>
+          {actions.some((spec) => spec.action === 'design') && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="mt-3"
+              onClick={openDesigner}
+            >
+              <Palette className="size-4 mr-1" />
+              Open the designer
+            </Button>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Void confirmation */}
       <AlertDialog open={voidDialogOpen} onOpenChange={setVoidDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
