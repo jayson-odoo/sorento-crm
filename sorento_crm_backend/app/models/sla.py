@@ -431,7 +431,14 @@ class SlaFormAction(Base):
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     action_key = Column(String(64), nullable=False)
     source_entity_type = Column(String(50), nullable=False)
-    source_entity_id = Column(UUID(as_uuid=False), nullable=False)
+    # A KEY, not necessarily a uuid (S6b, migration `s6b_record_action_entity_id`). Most
+    # records are addressed by their uuid, but a currency rate's primary key IS its
+    # three-letter code, a stock-visibility policy at the access-type tier is addressed
+    # by that code, and the sign-in background is a singleton the frontend names by a
+    # constant. Under the old `uuid` type each of those raised
+    # `invalid input syntax for type uuid` from inside the route - a 500 on a click that
+    # looked like every other Delete.
+    source_entity_id = Column(String(64), nullable=False)
     # The resolve-event this action will emit - the guardrail reads it to find the
     # stage the action closed.
     event_name = Column(String(64), nullable=True)

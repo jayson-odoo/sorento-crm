@@ -10,6 +10,7 @@ unsent.
 from __future__ import annotations
 
 import logging
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Optional
@@ -264,8 +265,25 @@ class FormActionService:
         return True
 
     def _active_tracker_id(self, entity_type: str, entity_id: str) -> Optional[str]:
-        """The unresolved form-SLA stage tracker for this form, if any."""
+        """The unresolved form-SLA stage tracker for this form, if any.
+
+        `conversation_sla_tracking.source_entity_id` is a uuid COLUMN, and since S6b a
+        record action's entity id is a key rather than necessarily a uuid: a currency
+        rate is addressed by its three-letter code, a stock-visibility policy at the
+        access-type tier by that code, the sign-in background by a constant. Asking this
+        question about one of those raised `invalid input syntax for type uuid` INSIDE
+        the commit, which aborted the request's transaction and turned the poll that was
+        watching the countdown into a 500.
+
+        A record action never has a tracker anyway - a product is not a form submission -
+        so a non-uuid key is answered without going to the database at all.
+        """
         from app.models.sla import ConversationSLATracking
+
+        try:
+            uuid.UUID(str(entity_id))
+        except (ValueError, AttributeError, TypeError):
+            return None
 
         row = (
             self.db.query(ConversationSLATracking.id)
