@@ -67,6 +67,25 @@ export function activeMentionFragment(
   return { start: at, query };
 }
 
+/**
+ * The suggestion's name with the typed fragment in bold. "zhi" legitimately
+ * matches both "Chong Zhi Xiu" and "Tay Zhi Yang"; showing WHERE it matched is
+ * what tells the reader to keep typing rather than pick the first row.
+ */
+function MatchedName({ name, query }: { name: string; query: string }) {
+  const q = query.trim();
+  if (!q) return <>{name}</>;
+  const at = name.toLowerCase().indexOf(q.toLowerCase());
+  if (at < 0) return <>{name}</>;
+  return (
+    <>
+      {name.slice(0, at)}
+      <strong className="font-semibold">{name.slice(at, at + q.length)}</strong>
+      {name.slice(at + q.length)}
+    </>
+  );
+}
+
 export default function InternalCommentComposer({
   onSubmit,
   disabled = false,
@@ -105,6 +124,10 @@ export default function InternalCommentComposer({
   });
 
   const suggestions = useMemo(() => candidates.slice(0, 8), [candidates]);
+  // How many matches the 8-row window hides. Without the footer this renders,
+  // a reader assumes the list IS everyone and scrolls for a name that sorts
+  // past the window instead of typing it (it cost a real mention).
+  const hiddenCount = Math.max(0, candidates.length - suggestions.length);
   // A failed lookup stays OPEN with its reason (same as the snippet picker):
   // silently closing reads as "@ does not work here".
   const typeaheadOpen =
@@ -269,9 +292,17 @@ export default function InternalCommentComposer({
                 }`}
                 title={displayNameOf(user)}
               >
-                {displayNameOf(user)}
+                <MatchedName name={displayNameOf(user)} query={debouncedQuery ?? ''} />
               </button>
             ))}
+            {hiddenCount > 0 && (
+              <div
+                className="px-2 py-1.5 text-xs text-muted-foreground"
+                data-testid="mention-typeahead-more"
+              >
+                {hiddenCount} more. Keep typing to narrow.
+              </div>
+            )}
           </div>
         )}
       </div>

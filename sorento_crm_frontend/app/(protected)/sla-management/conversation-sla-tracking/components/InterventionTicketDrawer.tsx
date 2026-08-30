@@ -131,9 +131,9 @@ export default function InterventionTicketDrawer({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
         side="right"
-        className="flex w-full flex-col gap-3 overflow-y-auto p-4 sm:max-w-xl sm:p-6"
+        className="flex w-full flex-col gap-3 overflow-y-auto p-4 sm:max-w-2xl sm:p-6 lg:max-w-4xl"
       >
-        <SheetHeader className="pe-8">
+        <SheetHeader className="border-b pb-3 pe-8">
           <div className="flex flex-wrap items-center gap-2">
             <SheetTitle className="min-w-0 break-words">
               {ticket?.contact_name ?? (ticketQuery.isLoading ? 'Loading enquiry…' : 'Enquiry')}
@@ -149,21 +149,15 @@ export default function InterventionTicketDrawer({
                 Resolved
               </Badge>
             )}
-          </div>
-          <SheetDescription className="text-xs">
-            {ticket?.contact_phone ?? 'Enquiry'}
-          </SheetDescription>
-        </SheetHeader>
-
-        {/* ---- AC-N5: every ticket action lives here, in the header.
-                They used to sit in a footer under the composer, where they
-                crowded the toolbar and competed with the global assistant
-                launcher for the same corner. Own row rather than beside the
-                title: the sheet's close button owns the top-right corner. ---- */}
-        <div
-          data-testid="ticket-header-actions"
-          className="flex flex-wrap items-center gap-2 border-b pb-3"
-        >
+            {/* ---- AC-N5: every ticket action lives here, in the header.
+                    Sharing the title row (right-aligned, inside the pe-8 gutter
+                    so the sheet's close button keeps the corner) rather than a
+                    row of their own: the second row cost the thread a whole
+                    button-height of reading room. ---- */}
+            <div
+              data-testid="ticket-header-actions"
+              className="ms-auto flex flex-wrap items-center justify-end gap-2"
+            >
           {isResolved && (
             <p
               className="me-auto text-xs text-muted-foreground"
@@ -187,7 +181,6 @@ export default function InterventionTicketDrawer({
             <Button
               variant="outline"
               size="sm"
-              className={isResolved ? '' : 'ms-auto'}
               data-testid="ticket-reassign"
               disabled={isResolved || reassignMutation.isPending}
               onClick={() => setReassignOpen(true)}
@@ -199,7 +192,6 @@ export default function InterventionTicketDrawer({
           <Button
             variant="outline"
             size="sm"
-            className={isResolved || canReassign ? '' : 'ms-auto'}
             disabled={!ticket?.can_resolve || isResolved}
             onClick={() => setConfirmResolve(true)}
           >
@@ -234,9 +226,14 @@ export default function InterventionTicketDrawer({
               </DropdownMenuContent>
             </DropdownMenu>
           )}
-        </div>
+            </div>
+          </div>
+          <SheetDescription className="text-xs">
+            {ticket?.contact_phone ?? 'Enquiry'}
+          </SheetDescription>
+        </SheetHeader>
 
-        <SheetBody className="flex min-h-0 flex-1 flex-col gap-3 py-0">
+        <SheetBody className="flex min-h-0 flex-1 flex-col gap-3 pt-0 pb-6">
           {/* ---- Enquiry reference: what this ticket is actually about ---- */}
           {ticketQuery.isLoading ? (
             <Skeleton className="h-24 w-full" />
@@ -320,10 +317,15 @@ export default function InterventionTicketDrawer({
           {/* ---- The chat panel: thread, notes, composers. The SAME
                   component the SLA detail page's "Chat Records" mounts, so a
                   capability cannot land on one surface and not the other. ---- */}
+          {/* The thread takes whatever height the header and the enquiry card
+              leave, and the composer stays on screen: a viewport-capped list
+              inside a scrolling sheet put the toolbar on the bottom edge on
+              every laptop. min-h keeps a readable strip on a short phone. */}
           <TicketConversationPanel
             ticketId={ticketId}
             enabled={open}
-            maxHeightClass="max-h-[45vh]"
+            className="min-h-0 flex-1"
+            maxHeightClass="min-h-40 flex-1"
             jumpRequest={jumpRequest}
             onSent={onSent}
           />

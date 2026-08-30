@@ -9,8 +9,8 @@ describe('pushService (TCK-33) unsupported environment', () => {
   it('getPushState returns false', async () => {
     expect(await getPushState()).toBe(false);
   });
-  it('subscribeToPush returns false (no throw)', async () => {
-    expect(await subscribeToPush()).toBe(false);
+  it('subscribeToPush reports unsupported (no throw)', async () => {
+    expect(await subscribeToPush()).toEqual({ ok: false, reason: 'unsupported' });
   });
   it('unsubscribeFromPush returns false (no throw)', async () => {
     expect(await unsubscribeFromPush()).toBe(false);

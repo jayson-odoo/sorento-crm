@@ -171,4 +171,21 @@ describe('RespondChatList internal notes (AC-L1)', () => {
 
     expect(screen.getByTestId('chat-internal-note')).toHaveTextContent('Inbox Agent');
   });
+
+  it('makes a url pasted into a note clickable, opening in a new tab', () => {
+    const url = 'https://app.respond.io/space/364817/inbox/497368374#1787975493000000';
+    render(
+      <RespondChatList
+        items={[]}
+        comments={[note('2026-08-15T02:00:00', `Ref conversation ${url} for context.`)]}
+      />,
+    );
+
+    const link = screen.getByRole('link', { name: url });
+    expect(link).toHaveAttribute('href', url);
+    expect(link).toHaveAttribute('target', '_blank');
+    expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+    // The words around the link are still there, as text.
+    expect(screen.getByTestId('chat-internal-note')).toHaveTextContent('for context.');
+  });
 });
