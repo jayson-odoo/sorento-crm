@@ -26,6 +26,7 @@ import { LoaderCircleIcon } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { useSettings } from './components/settings-context';
+import { SigninBackgroundCard } from './components/signin-background-card';
 import TimezoneSelect from './components/timezone-select';
 import {
   GeneralSettingsSchema,
@@ -126,20 +127,21 @@ export default function Page() {
 
   const savedSupplierId = settings?.defaultProductSupplierId ?? null;
   const savedSupplierMissingFromList =
-    !!savedSupplierId &&
-    !supplierOptions.some((s) => s.id === savedSupplierId);
+    !!savedSupplierId && !supplierOptions.some((s) => s.id === savedSupplierId);
 
-  const { data: savedSupplierFallback, isFetching: savedSupplierFallbackFetching } =
-    useQuery({
-      queryKey: ['supplier-detail-settings', savedSupplierId],
-      enabled: savedSupplierMissingFromList && !!savedSupplierId,
-      queryFn: async () => {
-        const r = await apiFetch(`/api/procurement/suppliers/${savedSupplierId}`);
-        if (!r.ok) return null;
-        return r.json() as Promise<SupplierSelectRow>;
-      },
-      staleTime: 5 * 60 * 1000,
-    });
+  const {
+    data: savedSupplierFallback,
+    isFetching: savedSupplierFallbackFetching,
+  } = useQuery({
+    queryKey: ['supplier-detail-settings', savedSupplierId],
+    enabled: savedSupplierMissingFromList && !!savedSupplierId,
+    queryFn: async () => {
+      const r = await apiFetch(`/api/procurement/suppliers/${savedSupplierId}`);
+      if (!r.ok) return null;
+      return r.json() as Promise<SupplierSelectRow>;
+    },
+    staleTime: 5 * 60 * 1000,
+  });
 
   const approversForPurchaseRequest = useMemo(
     () =>
@@ -224,10 +226,12 @@ export default function Page() {
     currencyFormat: settings?.currencyFormat || 'RM {value}',
     timezone: settings?.timezone || 'Europe/London',
     defaultProductSupplierId:
-      settings?.defaultProductSupplierId && settings.defaultProductSupplierId.length > 0
+      settings?.defaultProductSupplierId &&
+      settings.defaultProductSupplierId.length > 0
         ? settings.defaultProductSupplierId
         : NO_DEFAULT_SUPPLIER_VALUE,
-    defaultProductStandardLeadTimeDays: settings?.defaultProductStandardLeadTimeDays ?? 90,
+    defaultProductStandardLeadTimeDays:
+      settings?.defaultProductStandardLeadTimeDays ?? 90,
     defaultUomId:
       settings?.defaultUomId && settings.defaultUomId.length > 0
         ? settings.defaultUomId
@@ -282,10 +286,12 @@ export default function Page() {
       currencyFormat: settings.currencyFormat ?? 'RM {value}',
       timezone: settings.timezone ?? 'Europe/London',
       defaultProductSupplierId:
-        settings.defaultProductSupplierId && settings.defaultProductSupplierId.length > 0
+        settings.defaultProductSupplierId &&
+        settings.defaultProductSupplierId.length > 0
           ? settings.defaultProductSupplierId
           : NO_DEFAULT_SUPPLIER_VALUE,
-      defaultProductStandardLeadTimeDays: settings.defaultProductStandardLeadTimeDays ?? 90,
+      defaultProductStandardLeadTimeDays:
+        settings.defaultProductStandardLeadTimeDays ?? 90,
       defaultUomId:
         settings.defaultUomId && settings.defaultUomId.length > 0
           ? settings.defaultUomId
@@ -326,20 +332,25 @@ export default function Page() {
           values.defaultProductSupplierId === NO_DEFAULT_SUPPLIER_VALUE
             ? null
             : values.defaultProductSupplierId,
-        default_product_standard_lead_time_days: values.defaultProductStandardLeadTimeDays,
+        default_product_standard_lead_time_days:
+          values.defaultProductStandardLeadTimeDays,
         default_uom_id:
-          values.defaultUomId === NO_DEFAULT_UOM_VALUE ? null : values.defaultUomId,
+          values.defaultUomId === NO_DEFAULT_UOM_VALUE
+            ? null
+            : values.defaultUomId,
         takeover_cooldown_seconds: values.takeoverCooldownSeconds,
         form_sla_grace_seconds: values.formSlaGraceSeconds,
         deferred_delete_seconds: values.deferredDeleteSeconds,
         deferred_action_seconds: values.deferredActionSeconds,
         plan_grain: values.planGrain,
         purchase_request_default_approver_user_id:
-          values.purchaseRequestDefaultApproverUserId === NO_DEFAULT_APPROVER_VALUE
+          values.purchaseRequestDefaultApproverUserId ===
+          NO_DEFAULT_APPROVER_VALUE
             ? null
             : values.purchaseRequestDefaultApproverUserId,
         sponsorship_form_default_approver_user_id:
-          values.sponsorshipFormDefaultApproverUserId === NO_DEFAULT_APPROVER_VALUE
+          values.sponsorshipFormDefaultApproverUserId ===
+          NO_DEFAULT_APPROVER_VALUE
             ? null
             : values.sponsorshipFormDefaultApproverUserId,
       };
@@ -477,453 +488,348 @@ export default function Page() {
   };
 
   return (
-    <Card>
-      <CardHeader className="border-b border-border">
-        <CardTitle>Social Settings</CardTitle>
-      </CardHeader>
-      <CardContent className="py-12">
-        <Form {...form}>
-          <form
-            onSubmit={form.handleSubmit(handleSubmit, handleError)}
-            className="space-y-6 lg:max-w-[600px] mx-auto"
-          >
-            {/* Logo */}
-            <FormField
-              control={form.control}
-              name="logoFile"
-              render={({ field }) => (
-                <FormItem>
-                  <div className="flex items-center gap-5">
-                    <div className="relative size-32 border rounded-lg overflow-hidden">
-                      <img
-                        src={
-                          logoAttachedPreview ||
-                          logoExistingPreview ||
-                          '/media/ui/empty-image.svg'
-                        }
-                        alt="Logo preview"
-                        className="object-cover size-full"
-                      />
-                    </div>
-                    <div>
-                      <FormLabel>Company Logo</FormLabel>
-                      <FormControl className="my-1.5">
-                        <div className="flex flex-col space-y-2">
-                          <div className="flex space-x-2">
-                            <Button
-                              type="button"
-                              variant="outline"
-                              onClick={() => logoFileRef.current?.click()}
-                            >
-                              Attach Image
-                            </Button>
-
-                            {logoAttachedPreview ||
-                            (!logoAttachedPreview &&
-                              !logoExistingPreview &&
-                              settings?.logo) ? (
+    <div className="space-y-5">
+      <Card>
+        <CardHeader className="border-b border-border">
+          <CardTitle>Social Settings</CardTitle>
+        </CardHeader>
+        <CardContent className="py-12">
+          <Form {...form}>
+            <form
+              onSubmit={form.handleSubmit(handleSubmit, handleError)}
+              className="space-y-6 lg:max-w-[600px] mx-auto"
+            >
+              {/* Logo */}
+              <FormField
+                control={form.control}
+                name="logoFile"
+                render={({ field }) => (
+                  <FormItem>
+                    <div className="flex items-center gap-5">
+                      <div className="relative size-32 border rounded-lg overflow-hidden">
+                        <img
+                          src={
+                            logoAttachedPreview ||
+                            logoExistingPreview ||
+                            '/media/ui/empty-image.svg'
+                          }
+                          alt="Logo preview"
+                          className="object-cover size-full"
+                        />
+                      </div>
+                      <div>
+                        <FormLabel>Company Logo</FormLabel>
+                        <FormControl className="my-1.5">
+                          <div className="flex flex-col space-y-2">
+                            <div className="flex space-x-2">
                               <Button
                                 type="button"
                                 variant="outline"
-                                onClick={handleCancelLogo}
+                                onClick={() => logoFileRef.current?.click()}
                               >
-                                Cancel
+                                Attach Image
                               </Button>
-                            ) : null}
 
-                            {settings?.logo &&
-                            logoExistingPreview &&
-                            !logoAttachedPreview ? (
-                              <Button
-                                type="button"
-                                variant="outline"
-                                onClick={handleRemoveLogo}
-                              >
-                                Remove
-                              </Button>
-                            ) : null}
-                          </div>
-                          <input
-                            ref={logoFileRef}
-                            type="file"
-                            accept="image/*"
-                            className="hidden"
-                            onChange={(e) => handleChangeLogo(e, field)}
-                          />
-                        </div>
-                      </FormControl>
-                      <FormDescription>
-                        We support PNGs, JPEGs and GIFs under 1MB.
-                      </FormDescription>
-                      <FormMessage />
-                    </div>
-                  </div>
-                </FormItem>
-              )}
-            />
+                              {logoAttachedPreview ||
+                              (!logoAttachedPreview &&
+                                !logoExistingPreview &&
+                                settings?.logo) ? (
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  onClick={handleCancelLogo}
+                                >
+                                  Cancel
+                                </Button>
+                              ) : null}
 
-            {/* Company Name */}
-            <FormField
-              control={form.control}
-              name="name"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Shop Name</FormLabel>
-                  <FormControl>
-                    <Input placeholder="Enter company name" {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            {/* Active */}
-            <FormField
-              control={form.control}
-              name="active"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Shop Status</FormLabel>
-                  <FormControl>
-                    <div className="flex items-center space-x-2 rounded-lg bg-accent/60 p-4">
-                      <Switch
-                        id="active"
-                        checked={field.value}
-                        onCheckedChange={field.onChange}
-                      />
-                      <Label htmlFor="active">
-                        Toggle the switch to enable or disable the store&apos;s
-                        active status.
-                      </Label>
-                    </div>
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            {/* Address */}
-            <FormField
-              control={form.control}
-              name="address"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Address</FormLabel>
-                  <FormControl>
-                    <Textarea
-                      rows={3}
-                      id="address"
-                      value={field.value || ''}
-                      onChange={field.onChange}
-                      placeholder="Enter store address"
-                    />
-                  </FormControl>
-                  <FormDescription>
-                    Enter the full address of the store for customer reference.
-                  </FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            {/* Language */}
-            <FormField
-              control={form.control}
-              name="language"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Language</FormLabel>
-                  <FormControl>
-                    <SearchableSelect
-                      onChange={field.onChange}
-                      value={field.value}
-                      placeholder="Select language"
-                      options={languages.map((language) => ({
-                        value: language.code,
-                        label: language.name,
-                      }))}
-                      // Rows carry a flag image, which no option field can express.
-                      renderOption={(opt) => {
-                        const language = languages.find((l) => l.code === opt.value);
-                        return (
-                          <span className="flex w-full items-center justify-between gap-2.5">
-                            <img
-                              src={language?.flag}
-                              alt={`${opt.label} flag`}
-                              className="size-4 rounded-full"
+                              {settings?.logo &&
+                              logoExistingPreview &&
+                              !logoAttachedPreview ? (
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  onClick={handleRemoveLogo}
+                                >
+                                  Remove
+                                </Button>
+                              ) : null}
+                            </div>
+                            <input
+                              ref={logoFileRef}
+                              type="file"
+                              accept="image/*"
+                              className="hidden"
+                              onChange={(e) => handleChangeLogo(e, field)}
                             />
-                            <span className="grow">{opt.label}</span>
-                          </span>
-                        );
-                      }}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+                          </div>
+                        </FormControl>
+                        <FormDescription>
+                          We support PNGs, JPEGs and GIFs under 1MB.
+                        </FormDescription>
+                        <FormMessage />
+                      </div>
+                    </div>
+                  </FormItem>
+                )}
+              />
 
-            {/* Website */}
-            <FormField
-              control={form.control}
-              name="websiteURL"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Website URL</FormLabel>
-                  <FormControl>
-                    <Input
-                      id="websiteURL"
-                      type="url"
-                      placeholder="Enter website url"
-                      value={field.value || ''}
-                      onChange={field.onChange}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+              {/* Company Name */}
+              <FormField
+                control={form.control}
+                name="name"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Shop Name</FormLabel>
+                    <FormControl>
+                      <Input placeholder="Enter company name" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
 
-            {/* Support Email */}
-            <FormField
-              control={form.control}
-              name="supportEmail"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Support Email</FormLabel>
-                  <FormControl>
-                    <Input
-                      id="supportEmail"
-                      type="email"
-                      placeholder="Enter support email"
-                      value={field.value || ''}
-                      onChange={field.onChange}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+              {/* Active */}
+              <FormField
+                control={form.control}
+                name="active"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Shop Status</FormLabel>
+                    <FormControl>
+                      <div className="flex items-center space-x-2 rounded-lg bg-accent/60 p-4">
+                        <Switch
+                          id="active"
+                          checked={field.value}
+                          onCheckedChange={field.onChange}
+                        />
+                        <Label htmlFor="active">
+                          Toggle the switch to enable or disable the
+                          store&apos;s active status.
+                        </Label>
+                      </div>
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
 
-            {/* Support Phone */}
-            <FormField
-              control={form.control}
-              name="supportPhone"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Support Phone</FormLabel>
-                  <FormControl>
-                    <Input
-                      id="supportPhone"
-                      type="tel"
-                      placeholder="Enter support phone"
-                      value={field.value || ''}
-                      onChange={field.onChange}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+              {/* Address */}
+              <FormField
+                control={form.control}
+                name="address"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Address</FormLabel>
+                    <FormControl>
+                      <Textarea
+                        rows={3}
+                        id="address"
+                        value={field.value || ''}
+                        onChange={field.onChange}
+                        placeholder="Enter store address"
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      Enter the full address of the store for customer
+                      reference.
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
 
-            {/* Currency */}
-            <FormField
-              control={form.control}
-              name="currency"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Currency</FormLabel>
-                  <FormControl>
-                    <SearchableSelect
-                      onChange={field.onChange}
-                      value={field.value}
-                      placeholder="Select currency"
-                      options={[
-                        { value: 'MYR', label: 'MYR - Malaysian Ringgit' },
-                        { value: 'USD', label: 'USD - US Dollar' },
-                        { value: 'EUR', label: 'EUR - Euro' },
-                        { value: 'GBP', label: 'GBP - British Pound' },
-                        { value: 'JPY', label: 'JPY - Japanese Yen' },
-                        { value: 'INR', label: 'INR - Indian Rupee' },
-                      ]}
-                    />
-                  </FormControl>
-                  <FormDescription>
-                    Select the currency used for transactions in your store.
-                  </FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+              {/* Language */}
+              <FormField
+                control={form.control}
+                name="language"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Language</FormLabel>
+                    <FormControl>
+                      <SearchableSelect
+                        onChange={field.onChange}
+                        value={field.value}
+                        placeholder="Select language"
+                        options={languages.map((language) => ({
+                          value: language.code,
+                          label: language.name,
+                        }))}
+                        // Rows carry a flag image, which no option field can express.
+                        renderOption={(opt) => {
+                          const language = languages.find(
+                            (l) => l.code === opt.value,
+                          );
+                          return (
+                            <span className="flex w-full items-center justify-between gap-2.5">
+                              <img
+                                src={language?.flag}
+                                alt={`${opt.label} flag`}
+                                className="size-4 rounded-full"
+                              />
+                              <span className="grow">{opt.label}</span>
+                            </span>
+                          );
+                        }}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
 
-            {/* Currency Format */}
-            <FormField
-              control={form.control}
-              name="currencyFormat"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Currency Format</FormLabel>
-                  <FormControl>
-                    <SearchableSelect
-                      onChange={field.onChange}
-                      value={field.value}
-                      placeholder="Select currency format"
-                      options={[
-                        { value: 'RM {value}', label: 'RM {value}' },
-                        { value: '$ {value}', label: '$ {value}' },
-                        { value: '{value} €', label: '{value} €' },
-                        { value: '£ {value}', label: '£ {value}' },
-                        { value: '¥ {value}', label: '¥ {value}' },
-                        { value: '₹ {value}', label: '₹ {value}' },
-                      ]}
-                    />
-                  </FormControl>
-                  <FormDescription>
-                    Choose how the currency is displayed (e.g., symbol before or
-                    after value).
-                  </FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+              {/* Website */}
+              <FormField
+                control={form.control}
+                name="websiteURL"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Website URL</FormLabel>
+                    <FormControl>
+                      <Input
+                        id="websiteURL"
+                        type="url"
+                        placeholder="Enter website url"
+                        value={field.value || ''}
+                        onChange={field.onChange}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
 
-            <FormField
-              control={form.control}
-              name="defaultProductSupplierId"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Default supplier (new products)</FormLabel>
-                  <FormControl>
-                    <SearchableSelect
-                      key={`def-sup-${field.value}-${suppliersForSelect.length}-${savedSupplierFallback?.id ?? ''}`}
-                      onChange={field.onChange}
-                      value={field.value}
-                      placeholder="Select supplier"
-                      options={[
-                        { value: NO_DEFAULT_SUPPLIER_VALUE, label: 'Automatic' },
-                        ...suppliersForSelect.map((s) => ({
-                          value: s.id,
-                          label: `${s.supplier_code} - ${s.supplier_name}`,
-                        })),
-                      ]}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+              {/* Support Email */}
+              <FormField
+                control={form.control}
+                name="supportEmail"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Support Email</FormLabel>
+                    <FormControl>
+                      <Input
+                        id="supportEmail"
+                        type="email"
+                        placeholder="Enter support email"
+                        value={field.value || ''}
+                        onChange={field.onChange}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
 
-            <FormField
-              control={form.control}
-              name="defaultUomId"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Default unit of measure</FormLabel>
-                  <FormControl>
-                    <SearchableSelect
-                      key={`def-uom-${field.value}-${uomOptions.length}`}
-                      onChange={(v) => field.onChange(v || NO_DEFAULT_UOM_VALUE)}
-                      value={field.value}
-                      placeholder="Select unit"
-                      clearable
-                      options={[
-                        { value: NO_DEFAULT_UOM_VALUE, label: 'Automatic' },
-                        ...uomOptions.map((u) => ({
-                          value: u.id,
-                          label: `${u.uom_code} - ${u.uom_name}`,
-                        })),
-                      ]}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+              {/* Support Phone */}
+              <FormField
+                control={form.control}
+                name="supportPhone"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Support Phone</FormLabel>
+                    <FormControl>
+                      <Input
+                        id="supportPhone"
+                        type="tel"
+                        placeholder="Enter support phone"
+                        value={field.value || ''}
+                        onChange={field.onChange}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
 
-            <FormField
-              control={form.control}
-              name="defaultProductStandardLeadTimeDays"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Standard lead time (days)</FormLabel>
-                  <FormControl>
-                    <Input
-                      type="number"
-                      min={0}
-                      max={10950}
-                      value={field.value}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        if (v === '') return;
-                        const n = parseInt(v, 10);
-                        if (!Number.isNaN(n)) field.onChange(n);
-                      }}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+              {/* Currency */}
+              <FormField
+                control={form.control}
+                name="currency"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Currency</FormLabel>
+                    <FormControl>
+                      <SearchableSelect
+                        onChange={field.onChange}
+                        value={field.value}
+                        placeholder="Select currency"
+                        options={[
+                          { value: 'MYR', label: 'MYR - Malaysian Ringgit' },
+                          { value: 'USD', label: 'USD - US Dollar' },
+                          { value: 'EUR', label: 'EUR - Euro' },
+                          { value: 'GBP', label: 'GBP - British Pound' },
+                          { value: 'JPY', label: 'JPY - Japanese Yen' },
+                          { value: 'INR', label: 'INR - Indian Rupee' },
+                        ]}
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      Select the currency used for transactions in your store.
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
 
-            <FormField
-              control={form.control}
-              name="takeoverCooldownSeconds"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Takeover cooldown (seconds)</FormLabel>
-                  <FormControl>
-                    <Input
-                      type="number"
-                      min={0}
-                      max={3600}
-                      value={field.value}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        if (v === '') return;
-                        const n = parseInt(v, 10);
-                        if (!Number.isNaN(n)) field.onChange(n);
-                      }}
-                    />
-                  </FormControl>
-                  <FormDescription>
-                    Delay before a takeover commits, during which the original assignee can reject
-                    and the initiator can cancel. Set to 0 to take over instantly.
-                  </FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+              {/* Currency Format */}
+              <FormField
+                control={form.control}
+                name="currencyFormat"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Currency Format</FormLabel>
+                    <FormControl>
+                      <SearchableSelect
+                        onChange={field.onChange}
+                        value={field.value}
+                        placeholder="Select currency format"
+                        options={[
+                          { value: 'RM {value}', label: 'RM {value}' },
+                          { value: '$ {value}', label: '$ {value}' },
+                          { value: '{value} €', label: '{value} €' },
+                          { value: '£ {value}', label: '£ {value}' },
+                          { value: '¥ {value}', label: '¥ {value}' },
+                          { value: '₹ {value}', label: '₹ {value}' },
+                        ]}
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      Choose how the currency is displayed (e.g., symbol before
+                      or after value).
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
 
-            <FormField
-              control={form.control}
-              name="formSlaGraceSeconds"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Undo grace window (seconds)</FormLabel>
-                  <FormControl>
-                    <Input
-                      type="number"
-                      min={0}
-                      max={600}
-                      value={field.value}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        if (v === '') return;
-                        const n = parseInt(v, 10);
-                        if (!Number.isNaN(n)) field.onChange(n);
-                      }}
-                    />
-                  </FormControl>
-                  <FormDescription>
-                    Default wait before an in-app form action applies, for every SLA stage that
-                    does not set its own. During the wait nothing is written and nobody is
-                    notified, so the person who clicked can take it back. 0 disables the wait
-                    everywhere except stages that override it.
-                  </FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+              <FormField
+                control={form.control}
+                name="defaultProductSupplierId"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Default supplier (new products)</FormLabel>
+                    <FormControl>
+                      <SearchableSelect
+                        key={`def-sup-${field.value}-${suppliersForSelect.length}-${savedSupplierFallback?.id ?? ''}`}
+                        onChange={field.onChange}
+                        value={field.value}
+                        placeholder="Select supplier"
+                        options={[
+                          {
+                            value: NO_DEFAULT_SUPPLIER_VALUE,
+                            label: 'Automatic',
+                          },
+                          ...suppliersForSelect.map((s) => ({
+                            value: s.id,
+                            label: `${s.supplier_code} - ${s.supplier_name}`,
+                          })),
+                        ]}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
 
             <FormField
               control={form.control}
@@ -983,117 +889,245 @@ export default function Page() {
               )}
             />
 
-            <FormField
-              control={form.control}
-              name="planGrain"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Plan grain</FormLabel>
-                  <FormControl>
-                    <SearchableSelect
-                      value={field.value}
-                      onChange={field.onChange}
-                      placeholder="Product"
-                      options={[
-                        { value: 'product', label: 'Product' },
-                        { value: 'location', label: 'Location' },
-                      ]}
-                    />
-                  </FormControl>
-                  <FormDescription>
-                    Applies to runs created afterwards.
-                  </FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+              <FormField
+                control={form.control}
+                name="defaultUomId"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Default unit of measure</FormLabel>
+                    <FormControl>
+                      <SearchableSelect
+                        key={`def-uom-${field.value}-${uomOptions.length}`}
+                        onChange={(v) =>
+                          field.onChange(v || NO_DEFAULT_UOM_VALUE)
+                        }
+                        value={field.value}
+                        placeholder="Select unit"
+                        clearable
+                        options={[
+                          { value: NO_DEFAULT_UOM_VALUE, label: 'Automatic' },
+                          ...uomOptions.map((u) => ({
+                            value: u.id,
+                            label: `${u.uom_code} - ${u.uom_name}`,
+                          })),
+                        ]}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
 
-            <FormField
-              control={form.control}
-              name="purchaseRequestDefaultApproverUserId"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Default approver (purchase requests)</FormLabel>
-                  <FormControl>
-                    <SearchableSelect
-                      key={`def-pr-appr-${field.value}-${approversForPurchaseRequest.length}`}
-                      onChange={field.onChange}
-                      value={field.value}
-                      placeholder="None"
-                      options={[
-                        { value: NO_DEFAULT_APPROVER_VALUE, label: 'None' },
-                        ...approversForPurchaseRequest.map((u) => ({
-                          value: u.id,
-                          label: (u.name?.trim() || u.email) + ` (${u.email})`,
-                        })),
-                      ]}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+              <FormField
+                control={form.control}
+                name="defaultProductStandardLeadTimeDays"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Standard lead time (days)</FormLabel>
+                    <FormControl>
+                      <Input
+                        type="number"
+                        min={0}
+                        max={10950}
+                        value={field.value}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          if (v === '') return;
+                          const n = parseInt(v, 10);
+                          if (!Number.isNaN(n)) field.onChange(n);
+                        }}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
 
-            <FormField
-              control={form.control}
-              name="sponsorshipFormDefaultApproverUserId"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Default approver (sponsorship forms)</FormLabel>
-                  <FormControl>
-                    <SearchableSelect
-                      key={`def-sf-appr-${field.value}-${approversForSponsorshipForm.length}`}
-                      onChange={field.onChange}
-                      value={field.value}
-                      placeholder="None"
-                      options={[
-                        { value: NO_DEFAULT_APPROVER_VALUE, label: 'None' },
-                        ...approversForSponsorshipForm.map((u) => ({
-                          value: u.id,
-                          label: (u.name?.trim() || u.email) + ` (${u.email})`,
-                        })),
-                      ]}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+              <FormField
+                control={form.control}
+                name="takeoverCooldownSeconds"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Takeover cooldown (seconds)</FormLabel>
+                    <FormControl>
+                      <Input
+                        type="number"
+                        min={0}
+                        max={3600}
+                        value={field.value}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          if (v === '') return;
+                          const n = parseInt(v, 10);
+                          if (!Number.isNaN(n)) field.onChange(n);
+                        }}
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      Delay before a takeover commits, during which the original
+                      assignee can reject and the initiator can cancel. Set to 0
+                      to take over instantly.
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
 
-            {/* Timezone */}
-            <FormField
-              control={form.control}
-              name="timezone"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Timezone</FormLabel>
-                  <FormControl>
-                    <TimezoneSelect
-                      defaultValue={field.value}
-                      onChange={field.onChange}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+              <FormField
+                control={form.control}
+                name="formSlaGraceSeconds"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Undo grace window (seconds)</FormLabel>
+                    <FormControl>
+                      <Input
+                        type="number"
+                        min={0}
+                        max={600}
+                        value={field.value}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          if (v === '') return;
+                          const n = parseInt(v, 10);
+                          if (!Number.isNaN(n)) field.onChange(n);
+                        }}
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      Default wait before an in-app form action applies, for
+                      every SLA stage that does not set its own. During the wait
+                      nothing is written and nobody is notified, so the person
+                      who clicked can take it back. 0 disables the wait
+                      everywhere except stages that override it.
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
 
-            {/* Action Buttons */}
-            <div className="flex gap-2.5 justify-end">
-              <Button type="button" variant="outline" onClick={handleFormReset}>
-                Reset
-              </Button>
-              <Button
-                type="submit"
-                disabled={!form.formState.isDirty || isProcessing}
-              >
-                {isProcessing && <LoaderCircleIcon className="animate-spin" />}
-                Save Settings
-              </Button>
-            </div>
-          </form>
-        </Form>
-      </CardContent>
-    </Card>
+              <FormField
+                control={form.control}
+                name="planGrain"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Plan grain</FormLabel>
+                    <FormControl>
+                      <SearchableSelect
+                        value={field.value}
+                        onChange={field.onChange}
+                        placeholder="Product"
+                        options={[
+                          { value: 'product', label: 'Product' },
+                          { value: 'location', label: 'Location' },
+                        ]}
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      Applies to runs created afterwards.
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="purchaseRequestDefaultApproverUserId"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Default approver (purchase requests)</FormLabel>
+                    <FormControl>
+                      <SearchableSelect
+                        key={`def-pr-appr-${field.value}-${approversForPurchaseRequest.length}`}
+                        onChange={field.onChange}
+                        value={field.value}
+                        placeholder="None"
+                        options={[
+                          { value: NO_DEFAULT_APPROVER_VALUE, label: 'None' },
+                          ...approversForPurchaseRequest.map((u) => ({
+                            value: u.id,
+                            label:
+                              (u.name?.trim() || u.email) + ` (${u.email})`,
+                          })),
+                        ]}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="sponsorshipFormDefaultApproverUserId"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Default approver (sponsorship forms)</FormLabel>
+                    <FormControl>
+                      <SearchableSelect
+                        key={`def-sf-appr-${field.value}-${approversForSponsorshipForm.length}`}
+                        onChange={field.onChange}
+                        value={field.value}
+                        placeholder="None"
+                        options={[
+                          { value: NO_DEFAULT_APPROVER_VALUE, label: 'None' },
+                          ...approversForSponsorshipForm.map((u) => ({
+                            value: u.id,
+                            label:
+                              (u.name?.trim() || u.email) + ` (${u.email})`,
+                          })),
+                        ]}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              {/* Timezone */}
+              <FormField
+                control={form.control}
+                name="timezone"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Timezone</FormLabel>
+                    <FormControl>
+                      <TimezoneSelect
+                        defaultValue={field.value}
+                        onChange={field.onChange}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              {/* Action Buttons */}
+              <div className="flex gap-2.5 justify-end">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handleFormReset}
+                >
+                  Reset
+                </Button>
+                <Button
+                  type="submit"
+                  disabled={!form.formState.isDirty || isProcessing}
+                >
+                  {isProcessing && (
+                    <LoaderCircleIcon className="animate-spin" />
+                  )}
+                  Save Settings
+                </Button>
+              </div>
+            </form>
+          </Form>
+        </CardContent>
+      </Card>
+      {/* The one setting on this screen whose value is a file, so it saves on its own
+        rather than through the JSON form above. */}
+      <SigninBackgroundCard />
+    </div>
   );
 }

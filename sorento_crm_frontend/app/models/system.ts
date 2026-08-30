@@ -18,6 +18,11 @@ export interface SystemSetting {
   id: string;
   name: string;
   logo?: string | null;
+  /**
+   * The photograph behind the sign-in card, already signed by the backend so an <img>
+   * can load it. Null means none is set and the sign-in page draws its designed default.
+   */
+  signinBackground?: string | null;
   active: boolean;
   address?: string | null;
   websiteURL?: string | null;
