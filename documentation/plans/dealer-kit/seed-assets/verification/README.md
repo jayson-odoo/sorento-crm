@@ -545,3 +545,40 @@ all ignore a plain `click @ref`. And an impersonation session in `sessionStorage
 portal token in the URL: opening `/portal?token=...` while one is live keeps the impersonated
 contact, so read the "Welcome, <name>" heading before trusting which contact a portal proof is
 about.
+
+## Round 10, 30 Aug: the merge with main, walked end to end
+
+`origin/main` merged into `feat/price-tag-request` (41 commits, Apple alignment
+S1-S3 among them: lightbox dialogs, line tabs, phone-ready DataGrid + `rowHref`,
+design tokens, and S3's detail header with the PAGE-SCOPED pager that replaced the
+deleted `/neighbours` endpoints). Run on the `:3030` lane, agent-browser session
+`ptag-merge`, navigated from `/` through the sidebar every time. **Nothing was
+saved**: the one canvas drag was undone with Cmd+Z and Save was never pressed, so
+the seeded template and all four requests are exactly as the merge found them.
+
+| File | What it shows |
+| --- | --- |
+| `merge-1-tag-templates-list.png` | Dealer Kit -> Room Designer -> Tag Templates, reached by sidebar clicks. Both merged menu entries survived the `menu.config.tsx` conflict and are permission-gated as before. Nine rows on main's rebuilt DataGrid, the same nine the seed produced. |
+| `merge-2-tag-editor-zoom-and-drag.png` | `Kitchen Sink - Ala Carte` in the canvas editor at 148%. A `WheelEvent` over the workspace took the readout 111% -> 148% and came back `defaultPrevented: true`, so the page did not scroll (D34). A real mouse drag of the selected layer moved the Inspector from X 5.3 / Y 21 to X 14.15 / Y 28.28, which is bug 7's fix still holding: `stage.getLayers()[0].getChildren()` lists all 14 layer ids (`sink-ala-carte-band-1` ... `sink-ala-carte-product-14`). The shot is after the undo, so the Inspector reads `Select a layer` again. |
+| `merge-3-price-tag-requests-list.png` | The CRM list, four requests. Every row is now `role="link"`: the list opens records through main's `rowHref` rather than `onRowClick`, and the record URL it writes carries `?page=1&limit=50&sort=created_at&dir=desc` plus the status filter when one is set. |
+| `merge-4-price-tag-request-record-header.png` | `PT-202608-0001` on main's S3 record chrome. Breadcrumb whose leaf is the DOC NUMBER, one `Back to price tag requests` beside it, then a record card carrying the number, its `Proof Ready` pill, the read-only metadata line, and `DetailActions`: the page-scoped pager reading `4 / 4`, the gear, and one primary CTA `View design`. |
+| `merge-5-designer-on-pt-0001.png` | The designer for the same request, opened by that CTA. Both lines are there (`CWC1009-RL` as a Set, `SRTWC286-SH-150` as a product), the Layers panel reads `Set (5)`, and the Konva stage draws 17 nodes. |
+| `merge-6-portal-five-kinds.png` | The portal as `Ziv Beh`, type dropdown open: Stock Inquiry, Complaint, Purchase Request, Sponsorship Form and **Price Tag Request 4**. The grant added in round 9 survived the merge. |
+
+The pager was walked, not only rendered: Previous on `PT-202608-0001` (4 / 4) pushed
+`/dealer-kit/price-tag-requests/f0206b81-...?page=1&limit=50&sort=created_at&dir=desc`
+and the header read `PT-202608-0002` at `3 / 4`; Next put it back. Next is disabled
+at 4 / 4 and Previous at 1 / 1, which is `useListPager`'s own end handling and not
+something this page decides.
+
+**Two notes for the next run.** The `MouseEvent('click')` dispatch is still what the
+DOM half needs, now including the sidebar's `Dealer Kit` / `Room Designer` and the
+list rows; a plain `click @ref` reports success and leaves the accordion collapsed.
+And `agent-browser eval --stdin` shares one scope across calls in a session, so a
+second snippet declaring `const btns` dies on `Identifier 'btns' has already been
+declared`: wrap each snippet in an IIFE.
+
+**One thing the shot shows that the run did not cause.** The portal page carries the
+`Admin Jayson Personal is viewing this portal as you` banner, because the same browser
+holds the staff login from the CRM half of the run. The contact resolved is still
+`Ziv Beh` (the heading, and the counts, are hers), which is what the dropdown proves.
