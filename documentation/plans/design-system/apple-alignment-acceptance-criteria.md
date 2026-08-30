@@ -122,6 +122,12 @@ instead of overlapping. Nothing is asked of them that the screen already knew.
 - **S6-09** Users, Products and Orders (record and list) run on the deferred model; `ConfirmDeleteDialog` is not imported by them; the 9 native `confirm()` calls are gone. [FE][E2E]
 - **S6-10** (S6b) Every remaining `ConfirmDeleteDialog` and destructive `AlertDialog` importer is migrated; `ConfirmDeleteDialog` is deleted. [FE][T]
 
+Added 2026-08-30 from the user's run on the built S6 (the window works; what happens around it did not):
+
+- **S6-11** Given an action started from any surface, when the user navigates away before the window lapses, then the commit is still followed through: the tab asks `current` once at `commit_at` plus a grace with nothing mounted, refetches the action's lists and un-dims the row, so a list revisited later never serves a record that has already been deleted. A tab that was asleep does the same reconciliation when it next comes forward. [FE][T]
+- **S6-12** An outcome is announced only while it still answers a click: a success within 10s of `ended_at`, a failure within 60s, and each outcome id at most once however many surfaces observe it. A record page opened minutes after its own commit shows the fresh record and says nothing. [FE][T]
+- **S6-13** Given a link to a record this tab watched a delete commit on, when it is opened and the read 404s, then the page returns to its list with one quiet "Already deleted" and no error toast from any of the record's reads. A URL that was simply wrong keeps today's not-found page. [FE][T]
+
 ## S7 Feedback [FE]
 
 - **S7-01** A shared `useEntityMutation` factory gives optimistic updates with rollback to boolean and status toggles in expanded rows; the toggle flips before the request resolves. [FE][T]

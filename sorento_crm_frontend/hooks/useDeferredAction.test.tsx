@@ -47,12 +47,22 @@ vi.mock('@/services/pendingActionService', () => ({
 import { useDeferredAction } from './useDeferredAction';
 import { pendingEntityKey, pendingEntityStore } from '@/lib/pending-entity-store';
 
+/**
+ * A naive-UTC timestamp `offsetMs` from now, the way the backend writes them.
+ *
+ * The outcome toasts are gated on freshness (S6 feedback B), so a hard-coded
+ * date would start passing or failing depending on the day the suite runs.
+ */
+function serverTime(offsetMs: number): string {
+  return new Date(Date.now() + offsetMs).toISOString().replace(/\.\d+Z$/, '');
+}
+
 const PARKED = {
   id: 'pa-1',
   action_key: 'product.delete',
   entity_type: 'product',
   entity_id: 'p-1',
-  commit_at: '2026-08-30T10:00:10',
+  commit_at: serverTime(10_000),
   window_seconds: 10,
 };
 
@@ -97,8 +107,9 @@ async function refetchCurrent() {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  pendingEntityStore.clear('product', 'p-1');
-  pendingEntityStore.clear('order', 'o-1');
+  // Module-level state is per TAB, and each test is a fresh tab: the outcome
+  // dedupe would otherwise carry `pa-1` from one test into the next.
+  pendingEntityStore.reset();
   queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
@@ -196,7 +207,7 @@ describe('commit and failure (S6-03)', () => {
       action_key: 'product.delete',
       status: 'committed',
       error_text: null,
-      ended_at: '2026-08-30T10:00:10',
+      ended_at: serverTime(0),
     });
     await refetchCurrent();
 
@@ -223,7 +234,7 @@ describe('commit and failure (S6-03)', () => {
       action_key: 'product.delete',
       status: 'failed',
       error_text: 'The warehouse still holds stock for it',
-      ended_at: '2026-08-30T10:00:10',
+      ended_at: serverTime(0),
     });
     await refetchCurrent();
 
@@ -251,7 +262,7 @@ describe('commit and failure (S6-03)', () => {
       action_key: 'product.delete',
       status: 'cancelled',
       error_text: null,
-      ended_at: '2026-08-30T10:00:03',
+      ended_at: serverTime(0),
     });
     await refetchCurrent();
 
@@ -263,13 +274,118 @@ describe('commit and failure (S6-03)', () => {
   });
 });
 
+describe('toast hygiene (S6 feedback B)', () => {
+  /**
+   * The bug this locks down: a status change committed while the user was
+   * elsewhere, and the record page they came back to minutes later greeted them
+   * with "Delivery order updated" as if it had just happened. The remount reads
+   * the parked action out of the React Query cache first and the settled answer
+   * second, so the hook sees the same transition it would see live - the only
+   * thing that tells the two apart is how old the outcome is.
+   */
+  it('an outcome the user has long since forgotten does not toast', async () => {
+    const { result } = renderDeletion();
+    await act(async () => {
+      result.current.start();
+    });
+    await waitFor(() => expect(result.current.pending?.id).toBe('pa-1'));
+
+    serverSays(null, {
+      id: 'pa-1',
+      action_key: 'product.delete',
+      status: 'committed',
+      error_text: null,
+      ended_at: serverTime(-5 * 60_000),
+    });
+    await refetchCurrent();
+
+    await waitFor(() => expect(result.current.pending).toBeNull());
+    expect(toastSuccess).not.toHaveBeenCalledWith('Product deleted', expect.anything());
+  });
+
+  it('but the page still leaves a record that is genuinely gone', async () => {
+    const onCommitted = vi.fn();
+    const { result } = renderDeletion({ onCommitted });
+    await act(async () => {
+      result.current.start();
+    });
+    await waitFor(() => expect(result.current.pending?.id).toBe('pa-1'));
+
+    serverSays(null, {
+      id: 'pa-1',
+      action_key: 'product.delete',
+      status: 'committed',
+      error_text: null,
+      ended_at: serverTime(-5 * 60_000),
+    });
+    await refetchCurrent();
+
+    await waitFor(() => expect(onCommitted).toHaveBeenCalledTimes(1));
+  });
+
+  it('a FAILURE the user missed still reaches them a minute later', async () => {
+    const { result } = renderDeletion();
+    await act(async () => {
+      result.current.start();
+    });
+    await waitFor(() => expect(result.current.pending?.id).toBe('pa-1'));
+
+    serverSays(null, {
+      id: 'pa-1',
+      action_key: 'product.delete',
+      status: 'failed',
+      error_text: 'The warehouse still holds stock for it',
+      ended_at: serverTime(-30_000),
+    });
+    await refetchCurrent();
+
+    // Nothing was applied and no other surface will ever say so.
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith(
+        'The warehouse still holds stock for it',
+        expect.anything(),
+      ),
+    );
+  });
+
+  it('one outcome is said once, however many surfaces observe it', async () => {
+    const first = renderDeletion();
+    await act(async () => {
+      first.result.current.start();
+    });
+    await waitFor(() => expect(first.result.current.pending?.id).toBe('pa-1'));
+
+    const outcome = {
+      id: 'pa-1',
+      action_key: 'product.delete',
+      status: 'committed',
+      error_text: null,
+      ended_at: serverTime(0),
+    };
+    serverSays(null, outcome);
+    await refetchCurrent();
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalledTimes(1));
+
+    // The gear and the danger zone both watch one record; a second observer of
+    // the same outcome must not say it again.
+    const second = renderDeletion();
+    serverSays(PARKED);
+    await refetchCurrent();
+    await waitFor(() => expect(second.result.current.pending?.id).toBe('pa-1'));
+    serverSays(null, outcome);
+    await refetchCurrent();
+    await waitFor(() => expect(second.result.current.pending).toBeNull());
+    expect(toastSuccess).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('two actions on one record (S6-05)', () => {
   const otherKeyParked = {
     id: 'pa-9',
     action_key: 'order.delete',
     entity_type: 'order',
     entity_id: 'o-1',
-    commit_at: '2026-08-30T10:00:10',
+    commit_at: serverTime(10_000),
     window_seconds: 10,
   };
 
@@ -310,7 +426,7 @@ describe('two actions on one record (S6-05)', () => {
       action_key: 'order.delete',
       status: 'committed',
       error_text: null,
-      ended_at: '2026-08-30T10:00:10',
+      ended_at: serverTime(0),
     });
     await refetchCurrent();
 

@@ -39,6 +39,7 @@ import { getPromotionsByProductId } from '@/app/(protected)/marketing-management
 import { PriceFloorPanel } from '@/app/(protected)/project-sales/_shared/components/PriceFloorPanel';
 import DetailActions from '@/components/common/DetailActions';
 import { useProductActions } from '../../actions';
+import { useDeletedRecordGuard } from '@/hooks/useDeletedRecordGuard';
 import { productsPagerQuery } from '../../lib/listQuery';
 import AuditTrail from '@/components/audit/AuditTrail';
 import FieldAttachmentTooltip from './FieldAttachmentTooltip';
@@ -109,6 +110,14 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
     { onDeleted: () => router.push(backHref) },
   );
 
+  // A product this tab deleted a moment ago is gone on purpose, so a stale link
+  // to it returns to the list instead of reading as a fault (S6 feedback C).
+  const alreadyDeleted = useDeletedRecordGuard({
+    entityId: productId,
+    notFound: !isLoading && !product,
+    listPath: backHref,
+  });
+
   if (isLoading) {
     return (
       <div className="space-y-6">
@@ -119,6 +128,7 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
   }
 
   if (!product) {
+    if (alreadyDeleted) return null;
     return (
       <div className="text-center py-12">
         <p className="text-muted-foreground">Product not found</p>

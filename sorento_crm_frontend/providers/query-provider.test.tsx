@@ -2,8 +2,12 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render } from '@testing-library/react';
 
 // Capture the onError callback that QueryProvider passes to QueryCache.
-let capturedOnError: ((error: Error, query: { meta?: Record<string, unknown> }) => void) | null =
-  null;
+let capturedOnError:
+  | ((
+      error: Error,
+      query: { meta?: Record<string, unknown>; queryKey: readonly unknown[] },
+    ) => void)
+  | null = null;
 
 vi.mock('@tanstack/react-query', () => {
   const actual = vi.importActual('@tanstack/react-query');
@@ -43,17 +47,29 @@ vi.mock('@/lib/revision-fence', () => ({
   registerRevisionStaleHandler: vi.fn(),
 }));
 
-import { QueryProvider } from './query-provider';
+vi.mock('@/services/pendingActionService', () => ({
+  createPendingAction: vi.fn(),
+  cancelPendingAction: vi.fn(),
+  getCurrentPendingAction: vi.fn(),
+}));
 
-function fireOnError(message: string, meta?: Record<string, unknown>) {
+import { QueryProvider } from './query-provider';
+import { pendingEntityStore } from '@/lib/pending-entity-store';
+
+function fireOnError(
+  message: string,
+  meta?: Record<string, unknown>,
+  queryKey: readonly unknown[] = ['something'],
+) {
   if (!capturedOnError) throw new Error('onError not captured - render QueryProvider first');
-  capturedOnError(new Error(message), { meta });
+  capturedOnError(new Error(message), { meta, queryKey });
 }
 
 describe('QueryProvider toast deduplication', () => {
   beforeEach(() => {
     capturedOnError = null;
     toastCustom.mockClear();
+    pendingEntityStore.reset();
     render(
       <QueryProvider>
         <div />
@@ -110,5 +126,21 @@ describe('QueryProvider toast deduplication', () => {
     fireOnError('Permission required: scm.dashboard.view', { silent: true });
 
     expect(toastCustom).not.toHaveBeenCalled();
+  });
+
+  // S6 feedback C: a record the user watched a delete commit on is gone on
+  // purpose. The detail read, its tabs and its counts all 404 at once, and a
+  // stack of red toasts for the thing they asked for is not an answer.
+  it('says nothing about reads keyed on a record this tab just deleted', () => {
+    pendingEntityStore.noteCommittedDelete('p-1');
+
+    fireOnError('Product not found', undefined, ['product', 'p-1']);
+    fireOnError('Product not found', undefined, ['product-attachments', 'p-1']);
+
+    expect(toastCustom).not.toHaveBeenCalled();
+
+    // Everything else still reports normally.
+    fireOnError('Internal server error', undefined, ['product', 'p-2']);
+    expect(toastCustom).toHaveBeenCalledTimes(1);
   });
 });
