@@ -100,7 +100,6 @@ vi.mock('../services/certificateService', () => ({
 const hooks = vi.hoisted(() => ({
   useCertificate: vi.fn(),
   useCertificates: vi.fn(),
-  deleteAsync: vi.fn(),
 }));
 vi.mock('../hooks/useCertificates', () => ({
   // The pager reads the list page through the entity's shared key + fetch (S3-03).
@@ -112,7 +111,6 @@ vi.mock('../hooks/useCertificates', () => ({
   // The detail page pulls an unfiltered page of certificates to feed the
   // prev/next chevrons.
   useCertificates: (...a: unknown[]) => hooks.useCertificates(...a),
-  useDeleteCertificate: () => ({ mutateAsync: hooks.deleteAsync, isPending: false }),
   useCertificateMergeTargets: () => ({ data: [], isLoading: false }),
   useMergeCertificate: () => ({ mutate: vi.fn(), isPending: false }),
   useAddCertificateProduct: () => ({ mutateAsync: vi.fn(), isPending: false }),
@@ -420,7 +418,6 @@ describe('CertificateDetail - delete parks a pending action (S6-10)', () => {
         }),
       ),
     );
-    expect(hooks.deleteAsync).not.toHaveBeenCalled();
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     // Nothing has happened yet, so the page stays where it is until the server says
     // otherwise - a record page that left on the click would be lying for ten seconds.

@@ -4,7 +4,6 @@ import {
   addCertificateProduct,
   bulkDeleteCertificates,
   createCertificate,
-  deleteCertificate,
   getCertificate,
   getCertificates,
   mergeCertificateInto,
@@ -151,17 +150,9 @@ export function useUpdateCertificate() {
 }
 
 /**
- * Delete hooks stay SILENT: both are driven by `ConfirmDeleteDialog`, which owns
- * the success toast and the error alert. Toasting here would double up.
+ * Bulk delete stays SILENT: it is driven by the caller's own `AlertDialog`, which
+ * owns the success toast and the error alert. Toasting here would double up.
  */
-export function useDeleteCertificate() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => deleteCertificate(id),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['certificates'] }),
-  });
-}
-
 export function useBulkDeleteCertificates() {
   const queryClient = useQueryClient();
   return useMutation({

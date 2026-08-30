@@ -5,7 +5,7 @@
  *   DUP-4 (merge invalidates the list and the surviving TARGET certificate)
  *   COV-3 (add / remove coverage invalidates the list and that certificate)
  *   RVW-4 (update invalidates the list and that certificate)
- *   The two delete hooks stay SILENT on success: ConfirmDeleteDialog owns the
+ *   Bulk delete stays SILENT on success: the caller's own AlertDialog owns the
  *   toast, so toasting here would double up.
  *
  * The service layer is mocked - these tests pin the hook contract (key, params,
@@ -25,7 +25,6 @@ vi.mock('../services/certificateService', () => ({
   getCertificate: vi.fn(),
   createCertificate: vi.fn(),
   updateCertificate: vi.fn(),
-  deleteCertificate: vi.fn(),
   bulkDeleteCertificates: vi.fn(),
   mergeCertificateInto: vi.fn(),
   addCertificateProduct: vi.fn(),
@@ -38,7 +37,6 @@ import {
   addCertificateProduct,
   bulkDeleteCertificates,
   createCertificate,
-  deleteCertificate,
   getCertificate,
   getCertificates,
   mergeCertificateInto,
@@ -52,7 +50,6 @@ import {
   useCertificateMergeTargets,
   useCertificates,
   useCreateCertificate,
-  useDeleteCertificate,
   useMergeCertificate,
   useRemoveCertificateProduct,
   useUpdateCertificate,
@@ -62,7 +59,6 @@ const mockGetCertificates = getCertificates as unknown as ReturnType<typeof vi.f
 const mockGetCertificate = getCertificate as unknown as ReturnType<typeof vi.fn>;
 const mockCreate = createCertificate as unknown as ReturnType<typeof vi.fn>;
 const mockUpdate = updateCertificate as unknown as ReturnType<typeof vi.fn>;
-const mockDelete = deleteCertificate as unknown as ReturnType<typeof vi.fn>;
 const mockBulkDelete = bulkDeleteCertificates as unknown as ReturnType<typeof vi.fn>;
 const mockMerge = mergeCertificateInto as unknown as ReturnType<typeof vi.fn>;
 const mockAddProduct = addCertificateProduct as unknown as ReturnType<typeof vi.fn>;
@@ -272,19 +268,6 @@ describe('useCreateCertificate / useUpdateCertificate - invalidation + toasts', 
 });
 
 describe('delete hooks - invalidate but stay silent', () => {
-  it('single delete invalidates the list and does NOT toast (the dialog owns it)', async () => {
-    mockDelete.mockResolvedValue(undefined);
-    const client = newClient();
-    const invalidate = vi.spyOn(client, 'invalidateQueries');
-    const { result } = renderHook(() => useDeleteCertificate(), { wrapper: wrapper(client) });
-
-    result.current.mutate('cert-1');
-
-    await waitFor(() => expect(mockDelete).toHaveBeenCalledWith('cert-1'));
-    await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: ['certificates'] }));
-    expect(toast.success).not.toHaveBeenCalled();
-  });
-
   it('bulk delete passes the ids through, invalidates, and stays silent', async () => {
     mockBulkDelete.mockResolvedValue({ message: 'ok', deleted_count: 2 });
     const client = newClient();
