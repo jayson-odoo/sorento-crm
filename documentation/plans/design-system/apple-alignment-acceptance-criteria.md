@@ -138,10 +138,45 @@ Added 2026-08-30 from the user's run on the built S6 (the window works; what hap
 ## S7 Feedback [FE]
 
 - **S7-01** A shared `useEntityMutation` factory gives optimistic updates with rollback to boolean and status toggles in expanded rows; the toggle flips before the request resolves. [FE][T]
+  Reconciled against the tree on 31 Aug: **five** row toggles were sitting disabled through their
+  round trip and all five move onto the factory (automation enabled, email event config enabled,
+  team round-robin, Respond outbound across three grids, and the users list's daily conversation
+  summary). The last of those also reached `apiFetch` from inside the component; the write moved to
+  `userService` on the way past. The BULK outbound write stays non-optimistic: it is one write over
+  a selection, with nothing to roll back per row.
 - **S7-02** Search inputs use one `useDebouncedSearch` (200ms) and show a settling indicator; the four mock-latency constants and the `lookupSetService` sleep are gone. [FE][T]
+  Reconciled against the tree on 31 Aug: 24 boxes migrated. Three 300ms timers remain and are
+  deliberate: `SearchableSelect`, `SearchableMultiSelect` and the two product comboboxes are option
+  PICKERS rather than list searches, so they keep their own shape and read `SEARCH_DEBOUNCE_MS`
+  instead of a literal. Also untouched: the portal's own pickers under `app/(auth)` (outside the
+  sidebar's world, as in S5) and the mention autocomplete in the internal comment composer, which
+  is not a search box. `ConversationListPane`'s existing debounce test was re-timed from 300 to the
+  shared 200.
 - **S7-03** Forms validate `onTouched`; the eight `setTimeout(form.reset)` are replaced by `defaultValues` / `values`. [FE][T]
+  Reconciled against the tree on 31 Aug: **43** forms carried `mode: 'onSubmit'` or no mode at all
+  and now validate `onTouched`. Two exceptions: `user-restore-dialog` keeps `onChange`, because its
+  button unlocks on `formState.isValid` as the confirmation is typed, and the Metronic store-client
+  demo pages are out of scope as they are everywhere else. Forms with no resolver have nothing to
+  validate and were left alone. The six converted forms that are edit PAGES also carry
+  `resetOptions: { keepDirtyValues: true }`: `values` re-applies whenever the record changes, and
+  without it a background refetch mid-edit would discard what was being typed. The two converted
+  DIALOGS name their create values as well as their edit ones, because the component stays mounted
+  between openings.
 - **S7-04** The ten busiest list routes have `loading.tsx` skeletons; `LayoutLoadingFallback` keeps the shell and skeletons only the content pane. [FE][E2E]
+  "Busiest" measured on 31 Aug, not guessed: `user_list_column_configs` records who has personalised
+  which listing, and the ten with the most distinct users are Users (28), Complaints (16), Products
+  (14), Forms (14), Attachment directories (13), Contact access agents (12), Import jobs (11),
+  Orders (10), SPO allocations (10), Promotions (9). One shared `ListPageSkeleton` serves all ten;
+  a Next route boundary also covers the segment's CHILDREN, so a record page under one of these
+  lists is held by the same shape.
 - **S7-05** Copy-to-clipboard actions show the inline checkmark only, no toast. [FE]
+  Reconciled against the tree on 31 Aug: 11 copy actions had a success toast, three of them on top
+  of a "Copied" the button was already showing. Six live in a dropdown and now keep their menu open
+  (`onSelect` + `preventDefault`), because an item that closes the menu has nowhere to put a tick,
+  which is why they had reached for a toast. FAILURE keeps its toast and its fallbacks: the
+  clipboard is refused over plain HTTP and nothing else on screen would say so. Left alone: the two
+  create-then-copy toasts (Complaint, Stock inquiry), which report that the RECORD was created and
+  mention the copy in passing.
 
 ## S8 Motion [FE]
 
