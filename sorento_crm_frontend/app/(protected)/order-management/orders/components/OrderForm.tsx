@@ -321,7 +321,7 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
           </div>
         )}
         <Tabs defaultValue="basic" className="w-full">
-          <TabsList className="grid w-full grid-cols-3">
+          <TabsList variant="default" className="grid w-full grid-cols-3">
             <TabsTrigger value="basic">Basic Information</TabsTrigger>
             <TabsTrigger value="remarks">Remarks</TabsTrigger>
             <TabsTrigger value="tracking">Delivery & Tracking</TabsTrigger>

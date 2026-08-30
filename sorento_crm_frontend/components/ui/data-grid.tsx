@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, ReactNode, useContext } from 'react';
+import { createContext, ReactNode, useContext, useEffect } from 'react';
 import { cn } from '@/lib/utils';
 import { ColumnFiltersState, RowData, SortingState, Table } from '@tanstack/react-table';
 import { useListingColumnPreferences } from '@/lib/listing-column-preferences/useListingColumnPreferences';
@@ -58,6 +58,18 @@ export interface DataGridProps<TData extends object> {
   recordCount: number;
   children?: ReactNode;
   onRowClick?: (row: TData) => void;
+  /**
+   * Makes every body row a link to the record's own page.
+   *
+   * Return the bare detail path (`/order-management/orders/${row.id}`); the grid
+   * appends the list state it is showing - page, limit, sort, search - so the
+   * detail page's pager can walk the same page the user came from. A filter the
+   * list keeps outside TanStack rides along in the returned href's own query
+   * string, and wins over the grid's value.
+   *
+   * `onRowClick` stays for the lists whose record is edited in a lightbox.
+   */
+  rowHref?: (row: TData) => string;
   isLoading?: boolean;
   loadingMode?: 'skeleton' | 'spinner';
   loadingMessage?: ReactNode | string;
@@ -170,6 +182,12 @@ function DataGrid<TData extends object>({ children, table, listingKey, ...props 
       rowBorder: true,
       rowRounded: false,
       stripped: false,
+      // NOT true by default (UAC S1-07's sticky clause is deferred to S4): the
+      // grid's own `overflow-x-auto` scroller is the scrollport and never scrolls
+      // vertically, so a default sticky header sticks to nothing - while the 29
+      // lists that get one today, from their own bounded-height ScrollArea, gained
+      // a competing sticky context above them. A real sticky header needs the grid
+      // to own a bounded height, which is S4's layout work.
       headerSticky: false,
       headerBackground: true,
       headerBorder: true,
@@ -218,6 +236,19 @@ function DataGrid<TData extends object>({ children, table, listingKey, ...props 
   if (!table) {
     throw new Error('DataGrid requires a "table" prop');
   }
+
+  // Resizing that only lands on release reads as a dropped gesture. The resize
+  // handler reads this option at pointer-down time, so setting it once here
+  // reaches every list, including the ~70 that never passed it - and it sticks:
+  // `useReactTable` merges the list's options over the PREVIOUS ones on each of
+  // its renders, and no list mentions columnResizeMode, so it is never reset.
+  // In an effect rather than the render body, because it mutates an object the
+  // caller owns.
+  useEffect(() => {
+    if (table && table.options.columnResizeMode !== 'onChange') {
+      table.setOptions((prev) => ({ ...prev, columnResizeMode: 'onChange' }));
+    }
+  }, [table]);
 
   // `listingKey={null}` is a real opt-out: nothing is fetched, applied or saved, and the
   // column menu loses its "Reset to defaults" entry because there is no config to reset.

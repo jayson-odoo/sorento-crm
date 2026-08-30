@@ -291,7 +291,7 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
         <Tabs defaultValue={PRODUCT_FORM_TABS.includes(searchParams.get('tab') ?? '')
             ? (searchParams.get('tab') as string)
             : 'basic'} className="w-full">
-          <TabsList className="grid w-full grid-cols-5">
+          <TabsList variant="default" className="grid w-full grid-cols-5">
             <TabsTrigger value="basic">Basic Information</TabsTrigger>
             <TabsTrigger value="pricing">Pricing</TabsTrigger>
             <TabsTrigger value="specifications">Specifications</TabsTrigger>

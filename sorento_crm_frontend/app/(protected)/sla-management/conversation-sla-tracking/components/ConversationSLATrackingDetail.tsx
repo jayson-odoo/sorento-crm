@@ -784,7 +784,7 @@ export default function ConversationSLATrackingDetail({
       </AlertDialog>
 
       <Tabs defaultValue="overview" className="w-full">
-        <TabsList>
+        <TabsList variant="default">
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="event-log">Event Log</TabsTrigger>
         </TabsList>

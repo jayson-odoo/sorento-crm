@@ -166,7 +166,7 @@ export default function PromotionForm({ promotionId, onSuccess }: PromotionFormP
           </div>
         )}
         <Tabs defaultValue="basic" className="w-full">
-          <TabsList>
+          <TabsList variant="default">
             <TabsTrigger value="basic">Basic Information</TabsTrigger>
             {isEditMode && (
               <TabsTrigger value="attachments">Attachments</TabsTrigger>
