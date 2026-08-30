@@ -673,6 +673,47 @@ def _spec_values(db, product, values):
     db.flush()
 
 
+class TestMeasurementsPrintAsMeasured:
+    """A dimension read out of JSONB is a float, and floats do not round-trip.
+
+    ``Decimal(407.3)`` is 407.29999999999998863131622783839702606201171875, and
+    ``normalize():f`` prints every one of those digits. The spec row wins over
+    the master columns, so a product whose reviewed specs carry a fractional
+    measurement had that on the physical tag.
+    """
+
+    def test_a_fractional_dimension_prints_as_it_was_measured(self):
+        from app.services.dealer_kit.tag_data_service import format_dimensions_mm
+
+        assert format_dimensions_mm(407.3, 500, 220) == "407.3 x 500 x 220 mm"
+
+    def test_a_whole_float_keeps_its_shape_too(self):
+        from app.services.dealer_kit.tag_data_service import format_dimensions_mm
+
+        assert format_dimensions_mm(800.0, 500.0, 220.0) == "800 x 500 x 220 mm"
+
+    def test_a_spec_row_measurement_reaches_the_tag_intact(self, db):
+        """The path that actually feeds a printed tag: JSONB, not a column."""
+        from app.services.dealer_kit import tag_data_service
+
+        product = _product(db)
+        _spec_values(
+            db,
+            product,
+            {
+                "dim_length": {"value": 407.3, "unit": "mm"},
+                "dim_width": {"value": 500, "unit": "mm"},
+                "dim_height": {"value": 220, "unit": "mm"},
+            },
+        )
+
+        data = tag_data_service.product_tag_data(
+            db, product, tag_data_service.staff_viewer(), with_images=False
+        )
+
+        assert data["dimensions"] == "407.3 x 500 x 220 mm"
+
+
 class TestProductSpecs:
     """``{{spec.<key>}}`` needs the product's specs key by key.
 

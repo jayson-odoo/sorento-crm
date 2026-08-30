@@ -79,13 +79,22 @@ def format_dimensions_mm(length, width, height) -> Optional[str]:
     mm" on a tag whose flyer says "800 x 500 x 220 mm". ``normalize()`` drops the
     stored scale without touching a genuine fraction, so 12.50 still prints as
     12.5.
+
+    ``Decimal(str(part))``, never ``Decimal(part)``: a measurement that comes
+    from the reviewed spec row arrives as a JSON number, which is a Python
+    FLOAT, and ``Decimal(407.3)`` is 407.2999999999999886313162278383970260620
+    exactly. Printed, that is 28 digits of binary noise on a physical tag, and
+    the spec branch wins over the master columns so it is the branch a real
+    product with a fractional measurement takes. Going through ``str`` keeps the
+    number that was measured.
     """
     parts = [length, width, height]
     if not any(part is not None for part in parts):
         return None
     return (
         " x ".join(
-            "-" if part is None else f"{Decimal(part).normalize():f}" for part in parts
+            "-" if part is None else f"{Decimal(str(part)).normalize():f}"
+            for part in parts
         )
         + " mm"
     )
