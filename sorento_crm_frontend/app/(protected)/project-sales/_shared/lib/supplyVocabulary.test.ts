@@ -122,6 +122,20 @@ describe('rowOf reads the rung, never the warehouse code', () => {
     ).toBe('borrow_order');
   });
 
+  it('reads a FREE step-3 document as a borrow all the same (S4)', () => {
+    // A document nobody was waiting on names no donor, and the unrunged fallback would
+    // read that as 'borrow_other' - "Borrow other location", which is a location this
+    // line never borrows from. The RUNG decides, as it does everywhere else here.
+    expect(
+      rowOf({
+        kind: 'borrow',
+        rung: 'supply_borrow',
+        qty: '32',
+        location: 'BRW-BB',
+      }),
+    ).toBe('borrow_order');
+  });
+
   it('tells the pool free draw from the pool BORROW, which owes a debt back (R34)', () => {
     // Step 4a takes the free pile and nobody is owed it; step 4b takes a LATER POOL ORDER's
     // on hand and raises an ORDER_BACK against it. Both carry `rung: 'pool'`, so the donor

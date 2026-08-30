@@ -431,6 +431,14 @@ def _movements(
         for component in snapshot.get("components") or []:
             if component.get("kind") not in ("reserve", "borrow"):
                 continue
+            if component.get("supply_key"):
+                # LADDER V7.1 STEP 3 (S4): a DOCUMENT, not stock on a floor. Nothing can be
+                # carried between two bins until it lands, and the bin on the component is
+                # where the container is BOUND for, not where the goods are. The movement
+                # this implies is raised when the goods are received, by the receiving
+                # flow, and raising it now would put a transfer nobody can pick on a
+                # warehouse's list for months.
+                continue
             qty = _dec(component.get("qty"))
             if qty <= _ZERO:
                 continue

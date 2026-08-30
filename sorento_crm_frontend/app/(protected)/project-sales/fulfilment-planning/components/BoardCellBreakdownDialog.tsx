@@ -987,6 +987,24 @@ export function sourceLabel(
  */
 /** Exported for the same reason `sourceLabel` is - see its comment. */
 export function sourceAt(source: BoardContribution['sources'][number]): string {
+  // LADDER v7.1 STEP 3 (S4, AC-S4-5): a DOCUMENT, so the row names the document and the day
+  // it lands - "SPO 202607-S0105, arriving 15 Sep 2026" - before it names whose order gives
+  // it up. Both facts come from the server as fields (the client never parses them back out
+  // of the sentence), and the arrival is the whole reason a planner would accept this row
+  // over a Buy.
+  if (source.supply_document) {
+    const arriving = source.arrival_date
+      ? `, arriving ${formatDateInMalaysia(source.arrival_date)}`
+      : '';
+    const from = source.donor_so_number
+      ? ` from ${source.donor_so_number}${
+          source.donor_line_no !== null && source.donor_line_no !== undefined
+            ? ` line ${source.donor_line_no}`
+            : ''
+        }`
+      : '';
+    return ` ${source.supply_document}${arriving}${from}`;
+  }
   if (source.kind === 'borrow' && source.donor_so_number) {
     const line =
       source.donor_line_no !== null && source.donor_line_no !== undefined

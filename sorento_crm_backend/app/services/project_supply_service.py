@@ -96,8 +96,13 @@ from app.models.project_so import (
     DECISION_ACTIVE,
     DECISION_CHALLENGED,
     DECISION_SUPERSEDED,
+    INQUIRY_CANCELLED,
+    INQUIRY_RAISED,
+    IV_ORDER_BACK,
     LIVE_SO_STATUSES,
     AllocationClaim,
+    OrderInquiryLink,
+    OrderInquiryRow,
     ProjectSalesOrder,
     ProjectSalesOrderLine,
     SOLineAllocation,
@@ -132,6 +137,7 @@ from app.services.scm.front_planning_engine import (
     RUNG_GROUP_TAKE,
     RUNG_ORDER_BORROW,
     RUNG_POOL,
+    RUNG_SUPPLY_BORROW,
     TIMELY_SPO,
     Component,
     Option,
@@ -143,6 +149,7 @@ from app.services.scm.front_planning_engine import (
     qty_text,
     reserve_window_end,
     spo_reason,
+    supply_borrow_reason,
     walk_line,
 )
 # Ladder v7.1 reads ONE assignment with the Stock Debt view (R21). Aliased on import so the
@@ -150,6 +157,8 @@ from app.services.scm.front_planning_engine import (
 # own states would read as the same word twice.
 from app.services.scm.supply_assignment import (
     KIND_ON_HAND as SA_KIND_ON_HAND,
+    KIND_PO as SA_KIND_PO,
+    KIND_SPO as SA_KIND_SPO,
     POOL_GROUP as SA_POOL_GROUP,
     STATUS_COVERED as SA_STATUS_COVERED,
     STATUS_PINNED as SA_STATUS_PINNED,
@@ -853,6 +862,16 @@ class ProjectSupplyService:
         # of the same confirm cannot both take the whole of it (seeded net of what OTHER
         # confirmed decisions already hold from it, S1 - see `_group_borrow_held_qty`).
         self._donor_line_ledger: Dict[str, Decimal] = {}
+        # Ladder v7.1 step 3 (S4): how much of ONE incoming document is still available to
+        # this confirmation, seeded from the live book net of every placement link on it -
+        # so two lines of one confirm cannot both be given the whole of it, exactly as
+        # `_donor_line_ledger` stops two lines taking the whole of one donor line.
+        self._supply_doc_ledger: Dict[str, Decimal] = {}
+        #: Which holders' placements this confirmation has already credited back into that
+        #: ledger - `(document, holder)`. A holder is credited ONCE however many components
+        #: name it, or a document held by one donor would read as twice the size the moment
+        #: two lines of the same confirm asked for it.
+        self._supply_doc_credited: Set[Tuple[str, str]] = set()
         # The ATP reserve window's lead time per product, read once each per request: a board
         # of 300 lines asks about the same handful of products.
         self._lead_time_memo: Dict[str, Optional[int]] = {}
@@ -1233,6 +1252,7 @@ class ProjectSupplyService:
         as_of: Optional[date] = None,
         pools_net_left: Optional[Decimal] = None,
         other_group_left: Optional[MutableMapping[str, Decimal]] = None,
+        supply_left: Optional[MutableMapping[str, Decimal]] = None,
     ):
         """`compose_line` plus the five OPTIONS behind it (R36, AC-S3-14).
 
@@ -1247,6 +1267,7 @@ class ProjectSupplyService:
         group_take: List[Dict[str, Any]] = []
         other_group: List[Dict[str, Any]] = []
         order_borrow: List[Dict[str, Any]] = []
+        supply_borrow: List[Dict[str, Any]] = []
         pool_borrow: List[Dict[str, Any]] = []
         pools: List[Dict[str, Any]] = []
         own_offer = _ZERO
@@ -1257,6 +1278,9 @@ class ProjectSupplyService:
             )
             order_borrow = self.order_borrow_candidates_for(
                 fact, as_of=as_of, borrow_left=borrow_left
+            )
+            supply_borrow = self.supply_borrow_candidates_for(
+                fact, as_of=as_of, supply_left=supply_left
             )
             pool_borrow = self.order_borrow_candidates_for(
                 fact, as_of=as_of, borrow_left=borrow_left, pool=True
@@ -1278,6 +1302,7 @@ class ProjectSupplyService:
             group_take_candidates=group_take,
             other_group_candidates=other_group,
             order_borrow_candidates=order_borrow,
+            supply_borrow_candidates=supply_borrow,
             pool_borrow_candidates=pool_borrow,
             outside_reserve_window=outside_window,
             # Step 1's own number, date-aware since v7.1 (R24): what the ASSIGNMENT gave
@@ -1299,8 +1324,8 @@ class ProjectSupplyService:
         own key, with the shared piles drawn down once as the walk passes them.
 
         `entries` is `(key, fact, unit_key)` in walk order, and the answer for each key is
-        `(components, pool_open, borrow_open, net_open, options, other_group_open)` - the
-        composition, the five options behind it (R36), and what the
+        `(components, pool_open, borrow_open, net_open, options, other_group_open,
+        supply_open)` - the composition, the five options behind it (R36), and what the
         shared piles held when its unit was reached: this line's own site pool's free
         stock, the cross-group donors by warehouse id, and the five site pools' NET (the
         number that bounds rung 2, `pool_reserve_capacity`). The board's proof states both, and it states
@@ -1340,7 +1365,7 @@ class ProjectSupplyService:
         walk: List[Any] = []
         for key, fact, unit_key in entries:
             if fact.unplannable_reason:
-                out[key] = ((), None, {}, None, (), {})
+                out[key] = ((), None, {}, None, (), {}, {})
                 continue
             if unit_key not in units:
                 units[unit_key] = []
@@ -1373,6 +1398,11 @@ class ProjectSupplyService:
         # product id -> WAREHOUSE CODE -> what another project group's free pile still has
         # on the table in this walk (R40, step 1's offer half). See `use_candidates_for`.
         other_group_left: Dict[str, Dict[str, Decimal]] = {}
+        # product id -> EVENT KEY -> what one incoming document still has on the table in
+        # this walk (step 3, `supply_borrow_candidates_for`). Keyed by the DOCUMENT and not
+        # by a bin or a donor: R33 gives the whole unit to one document, so the document is
+        # the thing two units of a board compete for.
+        supply_left: Dict[str, Dict[str, Decimal]] = {}
         for unit_key in walk:
             arrived = units[unit_key]
             members = self._members_in_line_order(arrived)
@@ -1417,6 +1447,12 @@ class ProjectSupplyService:
             # what each pile held when this unit was REACHED, and re-reading it live is how
             # question 1 came to name a bin the walk had already emptied.
             other_group_open = dict(other_group) if other_group is not None else {}
+            supply = (
+                supply_left.setdefault(unit_fact.product_id, {})
+                if unit_fact.product_id
+                else None
+            )
+            supply_open = dict(supply) if supply is not None else {}
             walked = self.walk(
                 unit_fact,
                 pool_free_left=pool_open,
@@ -1424,6 +1460,7 @@ class ProjectSupplyService:
                 as_of=as_of,
                 pools_net_left=net_open,
                 other_group_left=other_group,
+                supply_left=supply,
             )
             components = walked.components
             options = walked.options
@@ -1465,11 +1502,19 @@ class ProjectSupplyService:
                     other_group[code] = max(
                         other_group.get(code, _ZERO) - component.qty, _ZERO
                     )
+            if supply is not None:
+                # Drawn down by what was COMPOSED, never by what was merely offered: the
+                # step offers a whole document and takes only what the unit needed.
+                for component in components:
+                    key_of = getattr(component, "supply_key", None)
+                    if not key_of:
+                        continue
+                    supply[key_of] = max(supply.get(key_of, _ZERO) - component.qty, _ZERO)
 
             if len(members) == 1:
                 out[members[0][0]] = (
                     components, pool_open, borrow_open, net_open, options,
-                    other_group_open,
+                    other_group_open, supply_open,
                 )
                 continue
             for key, split in self._split_unit(members, components).items():
@@ -1478,6 +1523,7 @@ class ProjectSupplyService:
                 # table and the reader sees why the unit was decided the way it was.
                 out[key] = (
                     split, pool_open, borrow_open, net_open, options, other_group_open,
+                    supply_open,
                 )
         return out
 
@@ -2378,6 +2424,185 @@ class ProjectSupplyService:
         out.sort(key=self._donor_order)
         return out
 
+    def supply_borrow_candidates_for(
+        self,
+        fact: _LineFacts,
+        *,
+        as_of: Optional[date] = None,
+        supply_left: Optional[MutableMapping[str, Decimal]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Step 3 (R27, R30, R32, R33, R35): the ONE document that covers the whole unit.
+
+        A supply event - an SPO allocation, or a purchase-order line net of the SPO cut from
+        it - is a candidate when it is ELIGIBLE and when the whole of this unit can be met
+        off it alone. Everything else about the step follows from those two words.
+
+        **Eligible** (R32): it arrives by the asker's own date, OR before a fresh purchase
+        raised today would land (`as_of + lead`). The second half is the captain's, on
+        AC-S4-2b's row: "if buy, it is going to arrive even later". Such a line is late, and
+        it is the earliest thing the ladder still has.
+
+        **One document, whole** (R33): the quantity available off ONE event has to cover the
+        unit. An SPO of 5 beside a PO of 7 does not cover a unit of 12, and the walk moves
+        on rather than promising one delivery on two dates. That is why this returns the
+        rows of a single document and not a merged list - the engine walks what it is given,
+        and a flat list of every eligible document would let it combine them.
+
+        **SPO before PO, and a PO only when no single SPO covers** (R27, R30, R35). An SPO
+        is ARRIVING; a PO is still ON ORDER, and the SPO placed on it is already netted out
+        of it (`_po_rows`). Nearest arrival first inside each family, then R19's donor order
+        so two documents landing the same day are broken the way every other donor list is.
+
+        **What is available off one document** is what nobody has been promised - `free` in
+        the assignment - plus what an ELIGIBLE later order holds of it: the same window and
+        the same donor rules step 2 applies (`order_borrow_candidates_for`), because a donor
+        that cannot itself wait is no donor whether it is holding stock or a promise. Free
+        rows come first inside the document: taking them owes nobody anything.
+
+        `supply_left` is the walk's ledger, keyed by event (`compose_lines`). Without it
+        every unit of a board reads the same document whole and `confirm` refuses all but
+        the first - the defect four delivery dates of SO381895 hit on the donor rung on
+        28 August 2026.
+        """
+        if not fact.product_id:
+            return []
+        as_of = as_of or self._walk_as_of or date.today()
+        result = self.planning_assignments([fact.product_id], as_of=as_of).get(
+            str(fact.product_id)
+        )
+        if result is None:
+            return []
+        need = max(_dec(fact.open_qty), _ZERO)
+        if need <= _ZERO:
+            return []
+        lead = self._lead_time_days(fact.product_id)
+        # The two dates eligibility is measured against (R32). `buy_lands` is the earliest a
+        # purchase raised today could arrive, which is what makes a late document better
+        # than nothing rather than merely late.
+        buy_lands = as_of + timedelta(
+            days=DEFAULT_LEAD_TIME_DAYS if lead is None else max(int(lead), 0)
+        )
+        window = reserve_window_end(as_of, lead)
+        tba_from = self._tba_date_from()
+        my_so = self._so_number_of(fact)
+        mine = next(
+            (
+                self._assignment_line(fact, line_id, as_of=as_of)
+                for line_id in self._unit_line_ids(fact)
+            ),
+            None,
+        )
+        my_agent = mine.line.agent_code if mine is not None else None
+
+        def eligible_donor(line: Any) -> bool:
+            """Step 2's donor rules, unchanged (R3, R12): only an order that can WAIT lends.
+
+            Read off the same `DemandLine` step 2 reads, so "a later order" cannot come to
+            mean one thing when it is holding stock and another when it is holding a
+            promise.
+            """
+            if line.is_pool:
+                return False
+            if line.required_date is None or line.required_date >= tba_from:
+                return False
+            if line.required_date < window:
+                return False
+            if my_so and (line.so_number or "") == my_so:
+                return False
+            return str(line.key) not in self._current_selection_core_ids
+
+        # What each event still has on the table: free first, then each eligible donor's
+        # hold of it, in R19's order. Keyed by event, because ONE document is the unit here.
+        rows_by_event: Dict[str, List[Dict[str, Any]]] = {}
+        for row in result.lines:
+            if not eligible_donor(row.line):
+                continue
+            if row.status not in (SA_STATUS_COVERED, SA_STATUS_PINNED):
+                continue
+            donor_group = sales_agent_service.group_of_warehouse_code(row.line.warehouse)
+            for item in row.assigned:
+                event = item.event
+                if event.kind not in (SA_KIND_SPO, SA_KIND_PO) or event.is_pool:
+                    continue
+                qty = max(_dec(item.qty), _ZERO)
+                if qty <= _ZERO:
+                    continue
+                rows_by_event.setdefault(str(event.key), []).append(
+                    {
+                        "qty": qty,
+                        "donor_so_number": row.line.so_number or None,
+                        "donor_line_no": row.line.line_no,
+                        "donor_agent_code": row.line.agent_code,
+                        "donor_core_line_id": str(row.line.key),
+                        "donor_required_date": row.line.required_date,
+                        "same_agent": bool(
+                            my_agent and row.line.agent_code == my_agent
+                        ),
+                        "same_group": bool(donor_group)
+                        and donor_group == fact.group_code,
+                        "same_warehouse": event.warehouse == fact.own_code,
+                    }
+                )
+
+        documents: List[Tuple[tuple, str, List[Dict[str, Any]]]] = []
+        for event in result.supply:
+            if event.kind not in (SA_KIND_SPO, SA_KIND_PO) or event.is_pool:
+                continue
+            arrival = event.at
+            if arrival is None:
+                continue
+            timely = fact.required_date is not None and arrival <= fact.required_date
+            if not timely and arrival >= buy_lands:
+                # No better than buying, so there is nothing to prefer it for (R32).
+                continue
+            free = max(_dec(result.free.get(str(event.key), 0)), _ZERO)
+            held = rows_by_event.get(str(event.key), [])
+            budget = free + sum((entry["qty"] for entry in held), _ZERO)
+            if supply_left is not None:
+                budget = min(
+                    budget, max(_dec(supply_left.setdefault(str(event.key), budget)), _ZERO)
+                )
+            if budget < need:
+                # A document that cannot cover the unit on its own is not an option at all
+                # (R33): the step gives nothing rather than half of something.
+                continue
+            rows: List[Dict[str, Any]] = []
+            shared = {
+                "location": event.warehouse,
+                "supply_key": str(event.key),
+                "supply_kind": event.kind,
+                "supply_document": event.ref,
+                "arrival_date": arrival,
+            }
+            if free > _ZERO:
+                # Free first: it owes nobody, so it is the part of the document that costs
+                # the least to take.
+                rows.append({**shared, "qty": free})
+            for entry in sorted(held, key=self._donor_order):
+                rows.append({**shared, **entry})
+            documents.append(
+                (
+                    (
+                        # SPO before PO (R27, R35), then nearest arrival, then R19's donor
+                        # order, then the document itself so two runs cannot disagree.
+                        0 if event.kind == SA_KIND_SPO else 1,
+                        arrival,
+                        min(
+                            (self._donor_order(entry) for entry in held),
+                            default=(),
+                        ),
+                        str(event.ref or ""),
+                        str(event.key),
+                    ),
+                    str(event.key),
+                    rows,
+                )
+            )
+        if not documents:
+            return []
+        documents.sort(key=lambda item: item[0])
+        return documents[0][2]
+
     @staticmethod
     def _donor_order(candidate: Mapping[str, Any]) -> tuple:
         """R4 + R19, in one place: same agent, then latest date, then same group, then the
@@ -3053,6 +3278,13 @@ class ProjectSupplyService:
             ),
             "donor_core_line_id": component.donor_core_line_id,
             "donor_required_date": component.donor_required_date,
+            # Step 3 (S4): WHICH document, how it is named, and when it lands. Carried on
+            # every component rather than only on a `supply_borrow` one, because a reader
+            # that has to ask which kind it is holding before it knows which keys exist is
+            # a reader that will one day drop the keys.
+            "supply_key": component.supply_key,
+            "supply_document": component.supply_document,
+            "arrival_date": component.arrival_date,
         }
 
     def _resolve_source_warehouse_id(
@@ -4175,6 +4407,15 @@ class ProjectSupplyService:
             refuse(invalid, "That location no longer exists.")
             return
 
+        supply_key = str(getattr(item, "supply_key", "") or "")
+        if supply_key:
+            # LADDER V7.1 STEP 3: this is a DOCUMENT, not stock on a floor, so neither the
+            # free-stock read below nor the donor line's committed quantity is the thing to
+            # judge it against. What it is judged against is the document's own open
+            # balance, net of the placements already on it.
+            self._check_supply_borrow(supply_key, item, fact, refuse, stale, invalid)
+            return
+
         donor_core_line_id = getattr(item, "donor_core_line_id", None)
         if item.source == ALLOC_SOURCE_OTHER_LOCATION and donor_core_line_id:
             self._check_group_borrow(
@@ -4278,6 +4519,182 @@ class ProjectSupplyService:
         from_hold = min(qty, held)
         borrow_left.take_held(fact.product_id, str(warehouse.id), str(donor.id), from_hold)
         borrow_left.take_free(fact.product_id, str(warehouse.id), qty - from_hold)
+
+    def _check_supply_borrow(
+        self,
+        supply_key: str,
+        item: Any,
+        fact: _LineFacts,
+        refuse,
+        stale: List[Dict[str, Any]],
+        invalid: List[Dict[str, Any]],
+    ) -> None:
+        """Step 3, re-read live (AC-C03): is the DOCUMENT still there, and still free of it?
+
+        A document is not stock, so neither test the other borrows make applies: there is no
+        floor to read free stock off, and no donor line whose committed quantity bounds it.
+        What bounds it is the document's own OPEN BALANCE - what is still to come on it -
+        less every placement already written against it, which is exactly the number the
+        Confirm is about to write a placement into.
+
+        Two placements are CREDITED BACK, because this Confirm is about to take them down:
+        the named DONOR's (PLAN 3.3's middle clause - judging against it would refuse the
+        very move being made) and this line's OWN, resubmitted, for the reason every other
+        component here has its carried quantity added back. Each holder is credited once
+        per document however many components name it.
+
+        Per-confirmation ledger, so two lines of one confirmation asking for the same
+        document draw it down between them rather than each being told it is whole.
+        """
+        qty = _dec(item.qty)
+        if qty <= _ZERO:
+            return
+        if not (item.reason or "").strip():
+            refuse(
+                invalid,
+                "Borrowing takes a reason. Say why this line is taking somebody else's "
+                "stock.",
+            )
+            return
+        named = getattr(item, "supply_document", None) or "That document"
+        if supply_key not in self._supply_doc_ledger:
+            balance = self._supply_document_balance(supply_key)
+            if balance is None:
+                refuse(
+                    invalid,
+                    f"{named} is no longer an open document, so nothing can be taken off "
+                    "it. Buy the quantity instead.",
+                )
+                return
+            self._supply_doc_ledger[supply_key] = balance
+        holders = [
+            ("line", str(fact.line.id) if fact.line is not None else ""),
+            ("donor", str(getattr(item, "donor_core_line_id", None) or "")),
+        ]
+        for kind, holder_id in holders:
+            if not holder_id or (supply_key, holder_id) in self._supply_doc_credited:
+                continue
+            self._supply_doc_credited.add((supply_key, holder_id))
+            self._supply_doc_ledger[supply_key] += self._supply_document_held_by(
+                supply_key, holder_id, by_core_line=kind == "donor"
+            )
+        available = self._supply_doc_ledger[supply_key]
+        if qty > available:
+            refuse(
+                stale,
+                f"{named} now has {qty_text(max(available, _ZERO))} left, and "
+                f"{qty_text(qty)} was asked for.",
+            )
+            return
+        self._supply_doc_ledger[supply_key] = available - qty
+
+    def _supply_document_balance(self, supply_key: str) -> Optional[Decimal]:
+        """What is still to come on this document, less every placement already on it.
+
+        `None` when the document is closed, received or gone - which is a refusal and not a
+        zero, because "it has nothing left" and "it is not there" send a planner to two
+        different places.
+        """
+        kind, _sep, target = supply_key.partition(":")
+        if not target:
+            return None
+        if kind == SA_KIND_SPO:
+            row = (
+                self.db.query(SPOAllocation)
+                .outerjoin(
+                    InboundShipment,
+                    InboundShipment.id == SPOAllocation.inbound_shipment_id,
+                )
+                .filter(
+                    SPOAllocation.id == target,
+                    # The one copy of "this row is still incoming" (`spo_supply`), the same
+                    # clauses `_spo_rows` read it with - so the document the ladder offered
+                    # and the document the Confirm re-reads cannot come to differ.
+                    *spo_supply.open_incoming_clauses(),
+                )
+                .first()
+            )
+            if row is None:
+                return None
+            open_qty = _dec(row.allocated_quantity) - _dec(row.quantity_received)
+        elif kind == SA_KIND_PO:
+            row = (
+                self.db.query(PurchaseOrderLine)
+                .join(
+                    PurchaseOrder,
+                    PurchaseOrder.id == PurchaseOrderLine.purchase_order_id,
+                )
+                .filter(
+                    PurchaseOrderLine.id == target,
+                    PurchaseOrderLine.line_status == "open",
+                    PurchaseOrder.status.in_(OPEN_PO_STATUSES),
+                )
+                .first()
+            )
+            if row is None:
+                return None
+            open_qty = _dec(row.qty_ordered) - _dec(row.qty_received)
+        else:
+            return None
+        if open_qty <= _ZERO:
+            return None
+        placed = sum(
+            (qty for _line_id, _core_id, qty in self._supply_document_links(supply_key)),
+            _ZERO,
+        )
+        return max(open_qty - placed, _ZERO)
+
+    def _supply_document_links(
+        self, supply_key: str
+    ) -> List[Tuple[str, str, Decimal]]:
+        """Every LIVE placement on this document: `(project line id, core line id, qty)`.
+
+        A CANCELLED inquiry row holds nothing - the same filter every other consumer of
+        these links applies - so a withdrawn placement does not go on reserving a document
+        nobody is waiting on.
+        """
+        kind, _sep, target = supply_key.partition(":")
+        if not target:
+            return []
+        column = (
+            OrderInquiryLink.spo_allocation_id
+            if kind == SA_KIND_SPO
+            else OrderInquiryLink.po_line_id
+        )
+        rows = (
+            self.db.query(
+                ProjectSalesOrderLine.id,
+                ProjectSalesOrderLine.core_sales_order_line_id,
+                OrderInquiryLink.qty,
+            )
+            .select_from(OrderInquiryLink)
+            .join(OrderInquiryRow, OrderInquiryRow.id == OrderInquiryLink.row_id)
+            .outerjoin(
+                ProjectSalesOrderLine,
+                ProjectSalesOrderLine.id == OrderInquiryRow.so_line_id,
+            )
+            .filter(column == target, OrderInquiryRow.state != INQUIRY_CANCELLED)
+            .all()
+        )
+        return [
+            (str(line_id or ""), str(core_id or ""), _dec(qty))
+            for line_id, core_id, qty in rows
+        ]
+
+    def _supply_document_held_by(
+        self, supply_key: str, holder_id: str, *, by_core_line: bool
+    ) -> Decimal:
+        """How much of this document one holder's placements are holding, by PROJECT line
+        (this order's own, resubmitted) or by CORE line (the donor's, which this Confirm is
+        about to take down)."""
+        return sum(
+            (
+                qty
+                for line_id, core_id, qty in self._supply_document_links(supply_key)
+                if (core_id if by_core_line else line_id) == holder_id
+            ),
+            _ZERO,
+        )
 
     def _check_group_borrow(
         self,
@@ -4476,7 +4893,7 @@ class ProjectSupplyService:
             as_of=as_of,
         )
         return {
-            str(line.id): composed.get(str(line.id), ((), None, {}))[0]
+            str(line.id): composed.get(str(line.id), ((),))[0]
             for line, _entry, _fact in checked
         }
 
@@ -4635,6 +5052,13 @@ class ProjectSupplyService:
             ),
             settle_in_place_line_ids=settle_in_place_line_ids,
         )
+        # LADDER V7.1 STEP 3'S OTHER HALF (PLAN 3.3, R8): the placement MOVES. Run after
+        # the handoff, because it needs the inquiry header the handoff mints and because the
+        # donor's own hole is raised there - the asker's row is a different row with a
+        # different date, and the two only make sense together.
+        self._place_supply_borrows(
+            order, decision, checked, handoff["inquiry"], actor_user_id=actor_user_id
+        )
         auto_place_products = sorted(
             {
                 str(entry["line"].product_id)
@@ -4687,6 +5111,129 @@ class ProjectSupplyService:
             # has already run it by the time this returns. In-process only, like the above.
             "auto_place_products": auto_place_products,
         }
+
+    def _place_supply_borrows(
+        self,
+        order: ProjectSalesOrder,
+        decision: SOSupplyDecision,
+        checked: Sequence[Tuple[ProjectSalesOrderLine, Any, _LineFacts]],
+        inquiry: Any,
+        *,
+        actor_user_id: str,
+    ) -> None:
+        """Move the placement onto the asker, for every step-3 borrow this Confirm decided
+        (PLAN 3.3, R8, AC-S4-3).
+
+        Three writes, in this order, and the order is the whole of it:
+
+        1. the DONOR's own placement on that document comes down for what it is giving up.
+           First, because until it does the document reads as fully claimed and the asker's
+           own link would be refused by the very rule that stops two rows pointing at one
+           quantity;
+        2. the ASKER gets an `ORDER_BACK`-verb row NAMING that document in `covered_by` -
+           which is what that column has always meant, "why no ORDER row was emitted: the
+           inbound that already covers this quantity" - and the link is written on it. The
+           verb is ORDER_BACK because it is the only verb whose links may name an
+           `spo_allocations` row (`OrderInquiryLink`), and the reason that rule exists is
+           exactly this case: an order back is a shortfall against something already
+           ordered, and the asker's is;
+        3. the DONOR's own hole is already raised, at the donor's own date, by
+           `_borrow_shortfalls` - the same writer step 2 uses, because it is the same fact.
+
+        And then nothing else has to happen. `assign()` reads a link as a pinned hold
+        (`stock_debt_service._holds`), so the next read of the book has the asker covered off
+        that document and the donor short in its own month, with no second ledger to keep in
+        step.
+
+        A row raised by an EARLIER revision of this order for the same line is CANCELLED
+        first, links and all: it named a document this revision is no longer taking, and a
+        placement left standing would hold a document for an instruction that no longer
+        exists. That is `_retire_uncovered_rows`' own rule, applied to the rows this method
+        owns.
+        """
+        from app.services.project_order_inquiry_service import (
+            ProjectOrderInquiryService,
+        )
+
+        wanted = [
+            (line, item)
+            for line, entry, _fact in checked
+            for item in (entry.borrow or [])
+            if getattr(item, "supply_key", None) and _dec(item.qty) > _ZERO
+        ]
+        line_ids = {str(line.id) for line, _item in wanted} | {
+            str(line.id) for line, _entry, _fact in checked
+        }
+        service = ProjectOrderInquiryService(self.db)
+        # Every previous revision's step-3 row on a line this confirmation decided. Read by
+        # `covered_by`, which is what tells one of these apart from a donor hole raised on
+        # the same line (see `_raise_borrow_shortfalls`).
+        stale = (
+            self.db.query(OrderInquiryRow)
+            .filter(
+                OrderInquiryRow.order_inquiry_id == inquiry.id,
+                OrderInquiryRow.verb == IV_ORDER_BACK,
+                OrderInquiryRow.covered_by.isnot(None),
+                OrderInquiryRow.state != INQUIRY_CANCELLED,
+                OrderInquiryRow.so_line_id.in_(sorted(line_ids)),
+            )
+            .all()
+            if line_ids
+            else []
+        )
+        if stale:
+            (
+                self.db.query(OrderInquiryLink)
+                .filter(OrderInquiryLink.row_id.in_([row.id for row in stale]))
+                .delete(synchronize_session=False)
+            )
+            for row in stale:
+                row.state = INQUIRY_CANCELLED
+                row.note = f"Superseded by revision {decision.revision_no}"
+            self.db.flush()
+        if not wanted:
+            return
+
+        for line, item in wanted:
+            qty = _dec(item.qty)
+            supply_key = str(item.supply_key)
+            donor_core_line_id = getattr(item, "donor_core_line_id", None)
+            if donor_core_line_id:
+                service.release_supply_borrow(
+                    supply_key=supply_key,
+                    core_line_id=str(donor_core_line_id),
+                    qty=qty,
+                )
+            fact = next(
+                (f for candidate, _e, f in checked if str(candidate.id) == str(line.id)),
+                None,
+            )
+            document = getattr(item, "supply_document", None)
+            row = OrderInquiryRow(
+                company_id=order.company_id,
+                order_inquiry_id=inquiry.id,
+                so_line_id=line.id,
+                item_code=fact.item_code if fact is not None else None,
+                qty=qty,
+                # THE ASKER's own date, not the donor's: this row says when this line needs
+                # the goods the document is bringing. The donor's hole carries the donor's
+                # date, and it is a different row for that reason.
+                delivery_date=(
+                    (fact.required_date if fact is not None else None)
+                    or line.delivery_date
+                ),
+                stock_location=(fact.own_code if fact is not None else None),
+                verb=IV_ORDER_BACK,
+                covered_by=document,
+                note=(item.reason or "").strip() or None,
+                supply_decision_id=decision.id,
+                state=INQUIRY_RAISED,
+            )
+            self.db.add(row)
+            self.db.flush()
+            service.place_supply_borrow(
+                row, supply_key=supply_key, qty=qty, actor_user_id=actor_user_id
+            )
 
     def _supersede_borrowed_donors(
         self,
@@ -5084,6 +5631,13 @@ class ProjectSupplyService:
                     # A borrow from another ORDER: already raised above, against the donor
                     # LINE, which is a sharper record than the location it sits at.
                     continue
+                if getattr(item, "supply_key", None):
+                    # STEP 3 ON A FREE DOCUMENT (S4). Nobody was waiting on it, so nobody is
+                    # owed it back - the same rule step 1's free pile follows. The location
+                    # test below would have read the bin the container is BOUND for as a
+                    # donor group and raised an order-back against a group that has lost
+                    # nothing.
+                    continue
                 donor_group = self.netting().group_of(str(item.warehouse_id))
                 if not donor_group or donor_group == fact.group_code:
                     # The line's own group (its stock to move) or a pool (shared, and
@@ -5229,7 +5783,9 @@ class ProjectSupplyService:
                 if item.donor_project_id
                 else None
             )
+            supply_key = getattr(item, "supply_key", None)
             is_group_borrow = bool(getattr(item, "donor_core_line_id", None))
+            arrival = getattr(item, "arrival_date", None)
             components.append(
                 {
                     "kind": "borrow",
@@ -5239,14 +5795,48 @@ class ProjectSupplyService:
                     "source_warehouse_id": str(item.warehouse_id),
                     "donor_project_ref": donor.project_code if donor else None,
                     "donor_project_id": str(donor.id) if donor else None,
-                    "reason": self._borrow_reason(item, warehouse, donor),
+                    "reason": (
+                        # Step 3's sentence is the ENGINE's own, rebuilt from what was
+                        # posted rather than replaced by "borrowed from free stock at X":
+                        # the document, its arrival and the debt month are the whole of
+                        # what this component says, and a location is none of them.
+                        supply_borrow_reason(
+                            qty,
+                            kind=(
+                                SA_KIND_PO
+                                if str(supply_key).startswith(f"{SA_KIND_PO}:")
+                                else SA_KIND_SPO
+                            ),
+                            document=getattr(item, "supply_document", None),
+                            arrival_date=arrival,
+                            donor_so_number=getattr(item, "donor_so_number", None),
+                            donor_line_no=getattr(item, "donor_line_no", None),
+                            donor_agent_code=getattr(item, "donor_agent_code", None),
+                            donor_required_date=getattr(
+                                item, "donor_required_date", None
+                            ),
+                        )
+                        if supply_key
+                        else self._borrow_reason(item, warehouse, donor)
+                    ),
                     "cs_reason": (item.reason or "").strip(),
-                    "rung": RUNG_GROUP_BORROW if is_group_borrow else None,
+                    "supply_key": supply_key,
+                    "supply_document": getattr(item, "supply_document", None),
+                    "arrival_date": arrival.isoformat() if arrival else None,
+                    "rung": (
+                        RUNG_SUPPLY_BORROW
+                        if supply_key
+                        else RUNG_GROUP_BORROW
+                        if is_group_borrow
+                        else None
+                    ),
                     "donor_so_number": getattr(item, "donor_so_number", None),
                     "donor_line_no": getattr(item, "donor_line_no", None),
                     "donor_agent_code": getattr(item, "donor_agent_code", None),
                     "same_agent": bool(getattr(item, "same_agent", False)),
                     "order_back_qty": qty_text(qty) if is_group_borrow else None,
+                    # (a free document names no donor, so `is_group_borrow` is False and
+                    # nothing is owed back - which is the whole content of "it was free")
                     "donor_core_line_id": getattr(item, "donor_core_line_id", None),
                     "donor_required_date": (
                         getattr(item, "donor_required_date", None).isoformat()
@@ -5376,6 +5966,14 @@ class ProjectSupplyService:
                 component.donor_required_date.isoformat()
                 if component.donor_required_date
                 else None
+            ),
+            # Step 3's document, frozen with the suggestion for the reason everything else
+            # here is: a proposal recomputed a week later is a different proposal, and this
+            # one named a document that may have landed since.
+            "supply_key": component.supply_key,
+            "supply_document": component.supply_document,
+            "arrival_date": (
+                component.arrival_date.isoformat() if component.arrival_date else None
             ),
         }
 
@@ -5539,6 +6137,14 @@ class ProjectSupplyService:
         for item in entry.borrow or []:
             qty = _dec(item.qty)
             if qty <= _ZERO:
+                continue
+            if getattr(item, "supply_key", None):
+                # LADDER V7.1 STEP 3 WRITES NO ALLOCATION. An `so_line_allocations` row is a
+                # hold on STOCK at a bin, and every reader of free stock nets it out of the
+                # floor - so writing one for a container still at sea would take units off a
+                # shelf that never had them. The hold this component writes is the PLACEMENT
+                # LINK (`_place_supply_borrows`), which `assign()` reads as pinned supply on
+                # the document itself (PLAN 3.3).
                 continue
             claim_id = None
             donor_project_id = None

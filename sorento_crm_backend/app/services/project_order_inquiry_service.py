@@ -997,6 +997,14 @@ class ProjectOrderInquiryService:
             )
             .all()
             if not (buy_line_ids and str(row.so_line_id) in buy_line_ids)
+            # A ROW THAT NAMES ITS COVER IS NOT A HOLE (S4). Ladder v7.1 step 3 raises an
+            # ORDER_BACK on the ASKER's own line carrying `covered_by` - the document that
+            # already covers the quantity, which is exactly what this column has always
+            # meant - and the placement link hangs off it. Netted here, that row would have
+            # cancelled a real donor hole at the same (item, location) as if purchasing had
+            # already bought it. The two live on the same line and only this tells them
+            # apart: the hole names no cover, because nothing covers it yet.
+            and not (row.covered_by or "").strip()
         ]
         # A PARTLY LINKED row is netted HALF, exactly as an ORDER row is one method up:
         # the quantity sitting on a document is real supply and counts against the hole,
@@ -3370,6 +3378,110 @@ class ProjectOrderInquiryService:
         self.db.flush()
         self._invalidate_link_cache()
         return link
+
+    def place_supply_borrow(
+        self,
+        row: OrderInquiryRow,
+        *,
+        supply_key: str,
+        qty: Decimal,
+        actor_user_id: str,
+    ) -> None:
+        """Link an ORDER_BACK row to the document ladder v7.1 step 3 gave it (PLAN 3.3).
+
+        The board's Confirm, not a buyer's click, so it takes the row rather than a row id
+        and the document by the ASSIGNMENT's own key (`spo:<allocation id>` /
+        `po:<line id>`) - the same address the component carries, so there is no second
+        lookup and no chance of naming a different line of the same document.
+
+        Everything else is `place_on_po_allocations`' own walk, and deliberately: the
+        candidate read, the remaining-quantity test, the ORDER-BACK-only rule for an SPO
+        allocation, the claim, the note stamp and the row's link state are all one
+        implementation. What is NOT reused is the AUTOMATIC reading of that walk
+        (`manual=False`), which applies ladder v4's group-deficit rule: it refuses a
+        purchase-order line at a group that cannot cover its own backlog, and a group in
+        deficit is the ordinary case for the very unit this step is borrowing for. The
+        engine has already decided; this is the write.
+        """
+        kind, _sep, target = str(supply_key).partition(":")
+        if not target:
+            return
+        self.place_on_po_allocations(
+            str(row.id),
+            [
+                {
+                    "spo_allocation_id": target if kind == "spo" else None,
+                    "po_line_id": target if kind == "po" else None,
+                    "qty": qty,
+                }
+            ],
+            actor_user_id=actor_user_id,
+        )
+
+    def release_supply_borrow(
+        self, *, supply_key: str, core_line_id: str, qty: Decimal
+    ) -> Decimal:
+        """Take DOWN a line's placements on one document, up to `qty`, and say how much
+        came down (PLAN 3.3's middle clause).
+
+        The donor is giving up what it was holding, so the placement that held it has to go
+        - a link left standing would keep the document reserved for an order the board has
+        just decided is waiting for a replacement instead, and `_candidates_for_row` would
+        then refuse the asker's own link on the grounds that the document is fully claimed.
+
+        LATEST FIRST, and reduced rather than always deleted: a donor holding a document
+        through two placements gives up the newest one first, and a placement bigger than
+        what is being borrowed keeps its remainder. A link of zero is not a smaller
+        placement, it is a row that should not exist, so it is deleted (the table's own
+        CHECK says the same).
+        """
+        left = _dec(qty)
+        if left <= _ZERO:
+            return _ZERO
+        kind, _sep, target = str(supply_key).partition(":")
+        if not target:
+            return _ZERO
+        column = (
+            OrderInquiryLink.spo_allocation_id
+            if kind == "spo"
+            else OrderInquiryLink.po_line_id
+        )
+        rows = (
+            self.db.query(OrderInquiryLink, OrderInquiryRow)
+            .join(OrderInquiryRow, OrderInquiryRow.id == OrderInquiryLink.row_id)
+            .join(
+                ProjectSalesOrderLine,
+                ProjectSalesOrderLine.id == OrderInquiryRow.so_line_id,
+            )
+            .filter(
+                column == target,
+                ProjectSalesOrderLine.core_sales_order_line_id == core_line_id,
+                OrderInquiryRow.state != INQUIRY_CANCELLED,
+            )
+            .order_by(OrderInquiryLink.linked_at.desc())
+            .all()
+        )
+        released = _ZERO
+        touched: List[OrderInquiryRow] = []
+        for link, row in rows:
+            if left <= _ZERO:
+                break
+            take = min(left, _dec(link.qty))
+            if take <= _ZERO:
+                continue
+            if take >= _dec(link.qty):
+                self.db.delete(link)
+            else:
+                link.qty = _dec(link.qty) - take
+            left -= take
+            released += take
+            touched.append(row)
+        if released > _ZERO:
+            self.db.flush()
+            self._invalidate_link_cache()
+            self._refresh_link_state(touched)
+            self.db.flush()
+        return released
 
     def place_on_po(
         self, row_id: str, po_line_id: str, *, actor_user_id: str

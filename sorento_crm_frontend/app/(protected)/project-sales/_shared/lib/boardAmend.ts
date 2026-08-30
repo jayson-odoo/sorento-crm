@@ -142,6 +142,13 @@ function draftFromSources(
     // The donor's own delivery date, which is the order-back's urgency: dropped here it was
     // lost from the posted borrow the moment the composition went through this editor.
     donor_required_date: source.donor_required_date ?? null,
+    // LADDER v7.1 STEP 3 (S4): the DOCUMENT this borrow comes off, carried verbatim so a
+    // proposal approved as it stands still moves the placement the engine named. Dropped
+    // here, the Confirm would re-check the quantity against free stock at a bin holding a
+    // container that has not landed, and refuse the engine's own answer.
+    supply_key: source.supply_key ?? null,
+    supply_document: source.supply_document ?? null,
+    arrival_date: source.arrival_date ?? null,
   }));
 
   return {
@@ -236,6 +243,13 @@ function frozenDraft(
       donor_agent_code: row.donor_agent_code ?? null,
       same_agent: row.same_agent ?? false,
       donor_required_date: row.donor_required_date ?? null,
+      // LADDER v7.1 STEP 3 (S4): the DOCUMENT this borrow comes off, carried verbatim so a
+      // proposal approved as it stands still moves the placement the engine named. Dropped
+      // here, the Confirm would re-check the quantity against free stock at a bin holding a
+      // container that has not landed, and refuse the engine's own answer.
+      supply_key: row.supply_key ?? null,
+      supply_document: row.supply_document ?? null,
+      arrival_date: row.arrival_date ?? null,
     })),
     buy_qty: frozen.buy_qty,
     buy_reason: frozen.buy_reason ?? '',

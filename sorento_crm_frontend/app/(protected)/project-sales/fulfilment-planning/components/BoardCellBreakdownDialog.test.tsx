@@ -2842,6 +2842,48 @@ describe('sourceAt names the DONOR for every borrow that has one', () => {
     ).toBe(' from SO414285 line 4');
   });
 
+  it('names the DOCUMENT and its arrival for a step-3 borrow (AC-S4-5)', () => {
+    // Ladder v7.1 step 3 borrows a DOCUMENT, so the row reads the document and the day it
+    // lands before it reads whose order gives it up: the arrival is the whole reason a
+    // planner takes this row over a Buy, and the bin the container is bound for says
+    // nothing about when the goods can be picked.
+    expect(
+      sourceAt({
+        kind: 'borrow',
+        rung: 'supply_borrow',
+        qty: '50',
+        location: 'BRW-IB',
+        reason: 'because',
+        supply_key: 'spo:0f2b',
+        supply_document: 'SPO 202607-S0105',
+        arrival_date: '2026-09-15',
+        donor_so_number: 'SO414285',
+        donor_line_no: 4,
+      } as never),
+    // DD/MM/YYYY, the screen's own date format (`formatDateInMalaysia`), not the engine
+    // sentence's "15 Sep 2026": the required-date column of the SAME row prints DD/MM/YYYY,
+    // and two spellings of a date on one row is a second vocabulary. The server's wording
+    // survives verbatim inside `reason`, which is what the info tooltip shows.
+    ).toBe(' SPO 202607-S0105, arriving 15/09/2026 from SO414285 line 4');
+  });
+
+  it('names a FREE document without a donor, because nobody is owed it back', () => {
+    // A document nobody was waiting on raises no order-back, so there is no donor to name
+    // and the row must not invent one - it is the same fact step 1's free pile carries.
+    expect(
+      sourceAt({
+        kind: 'borrow',
+        rung: 'supply_borrow',
+        qty: '32',
+        location: 'BRW-BB',
+        reason: 'because',
+        supply_key: 'po:9a1c',
+        supply_document: 'PO 202608-S0041 line 1',
+        arrival_date: '2026-11-16',
+      } as never),
+    ).toBe(' PO 202608-S0041 line 1, arriving 16/11/2026');
+  });
+
   it('names the donor for the pool BORROW half and keeps the location for a free draw', () => {
     expect(
       sourceAt({

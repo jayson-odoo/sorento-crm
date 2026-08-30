@@ -107,6 +107,12 @@ class BoardSource(BaseModel):
     #: so approving this source AS PROPOSED still posts it (`ConfirmBorrowComponent`
     #: takes it back), rather than making the order-back's urgency a second lookup.
     donor_required_date: Optional[date] = None
+    #: STEP 3 (`supply_borrow`, S4): the incoming document this quantity comes off, by
+    #: ADDRESS (`spo:<allocation id>` / `po:<line id>`) and as a person NAMES it
+    #: (`SPO 202607-S0105`). The first is never rendered and is what the Confirm moves the
+    #: placement link onto; the second is what the drill row prints beside the arrival.
+    supply_key: Optional[str] = None
+    supply_document: Optional[str] = None
 
 
 #: LADDER V5 (`PLAN-scm-cs-planning-uat.md` section 1e): the trail is the captain's four

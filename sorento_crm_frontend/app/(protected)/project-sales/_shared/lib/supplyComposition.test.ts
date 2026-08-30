@@ -527,6 +527,12 @@ describe('confirmLineFromDraft', () => {
           donor_agent_code: null,
           same_agent: false,
           donor_required_date: null,
+          // Ladder v7.1 step 3 (S4): null on every borrow that is not a DOCUMENT, and sent
+          // rather than omitted, so a payload built from a draft and one built from a
+          // proposal have the same shape.
+          supply_key: null,
+          supply_document: null,
+          arrival_date: null,
         },
       ],
       buy_qty: '250',
