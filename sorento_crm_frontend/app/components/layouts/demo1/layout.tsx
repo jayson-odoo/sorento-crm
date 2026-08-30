@@ -37,9 +37,16 @@ export function Demo1Layout({ children }: { children: ReactNode }) {
     bodyClass.add('sidebar-fixed');
     bodyClass.add('header-fixed');
 
-    const timer = setTimeout(() => {
+    // One frame, not a second (S8-03): the only thing this class still gates is
+    // the sidebar's OWN collapse transform (see css/demos/demo1.css) - it exists
+    // so the very first paint, which already reflects a persisted collapsed/
+    // expanded setting, does not itself animate. A single rAF is enough for
+    // that paint to land; the earlier 1s delay predated the transform-only
+    // rewrite, when this also gated the wrapper/header layout-property
+    // transitions and a slower guard mattered more.
+    const raf = requestAnimationFrame(() => {
       bodyClass.add('layout-initialized');
-    }, 1000); // 1000 milliseconds
+    });
 
     // Remove the class when the component is unmounted
     return () => {
@@ -48,7 +55,7 @@ export function Demo1Layout({ children }: { children: ReactNode }) {
       bodyClass.remove('sidebar-collapse');
       bodyClass.remove('header-fixed');
       bodyClass.remove('layout-initialized');
-      clearTimeout(timer);
+      cancelAnimationFrame(raf);
     };
   }, []); // Runs only once on mount
 

@@ -57,7 +57,15 @@ export function SidebarHeader() {
         mode="icon"
         variant="outline"
         className={cn(
-          'size-7 absolute start-full top-2/4 rtl:translate-x-2/4 -translate-x-2/4 -translate-y-2/4',
+          'size-7 absolute start-full top-2/4 rtl:translate-x-2/4 -translate-x-2/4 -translate-y-2/4 origin-left rtl:origin-right',
+          // `.sidebar-header` sits inside `.sidebar-rail`, which counter-scales
+          // against `.sidebar`'s own collapse transform so its content never
+          // visually distorts (S8-03, css/demos/demo1.css). This button is the
+          // one thing in there that SHOULD track `.sidebar`'s real (shrunk) edge
+          // rather than stay full-size - re-applying the same scale cancels the
+          // rail's counter-scale for just this element, so it shrinks and moves
+          // with the edge instead of floating over the content past it.
+          'scale-x-[var(--sidebar-scale,1)]',
           settings.layouts.demo1.sidebarCollapse
             ? 'ltr:rotate-180'
             : 'rtl:rotate-180',

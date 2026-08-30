@@ -21,8 +21,15 @@
     height: var(--header-height);
   }
 
+  /*
+   * The sidebar's own box is ALWAYS the expanded width (S8-03) - collapse is a
+   * `transform: scaleX()` on this box below, not a `width` change, so toggling
+   * it never asks the browser to lay this element's own (deeply nested menu)
+   * subtree out again. `overflow: hidden` clips whatever the scale hides.
+   */
   .demo1 .sidebar {
-    width: var(--sidebar-width);
+    width: var(--sidebar-default-width);
+    overflow: hidden;
   }
 
   .demo1.header-fixed .wrapper {
@@ -32,9 +39,20 @@
   /* Desktop mode */
   @media (min-width: theme(--breakpoint-lg)) {
     .demo1 .sidebar {
-      width: var(--sidebar-width);
-      transition: width var(--sidebar-transition-duration)
-        var(--sidebar-transition-timing);
+      transform: scaleX(var(--sidebar-scale, 1));
+    }
+
+    /*
+     * `.sidebar-rail` (sidebar.tsx) wraps the header + menu and counter-scales
+     * by the reciprocal of `.sidebar`'s own scale, in lockstep with it. The two
+     * cancel exactly at every instant, so the content never visually stretches
+     * or squashes - only how much of it `.sidebar`'s `overflow: hidden` shows
+     * changes. This is the whole trick: a "width" animation with no `width`
+     * transition anywhere in it.
+     */
+    .demo1 .sidebar .sidebar-rail {
+      width: var(--sidebar-default-width);
+      transform: scaleX(calc(1 / var(--sidebar-scale, 1)));
     }
 
     .demo1 .sidebar .sidebar-header {
@@ -67,15 +85,13 @@
 
     .demo1.sidebar-collapse {
       --sidebar-width: var(--sidebar-width-collapse);
-    }
-
-    .demo1.sidebar-collapse .sidebar {
-      transition: width var(--sidebar-transition-duration)
-        var(--sidebar-transition-timing);
+      --sidebar-scale: calc(
+        var(--sidebar-width-collapse) / var(--sidebar-default-width)
+      );
     }
 
     .demo1.sidebar-collapse .sidebar:hover {
-      width: var(--sidebar-default-width);
+      --sidebar-scale: 1;
     }
 
     .demo1.sidebar-collapse .sidebar:not(:hover) .default-logo {
@@ -131,13 +147,17 @@
     }
   }
 
-  .demo1.layout-initialized .wrapper {
-    transition: padding-inline-start var(--sidebar-transition-duration)
-      var(--sidebar-transition-timing);
-  }
-
-  .demo1.layout-initialized .header {
-    transition: inset-inline-start var(--sidebar-transition-duration)
+  /*
+   * `layout-initialized` (set one frame after mount, app/components/layouts/
+   * demo1/layout.tsx) exists so the very first paint - which already reflects
+   * a persisted collapsed/expanded setting - does not itself animate. `.sidebar`
+   * is the only thing that transitions on a collapse toggle (S8-03): `.wrapper`
+   * and `.header` reserve the sidebar's already-current width the instant the
+   * class flips, no transition, so they never run a `padding`/`inset` animation
+   * across the whole page's layout.
+   */
+  .demo1.layout-initialized .sidebar {
+    transition: transform var(--sidebar-transition-duration)
       var(--sidebar-transition-timing);
   }
 }
