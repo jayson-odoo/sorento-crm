@@ -11,14 +11,14 @@ Both nullable with no default and no backfill, deliberately: NULL means "no admi
 one", and the sign-in page then draws its designed default wash, which is a finished screen
 rather than a missing image. There is nothing an existing row could be backfilled TO.
 
-Revision ID: 443_signin_background
-Revises: 442_notice_recipients_opens
+Revision ID: 445_signin_background
+Revises: 444_notify_email_on_mention
 """
 from alembic import op
 import sqlalchemy as sa
 
-revision = "443_signin_background"
-down_revision = "442_notice_recipients_opens"
+revision = "445_signin_background"
+down_revision = "444_notify_email_on_mention"
 branch_labels = None
 depends_on = None
 
