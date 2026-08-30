@@ -31,6 +31,15 @@ export interface DetailActionsProps {
   gear?: ReactNode;
   /** The one primary button (Edit ...). */
   primary?: ReactNode;
+  /**
+   * The countdown of an action parked on this record (D7, S6-06).
+   *
+   * It stands WHERE the primary button stands, and while it is there the primary
+   * button is not: a record on its way out has one thing to offer, and that is
+   * Cancel. `useDeferredAction` hands this back as `countdown`, null when nothing
+   * is parked, so the caller passes it straight through.
+   */
+  pendingAction?: ReactNode;
   /** Dialogs the actions need mounted, from `use<Entity>Actions`. */
   dialogs?: ReactNode;
   gearLabel?: string;
@@ -56,6 +65,7 @@ export default function DetailActions({
   actions,
   gear,
   primary,
+  pendingAction,
   dialogs,
   gearLabel = 'Actions',
   className,
@@ -72,7 +82,7 @@ export default function DetailActions({
         <DetailActionsMenu actions={actions} trigger="gear" ariaLabel={gearLabel} />
       )}
       {!actions && gear}
-      {primary}
+      {pendingAction ?? primary}
       {dialogs}
     </div>
   );

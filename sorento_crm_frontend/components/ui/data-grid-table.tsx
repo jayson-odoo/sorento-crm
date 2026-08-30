@@ -531,14 +531,20 @@ function DataGridTableBodyRow<TData>({
   // 78 of 193 lists did this and 26 had a detail route with no way to reach it.
   const href = props.rowHref ? appendListState(props.rowHref(row.original), table) : undefined;
 
+  // A record on its way out stays visible and says so, rather than vanishing
+  // before the reader can cancel (S6-07).
+  const isPending = props.rowPending?.(row.original) ?? false;
+
   const rowProps: React.ComponentProps<'tr'> = {
     ref: dndRef,
     style: { ...(dndStyle ? dndStyle : null) },
     'data-state': table.options.enableRowSelection && row.getIsSelected() ? 'selected' : undefined,
+    'data-pending': isPending ? 'true' : undefined,
     ...(dndAttributes ?? {}),
     ...(dndListeners ?? {}),
     className: cn(
       'hover:bg-muted/40 data-[state=selected]:bg-muted/50',
+      isPending && 'opacity-50',
       (href || props.onRowClick) && 'cursor-pointer',
       !props.tableLayout?.stripped &&
         props.tableLayout?.rowBorder &&

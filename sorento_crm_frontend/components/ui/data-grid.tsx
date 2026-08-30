@@ -70,6 +70,15 @@ export interface DataGridProps<TData extends object> {
    * `onRowClick` stays for the lists whose record is edited in a lightbox.
    */
   rowHref?: (row: TData) => string;
+  /**
+   * True for a row with an action parked on it (D7, S6-07).
+   *
+   * The countdown for a row action lives in a toast, so the row itself has to say
+   * which record that toast belongs to: it stays where it is, dimmed, and carries
+   * `data-pending` until the server commits or the reader cancels. Read the ids
+   * from `usePendingEntityKeys()`.
+   */
+  rowPending?: (row: TData) => boolean;
   isLoading?: boolean;
   loadingMode?: 'skeleton' | 'spinner';
   loadingMessage?: ReactNode | string;
