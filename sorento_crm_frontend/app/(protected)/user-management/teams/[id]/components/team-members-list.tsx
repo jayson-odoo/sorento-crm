@@ -148,7 +148,6 @@ export default function TeamMembersList({
                         <Switch
                           size="sm"
                           checked={includeInRR}
-                          disabled={roundRobinMutation.isPending}
                           onCheckedChange={(checked) =>
                             roundRobinMutation.mutate({
                               userId: member.user_id,

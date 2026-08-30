@@ -101,7 +101,9 @@ export default function ContactsList() {
   // the selection needs no de-duplication (unlike the contact x agent grants grid).
   const { setOne: setOutboundOne, setBulk: setOutboundBulk } =
     useRespondContactOutboundMutations();
-  const outboundBusy = setOutboundOne.isPending || setOutboundBulk.isPending;
+  // Only the BULK write blocks the switches. The per-row one is optimistic
+  // (S7-01), so it has already moved the switch and can be flipped straight back.
+  const outboundBusy = setOutboundBulk.isPending;
   const outboundCounts = useMemo(() => {
     let reachable = 0;
     let silenced = 0;

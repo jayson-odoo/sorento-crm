@@ -74,7 +74,9 @@ export default function RespondContactsOutboundList() {
   const total = data?.pagination?.total ?? 0;
   const counts = data?.counts ?? { enabled: 0, disabled: 0, total: 0 };
   const selectedIds = useMemo(() => Object.keys(rowSelection), [rowSelection]);
-  const busy = setOne.isPending || setBulk.isPending;
+  // Only the BULK write blocks the switches. The per-row one is optimistic
+  // (S7-01), so it has already moved the switch and can be flipped straight back.
+  const busy = setBulk.isPending;
 
   const clearSelection = () => setRowSelection({});
 
