@@ -242,7 +242,10 @@ describe('LoadingPlanView (the record)', () => {
     expect(subtitle).toContain('Started');
     expect(subtitle).toContain('SO cut-off 30/09/2026');
     expect(subtitle).toContain('Stock list 27/07/2026');
-    expect(screen.getByText('Planning')).toBeTruthy();
+    // The state pill, not the sidebar crumb that also reads "Planning".
+    expect(
+      screen.getAllByText('Planning').some((el) => el.dataset.slot === 'badge'),
+    ).toBe(true);
   });
 
   it('carries no header card and no Upload button of its own (AC-A3, AC-A12)', () => {
