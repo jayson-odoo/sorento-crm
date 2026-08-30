@@ -107,7 +107,7 @@ const RoleEditDialog = ({
       description: '',
       permissions: [],
     },
-    mode: 'onSubmit',
+    mode: 'onTouched',
   });
 
   useEffect(() => {

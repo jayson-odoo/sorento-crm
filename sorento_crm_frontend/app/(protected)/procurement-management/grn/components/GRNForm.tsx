@@ -72,6 +72,7 @@ export default function GRNForm({ grnId, onSuccess }: GRNFormProps) {
 
   const form = useForm<GRNSchemaType>({
     resolver: zodResolver(grnSchema) as Resolver<GRNSchemaType>,
+    mode: 'onTouched',
     defaultValues: {
       picking_number: '',
       spo_number: '',

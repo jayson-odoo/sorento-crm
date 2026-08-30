@@ -31,6 +31,7 @@ export default function Page() {
 
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
+    mode: 'onTouched',
     defaultValues: {
       email: '',
     },

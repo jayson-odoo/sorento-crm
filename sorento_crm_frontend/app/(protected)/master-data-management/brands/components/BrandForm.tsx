@@ -50,7 +50,7 @@ export default function BrandForm({ brandId, onSuccess }: BrandFormProps) {
       is_active: true,
       access_levels: [],
     },
-    mode: 'onSubmit',
+    mode: 'onTouched',
   });
 
   // Load brand data when editing

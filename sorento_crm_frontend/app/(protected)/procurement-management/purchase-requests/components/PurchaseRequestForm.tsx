@@ -152,7 +152,7 @@ export default function PurchaseRequestForm({
         },
       ],
     },
-    mode: "onSubmit",
+    mode: 'onTouched',
   });
 
   const requestType =

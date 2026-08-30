@@ -45,7 +45,7 @@ export default function CustomerForm({ customerId, onSuccess }: CustomerFormProp
       phone_number: '',
       is_active: true,
     },
-    mode: 'onSubmit',
+    mode: 'onTouched',
   });
 
   // Track if form has been initialized to prevent multiple resets
