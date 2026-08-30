@@ -61,6 +61,8 @@ export interface PortalContact {
    */
   requires_registered_project?: boolean;
   impersonation?: PortalImpersonationInfo | null;
+  /** Portal form types this contact may see (access-type union + overrides). */
+  visible_form_types?: string[];
 }
 
 export interface PortalSubmissionSummary {

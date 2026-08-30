@@ -12,11 +12,13 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import {
   AlertCircle,
+  ChevronRight,
   Filter,
   FileText,
   LogOut,
   Plus,
   Star,
+  Tag,
 } from 'lucide-react';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -61,6 +63,7 @@ import {
 } from '@/lib/complaint-status';
 import { revisionBadgeLabel } from '@/lib/document-number';
 import {
+  portalBase,
   portalDetailPath,
   portalNewPath,
   portalRevisePath,
@@ -523,6 +526,25 @@ export function PortalLanding({ slug }: { slug?: string }) {
           />
         </Button>
       </div>
+
+      {/* Price tag requests live on their own pages, not in the submissions
+          feed, so the landing links out rather than adding a tab. Shown only
+          when the contact's access types (or an override) grant the form;
+          the server enforces the same rule on every route regardless. */}
+      {contact?.visible_form_types?.includes('price_tag_request') && (
+        <Button
+          type="button"
+          variant="outline"
+          className="h-12 w-full justify-between text-base"
+          onClick={() => router.push(`${portalBase(slug)}/price_tag_request`)}
+        >
+          <span className="flex items-center gap-2">
+            <Tag className="h-4 w-4" />
+            Price Tag Requests
+          </span>
+          <ChevronRight className="h-4 w-4" />
+        </Button>
+      )}
 
       <SubmissionList
         kind={activeTab}
