@@ -359,6 +359,7 @@ clicks (Dealer Kit -> Room Designer -> Price Tag Requests). Request `PT-202608-0
 | `request-8-arrange-auto-placed.png` | The Arrange half: `1 sheet / 3 tags` for line 1 (qty 1) plus line 2 (qty 2), auto-placed on A4 3-up with the imposition panel on the right. Nobody had to drag anything. |
 | `request-9-proof-ready-view-design.png` | After Mark proof ready: the pill reads `Proof Ready`, the primary CTA becomes `View design`, and the gear is down to `Void` (D52). |
 | `request-10-stock-inquiry-reference-chrome.png` | The reference, `/procurement-management/stock-inquiries/<id>`, for the side-by-side: same heading shape, same `Created: ... - <pill>` subline, same primary-then-gear-then-chevrons order. |
+| `request-12-template-editor-unchanged.png` | The template editor after `TagCanvasEditor` gained its four optional props: no rail, the Layers panel filling the left column, the same canvas and Inspector, its own Save bar still there. Nothing about editing a TEMPLATE changed. |
 | `request-11-detail-at-375px.png` | The whole detail page at 375px: the header wraps, the CTA row stays on one line, every card stacks, the lines table scrolls rather than clipping, and each section keeps its empty state. |
 
 ### Measured, not assumed
