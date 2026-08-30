@@ -136,13 +136,30 @@ class GroupNetting:
         triples: Mapping[Tuple[str, str], Mapping[str, Any]],
         warehouse_codes: Mapping[str, str],
         pool_warehouse_ids: Iterable[str] = (),
+        planning_warehouse_ids: Optional[Iterable[str]] = None,
     ) -> None:
+        """`planning_warehouse_ids` narrows the OWNERSHIP GROUPS to the bins flagged into
+        fulfilment planning (`planning_predicate`, R17): a bin that is off is not a member
+        of its group, so its on hand, its backlog and its SPO are outside every net.
+
+        It is a separate argument rather than a filter on `warehouse_codes` because the
+        SITE POOLS have to stay in the codes - they are flagged off by design, and
+        `pools_net` still has to be able to net them. `None` means "every code given is in
+        planning", which is what a caller handing in one already-filtered set means.
+        """
         self._triples = triples
         self._codes = {str(k): str(v) for k, v in warehouse_codes.items() if v}
         self._pool_ids = {str(pool_id) for pool_id in pool_warehouse_ids}
+        planning = (
+            None
+            if planning_warehouse_ids is None
+            else {str(wid) for wid in planning_warehouse_ids}
+        )
         # warehouse ids per group code, and the pool ids, resolved once.
         self._by_group: Dict[str, list] = {}
         for warehouse_id, code in self._codes.items():
+            if planning is not None and warehouse_id not in planning:
+                continue
             group = group_of_warehouse_code(code)
             if group:
                 self._by_group.setdefault(group, []).append(warehouse_id)
@@ -155,6 +172,10 @@ class GroupNetting:
 
         `group_code` is the suffix, `IB` / `BB` / `IR`. An unknown group nets zero over no
         locations, which is the honest answer: nothing was found to look at.
+
+        The group's membership is the bins FLAGGED INTO FULFILMENT PLANNING (R17,
+        `planning_warehouse_ids`): a bin that is off holds stock nobody plans against, so
+        counting it here would put supply into a net the ladder may never draw on.
         """
         if not product_id or not group_code:
             return NetPosition(net=ZERO, by_location=())
@@ -230,7 +251,9 @@ class GroupNetting:
 # --------------------------------------------------------------------------- reads
 
 
-def netting_for_products(db, product_ids: Sequence[str]) -> GroupNetting:
+def netting_for_products(
+    db, product_ids: Sequence[str], *, planning_only: bool = False
+) -> GroupNetting:
     """A `GroupNetting` over every ACTIVE warehouse, read here and nowhere else.
 
     The constructor for a caller with no board and no supply service in hand - the
@@ -240,11 +263,21 @@ def netting_for_products(db, product_ids: Sequence[str]) -> GroupNetting:
     Three queries, batched over the products asked about, and the same three
     `project_supply_service._pile_read` runs - which is why the board hands its own
     already-read triple to the constructor above instead of calling this.
+
+    `planning_only` narrows the ownership groups to the bins flagged into fulfilment
+    planning (R17), and it is OPT-IN because this door is not the ladder's. The
+    order-inquiry link walk reads "this group has no members" as "this group nets zero" and
+    offers its purchase-order lines on the strength of it, so narrowing every caller
+    silently turned 114 open lines at unflagged bins into offers no plan stands behind.
+    The ladder and the board do not come through here at all: they build `GroupNetting`
+    themselves off the triple they have already read, with `planning_warehouse_ids` set
+    (`project_supply_service.netting`).
     """
     from app.models.inventory import Stock, Warehouse
     from app.models.order import SalesOrder, SalesOrderLine
     from app.models.procurement import InboundShipment, SPOAllocation
     from app.services.scm import spo_supply
+    from app.services.scm.planning_predicate import in_fulfilment_planning
     from app.services.scm.demand import demand_qty, is_open_demand
     from sqlalchemy import func
 
@@ -254,8 +287,22 @@ def netting_for_products(db, product_ids: Sequence[str]) -> GroupNetting:
     pools = {
         str(w.pool_warehouse_id) for w in warehouses if w.pool_warehouse_id
     } & set(codes)
+    # Every ACTIVE warehouse is read (the pools have to be in `codes` for `pools_net`). Only
+    # a caller asking the PLANNING question narrows the groups to the flagged bins (R17);
+    # `None` leaves every code a member of its own group, which is what this seam answered
+    # before the flag existed and what its callers still expect.
+    planning = (
+        {str(w.id) for w in warehouses if in_fulfilment_planning(w)} & set(codes)
+        if planning_only
+        else None
+    )
     if not ids:
-        return GroupNetting(triples={}, warehouse_codes=codes, pool_warehouse_ids=pools)
+        return GroupNetting(
+            triples={},
+            warehouse_codes=codes,
+            pool_warehouse_ids=pools,
+            planning_warehouse_ids=planning,
+        )
 
     triples: Dict[Tuple[str, str], Dict[str, Decimal]] = {}
 
@@ -321,7 +368,10 @@ def netting_for_products(db, product_ids: Sequence[str]) -> GroupNetting:
             slot(row.product_id, row.warehouse_id)[SPO_QTY] += balance
 
     return GroupNetting(
-        triples=triples, warehouse_codes=codes, pool_warehouse_ids=pools
+        triples=triples,
+        warehouse_codes=codes,
+        pool_warehouse_ids=pools,
+        planning_warehouse_ids=planning,
     )
 
 

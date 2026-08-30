@@ -9,15 +9,15 @@ Same fixture family as `test_policy_config.py` (real Postgres, rolled-back savep
 1. The GET answers the seeded ("fair") values migration 385 activated, factor-for-factor.
 2. A PUT writes a NEW revision and activates it - the OLD row stays, `is_active=false`, and
    `priority.active_policy()` (what the board itself reads) sees the new weights immediately.
-3. Negative weights, and the ladder-v2 settings outside their bounds, are refused with 422 and
-   write nothing.
+3. Negative weights, and a `tba_date_from` earlier than today, are refused with 422 and
+   write nothing (AC-S1-2).
 4. `priority.create_revision` turns the race two concurrent PUTs can hit - both trying to
    activate a new revision at once - into a 409 rather than an unhandled `IntegrityError`
    (500) off `uq_scm_priority_policy_one_active`.
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -52,8 +52,7 @@ def _write(**overrides) -> dict:
         },
         "demand_class_weights": {"project": 1.0, "retail": 0.4},
         "reorder_coverage_until": "2026-10-31",
-        "cross_group_borrow_max_qty": 50,
-        "cross_group_borrow_max_pct": 10.0,
+        "tba_date_from": "2029-01-01",
     }
     body.update(overrides)
     return body
@@ -63,7 +62,7 @@ def _active_row(db) -> dict:
     row = db.execute(
         text(
             "SELECT id, name, is_active, factors, demand_class_weights, "
-            "reorder_coverage_until, cross_group_borrow_max_qty, cross_group_borrow_max_pct "
+            "reorder_coverage_until, tba_date_from "
             "FROM scm.priority_policy WHERE is_active = true"
         )
     ).mappings().first()
@@ -84,10 +83,11 @@ def test_get_returns_the_seeded_fair_policy(scm_app):
     assert body["demand_class_weights"] == seeded["demand_class_weights"]
     seeded_until = seeded["reorder_coverage_until"]
     assert body["reorder_coverage_until"] == (seeded_until.isoformat() if seeded_until else None)
-    assert body["cross_group_borrow_max_qty"] == seeded["cross_group_borrow_max_qty"]
-    assert float(body["cross_group_borrow_max_pct"]) == float(
-        seeded["cross_group_borrow_max_pct"]
-    )
+    assert body["tba_date_from"] == seeded["tba_date_from"].isoformat()
+    # The dropped cross-group caps (R5) are gone from the response, not merely ignored:
+    # `response_model` would silently keep serving them if the schema still declared them.
+    assert "cross_group_borrow_max_qty" not in body
+    assert "cross_group_borrow_max_pct" not in body
 
 
 def test_put_creates_a_revision_and_the_board_sees_it(scm_app):
@@ -105,8 +105,7 @@ def test_put_creates_a_revision_and_the_board_sees_it(scm_app):
             "customer_credit": 0.5,
         },
         reorder_coverage_until="2026-11-15",
-        cross_group_borrow_max_qty=25,
-        cross_group_borrow_max_pct=5.0,
+        tba_date_from="2030-06-30",
     )
     with TestClient(app) as c:
         put = c.put(BASE, json=new_weights)
@@ -122,7 +121,7 @@ def test_put_creates_a_revision_and_the_board_sees_it(scm_app):
     active = _active_row(db)
     assert active["factors"]["need_by_date"] == 5.0
     assert active["reorder_coverage_until"] == date(2026, 11, 15)
-    assert active["cross_group_borrow_max_qty"] == 25
+    assert active["tba_date_from"] == date(2030, 6, 30)
 
     # The board's own read (`priority.active_policy`) resolves to the same row.
     board_policy = priority_svc.active_policy(db)
@@ -202,17 +201,89 @@ def test_reorder_coverage_until_null_clears_it(scm_app):
     assert active["reorder_coverage_until"] is None
 
 
-def test_cross_group_borrow_qty_must_not_be_negative(scm_app):
-    app, _db = _client(scm_app, "purchasing")
+def test_tba_date_from_round_trips_and_reaches_the_row(scm_app):
+    """AC-S1-2: the PUT accepts it, the GET answers it, and the active row holds it."""
+    app, db = _client(scm_app, "purchasing")
     with TestClient(app) as c:
-        assert c.put(BASE, json=_write(cross_group_borrow_max_qty=-1)).status_code == 422
+        put = c.put(BASE, json=_write(tba_date_from="2031-03-01"))
+        assert put.status_code == 200, put.text
+        assert put.json()["tba_date_from"] == "2031-03-01"
+
+        got = c.get(BASE)
+    assert got.json()["tba_date_from"] == "2031-03-01"
+    assert _active_row(db)["tba_date_from"] == date(2031, 3, 1)
 
 
-def test_cross_group_borrow_pct_must_be_in_0_100(scm_app):
+def test_a_tba_date_in_the_past_is_refused(scm_app):
+    """A TBA line dated yesterday turns the WHOLE open book into placeholders - every line
+    dated on or after it stops taking supply. Refused with 422, and nothing written."""
+    app, db = _client(scm_app, "purchasing")
+    before_count = db.execute(text("SELECT count(*) FROM scm.priority_policy")).scalar()
+    yesterday = (date.today() - timedelta(days=1)).isoformat()
+
+    with TestClient(app) as c:
+        res = c.put(BASE, json=_write(tba_date_from=yesterday))
+    assert res.status_code == 422, res.text
+    assert db.execute(text("SELECT count(*) FROM scm.priority_policy")).scalar() == before_count
+
+
+def test_todays_tba_date_is_accepted(scm_app):
+    """"Today or later" - the boundary itself is allowed, so the panel's own mirror of the
+    rule and the server agree on the day they are both looking at."""
     app, _db = _client(scm_app, "purchasing")
     with TestClient(app) as c:
-        assert c.put(BASE, json=_write(cross_group_borrow_max_pct=150)).status_code == 422
-        assert c.put(BASE, json=_write(cross_group_borrow_max_pct=-1)).status_code == 422
+        res = c.put(BASE, json=_write(tba_date_from=date.today().isoformat()))
+    assert res.status_code == 200, res.text
+
+
+def test_a_stored_tba_date_in_the_past_still_reads_200(scm_app):
+    """The freshness rule belongs to the WRITE body, never to the response.
+
+    A date that was legal the day it was saved is in the past a year later, and the row is
+    still the active policy. `FulfilmentPriorityPolicy` inheriting the write validator made
+    every GET 500 on its own stored value from the day the date passed - the screen went
+    down without a single row changing.
+    """
+    app, db = _client(scm_app, "purchasing")
+    # Written straight onto the row: the PUT itself would (correctly) refuse this date.
+    db.execute(
+        text(
+            "UPDATE scm.priority_policy SET tba_date_from = :d WHERE is_active = true"
+        ),
+        {"d": date(2020, 1, 1)},
+    )
+    db.flush()
+
+    with TestClient(app) as c:
+        got = c.get(BASE)
+        assert got.status_code == 200, got.text
+        assert got.json()["tba_date_from"] == "2020-01-01"
+
+        # And the panel can still save a fresh date over it.
+        future = (date.today() + timedelta(days=30)).isoformat()
+        put = c.put(BASE, json=_write(tba_date_from=future))
+    assert put.status_code == 200, put.text
+    assert put.json()["tba_date_from"] == future
+    assert _active_row(db)["tba_date_from"] == date.today() + timedelta(days=30)
+
+
+def test_a_put_that_omits_the_tba_date_keeps_the_active_value(scm_app):
+    """An older bundle, a script or an n8n call that predates the field saves the weights
+    it means to save and moves nothing else. Defaulting the body to 2029-01-01 instead let
+    such a writer silently reset a configured TBA line while editing a weight."""
+    app, db = _client(scm_app, "purchasing")
+    with TestClient(app) as c:
+        c.put(BASE, json=_write(tba_date_from="2031-03-01"))
+
+        body = _write()
+        body.pop("tba_date_from")
+        put = c.put(BASE, json=body)
+        assert put.status_code == 200, put.text
+        assert put.json()["tba_date_from"] == "2031-03-01"
+
+        got = c.get(BASE)
+    assert got.json()["tba_date_from"] == "2031-03-01"
+    assert _active_row(db)["tba_date_from"] == date(2031, 3, 1)
 
 
 def test_rbac_denied_without_manage(scm_app):
@@ -259,8 +330,7 @@ def test_a_uniqueness_conflict_on_activation_is_a_409_not_a_500(scm_app):
                 factors={"po_document_sequence": 1.0},
                 demand_class_weights={},
                 reorder_coverage_until=None,
-                cross_group_borrow_max_qty=50,
-                cross_group_borrow_max_pct=10.0,
+                tba_date_from=date(2029, 1, 1),
             )
     finally:
         db.flush = real_flush

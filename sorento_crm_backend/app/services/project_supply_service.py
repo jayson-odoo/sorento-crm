@@ -108,6 +108,11 @@ from app.services.scm import priority, spo_supply
 from app.services.scm import sales_agent_service
 from app.services.scm.demand import demand_qty, is_open_demand
 from app.services.scm.group_netting import GroupNetting
+from app.services.scm.planning_predicate import (
+    OUTSIDE_FULFILMENT_PLANNING,
+    fulfilment_planning_predicate,
+    outside_fulfilment_planning,
+)
 from app.services.scm.front_planning_engine import (
     BORROW,
     BUY,
@@ -728,7 +733,7 @@ class ProjectSupplyService:
             Dict[Tuple[str, str], List[_SpoRow]]
         ] = None
         # Every active warehouse by id, read once: the span the nets are summed over.
-        self._active_warehouses_cache: Optional[Dict[str, Warehouse]] = None
+        self._planning_warehouses_cache: Optional[Dict[str, Warehouse]] = None
         # Warehouse and project rows this request has already read, by id. A donor list is
         # asked for once per line, and a board of hundreds of lines paid two round trips
         # per line to re-read the same handful of rows.
@@ -1472,8 +1477,9 @@ class ProjectSupplyService:
         residual: Decimal,
         borrow_left: Optional[Mapping[str, Decimal]] = None,
     ) -> List[Dict[str, Any]]:
-        """`compose_line`'s cross-group-borrow candidate list (section 1b rung 4, already
-        cap-filtered against `residual`), public for the board's trail.
+        """`compose_line`'s cross-group-borrow candidate list (section 1b rung 4), public
+        for the board's trail. Uncapped since v7.1 (R5); `residual` only decides whether
+        the rung is asked at all.
 
         `borrow_left` is the walk's donor ledger as this line's unit found it, and the trail
         states it for the same reason it states `pool_free_left`: the proof has to be the
@@ -1496,8 +1502,8 @@ class ProjectSupplyService:
     # ------------------------------------------------ ladder v3 group context (section 1b)
 
     def _fulfilment_settings(self) -> Dict[str, Any]:
-        """`{reorder_coverage_until, cross_group_borrow_max_qty, cross_group_borrow_max_pct}`
-        for the active policy, read once per request. `.get()` with a None-safe fallback
+        """`{reorder_coverage_until, tba_date_from}` for the active policy, read once per
+        request. `.get()` with a None-safe fallback
         throughout: this reads the SAME row `app.services.scm.priority.fulfilment_settings`
         serves to the admin screen, which may still be mid-migration on another branch."""
         if self._fulfilment_settings_cache is None:
@@ -1512,15 +1518,6 @@ class ProjectSupplyService:
 
     def _reorder_coverage_until(self) -> Optional[date]:
         return self._fulfilment_settings().get("reorder_coverage_until")
-
-    def _cross_group_cap(self) -> Tuple[Optional[Decimal], Optional[Decimal]]:
-        settings = self._fulfilment_settings()
-        qty = settings.get("cross_group_borrow_max_qty")
-        pct = settings.get("cross_group_borrow_max_pct")
-        return (
-            _dec(qty) if qty is not None else None,
-            _dec(pct) if pct is not None else None,
-        )
 
     def _site_pool_warehouses(self) -> Dict[str, Warehouse]:
         """Every active warehouse that is SOME location's `pool_warehouse_id` - the pools
@@ -1630,7 +1627,7 @@ class ProjectSupplyService:
             return {}
         cache = self._group_siblings_cache.setdefault(fact.group_code, None)
         if cache is None:
-            rows = self.db.query(Warehouse).filter(Warehouse.is_active.is_(True)).all()
+            rows = list(self._planning_warehouses().values())
             cache = {
                 row.warehouse_code: row
                 for row in rows
@@ -2005,9 +2002,15 @@ class ProjectSupplyService:
         residual: Decimal,
         borrow_left: Optional[Mapping[str, Decimal]] = None,
     ) -> List[Dict[str, Any]]:
-        """Rung 5: free stock OUTSIDE this line's ownership group, offered only within the
-        small-quantity cap (section 1b rung 4). `residual` is what the ladder would still
-        need by the time it reaches this rung - the "Q" the cap is measured against.
+        """Rung 5: free stock OUTSIDE this line's ownership group. `residual` is what the
+        ladder would still need by the time it reaches this rung; nothing is offered when
+        it is already covered.
+
+        UNCAPPED since borrow ladder v7.1 (R5, migration 443). It used to be offered only
+        under `cross_group_borrow_max_qty` / `cross_group_borrow_max_pct`, on the reading
+        that another group's stock was a favour rather than supply. The captain's ruling
+        reverses that: ANY group may donate, so the cap had nothing left to cap and both
+        columns are gone. The rung itself stays until S3 replaces it with `order_borrow`.
 
         `borrow_left` is the walk's own donor ledger (`compose_lines`): warehouse id -> what
         is still borrowable there after the earlier units of this walk drew on it. Without
@@ -2021,11 +2024,13 @@ class ProjectSupplyService:
         """
         if not fact.product_id or not fact.group_code or residual <= _ZERO:
             return []
-        max_qty, max_pct = self._cross_group_cap()
         inside = self._reserve_location_ids(fact) | {
             str(w.id) for w in self._group_sibling_warehouses(fact).values()
         }
         netting = self.netting()
+        # The walk's own free-stock index, which is already narrowed to the bins a proposal
+        # may draw from (`_drawable_free_stock`, R17) - a bin outside fulfilment planning is
+        # not a donor, because its stock is in no group's net.
         free_index, _holds_index = self._by_product()
         free_here = free_index.get(fact.product_id, {})
         # LADDER V4 (section 1d): what may be borrowed from another group is that GROUP's
@@ -2088,14 +2093,6 @@ class ProjectSupplyService:
                 # nobody has classified yet.
                 offer = free
             if offer <= _ZERO:
-                continue
-            within_qty = max_qty is not None and residual <= max_qty
-            within_pct = (
-                max_pct is not None
-                and offer > _ZERO
-                and residual <= (offer * max_pct / Decimal("100"))
-            )
-            if not (within_qty or within_pct):
                 continue
             if donor_group:
                 group_left[donor_group] -= offer
@@ -2184,7 +2181,9 @@ class ProjectSupplyService:
         }
         self._decided_elsewhere_cache = None
         self._request_product_ids = {str(pid) for pid in product_ids if pid}
-        self._free_cache = self._free_stock(product_ids, exclude_line_ids=exclude_line_ids)
+        self._free_cache = self._drawable_free_stock(
+            product_ids, exclude_line_ids=exclude_line_ids
+        )
         self._holds_cache = self._holds_by_project(
             product_ids, exclude_line_ids=exclude_line_ids
         )
@@ -3130,6 +3129,13 @@ class ProjectSupplyService:
                 "This line has no reconciled AutoCount line, so there is no open "
                 "quantity to promise against.",
             )
+            return
+
+        # Anything else the fact judged unplannable - today only a bin flagged out of
+        # fulfilment planning (R17). The ladder proposed nothing for it, so a payload
+        # naming it is a composition the engine never offered.
+        if fact.unplannable_reason:
+            refuse(invalid, fact.unplannable_reason)
             return
 
         timely = _dec(entry.timely_spo_qty)
@@ -5056,7 +5062,9 @@ class ProjectSupplyService:
         }
         self._decided_elsewhere_cache = None
         self._request_product_ids = {str(pid) for pid in product_ids if pid}
-        self._free_cache = self._free_stock(product_ids, exclude_line_ids=replaced)
+        self._free_cache = self._drawable_free_stock(
+            product_ids, exclude_line_ids=replaced
+        )
         self._holds_cache = self._holds_by_project(product_ids, exclude_line_ids=replaced)
         self._pile_cache = None
         self._netting_cache = None
@@ -5212,9 +5220,18 @@ class ProjectSupplyService:
                     row for row in spo.get(key, []) if row not in timely_refs
                 ],
                 unplannable_reason=(
-                    None
-                    if core is not None
-                    else "No reconciled AutoCount line. Reconcile the sales order first."
+                    "No reconciled AutoCount line. Reconcile the sales order first."
+                    if core is None
+                    # R17 / AC-S1-6: the line's own bin is ACTIVE and flagged out of
+                    # fulfilment planning, so there is no pile to walk, no group to net it
+                    # against and no donor to ask. Stated as the verdict rather than
+                    # proposed as a Buy, which is what a location the engine cannot see
+                    # would otherwise become. An INACTIVE bin is NOT this case
+                    # (`outside_fulfilment_planning`): it was already outside every read
+                    # before the flag existed and keeps the verdict it carried then.
+                    else OUTSIDE_FULFILMENT_PLANNING
+                    if outside_fulfilment_planning(warehouse)
+                    else None
                 ),
                 group_code=sales_agent_service.group_of_warehouse_code(
                     warehouse.warehouse_code if warehouse else None
@@ -5365,6 +5382,11 @@ class ProjectSupplyService:
 
         No line is excluded, because a cross-order reader is not replacing any one line.
 
+        EVERY ACTIVE location, flagged into fulfilment planning or not (R17): this states
+        what a location HOLDS, beside the on hand and held figures its two siblings state,
+        and a bin nobody plans against still holds its stock. What a PROPOSAL may draw is
+        the narrower `_drawable_free_stock`.
+
         It carries `_free_stock`'s known limit, and the board is built to SHOW that limit
         rather than hide it (PLAN 13.5.1): only CONFIRMED holds are netted off, so two orders
         composed separately can both still be proposed the same stock. The board answers that
@@ -5382,6 +5404,12 @@ class ProjectSupplyService:
         Stage 1C) or to an ACTIVE one. A superseded revision's rows are history and hold
         nothing, and the lines being replaced (`exclude_line_ids`, project line ids) are
         excluded so their own previous revision does not compete with the one replacing it.
+
+        EVERY ACTIVE location, fulfilment-planning flag or not. This is the arithmetic
+        `stock_levels_by_location` and `held_stock_by_location` state the two other terms
+        of, and a screen printing 1,928 on hand beside 0 free reads as a defect rather than
+        as a policy. What the LADDER may draw is a narrower question, and its own
+        (`_drawable_free_stock`, R17).
         """
         ids = [pid for pid in product_ids if pid]
         if not ids:
@@ -5405,6 +5433,28 @@ class ProjectSupplyService:
             if key in free:
                 free[key] = max(free[key] - qty, _ZERO)
         return free
+
+    def _drawable_free_stock(
+        self, product_ids: Iterable[str], *, exclude_line_ids: Optional[Sequence[str]]
+    ) -> Dict[Tuple[str, str], Decimal]:
+        """`_free_stock`, narrowed to the locations a PROPOSAL may draw from (R17).
+
+        The fulfilment-planning bins plus the site pools: a bin flagged out of planning has
+        no pile, no group net and no donor, so no rung, no manual donor list and no
+        confirm-time re-read may take a unit from it. The pools are in because the pool rung
+        draws them and they are flagged off by design.
+
+        Applied HERE, on the ladder's own fact caches (`demand_facts` and `_facts_for` are
+        the only two writers of `_free_cache`), rather than inside `_free_stock` itself:
+        the public `free_stock_by_location` seam is also what the board's stock detail and
+        the location-stock screen print, and those state what a location HOLDS, which does
+        not change because nobody plans against it.
+        """
+        free = self._free_stock(product_ids, exclude_line_ids=exclude_line_ids)
+        drawable = set(self._planning_warehouses()) | set(self._site_pool_warehouses())
+        return {
+            key: qty for key, qty in free.items() if key[1] in drawable
+        }
 
     def _hold_rows(
         self, product_ids: Sequence[str], *, exclude_line_ids: Optional[Sequence[str]]
@@ -5650,7 +5700,10 @@ class ProjectSupplyService:
         """
         if self._spo_by_location_cache is None:
             self._spo_by_location_cache = self._spo_rows(
-                self._request_product_ids, set(self._active_warehouses())
+                self._request_product_ids,
+                # Same span as `_pile_facts`, and for the same reason: the group's water
+                # sits at the flagged siblings, the pool rung reads the pools' own.
+                set(self._planning_warehouses()) | set(self._site_pool_warehouses()),
             )
         return self._spo_by_location_cache
 
@@ -6168,7 +6221,6 @@ class ProjectSupplyService:
         inside = self._reserve_location_ids(fact)
         group_siblings = self._group_sibling_warehouses(fact)
         inside_group = inside | {str(w.id) for w in group_siblings.values()}
-        max_qty, max_pct = self._cross_group_cap()
         out: List[Dict[str, Any]] = []
 
         free_index, holds_index = self._by_product()
@@ -6190,32 +6242,11 @@ class ProjectSupplyService:
             free = free_here[warehouse_id]
             committed = committed_at.get(warehouse_id, _ZERO)
             # Ladder v2 (section E rule 5): a free-stock donor OUTSIDE this line's
-            # ownership group is the SAME donor rung 5 draws automatically, within the
-            # small-quantity cap - stated here, on the one row, rather than offered a
-            # second time as a separate "cross-group" candidate.
+            # ownership group is the SAME donor the cross-group rung draws automatically -
+            # stated here, on the one row, rather than offered a second time as a separate
+            # "cross-group" candidate. UNCAPPED since v7.1 (R5): any group may donate, so
+            # the row carries no `over_cap` verdict any more.
             is_cross_group = bool(fact.group_code) and warehouse_id not in inside_group
-            over_cap = False
-            cap_reason = None
-            if is_cross_group:
-                within_qty = max_qty is not None and need <= max_qty
-                within_pct = (
-                    max_pct is not None
-                    and free > _ZERO
-                    and need <= (free * max_pct / Decimal("100"))
-                )
-                over_cap = need > _ZERO and not (within_qty or within_pct)
-                if over_cap:
-                    cap_bits = []
-                    if max_qty is not None:
-                        cap_bits.append(f"{qty_text(max_qty)} units")
-                    if max_pct is not None:
-                        cap_bits.append(
-                            f"{qty_text(max_pct)}% of {warehouse.warehouse_code}'s free stock"
-                        )
-                    cap_reason = (
-                        f"{qty_text(need)} exceeds the cross-group borrow limit "
-                        f"({' or '.join(cap_bits) or 'no limit set'})"
-                    )
             out.append(
                 {
                     "source": ALLOC_SOURCE_OTHER_LOCATION,
@@ -6229,8 +6260,6 @@ class ProjectSupplyService:
                         "committed_qty": qty_text(committed),
                     },
                     "rung": RUNG_CROSS_GROUP_BORROW if is_cross_group else None,
-                    "over_cap": over_cap,
-                    "cap_reason": cap_reason,
                 }
             )
 
@@ -6381,9 +6410,9 @@ class ProjectSupplyService:
         sort key, because "compare this only when both sides have it" is a statement about a
         PAIR and a key function cannot make one.
 
-        An `over_cap` row (section 1b rung 4) is still SHOWN in its earned rank position,
-        but never carries `recommended`: it cannot be taken automatically, so recommending
-        it would point CS at a donor the confirm path will refuse.
+        Every row is eligible since v7.1 (R5): the cross-group cap that used to mark a row
+        `over_cap` - shown but never recommended - is gone, so the first row of the ranked
+        list is always the recommendation.
         """
 
         def compare(left: Dict[str, Any], right: Dict[str, Any]) -> int:
@@ -6402,12 +6431,8 @@ class ProjectSupplyService:
             return 0
 
         candidates.sort(key=cmp_to_key(compare))
-        recommended_set = False
-        for candidate in candidates:
-            eligible = not candidate.get("over_cap")
-            candidate["recommended"] = eligible and not recommended_set
-            if eligible:
-                recommended_set = True
+        for index, candidate in enumerate(candidates):
+            candidate["recommended"] = index == 0
         return candidates
 
     def _pile_facts(self) -> Dict[Tuple[str, str], Dict[str, Decimal]]:
@@ -6438,24 +6463,36 @@ class ProjectSupplyService:
             self._request_product_ids
             | {product_id for product_id, _w in self._free_cache}
             | {product_id for product_id, _w, _p in self._holds_cache},
-            set(self._active_warehouses()),
+            # The planning bins AND the site pools. The pools are flagged OFF (R17) yet the
+            # pool rung still reads their triple off this cache, so the two sets are unioned
+            # here rather than the predicate being loosened - "outside fulfilment planning"
+            # is about the ownership groups, and a pool is not one.
+            set(self._planning_warehouses()) | set(self._site_pool_warehouses()),
         )
         return self._pile_cache
 
-    def _active_warehouses(self) -> Dict[str, Warehouse]:
-        """Every active warehouse by id, read once per request.
+    def _planning_warehouses(self) -> Dict[str, Warehouse]:
+        """Every warehouse fulfilment planning READS, by id, read once per request.
 
-        The span ladder v4 nets over (`group_netting`), and the same rows
-        `_group_sibling_warehouses` filters for one group's members.
+        Active AND flagged into fulfilment planning (`planning_predicate`, R17): a bin that
+        is off contributes no on hand, no incoming and no sales-order line to anything the
+        ladder or the board computes. This is the span ladder v4 nets over
+        (`group_netting`), and the same rows `_group_sibling_warehouses` filters for one
+        group's members - so narrowing it here narrows every one of them at once.
+
+        The SITE POOLS are not in it, deliberately: a pool is off (it is reached through
+        `pool_warehouse_id`, never as an ownership group) and its own set is
+        `_site_pool_warehouses`. Anything that needs both unions the two, which is what
+        `_pile_facts` does.
         """
-        if self._active_warehouses_cache is None:
-            self._active_warehouses_cache = {
+        if self._planning_warehouses_cache is None:
+            self._planning_warehouses_cache = {
                 str(row.id): row
                 for row in self.db.query(Warehouse)
-                .filter(Warehouse.is_active.is_(True))
+                .filter(fulfilment_planning_predicate())
                 .all()
             }
-        return self._active_warehouses_cache
+        return self._planning_warehouses_cache
 
     def netting(self) -> GroupNetting:
         """The ONE reader of availability for this request (section 1d).
@@ -6467,14 +6504,20 @@ class ProjectSupplyService:
         `_facts_for` reset both), because the un-netting carve-outs differ per call.
         """
         if self._netting_cache is None:
+            planning = self._planning_warehouses()
+            pools = self._site_pool_warehouses()
             self._netting_cache = GroupNetting(
                 triples=self._pile_facts(),
                 warehouse_codes={
                     warehouse_id: warehouse.warehouse_code
-                    for warehouse_id, warehouse in self._active_warehouses().items()
+                    for warehouse_id, warehouse in {**pools, **planning}.items()
                     if warehouse.warehouse_code
                 },
-                pool_warehouse_ids=set(self._site_pool_warehouses()),
+                # Only the flagged bins form ownership groups (R17). The pools are in the
+                # codes above so `pools_net` still has locations to net, and out of the
+                # group index so a flagged-off bin can never be a group member.
+                planning_warehouse_ids=set(planning),
+                pool_warehouse_ids=set(pools),
             )
         return self._netting_cache
 

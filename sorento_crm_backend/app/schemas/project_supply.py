@@ -130,10 +130,6 @@ class BorrowCandidate(BaseModel):
     lower_ranked: bool = False
     #: The donor shares this line's own sales agent (section 8) - offered at any rank.
     same_agent: bool = False
-    #: This donor is outside the small-quantity cap (`cross_group_borrow_max_qty` /
-    #: `_pct`), so it is shown but not selectable without a manual override.
-    over_cap: bool = False
-    cap_reason: Optional[str] = None
     #: The donor's own required date (section E.4: "urgency = the donor's required
     #: date"), for a `group_borrow` row - the confirm payload round-trips this into
     #: `ConfirmBorrowComponent.donor_required_date`. `None` on every other rung.

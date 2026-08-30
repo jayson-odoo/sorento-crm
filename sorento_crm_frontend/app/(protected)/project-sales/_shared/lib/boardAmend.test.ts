@@ -433,8 +433,6 @@ describe('borrowCandidatesOf: only a donor the confirmation can name', () => {
         donor_core_line_id: null,
         lower_ranked: false,
         same_agent: false,
-        over_cap: false,
-        cap_reason: null,
       },
     ]);
   });

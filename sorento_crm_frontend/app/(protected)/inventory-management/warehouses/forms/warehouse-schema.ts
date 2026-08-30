@@ -15,6 +15,9 @@ export const WarehouseSchema = z.object({
   is_active: z.boolean(),
   // Planning configuration. Both change what the reorder plan buys.
   counts_as_available: z.boolean(),
+  // Whether this bin takes part in fulfilment planning at all (migration 443). Off means
+  // its stock, its incoming and its sales-order lines are outside the plan entirely.
+  fulfilment_planning: z.boolean(),
   pool_warehouse_id: z.string().uuid().optional().nullable(),
   // Dealer or project. Seeded from the code suffix and editable, because the convention
   // is a convention: the one location it gets wrong has to be fixable without a deploy.

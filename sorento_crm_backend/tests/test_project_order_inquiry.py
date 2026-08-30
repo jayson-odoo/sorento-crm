@@ -165,7 +165,10 @@ def _line(db, order, product, qty, delivery_date, *, line_no=1) -> ProjectSalesO
 
 
 def _warehouse(db, code: str) -> Warehouse:
-    row = Warehouse(id=_uid(), warehouse_code=code, warehouse_name=f"{MARKER} {code}")
+    row = Warehouse(
+        id=_uid(), warehouse_code=code, warehouse_name=f"{MARKER} {code}",
+        fulfilment_planning=True,
+    )
     db.add(row)
     db.flush()
     return row
