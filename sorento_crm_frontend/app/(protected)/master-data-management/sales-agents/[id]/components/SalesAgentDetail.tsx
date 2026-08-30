@@ -90,6 +90,13 @@ export function SalesAgentDetail({ id }: { id: string }) {
   const [followUp, setFollowUp] = useState(false);
   const [internalNote, setInternalNote] = useState('');
   const [contactId, setContactId] = useState('');
+  // The person just picked, kept so the trigger can name them before anything is
+  // saved. Without it the label was read off the AGENT row and only while that
+  // row's own contact id still matched the pick, so choosing somebody else made
+  // the field read "Not linked" with a real person selected.
+  const [pickedContact, setPickedContact] = useState<SearchableSelectOption | null>(
+    null,
+  );
   const [tab, setTab] = useState('general');
 
   // Contacts, searched on the server rather than capped at a page: the book runs to
@@ -111,6 +118,9 @@ export function SalesAgentDetail({ id }: { id: string }) {
     setFollowUp(agent.follow_up);
     setInternalNote(agent.internal_note ?? '');
     setContactId(agent.contact_id ?? '');
+    // An edit session starts from the stored row, so anything picked in a
+    // previous one must not survive into it.
+    setPickedContact(null);
     setIsEditing(true);
   };
 
@@ -163,9 +173,11 @@ export function SalesAgentDetail({ id }: { id: string }) {
   const agent = data;
 
   const selectedContact: SearchableSelectOption | undefined =
-    agent.contact_id && agent.contact_id === contactId
-      ? { value: agent.contact_id, label: agent.contact_name ?? 'Linked contact' }
-      : undefined;
+    pickedContact && pickedContact.value === contactId
+      ? pickedContact
+      : agent.contact_id && agent.contact_id === contactId
+        ? { value: agent.contact_id, label: agent.contact_name ?? 'Linked contact' }
+        : undefined;
 
   const handleSave = async () => {
     const trimmedLabel = personLabel.trim();
@@ -359,6 +371,7 @@ export function SalesAgentDetail({ id }: { id: string }) {
                     id="sa-edit-contact"
                     value={contactId}
                     onChange={setContactId}
+                    onOptionChange={setPickedContact}
                     fetchOptions={fetchContacts}
                     // The row already carries the linked person's NAME, so the trigger
                     // reads it without a round trip and keeps reading it while the search
