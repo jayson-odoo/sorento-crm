@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { Copy } from 'lucide-react';
+import { Check, Copy } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import {
@@ -13,6 +13,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard';
 
 /**
  * The fallback for a refused clipboard.
@@ -30,6 +31,9 @@ export function QuotationSignLinkDialog({
   url: string | null;
   onOpenChange: (open: boolean) => void;
 }) {
+  // The tick on the button is the confirmation; only a refusal needs saying (S7-05).
+  const { isCopied, copyToClipboard } = useCopyToClipboard();
+
   return (
     <Dialog open={Boolean(url)} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-lg">
@@ -51,16 +55,17 @@ export function QuotationSignLinkDialog({
             variant="outline"
             onClick={async () => {
               if (!url) return;
-              try {
-                await navigator.clipboard.writeText(url);
-                toast.success('Counter-sign link copied');
-              } catch {
+              if (!(await copyToClipboard(url))) {
                 toast.error('Press Ctrl/Cmd+C to copy the selected link');
               }
             }}
           >
-            <Copy className="size-4" aria-hidden />
-            Copy
+            {isCopied ? (
+              <Check className="size-4" aria-hidden />
+            ) : (
+              <Copy className="size-4" aria-hidden />
+            )}
+            {isCopied ? 'Copied' : 'Copy'}
           </Button>
         </div>
         <DialogFooter>

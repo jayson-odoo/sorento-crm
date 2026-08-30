@@ -10,7 +10,7 @@ import {
   getPaginationRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { ArrowLeft, ClipboardCopy, Download, OctagonAlert, TriangleAlert } from 'lucide-react';
+import { ArrowLeft, Check, ClipboardCopy, Download, OctagonAlert, TriangleAlert } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -26,6 +26,7 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Skeleton } from '@/components/ui/skeleton';
+import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import {
   useSalesOrderImportFile,
@@ -174,11 +175,10 @@ function WorksheetView({
         : undefined;
   const canExport = !exportHint;
 
+  // The tick on the button is the confirmation; only a refusal needs saying (S7-05).
+  const { isCopied, copyToClipboard } = useCopyToClipboard();
   const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(worksheetAsTabbedText(lines));
-      toast.success(`${lines.length} line${lines.length === 1 ? '' : 's'} copied`);
-    } catch {
+    if (!(await copyToClipboard(worksheetAsTabbedText(lines)))) {
       toast.error('The worksheet could not be copied');
     }
   };
@@ -371,8 +371,12 @@ function WorksheetView({
             disabled={!canExport || lines.length === 0}
             title={exportHint}
           >
-            <ClipboardCopy className="size-4" aria-hidden />
-            Copy for AutoCount
+            {isCopied ? (
+              <Check className="size-4" aria-hidden />
+            ) : (
+              <ClipboardCopy className="size-4" aria-hidden />
+            )}
+            {isCopied ? 'Copied' : 'Copy for AutoCount'}
           </Button>
           {/* Fetched through the api client, not followed as a link: `import_file_url` is a
               backend path, so an anchor resolves it against this origin and 404s. */}

@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { AlertTriangle, CheckCircle2, Copy } from 'lucide-react';
+import { AlertTriangle, Check, CheckCircle2, Copy } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   AlertDialog,
@@ -16,6 +16,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { FileDropzone } from '@/components/common/FileDropzone';
+import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard';
 import { Textarea } from '@/components/ui/textarea';
 import { Progress } from '@/components/ui/progress';
 import {
@@ -246,11 +247,11 @@ function ImportProgress({
 function ImportReport({ result }: { result: SeriesProductImportResult }) {
   const misses = result.unmatched_codes;
 
+  // The tick on the button is the confirmation; only a refusal needs saying (S7-05).
+  const { isCopied, copyToClipboard } = useCopyToClipboard();
+
   async function copyMisses() {
-    try {
-      await navigator.clipboard.writeText(misses.join('\n'));
-      toast.success('Unmatched codes copied');
-    } catch {
+    if (!(await copyToClipboard(misses.join('\n')))) {
       toast.error('Copying is blocked in this browser. Select the list and copy it by hand.');
     }
   }
@@ -295,8 +296,12 @@ function ImportReport({ result }: { result: SeriesProductImportResult }) {
               className="shrink-0"
               onClick={() => void copyMisses()}
             >
-              <Copy className="size-4" aria-hidden />
-              Copy
+              {isCopied ? (
+                <Check className="size-4" aria-hidden />
+              ) : (
+                <Copy className="size-4" aria-hidden />
+              )}
+              {isCopied ? 'Copied' : 'Copy'}
             </Button>
           </div>
           <div className="mt-2 flex max-h-40 flex-wrap gap-1 overflow-y-auto">
