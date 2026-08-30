@@ -15,6 +15,12 @@ export interface ListSearchInputProps {
   onSubmit?: () => void;
   className?: string;
   'aria-label'?: string;
+  /**
+   * A one-line hint on the box itself, for the single thing about THIS search a
+   * reader would otherwise get wrong (the fulfilment board: a product match
+   * lists the whole order). A hint, not a paragraph teaching the feature.
+   */
+  title?: string;
 }
 
 /**
@@ -39,6 +45,7 @@ export function ListSearchInput({
   onSubmit,
   className,
   'aria-label': ariaLabel,
+  title,
 }: ListSearchInputProps) {
   return (
     <div className={cn('relative', className ?? 'w-full md:w-64')}>
@@ -56,6 +63,7 @@ export function ListSearchInput({
       <Input
         placeholder={placeholder}
         aria-label={ariaLabel ?? placeholder}
+        title={title}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         onKeyDown={(e) => {

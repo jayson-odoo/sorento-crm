@@ -727,7 +727,10 @@ export function FulfilmentPlanningClient() {
                   onChange={setSearch}
                   isSettling={debouncedSettling}
                   placeholder="Search sales order, customer, project or product"
-                  aria-label="Clear the search"
+                  // The one surprise, as a hint on the box rather than prose on the page: a
+                  // product needle matches the ORDER, so the row still counts the whole
+                  // order, and only an outstanding line counts as a match.
+                  title="A product match lists the whole order that has an outstanding line for it."
                   className="w-full"
                 />
               }

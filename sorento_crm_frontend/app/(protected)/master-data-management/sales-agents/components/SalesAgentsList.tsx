@@ -308,7 +308,6 @@ export default function SalesAgentsList() {
                   onChange={setSearchQuery}
                   isSettling={debouncedSearchSettling}
                   placeholder="Search agent code..."
-                  aria-label="Clear search"
                   className="w-64"
                 />
               }

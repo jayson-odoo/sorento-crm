@@ -297,7 +297,6 @@ export function ReorderPolicyGrid() {
                 onChange={setSearchQuery}
                 isSettling={debouncedSearchSettling}
                 placeholder="Search scope or type..."
-                aria-label="Clear search"
                 className="w-64"
               />
             </CardHeading>

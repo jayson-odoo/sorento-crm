@@ -296,7 +296,6 @@ export default function ProductSetsList() {
                     onChange={setSearchQuery}
                     isSettling={debouncedSearchSettling}
                     placeholder="Search set code or name..."
-                    aria-label="Clear search"
                     className="w-64"
                   />
                 }
