@@ -1,5 +1,5 @@
 /**
- * The arithmetic behind the tag canvas's Illustrator-style behaviour (D33-D40).
+ * The arithmetic behind the tag canvas's Illustrator-style behaviour (D33-D44).
  *
  * Everything here is a pure function over the layer array, which is the point:
  * group propagation, marquee scoping, hit resolution under isolation and the
@@ -14,6 +14,9 @@ import { defaultShapeProps, defaultTextProps } from './tag-template-types';
 import {
   ancestorsOf,
   bandBetween,
+  panelDropTarget,
+  panelRows,
+  reparentLayer,
   cloneLayers,
   descendantsOf,
   fitView,
@@ -542,5 +545,172 @@ describe('stageToMm', () => {
     const point = stageToMm({ zoom: 2, panX: 30, panY: 10 }, 30 + 2 * CANVAS_PX_PER_MM * 5, 10);
     expect(point.x_mm).toBeCloseTo(5, 6);
     expect(point.y_mm).toBeCloseTo(0, 6);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Layers panel drag and drop (D43)
+// ---------------------------------------------------------------------------
+
+/**
+ * A block plus a loose layer, the shape the panel drags things between.
+ *
+ *   x  (top level, z 4)
+ *   G  (0,0 40x20, z 3)
+ *     c2 (20,0 20x20, z 2)
+ *     c1 (0,0 10x10, z 1)
+ *
+ * Panel order is z descending, so the rows read x, G, c2, c1.
+ */
+function panelDoc(): TagLayer[] {
+  return [
+    box({ id: 'c1', x: 0, y: 0, w: 10, h: 10, z: 1 }),
+    box({ id: 'c2', x: 20, y: 0, w: 20, h: 20, z: 2 }),
+    group({ id: 'G', x: 0, y: 0, w: 40, h: 20, z: 3, children: ['c1', 'c2'] }),
+    box({ id: 'x', x: 60, y: 60, w: 10, h: 10, z: 4 }),
+  ];
+}
+
+describe('panelRows', () => {
+  it('reads top down in z order with children indented under their group', () => {
+    expect(panelRows(panelDoc())).toEqual([
+      { id: 'x', parentId: null, depth: 0 },
+      { id: 'G', parentId: null, depth: 0 },
+      { id: 'c2', parentId: 'G', depth: 1 },
+      { id: 'c1', parentId: 'G', depth: 1 },
+    ]);
+  });
+
+  it('indents a nested group under its parent', () => {
+    expect(panelRows(nested())).toEqual([
+      { id: 'g1', parentId: null, depth: 0 },
+      { id: 'g2', parentId: 'g1', depth: 1 },
+      { id: 'b', parentId: 'g2', depth: 2 },
+      { id: 'a', parentId: 'g1', depth: 1 },
+    ]);
+  });
+});
+
+describe('panelDropTarget', () => {
+  it('drops above the row when the pointer is in its top edge', () => {
+    expect(panelDropTarget(panelDoc(), 'c1', 0.1)).toEqual({
+      parentId: 'G',
+      beforeId: 'c1',
+    });
+  });
+
+  it('drops below the row when the pointer is in its bottom edge', () => {
+    expect(panelDropTarget(panelDoc(), 'c2', 0.9)).toEqual({
+      parentId: 'G',
+      beforeId: 'c1',
+    });
+  });
+
+  it('drops at the end of the list below the last row', () => {
+    expect(panelDropTarget(panelDoc(), 'c1', 0.9)).toEqual({
+      parentId: 'G',
+      beforeId: null,
+    });
+  });
+
+  it('joins the group when the pointer is over the body of a group row', () => {
+    expect(panelDropTarget(panelDoc(), 'G', 0.5)).toEqual({
+      parentId: 'G',
+      beforeId: null,
+    });
+  });
+
+  it('stays beside a group when the pointer is on its edge', () => {
+    expect(panelDropTarget(panelDoc(), 'G', 0.1)).toEqual({
+      parentId: null,
+      beforeId: 'G',
+    });
+    expect(panelDropTarget(panelDoc(), 'G', 0.9)).toEqual({
+      parentId: null,
+      beforeId: null,
+    });
+  });
+
+  it('answers nothing for a row that is not there', () => {
+    expect(panelDropTarget(panelDoc(), 'nope', 0.5)).toBeNull();
+  });
+});
+
+describe('reparentLayer', () => {
+  it('joins the group when dropped between two of its children', () => {
+    const out = reparentLayer(panelDoc(), 'x', { parentId: 'G', beforeId: 'c1' });
+
+    expect(panelRows(out).map((row) => row.id)).toEqual(['G', 'c2', 'x', 'c1']);
+    expect((byId(out, 'G').props as { children: string[] }).children).toEqual([
+      'c1',
+      'x',
+      'c2',
+    ]);
+  });
+
+  it('appends as the last child when dropped onto the group row', () => {
+    const out = reparentLayer(panelDoc(), 'x', { parentId: 'G', beforeId: null });
+
+    expect(panelRows(out).map((row) => row.id)).toEqual(['G', 'c2', 'c1', 'x']);
+    expect((byId(out, 'G').props as { children: string[] }).children[0]).toBe('x');
+  });
+
+  it('leaves the group when dropped between two top-level rows', () => {
+    const out = reparentLayer(panelDoc(), 'c2', { parentId: null, beforeId: 'G' });
+
+    expect(panelRows(out).map((row) => row.id)).toEqual(['x', 'c2', 'G', 'c1']);
+    expect((byId(out, 'G').props as { children: string[] }).children).toEqual(['c1']);
+  });
+
+  it('refits the group it left', () => {
+    const out = reparentLayer(panelDoc(), 'c2', { parentId: null, beforeId: 'G' });
+    const g = byId(out, 'G');
+
+    expect([g.x_mm, g.y_mm, g.width_mm, g.height_mm]).toEqual([0, 0, 10, 10]);
+  });
+
+  it('refits the group it joined', () => {
+    const out = reparentLayer(panelDoc(), 'x', { parentId: 'G', beforeId: null });
+    const g = byId(out, 'G');
+
+    expect([g.x_mm, g.y_mm, g.width_mm, g.height_mm]).toEqual([0, 0, 70, 70]);
+  });
+
+  it('carries a whole subtree when a group row is dragged', () => {
+    const layers = [...nested(), box({ id: 'top', x: 60, y: 60, w: 10, h: 10, z: 5 })];
+    const out = reparentLayer(layers, 'g2', { parentId: null, beforeId: 'g1' });
+
+    expect(panelRows(out).map((row) => row.id)).toEqual(['top', 'g2', 'b', 'g1', 'a']);
+    expect((byId(out, 'g1').props as { children: string[] }).children).toEqual(['a']);
+  });
+
+  it('refuses a drop into its own subtree', () => {
+    const layers = nested();
+
+    expect(reparentLayer(layers, 'g1', { parentId: 'g2', beforeId: null })).toBe(layers);
+    expect(reparentLayer(layers, 'g1', { parentId: 'g1', beforeId: null })).toBe(layers);
+  });
+
+  it('renumbers z 1..n so the panel order is the stacking order', () => {
+    const out = reparentLayer(panelDoc(), 'x', { parentId: 'G', beforeId: 'c1' });
+    const rows = panelRows(out).map((row) => byId(out, row.id).z_index);
+
+    expect(rows).toEqual([4, 3, 2, 1]);
+  });
+
+  it('reorders a locked layer, because a lock protects the canvas and not the stack', () => {
+    const layers = panelDoc().map((layer) =>
+      layer.id === 'x' ? { ...layer, locked: true } : layer,
+    );
+    const out = reparentLayer(layers, 'x', { parentId: 'G', beforeId: null });
+
+    expect((byId(out, 'G').props as { children: string[] }).children).toContain('x');
+    expect(byId(out, 'x').locked).toBe(true);
+  });
+
+  it('leaves the document alone when the layer is not there', () => {
+    const layers = panelDoc();
+
+    expect(reparentLayer(layers, 'nope', { parentId: 'G', beforeId: null })).toBe(layers);
   });
 });

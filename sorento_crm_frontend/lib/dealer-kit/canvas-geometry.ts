@@ -1,5 +1,5 @@
 /**
- * The arithmetic behind the tag canvas's drawing-tool behaviour (D33-D40).
+ * The arithmetic behind the tag canvas's drawing-tool behaviour (D33-D44).
  *
  * A tag document keeps its layers FLAT: children carry absolute mm positions
  * and a group is a bounding box holding `children: string[]`. That is what the
@@ -7,7 +7,7 @@
  * has to be a function over the layer array rather than a change of shape, and
  * this module is that set of functions: ancestry, propagation of a move or a
  * transform, marquee scoping, hit resolution under group isolation, z reorder,
- * cloning and the viewport transform.
+ * cloning, the Layers panel tree and the viewport transform.
  *
  * No React and no Konva in here on purpose. These are the rules that were wrong
  * on the canvas, and they are testable without a browser.
@@ -315,6 +315,172 @@ export function ungroupLayers(
     });
 
   return { layers: out, ids: freed };
+}
+
+// ---------------------------------------------------------------------------
+// The Layers panel as a tree (D43)
+// ---------------------------------------------------------------------------
+
+/** One row of the Layers panel, top to bottom. */
+export interface PanelRow {
+  id: string;
+  parentId: string | null;
+  depth: number;
+}
+
+/** Where a dragged row lands: inside `parentId`, directly above `beforeId`. */
+export interface ReparentTarget {
+  /** The group it joins, or null for the top level. */
+  parentId: string | null;
+  /** The sibling it sits directly above, or null to go last (bottom-most). */
+  beforeId: string | null;
+}
+
+/**
+ * The panel's rows, top down: highest z first, a group's children indented
+ * directly under it.
+ *
+ * The panel reads the z order, so this is also the order `reparentLayer`
+ * renumbers against. Deriving it here rather than in the component is what lets
+ * the drag rules be tested without rendering anything.
+ */
+export function panelRows(layers: TagLayer[]): PanelRow[] {
+  const parents = parentIndex(layers);
+  const byZDesc = [...layers].sort((a, b) => b.z_index - a.z_index);
+
+  const rows: PanelRow[] = [];
+  const seen = new Set<string>();
+
+  const walk = (layer: TagLayer, parentId: string | null, depth: number): void => {
+    if (seen.has(layer.id)) return;
+    seen.add(layer.id);
+    rows.push({ id: layer.id, parentId, depth });
+    for (const child of byZDesc.filter((l) => parents.get(l.id) === layer.id)) {
+      walk(child, layer.id, depth + 1);
+    }
+  };
+
+  for (const layer of byZDesc) {
+    if (!parents.has(layer.id)) walk(layer, null, 0);
+  }
+  // A document whose parent chain loops would otherwise lose rows entirely.
+  for (const layer of byZDesc) {
+    if (!seen.has(layer.id)) walk(layer, parents.get(layer.id) ?? null, 0);
+  }
+  return rows;
+}
+
+/**
+ * What a drop on the row `overId` means, given how far down that row the
+ * pointer is (0 at its top edge, 1 at its bottom).
+ *
+ * The middle half of a GROUP row is the group itself, which is how a layer
+ * joins a block; every other part of every row is a gap between two rows, and a
+ * gap belongs to whichever parent the rows around it have. That is the whole
+ * difference between "put it here" and "put it in there".
+ */
+export function panelDropTarget(
+  layers: TagLayer[],
+  overId: string,
+  ratio: number,
+): ReparentTarget | null {
+  const rows = panelRows(layers);
+  const index = rows.findIndex((row) => row.id === overId);
+  if (index === -1) return null;
+  const over = rows[index];
+
+  const isGroup = layers.find((l) => l.id === overId)?.props.kind === 'group';
+  if (isGroup && ratio > 0.25 && ratio < 0.75) {
+    return { parentId: overId, beforeId: null };
+  }
+
+  if (ratio < 0.5) return { parentId: over.parentId, beforeId: overId };
+
+  const next = rows.slice(index + 1).find((row) => row.parentId === over.parentId);
+  return { parentId: over.parentId, beforeId: next?.id ?? null };
+}
+
+/**
+ * Move a layer to another place in the panel, taking its subtree with it (D43).
+ *
+ * Membership and stacking are the same fact here: a group's children are a
+ * contiguous block directly below it in the panel, so a drop that changes where
+ * a row sits also changes which group it belongs to. The whole document is
+ * renumbered 1..n afterwards, which is what keeps that true, and both the old
+ * and the new ancestors are refitted so no box outlives the children it
+ * measured.
+ *
+ * A drop into the layer's own subtree is refused rather than corrected: there
+ * is no sensible answer, and returning the same array lets the caller skip the
+ * history entry.
+ */
+export function reparentLayer(
+  layers: TagLayer[],
+  id: string,
+  target: ReparentTarget,
+): TagLayer[] {
+  const index = indexById(layers);
+  const moving = index.get(id);
+  if (!moving) return layers;
+
+  const parentId = target.parentId;
+  if (parentId !== null) {
+    const parent = index.get(parentId);
+    if (!parent || parent.props.kind !== 'group') return layers;
+    if (parentId === id || descendantsOf(layers, id).includes(parentId)) return layers;
+  }
+
+  const oldParentId = parentIndex(layers).get(id) ?? null;
+
+  // Sibling lists in panel order, the moved layer taken out of all of them.
+  const rows = panelRows(layers).filter((row) => row.id !== id);
+  const siblings = new Map<string | null, string[]>();
+  for (const row of rows) {
+    const list = siblings.get(row.parentId) ?? [];
+    list.push(row.id);
+    siblings.set(row.parentId, list);
+  }
+
+  const destination = siblings.get(parentId) ?? [];
+  const slot =
+    target.beforeId === null ? destination.length : destination.indexOf(target.beforeId);
+  destination.splice(slot === -1 ? destination.length : slot, 0, id);
+  siblings.set(parentId, destination);
+
+  // Flatten back to panel order, then number from the bottom up so the panel
+  // order IS the z order.
+  const flattened: string[] = [];
+  const walk = (parent: string | null): void => {
+    for (const childId of siblings.get(parent) ?? []) {
+      flattened.push(childId);
+      walk(childId);
+    }
+  };
+  walk(null);
+
+  const zByIndex = new Map<string, number>();
+  flattened.forEach((layerId, position) => {
+    zByIndex.set(layerId, flattened.length - position);
+  });
+
+  let out = layers.map((layer) => {
+    const next: TagLayer = { ...layer, z_index: zByIndex.get(layer.id) ?? layer.z_index };
+    if (next.props.kind === 'group') {
+      // Children bottom-most first, the order the block builders write and the
+      // order the canvas draws in.
+      const children = [...(siblings.get(next.id) ?? [])].reverse();
+      next.props = { ...next.props, children };
+    }
+    return next;
+  });
+
+  for (const ancestorId of [
+    ...(oldParentId ? [oldParentId, ...ancestorsOf(out, oldParentId)] : []),
+    ...(parentId ? [parentId, ...ancestorsOf(out, parentId)] : []),
+  ]) {
+    out = refitGroup(out, ancestorId);
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------

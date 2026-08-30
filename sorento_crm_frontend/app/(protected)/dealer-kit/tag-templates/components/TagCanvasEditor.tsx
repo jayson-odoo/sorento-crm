@@ -16,11 +16,16 @@
  * Space) pans, a click takes a group and a double-click goes inside it, and a
  * group carries its descendants through every move, transform and clipboard
  * action.
+ *
+ * The MOUSE BUTTON decides which of those runs (D44). Left marquees, drags and
+ * selects; the middle button pans for as long as it is held, whatever tool is
+ * active; the right button starts nothing, because the context menu owns it.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type Konva from 'konva';
+import { Konva as KonvaGlobal } from 'konva/lib/Global';
 import type {
   GroupBinding,
   ImageSource,
@@ -61,6 +66,7 @@ import {
   refitAncestors,
   removeLayers,
   reorderZ,
+  reparentLayer,
   stageToMm,
   topmostChildAt,
   transformGroup,
@@ -71,6 +77,7 @@ import {
   CANVAS_PX_PER_MM,
   type CanvasView,
   type ReorderDirection,
+  type ReparentTarget,
 } from '@/lib/dealer-kit/canvas-geometry';
 import {
   ContextMenu,
@@ -121,6 +128,11 @@ import { KonvaTagLayer } from './KonvaTagLayer';
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+// Konva starts a drag on the middle button as well as the left one by default
+// (`dragButtons` ships as `[0, 1]`), so holding the wheel down over a layer
+// dragged it while the workspace drew a band. The middle button pans (D44).
+KonvaGlobal.dragButtons = [0];
 
 let idCounter = 0;
 function newLayerId(): string {
@@ -196,6 +208,8 @@ export function TagCanvasEditor({ doc, onChange, promotionId }: TagCanvasEditorP
     null,
   );
   const [fontUploadOpen, setFontUploadOpen] = useState(false);
+  /** True while the middle button is held: the hand tool, borrowed (D44). */
+  const [wheelPanning, setWheelPanning] = useState(false);
   /**
    * The product the canvas is DRAWN against while previewing (D41).
    *
@@ -1069,6 +1083,16 @@ export function TagCanvasEditor({ doc, onChange, promotionId }: TagCanvasEditorP
     (e: Konva.KonvaEventObject<MouseEvent>) => {
       const point = stageRef.current?.getPointerPosition();
       if (!point) return;
+      // The middle button pans wherever it is pressed and whatever the tool is,
+      // and `preventDefault` keeps the browser's autoscroll cursor away. The
+      // right button starts nothing: the context menu resolves its own target.
+      if (e.evt.button === 1) {
+        e.evt.preventDefault();
+        panRef.current = { x: point.x, y: point.y, panX: view.panX, panY: view.panY };
+        setWheelPanning(true);
+        return;
+      }
+      if (e.evt.button !== 0) return;
       if (handMode) {
         panRef.current = { x: point.x, y: point.y, panX: view.panX, panY: view.panY };
         return;
@@ -1099,6 +1123,7 @@ export function TagCanvasEditor({ doc, onChange, promotionId }: TagCanvasEditorP
 
   const handleStageMouseUp = useCallback(() => {
     panRef.current = null;
+    setWheelPanning(false);
     const band = marqueeRef.current;
     marqueeRef.current = null;
     setMarquee(null);
@@ -1123,6 +1148,7 @@ export function TagCanvasEditor({ doc, onChange, promotionId }: TagCanvasEditorP
   useEffect(() => {
     const cancel = () => {
       panRef.current = null;
+      setWheelPanning(false);
       if (marqueeRef.current) {
         marqueeRef.current = null;
         setMarquee(null);
@@ -1215,6 +1241,21 @@ export function TagCanvasEditor({ doc, onChange, promotionId }: TagCanvasEditorP
       if (layer) updateLayer(id, { locked: !layer.locked });
     },
     [layers, updateLayer],
+  );
+
+  /**
+   * A drag in the Layers panel (D43): one reorder, one history entry.
+   *
+   * A drop that changes nothing (into its own subtree, or onto a target that is
+   * no longer there) answers the same array, and then there is nothing to undo.
+   */
+  const handleMoveLayer = useCallback(
+    (id: string, target: ReparentTarget) => {
+      const next = reparentLayer(layers, id, target);
+      if (next === layers) return;
+      commit(next);
+    },
+    [layers, commit],
   );
 
   const selectionLocked = useMemo(
@@ -1487,6 +1528,7 @@ export function TagCanvasEditor({ doc, onChange, promotionId }: TagCanvasEditorP
             onSelect={handleSelect}
             onToggleVisibility={handleToggleVisibility}
             onToggleLock={handleToggleLock}
+            onMoveLayer={handleMoveLayer}
           />
         </div>
 
@@ -1499,6 +1541,7 @@ export function TagCanvasEditor({ doc, onChange, promotionId }: TagCanvasEditorP
               className={cn(
                 'relative flex-1 overflow-hidden bg-muted/50',
                 handMode && 'cursor-grab active:cursor-grabbing',
+                wheelPanning && 'cursor-grabbing',
               )}
             >
               <CanvasRulers

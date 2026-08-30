@@ -185,7 +185,7 @@ The template was left exactly as it was seeded: the one save made during the run
 was reverted through the inspector and saved again (wordmark back to X 84 /
 Y 5.05), and every other edit was discarded by reloading without saving.
 
-## The nine evidence shots
+## The evidence shots
 
 | File | What it shows |
 | --- | --- |
@@ -198,6 +198,11 @@ Y 5.05), and every other edit was discarded by reloading without saving.
 | `interaction-7-context-menu.png` | Our menu on right-click over a badge: Cut, Copy, Paste, Duplicate / Bring to Front, Bring Forward, Send Backward, Send to Back / Group / Lock, Hide / Delete. The browser's own menu never appeared. Right-clicking empty space gave Paste, Select All, Fit to View, Zoom 100%, Preview with a product (AC-M.6). |
 | `interaction-8-duplicate-group-carries-descendants.png` | Duplicate on the group took the document from 14 layers to 21, and the Layers panel nests six fresh children under the copy, so the clone's `children` points at the clones. Before this change a duplicate added ONE layer whose `children` still named the originals. Ctrl+Z returned it to 14 (AC-M.7). |
 | `interaction-9-preview-with-a-product.png` | Preview with `SRTKS2435`: the code, dimensions, spec line, `LP: RM 1,550` and the price badge all resolve, and the chip on the toolbar names the product. The Layers panel still reads `Group (6)`, not `Product (6)`, because nothing was bound. Saving with the preview active and reloading gave back the placeholder text, no chip and an unbound group (AC-M.9). |
+| `interaction-10-preview-photo-follows-product.png` | Preview with `CBF3612`, the product whose photo the hero slot used to refuse to draw. The tag now shows its primary photo, its code, its dimensions, its spec line, `LP: RM 799` and `RM 799`, and the chip on the toolbar names it. The template's hero layer still holds `source: null`: the slot follows the bound product's primary photo (D42, AC-M.11). |
+| `interaction-10b-preview-cleared-no-image.png` | The same template after Stop previewing: the hero is back to the `No image` placeholder and the text layers to their seeded placeholders, so nothing about the preview leaked into the document (AC-M.11). |
+| `interaction-11-layers-drag-into-group.png` | The `LP:` row dragged onto the `code` row inside the block. It became a member: the panel indents it under the group, the count went from `Group (6)` to `Group (7)`, and the group's dashed box grew to enclose it. Dragging the group on the canvas afterwards moved `LP:` from X 78.5 / Y 55.6 to X 90.47 / Y 54.6, the same delta the group took (5.3 to 17.27, 21 to 20). One Ctrl+Z put the canvas move back and left the membership; a second Ctrl+Z put `LP:` back at the top level and the panel back to `Group (6)` (D43, AC-M.12). |
+| `interaction-11b-drop-onto-group-joins-as-last-child.png` | A `Badge` row dropped onto the BODY of the group row joined as the group's last child, and the group's box grew upwards to reach it. Reading z off the inspector down the panel gave `sell price` 13, `product image` 8, `Badge` 7: the panel order is the z order, and the group's descendants are one contiguous block below it (D43, AC-M.12). |
+| `interaction-12-middle-button-pans-before.png` / `-after.png` | Middle-button drag over the product photo, from (700, 420) to (760, 430). The 10 mm ruler tick moved from x=597 to x=657 and the artboard came with it; no marquee band was drawn, the selected `Badge` kept X 51.4 / Y 5.7 / z 7 and the selection never changed. While the button was held the workspace carried `cursor-grabbing`, and it was gone on release (D44, AC-M.13). |
 
 ## Measurements that are not in a picture
 

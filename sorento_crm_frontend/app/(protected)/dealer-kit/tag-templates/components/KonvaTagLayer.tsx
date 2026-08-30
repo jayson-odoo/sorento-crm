@@ -131,6 +131,9 @@ export function KonvaTagLayer({
   // and the toolbar still thought was not selected.
   const handleMouseDown = (e: Konva.KonvaEventObject<MouseEvent | TouchEvent>) => {
     if (layer.locked) return;
+    // Only the left button selects. The middle one pans the view (D44) and the
+    // right one is the context menu's, which resolves its own target.
+    if ('button' in e.evt && e.evt.button !== 0) return;
     e.cancelBubble = true;
     const shiftKey = 'shiftKey' in e.evt ? e.evt.shiftKey : false;
     onSelect?.(layer.id, shiftKey);
@@ -230,6 +233,32 @@ function LayerContent({
       );
 
     case 'product_slot':
+      // A slot draws its DATA when there is any (D42) and falls back to the
+      // dashed outline naming the field, which is what a designer needs to see
+      // while the template is unbound.
+      if (display?.imageUrl) {
+        return (
+          <ImageContent
+            w={w}
+            h={h}
+            url={display.imageUrl}
+            fit="contain"
+            maskShape="none"
+          />
+        );
+      }
+      if (display?.text) {
+        return (
+          <Text
+            width={w}
+            height={h}
+            text={display.text}
+            fontSize={Math.min(11, w / 6)}
+            fill="#000000"
+            wrap="word"
+          />
+        );
+      }
       return (
         <>
           <Rect
