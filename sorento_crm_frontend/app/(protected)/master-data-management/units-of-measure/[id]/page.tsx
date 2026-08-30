@@ -4,24 +4,11 @@ import { use } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { MoveLeft, Edit, Trash2 } from 'lucide-react';
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Container } from '@/components/common/container';
-import {
-  Toolbar,
-  ToolbarActions,
-  ToolbarHeading,
-  ToolbarTitle,
-} from '@/components/common/toolbar';
+import { PageHeader } from '@/components/common/PageHeader';
 import { useUOM, useDeleteUOM } from '../hooks/useUOM';
 import { useBackToListHref } from '@/components/common/BackToList';
 import { formatDate } from '@/lib/helpers';
@@ -55,35 +42,16 @@ export default function UOMDetailPage({
     return (
       <>
         <Container>
-          <Toolbar>
-            <ToolbarHeading>
-              <ToolbarTitle>Unit of Measure</ToolbarTitle>
-              <Breadcrumb>
-                <BreadcrumbList>
-                  <BreadcrumbItem>
-                    <BreadcrumbLink href="/">Home</BreadcrumbLink>
-                  </BreadcrumbItem>
-                  <BreadcrumbSeparator />
-                  <BreadcrumbItem>
-                    <BreadcrumbPage>Product Management</BreadcrumbPage>
-                  </BreadcrumbItem>
-                  <BreadcrumbSeparator />
-                  <BreadcrumbItem>
-                    <BreadcrumbLink href="/master-data-management/units-of-measure">
-                      Units of Measure
-                    </BreadcrumbLink>
-                  </BreadcrumbItem>
-                </BreadcrumbList>
-              </Breadcrumb>
-            </ToolbarHeading>
-            <ToolbarActions>
+          <PageHeader
+            title="Unit of Measure"
+            actions={
               <Button asChild variant="outline">
                 <Link href={backHref}>
                   <MoveLeft /> Back to UOMs
                 </Link>
               </Button>
-            </ToolbarActions>
-          </Toolbar>
+            }
+          />
         </Container>
         <Container>
           <div className="space-y-6">
@@ -99,35 +67,16 @@ export default function UOMDetailPage({
     return (
       <>
         <Container>
-          <Toolbar>
-            <ToolbarHeading>
-              <ToolbarTitle>Unit of Measure</ToolbarTitle>
-              <Breadcrumb>
-                <BreadcrumbList>
-                  <BreadcrumbItem>
-                    <BreadcrumbLink href="/">Home</BreadcrumbLink>
-                  </BreadcrumbItem>
-                  <BreadcrumbSeparator />
-                  <BreadcrumbItem>
-                    <BreadcrumbPage>Product Management</BreadcrumbPage>
-                  </BreadcrumbItem>
-                  <BreadcrumbSeparator />
-                  <BreadcrumbItem>
-                    <BreadcrumbLink href="/master-data-management/units-of-measure">
-                      Units of Measure
-                    </BreadcrumbLink>
-                  </BreadcrumbItem>
-                </BreadcrumbList>
-              </Breadcrumb>
-            </ToolbarHeading>
-            <ToolbarActions>
+          <PageHeader
+            title="Unit of Measure"
+            actions={
               <Button asChild variant="outline">
                 <Link href={backHref}>
                   <MoveLeft /> Back to UOMs
                 </Link>
               </Button>
-            </ToolbarActions>
-          </Toolbar>
+            }
+          />
         </Container>
         <Container>
           <div className="text-center py-12">
@@ -149,35 +98,16 @@ export default function UOMDetailPage({
   return (
     <>
       <Container>
-        <Toolbar>
-          <ToolbarHeading>
-            <ToolbarTitle>Unit of Measure</ToolbarTitle>
-            <Breadcrumb>
-              <BreadcrumbList>
-                <BreadcrumbItem>
-                  <BreadcrumbLink href="/">Home</BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbPage>Product Management</BreadcrumbPage>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbLink href="/master-data-management/units-of-measure">
-                    Units of Measure
-                  </BreadcrumbLink>
-                </BreadcrumbItem>
-              </BreadcrumbList>
-            </Breadcrumb>
-          </ToolbarHeading>
-          <ToolbarActions>
+        <PageHeader
+          title="Unit of Measure"
+          actions={
             <Button asChild variant="outline">
               <Link href={backHref}>
                 <MoveLeft /> Back to UOMs
               </Link>
             </Button>
-          </ToolbarActions>
-        </Toolbar>
+          }
+        />
       </Container>
 
       <Container>
@@ -185,7 +115,7 @@ export default function UOMDetailPage({
           {/* Header */}
           <div className="flex items-center justify-between">
             <div className="space-y-1">
-              <h1 className="text-2xl font-bold">{uom.uom_name}</h1>
+              <h2 className="text-2xl font-bold">{uom.uom_name}</h2>
               <p className="text-sm text-muted-foreground">
                 UOM Code: {uom.uom_code}
               </p>

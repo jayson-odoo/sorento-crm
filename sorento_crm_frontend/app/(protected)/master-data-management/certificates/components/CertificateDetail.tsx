@@ -84,7 +84,7 @@ export default function CertificateDetail({ certificateId }: { certificateId: st
       {/* Header (FE-9) */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0 space-y-1">
-          <h1 className="break-words text-2xl font-bold">{title}</h1>
+          <h2 className="break-words text-2xl font-bold">{title}</h2>
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-sm text-muted-foreground">{certificate.certifying_body}</span>
             <span className={`${STATUS_PILL_BASE} ${statusPillClass(certificate.validity_state)}`}>
