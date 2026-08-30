@@ -649,11 +649,19 @@ export type BoardSourceKind =
  * of that question's facts rather than a question of its own, and `QueueLink`'s dialog
  * still opens exactly that location).
  *
+ * Ladder v7.1 (S3, PLAN section 3.2) renames the middle of the walk: `order_borrow` is
+ * borrowing ON HAND from a later order and `supply_borrow` is borrowing the SUPPLY a later
+ * order holds (S4). They are added rather than substituted because a trail frozen under v5
+ * still names `cross_group_borrow` / `group_borrow`, and a snapshot that fails to render is
+ * worse than one that reads in the older words.
+ *
  * `incoming` / `group_take` / `reserve_own` / `reserve_pool` / plain `borrow` are retired
  * spellings, kept only so a stale cached trail does not fail to render.
  */
 export type BoardTrailKind =
   | 'own'
+  | 'order_borrow'
+  | 'supply_borrow'
   | 'pool'
   | 'cross_group_borrow'
   | 'group_borrow'
@@ -733,6 +741,64 @@ export interface BoardTrailStep {
    * rung, and on a pool rung with no pile to describe (no shared pool; the pool is this location).
    */
   pool?: BoardTrailPool | null;
+}
+
+/**
+ * The five steps of ladder v7.1, in the order they are walked (PLAN section 3.2).
+ *
+ * `use` is the free pile (own group, then the other project groups), `order_borrow` is on hand
+ * held by a later order, `supply_borrow` is the SUPPLY a later order holds (one document, S4),
+ * then the pool's own book, then Buy.
+ */
+export type BoardLadderStep =
+  | 'use'
+  | 'order_borrow'
+  | 'supply_borrow'
+  | 'pool'
+  | 'buy';
+
+/**
+ * ONE STEP OF THE LADDER, WITH THE DATE IT WOULD FULFIL THE UNIT BY (R36, AC-S3-14).
+ *
+ * The captain, on round 6 of the plan review: the ladder used to report only the composition it
+ * chose, so a planner reading "Buy 32" could not see that borrowing an SPO would have landed the
+ * unit six weeks earlier, or that the pool could have covered it today. The engine now states
+ * EVERY step it walked, whether or not it was taken, and the two questions that decide between
+ * them - can it cover the WHOLE unit, and WHEN would the unit be fulfilled.
+ *
+ * The proposal is still the first WHOLE option in step order; `chosen` marks it. Amend is how a
+ * planner takes a different one, and until S4 wires that, this table is read-only.
+ */
+export interface BoardLadderOption {
+  step: BoardLadderStep;
+  /** The step in the words a planner reads it by. The SERVER's sentence, never assembled here. */
+  label: string;
+  /**
+   * Whether this step covers the WHOLE planning unit. A step that covers part of it gives
+   * nothing (R10, R33), so this is what decides whether the option was available at all.
+   */
+  whole: boolean;
+  /**
+   * `YYYY-MM-DD`: when the unit would be fulfilled if this option were taken - today for on
+   * hand (plus two days when a transfer is needed), the SPO's arrival, the PO's `issue + lead`,
+   * `as_of + lead` for Buy. Null when the step gives nothing, so there is no date to state.
+   */
+  fulfil_date?: string | null;
+  /**
+   * How many days after the line's required date that lands. `0` is on time and renders blank -
+   * a column of zeroes says nothing; a number is the whole point of the row. Null alongside a
+   * null `fulfil_date`.
+   */
+  days_late?: number | null;
+  /**
+   * WHOSE order pays for it, when the option creates a stock debt: the donor's number, and the
+   * month its own required date falls in (`YYYY-MM`), which is where the debt lands on the Stock
+   * Debt view. Both absent on `use` and `buy`, which owe nobody.
+   */
+  debt_so_number?: string | null;
+  debt_month?: string | null;
+  /** The option the engine proposed. Exactly one option carries it, or none when nothing covers. */
+  chosen: boolean;
 }
 
 /**
@@ -1057,6 +1123,18 @@ export interface BoardContribution {
    * rungs that gave nothing. Empty for a line that cannot be planned at all.
    */
   trail?: BoardTrailStep[];
+  /**
+   * WHAT ELSE COULD HAVE BEEN DONE, and when each would land (R36, AC-S3-14).
+   *
+   * One entry per step of ladder v7.1, in step order, taken or not. The trail says what was
+   * CHECKED; this says what each answer would have COST in days, which is the comparison a
+   * planner amending the proposal is actually making.
+   *
+   * Absent - never an empty array - on a line no ladder was walked for (unplannable, or covered
+   * by a decision frozen before options existed): "nothing was offered" and "this was built
+   * before the engine stated its options" are different answers, and the screen says which.
+   */
+  options?: BoardLadderOption[];
   /**
    * The item facts the ladder judged this line on. Null, never a set of `false`s, on a line the
    * ladder did not walk (unplannable, covered): it was judged against nothing.

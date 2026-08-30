@@ -15,6 +15,7 @@ import type {
   BoardTrailPool,
   BoardTrailStep,
 } from '../../_shared/types/fulfilmentPlanning.types';
+import { BoardLadderOptionsTable } from './BoardLadderOptionsTable';
 import { ClassificationProofPopover } from './ClassificationProofPopover';
 import { PileQueueDialog } from './PileQueueDialog';
 
@@ -194,6 +195,22 @@ export function BoardTrailPopover({
                     ))}
                   </tbody>
                 </table>
+              )}
+              {/* AND WHAT ELSE COULD HAVE BEEN DONE (R36, AC-S3-14). Beneath the questions,
+                  because it is the answer to the one they raise: five rungs were checked, and
+                  this is when each of them would have landed the unit. Rendered only when the
+                  server states options - a snapshot frozen before they existed has none, and
+                  an empty table would read as "no option covers this line". */}
+              {(contribution.options?.length ?? 0) > 0 && (
+                <div className="border-t">
+                  <p className="px-3 pb-1 pt-2 text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Options
+                  </p>
+                  <BoardLadderOptionsTable
+                    options={contribution.options ?? []}
+                    contributionKey={contribution.key}
+                  />
+                </div>
               )}
             </div>
           </PopoverContent>
