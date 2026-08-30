@@ -77,7 +77,7 @@ Menu: **Administrative Users** (page title *Administrative Users*). The people w
 
 ## Notify toggles (on the User) - SLA notification gates
 
-Eight boolean columns on `users` gate **whether a user is reached** for SLA events, per channel. They live on the **Administrative Users** edit dialog (each is a checkbox; verbatim labels below).
+Boolean columns on `users` gate **whether a user is reached** for SLA events, per channel. They live on the **Administrative Users** edit dialog (each is a checkbox; verbatim labels below).
 
 | Column | Form label | Default | Fires when… |
 |--------|-----------|---------|-------------|
@@ -89,6 +89,7 @@ Eight boolean columns on `users` gate **whether a user is reached** for SLA even
 | `notify_whatsapp_on_deadline_extended` | **WhatsApp on deadline extended** | off | deadline-extended (needs a linked WhatsApp contact) |
 | `notify_email_on_product_discontinued` | **Email on products discontinued** | off | products newly discontinued (batched) - **which** products is set by the user's `user_product_discontinued_scopes` rows (section below) |
 | `notify_whatsapp_on_product_discontinued` | **WhatsApp on products discontinued** | off | product-discontinued (needs a linked WhatsApp contact) |
+| `notify_email_on_mention` | **Email on mention in a note** | on (`true`) | a teammate mentions the user in an internal note (email only - this event has no WhatsApp toggle) |
 
 Two related but separate columns also exist: `notify_whatsapp` (legacy, superseded by the per-event toggles) and `notify_whatsapp_summary` (form label **WhatsApp daily SLA summary**), plus `daily_sla_summary_subscribed` (the **email** daily summary).
 
