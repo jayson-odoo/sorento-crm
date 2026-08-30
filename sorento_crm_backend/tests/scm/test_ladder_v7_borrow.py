@@ -32,7 +32,7 @@ from app.models.project_so import (
     SOSupplyDecision,
 )
 from app.schemas.project_supply import ConfirmLine, ConfirmSupplyBody
-from app.services.project_supply_service import ProjectSupplyService
+from app.services.project_supply_service import ProjectSupplyService, SupplyLinesRefused
 from app.services.scm import priority
 
 from .._pg_fixture import blank_session
@@ -326,6 +326,234 @@ def test_the_free_pile_is_read_at_the_askers_own_date_srtwb242():
     assert jay_short == [16.0], (
         f"JAY draws the 16 that is left and goes without the rest: {short}"
     )
+
+
+# ------------------------------------------------ AC-S3-1b, the confirm side (30 Aug)
+#
+# The board proposes off the DATE-AWARE pile and the confirmation used to re-derive its
+# Reserve capacity off ladder v4's UNDATED group offer, so on a book where later demand
+# dominates (which is what AC-S3-1b is ABOUT) the two disagreed and the recheck refused the
+# engine's own answer: SO381895's `Confirm (76)` came back "34 lines cannot be confirmed.
+# Nothing was written", every refusal "<bin> has nothing free for this line now" in front of
+# a row the board itself was proposing as `Use own location`.
+
+
+def _reserve_payload(line, components):
+    """The board's OWN proposal for one line, re-sent verbatim (R24, AC-S3-1b).
+
+    Not a hand-typed body: whatever the walk proposed is what is posted back, which is the
+    only thing that makes "a verbatim re-send always confirms" a statement about the engine
+    rather than about the fixture.
+    """
+    return ConfirmLine(
+        project_line_id=line.id,
+        reserve=[
+            {"warehouse_id": c["source_warehouse_id"], "qty": c["qty"]}
+            for c in components
+            if c["kind"] == "reserve"
+        ],
+        buy_qty=sum(
+            (Decimal(c["qty"]) for c in components if c["kind"] == "buy"), Decimal("0")
+        ),
+    )
+
+
+def _srtwb242_book(db, company_id, project, product, own):
+    """SRTWB242's shape: 199 on the floor, 144 of it past due, and the rest of the book
+    behind the asker - so plain Available is deeply negative while the pile IS free by an
+    early enough date (AC-S3-1b)."""
+    _stock(db, product, own, on_hand=199)
+    _lead_time(db, product, LEAD_DAYS)
+
+    def other(qty, days):
+        core_so = _core_so(db, company_id)
+        core_so.so_number = f"ZZT-SO-{_uid()[:8]}"
+        db.flush()
+        _core_line(
+            db, core_so, product, own, qty_ordered=str(qty),
+            required_date=date.today() + timedelta(days=days),
+        )
+
+    other(144, -20)   # past due, read at today, ahead of everybody
+    other(12, 25)
+    other(12, 90)
+    other(501, 300)
+    other(100, 1200)
+    db.commit()
+
+
+def test_a_date_aware_use_proposal_confirms_verbatim_although_available_is_negative():
+    """AC-S3-1b on the CONFIRM side: the board proposes `Use own location` off the pile that
+    is free by the asker's date, and the same payload is accepted.
+
+    JEREMY's 27 is due inside the window with 55 free by his date, while the group's plain
+    Available across the whole book is -602. The recheck seeded its capacity from the
+    undated number, read `nothing free for this line now`, and refused the composition the
+    ladder had just written."""
+    with blank_session() as db:
+        company_id, eling, project, product = _world(db)
+        _group, sites = _group_sites(db)
+        own, _pool = sites["BRW"]
+        _srtwb242_book(db, company_id, project, product, own)
+
+        jeremy, jeremy_line, _cso, _cline = _seed_line(
+            db, company_id, project, product, own, qty_ordered="27",
+            required_date=date.today() + timedelta(days=10),
+        )
+        service = ProjectSupplyService(db)
+        components = _components(service.proposal_for(jeremy))
+        service.confirm(
+            jeremy,
+            ConfirmSupplyBody(lines=[_reserve_payload(jeremy_line, components)]),
+            actor_user_id=eling,
+        )
+        db.commit()
+
+        decision = (
+            db.query(SOSupplyDecision)
+            .filter(
+                SOSupplyDecision.project_sales_order_id == jeremy.id,
+                SOSupplyDecision.state == DECISION_ACTIVE,
+            )
+            .one()
+        )
+        holds = [
+            (str(a.warehouse_id), str(a.source_type), Decimal(str(a.qty)))
+            for a in db.query(SOLineAllocation)
+            .filter(SOLineAllocation.so_line_id == jeremy_line.id)
+            .all()
+        ]
+        own_id = str(own.id)
+
+    assert [(c["kind"], c["qty"], c["rung"]) for c in components] == [
+        ("reserve", "27", "group_take")
+    ], "55 is free by his date, so the whole 27 comes off the own group"
+    assert decision.revision_no == 1
+    assert holds == [(own_id, "own", Decimal("27"))], holds
+
+
+def test_a_reserve_beyond_the_date_aware_pile_is_still_refused():
+    """The other half of the same seeding: the pile is the WALK's number, not the whole
+    floor. JAY's 32 is due after JEREMY's 27 and the 12 behind it, so 16 is free by his
+    date - and a hand-composed Reserve for the whole 32 is refused with the 16 named."""
+    with blank_session() as db:
+        company_id, eling, project, product = _world(db)
+        _group, sites = _group_sites(db)
+        own, _pool = sites["BRW"]
+        _srtwb242_book(db, company_id, project, product, own)
+
+        _jeremy, _jl, _jcso, _jcline = _seed_line(
+            db, company_id, project, product, own, qty_ordered="27",
+            required_date=date.today() + timedelta(days=10),
+        )
+        jay, jay_line, _cso, _cline = _seed_line(
+            db, company_id, project, product, own, qty_ordered="32",
+            required_date=date.today() + timedelta(days=40),
+        )
+        service = ProjectSupplyService(db)
+        jay_components = _components(service.proposal_for(jay))
+        refusal = None
+        try:
+            service.confirm(
+                jay,
+                ConfirmSupplyBody(
+                    lines=[
+                        ConfirmLine(
+                            project_line_id=jay_line.id,
+                            reserve=[{"warehouse_id": str(own.id), "qty": "32"}],
+                        )
+                    ]
+                ),
+                actor_user_id=eling,
+            )
+        except SupplyLinesRefused as exc:
+            refusal = exc
+        db.rollback()
+        own_code = own.warehouse_code
+
+    assert [(c["kind"], c["qty"]) for c in jay_components] == [("buy", "32")], (
+        "16 is not the whole unit, so the board proposes a Buy"
+    )
+    assert refusal is not None, "32 was asked for off a pile that is 16 by his date"
+    assert refusal.detail["failing_lines"][0]["reason"] == (
+        f"{own_code} now has 16 free for this line, and 32 was asked for."
+    ), refusal.detail["failing_lines"]
+
+
+def test_two_lines_of_one_confirm_share_one_pile_and_the_second_is_capped():
+    """The ledger, unchanged: the pile is seeded once for the confirmation and drawn down as
+    its lines are checked (S7), so the second line sees what the first left.
+
+    100 on the floor, 60 of it owed to an earlier order that has decided nothing - so it
+    holds no stock a Reserve competes with, and only the DATED walk knows it is spoken for.
+    The board gives line 10 its 30 and line 20 the 10 that is left; line 20 is hand-composed
+    for 30 anyway, and is told what remains rather than what is on the floor."""
+    with blank_session() as db:
+        company_id, eling, project, product = _world(db)
+        _group, sites = _group_sites(db)
+        own, _pool = sites["BRW"]
+        _stock(db, product, own, on_hand=100)
+        _lead_time(db, product, LEAD_DAYS)
+        earlier = _core_so(db, company_id)
+        earlier.so_number = f"ZZT-SO-{_uid()[:8]}"
+        db.flush()
+        _core_line(
+            db, earlier, product, own, qty_ordered="60",
+            required_date=date.today() + timedelta(days=3),
+        )
+        db.commit()
+
+        order, first_line, core_so, _cline = _seed_line(
+            db, company_id, project, product, own, qty_ordered="30",
+            required_date=date.today() + timedelta(days=10),
+        )
+        second_core = _core_line(
+            db, core_so, product, own, qty_ordered="30",
+            required_date=date.today() + timedelta(days=40),
+        )
+        second_line = _project_line(
+            db, order, line_no=20, product=product, core_line=second_core
+        )
+        db.commit()
+
+        service = ProjectSupplyService(db)
+        proposal = service.proposal_for(order)
+        stated = {
+            row["line_no"]: [(c["kind"], c["qty"]) for c in row["components"]]
+            for row in proposal["lines"]
+        }
+        refusal = None
+        try:
+            service.confirm(
+                order,
+                ConfirmSupplyBody(
+                    lines=[
+                        ConfirmLine(
+                            project_line_id=first_line.id,
+                            reserve=[{"warehouse_id": str(own.id), "qty": "30"}],
+                        ),
+                        ConfirmLine(
+                            project_line_id=second_line.id,
+                            reserve=[{"warehouse_id": str(own.id), "qty": "30"}],
+                        ),
+                    ]
+                ),
+                actor_user_id=eling,
+            )
+        except SupplyLinesRefused as exc:
+            refusal = exc
+        db.rollback()
+        own_code = own.warehouse_code
+
+    assert stated[10] == [("reserve", "30")], "30 is free by the first line's date"
+    assert stated[20] == [("buy", "30")], "10 is left by the second's, which is not whole"
+    assert refusal is not None, "the second line asked for a pile the first had emptied"
+    assert [row["line_no"] for row in refusal.detail["failing_lines"]] == [20], (
+        f"only the second line is refused: {refusal.detail["failing_lines"]}"
+    )
+    assert refusal.detail["failing_lines"][0]["reason"] == (
+        f"{own_code} now has 10 free for this line, and 30 was asked for."
+    ), refusal.detail["failing_lines"]
 
 
 # --------------------------------------------------------------------------- AC-S3-2

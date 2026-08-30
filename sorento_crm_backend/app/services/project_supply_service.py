@@ -647,11 +647,46 @@ class _CapacityLedger:
 
     def __init__(self) -> None:
         self._left: Dict[Tuple[str, str], Decimal] = {}
+        #: What this location's pile has been STATED to hold, in total, by whichever
+        #: readings have spoken for it so far. `_left` is that number less what the
+        #: confirmation has already taken, so raising the statement raises the balance by
+        #: the difference and never by more.
+        self._basis: Dict[Tuple[str, str], Decimal] = {}
+        #: The date-aware slices claimed against it, summed (`offer`).
+        self._claimed: Dict[Tuple[str, str], Decimal] = {}
 
     def capacity(self, product_id: Optional[str], warehouse_id: str, live_qty: Decimal) -> Decimal:
         key = (product_id or "", warehouse_id)
         if key not in self._left:
             self._left[key] = live_qty
+            self._basis[key] = live_qty
+        return self._left[key]
+
+    def offer(
+        self, product_id: Optional[str], warehouse_id: str, share: Decimal
+    ) -> Decimal:
+        """State one planning unit's DATE-AWARE slice of a location (ladder v7.1, R24).
+
+        Seed-if-absent is the right reading of a WHOLE-PILE number - ladder v4's group offer
+        says what the location holds, so the first line to read it states the balance every
+        later line draws down. It is the wrong reading of a SLICE: the assignment hands each
+        unit a DISJOINT part of one bin (a unit due in September and a unit due in October
+        are given different parts of the same 199), so seeding from the first unit's slice
+        sells the whole confirmation the smallest of them.
+
+        So the slices are SUMMED, and the pile is whichever statement about it is larger -
+        the undated whole-pile reading or the slices claimed so far. Never their sum: two
+        readings of one bin are two answers to one question, and adding them would promise a
+        location's stock twice over.
+        """
+        key = (product_id or "", warehouse_id)
+        if key not in self._left:
+            self._left[key] = _ZERO
+            self._basis[key] = _ZERO
+        claimed = self._claimed[key] = self._claimed.get(key, _ZERO) + share
+        if claimed > self._basis[key]:
+            self._left[key] += claimed - self._basis[key]
+            self._basis[key] = claimed
         return self._left[key]
 
     def take(self, product_id: Optional[str], warehouse_id: str, qty: Decimal) -> None:
@@ -677,6 +712,11 @@ class _UnitCheck:
 
     fact: _LineFacts
     timely_left: Decimal
+    #: Whether this unit's step-1 own-group slice has been added to the confirmation's
+    #: capacity ledger yet (ladder v7.1). The slice belongs to the UNIT, so it is added
+    #: once, on whichever of its member lines is checked first, and its members then share
+    #: it - adding it per line would sell one slice to each of them.
+    own_seeded: bool = False
 
 
 @dataclass
@@ -3681,7 +3721,7 @@ class ProjectSupplyService:
         # line's ownership GROUP - its own included - or any active site pool. The same
         # candidates `compose_line` walked to propose this composition, and drawn from the
         # same builders, so the recheck cannot refuse what the proposal itself offered
-        # (the own location's cap in particular is `_group_take_candidates`' own).
+        # (the own location's cap in particular is `use_candidates_for`' own).
         #
         # S7: every location here is drawn through `capacity_left`, the running ledger
         # shared across every line of this confirmation - not read live per line - so a
@@ -3706,27 +3746,67 @@ class ProjectSupplyService:
             capacity[location] = capacity_left.capacity(
                 fact.product_id, str(source.id), live_qty
             )
+        # STEP 1's OWN half, read TWICE and reconciled into one pile.
+        #
+        # Ladder v4's `_group_take_candidates` is the UNDATED whole-pile reading: what the
+        # group's own net leaves, per bin. It is what a line the dated walk cannot place -
+        # a TBA order, an undated one, a line outside the reserve window - is still judged
+        # against, so it stays.
+        #
+        # Ladder v7.1's `use_candidates_for` is the DATE-AWARE one (R24, AC-S3-1b): what the
+        # assignment gave this unit BY ITS OWN DATE, which is the number the proposal was
+        # composed from. Seeding the recheck from the undated number alone refused the
+        # board's own answer on exactly the book v7.1 exists for - where later-dated demand
+        # dominates, plain Available is negative while the pile IS free by an early line's
+        # date. SO381895's `Confirm (76)` came back "34 lines cannot be confirmed. Nothing
+        # was written", every refusal "<bin> has nothing free for this line now" in front of
+        # a row the board itself was proposing as `Use own location` off that bin
+        # (30 August 2026).
+        #
+        # The pile is whichever of the two is LARGER, never their sum (`_CapacityLedger`),
+        # and the dated slices of two units are summed against it because the assignment
+        # gives each unit a different part of one bin.
+        #
+        # The FLOOR half only, in both readings. A `water` candidate is incoming supply,
+        # judged against `fact.timely_qty` above; seeding Reserve capacity with it would let
+        # a hold be written against goods that are not on a floor for anybody to pick.
+        own_use, other_use, _own_offer = self.use_candidates_for(unit.fact)
+        undated: Dict[str, Decimal] = {}
         for candidate in self._group_take_candidates(unit.fact):
-            # The FLOOR half only. A `water` candidate is incoming supply, judged against
-            # `fact.timely_qty` above; seeding Reserve capacity with it would let a hold be
-            # written against goods that are not on a floor for anybody to pick.
             if candidate.get("water"):
                 continue
-            location = candidate["location"]
+            undated[candidate["location"]] = undated.get(
+                candidate["location"], _ZERO
+            ) + _dec(candidate["qty"])
+        dated: Dict[str, Decimal] = {}
+        for candidate in own_use:
+            if candidate.get("water"):
+                continue
+            dated[candidate["location"]] = dated.get(candidate["location"], _ZERO) + _dec(
+                candidate["qty"]
+            )
+        for location in list(undated) + [code for code in dated if code not in undated]:
             source = self._warehouse_by_code(location)
             if source is None:
                 continue
             location_ids[location] = str(source.id)
-            seeded = capacity_left.capacity(
-                fact.product_id, str(source.id), _dec(candidate["qty"])
+            left = capacity_left.capacity(
+                fact.product_id, str(source.id), undated.get(location, _ZERO)
             )
-            capacity[location] = capacity.get(location, _ZERO) + seeded
+            share = dated.get(location, _ZERO)
+            if share > _ZERO and not unit.own_seeded:
+                # Once per UNIT, on whichever of its member lines is checked first: the
+                # slice belongs to the unit and its members split it between them, so
+                # claiming it per line would sell one slice to each of them.
+                left = capacity_left.offer(fact.product_id, str(source.id), share)
+            capacity[location] = capacity.get(location, _ZERO) + left
+        unit.own_seeded = True
         # LADDER V7.1 step 1's SECOND half (R5, AC-S3-1): the other project groups' free
         # piles. Seeded from the same builder that offered them, for the same reason the own
         # half is - a recheck that does not know about a step the proposal walked refuses
         # the engine's own answer, which is what "ZZTDC1-IR has nothing free for this line"
         # was in front of a composition the ladder had just written.
-        for candidate in self.use_candidates_for(unit.fact)[1]:
+        for candidate in other_use:
             if candidate.get("water"):
                 continue
             location = candidate["location"]

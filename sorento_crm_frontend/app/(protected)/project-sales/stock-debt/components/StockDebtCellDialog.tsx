@@ -181,15 +181,28 @@ export function StockDebtCellDialog({
           // Re-deriving it as `open - assigned` disagreed with the payload the moment later
           // supply cleared the shortfall: a `late` line ended fully assigned and printed
           // "short 0" beside a cell the same line had put in debt.
-          const label =
-            row.original.status === 'short' && row.original.short_qty > 0
-              ? `short ${row.original.short_qty.toLocaleString()}`
-              : row.original.status;
-          return (
-            <span className={cn(STATUS_PILL_BASE, STATUS_CLASS[row.original.status])}>
-              {label}
-            </span>
-          );
+          //
+          // A LATE line is exactly that case - later supply cleared it, so Open and Assigned
+          // read the same - and it STILL books its shortfall in this month (R37, AC-S2-7).
+          // Printing only the word "late" left the figure the cell was made of unsaid, so
+          // the row is stated as `late . short 40`: what happened, and how much of it.
+          const { status, short_qty: shortQty } = row.original;
+          const pill = cn(STATUS_PILL_BASE, STATUS_CLASS[status]);
+          const shortLabel = `short ${shortQty.toLocaleString()}`;
+          if (shortQty > 0 && status === 'short') {
+            // "short 16" already says both, so the word is not repeated.
+            return <span className={pill}>{shortLabel}</span>;
+          }
+          if (shortQty > 0 && status === 'late') {
+            return (
+              <span className={cn(pill, 'gap-1')}>
+                {status}
+                <span aria-hidden="true">&middot;</span>
+                <span>{shortLabel}</span>
+              </span>
+            );
+          }
+          return <span className={pill}>{status}</span>;
         },
       },
       {

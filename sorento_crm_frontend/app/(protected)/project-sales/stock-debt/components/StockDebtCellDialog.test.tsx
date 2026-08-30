@@ -223,4 +223,36 @@ describe('StockDebtCellDialog', () => {
     switchTab('Supply (2)');
     expect(await screen.findByText('Free 0')).toBeInTheDocument();
   });
+
+  it('states the short quantity a LATE line still books, although it ends fully assigned (R37)', async () => {
+    // Gap case: a `late` line is one later supply cleared - `assigned_qty` equals
+    // `open_qty` by the end of the walk - but it still went without ON ITS OWN DATE, and
+    // `short_qty` is the server's own figure for that (re-deriving `open - assigned` gives
+    // 0 for exactly this row, which is the defect R37's fixture correction exists to catch:
+    // "the drill for those columns was empty" while the cell it opened from was in debt).
+    renderDialog({
+      demand: [
+        {
+          so_number: 'SO398214',
+          agent_code: 'CYNDI',
+          warehouse_code: 'BRW-BB',
+          required_date: '2026-10-20',
+          open_qty: 20,
+          assigned_qty: 20,
+          assigned_source: 'SPO 2026/09-0088',
+          short_qty: 20,
+          status: 'late',
+        },
+      ],
+      supply: [],
+    });
+
+    expect(await screen.findByText('SO398214')).toBeInTheDocument();
+    const row = screen.getByText('SO398214').closest('tr') as HTMLElement;
+    // Fully assigned by the time the whole walk is over: Open and Assigned both read 20.
+    expect(within(row).getAllByText('20')).toHaveLength(2);
+    // ...but the status cell still states what it went without on its own date, not just
+    // the word "late" with the figure that made it so left unsaid.
+    expect(within(row).getByText('short 20')).toBeInTheDocument();
+  });
 });
