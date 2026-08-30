@@ -802,3 +802,55 @@ template, `impositionSlots` per preset, and `autoArrange` laying out quantity co
 across sheets with pinned drags kept and everything else flowing around them. Component tests for
 the detail page: one primary CTA per status (table-driven over every status) and the secondary
 actions living in the gear. No pytest: no route changed.
+
+---
+
+## 13. Round 7, 30 Aug: a real colour picker, and merge fields inside a text layer
+
+**Status:** BUILT 2026-08-30. Two items from the captain's test of round 6. First, the colour
+control offers twelve swatches and a hex box, so any colour outside those twelve has to be typed
+as a hex code. Second, and the larger one: a tag's text can draw on ONE whole product field
+through `slot_binding`, but marketing writes lines that mix several ("1 product has so many
+specs"), the way an email template writes `{{recipient.firstName}}` inside a sentence.
+
+### What was wrong
+
+| # | Symptom | Cause found in the code |
+|---|---------|--------------------------|
+| 1 | The colour control cannot reach a colour that is not one of twelve | `ColorPicker.tsx` is a swatch button, a hex `Input` and a popover of twelve fixed swatches. There is no spectrum control anywhere in it. |
+| 2 | A text layer is either free text or ONE whole field | `layerText` returns `text_override`, else the resolved slot, else `props.text`. The three are alternatives, so a sentence that names a product's material AND its dimensions cannot be written at all: the designer types both by hand and the tag stops following the product. |
+| 3 | A product's reviewed specs are unreachable from a tag | `ProductTagData` carries `spec_lines` - the rendered spec SENTENCE - and nothing key by key. `ProductSpecifications.values` holds `{"material": {"value": "ceramic"}}` per key, and no tag surface has ever read it. |
+
+### Decisions
+
+| ID | Decision |
+|----|----------|
+| D54 | **The colour control is a picker, not a palette.** The popover's PRIMARY control becomes a native `<input type="color">`, sized to a large swatch area rather than the browser's 20px default, so the full spectrum and Chrome's own eyedropper are both available with no library added. The twelve brand swatches stay under it as the quick path, and the hex `Input` stays editable beside the swatch button. The three sync both ways: picking on the spectrum calls `onChange` with the hex and rewrites the box, typing a valid hex moves the picker, and an invalid hex is ignored until it becomes valid rather than clearing the colour. `transparent` has no spectrum value, so the picker falls back to black while the swatch keeps drawing the chequerboard. One component; every colour field in the Inspector already uses it. |
+| D55 | **A text layer's content may carry `{{path}}` merge fields.** The token set is fixed and small: `product.code`, `product.name`, `product.dimensions`, `product.spec_lines`, `product.list_price`, `product.sell_price`, `product.included_accessories`; `spec.<key>` for every key in the spec registry; `set.code`, `set.name`, `set.members`; `line.quantity`. `product.*` and `set.*` resolve through the SAME slot the tag already binds by, so `product.code` and `set.code` are one question asked twice - a set block's code IS its set code, and a token that read empty because the block turned out to be a set would be a trap rather than a rule. Prices render through `formatTagPrice`, the same `RM #,##0` the badge prints. Unknown path or missing data renders empty in print; in the EDITOR with no data at all the token is drawn as itself (`{{spec.material}}`), so the designer sees what will fill and not a blank tag. **No filters, no arithmetic, no conditionals.** The trigger for a formula layer is named here rather than built: the first real request for arithmetic or a condition (a price minus a deposit, "show X only when Y") is when one gets designed. |
+| D56 | **One resolver, called by the canvas and by the print page.** `lib/dealer-kit/merge-fields.ts` holds `renderMergeFields(text, data, mode)` and `mergeFieldCatalog(specKeys)`; `product-block.ts`'s `layerText` runs every text layer's content through it, and `TagSheetRenderer`'s text layer stops switching on `slot_binding` for itself and calls `layerText` too. The print page's `ResolvedLineData` is the same shape as `LineTagData`, so the adaptation is one function and the two surfaces cannot resolve a token differently. A vitest renders one text layer through both and compares. |
+| D57 | **A layer holding a token is dynamic, not unlinked.** `isUnlinked` today means "bound to a slot and showing typed text", and it is what puts the amber broken-link icon in the Layers panel. A `text_override` that CONTAINS a token is still following the product, so `isUnlinked` answers false for it and a new `isDynamic` answers true; the panel shows a small `{}` marker in the same place. Relink-all (D28) skips dynamic layers for the same reason: clearing an override that is doing its job would delete the designer's sentence. |
+| D58 | **The data grows a `specs` list, key by key.** `ProductTagData` and `LineTagData` (and their Pydantic twins, `tag_data_service`, and the print payload in `tag_sheet_export_service`) gain `specs: [{key, label, value, unit}]`, built by joining the active spec registry against the product's reviewed `ProductSpecifications.values`. A value may be stored bare or as `{"value": ...}` - `dimensions_text` already reads both - and the unit comes from the registry, not from the row. Only keys the product actually carries are listed, so `spec.<key>` for anything else resolves empty. A set has no spec row of its own, so a set line's `specs` is empty. The catalogue's key list comes from `GET /api/v1/dealer-kit/spec-keys`, a read of `active_registry` gated on `dealer_kit.tag_templates.view` beside the editor's other data routes rather than the master-data registry route, which is gated on `master_data.products.view` - a permission the marketing role designing a tag has no reason to hold. A new spec key therefore appears in the dialog with no code change. |
+| D59 | **Insert field is a dialog, and it writes ONE history entry.** The Inspector's Text section gains an "Insert field" button beside Content. The dialog holds the content in an editable textarea at the top (with the cursor position kept), a search box, the catalogue grouped Product / Specs / Set / Line with the label on the left and `{{token}}` on the right in mono, and a "Preview:" line under the list rendered by `renderMergeFields` against the layer's CURRENT data - its block's preview (D41/D53), its real binding, or the request designer's line - reading "(preview a product to see values)" when there is none. Clicking a field inserts at the cursor. Done writes the content back the way the Text section already does (to `text_override` when the layer has a slot binding, else `props.text`) and pushes one history entry, so one undo takes the whole edit back. |
+
+### What is deliberately NOT built
+
+- No expression language. See D55: filters, arithmetic and conditionals are named as the trigger
+  for a formula layer, not shipped as an unused surface today.
+- No merge fields outside text layers. A price badge is a composition (D26) and a product slot is
+  one whole field by definition; neither has a sentence to put a token in.
+- No colour library. `<input type="color">` is the browser's own spectrum control and already
+  carries the eyedropper on Chrome, which is what the request was for.
+- No stored spec ordering for the catalogue. The registry's own key order is used, and the search
+  box is what finds a key in a long list.
+
+### Tests
+
+vitest `lib/dealer-kit/merge-fields.test.ts`: every path group against product, set and line data;
+an unknown token; a spec key the product does not carry; price formatting; editor mode drawing the
+token with no data and the value with data; the catalogue built from registry keys and grouped;
+and the parity render, one text layer through `layerText` and through `TagSheetRenderer`'s DOM.
+`ColorPicker.test.tsx`: picking a colour calls `onChange` with the hex, and typing a hex moves the
+picker's value. `InsertFieldDialog.test.tsx`: a click inserts at the cursor, and the preview line
+shows the resolved value against a stubbed binding. pytest: `product_tag_data` carries `specs`
+built from the registry, the print payload's resolved line carries them too, and both are asserted
+ON THE WIRE where a route answers, because `response_model` drops what it does not declare.
