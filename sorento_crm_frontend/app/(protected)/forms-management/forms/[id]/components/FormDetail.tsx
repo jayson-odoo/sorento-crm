@@ -114,7 +114,7 @@ export default function FormDetail({ formId }: FormDetailProps) {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="space-y-1 min-w-0">
           <div className="flex flex-wrap items-center gap-3">
-            <h1 className="text-2xl font-bold break-words min-w-0">{form.name}</h1>
+            <h2 className="text-2xl font-bold break-words min-w-0">{form.name}</h2>
             <Badge variant={form.is_active ? 'success' : 'secondary'}>
               {form.is_active ? 'Active' : 'Inactive'}
             </Badge>
