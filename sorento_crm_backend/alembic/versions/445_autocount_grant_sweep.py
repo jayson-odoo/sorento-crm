@@ -52,13 +52,13 @@ connection it rolls back. The local Postgres is shared across worktrees and its
 way to check this one.
 
 Revision ID: 445_autocount_grant_sweep
-Revises: 444_notify_email_on_mention
+Revises: s6b_record_action_entity_id
 """
 import sqlalchemy as sa
 from alembic import op
 
 revision = "445_autocount_grant_sweep"
-down_revision = "444_notify_email_on_mention"
+down_revision = "s6b_record_action_entity_id"
 branch_labels = None
 depends_on = None
 
