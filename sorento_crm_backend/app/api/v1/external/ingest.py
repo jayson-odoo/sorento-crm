@@ -16,6 +16,13 @@ Permissions reuse the existing per-entity slugs. Writing a warehouse through
 the ESB is the same act as writing one through the UI, so it is the same
 permission -- an integration that may not edit warehouses must not gain the
 ability by coming through a different door.
+
+Both calls are **company-anchored** (group A1): a top-level ``companyCode``, or
+the calling integration's binding, names the one company the request writes,
+adopts and reads inside. The guard runs after the body has parsed and after the
+batch cap, because a caller cannot supply an anchor for a request that never
+parsed, and telling it about the anchor before telling it the batch is too big
+would cost it a second round trip. See ``company_anchor.py``.
 """
 from __future__ import annotations
 
@@ -24,6 +31,7 @@ import logging
 from fastapi import APIRouter, Body, Depends, Path, Query, status
 from sqlalchemy.orm import Session
 
+from app.api.v1.external.company_anchor import resolve_company_anchor
 from app.api.v1.external.permissions import require_external_permission_for_path
 from app.dependencies import get_external_api_user
 from app.database import get_db
@@ -124,7 +132,13 @@ async def ingest_masters(
             code="BATCH_TOO_LARGE",
         )
 
-    service = MasterIngestService(db, integration_id=current_user.get("integration_id"))
+    company_id = resolve_company_anchor(db, payload, current_user)
+
+    service = MasterIngestService(
+        db,
+        integration_id=current_user.get("integration_id"),
+        company_id=company_id,
+    )
     try:
         result = service.ingest(entity, records, dry_run=dry_run)
     except UnsupportedIngestEntity as exc:
@@ -141,9 +155,11 @@ async def ingest_masters(
         db.commit()
 
     logger.info(
-        "ingest.batch entity=%s integration=%s dry_run=%s created=%d updated=%d failed=%d retryable=%d",
+        "ingest.batch entity=%s integration=%s company=%s dry_run=%s "
+        "created=%d updated=%d failed=%d retryable=%d",
         entity,
         current_user.get("integration_name"),
+        company_id,
         dry_run,
         result.created,
         result.updated,
@@ -184,4 +200,6 @@ async def read_current_state(
             code="BATCH_TOO_LARGE",
         )
 
-    return MasterReadService(db).current_state(entity, source_refs)
+    company_id = resolve_company_anchor(db, payload, current_user)
+
+    return MasterReadService(db, company_id=company_id).current_state(entity, source_refs)

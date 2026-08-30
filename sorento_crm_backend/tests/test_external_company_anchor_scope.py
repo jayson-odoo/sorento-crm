@@ -14,6 +14,15 @@ different companies and only one is right. The payload has to name its company
 through something globally unique - a warehouse code, a container number, an SPO -
 and ``pin_scope_to_companies`` pins the request to it before any code is matched.
 
+The AutoCount ingest surface (``/external/ingest/{entity}``,
+``/external/read/{entity}``) has the same problem and cannot use the same fix:
+its payload names no warehouse and no container, only a business code, so there
+is nothing in it to infer a company from. It therefore states the company
+outright - a top-level ``companyCode``, or the calling integration's binding -
+and ``resolve_company_anchor`` turns that into the one company the whole request
+writes, adopts and reads inside. Group A1 of the AutoCount cross-repo contract;
+the tests are the second half of this file.
+
 Substrate: Postgres only, on the shared blank schema whose writes are discarded
 (group T). Every test seeds its own chain under a ZZTANCH marker; nothing is
 borrowed and nothing asserts about a production row.
@@ -25,6 +34,7 @@ import uuid
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from sqlalchemy import text
 
 # MUST be the first app import - resolves the circular import in
 # app.modules.runtime.guards.
@@ -86,6 +96,13 @@ class _Env:
         db.add(other)
         db.flush()
         self.company_b = str(other.id)
+        self.company_b_code = other.code
+        # Read rather than hardcoded: the incumbent's code is seeded by conftest's
+        # after_create hook here and by migration 302 in production, and a test that
+        # spells "SRT" out would pin a value neither of those promises.
+        self.company_a_code = db.execute(
+            text("SELECT code FROM companies WHERE id = :id"), {"id": self.company_a}
+        ).scalar()
         self._category = ProductCategory(
             category_code=unique_code(MARKER), category_name=f"{MARKER} category"
         )
@@ -232,3 +249,265 @@ def test_grn_binds_the_product_of_the_company_its_warehouse_belongs_to(env):
     )
     line = env.db.query(PickingLine).filter(PickingLine.picking_header_id == header.id).one()
     assert str(line.product_id) == str(wanted.id)
+
+
+# ============================================================ the ingest surface
+# Group A1 of the AutoCount cross-repo contract. Same disease as above, different
+# medicine: an ingest payload carries no warehouse and no container to infer a
+# company from, so it states one - and every write, adoption and read in the
+# request happens inside it.
+INGEST_WAREHOUSES = "/api/v1/external/ingest/warehouses"
+READ_WAREHOUSES = "/api/v1/external/read/warehouses"
+INGEST_PRODUCTS = "/api/v1/external/ingest/products"
+
+
+def _wh_record(code: str | None = None, name: str = "Depot", ref: str | None = None) -> dict:
+    code = code or f"{MARKER}WH{uuid.uuid4().hex[:6]}"
+    return {
+        "source_ref": ref or f"{MARKER}-REF-{uuid.uuid4().hex[:8]}",
+        "code": code,
+        "name": name,
+    }
+
+
+def _warehouse_row(env, code: str):
+    """Raw SQL on purpose: the ORM filter would hide the row of whichever company
+    the request just anchored to, and which company the row landed in is exactly
+    what these tests are asking."""
+    return (
+        env.db.execute(
+            text(
+                "SELECT id, warehouse_name, company_id FROM warehouses "
+                "WHERE warehouse_code = :c"
+            ),
+            {"c": code},
+        )
+        .mappings()
+        .first()
+    )
+
+
+def _link_in_company_b(env, code: str):
+    """A warehouse owned by company B and claimed by an AutoCount source_ref."""
+    from app.services.integration_reference_service import IntegrationReferenceService
+
+    theirs = env.warehouse(code, env.company_b)
+    source_ref = f"{MARKER}-XREF-{uuid.uuid4().hex[:8]}"
+    IntegrationReferenceService(env.db).link(
+        entity_type="warehouses", entity_id=str(theirs.id), source_ref=source_ref
+    )
+    return theirs, source_ref
+
+
+def test_ingest_without_a_company_code_or_a_binding_is_refused(env):
+    """AC-A1-1. Guessing is not available: the six masters are company-partitioned,
+    so a push with no anchor has no correct destination, only a likely one."""
+    record = _wh_record()
+
+    res = env.client.post(INGEST_WAREHOUSES, json={"records": [record]})
+
+    assert res.status_code == 422, res.text
+    assert res.json()["code"] == "COMPANY_ANCHOR_REQUIRED"
+    assert _warehouse_row(env, record["code"]) is None
+
+
+def test_an_unknown_or_inactive_company_code_is_refused(env):
+    """AC-A1-2. An inactive company is refused with the same code as an unknown
+    one: for a caller that may not write there, the distinction is academic."""
+    record = _wh_record()
+
+    res = env.client.post(
+        INGEST_WAREHOUSES, json={"companyCode": f"{MARKER}-NOPE", "records": [record]}
+    )
+    assert res.status_code == 422, res.text
+    assert res.json()["code"] == "UNKNOWN_COMPANY"
+
+    dormant = Company(
+        id=str(uuid.uuid4()),
+        name=f"{MARKER} dormant",
+        code=f"ZX{uuid.uuid4().hex[:8]}",
+        is_active=False,
+    )
+    env.db.add(dormant)
+    env.db.flush()
+
+    res = env.client.post(
+        INGEST_WAREHOUSES, json={"companyCode": dormant.code, "records": [record]}
+    )
+    assert res.status_code == 422, res.text
+    assert res.json()["code"] == "UNKNOWN_COMPANY"
+    assert _warehouse_row(env, record["code"]) is None
+
+
+def test_the_company_code_matches_code_or_autocount_ref_case_insensitively(env):
+    """AC-A1-3. The ESB knows companies by their AutoCount name, an operator knows
+    them by the Sorento code, and neither controls the other's casing."""
+    env.db.execute(
+        text("UPDATE companies SET autocount_ref = :r WHERE id = :id"),
+        {"r": f"AC-{env.company_b_code}", "id": env.company_b},
+    )
+
+    by_code = _wh_record()
+    res = env.client.post(
+        INGEST_WAREHOUSES,
+        json={"companyCode": env.company_b_code.lower(), "records": [by_code]},
+    )
+    assert res.status_code == 200, res.text
+    assert str(_warehouse_row(env, by_code["code"])["company_id"]) == env.company_b
+
+    by_ref = _wh_record()
+    res = env.client.post(
+        INGEST_WAREHOUSES,
+        json={"companyCode": f"ac-{env.company_b_code}".lower(), "records": [by_ref]},
+    )
+    assert res.status_code == 200, res.text
+    assert str(_warehouse_row(env, by_ref["code"])["company_id"]) == env.company_b
+
+
+def test_the_integration_binding_anchors_and_a_disagreeing_body_code_does_not(env):
+    """AC-A1-4. A dedicated integration per AutoCount company needs no body field;
+    one that then names a DIFFERENT company is refused rather than ranked, because
+    either half could be the mistake and only the caller knows which."""
+    from app.dependencies import get_external_api_user
+    from app.models.integration import Integration
+
+    integration = Integration(
+        id=str(uuid.uuid4()),
+        name=f"{MARKER} esb {uuid.uuid4().hex[:6]}",
+        type="esb",
+        config_json={"company_code": env.company_b_code},
+    )
+    env.db.add(integration)
+    env.db.flush()
+
+    app.dependency_overrides[get_external_api_user] = lambda: {
+        "id": _USER_ID,
+        "email": f"{MARKER.lower()}-admin@test.com",
+        "integration_id": str(integration.id),
+    }
+
+    bound = _wh_record()
+    res = env.client.post(INGEST_WAREHOUSES, json={"records": [bound]})
+    assert res.status_code == 200, res.text
+    assert str(_warehouse_row(env, bound["code"])["company_id"]) == env.company_b
+
+    clash = _wh_record()
+    res = env.client.post(
+        INGEST_WAREHOUSES, json={"companyCode": env.company_a_code, "records": [clash]}
+    )
+    assert res.status_code == 422, res.text
+    assert res.json()["code"] == "COMPANY_ANCHOR_AMBIGUOUS"
+    assert _warehouse_row(env, clash["code"]) is None
+
+
+def test_a_created_row_carries_the_anchor_company(env):
+    """AC-A1-5, the NULL-company regression. ``_apply`` raw-INSERTs, so it bypasses
+    the ORM auto-stamp entirely: before the anchor it wrote no ``company_id`` at
+    all, which production rejects outright (NOT NULL, migration 305) and a
+    create_all test schema silently accepts (the column is ORM-nullable). Asserted
+    on the value, never on the constraint."""
+    record = _wh_record()
+
+    res = env.client.post(
+        INGEST_WAREHOUSES, json={"companyCode": env.company_b_code, "records": [record]}
+    )
+
+    assert res.status_code == 200, res.text
+    assert res.json()["summary"]["created"] == 1
+    assert str(_warehouse_row(env, record["code"])["company_id"]) == env.company_b
+
+
+def test_adoption_does_not_reach_into_another_company(env):
+    """AC-A1-6. Adoption by business code is what stops a first sync duplicating a
+    hand-entered row - and unscoped it would hand company A's push to company B's
+    record instead, silently retargeting a row nobody asked it to touch.
+
+    ``products`` rather than ``warehouses``: this AC needs the same code in two
+    companies, and ``Warehouse.warehouse_code`` still carries the pre-305 GLOBAL
+    ``unique=True`` in the model, so a schema built by ``create_all`` cannot hold
+    one. ``Product`` was brought into step with migration 305's composite
+    (``uq_products_company_product_code``) and can."""
+    code = f"{MARKER}-ADOPT-{uuid.uuid4().hex[:6]}"
+    theirs = env.product(code, env.company_b)
+
+    res = env.client.post(
+        INGEST_PRODUCTS,
+        json={
+            "companyCode": env.company_a_code,
+            "records": [
+                {
+                    "source_ref": f"{MARKER}-REF-{uuid.uuid4().hex[:8]}",
+                    "code": code,
+                    "name": f"{MARKER} pushed",
+                    "category_code": env._category.category_code,
+                    "uom_code": env._uom.uom_code,
+                }
+            ],
+        },
+    )
+
+    assert res.status_code == 200, res.text
+    assert res.json()["records"][0]["outcome"] == "created"
+
+    rows = (
+        env.db.execute(
+            text("SELECT id, product_name, company_id FROM products WHERE product_code = :c"),
+            {"c": code},
+        )
+        .mappings()
+        .all()
+    )
+    by_company = {str(row["company_id"]): row for row in rows}
+    assert set(by_company) == {env.company_a, env.company_b}
+    assert str(by_company[env.company_b]["id"]) == str(theirs.id)
+    assert by_company[env.company_b]["product_name"] == f"{MARKER} {code}"
+
+
+def test_a_source_ref_linked_in_another_company_fails_instead_of_updating(env):
+    """AC-A1-7. The reference table is global, so a ref resolves to a row whatever
+    company the request anchored to. Overwriting it would be a cross-company write
+    dressed up as an ordinary re-sync, so it is refused per record."""
+    code = f"{MARKER}WH{uuid.uuid4().hex[:6]}"
+    theirs, source_ref = _link_in_company_b(env, code)
+
+    res = env.client.post(
+        INGEST_WAREHOUSES,
+        json={
+            "companyCode": env.company_a_code,
+            "records": [{"source_ref": source_ref, "code": code, "name": f"{MARKER} hijack"}],
+        },
+    )
+
+    assert res.status_code == 200, res.text
+    entry = res.json()["records"][0]
+    assert entry["outcome"] == "failed"
+    assert "another company" in entry["errors"]["source_ref"]
+
+    row = _warehouse_row(env, code)
+    assert str(row["id"]) == str(theirs.id)
+    assert str(row["company_id"]) == env.company_b
+    assert row["warehouse_name"] == f"{MARKER} {code}"
+
+
+def test_read_reports_another_companys_row_as_not_found(env):
+    """AC-A1-8. Reported explicitly, not omitted: the ESB acts on ``not_found``,
+    and a row it is not entitled to see must read the same as one that does not
+    exist. The control at the end is what proves the ref itself is fine."""
+    code = f"{MARKER}WH{uuid.uuid4().hex[:6]}"
+    _theirs, source_ref = _link_in_company_b(env, code)
+
+    res = env.client.post(
+        READ_WAREHOUSES,
+        json={"companyCode": env.company_a_code, "source_refs": [source_ref]},
+    )
+    assert res.status_code == 200, res.text
+    assert res.json()["not_found"] == [source_ref]
+    assert res.json()["records"] == []
+
+    res = env.client.post(
+        READ_WAREHOUSES,
+        json={"companyCode": env.company_b_code, "source_refs": [source_ref]},
+    )
+    assert res.status_code == 200, res.text
+    assert res.json()["records"][0]["code"] == code
+    assert res.json()["not_found"] == []

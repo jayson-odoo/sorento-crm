@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from app.database import engine
 from app.models.integration_reference import IntegrationReference
+from app.services.company_scope import DEFAULT_COMPANY_ID
 from app.services.master_ingest_service import (
     IngestOutcome,
     MasterIngestService,
@@ -52,7 +53,13 @@ def db():
 
 @pytest.fixture()
 def svc(db):
-    return MasterIngestService(db, integration_id=None)
+    """Anchored to the incumbent company, the way the route anchors a request.
+
+    ``company_id`` is required rather than defaulted: an ingest that cannot name
+    one company has no correct destination for a row, and a default here would
+    have hidden that from every test in this file.
+    """
+    return MasterIngestService(db, integration_id=None, company_id=DEFAULT_COMPANY_ID)
 
 
 def _wh(code="ZZT-WH-01", name="Main", ref=None, **extra):

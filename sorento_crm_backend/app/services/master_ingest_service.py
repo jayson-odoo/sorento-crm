@@ -29,6 +29,13 @@ records that would overwrite an existing row -- an adoption above all, where the
 row holds hand-entered data -- the result carries a field-level diff of what
 would be replaced.
 
+**One company per call.** The caller names it (``company_anchor.py``) and it is
+required here, not defaulted: every table below is partitioned per company, and
+their business codes are unique only within one. Both halves of the ingest have
+to honour it or the anchor is decorative -- the INSERT stamps it, and adoption
+matches inside it, because adopting across companies would silently retarget
+another company's hand-entered row.
+
 Ingest emits **no lifecycle events** (AC-AC-18). A record arriving *from*
 AutoCount must never trigger a write back to it. Nothing here calls an emitter,
 and nothing here should ever be given one.
@@ -152,10 +159,21 @@ class EntitySpec:
     schema: type[BaseModel]
     code_column: str
     # canonical payload -> column values. May raise MissingReference.
-    to_columns: Callable[[BaseModel, Session], dict[str, Any]]
+    to_columns: Callable[[BaseModel, Session, str], dict[str, Any]]
 
 
-def _category_columns(payload: Any, db: Session) -> dict[str, Any]:
+# Tables where a row serves every company (``company_id`` NULL). Listed rather
+# than derived from the model, because the question here is what the RAW SQL
+# below must write, and a mixin the SQL never consults cannot answer it.
+# Everything else in ENTITY_SPECS is company-scoped.
+SHARED_TABLES = {"sales_agents"}
+
+
+def _is_company_scoped(table: str) -> bool:
+    return table not in SHARED_TABLES
+
+
+def _category_columns(payload: Any, db: Session, company_id: str) -> dict[str, Any]:
     return {
         "category_code": payload.code,
         "category_name": payload.name,
@@ -164,7 +182,7 @@ def _category_columns(payload: Any, db: Session) -> dict[str, Any]:
     }
 
 
-def _uom_columns(payload: Any, db: Session) -> dict[str, Any]:
+def _uom_columns(payload: Any, db: Session, company_id: str) -> dict[str, Any]:
     return {
         "uom_code": payload.code,
         "uom_name": payload.name,
@@ -176,7 +194,7 @@ def _uom_columns(payload: Any, db: Session) -> dict[str, Any]:
     }
 
 
-def _warehouse_columns(payload: Any, db: Session) -> dict[str, Any]:
+def _warehouse_columns(payload: Any, db: Session, company_id: str) -> dict[str, Any]:
     return {
         "warehouse_code": payload.code,
         "warehouse_name": payload.name,
@@ -185,7 +203,7 @@ def _warehouse_columns(payload: Any, db: Session) -> dict[str, Any]:
     }
 
 
-def _supplier_columns(payload: Any, db: Session) -> dict[str, Any]:
+def _supplier_columns(payload: Any, db: Session, company_id: str) -> dict[str, Any]:
     terms = payload.payment_terms_days
     if payload.payment_terms_code:
         # The payment-terms master does not exist until Phase D. Rather than
@@ -203,7 +221,7 @@ def _supplier_columns(payload: Any, db: Session) -> dict[str, Any]:
     }
 
 
-def _customer_columns(payload: Any, db: Session) -> dict[str, Any]:
+def _customer_columns(payload: Any, db: Session, company_id: str) -> dict[str, Any]:
     if payload.payment_terms_code:
         raise MissingReference("payment_terms_code", payload.payment_terms_code)
     return {
@@ -220,25 +238,41 @@ def _customer_columns(payload: Any, db: Session) -> dict[str, Any]:
     }
 
 
-def _lookup_id(db: Session, table: str, column: str, value: str) -> Optional[str]:
+def _lookup_id(
+    db: Session, table: str, column: str, value: str, company_id: str
+) -> Optional[str]:
+    """A row matched by business code, WITHIN the anchored company.
+
+    Unscoped this is a coin toss: ``warehouse_code`` and ``product_code`` are
+    unique per company only (migration 305) and thousands of codes exist in both,
+    so the row returned was whichever the scan reached first. A shared table has
+    no company of its own, so its rows match on NULL as well.
+    """
+    if _is_company_scoped(table):
+        where = f"{column} = :v AND company_id = :cid"
+    else:
+        where = f"{column} = :v AND (company_id IS NULL OR company_id = :cid)"
     row = db.execute(
-        text(f"SELECT id FROM {table} WHERE {column} = :v LIMIT 1"), {"v": value}
+        text(f"SELECT id FROM {table} WHERE {where} LIMIT 1"),
+        {"v": value, "cid": company_id},
     ).first()
     return str(row[0]) if row else None
 
 
-def _product_columns(payload: Any, db: Session) -> dict[str, Any]:
+def _product_columns(payload: Any, db: Session, company_id: str) -> dict[str, Any]:
     # products.category_id and base_uom_id are NOT NULL, so an unresolved code
     # makes the row uncreatable. That is a sequencing problem, not bad data.
     if not payload.category_code:
         raise MissingReference("category_code", "")
-    category_id = _lookup_id(db, "product_categories", "category_code", payload.category_code)
+    category_id = _lookup_id(
+        db, "product_categories", "category_code", payload.category_code, company_id
+    )
     if category_id is None:
         raise MissingReference("category_code", payload.category_code)
 
     if not payload.uom_code:
         raise MissingReference("uom_code", "")
-    uom_id = _lookup_id(db, "units_of_measure", "uom_code", payload.uom_code)
+    uom_id = _lookup_id(db, "units_of_measure", "uom_code", payload.uom_code, company_id)
     if uom_id is None:
         raise MissingReference("uom_code", payload.uom_code)
 
@@ -272,9 +306,15 @@ ENTITY_SPECS: dict[str, EntitySpec] = {
 
 
 class MasterIngestService:
-    def __init__(self, db: Session, integration_id: Optional[str] = None):
+    def __init__(
+        self, db: Session, integration_id: Optional[str] = None, *, company_id: str
+    ):
         self.db = db
         self.integration_id = integration_id
+        # Required, deliberately. A default would be the incumbent company, and a
+        # push meant for the other one would land there silently -- the failure
+        # this whole anchor exists to prevent.
+        self.company_id = company_id
         self.refs = IntegrationReferenceService(db)
         # Set for the duration of a dry-run ingest. Read by _apply to decide
         # whether to capture a before/after diff; the rollback that makes the
@@ -375,10 +415,11 @@ class MasterIngestService:
     def _apply(
         self, entity_type: str, spec: EntitySpec, payload: Any
     ) -> tuple[IngestOutcome, str, Optional[dict[str, dict[str, Any]]]]:
-        columns = spec.to_columns(payload, self.db)
+        columns = spec.to_columns(payload, self.db, self.company_id)
 
         existing_id = self.refs.resolve(entity_type=entity_type, source_ref=payload.source_ref)
         if existing_id is not None:
+            self._require_same_company(spec, existing_id, payload.source_ref)
             diff = self._diff(spec, existing_id, columns)
             self._update(spec, existing_id, columns)
             self._link(entity_type, existing_id, payload)
@@ -386,7 +427,9 @@ class MasterIngestService:
 
         # First sync: adopt a local record with the same business code rather
         # than creating a duplicate under a new id.
-        adopted = _lookup_id(self.db, spec.table, spec.code_column, payload.code)
+        adopted = _lookup_id(
+            self.db, spec.table, spec.code_column, payload.code, self.company_id
+        )
         if adopted is not None:
             if self.refs.origin_of(entity_type=entity_type, entity_id=adopted) is not None:
                 # Already claimed by a different source document -- surfacing
@@ -403,16 +446,43 @@ class MasterIngestService:
             return IngestOutcome.UPDATED, adopted, diff
 
         new_id = str(uuid.uuid4())
-        cols = ", ".join(["id", *columns])
-        binds = ", ".join([":id", *(f":{c}" for c in columns)])
+        # Raw SQL bypasses the ORM auto-stamp, so the anchor is written by hand.
+        # Without it the row lands with a NULL company -- rejected outright on the
+        # live schema (NOT NULL, migration 305) and, where the column is still
+        # nullable, invisible to every scoped read afterwards. A shared table is
+        # left alone: NULL there means "serves both companies".
+        insert_columns = dict(columns)
+        if _is_company_scoped(spec.table):
+            insert_columns["company_id"] = self.company_id
+        cols = ", ".join(["id", *insert_columns])
+        binds = ", ".join([":id", *(f":{c}" for c in insert_columns)])
         self.db.execute(
             text(f"INSERT INTO {spec.table} ({cols}) VALUES ({binds})"),
-            {"id": new_id, **columns},
+            {"id": new_id, **insert_columns},
         )
         self._link(entity_type, new_id, payload)
         # Nothing existed to overwrite, so there is no diff to report. Distinct
         # from {} -- see RecordResult.diff.
         return IngestOutcome.CREATED, new_id, None
+
+    def _require_same_company(self, spec: EntitySpec, entity_id: str, source_ref: str) -> None:
+        """Refuse a reference that resolves into another company.
+
+        ``integration_references`` is global, so a source_ref finds its row
+        whatever company the request anchored to. Updating it would be a
+        cross-company write wearing the clothes of an ordinary re-sync, and the
+        row it overwrites belongs to a company this caller did not name. Failed
+        per record, so the rest of the batch still lands.
+        """
+        if not _is_company_scoped(spec.table):
+            return
+        owner = self.db.execute(
+            text(f"SELECT company_id FROM {spec.table} WHERE id = :id"), {"id": entity_id}
+        ).scalar()
+        if str(owner) != str(self.company_id):
+            raise ReferenceConflict(
+                f"source_ref {source_ref!r} is linked to a record in another company"
+            )
 
     def _diff(
         self, spec: EntitySpec, entity_id: str, columns: dict[str, Any]
