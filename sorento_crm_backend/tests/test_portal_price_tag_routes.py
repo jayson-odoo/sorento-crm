@@ -363,3 +363,62 @@ class TestSubmitRefusals:
         c.post(f"{_BASE}/{created['id']}/submit")
 
         assert c.delete(f"{_BASE}/{created['id']}").status_code == 409
+
+
+# ---------------------------------------------------------------------------
+# The grant gates every route, lookups included
+# ---------------------------------------------------------------------------
+
+
+def _revoke_the_grant(db: Session, contact_id: str) -> None:
+    """Take ``price_tag_request`` off every access type this contact holds."""
+    from app.models.access import ContactAccessType, respond_contact_access_types
+
+    codes = [
+        row.access_type_code
+        for row in db.execute(
+            respond_contact_access_types.select().where(
+                respond_contact_access_types.c.contact_id == contact_id
+            )
+        )
+    ]
+    db.query(ContactAccessType).filter(ContactAccessType.code.in_(codes)).update(
+        {"portal_form_types": []}, synchronize_session=False
+    )
+    db.flush()
+
+
+class TestTheGrantGatesEveryRoute:
+    def test_the_debtor_lookup_refuses_a_contact_without_the_grant(self, client):
+        """A revoked contact cannot enumerate their agent's debtor book.
+
+        This was the one route of the ten that never called ``_assert_visible``,
+        so the customer names, the customer codes and who buys from whom stayed
+        readable with the form itself switched off.
+        """
+        c, db, contact_id = client
+        _revoke_the_grant(db, contact_id)
+
+        res = c.get("/api/v1/public/portal/lookups/debtors-for-agent")
+
+        assert res.status_code == 403, res.text
+        assert res.json()["code"] == "FORM_TYPE_NOT_VISIBLE"
+
+    def test_the_item_lookup_beside_it_refuses_the_same_way(self, client):
+        """The control: its sibling lookup was already gated."""
+        c, db, contact_id = client
+        _revoke_the_grant(db, contact_id)
+
+        res = c.get("/api/v1/public/portal/lookups/price-tag-items")
+
+        assert res.status_code == 403, res.text
+        assert res.json()["code"] == "FORM_TYPE_NOT_VISIBLE"
+
+    def test_the_debtor_lookup_still_answers_a_granted_contact(self, client):
+        """And the gate does not cost the contact who IS granted the form."""
+        c, _db, _contact_id = client
+
+        res = c.get("/api/v1/public/portal/lookups/debtors-for-agent")
+
+        assert res.status_code == 200, res.text
+        assert isinstance(res.json(), list)

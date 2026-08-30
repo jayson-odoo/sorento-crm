@@ -300,7 +300,14 @@ def portal_lookup_debtors_for_agent(
     token: PortalToken = Depends(get_portal_token),
     db: Session = Depends(get_db),
 ):
-    """Scoped debtor lookup: customers by sales_agent_id + orders."""
+    """Scoped debtor lookup: customers by sales_agent_id + orders.
+
+    Gated like every other route here, and it was the one that was not: a contact
+    whose grant had been taken away could still read out the whole debtor book of
+    the agent they are linked to - names, codes and who buys from whom - through
+    a form they are no longer allowed to open.
+    """
+    _assert_visible(db, token.contact_id)
     debtors = PriceTagRequestService.lookup_debtors_for_agent(db, token.contact_id)
     if q:
         q_lower = q.lower()
