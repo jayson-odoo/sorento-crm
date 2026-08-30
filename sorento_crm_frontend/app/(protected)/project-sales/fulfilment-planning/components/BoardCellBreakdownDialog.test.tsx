@@ -46,7 +46,8 @@ vi.mock('../../_shared/services/fulfilmentPlanningService', () => ({
     getClassificationEvidence(...args),
 }));
 
-import { BoardCellBreakdownDialog } from './BoardCellBreakdownDialog';
+import { BoardCellBreakdownDialog, sourceAt } from './BoardCellBreakdownDialog';
+import { LADDER_VERSION } from '../../_shared/lib/supplyVocabulary';
 import {
   buildBoard,
   PREVIEW_POLICY,
@@ -2474,7 +2475,7 @@ describe('BoardCellBreakdownDialog: how the Suggestion card names its sources', 
     );
 
     const card = screen.getByTestId('cell-suggestion');
-    expect(card).toHaveTextContent('Suggestion (before ladder v5)');
+    expect(card).toHaveTextContent(`Suggestion (before ladder ${LADDER_VERSION})`);
     // One short label and no sentence: what a planner needs is to know they are reading
     // history, not a paragraph about ladder versions.
     expect(card).not.toHaveTextContent(/no longer/);
@@ -2819,5 +2820,47 @@ describe('BoardCellBreakdownDialog: the table scrolls inside its own container a
       expect(inlineWidth).not.toMatch(/^\d+px$/);
       node = node.parentElement;
     }
+  });
+});
+
+
+describe('sourceAt names the DONOR for every borrow that has one', () => {
+  it('names the donor order and line for a ladder v7.1 step-2 borrow', () => {
+    // The gate used to be `rung === 'group_borrow'` - ladder v2's only borrow rung - so an
+    // `order_borrow` source printed " from MWH-IB", which is where the goods sit rather
+    // than whose order gives them up. The location is the secondary fact here.
+    expect(
+      sourceAt({
+        kind: 'borrow',
+        rung: 'order_borrow',
+        qty: '30',
+        location: 'MWH-IB',
+        reason: 'because',
+        donor_so_number: 'SO414285',
+        donor_line_no: 4,
+      } as never),
+    ).toBe(' from SO414285 line 4');
+  });
+
+  it('names the donor for the pool BORROW half and keeps the location for a free draw', () => {
+    expect(
+      sourceAt({
+        kind: 'borrow',
+        rung: 'pool',
+        qty: '30',
+        location: 'BRW',
+        reason: 'because',
+        donor_so_number: 'SO414285',
+      } as never),
+    ).toBe(' from SO414285');
+    expect(
+      sourceAt({
+        kind: 'reserve',
+        rung: 'pool',
+        qty: '30',
+        location: 'BRW',
+        reason: 'because',
+      } as never),
+    ).toBe(' at BRW');
   });
 });

@@ -83,8 +83,12 @@ class BoardSource(BaseModel):
     reason: str
     spo_number: Optional[str] = None
     arrival_date: Optional[date] = None
-    #: Ladder v2 (section E): which rung produced this source - `pool`, `group_take`,
-    #: `group_borrow` or `cross_group_borrow`. `None` on a plain `timely_spo`/`buy` row.
+    #: Which rung produced this source. LADDER V7.1: `group_take` (step 1, both halves),
+    #: `order_borrow` (step 2), `supply_borrow` (step 3) or `pool` (step 4, free draw AND
+    #: the borrow half - the two are told apart by `donor_so_number`). `None` on a plain
+    #: `timely_spo`/`buy` row and on a source rebuilt from a frozen composition.
+    #: `group_borrow` and `cross_group_borrow` still arrive on FROZEN v2-v5 snapshots, which
+    #: the board renders unchanged: a snapshot is evidence of what was promised.
     rung: Optional[str] = None
     #: WHICH LADDER wrote it (AC-V8). A LIVE suggestion carries today's version; a FROZEN
     #: one carries whatever was stamped when it was frozen, and `None` for a snapshot older
@@ -116,7 +120,8 @@ class BoardSource(BaseModel):
 #: The retired spellings stay in the Literal so a stale client cache holding an older trail
 #: does not 422 a read: `incoming`, `group_take`, `reserve_own`, `reserve_pool`, `borrow`.
 BoardTrailKind = Literal[
-    "own", "pool", "cross_group_borrow", "group_borrow", "buy",
+    "own", "order_borrow", "supply_borrow", "pool", "buy",
+    "cross_group_borrow", "group_borrow",
     "incoming", "group_take", "reserve_own", "reserve_pool", "borrow",
 ]
 #: Yes or no, one word per question (AC-V1). It replaced a five-value `outcome`
@@ -284,6 +289,38 @@ class BoardTrailStep(BaseModel):
     pool: Optional[BoardTrailPool] = None
 
     model_config = ConfigDict(populate_by_name=True)
+
+
+class BoardLadderOption(BaseModel):
+    """One step of ladder v7.1, answered whether or not it was taken (R36, AC-S3-14).
+
+    FIVE per walked line, in step order - `use`, `order_borrow`, `supply_borrow`, `pool`,
+    `buy` - because a step the server omitted reads as a step nobody walked. The client
+    renders them as given and never sorts them.
+    """
+
+    #: The step's own key. Addressing and test ids; the reader is shown `label`.
+    step: str
+    #: The step in a planner's words. The SERVER's sentence, so two screens cannot spell
+    #: one step two ways.
+    label: str
+    #: Does it cover the WHOLE planning unit (R10, R33)? Half a unit is not an option.
+    whole: bool = False
+    #: When the unit would be fulfilled if this were taken. NULL exactly when the step
+    #: offered nothing, and `days_late` is null with it: "nothing was offered" and
+    #: "offered, on time" are different answers.
+    fulfil_date: Optional[str] = None
+    #: Days after the line's required date; 0 is on time and renders blank. NEVER negative -
+    #: landing early is on time, not minus six days late.
+    days_late: Optional[int] = None
+    #: Whose order pays for it, by DOCUMENT NUMBER, and the Stock Debt column the debt lands
+    #: in. Set on the borrow steps only: `use` draws the free pile and `buy` orders new
+    #: stock, so neither owes anybody.
+    debt_so_number: Optional[str] = None
+    debt_month: Optional[str] = None
+    #: The step the engine proposed. At most ONE option carries it, and none does when
+    #: nothing covers the unit.
+    chosen: bool = False
 
 
 class BoardDecisionReserve(BaseModel):
@@ -540,6 +577,10 @@ class BoardContribution(BaseModel):
     #: The ladder, rung by rung, in the order it was walked (see `BoardTrailStep`). Empty for a
     #: line that cannot be planned: no ladder was walked for it.
     trail: List[BoardTrailStep] = []
+    #: The FIVE options of ladder v7.1 (R36, AC-S3-14), always all five and always in step
+    #: order, one chosen at most. Declared here or `response_model` would drop the field on
+    #: its way out - which is the whole reason the contract is asserted in a route test.
+    options: List[BoardLadderOption] = []
     #: The item facts the ladder judged this line on. Null, never a set of `false`s, on a
     #: line the ladder did not walk (unplannable, covered): it was judged against nothing.
     item_flags: Optional[BoardItemFlags] = None
@@ -640,6 +681,9 @@ class StockDetailSalesOrder(BaseModel):
     so_number: str
     customer_name: Optional[str] = None
     customer_id: Optional[str] = None
+    #: The BIN this claim sits at. Always stated, because a group read merges several bins
+    #: into one list and a reader has to be able to see where each document stands.
+    location: Optional[str] = None
     #: Who sold it. Null for a purchase-order row (`StockDetailIncoming`), which is not a
     #: sales document and carries no agent by construction.
     agent_code: Optional[str] = None
@@ -663,8 +707,43 @@ class StockDetailIncoming(BaseModel):
 
     spo_number: Optional[str] = None
     supplier_name: Optional[str] = None
+    #: The bin it lands at, for the same reason a sales-order row states one.
+    location: Optional[str] = None
     expected_date: Optional[date] = None
     spo_qty: str
+    #: Days late, when the promised arrival has passed with nothing received. The service
+    #: has always stated it and the panel has always rendered it; undeclared here, the
+    #: response model dropped it on the way out, so every row read as fresh.
+    overdue_days: Optional[int] = None
+
+
+class StockDetailHold(BaseModel):
+    """A confirmed hold on this set's stock, taken by a line booked OUTSIDE the set (R40).
+
+    Cross-group stock only moves as a PINNED hold, and such a hold appears in no
+    sales-order row of the group whose pile it is drawn from. Listed so the group's running
+    balance walks the pile a planner can actually draw on.
+    """
+
+    #: The order holding it. Null when its line has not been reconciled to a core order yet,
+    #: which is the only case with no number a person could read.
+    so_number: Optional[str] = None
+    location: Optional[str] = None
+    #: The holder's own required date, which is where the hold sits in the walk.
+    required_date: Optional[date] = None
+    qty: str
+
+
+class StockDetailBin(BaseModel):
+    """One member of the set a group read covers, and the pile it starts from.
+
+    Stated per bin rather than only summed, because the group drill opens its running
+    balance on the on hand each location actually holds.
+    """
+
+    warehouse_id: str
+    location: str
+    qty_on_hand: str
 
 
 class StockDetail(BaseModel):
@@ -679,8 +758,13 @@ class StockDetail(BaseModel):
     product_id: str
     item_code: str
     description: Optional[str] = None
-    warehouse_id: str
-    location: str
+    #: Null on a GROUP read: the whole set is the answer, and no single bin is it.
+    warehouse_id: Optional[str] = None
+    location: Optional[str] = None
+    #: The set this read covers - the ownership-group suffix (`IB`) or `pools` - and its
+    #: members. Null / empty for the ordinary one-bin read.
+    group: Optional[str] = None
+    bins: List[StockDetailBin] = []
     qty_on_hand: str
     #: What the whole book still owes here, by the shared `is_open_demand()` rule, every demand
     #: class: a dealer order occupies the stock as completely as a project one.
@@ -693,6 +777,8 @@ class StockDetail(BaseModel):
     qty_free: str
     sales_orders: List[StockDetailSalesOrder] = []
     incoming: List[StockDetailIncoming] = []
+    #: Confirmed holds taken by lines booked outside this set. Group reading only.
+    holds: List[StockDetailHold] = []
 
 
 class PileQueueLine(BaseModel):

@@ -1,8 +1,5 @@
 import { apiFetch } from '@/lib/api';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
-// PHASE 1 ONLY (S3). This import and `ladderOptionsMock.ts` are deleted together the moment
-// `propose_line` returns `options[]` for real; nothing else in the app refers to either.
-import { withLadderOptions } from '../lib/ladderOptionsMock';
 import type {
   AdoptSalesOrderResult,
   BoardGranularity,
@@ -346,9 +343,10 @@ export async function confirmSupply(
  * ownership group, then the asker's own warehouse (fewest transfers). Phase 2 wires that
  * ordering; the dialog needs no change for it.
  *
- * PHASE 1 (S3) serves `options` and the v7.1 `trail` from `lib/ladderOptionsMock.ts`, laid over
- * the real board, behind `NEXT_PUBLIC_LADDER_OPTIONS_MOCK=1`. That file and its one import go
- * when the engine answers for real.
+ * PHASE 2 (S3), and the mock is GONE. `propose_line` returns the five options for real and
+ * this function reads them straight off the payload; `lib/ladderOptionsMock.ts` and the
+ * `NEXT_PUBLIC_LADDER_OPTIONS_MOCK` flag it hung off are deleted, so the flag being set on a
+ * running dev server does nothing at all.
  */
 export async function getPlanningBoard(
   soNumbers: string[],
@@ -379,25 +377,32 @@ export async function getPlanningBoard(
   const response = await apiFetch(`${BASE}/fulfilment-planning/board?${search.toString()}`);
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to load the planning board'));
-  // Phase 1 (S3): a no-op unless NEXT_PUBLIC_LADDER_OPTIONS_MOCK=1, and deleted with the
-  // fixture once the engine states its own options.
-  return withLadderOptions(await response.json());
+  return response.json();
 }
 
 
 /**
  * What a location row of the cell's stock table is made of (AutoCount's "Stock Status with
- * Detail"), expanded under that row.
+ * Detail"), expanded under that row - or what a whole ownership GROUP is made of, under its
+ * subtotal row.
  *
  * Addressed by IDS, never by item code: two products on the live book share the code
  * `B2155-NL-BLUE`, so a lookup by code would answer confidently about the wrong one.
  */
 export async function getStockDetail(
   productId: string,
-  warehouseId: string,
+  warehouseId: string | null,
   lineIds: string[] = [],
+  /**
+   * A whole SET instead of one bin: the ownership-group suffix (`IB`), or `pools` for the
+   * five site pools. Step 1 of the ladder draws the group's pile - a `BRW-IB` line is fed by
+   * `MWH-IB` stock - so a running balance is only true when it is read over the group.
+   */
+  group?: string | null,
 ): Promise<StockDetail> {
-  const search = new URLSearchParams({ product_id: productId, warehouse_id: warehouseId });
+  const search = new URLSearchParams({ product_id: productId });
+  if (group) search.set('group', group);
+  else if (warehouseId) search.set('warehouse_id', warehouseId);
   // The lines the drawer is planning. Their rows come back marked `is_this_line`; an absent
   // parameter reads the list on nobody's behalf.
   if (lineIds.length > 0) search.set('line_ids', lineIds.join(','));

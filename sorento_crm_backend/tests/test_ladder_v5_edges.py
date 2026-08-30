@@ -21,6 +21,7 @@ from decimal import Decimal
 import pytest
 from sqlalchemy import event
 
+from app.services.project_supply_service import LADDER_VERSION
 from app.services.error_handler import AppException
 
 from ._pg_fixture import blank_session
@@ -69,14 +70,20 @@ def test_question_three_takes_the_whole_line_where_the_cap_used_to_refuse_it():
 
         contribution = _contribution(db, order, product)
 
-        step = _step(contribution, "cross_group_borrow")
+        # LADDER V7.1 (R5): another PROJECT group's FREE pile is step 1's second half, not
+        # a borrow rung. Free means owed to nobody, so it is a Reserve and it raises no
+        # order-back - which is why it is walked before either borrow step and before the
+        # pool. The quantity and the donor are unchanged; what changed is which question
+        # answers, and that is the whole of R5.
+        step = _step(contribution, "own")
         assert step["answer"] == "yes"
         assert step["took"] == "24"
         assert donor.warehouse_code in step["why"]
         assert "cross-group borrow limit" not in step["why"]
 
-        assert [s["kind"] for s in contribution["sources"]] == ["borrow"]
+        assert [s["kind"] for s in contribution["sources"]] == ["reserve"]
         assert contribution["sources"][0]["qty"] == "24"
+        assert contribution["sources"][0]["location"] == donor.warehouse_code
 
 
 # --------------------------------------------------------------------------- #
@@ -124,17 +131,17 @@ def test_question_one_names_the_whole_line_rule_when_it_had_stock_but_not_enough
 
 
 def test_an_overdue_promise_that_still_lands_in_time_is_drawn_as_water_and_dated():
-    """THE CAPTAIN'S RULING ON THE WATER, 27 August 2026, first half.
+    """R31 (29 August 2026) REPLACES the 27 August reading of an overdue promise.
 
-    "Overdue" and "late for this line" are two different facts and the trail had been
-    conflating them. This promise is 40 days past its own date and still arrives well before
-    the line's required date, so it DOES cover the line - drawn at question 1, as `timely_spo`
-    (goods on the water are not a hold on a floor) with the arrival date in the sentence, so
-    a planner can check the promise they are leaning on.
+    It used to be drawn: 40 days past its own date, still arriving before the line needs
+    it, so it covered the line as `timely_spo`. The captain's ruling reverses that with a
+    measurement behind it - every one of the 725 open SPO lines on the live book is dated
+    August 2026 or earlier - so a document whose arrival has passed with nothing received
+    is NOT supply until somebody re-dates it, and promising against it is promising against
+    a date nobody believes. The line buys, and the trail says the group had nothing to give.
 
     The DRILL-DOWN table (`stock_detail`, behind the frontend's `StockDocumentsPanel`) keeps
-    carrying `overdue_days`, which is where "go and chase this one" belongs: question 1
-    answers "can we cover the line", not "is the supplier behind".
+    carrying `overdue_days`, which is where "go and chase this one" belongs.
     """
     with blank_session() as db:
         product = _product(db, f"ZZT-{_uid()[:6]}")
@@ -153,15 +160,11 @@ def test_an_overdue_promise_that_still_lands_in_time_is_drawn_as_water_and_dated
         contribution = _contribution(db, order, product)
 
         own_step = _step(contribution, "own")
-        assert own_step["answer"] == "yes", "the group net offers it (section 1e/1d)"
-        assert own_step["took"] == "40"
-        assert f"40 on the water to {own.warehouse_code}" in own_step["why"], own_step["why"]
+        assert own_step["answer"] == "no", "an overdue document is not supply (R31)"
+        assert own_step["took"] == "0"
         assert [(s["kind"], s["rung"]) for s in contribution["sources"]] == [
-            ("timely_spo", "group_take")
+            ("buy", "buy")
         ]
-        assert f"arriving {arrives.day} " in contribution["sources"][0]["reason"], (
-            "the date the goods land by is in the sentence, not left to the table"
-        )
 
         detail = _service(db).stock_detail(str(product.id), str(own.id))
         incoming_row = next(
@@ -225,7 +228,7 @@ def test_a_decided_incoming_component_totals_on_the_contribution_and_stales_corr
     one written before v5 shipped - what `BoardCellBreakdownDialog`'s `suggestionIsStale`
     reads to print "Suggestion (before ladder v5)". A second, undecided line on the same
     order carries no such staleness: every part of its live suggestion is stamped
-    `ladder: "v5"` (AC-V8's other half).
+    the LIVE `ladder` stamp (AC-V8's other half).
     """
     from app.models.project_so import ProjectSalesOrderLine, SOSupplyDecision
 
@@ -293,7 +296,7 @@ def test_a_decided_incoming_component_totals_on_the_contribution_and_stales_corr
         # record and stays in `line_snapshots`; what the board serves is live and so is
         # stamped by the current ladder, which is why "Suggestion (before ladder v5)" can
         # no longer be produced from this field.
-        assert {part.get("ladder") for part in proposed_parts} == {"v5"}, (
+        assert {part.get("ladder") for part in proposed_parts} == {LADDER_VERSION}, (
             "a covered line's suggestion is the live ladder, never the frozen snapshot"
         )
 
@@ -303,7 +306,7 @@ def test_a_decided_incoming_component_totals_on_the_contribution_and_stales_corr
         assert undecided_contribution["covered"] is False
         assert {
             part["ladder"] for part in undecided_contribution["proposed"]["components"]
-        } == {"v5"}, "an undecided line never carries a stale stamp"
+        } == {LADDER_VERSION}, "an undecided line never carries a stale stamp"
 
 
 # --------------------------------------------------------------------------- #
@@ -313,7 +316,7 @@ def test_a_decided_incoming_component_totals_on_the_contribution_and_stales_corr
 #: The engine's INTERNAL rung keys. Legitimate as the VALUE of `kind` / `rung` (addressing),
 #: never inside a rendered sentence (`why` / `note` / `reason`) - section 1e's own words:
 #: "the rung names are internal keys under ladder v5 and never reach a reader".
-_RUNG_TOKENS = ("group_take", "cross_group_borrow", "group_borrow", "timely_spo")
+_RUNG_TOKENS = ("group_take", "order_borrow", "supply_borrow", "timely_spo")
 
 
 def _prose_strings(contribution) -> list:
@@ -363,11 +366,11 @@ def test_the_trail_is_five_rows_with_no_leaked_rung_vocabulary_and_a_note_that_a
 
         # ---- shape ----
         assert [step["question"] for step in contribution["trail"]] == [
-            "Can we use our location?",
+            "Can we use our locations?",
+            "Can we borrow on hand from a later order?",
+            "Can we borrow incoming from a later order?",
             "Can we take from the pool?",
-            "Can we borrow from another location?",
-            "Can we borrow from the same agent's other order in this group?",
-            "Buy the rest?",
+            "Buy",
         ]
         for step in contribution["trail"]:
             assert step["answer"] in ("yes", "no")
@@ -382,11 +385,13 @@ def test_the_trail_is_five_rows_with_no_leaked_rung_vocabulary_and_a_note_that_a
 
         # ---- the donor was offered, not refused by the cap, and the whole line still
         #      buys because 10 alone cannot finish 24 ----
-        cross = _step(contribution, "cross_group_borrow")
-        assert cross["answer"] == "no"
-        assert cross["took"] == "0"
-        assert "could not cover the whole line" in cross["why"]
-        assert "bought entire" in cross["why"]
+        # The donor is another group's FREE stock, so it is step 1's business now (R5) -
+        # and 10 alone cannot finish 24, so the whole-unit rule takes it back.
+        used = _step(contribution, "own")
+        assert used["answer"] == "no"
+        assert used["took"] == "0"
+        assert "could not cover the whole line" in used["why"]
+        assert "bought entire" in used["why"]
 
         buy = _step(contribution, "buy")
         assert buy["answer"] == "yes"
@@ -516,10 +521,13 @@ def test_a_board_of_76_lines_does_not_scale_its_query_count_with_the_line_count(
         seen_lines = sum(len(cell["contributions"]) for cell in board["cells"])
         assert seen_lines == line_count, "the seed actually reached the board"
         # MEASURED 37 on this fixture (27 August 2026), after `_warehouses_for_groups`
-        # stopped scanning the warehouse table once per CELL. One statement of slack, and
-        # no more: the bound is here to catch a `for line in lines: db.query(...)`, and a
-        # generous one lets 76 lines' worth of per-line reads hide under it.
-        assert calls["n"] <= 38, calls["n"]
+        # stopped scanning the warehouse table once per CELL, and 43 on 30 August, after
+        # ladder v7.1 added the ONE assignment both the board and the Stock Debt view read
+        # (six batched reads for the whole board: stock, demand, SPO, PO, allocations,
+        # links). One statement of slack, and no more: the bound is here to catch a
+        # `for line in lines: db.query(...)`, and a generous one lets 76 lines' worth of
+        # per-line reads hide under it.
+        assert calls["n"] <= 44, calls["n"]
 
 
 # --------------------------------------------------------------------------- #

@@ -104,19 +104,18 @@ def test_a_sibling_holding_stock_offers_nothing_while_the_group_nets_negative():
 
 
 def test_while_the_group_is_short_even_the_front_of_the_queue_buys():
-    """THE CONSEQUENCE of the ruling, pinned so it cannot happen by accident.
+    """THE CONSEQUENCE, as ladder v7.1 rules it (R24, 29 August 2026).
 
-    1015 sit at the group and 9,080 are owed against them. Under ladder v3 the line at the
-    FRONT of that queue reserved its 80 out of the 1,015 and only the 9,000 behind it
-    bought. Under v4 the group's own net is what decides, the rank queue takes no part, and
-    a group that cannot cover its book promises its stock to nobody in particular - so both
-    lines buy and whoever ships first uses the 1,015.
+    1015 sit at the group and 9,080 are owed against them. Ladder v3 served the FRONT of the
+    queue and bought for the 9,000 behind it; v4 refused everybody, on the reading that a
+    group which cannot cover its book promises its stock to nobody in particular. R24
+    reverses v4 and restores the earlier answer for a different reason: the pile is served
+    FIRST-COME BY REQUIRED DATE, so the line due first takes what is there and the line
+    behind it goes short in its own month.
 
-    That is the rule as the captain ruled it (`PLAN-scm-cs-planning-uat.md` section 1d,
-    AC-L7: "the group net is -15514 and the suggestion is Buy 60"), and it reaches further
-    than the one line the AC names: on a book whose group is short, every line of that
-    group buys. Written down here because a test that only covered AC-L7's own numbers
-    would have hidden it.
+    It is the same rule AC-S3-1b turns on: SRTWB242's BB group nets -1,156 and JEREMY's 27
+    due 15 September is still reserved, because 55 is free BY HIS DATE. A group being short
+    over its whole book is not a statement about any one date.
     """
     with blank_session() as db:
         company_id, _eling, project, product = _world(db)
@@ -138,7 +137,7 @@ def test_while_the_group_is_short_even_the_front_of_the_queue_buys():
         front = _components(service.proposal_for(first))
         back = _components(ProjectSupplyService(db).proposal_for(behind))
 
-    assert [(c["kind"], c["qty"]) for c in front] == [("buy", "80")]
+    assert [(c["kind"], c["qty"]) for c in front] == [("reserve", "80")]
     assert [(c["kind"], c["qty"]) for c in back] == [("buy", "9000")]
 
 
@@ -271,7 +270,10 @@ def test_a_cross_group_donor_is_offered_only_while_its_own_group_nets_positive()
             return _components(ProjectSupplyService(db).proposal_for(order)), donor
 
     flush, donor = _run(sink=False)
-    assert [c["rung"] for c in flush] == ["cross_group_borrow"]
+    # v7.1 (R5): another group's FREE stock is step 1's second half, not a borrow rung.
+    # The quantity and the donor are unchanged; only the question that answers moved.
+    assert [c["rung"] for c in flush] == ["group_take"]
+    assert [c["kind"] for c in flush] == ["reserve"]
     assert flush[0]["qty"] == "40"
 
     sunk, _donor = _run(sink=True)

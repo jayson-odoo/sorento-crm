@@ -394,7 +394,7 @@ export function ProjectRetailTabs({
  * pool row at all falls back to everything it was given, rather than showing an empty table
  * for a product that plainly has stock somewhere.
  */
-export function OnHandTable({ productId, itemCode }: { productId: string; itemCode: string }) {
+export function OnHandTable({ productId }: { productId: string }) {
   const stock = useLocationStock(productId, Boolean(productId));
   const [openRow, setOpenRow] = useState<string | null>(null);
 
@@ -474,8 +474,6 @@ export function OnHandTable({ productId, itemCode }: { productId: string; itemCo
                           <StockDocumentsPanel
                             productId={productId}
                             warehouseId={loc.warehouse_id}
-                            itemCode={itemCode}
-                            locationCode={loc.warehouse_code ?? EM_DASH}
                           />
                         </td>
                       </tr>

@@ -688,15 +688,15 @@ def test_cross_group_borrow_is_no_longer_capped_by_a_quantity_limit():
         big_components = proposal_big["lines"][0]["components"]
 
     assert len(small_components) == 1
-    assert small_components[0]["kind"] == "borrow"
-    assert small_components[0]["rung"] == "cross_group_borrow"
+    assert small_components[0]["kind"] == "reserve"
+    assert small_components[0]["rung"] == "group_take"
     assert small_components[0]["source_location"] == outside.warehouse_code
 
     assert len(big_components) == 1
-    assert big_components[0]["kind"] == "borrow", (
-        "size alone no longer refuses a cross-group borrow"
-    )
-    assert big_components[0]["rung"] == "cross_group_borrow"
+    # v7.1 (R5): size alone no longer refuses it, and free stock outside the group is a
+    # RESERVE at step 1 rather than a Borrow - free means owed to nobody.
+    assert big_components[0]["kind"] == "reserve"
+    assert big_components[0]["rung"] == "group_take"
     assert big_components[0]["qty"] == "25"
 
 
@@ -1088,20 +1088,27 @@ def test_group_borrow_refuses_a_donor_line_of_a_different_product():
             )
 
 
-def test_group_borrow_refuses_a_donor_line_outside_the_ownership_group():
-    """S8: the donor's own location has to be inside THIS line's ownership group - a
-    bare site pool (no group suffix) is not a group-borrow donor."""
+def test_group_borrow_refuses_a_donor_line_at_a_bin_in_no_ownership_group():
+    """S8, as ladder v7.1 leaves it (R5): ANY ownership group may donate now, so what is
+    refused is a donor line at a bin that is in no group AT ALL and is not a site pool -
+    nothing nets it, and the order-back would be owed to a place with no book.
+
+    A SITE POOL donor is allowed, because step 4b borrows a later pool order's on hand
+    (R34); `tests/scm/test_ladder_v7_borrow.py` pins that end to end.
+    """
     from app.schemas.project_supply import ConfirmLine, ConfirmSupplyBody
 
     with blank_session() as db:
         company_id, eling, project, product = _world(db)
         _group, sites = _group_sites(db)
-        own, pool = sites["BRW"]
+        own, _pool = sites["BRW"]
+        # A bare bin nobody's `pool_warehouse_id` points at: no group suffix and not a pool.
+        nowhere = _warehouse(db, f"ZZTBARE{_uid()[:6]}"[:20])
 
         core_so = _core_so(db, company_id)
         core_so.so_number = "SO820001"
         db.flush()
-        donor_core = _core_line(db, core_so, product, pool, qty_ordered="90")
+        donor_core = _core_line(db, core_so, product, nowhere, qty_ordered="90")
         db.commit()
 
         order, line, _cso, _cline = _seed_line(
@@ -1118,7 +1125,7 @@ def test_group_borrow_refuses_a_donor_line_outside_the_ownership_group():
                             borrow=[
                                 {
                                     "source": "other_location",
-                                    "warehouse_id": str(pool.id),
+                                    "warehouse_id": str(nowhere.id),
                                     "qty": "90",
                                     "reason": "Group borrow.",
                                     "donor_core_line_id": str(donor_core.id),
@@ -1180,8 +1187,11 @@ def test_group_pile_runs_o1_queries_for_a_board_of_n_lines_of_one_product_group(
     """S3: `_group_pile_members` is cached per (product, group), not per line - a board
     of N lines sharing one product/group must run its own query ONCE, not N times.
 
-    Counted by the ONE query in this whole call graph that joins `sales_agents`
-    (`_group_pile_members`'s own read) - a query-count assertion via a real
+    Counted by the queries in this call graph that join `sales_agents` - two since ladder
+    v7.1: `_group_pile_members`'s own ranked read, and the ONE assignment read the board and
+    the Stock Debt view share (R21), which names the agent on every demand line so a borrow
+    can say whose order it is taking. Both are per (product, group) or per walk; neither
+    scales with the line count, which is what this test exists to catch. A real
     `before_cursor_execute` listener, not an inference from timing.
     """
     with blank_session() as db:
@@ -1224,7 +1234,7 @@ def test_group_pile_runs_o1_queries_for_a_board_of_n_lines_of_one_product_group(
             event.remove(connection, "before_cursor_execute", _count)
 
     assert proposal["lines_total"] == n
-    assert calls["group_pile"] == 1, calls
+    assert calls["group_pile"] == 2, calls
 
 
 # --------------------------------------------------------- the donor ranking's tie-breaks
@@ -1613,11 +1623,13 @@ def test_a_past_dated_promise_is_still_inside_the_groups_net():
     """TRUST THE BOOK (captain, 26 August 2026). The goods are owed until a re-uploaded PO
     and SPO book says they arrived, so an overdue promise is still supply the group holds.
 
-    Dropping these rows instead would have told the planner to buy 39,110 units a second
-    time: every open SPO line on the captain's book carries a past date today. Under v5 the
-    row reaches the line through the group's net rather than through a rung of its own, and
-    "overdue" is a word for the order-inquiry row and the location table, where the document
-    is named and can be chased.
+    LADDER V7.1 REVERSES THE DRAW (R31, 29 August 2026), and keeps the net. An overdue
+    document is still inside `group_net` - AutoCount counts it and the trail names it - but
+    it is NOT supply a proposal may promise against until somebody re-dates it. The captain
+    ruled it with the measurement in hand: every one of the 725 open SPO lines on the live
+    book is dated August 2026 or earlier, so drawing them would promise against dates
+    nobody believes. The line buys, and "overdue" stays a word for the order-inquiry row and
+    the location table, where the document is named and can be chased.
     """
     with blank_session() as db:
         company_id, _eling, project, product = _world(db)
@@ -1634,9 +1646,8 @@ def test_a_past_dated_promise_is_still_inside_the_groups_net():
         components = _components(ProjectSupplyService(db).proposal_for(order))
 
     assert spo_number
-    assert [c["kind"] for c in components] == ["timely_spo"]
+    assert [c["kind"] for c in components] == ["buy"]
     assert components[0]["qty"] == "40"
-    assert components[0]["rung"] == "group_take"
 
 
 def test_a_promise_dated_today_covers_its_line():

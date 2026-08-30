@@ -1714,6 +1714,8 @@ export interface StockDetailSalesOrder {
   so_number: string;
   customer_name?: string | null;
   customer_id?: string | null;
+  /** The BIN this claim sits at. A GROUP read merges several bins into one list. */
+  location?: string | null;
   /** Who sold it. Null on a purchase-order row (`StockDetailIncoming`), which is not a sales
    * document and carries no agent by construction. */
   agent_code?: string | null;
@@ -1738,6 +1740,8 @@ export interface StockDetailSalesOrder {
 export interface StockDetailIncoming {
   spo_number: string;
   supplier_name?: string | null;
+  /** The bin it lands at, for the same reason a sales-order row states one. */
+  location?: string | null;
   expected_date?: string | null;
   spo_qty: string;
   /**
@@ -1752,6 +1756,29 @@ export interface StockDetailIncoming {
 }
 
 /**
+ * A confirmed hold on this set's stock, taken by a line booked OUTSIDE the set (R40).
+ *
+ * Cross-group stock only moves as a PINNED hold, and such a hold appears in no sales-order
+ * row of the group whose pile it is drawn from - so a running balance without it would walk a
+ * pile bigger than the one a planner can draw on.
+ */
+export interface StockDetailHold {
+  /** The order holding it. Null when its line has not been reconciled to a core order yet. */
+  so_number?: string | null;
+  location?: string | null;
+  /** The holder's own required date, which is where the hold sits in the walk. */
+  required_date?: string | null;
+  qty: string;
+}
+
+/** One member of the set a group read covers, and the pile the drill opens its walk on. */
+export interface StockDetailBin {
+  warehouse_id: string;
+  location: string;
+  qty_on_hand: string;
+}
+
+/**
  * `GET /project-sales/fulfilment-planning/stock-detail?product_id=&warehouse_id=`.
  *
  * The field names are the SERVER's, checked against `app/schemas/project_board.py`. This type
@@ -1763,9 +1790,17 @@ export interface StockDetail {
   product_id: string;
   item_code: string;
   description?: string | null;
-  warehouse_id: string;
+  /** Null on a GROUP read: the whole set is the answer, and no single bin is it. */
+  warehouse_id?: string | null;
   /** The warehouse CODE, which is what the screen shows. Named `location` by the server. */
-  location: string;
+  location?: string | null;
+  /**
+   * The SET this read covers - the ownership-group suffix (`IB`) or `pools` - and its members.
+   * Null / empty on the ordinary one-bin read. Step 1 of the ladder draws the GROUP's pile, so
+   * a running balance is only true when it is read over the group.
+   */
+  group?: string | null;
+  bins?: StockDetailBin[];
   qty_on_hand: string;
   so_qty: string;
   spo_qty: string;
@@ -1777,6 +1812,8 @@ export interface StockDetail {
   qty_free: string;
   sales_orders: StockDetailSalesOrder[];
   incoming: StockDetailIncoming[];
+  /** Confirmed holds taken by lines booked outside this set. Group reading only. */
+  holds?: StockDetailHold[];
 }
 
 /**

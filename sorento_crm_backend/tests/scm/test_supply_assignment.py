@@ -7,9 +7,10 @@ read and argued about without reading the code that produces it - which is what 
 golden set rather than a restatement of the implementation.
 
 The cases beyond the fixtures pin behaviour the fixtures cannot state in one table: which
-pile a line may draw (its own group, then the other project groups, never a site pool), that
-a confirmed hold outranks the span it was read in, and that the assignment is stable under
-input order.
+pile a line may draw (its OWN ownership group and no other, R40), that the other groups'
+piles are still OFFERED at the asker's date (`free_piles_at`, which is what makes the offer
+a proposal rather than an assumption), that a confirmed hold outranks the span it was read
+in, and that the assignment is stable under input order.
 """
 from __future__ import annotations
 
@@ -187,17 +188,17 @@ def _hand(warehouse, qty) -> SupplyEvent:
     )
 
 
-def test_a_line_draws_its_own_group_first_then_the_other_project_groups():
-    """AC-S2-1b, ruled 30 Aug: free is free.
+def test_an_undecided_line_draws_its_own_group_and_never_another_groups_pile():
+    """R40, ruled 30 Aug by the captain, partially reversing AC-S2-1b.
 
-    Ladder step 1 is "use the own ownership group, then the other PROJECT groups' free
-    piles" (PLAN 3.2), and free means owed to nobody - so drawing it raises no debt and
-    needs no borrow. Walking each group on its own hid exactly this: the BB line read
-    `short` while IB stock sat unused, so the product-wide month balance printed green over
-    a drill that printed red. The two now agree by construction.
+    The 30 August draft gave an undecided line the other project groups' free piles, on
+    "free is free". The captain refused it on the live book - a BB line of 507 with no
+    inquiry and no planning had silently eaten the IB pile - "who is us to decide those BB
+    group takes our IB pile". So an undecided line draws its OWN group and stops: the 30 at
+    BRW-BB, then short 70, while IB's 100 and NTC's container are untouched and free.
 
-    Own group first (30 at BRW-BB), then the others OLDEST FIRST - the IB stock held today
-    before the NTC container that lands on the 5th.
+    The month still foots (R37): 150 stayed free (IB's 100 and NTC's 50) and 70 went
+    short, so +80.
     """
     result = assign(
         "p",
@@ -219,21 +220,52 @@ def test_a_line_draws_its_own_group_first_then_the_other_project_groups():
         demand=[_line("only", "BRW-BB", date(2026, 9, 20), 100)],
     )
     line = result.lines[0]
-    assert line.status == "covered"
-    assert line.uncovered == 0
+    assert line.status == "short"
+    assert line.uncovered == 70.0
     assert [(item.event.key, item.qty) for item in line.assigned] == [
         ("on_hand:BRW-BB", 30.0),
-        ("on_hand:BRW-IB", 70.0),
     ]
-    # 30 + 100 + 50 held or arriving, 100 owed: the month says +80 and the line says
-    # covered. One book, one answer.
+    assert result.free["on_hand:BRW-IB"] == 100.0, "IB's pile is untouched"
+    assert result.free["spo:ntc"] == 50.0
     assert [m.balance for m in result.months] == [80.0]
 
 
-def test_a_cross_group_draw_clears_a_shortfall_the_asking_group_could_not():
-    """The other half of the same rule: supply arriving in ANOTHER project group clears an
-    open shortfall, so the line reads `late` rather than `short` - and the balance, which
-    counted that arrival all along, stops contradicting it."""
+def test_the_ladder_still_offers_the_other_groups_free_pile_at_the_askers_date():
+    """R40's other half: refusing to ASSUME is not refusing to OFFER.
+
+    `free_piles_at` is what ladder step 1's second half is built from (PLAN 3.2, read by
+    `use_candidates_for`): the other groups' piles as they stood on the asker's own date,
+    net of what is pinned and of what that group's own earlier lines took. On Confirm the
+    proposal becomes a pinned hold, and only THEN does IB's pile deplete for everybody else.
+    """
+    from app.services.scm.supply_assignment import free_piles_at
+
+    result = assign(
+        "p",
+        as_of=AS_OF,
+        tba_from=TBA,
+        lead_days=90,
+        supply=[
+            _hand("BRW-BB", 30),
+            _hand("BRW-IB", 100),
+        ],
+        demand=[
+            _line("only", "BRW-BB", date(2026, 9, 20), 100),
+            # IB's own earlier line takes 40 of its pile before the asker's date, so the
+            # offer is 60 and not 100.
+            _line("ib_early", "BRW-IB", date(2026, 9, 10), 40),
+        ],
+    )
+    piles = free_piles_at(result, at=date(2026, 9, 20), as_of=AS_OF)
+    assert [(event.warehouse, qty) for event, qty in piles.get("IB", [])] == [
+        ("BRW-IB", 60.0),
+    ]
+    assert "BB" not in piles, "BB's own 30 was drawn by the asker itself"
+
+
+def test_an_arrival_clears_only_its_own_groups_shortfall():
+    """The R40 rule from the supply side: an SPO landing in ANOTHER project group does not
+    reach across and clear a BB shortfall, so the line stays `short` rather than `late`."""
     result = assign(
         "p",
         as_of=AS_OF,
@@ -252,9 +284,10 @@ def test_a_cross_group_draw_clears_a_shortfall_the_asking_group_could_not():
         demand=[_line("only", "BRW-BB", date(2026, 9, 20), 100)],
     )
     line = result.lines[0]
-    assert line.status == "late"
-    assert line.uncovered == 0
-    assert [(item.event.key, item.qty) for item in line.assigned] == [("spo:ib", 100.0)]
+    assert line.status == "short"
+    assert line.uncovered == 100.0
+    assert line.assigned == ()
+    assert result.free["spo:ib"] == 100.0
 
 
 def test_the_site_pool_is_its_own_group():

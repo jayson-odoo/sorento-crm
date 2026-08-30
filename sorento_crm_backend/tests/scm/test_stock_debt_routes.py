@@ -294,11 +294,12 @@ def test_the_group_filter_recomputes_rather_than_filters(scm_app):
     """`group=BB` narrows the SPAN of every read, so the balance is the BB group's own -
     and that is what makes the narrowing meaningful rather than cosmetic.
 
-    On the WHOLE book the IB stock is another PROJECT group's free pile, so the BB line
-    draws it and reads `covered` (AC-S2-1b, ladder step 1). Under `group=BB` the IB bin is
-    not in the span at all, so no cross-group draw can happen and the line is short its
-    whole 40. Same rows, two different questions - which is precisely what "recomputes"
-    means; filtering finished rows would have shown one answer under both.
+    On the WHOLE book the IB stock is IB's, and R40 says an undecided BB line does not take
+    it, so the BB line is short its 40 in its own month while IB's 100 reads free in the
+    month it sits in. Under `group=BB` the IB bin is not in the span at all, so there is no
+    100 to be free of and the current month reads 0. Same rows, two different questions -
+    which is precisely what "recomputes" means; filtering finished rows would have shown
+    one answer under both.
     """
     app, db = _client(scm_app)
     marker = f"ZZTSD{_u()[:6]}".upper()
@@ -329,20 +330,20 @@ def test_the_group_filter_recomputes_rather_than_filters(scm_app):
         row = _row_of(body, product.product_code)
         return {month["key"]: month["balance"] for month in row["months"]}[key]
 
-    # R37: on the whole book the BB line draws 40 of the IB pile at its own date, so it is
-    # short of nothing in its month and 60 of the on hand is still free in the month the
-    # stock sits in. Narrowed to BB there is no pile at all: the line owes its whole 40 in
-    # its own month, and the current month has nothing to be free of.
-    assert balance(whole, month_key(TODAY)) == 60
-    assert balance(whole, due) == 0
+    # R37 + R40: on the whole book the whole 100 of IB's on hand stays free (a BB line may
+    # not take it) and the BB line owes 40 in its own month. Narrowed to BB the IB bin is
+    # out of the span entirely, so the current month has nothing to be free of at all -
+    # which is the difference that proves the narrowing RECOMPUTES.
+    assert balance(whole, month_key(TODAY)) == 100
+    assert balance(whole, due) == -40
     assert balance(narrowed, month_key(TODAY)) == 0
     assert balance(narrowed, due) == -40
 
-    # AC-S2-1b, and the reason the cell route takes `group` at all: the drill has to foot
-    # with the cell that opened it. Without it the narrowed board's red cell drilled into a
-    # covered line read off the whole book.
-    assert whole_cell["demand"][0]["status"] == "covered"
-    assert whole_cell["demand"][0]["assigned_qty"] == 40
+    # The reason the cell route takes `group` at all: the drill has to foot with the cell
+    # that opened it, and it does under both spans. The SUPPLY half is where the two differ
+    # - the whole book lists IB's 100 as free, the narrowed one lists nothing.
+    assert whole_cell["demand"][0]["status"] == "short"
+    assert whole_cell["demand"][0]["short_qty"] == 40
     assert narrowed_cell["demand"][0]["status"] == "short"
     assert narrowed_cell["demand"][0]["assigned_qty"] == 0
 
@@ -1328,3 +1329,40 @@ def test_the_tba_undated_and_unlocated_cells_are_unchanged_by_the_month_rule(scm
     # Nothing drew on the 500, so it is spare in the month it sits in - and only there.
     balances = {m["key"]: m["balance"] for m in row["months"]}
     assert balances[month_key(TODAY)] == 500
+
+
+def test_on_hand_is_stamped_with_the_callers_as_of_not_the_clock(scm_app):
+    """Review finding: `_supply()` stamped every on-hand event `date.today()`.
+
+    A board simulated at a PAST date (`as_of`, which the ladder pins so a walk is
+    reproducible) then read its own floor as arriving after every line due between the two
+    dates, so a line due yesterday drew nothing on its own date and came back `late` off
+    stock that has been on the shelf all along. The event belongs on the day the walk
+    starts, which is the caller's `as_of`.
+    """
+    app, db = _client(scm_app)
+    marker = f"ZZTSD{_u()[:6]}".upper()
+    warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
+    product = _product(db, f"{marker}-A")
+    _stock(db, product, warehouse, 40)
+    # Due BETWEEN the simulated day and today: the window the bug lived in.
+    _demand(
+        db, product, warehouse, qty=40, required_date=TODAY - timedelta(days=3),
+        so_number=f"{marker}-SO1",
+    )
+    db.flush()
+
+    from app.services.scm.stock_debt_service import StockDebtService
+
+    service = StockDebtService(db)
+    result = service.assignments_for(
+        [str(product.id)],
+        {str(warehouse.id): warehouse},
+        as_of=TODAY - timedelta(days=10),
+    )[str(product.id)]
+    line = result.lines[0]
+    events = [event for event in result.supply if event.kind == "on_hand"]
+
+    assert events and events[0].at == TODAY - timedelta(days=10)
+    assert line.status == "covered", "the floor was there on the simulated day"
+    assert line.short_at_date == 0

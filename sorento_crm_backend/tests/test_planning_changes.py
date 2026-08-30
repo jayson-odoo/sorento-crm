@@ -1804,7 +1804,7 @@ def test_build_batch_proposal_for_a_covered_replan_row_is_the_boards_full_contri
     # the ownership group's own net.
     assert [step["step"] for step in proposal["trail"]] == [1, 2, 3, 4, 5]
     assert [step["kind"] for step in proposal["trail"]] == [
-        "own", "pool", "cross_group_borrow", "group_borrow", "buy",
+        "own", "order_borrow", "supply_borrow", "pool", "buy",
     ]
     assert proposal["rank_factors"]
     assert proposal["sources"]

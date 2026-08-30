@@ -98,6 +98,49 @@ describe('rowOf reads the rung, never the warehouse code', () => {
     expect(rowOf({ kind: 'timely_spo', rung: 'incoming', qty: '1' })).toBe('incoming');
   });
 
+  it('names ladder v7.1 own two borrow rungs, which the switch never learned', () => {
+    // Step 2 borrows ON HAND held by a later order, step 3 the DOCUMENT it is waiting on.
+    // Neither was in the switch, so both resolved to null and every step-2 borrow vanished
+    // from the strip, the bar, the card and the popover behind 'Cannot be sourced'.
+    expect(
+      rowOf({
+        kind: 'borrow',
+        rung: 'order_borrow',
+        qty: '30',
+        location: 'MWH-IB',
+        donor_so_number: 'SO414285',
+      }),
+    ).toBe('borrow_order');
+    expect(
+      rowOf({
+        kind: 'borrow',
+        rung: 'supply_borrow',
+        qty: '50',
+        location: 'BRW-IB',
+        donor_so_number: 'SO414285',
+      }),
+    ).toBe('borrow_order');
+  });
+
+  it('tells the pool free draw from the pool BORROW, which owes a debt back (R34)', () => {
+    // Step 4a takes the free pile and nobody is owed it; step 4b takes a LATER POOL ORDER's
+    // on hand and raises an ORDER_BACK against it. Both carry `rung: 'pool'`, so the donor
+    // is what distinguishes them - without it the borrow read as the free 'Use BRW' and the
+    // debt was invisible.
+    expect(
+      rowOf({ kind: 'reserve', rung: 'pool', qty: '30', location: 'BRW' }),
+    ).toBe('shared');
+    expect(
+      rowOf({
+        kind: 'borrow',
+        rung: 'pool',
+        qty: '30',
+        location: 'BRW',
+        donor_so_number: 'SO414285',
+      }),
+    ).toBe('borrow_order');
+  });
+
   it('gives every kind a label and a colour, both a swatch and a text token', () => {
     for (const kind of [
       'buy',

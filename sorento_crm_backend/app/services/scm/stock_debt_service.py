@@ -366,18 +366,38 @@ class StockDebtService:
             SalesOrderLine.warehouse_id.is_(None),
         )
 
+    def assignments_for(
+        self,
+        product_ids: Sequence[str],
+        warehouses: Dict[str, Warehouse],
+        *,
+        as_of: Optional[date] = None,
+    ) -> Dict[str, Assignment]:
+        """The same assignment, for a caller that holds product ids and a span of its own.
+
+        PUBLIC for the LADDER (S3, R21): the board reads the assignment this view reads, or
+        the two surfaces disagree about what is free. The ladder's span is this one plus the
+        site pools, because it has a pool step and the view has not (see
+        `ProjectSupplyService.planning_assignments`).
+        """
+        return self._assignments(
+            [(str(pid), "", None) for pid in product_ids], warehouses, as_of=as_of
+        )
+
     def _assignments(
         self,
         products: Sequence[Tuple[str, str, Optional[str]]],
         warehouses: Dict[str, Warehouse],
         *,
         keep_events: bool = False,
+        as_of: Optional[date] = None,
     ) -> Dict[str, Assignment]:
         """One `assign()` per product, off ONE read per input for the whole set."""
         self._event_cache: Dict[str, List[SupplyEvent]] = {}
         self._lead_cache: Dict[str, int] = {}
         product_ids = [product_id for product_id, _code, _name in products]
-        as_of = date.today()
+        # The CALLER's `as_of` when it pins one (the board's simulation does), else today.
+        as_of = as_of or date.today()
         tba_from = self._tba_from()
         if not product_ids:
             return {}
@@ -394,7 +414,7 @@ class StockDebtService:
         # states no lead paid its own round trip - ~1,900 extra queries per list request on
         # the dev copy.
         leads = self.supply.lead_times(product_ids)
-        supply_rows = self._supply(product_ids, warehouse_ids, codes, pools)
+        supply_rows = self._supply(product_ids, warehouse_ids, codes, pools, as_of=as_of)
         demand_rows = self._demand(product_ids, warehouse_ids, codes, pools)
         holds = self._holds(
             product_ids,
@@ -435,6 +455,8 @@ class StockDebtService:
         warehouse_ids: Sequence[str],
         codes: Dict[str, str],
         pools: set,
+        *,
+        as_of: Optional[date] = None,
     ) -> Dict[str, List[SupplyEvent]]:
         """On hand, SPO and PO for the whole page - three reads, none of them per product.
 
@@ -444,8 +466,13 @@ class StockDebtService:
         units twice. The confirmed HOLDS are subtracted separately, by pinning them to the
         lines that hold them (`_holds`) - which is the more useful shape, because the drill
         can then say which order has them.
+
+        `as_of` is the CALLER's day, not the clock: an on-hand event is stamped with the day
+        the walk starts, and stamping it `date.today()` while the walk ran at a pinned
+        earlier date put the stock after every line due between the two, so a board
+        simulated at a past date read its own floor as arriving late.
         """
-        as_of = date.today()
+        as_of = as_of or date.today()
         out: Dict[str, List[SupplyEvent]] = {}
 
         rows = (
@@ -533,9 +560,18 @@ class StockDebtService:
                 demand_qty().label("qty"),
                 SalesOrder.so_number,
                 SalesAgent.sales_agent,
+                # The PROJECT mirror's own line number. A core line nobody has adopted has
+                # none, and a missing number is treated as absent everywhere it is printed.
+                # Carried because a v7 borrow names the donor's line ("SO414285 line 4") and
+                # the ladder reads its donors out of this very list (AC-S3-2, AC-S3-11).
+                ProjectSalesOrderLine.line_no,
             )
             .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
             .outerjoin(SalesAgent, SalesAgent.id == SalesOrder.sales_agent_id)
+            .outerjoin(
+                ProjectSalesOrderLine,
+                ProjectSalesOrderLine.core_sales_order_line_id == SalesOrderLine.id,
+            )
             .filter(
                 SalesOrderLine.product_id.in_(product_ids),
                 self._demand_span(warehouse_ids),
@@ -551,7 +587,7 @@ class StockDebtService:
                 DemandLine(
                     key=str(row.id),
                     so_number=row.so_number or "",
-                    line_no=None,
+                    line_no=row.line_no,
                     # None for an unlocated line, which is what puts it in its own bucket.
                     warehouse=codes.get(warehouse_id),
                     agent_code=row.sales_agent,

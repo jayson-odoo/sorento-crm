@@ -714,7 +714,6 @@ export function BoardCellBreakdownDialog({
           <CellStockTable
             key={`${cell.row_key ?? cell.item_code}|${cell.bucket_key}`}
             locations={shownLocations}
-            itemCode={cell.item_code}
             groupNote={cell.location_group_note}
             taken={taken}
             lineIds={askingLineIds}
@@ -977,17 +976,18 @@ export function sourceLabel(
  * Where the quantity comes from, in the preposition each kind takes.
  *
  * A Reserve is held AT a location; a Borrow comes FROM somebody else's. "Borrow 10 at MWH-IB"
- * reads as stock this line has there, which is the opposite of what a borrow is. A group
- * borrow names its donor SO line instead, when one was stated - "from SO371334 line 2" is
- * the identity that matters, the location is secondary.
+ * reads as stock this line has there, which is the opposite of what a borrow is. A borrow
+ * FROM AN ORDER names its donor SO line instead, when one was stated - "from SO371334 line 2"
+ * is the identity that matters, the location is secondary.
+ *
+ * ANY borrow that names a donor, not only the retired `group_borrow` rung: ladder v7.1's
+ * step 2 (`order_borrow`), step 3 (`supply_borrow`) and the pool's borrow half all take a
+ * later ORDER's quantity, and gating on the one v2 rung printed the LOCATION for every one
+ * of them - so the row said "from MWH-IB" where the whole point is whose order it was.
  */
 /** Exported for the same reason `sourceLabel` is - see its comment. */
 export function sourceAt(source: BoardContribution['sources'][number]): string {
-  if (
-    source.kind === 'borrow' &&
-    source.rung === 'group_borrow' &&
-    source.donor_so_number
-  ) {
+  if (source.kind === 'borrow' && source.donor_so_number) {
     const line =
       source.donor_line_no !== null && source.donor_line_no !== undefined
         ? ` line ${source.donor_line_no}`

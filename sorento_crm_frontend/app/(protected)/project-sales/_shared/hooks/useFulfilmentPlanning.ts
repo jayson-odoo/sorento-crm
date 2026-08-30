@@ -318,12 +318,21 @@ export function useClassificationEvidence(productId?: string | null, enabled = t
  * `lineIds` are the cell's own contributing lines. Their rows come back marked, so a planner
  * can find themselves in a list that is otherwise all other people's documents. Part of the
  * key, because a different asker is a different answer.
+ *
+ * `group` reads the whole ownership group instead of one bin, which is the pile step 1 of the
+ * ladder actually draws.
  */
-export function useStockDetail(productId: string, warehouseId: string, lineIds: string[] = []) {
+export function useStockDetail(
+  productId: string,
+  warehouseId: string | null,
+  lineIds: string[] = [],
+  /** A whole SET instead of one bin: the group suffix (`IB`), or `pools`. */
+  group?: string | null,
+) {
   const key = lineIds.join(',');
   return useQuery({
-    queryKey: [STOCK_DETAIL_KEY, productId, warehouseId, key],
-    queryFn: () => getStockDetail(productId, warehouseId, lineIds),
+    queryKey: [STOCK_DETAIL_KEY, productId, group ?? warehouseId, key],
+    queryFn: () => getStockDetail(productId, warehouseId, lineIds, group),
     retry: 1,
     refetchOnWindowFocus: false,
   });

@@ -501,13 +501,15 @@ def test_free_stock_is_what_the_supply_service_computes_not_a_second_opinion():
 
 
 def test_both_lines_of_an_oversold_group_buy_and_are_reported_as_contested():
-    """LADDER V4 (26 August 2026): 10 on hand against 20 owed, so the group cannot cover
-    its own book and promises its stock to NEITHER line.
+    """LADDER V7.1 (R24, 29 August 2026): 10 on hand against 20 owed, served FIRST-COME BY
+    REQUIRED DATE - so the line due 1 September takes the 10 and the line due the 4th goes
+    without.
 
-    Under v3 the winner reserved the 10 and only the loser bought. `contested` still means
-    what it always meant - this line is buying while its location holds free stock - and
-    under v4 that is true of both of them. The ranking is still computed and still reported;
-    what it no longer does is decide how much either line may have.
+    v4 refused both of them, on the reading that a group which cannot cover its own book
+    promises its stock to nobody in particular. R24 replaces that: the pile is date-aware,
+    the earlier line takes it, and the later one is short in its own month. `contested`
+    still means what it always meant - this line is buying while its location holds stock -
+    and under v7.1 that is true of the LOSER alone.
     """
     with blank_session() as db:
         _policy(db, {"need_by_date": 1.0})
@@ -530,11 +532,11 @@ def test_both_lines_of_an_oversold_group_buy_and_are_reported_as_contested():
         ], "contributions are served in rank order, highest first"
         won, lost = cell["contributions"]
         assert won["rank_score"] > lost["rank_score"], "the ranking is still computed"
-        assert [(s["kind"], s["qty"]) for s in won["sources"]] == [("buy", "10")]
+        assert [(s["kind"], s["qty"]) for s in won["sources"]] == [("reserve", "10")]
         assert [(s["kind"], s["qty"]) for s in lost["sources"]] == [("buy", "10")]
         assert lost["contested"] is True
-        assert won["contested"] is True, "stock sits there and this line is buying too"
-        assert cell["contested_count"] == 2
+        assert won["contested"] is False, "it is not buying: it took the pile"
+        assert cell["contested_count"] == 1
         # A ranking nobody can inspect is a ranking nobody will trust: the row still carries
         # the factors behind its score.
         assert {f["key"] for f in lost["rank_factors"]} >= {
@@ -1065,10 +1067,10 @@ def test_moving_the_day_window_does_not_change_the_board_totals():
 def test_a_line_outside_the_day_window_is_still_served_from_its_pile():
     """The window is a display bound, so it must not change what anybody is proposed.
 
-    Two lines at one location holding 10 against 20 owed: under ladder v4 the group cannot
-    cover its book, so both lines buy and both are contested. Look at that through a day
-    window containing neither of them, and the count still has to be reported - the board's
-    totals describe the selection, not the columns that happen to be on screen.
+    Two lines at one location holding 10 against 20 owed: under ladder v7.1 the earlier one
+    takes the pile and the later one buys, contested. Look at that through a day window
+    containing neither of them, and the count still has to be reported - the board's totals
+    describe the selection, not the columns that happen to be on screen.
     """
     with blank_session() as db:
         _policy(db, {"need_by_date": 1.0})
@@ -1090,11 +1092,11 @@ def test_a_line_outside_the_day_window_is_still_served_from_its_pile():
             day_window_start=date(2029, 1, 1),
         )
 
-        assert week["contested_line_count"] == 2
+        assert week["contested_line_count"] == 1
         assert [c for c in far["cells"] if c["bucket_key"] != "no_date"] == [], (
             "the window shows nothing of the timeline"
         )
-        assert far["contested_line_count"] == 2, "and the contest is still reported"
+        assert far["contested_line_count"] == 1, "and the contest is still reported"
 
 
 def test_top_level_contributions_carry_every_line_even_outside_the_day_window():
@@ -1610,13 +1612,12 @@ def test_a_buy_the_board_cannot_avoid_still_says_borrowing_is_possible():
             elsewhere.warehouse_code
         ]
         assert "borrow" in contribution["sources"][-1]["reason"].lower()
-        # AC-V4: the note and question 3 are ONE statement, so the row that answers "can we
-        # borrow from another location" names the same donor the Buy's sentence offers.
-        # This line's location carries no ownership group, so there is no cross-group
-        # question to refuse it - which is what the sentence says.
-        step = _step(contribution, "cross_group_borrow")
-        assert elsewhere.warehouse_code in step["why"]
-        assert "person's pick in Amend" in step["why"]
+        # AC-V4: the note and step 1 are ONE statement. This line's location carries no
+        # ownership group, so step 1 has no "our locations" to draw from - and the donor is
+        # still on the row's own candidate list, which is what the Buy's sentence names.
+        step = _step(contribution, "own")
+        assert step["answer"] == "no"
+        assert "no ownership group" in step["why"]
 
 
 def test_a_board_borrow_candidate_carries_what_it_takes_to_confirm_it():
@@ -1724,7 +1725,7 @@ def test_a_line_beyond_the_reserve_window_says_so_and_offers_no_donor():
 
         # And the trail says the two rungs were not walked, rather than pretending they were
         # checked and found empty.
-        for kind in ("group_borrow", "cross_group_borrow"):
+        for kind in ("order_borrow", "supply_borrow"):
             step = _step(contribution, kind)
             assert step["answer"] == "no", kind
             assert step["answer"] == "no", kind
@@ -2562,17 +2563,22 @@ def test_a_location_row_counts_the_other_lines_demand_and_not_the_asking_lines_o
         # The subtotal the table prints for the group, which is the engine's own offer.
         assert row["net_of"] == group
         assert row["net"] == "9"
-        # And the ladder took exactly that from the group, so the card reads "9 from BRW-AM"
-        # and the pool covers the rest of the 24.
-        sources = cell["contributions"][0]["sources"]
+        # And step 1 was OFFERED exactly that: the sentence names the 9 it had for this
+        # line. Nothing is drawn, because ladder v7.1 covers a unit from ONE step or buys it
+        # whole (R33) - 9 from the group plus 15 from the pool is two stories about one
+        # delivery, and the captain ruled that out ("the 16 on hand stays free", AC-S4-2b).
+        contribution = cell["contributions"][0]
         taken = sum(
-            Decimal(source["qty"]) for source in sources
+            Decimal(source["qty"]) for source in contribution["sources"]
             if source.get("rung") == "group_take"
         )
-        assert taken == Decimal("9")
-        assert sum(
-            Decimal(source["qty"]) for source in sources if source.get("rung") == "pool"
-        ) == Decimal("15")
+        assert taken == Decimal("0")
+        used = next(step for step in contribution["trail"] if step["kind"] == "own")
+        assert "9" in used["why"], used["why"]
+        # And the pool is not asked to make up the difference either, for the same reason.
+        assert not any(
+            source.get("rung") == "pool" for source in contribution["sources"]
+        )
 
 
 def test_a_group_the_other_lines_alone_oversell_offers_nothing_and_says_so():
@@ -2614,12 +2620,17 @@ def test_the_group_subtotal_is_the_offer_the_ladder_obeyed_on_every_contribution
 
         assert offer > 0
         assert Decimal(row["net"]) == offer
+        # The subtotal IS the offer step 1 obeyed; whether it was DRAWN is the whole-unit
+        # rule's business (R33), and 9 cannot finish 24, so nothing is.
+        contribution = cell["contributions"][0]
+        used = next(step for step in contribution["trail"] if step["kind"] == "own")
+        assert str(int(offer)) in used["why"], used["why"]
         taken = sum(
             Decimal(source["qty"])
-            for source in cell["contributions"][0]["sources"]
+            for source in contribution["sources"]
             if source.get("rung") == "group_take"
         )
-        assert taken == offer
+        assert taken == Decimal("0")
         # The cell's own table IS that line's table when the cell holds one line: one set of
         # figures, not a cell reading and a line reading of the same pile.
         assert cell["locations"] == cell["contributions"][0]["locations"]
@@ -2959,6 +2970,204 @@ def test_an_empty_product_location_drills_down_to_an_honest_nothing():
         assert detail["incoming"] == []
 
 
+# --------------------------------------------------------------------------- #
+# the drill-down over a whole ownership GROUP (captain, 30 August 2026)
+# --------------------------------------------------------------------------- #
+#
+# The board proposed "use own location - 60 from BRW-IB" beside an Available of -24,186 and
+# the two could not be reconciled on screen. Step 1 of the ladder draws the GROUP's pile at
+# the line's own date - a `BRW-IB` line is fed by `MWH-IB` stock - so the drill a planner
+# checks a proposal against is read over the set, not over one bin.
+
+
+def _qq_group(db):
+    """Two bins of one ownership group, a third in another, and a book across all three."""
+    product = _product(db, f"ZZT-{_uid()[:6]}")
+    first = _warehouse(db, f"ZZA{_uid()[:4]}-QQ")
+    second = _warehouse(db, f"ZZB{_uid()[:4]}-QQ")
+    outside = _warehouse(db, f"ZZC{_uid()[:4]}-RR")
+    _stock(db, product, first, on_hand=100)
+    _stock(db, product, second, on_hand=20)
+    _stock(db, product, outside, on_hand=500)
+    mine = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 5))
+    _line(db, mine, product, qty="30", required_date=date(2026, 8, 24), warehouse=first)
+    early = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 2))
+    _line(db, early, product, qty="30", required_date=date(2026, 8, 1), warehouse=second)
+    elsewhere = _order(db, so_number="ZZT-SO-OTHERGROUP", order_date=date(2026, 1, 2))
+    _line(db, elsewhere, product, qty="999", required_date=date(2026, 8, 2), warehouse=outside)
+    return product, first, second, outside
+
+
+def test_the_drill_down_reads_a_whole_ownership_group_when_asked_for_one():
+    with blank_session() as db:
+        product, first, second, _outside = _qq_group(db)
+        _incoming(
+            db, product, first,
+            spo_number="ZZT-SPO-GROUP", allocated=30, received=0, arrives=date(2026, 9, 15),
+        )
+
+        detail = _service(db).stock_detail(str(product.id), None, group="QQ")
+
+        # No single bin is the answer, and the set states its own members.
+        assert detail["warehouse_id"] is None
+        assert detail["location"] is None
+        assert detail["group"] == "QQ"
+        assert [(row["location"], row["qty_on_hand"]) for row in detail["bins"]] == [
+            (first.warehouse_code, "100"), (second.warehouse_code, "20"),
+        ]
+        # The totals are the SET's: 120 on hand, 60 owed, 30 on the water.
+        assert detail["qty_on_hand"] == "120"
+        assert detail["so_qty"] == "60"
+        assert detail["spo_qty"] == "30"
+        assert detail["available_qty"] == "90"
+        # Every row says which bin it sits at, and the bin in another group is not in the set.
+        assert {row["location"] for row in detail["sales_orders"]} == {
+            first.warehouse_code, second.warehouse_code,
+        }
+        assert "ZZT-SO-OTHERGROUP" not in {row["so_number"] for row in detail["sales_orders"]}
+        assert [row["location"] for row in detail["incoming"]] == [first.warehouse_code]
+
+
+def test_one_bin_still_reads_one_bin():
+    """The group reading is opt-in: nothing about the per-bin drill changes."""
+    with blank_session() as db:
+        product, first, _second, _outside = _qq_group(db)
+
+        detail = _service(db).stock_detail(str(product.id), str(first.id))
+
+        assert detail["group"] is None
+        assert detail["location"] == first.warehouse_code
+        assert detail["qty_on_hand"] == "100"
+        assert detail["so_qty"] == "30"
+        assert [row["location"] for row in detail["sales_orders"]] == [first.warehouse_code]
+
+
+def test_a_hold_taken_from_outside_the_group_is_listed_and_one_from_inside_is_not():
+    """R40: cross-group stock moves only as a PINNED hold.
+
+    Such a hold is in no sales-order row of the group whose pile it draws from, so a walk
+    without it counts a pile nobody can draw on. A hold whose own line IS in the set is
+    already one of those rows, and listing it again would subtract it twice.
+    """
+    from datetime import datetime
+
+    from app.models.project_so import (
+        DECISION_ACTIVE,
+        SO_STATUS_ADOPTED,
+        ProjectSalesOrder,
+        ProjectSalesOrderLine,
+        SOLineAllocation,
+        SOSupplyDecision,
+    )
+
+    def _hold(db, company_id, product, order, line, warehouse, qty):
+        record = ProjectSalesOrder(
+            id=_uid(), company_id=company_id, project_id=None,
+            provisional_ref=order.so_number, autocount_doc_no=order.so_number,
+            so_id=order.id, status=SO_STATUS_ADOPTED, grouping_origin="area",
+        )
+        db.add(record)
+        db.flush()
+        mirror = ProjectSalesOrderLine(
+            id=_uid(), company_id=company_id, project_sales_order_id=record.id, line_no=1,
+            product_id=product.id, description=f"{MARKER} mirror", qty=Decimal(qty),
+            uom="UNIT", unit_price=Decimal("1.00"), amount=Decimal("1.00"),
+            delivery_date=date(2026, 8, 2), core_sales_order_line_id=line.id,
+        )
+        decision = SOSupplyDecision(
+            id=_uid(), company_id=company_id, project_sales_order_id=record.id,
+            revision_no=1, state=DECISION_ACTIVE, confirmed_at=datetime.utcnow(),
+            line_snapshots=[{"core_line_id": str(line.id), "line_no": 1}],
+        )
+        db.add_all([mirror, decision])
+        db.flush()
+        db.add(
+            SOLineAllocation(
+                id=_uid(), company_id=company_id, so_line_id=mirror.id, source_type="own",
+                warehouse_id=warehouse.id, qty=Decimal(qty), decision_id=decision.id,
+                confirmed_at=datetime.utcnow(),
+            )
+        )
+        db.flush()
+
+    with blank_session() as db:
+        company_id = _sorento(db)
+        product, first, second, outside = _qq_group(db)
+        # An order booked in the OTHER group, holding 6 of this group's stock.
+        theirs = db.query(SalesOrder).filter(SalesOrder.so_number == "ZZT-SO-OTHERGROUP").one()
+        their_line = (
+            db.query(SalesOrderLine)
+            .filter(SalesOrderLine.sales_order_id == theirs.id)
+            .one()
+        )
+        _hold(db, company_id, product, theirs, their_line, first, "6")
+        # And one of this group's own lines holding 5 of it, which its own row already states.
+        ours = _order(db, so_number="ZZT-SO-INSIDE", order_date=date(2026, 1, 2))
+        our_line = _line(
+            db, ours, product, qty="5", required_date=date(2026, 8, 3), warehouse=second
+        )
+        _hold(db, company_id, product, ours, our_line, second, "5")
+
+        detail = _service(db).stock_detail(str(product.id), None, group="QQ")
+
+        assert [
+            (row["so_number"], row["location"], row["qty"], row["required_date"])
+            for row in detail["holds"]
+        ] == [("ZZT-SO-OTHERGROUP", first.warehouse_code, "6", date(2026, 8, 2))]
+        # The per-bin reading raises none of this: it is read beside its own Available, which
+        # nets no holds either.
+        assert _service(db).stock_detail(str(product.id), str(first.id))["holds"] == []
+
+
+def test_the_group_drill_down_answers_over_the_wire_with_every_field_it_states():
+    """`response_model` drops what it does not declare, so the new fields are asserted HERE.
+
+    `overdue_days` is in the list because it was dropped exactly that way: the service has
+    stated it since 26 August and the schema never declared it, so every arrival reached the
+    screen reading as fresh.
+    """
+    from app.models.base import company_scope
+
+    with blank_session() as db:
+        company_id = _sorento(db)
+        actor = _user(db, f"{MARKER} Eling")
+        product, first, second, _outside = _qq_group(db)
+        _incoming(
+            db, product, first,
+            spo_number="ZZT-SPO-LATE", allocated=30, received=0, arrives=date(2026, 8, 1),
+        )
+        db.commit()
+        client, originals = _client(db, actor, [VIEW])
+        try:
+            with company_scope(db, frozenset({company_id})):
+                response = client.get(
+                    f"{BASE}/fulfilment-planning/stock-detail",
+                    params={"product_id": str(product.id), "group": "QQ"},
+                )
+                neither = client.get(
+                    f"{BASE}/fulfilment-planning/stock-detail",
+                    params={"product_id": str(product.id)},
+                )
+        finally:
+            _restore(originals)
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["group"] == "QQ"
+        assert body["warehouse_id"] is None
+        assert [row["location"] for row in body["bins"]] == [
+            first.warehouse_code, second.warehouse_code,
+        ]
+        assert body["holds"] == []
+        assert {row["location"] for row in body["sales_orders"]} == {
+            first.warehouse_code, second.warehouse_code,
+        }
+        assert body["incoming"][0]["location"] == first.warehouse_code
+        assert body["incoming"][0]["overdue_days"] > 0
+        # Neither a bin nor a set is a question with no answer, and it is refused as one.
+        assert neither.status_code == 422, neither.text
+
+
 def test_the_drill_down_route_answers_over_the_wire():
     from app.models.base import company_scope
 
@@ -3254,13 +3463,16 @@ def test_a_line_behind_more_demand_than_the_pile_holds_reserves_nothing():
         assert contribution["available_to_this_line"] == "0"
 
 
-def test_while_the_group_is_short_the_front_of_the_queue_buys_too():
-    """LADDER V4's consequence, at the pile the v3 version of this test was written for.
+def test_while_the_group_is_short_the_earliest_line_still_gets_the_pile_it_reaches():
+    """LADDER V7.1 (R24, AC-S3-1b), rewritten off the v4 test this used to be.
 
-    1015 on hand against 9080 owed. Under v3 the line at the front of the queue reserved its
-    whole 80 out of that 1015 and only the 9000 behind it bought. Under v4 the group's own
-    net decides and the rank queue takes no part, so a group that cannot cover its book
-    promises its stock to nobody in particular and both lines buy.
+    1015 on hand against 9080 owed. Under v4 the group's own NET decided - `max(-8065 + 80,
+    0)` - so a group that could not cover its book promised its stock to nobody and both
+    lines bought. Under v7.1 the pile is read AT THE ASKER'S OWN DATE: the line due first
+    reaches 1015 that nothing earlier has claimed and reserves its 80, and the 9000 due in
+    December reaches the 935 that is left, which is not its whole unit, so it buys entire.
+    That is exactly SRTWB242's case, where plain Available is -1,156 and JEREMY still
+    reserves his 27.
 
     The queue arithmetic is still computed and still printed - `so_qty_ahead`,
     `lines_ahead` and `available_to_this_line` say who is in front of whom - it just no
@@ -3285,8 +3497,8 @@ def test_while_the_group_is_short_the_front_of_the_queue_buys_too():
         assert earliest["so_qty_ahead"] == "0"
         assert earliest["lines_ahead"] == 0
         assert earliest["available_to_this_line"] == "1015"
-        assert earliest["qty_proposed_reserve"] == "0"
-        assert earliest["qty_proposed_buy"] == "80"
+        assert earliest["qty_proposed_reserve"] == "80"
+        assert earliest["qty_proposed_buy"] == "0"
         # And the queue still names what is left of the pile for the line behind it.
         behind = _cell(board, product.product_code, "2026-12-28")["contributions"][0]
         assert behind["so_qty_ahead"] == "80"
@@ -3495,18 +3707,18 @@ def test_the_trail_asks_the_four_questions_in_order_and_then_buy():
         contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
         assert [step["kind"] for step in _trail(contribution)] == [
             "own",
+            "order_borrow",
+            "supply_borrow",
             "pool",
-            "cross_group_borrow",
-            "group_borrow",
             "buy",
         ]
         assert [step["step"] for step in _trail(contribution)] == [1, 2, 3, 4, 5]
         assert [step["question"] for step in _trail(contribution)] == [
-            "Can we use our location?",
+            "Can we use our locations?",
+            "Can we borrow on hand from a later order?",
+            "Can we borrow incoming from a later order?",
             "Can we take from the pool?",
-            "Can we borrow from another location?",
-            "Can we borrow from the same agent's other order in this group?",
-            "Buy the rest?",
+            "Buy",
         ]
 
 
@@ -3581,17 +3793,12 @@ def test_a_line_covered_before_the_buy_step_says_the_buy_was_not_needed():
         contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
 
         assert _step(contribution, "pool")["answer"] == "yes"
-        # Everything after the cover is walked and reported as unnecessary, never omitted.
-        for kind in ("cross_group_borrow", "buy"):
+        # Every step is walked and reported, before the cover and after it: an omitted row
+        # reads as a question nobody asked (AC-S3-14).
+        for kind in ("own", "order_borrow", "supply_borrow", "buy"):
             step = _step(contribution, kind)
             assert step["took"] == "0"
             assert step["answer"] == "no", kind
-        # Question 4 is stated too, and states the rule rather than an empty search: it is
-        # never auto-composed (ruled 25 August 2026), covered or not.
-        borrowed = _step(contribution, "group_borrow")
-        assert borrowed["took"] == "0"
-        assert borrowed["answer"] == "no"
-        assert "person's pick" in borrowed["why"]
 
 
 # `test_the_trail_says_a_hot_selling_line_reserves_its_own_location_and_no_pool` DELETED
@@ -3660,8 +3867,8 @@ def test_the_borrow_step_offers_what_it_found_and_takes_none_of_it():
         board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
         contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
 
-        step = _step(contribution, "cross_group_borrow")
-        assert step["took"] == "0", "a Borrow needs a donor and a reason from a person"
+        step = _step(contribution, "own")
+        assert step["took"] == "0", "an ungrouped bin is outside step 1 (v7.1)"
         assert step["answer"] == "no"
         assert _step(contribution, "buy")["took"] == "10"
         # The donor is still OFFERED, on the contribution's own list.
@@ -3689,7 +3896,10 @@ def test_the_cross_group_rung_is_asked_against_the_true_residual_not_the_whole_l
 
         product = _product(db, f"ZZT-{_uid()[:6]}")
         own = _warehouse(db, f"ZZTOCG{_uid()[:4]}-BB"[:20])
-        elsewhere = _warehouse(db, f"ZZTECG{_uid()[:4]}"[:20])
+        # ANOTHER PROJECT GROUP, not an ungrouped bin: step 1's second half is about groups,
+        # and a bin with no group at all is outside the step in both halves (the test above
+        # pins that). `-IR` is what makes this donor step 1 material at all.
+        elsewhere = _warehouse(db, f"ZZTECG{_uid()[:4]}-IR"[:20])
         _stock(db, product, own, on_hand=0)
         _incoming(
             db, product, own,
@@ -3709,11 +3919,11 @@ def test_the_cross_group_rung_is_asked_against_the_true_residual_not_the_whole_l
 
         # The whole-line rule fired: nothing partial survived, the whole 100 is bought.
         assert contribution["qty_proposed_buy"] == "100"
-        step = _step(contribution, "cross_group_borrow")
+        step = _step(contribution, "own")
         why = step["why"] or ""
-        # The donor is SEEN and named (the residual of 70 is > 0, so the rung was asked),
-        # and the sentence is the whole-line one rather than a cap refusal - there is no cap
-        # left to refuse anything.
+        # The donor is SEEN and named - another project group's free pile is step 1's second
+        # half since v7.1 (R5) - and the sentence is the whole-unit one rather than a cap
+        # refusal: there is no cap left to refuse anything.
         assert elsewhere.warehouse_code in why
         assert "cross-group borrow limit" not in why, why
         assert "is still needed" not in why, why
@@ -3909,7 +4119,7 @@ def test_the_supply_on_the_water_is_inside_question_ones_own_offer():
         contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
 
         assert [step["kind"] for step in contribution["trail"]] == [
-            "own", "pool", "cross_group_borrow", "group_borrow", "buy",
+            "own", "order_borrow", "supply_borrow", "pool", "buy",
         ]
         assert "group nets" in _step(contribution, "own")["why"]
         assert _step(contribution, "buy")["took"] == "20"
@@ -4541,7 +4751,7 @@ def test_an_uncovered_line_of_a_partly_confirmed_order_is_still_proposed():
         assert sibling["qty_proposed_reserve"] == "0"
         assert sibling["qty_proposed_buy"] == "21"
         assert [step["kind"] for step in sibling["trail"]] == [
-            "own", "pool", "cross_group_borrow", "group_borrow", "buy",
+            "own", "order_borrow", "supply_borrow", "pool", "buy",
         ]
 
 
@@ -5238,8 +5448,8 @@ def test_a_reserve_met_line_still_carries_its_donors():
         assert candidate["available_after_need"] == "15"
         assert candidate["recommended"] is True
         assert contribution["qty_borrow_available"] == "25"
-        # The trail still takes nothing from a donor: it is offered, not proposed.
-        borrow_step = _step(contribution, "cross_group_borrow")
+        # The trail still takes nothing from this donor: the whole-unit rule refused it.
+        borrow_step = _step(contribution, "own")
         assert borrow_step["took"] == "0"
 
 
@@ -5677,7 +5887,7 @@ def test_a_line_beyond_its_window_is_bought_whole_even_with_an_spo_landing_in_ti
         # Four Noes and a Yes, and every No names the window rather than reporting an empty
         # search that never happened.
         assert not any(step["kind"] == "incoming" for step in contribution["trail"])
-        for kind in ("own", "pool", "cross_group_borrow", "group_borrow"):
+        for kind in ("own", "order_borrow", "supply_borrow", "pool"):
             step = _step(contribution, kind)
             assert step["answer"] == "no", kind
             assert step["took"] == "0", kind

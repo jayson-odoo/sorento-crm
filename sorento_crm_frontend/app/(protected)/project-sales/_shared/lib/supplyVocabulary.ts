@@ -12,11 +12,17 @@
  * | Rung                 | Label                      | Colour  |
  * | -------------------- | -------------------------- | ------- |
  * | `group_take`         | Use own location           | emerald |
- * | `pool`               | Use BRW                    | sky     |
+ * | `pool` (free draw)   | Use BRW                    | sky     |
+ * | `pool` (borrow half) | Borrow from another order  | amber   |
+ * | `order_borrow`       | Borrow from another order  | amber   |
+ * | `supply_borrow`      | Borrow from another order  | amber   |
  * | `cross_group_borrow` | Borrow other location      | amber   |
  * | `group_borrow`       | Borrow from another order  | amber   |
  * | `buy`                | Buy                        | rose    |
  * | `incoming`           | Incoming supply            | violet  |
+ *
+ * The last three are FROZEN-SNAPSHOT rungs under ladder v7.1: the engine writes none of
+ * them any more, and the board still renders decisions that carry them.
  *
  * The rung strings are `app/services/scm/front_planning_engine.py`'s own constants
  * (`RUNG_POOL`, `RUNG_GROUP_TAKE`, ...), spelled here exactly as the engine spells them.
@@ -53,7 +59,7 @@ import type {
  * that no longer runs, and the screen labels it as history rather than passing it off as
  * today's answer (AC-V8).
  */
-export const LADDER_VERSION = 'v5';
+export const LADDER_VERSION = 'v7.1';
 
 export type SupplyKind =
   | 'buy'
@@ -224,9 +230,22 @@ export function rowOf(part: SupplyPart, ownLocation?: string | null): SupplyKind
     case 'incoming':
       return 'incoming';
     case 'pool':
-      return 'shared';
+      // LADDER V7.1 step 4 has TWO halves and they are different decisions. The free pile
+      // is a draw nobody is owed back ("Use BRW"); step 4b takes a LATER POOL ORDER's on
+      // hand and raises an ORDER_BACK against it (R34), which is a Borrow and has to read
+      // as one - it rendered as the free "Use BRW" label, so the debt was invisible on
+      // every composition surface. The donor SO is what tells them apart, because it is
+      // what the borrow half has and the free half never does.
+      return part.kind === 'borrow' && part.donor_so_number ? 'borrow_order' : 'shared';
     case 'group_take':
       return 'own';
+    // Step 2 (ON HAND held by a later order) and step 3 (the DOCUMENT a later order is
+    // waiting on, S4). Both name a donor order, so both read as "Borrow from another
+    // order" - the two rungs were missing from this switch entirely, so every step-2
+    // borrow resolved to null and vanished behind "Cannot be sourced".
+    case 'order_borrow':
+    case 'supply_borrow':
+      return 'borrow_order';
     case 'group_borrow':
       return 'borrow_order';
     case 'cross_group_borrow':

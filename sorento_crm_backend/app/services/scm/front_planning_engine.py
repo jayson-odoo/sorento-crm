@@ -1,59 +1,61 @@
-"""Order promising: what covers a Project SO line, and why (PLAN 3.2, 3.3, 3.5, and the
-25 August 2026 ruling, "ladder v3").
+"""Order promising: what covers a Project SO line, and why.
 
-PURE arithmetic, the same discipline as ``coverage_timeline`` and ``reorder_engine``'s top
-half: no database, no LLM, no optimizer, no configuration knob. Every number here is
-derived from the rule that produced it, and every rule states itself in a sentence that
-travels with the quantity, because a proposal that shows a number without saying why is a
-number CS has to go and verify somewhere else (AC-B14).
+LADDER V7.1 (`PLAN-scm-borrow-ladder-v7-stock-debt.md` section 3.2, rulings R1-R37).
+
+PURE arithmetic, the same discipline as ``coverage_timeline`` and ``supply_assignment``: no
+database, no LLM, no optimizer, no configuration knob. Every number here is derived from the
+rule that produced it, and every rule states itself in a sentence that travels with the
+quantity, because a proposal that shows a number without saying why is a number CS has to go
+and verify somewhere else (AC-B14).
 
 Two functions, and they answer two different questions.
 
-``propose_line`` answers "how should THIS line be met" - LADDER V5, the captain's four
-questions of 26 August (``PLAN-scm-cs-planning-uat.md`` section 1e), which is section 1b's
-ladder with incoming taken out of it and nothing else moved:
+``walk_line`` (and ``propose_line``, which is its components alone) answers "how should this
+PLANNING UNIT be met" - five steps, in this order, each of them ASKED and answered whether or
+not it is taken:
 
 0. beyond the reserve window (``as_of + lead time + RESERVE_BUFFER_DAYS``) or beyond
-   purchasing's reorder-coverage date -> no rung runs and the whole line is a ``Buy``;
-1. **Can we use our location?** the OWNERSHIP GROUP, this line's own location included: the
-   caller hands over the locations in draw order, already capped so that they total no more
-   than what the WHOLE GROUP's net leaves for this line, never one warehouse's own reading
-   (ladder v4, section 1d). The rank queue no longer decides availability;
-2. **Can we take from the pool?** all five site pools netted as ONE pile (``pools_net``),
-   drawn own site first then the others by on hand, with no per-pool cap. 3.3a's dealer
-   hot-selling gate is retained and refuses the WHOLE pile (the pool is kept for retail);
-   its project hot-selling cap is subsumed by the pile's own net;
-3. **Can we borrow from another location?** what a DONOR GROUP nets as a whole, offered by
-   the caller only within the small-quantity cap;
-4. the whole-line rule: if 1-3 together reach the whole of Q, that composition is proposed,
-   in rung order; otherwise NONE of it is proposed and the whole line is a Buy - never a
-   partial mix of "reserve 213, buy 145".
+   purchasing's reorder-coverage date -> no step runs and the whole unit is a ``Buy``;
+1. **use** - the asker's own ownership group's FREE pile at its own date (R24), then the
+   OTHER project groups' free piles (R5). Free means owed to nobody, so this step raises no
+   debt, which is why it is walked before either borrow;
+2. **order_borrow** - ON HAND held by a LATER order (R3, R4, R9, R12, R19, R25). The donor
+   receives an order-back at its OWN required date, and a decided donor's decision falls
+   with it, inside the same Confirm;
+3. **supply_borrow** (S4) - the DOCUMENT a later order is waiting on, one document whole
+   (R27, R32, R33);
+4. **pool** - the site pools' own book: its free pile, then a later POOL order's on hand,
+   which does raise an order-back (R34). The dealer hot-selling gate refuses the whole step;
+5. **buy** - the whole unit at ``as_of + lead``.
 
-**Incoming (SPO) is not a rung** (ladder v5, section 1e). It used to be the first one, and
-to run even beyond the reserve window on the grounds that supply already on its way is
-already bought. What retired it is that an SPO is INSIDE the ownership group's net already -
-AutoCount's Available is ``on hand + SPO - SO`` - so rung 1 and the group rung were two
-readings of one pile, netted against each other to keep the arithmetic honest. One reading
-is simpler and cannot drift.
+**A STEP COVERS THE WHOLE UNIT OR IT GIVES NOTHING** (R10, R33). Sources combine INSIDE one
+step - two bins of the group, two on-hand donors (R35) - and never across two: half a promise
+off the free pile and half off somebody else's order is two different stories about one
+delivery, and the captain ruled it out on AC-S4-2b ("the PO is taken whole ... the 16 on hand
+stays free").
 
-It is still a KIND, though, and question 1 still answers with it: part of what the group's
-net can cover a line with is on the water rather than on a floor, so the caller marks those
-candidates ``water`` and this module composes them as ``timely_spo`` with question 1's own
-rung. Only water arriving on or before the line's required date is offered - the caller
-applies that test, because only it holds the documents - and late water is named in the
-proof's own sentence and never drawn. A LATE SPO reaches a particular line through Link SPO
-on that line's order-inquiry row, which is where purchasing was already doing it.
+**Every step is also an OPTION** (R36): the date it would fulfil the unit, how many days late
+that is, and whose order pays for it. Five of them travel with every walked unit, in step
+order, at most one chosen - the contract is written out in
+``fulfilmentPlanningService.ts`` ("LADDER v7.1: THE OPTIONS CONTRACT") and mirrored by
+``schemas/project_board.py::BoardLadderOption``.
 
-The fourth question - **can we borrow from the same agent's other order in this group?** -
-is not a rung here at all (ruled 25 August 2026): it is a manual pick in Amend, made by a
-person who has the donor's position in front of them, never something the engine composes
-on their behalf. The proof trail states it as a question all the same, so a reader learns it
-was considered.
+**What the caller does and this module does not.** Every candidate list arrives already read,
+already windowed and already ORDERED (``ProjectSupplyService.use_candidates_for`` /
+``order_borrow_candidates_for``, off the ONE ``supply_assignment.assign()`` the Stock Debt
+view also reads, R21). This module walks them in the order given and never re-sorts or
+re-derives a capacity.
+
+**Incoming is not a step of its own.** An SPO is inside the ownership group's net already -
+AutoCount's Available is ``on hand + SPO - SO`` - so step 1 answers with it where it is free
+by the asker's date, as ``timely_spo`` rather than as a Reserve, because a hold cannot be
+written against goods a picker cannot walk to. A document whose arrival has PASSED with
+nothing received is not supply at all until somebody re-dates it (R31).
 
 ``attribute_sources`` answers "who gets the one pile" - several lines competing for one
-location's opening stock and its dated incoming, resolved in section 3.5's fixed order so
-the same facts always produce the same answer and the database's row order never
-participates. Unchanged by ladder v3.
+location's opening stock and its dated incoming, resolved in PLAN 3.5's fixed order so the
+same facts always produce the same answer and the database's row order never participates.
+Untouched by v7.1.
 
 Quantities are ``Decimal`` throughout. These figures are compared for exact equality at
 confirmation, and a binary float does not survive that.
@@ -64,6 +66,11 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from decimal import Decimal
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+
+#: `YYYY-MM` - the Stock Debt cell a debt lands in. IMPORTED, never restated: the option's
+#: `debt_month` and the view's own column key are the same string, and two spellings of one
+#: key is how a lightbox comes to open on a month the cell did not mean.
+from app.services.scm.supply_assignment import month_key
 
 ZERO = Decimal("0")
 
@@ -100,8 +107,55 @@ RUNG_INCOMING = "incoming"
 RUNG_POOL = "pool"
 RUNG_GROUP_TAKE = "group_take"
 RUNG_GROUP_BORROW = "group_borrow"
+#: Retired by ladder v7.1 (R5): another group's FREE stock is step 1's second half now, and
+#: free stock owes nobody a thing, so it is a Reserve rather than a Borrow. The constant
+#: survives for reading frozen snapshots, exactly as `RUNG_INCOMING` does.
 RUNG_CROSS_GROUP_BORROW = "cross_group_borrow"
+#: Ladder v7.1 (`PLAN-scm-borrow-ladder-v7-stock-debt.md` 3.2). Step 2 borrows ON HAND held
+#: by a LATER order; step 3 (S4) borrows the DOCUMENT a later order is waiting on. Both are
+#: `borrow` kinds and both raise an order-back at the DONOR's own required date.
+RUNG_ORDER_BORROW = "order_borrow"
+RUNG_SUPPLY_BORROW = "supply_borrow"
 RUNG_BUY = "buy"
+
+# --------------------------------------------------------------------------- #
+# The five options (R36, AC-S3-14)
+# --------------------------------------------------------------------------- #
+#
+# The ladder walks five steps and the screen shows all five, answered, whether or not they
+# were taken: a step the server omitted reads as a step nobody walked. The keys are the
+# wire's own (`fulfilmentPlanningService.ts`, "LADDER v7.1: THE OPTIONS CONTRACT").
+
+STEP_USE = "use"
+STEP_ORDER_BORROW = "order_borrow"
+STEP_SUPPLY_BORROW = "supply_borrow"
+STEP_POOL = "pool"
+STEP_BUY = "buy"
+
+#: In walk order, always. The client renders what it is given and never sorts.
+OPTION_STEPS = (
+    STEP_USE,
+    STEP_ORDER_BORROW,
+    STEP_SUPPLY_BORROW,
+    STEP_POOL,
+    STEP_BUY,
+)
+
+#: The step in a planner's words. The SERVER's sentence, so two screens cannot spell one
+#: step two ways.
+STEP_LABELS = {
+    STEP_USE: "Use our locations",
+    STEP_ORDER_BORROW: "Borrow on hand from a later order",
+    STEP_SUPPLY_BORROW: "Borrow incoming from a later order",
+    STEP_POOL: "Take from the pool",
+    STEP_BUY: "Buy",
+}
+
+#: Days a transfer between two bins costs, when the quantity is not already at the asking
+#: line's own location (R36: "today, +2 days with a transfer"). A literal because nobody
+#: has asked to configure it; the trigger for a policy field is the first request to change
+#: it without a deploy.
+TRANSFER_DAYS = 2
 
 BUY_REASON = "remaining uncovered need"
 
@@ -236,6 +290,41 @@ class Component:
     def stated(self) -> str:
         """The whole phrase AC-B14 quotes: "Reserve 10: free stock at BRW ..."."""
         return f"{COMPONENT_LABELS[self.kind]} {qty_text(self.qty)}: {self.reason}"
+
+
+@dataclass(frozen=True)
+class Option:
+    """One step of the ladder, answered (R36, AC-S3-14).
+
+    Five of these travel with every walked line, in step order, whether or not the step
+    was taken. `fulfil_date` and `days_late` are null TOGETHER and exactly when the step
+    offered nothing: "nothing was offered" and "offered, on time" are different answers.
+    `days_late` is never negative - landing before the required date is on time, not minus
+    six days late.
+    """
+
+    step: str
+    label: str
+    #: Does this step cover the WHOLE planning unit (R10, R33)? A step that covers part of
+    #: it is not an option, because half a unit is not a proposal.
+    whole: bool
+    fulfil_date: Optional[date] = None
+    days_late: Optional[int] = None
+    #: Whose order pays for it, by DOCUMENT NUMBER. Set on the two borrow steps only: `use`
+    #: draws the free pile and `buy` orders new stock, so neither owes anybody.
+    debt_so_number: Optional[str] = None
+    debt_month: Optional[str] = None
+    #: The step the engine proposed. At most ONE option carries it - the first whole one in
+    #: step order - and none does when nothing covers the unit.
+    chosen: bool = False
+
+
+@dataclass(frozen=True)
+class Walk:
+    """What one walk produced: the composition, and every step it asked about."""
+
+    components: Tuple[Component, ...]
+    options: Tuple[Option, ...]
 
 
 def _own_reason(location: str) -> str:
@@ -387,14 +476,99 @@ def group_take_reason(
 
 
 def _cross_group_borrow_reason(location: str, qty: Decimal) -> str:
-    """v4: what the DONOR GROUP can lend, drawn at this location.
+    """v4's sentence, kept for reading FROZEN snapshots that still carry the retired rung.
 
-    Never "`{location}` has N free": the offer is capped by the donor group's whole net
-    (section 1d rung 4), so a location holding far more than N would be described wrongly
-    by its own free balance. The small-quantity cap that used to be named here is gone
-    (v7.1, R5): any ownership group may donate.
+    Under v7.1 another group's free stock is step 1's second half and reads through
+    `other_group_reason`: free means owed to nobody, so taking it is a Reserve and it
+    raises no debt.
     """
     return f"{location} can lend {qty_text(qty)} from outside this group"
+
+
+def other_group_reason(
+    location: str,
+    qty: Decimal,
+    group_code: Optional[str],
+    arrival_date: Optional[date] = None,
+) -> str:
+    """Step 1's second half (v7.1, R5, AC-S3-1): another PROJECT group's FREE pile.
+
+    Free means owed to nobody, so there is no debt and no donor to name - which is exactly
+    why it is walked before either borrow step and why it is a Reserve rather than a
+    Borrow. The sentence says whose stock it is, because "40 from DC1-NT" beside a `-BB`
+    line reads as an error until it says the pile was free.
+
+    `arrival_date` is set when the free quantity is ON THE WATER rather than on a floor, and
+    it is the day the WHOLE of the draw has landed by - the same rule the own half's
+    `group_water_reason` follows. Without it an incoming container in another group read as
+    stock available today, and the option table dated the whole proposal `today`.
+    """
+    whose = f" the {group_code} group" if group_code else " this line's group"
+    when = f", arriving {date_text(arrival_date)}" if arrival_date else ""
+    return (
+        f"{location} has {qty_text(qty)} free outside{whose}{when}, and free stock is owed "
+        "to nobody"
+    )
+
+
+def order_borrow_reason(
+    qty: Decimal,
+    location: str,
+    donor_so_number: Optional[str],
+    donor_line_no: Optional[int],
+    donor_agent_code: Optional[str],
+    donor_required_date: Optional[date],
+) -> str:
+    """Step 2's sentence (AC-S3-11, R27): what is borrowed, from whom, when they are due,
+    and the month the debt lands in.
+
+    `Borrow 30 on hand at MWH-IB from SO414285 line 4 (JEREMY, due 12 Nov 2026); its debt
+    lands in Nov 2026`. Every clause is a fact the planner acts on: the quantity, that it
+    is ON HAND (not a promise), where it physically is, whose order gives it up, and the
+    column of the Stock Debt view it will appear in.
+    """
+    who = donor_so_number or "an unnamed sales order"
+    line_text = f" line {donor_line_no}" if donor_line_no is not None else ""
+    inside: List[str] = []
+    if donor_agent_code:
+        inside.append(str(donor_agent_code))
+    if donor_required_date is not None:
+        inside.append(f"due {date_text(donor_required_date)}")
+    named = f" ({', '.join(inside)})" if inside else ""
+    debt = (
+        f"; its debt lands in {month_text(donor_required_date)}"
+        if donor_required_date is not None
+        else "; its debt lands in the month it is due"
+    )
+    return (
+        f"Borrow {qty_text(qty)} on hand at {location} from {who}{line_text}{named}{debt}"
+    )
+
+
+def pool_borrow_reason(
+    qty: Decimal,
+    location: str,
+    donor_so_number: Optional[str],
+    donor_required_date: Optional[date],
+) -> str:
+    """Step 4's borrow half (R34): a LATER pool order lends its on hand and is owed it back.
+
+    The pool's free pile raises nothing (`pool_reason`); this does, because the quantity
+    was already promised to somebody's order.
+    """
+    who = donor_so_number or "a later pool order"
+    when = f", due {date_text(donor_required_date)}" if donor_required_date else ""
+    debt = (
+        f"; its debt lands in {month_text(donor_required_date)}"
+        if donor_required_date is not None
+        else ""
+    )
+    return f"Borrow {qty_text(qty)} on hand at pool {location} from {who}{when}{debt}"
+
+
+def month_text(value: date) -> str:
+    """"Nov 2026" - the Stock Debt column a debt lands in, spelled once."""
+    return f"{_MONTHS[value.month - 1]} {value.year}"
 
 
 def _whole_line_buy_reason(covered: Decimal, open_qty: Decimal) -> str:
@@ -409,88 +583,83 @@ def _whole_line_buy_reason(covered: Decimal, open_qty: Decimal) -> str:
 # --------------------------------------------------------------------------- #
 
 
-def propose_line(
+def walk_line(
     *,
     open_qty: Any,
     line_no: Optional[int] = None,
     required_date: Optional[date] = None,
-    #: Accepted and NOT read. The rungs name their own `source_location` from the candidate
-    #: lists the caller hands over, so the line's own location takes no part in the
-    #: arithmetic here. Kept on the signature because every caller states it and the ladder's
-    #: own logs read better with it; the day a log stops naming it, it goes.
+    #: Today, for the option dates (R36). `None` reads the clock, which is what a caller
+    #: with no pinned simulation wants; the board states its own so a pinned run is
+    #: reproducible.
+    as_of: Optional[date] = None,
+    #: The product's lead time, for Buy's own fulfil date. `None` is the documented default.
+    lead_time_days: Optional[int] = None,
+    #: The asking line's own bin. READ since v7.1, and only for the option dates: a
+    #: quantity that is not already there costs a transfer, which is two days (R36).
     fulfilment_location: Optional[str] = None,
     group_code: Optional[str] = None,
     is_dealer_hot_selling: bool = False,
     #: Accepted and NOT read since ladder v4 (section 1d). 3.3a capped a project
     #: hot-selling line's pool draw at the pool's own signed availability; the pile's net
-    #: now bounds every draw the same way, for every item. Kept on the signature because
-    #: three callers state it and the board's trail still names the classification in
-    #: words; the day nothing reads it at all, it goes.
+    #: now bounds every draw the same way, for every item.
     is_project_hot_selling: bool = False,
     pools: Optional[Sequence[Mapping[str, Any]]] = None,
     is_discontinued: bool = False,
     reorder_coverage_until: Optional[date] = None,
     group_take_candidates: Optional[Sequence[Mapping[str, Any]]] = None,
-    cross_group_borrow_candidates: Optional[Sequence[Mapping[str, Any]]] = None,
+    other_group_candidates: Optional[Sequence[Mapping[str, Any]]] = None,
+    order_borrow_candidates: Optional[Sequence[Mapping[str, Any]]] = None,
+    supply_borrow_candidates: Optional[Sequence[Mapping[str, Any]]] = None,
+    pool_borrow_candidates: Optional[Sequence[Mapping[str, Any]]] = None,
     outside_reserve_window: bool = False,
     group_offer: Optional[Decimal] = None,
     pools_net: Optional[Decimal] = None,
-) -> Tuple[Component, ...]:
-    """The proposed composition for one line, ladder v5's four questions (section 1e).
+) -> Walk:
+    """LADDER V7.1: the five steps, in order, each answered (PLAN 3.2, R1/R13/R33/R36).
 
-    0. beyond the reserve window, or beyond `reorder_coverage_until` -> no rung runs and the
-       whole of `open_qty` is a single Buy naming the bound that fired. An UNDATED line
-       (`required_date=None`) is never beyond either bound - both comparisons need two dates
-       - so it falls straight through to the full walk;
-    1. the ownership group: `group_take_candidates`, already capped by the caller to the
-       GROUP's own position (`group_offer`) and already in draw order - this line's own
-       location first, then its siblings by site. An SPO to any of those locations is inside
-       that net, which is why there is no incoming rung above this one; a candidate marked
-       `water` is that SPO share, and it is composed as `timely_spo` rather than `reserve`;
-    2. the shared pool(s), `pool_reserve_capacity`, own site first, the rung as a whole
-       bounded by `pools_net` and by each pool's own free stock;
-    3. cross-group borrow: `cross_group_borrow_candidates` - the caller passes ONLY the
-       donors within the small-quantity cap, each donor group capped at its own net;
-    4. the whole-line rule: if 1-3 reach the whole of `open_qty`, that composition is
-       returned, in rung order; otherwise every partial component is DROPPED and the whole
-       line is proposed as a single Buy - never "reserve 213, buy 145".
+    0. beyond the reserve window, or beyond `reorder_coverage_until` -> no step runs and
+       the whole of `open_qty` is a single Buy naming the bound that fired. An UNDATED line
+       is never beyond either bound - both comparisons need two dates - so it falls through
+       to the full walk;
+    1. **use** (`group_take`): the asker's own ownership group's FREE pile at its own date,
+       drawn own location first then the siblings by code (`group_take_candidates`, already
+       date-aware and already capped by the caller), and then the OTHER project groups'
+       free piles (`other_group_candidates`). Free means owed to nobody, so this step
+       raises no debt and is walked before either borrow;
+    2. **order_borrow**: ON HAND held by a LATER order (`order_borrow_candidates`, already
+       windowed and ordered by the caller: same agent, latest date, same group, same
+       warehouse). Several donors may combine for one unit (R35). Every take raises an
+       order-back at the DONOR's own required date;
+    3. **supply_borrow** (S4): the DOCUMENT a later order is waiting on. `S3 offers none`,
+       and the step is still reported, answering "nothing offered";
+    4. **pool**: the site pools' own book - its free pile (`pools`/`pools_net`, the dealer
+       hot-selling gate in front of the whole step), then a later POOL order's on hand
+       (`pool_borrow_candidates`), which does raise an order-back (R34);
+    5. **buy**: the whole unit.
 
-    Each candidate rung's inputs are already computed live and already ordered by the
-    caller (`own location first, then the siblings` for the group rung; `own site pool
-    first` for the pool rung); this function only walks them in the order given and never
-    re-sorts or re-derives a capacity.
+    **A STEP COVERS THE WHOLE UNIT OR IT GIVES NOTHING** (R10, R33). Sources COMBINE inside
+    one step - two bins of the group, two donors of step 2 - and never across two, because
+    half a promise from the free pile and half from somebody else's order is two different
+    stories about one delivery. The first step that covers the whole of `open_qty` is the
+    proposal; if none does, the whole unit is a Buy.
 
-    A component contributing nothing is not proposed at all: emitting a zero would force a
-    reason for a quantity that does not exist.
+    Each step's inputs are already computed and already ORDERED by the caller; this
+    function walks them in the order given and never re-sorts or re-derives a capacity.
 
-    `outside_reserve_window` is the ATP rule (see the constants at the top of this module):
-    the line is due beyond `as_of + lead time + RESERVE_BUFFER_DAYS`, so purchasing can still
-    buy for it in time and it must not take stock a nearer-dated order needs. No rung runs
-    for such a line under v5. The CALLER decides which side of the window a line falls on,
-    because only it knows the product's lead time.
-
-    `group_offer` and `pools_net` are ladder v4's own numbers (section 1d). `pools_net` is
-    what the five site pools hold BETWEEN them, signed, and it caps rung 3's whole draw.
-    `group_offer` is what the ownership group's NET leaves for THIS line (its own quantity
-    un-netted, every other line's still netted); it is the bound the caller has already
-    applied to `group_take_candidates`, and it travels here so each component's reason can
-    name the number it is a share OF. Both are `None` for a caller that states neither, and
-    the rungs then stand on their per-location caps alone.
+    Returns the composition AND the five options (R36): every step with the date it would
+    fulfil the unit, how late that is, and whose order pays for it.
     """
+    today = as_of or date.today()
+    lead = DEFAULT_LEAD_TIME_DAYS if lead_time_days is None else max(int(lead_time_days), 0)
+    buy_date = today + timedelta(days=lead)
     open_amount = max(_dec(open_qty), ZERO)
     if open_amount <= ZERO:
-        return ()
+        return Walk(components=(), options=())
 
-    # 0. Beyond either bound, NO rung runs at all and the whole line is bought. Two bounds,
+    # 0. Beyond either bound, NO step runs at all and the whole line is bought. Two bounds,
     #    one rule: whichever of them the line is beyond decides it, and the reason names the
     #    one that fired. Purchasing's stated coverage date is checked first because it is a
     #    date a person set and can point at; the window is the derived one.
-    #
-    #    LADDER V5 (section 1e): incoming used to be the one rung that still ran here,
-    #    because supply already on its way is already bought. It is not a rung any more - an
-    #    SPO is inside the ownership group's own net, where AutoCount already counts it, and
-    #    it reaches a particular line through Link SPO on that line's order-inquiry row. So
-    #    "beyond the window" is now literally what section 1b always said it was: buy.
     beyond: Optional[str] = None
     if (
         reorder_coverage_until is not None
@@ -501,110 +670,367 @@ def propose_line(
     elif outside_reserve_window:
         beyond = _reserve_window_buy_reason()
     if beyond is not None:
-        return (
-            Component(kind=BUY, qty=open_amount, reason=beyond, rung=RUNG_BUY),
+        return Walk(
+            components=(Component(kind=BUY, qty=open_amount, reason=beyond, rung=RUNG_BUY),),
+            options=_options(
+                required_date=required_date,
+                buy_date=buy_date,
+                offers={},
+                chosen=STEP_BUY,
+                need=open_amount,
+            ),
         )
 
-    remaining = open_amount
-    components: List[Component] = []
+    offers: Dict[str, "_Offer"] = {}
 
-    # 1. the ownership group: what the GROUP's net leaves for this line, drawn at the
-    #    locations the caller states in the draw order it states (own location first).
-    for candidate in group_take_candidates or []:
-        if remaining <= ZERO:
+    # 1. use -----------------------------------------------------------------------------
+    step_use = _Offer()
+    _draw_group(step_use, group_take_candidates, open_amount, group_code, group_offer)
+    _draw_other_groups(step_use, other_group_candidates, open_amount, group_code)
+    offers[STEP_USE] = step_use
+
+    # 2. order_borrow ---------------------------------------------------------------------
+    offers[STEP_ORDER_BORROW] = _draw_order_borrow(
+        order_borrow_candidates, open_amount, RUNG_ORDER_BORROW
+    )
+
+    # 3. supply_borrow - S4. The step is reported, and in S3 it is always empty.
+    offers[STEP_SUPPLY_BORROW] = _draw_order_borrow(
+        supply_borrow_candidates, open_amount, RUNG_SUPPLY_BORROW
+    )
+
+    # 4. pool ------------------------------------------------------------------------------
+    step_pool = _Offer()
+    if not is_dealer_hot_selling:
+        _draw_pool(step_pool, pools, pools_net, open_amount)
+        if step_pool.qty < open_amount:
+            # The pool's FREE pile could not cover it, so its own later orders are asked -
+            # and that half raises a debt (R34). Never mixed with the free half: one step,
+            # one story.
+            borrowed = _draw_order_borrow(pool_borrow_candidates, open_amount, RUNG_POOL)
+            if borrowed.qty >= open_amount:
+                step_pool = borrowed
+    offers[STEP_POOL] = step_pool
+
+    chosen: Optional[str] = None
+    for step in (STEP_USE, STEP_ORDER_BORROW, STEP_SUPPLY_BORROW, STEP_POOL):
+        if offers[step].qty >= open_amount and offers[step].components:
+            chosen = step
+            break
+
+    options = _options(
+        required_date=required_date,
+        buy_date=buy_date,
+        offers=offers,
+        chosen=chosen or STEP_BUY,
+        need=open_amount,
+        as_of=today,
+        own_location=fulfilment_location,
+    )
+    if chosen is None:
+        covered = max(
+            (offer.qty for offer in offers.values()), default=ZERO
+        )
+        return Walk(
+            components=(
+                Component(
+                    kind=BUY,
+                    qty=open_amount,
+                    reason=_whole_line_buy_reason(min(covered, open_amount), open_amount),
+                    rung=RUNG_BUY,
+                ),
+            ),
+            options=options,
+        )
+    return Walk(components=tuple(offers[chosen].components), options=options)
+
+
+def propose_line(**kwargs: Any) -> Tuple[Component, ...]:
+    """The proposed composition for one line - `walk_line`'s components, and nothing else.
+
+    Two names because two questions: most callers want what to promise, and only the board
+    also wants the five options behind it. One implementation, so they cannot drift.
+    """
+    return walk_line(**kwargs).components
+
+
+@dataclass
+class _Offer:
+    """What one step put on the table, while the walk is building it."""
+
+    qty: Decimal = ZERO
+    components: List[Component] = None  # type: ignore[assignment]
+    #: The day the WHOLE of this step has landed by - today for stock on a floor, the
+    #: latest arrival when part of it is on the water.
+    arrival: Optional[date] = None
+    #: Whether anything in it has to be carried to the asking line's own bin.
+    locations: List[str] = None  # type: ignore[assignment]
+    #: The largest donor, for the option's `debt_so_number` / `debt_month`.
+    donor_so_number: Optional[str] = None
+    donor_qty: Decimal = ZERO
+    donor_required_date: Optional[date] = None
+
+    def __post_init__(self) -> None:
+        if self.components is None:
+            self.components = []
+        if self.locations is None:
+            self.locations = []
+
+    def add(self, component: Component, *, arrival: Optional[date] = None) -> None:
+        self.components.append(component)
+        self.qty += component.qty
+        if component.source_location:
+            self.locations.append(component.source_location)
+        if arrival is not None and (self.arrival is None or arrival > self.arrival):
+            self.arrival = arrival
+        if component.donor_so_number and component.qty > self.donor_qty:
+            self.donor_qty = component.qty
+            self.donor_so_number = component.donor_so_number
+            self.donor_required_date = component.donor_required_date
+
+
+def _draw_group(
+    offer: "_Offer",
+    candidates: Optional[Sequence[Mapping[str, Any]]],
+    need: Decimal,
+    group_code: Optional[str],
+    group_offer: Optional[Decimal],
+) -> None:
+    """Step 1a: the asker's OWN ownership group, in the caller's own draw order.
+
+    A candidate marked `water` is the share of the group's offer that is on the water
+    rather than on a floor; it is composed as `timely_spo` and never as a Reserve, because
+    a hold cannot be written against goods a picker cannot walk to.
+    """
+    for candidate in candidates or []:
+        left = need - offer.qty
+        if left <= ZERO:
             break
         location = candidate.get("location")
         capacity = max(_dec(candidate.get("qty")), ZERO)
         if not location or capacity <= ZERO:
             continue
-        take = min(remaining, capacity)
-        # Water inside the group's own net (`candidate["water"]`): incoming supply, and said
-        # so. Same rung - it is question 1's answer either way - and a different kind,
-        # because a Reserve is a hold on stock a picker can walk to.
+        take = min(left, capacity)
         water = bool(candidate.get("water"))
-        components.append(
+        arrival = candidate.get("arrival_date") if water else None
+        offer.add(
             Component(
                 kind=TIMELY_SPO if water else RESERVE,
                 qty=take,
                 reason=(
                     group_water_reason(
-                        str(location),
-                        take,
-                        group_code,
-                        group_offer,
-                        candidate.get("arrival_date"),
+                        str(location), take, group_code, group_offer, arrival
                     )
                     if water
                     else group_take_reason(str(location), take, group_code, group_offer)
                 ),
                 source_location=str(location),
                 rung=RUNG_GROUP_TAKE,
-            )
+            ),
+            arrival=arrival,
         )
-        remaining -= take
 
-    # 2. the shared pool(s), own site first, the whole rung bounded by what the five pools
-    #    net BETWEEN them (v4, section 1d).
-    for location, capacity in pool_reserve_capacity(
-        is_dealer_hot_selling=is_dealer_hot_selling,
-        pools=pools or [],
-        pools_net=pools_net,
-    ):
-        if remaining <= ZERO:
-            break
-        take = min(remaining, capacity)
-        if take <= ZERO:
-            continue
-        components.append(
-            Component(
-                kind=RESERVE,
-                qty=take,
-                # Built from what is TAKEN, never from the rung's own running balance: the
-                # reason travels with the quantity beside it, and a sentence naming the
-                # capacity while the component names the draw is two numbers for one fact.
-                reason=pool_reason(location, take, pools_net),
-                source_location=location,
-                rung=RUNG_POOL,
-            )
-        )
-        remaining -= take
 
-    # 3. cross-group borrow: free stock outside this group, already cap-filtered by the
-    #    caller. Borrowing another SALES ORDER's committed quantity is not a rung here and
-    #    never becomes one: ruled 25 August 2026 as a manual pick in Amend, taken by a
-    #    person with the donor's position in front of them.
-    for candidate in cross_group_borrow_candidates or []:
-        if remaining <= ZERO:
+def _draw_other_groups(
+    offer: "_Offer",
+    candidates: Optional[Sequence[Mapping[str, Any]]],
+    need: Decimal,
+    group_code: Optional[str],
+) -> None:
+    """Step 1b (R5, AC-S3-1): the OTHER project groups' free piles.
+
+    Same step, same rung, no debt: free stock is owed to nobody, whichever group's bin it
+    happens to sit in. The site pools are never here - they are step 4, and taking one does
+    raise a debt (R34).
+
+    A candidate marked `water` is composed as `timely_spo` and dated by its arrival, exactly
+    as the own half does it: another group's incoming document is no more pickable than this
+    group's, and composing it as a Reserve wrote a hold against goods on a ship and dated
+    the whole option `today`.
+    """
+    for candidate in candidates or []:
+        left = need - offer.qty
+        if left <= ZERO:
             break
         location = candidate.get("location")
         capacity = max(_dec(candidate.get("qty")), ZERO)
         if not location or capacity <= ZERO:
             continue
-        take = min(remaining, capacity)
-        components.append(
+        take = min(left, capacity)
+        water = bool(candidate.get("water"))
+        arrival = candidate.get("arrival_date") if water else None
+        offer.add(
+            Component(
+                kind=TIMELY_SPO if water else RESERVE,
+                qty=take,
+                reason=other_group_reason(str(location), take, group_code, arrival),
+                source_location=str(location),
+                rung=RUNG_GROUP_TAKE,
+            ),
+            arrival=arrival,
+        )
+
+
+def _draw_order_borrow(
+    candidates: Optional[Sequence[Mapping[str, Any]]],
+    need: Decimal,
+    rung: str,
+) -> "_Offer":
+    """Steps 2, 3 and 4b: a LATER order's supply, with an order-back at the donor's date.
+
+    Several donors may combine for one unit (R35): they are one timing, because the stock
+    is on a floor today whichever order it was promised to. The caller has already ordered
+    them (same agent, latest date, same group, same warehouse - R4, R19) and this walks
+    that order.
+    """
+    offer = _Offer()
+    for candidate in candidates or []:
+        left = need - offer.qty
+        if left <= ZERO:
+            break
+        location = candidate.get("location")
+        capacity = max(_dec(candidate.get("qty")), ZERO)
+        if not location or capacity <= ZERO:
+            continue
+        take = min(left, capacity)
+        donor_date = candidate.get("donor_required_date")
+        arrival = candidate.get("arrival_date")
+        offer.add(
             Component(
                 kind=BORROW,
                 qty=take,
-                reason=_cross_group_borrow_reason(str(location), take),
+                reason=(
+                    pool_borrow_reason(
+                        take, str(location), candidate.get("donor_so_number"), donor_date
+                    )
+                    if rung == RUNG_POOL
+                    else order_borrow_reason(
+                        take,
+                        str(location),
+                        candidate.get("donor_so_number"),
+                        candidate.get("donor_line_no"),
+                        candidate.get("donor_agent_code"),
+                        donor_date,
+                    )
+                ),
                 source_location=str(location),
-                rung=RUNG_CROSS_GROUP_BORROW,
+                rung=rung,
+                donor_so_number=candidate.get("donor_so_number"),
+                donor_line_no=candidate.get("donor_line_no"),
+                donor_agent_code=candidate.get("donor_agent_code"),
+                same_agent=bool(candidate.get("same_agent")),
+                order_back_qty=take,
+                donor_core_line_id=candidate.get("donor_core_line_id"),
+                donor_required_date=donor_date,
+            ),
+            arrival=arrival,
+        )
+    return offer
+
+
+def _draw_pool(
+    offer: "_Offer",
+    pools: Optional[Sequence[Mapping[str, Any]]],
+    pools_net: Optional[Decimal],
+    need: Decimal,
+) -> None:
+    """Step 4a: the site pools as ONE pile, own site first (the caller's draw order).
+
+    The pile offers `max(pools_net, 0)` and not a unit more - `BRW -103` beside `DC1 +1`
+    nets -102 and offers NOTHING, where per-pool arithmetic would have offered the 1, which
+    is stock the shared book already owes at BRW. Each pool's own `free` says WHERE the
+    quantity can come from; the net says HOW MUCH. Nobody is owed a free pool draw back
+    (AC-L13 as it applies to the free half; the BORROW half is 4b).
+    """
+    left_in_pile = max(_dec(pools_net), ZERO)
+    for pool in pools or []:
+        left = need - offer.qty
+        if left <= ZERO or left_in_pile <= ZERO:
+            break
+        location = pool.get("location")
+        if not location:
+            continue
+        capacity = min(max(_dec(pool.get("free")), ZERO), left_in_pile)
+        if capacity <= ZERO:
+            continue
+        take = min(left, capacity)
+        offer.add(
+            Component(
+                kind=RESERVE,
+                qty=take,
+                reason=pool_reason(str(location), take, pools_net),
+                source_location=str(location),
+                rung=RUNG_POOL,
             )
         )
-        remaining -= take
+        left_in_pile -= take
 
-    # 4. the whole-line rule: cover Q entirely in rung order, or Buy the whole of it.
-    if remaining > ZERO:
-        covered = open_amount - remaining
-        return (
-            Component(
-                kind=BUY,
-                qty=open_amount,
-                reason=_whole_line_buy_reason(covered, open_amount),
-                rung=RUNG_BUY,
-            ),
+
+def _options(
+    *,
+    required_date: Optional[date],
+    buy_date: date,
+    offers: Mapping[str, "_Offer"],
+    chosen: str,
+    need: Decimal = ZERO,
+    as_of: Optional[date] = None,
+    own_location: Optional[str] = None,
+) -> Tuple[Option, ...]:
+    """The five rows the trail and the decision panel print (R36, AC-S3-14).
+
+    FIVE, always, in step order. A step that offered nothing sends `fulfil_date` and
+    `days_late` NULL together - "nothing was offered" and "offered, on time" are different
+    answers and the table shows them differently - and `days_late` is never negative,
+    because landing before the required date is on time rather than minus six days late.
+    """
+    today = as_of or date.today()
+    out: List[Option] = []
+    for step in OPTION_STEPS:
+        if step == STEP_BUY:
+            out.append(
+                Option(
+                    step=step,
+                    label=STEP_LABELS[step],
+                    whole=True,
+                    fulfil_date=buy_date,
+                    days_late=_days_late(buy_date, required_date),
+                    chosen=chosen == STEP_BUY,
+                )
+            )
+            continue
+        offer = offers.get(step)
+        whole = bool(offer and offer.components and offer.qty >= need > ZERO)
+        if not whole:
+            out.append(Option(step=step, label=STEP_LABELS[step], whole=False))
+            continue
+        fulfil = offer.arrival or today
+        if any(code != own_location for code in offer.locations):
+            fulfil = max(fulfil, today + timedelta(days=TRANSFER_DAYS))
+        debt = step in (STEP_ORDER_BORROW, STEP_SUPPLY_BORROW, STEP_POOL)
+        out.append(
+            Option(
+                step=step,
+                label=STEP_LABELS[step],
+                whole=True,
+                fulfil_date=fulfil,
+                days_late=_days_late(fulfil, required_date),
+                debt_so_number=offer.donor_so_number if debt else None,
+                debt_month=(
+                    month_key(offer.donor_required_date)
+                    if debt and offer.donor_required_date is not None
+                    else None
+                ),
+                chosen=chosen == step,
+            )
         )
+    return tuple(out)
 
-    return tuple(components)
+
+def _days_late(fulfil: date, required_date: Optional[date]) -> int:
+    """Never negative: landing before the required date is ON TIME, not minus six days."""
+    if required_date is None:
+        return 0
+    return max((fulfil - required_date).days, 0)
 
 
 # --------------------------------------------------------------------------- #

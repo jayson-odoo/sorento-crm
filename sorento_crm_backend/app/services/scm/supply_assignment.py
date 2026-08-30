@@ -29,22 +29,23 @@ reads the same answer so the board and the view can never disagree about what is
    caller narrowed with `group=`), the hold is honoured anyway, off the bin the hold itself
    names. The hold IS the supply: somebody confirmed it against real stock, and dropping it
    because the reader narrowed the question printed a board-covered line as `short`.
-2. **Then ONE chronological walk, with a pile per ownership group.** The group is the
-   warehouse code's suffix (`BRW-BB` -> `BB`), which is the pile ladder v4 nets
-   (`group_netting`); the site pools are one further group of their own, because a pool is
-   reached through `pool_warehouse_id` and is nobody's ownership group.
-   Supply lands in ITS OWN group's free pile at its arrival date. A demand line, at its
-   date, draws from its own group's pile oldest-first, and then - ladder step 1, PLAN 3.2 -
-   from the OTHER PROJECT groups' free piles, oldest first. Free means owed to nobody, so
-   using it raises no debt and needs no borrow. A SITE POOL never covers a project line and
-   a project group never covers a pool line: the pool is walked by its own rung (R34), which
-   does raise a debt. One walk rather than a walk per group is the whole point - per-group
-   walks hid a cross-group shortfall, so the product-wide month balance said green while the
-   drill said `short`.
-   What a line cannot draw is an OPEN SHORTFALL, and the next supply to arrive clears open
-   shortfalls (its own group first, then the other project groups, earliest required date
-   within each) BEFORE it becomes free for a later line - which is what makes this
-   first-come by REQUIRED DATE rather than by arrival, and it is the case AC-S2-1 pins.
+2. **Then ONE chronological walk, with a pile per ownership group, and a group draws its
+   OWN pile and nothing else** (R40, 30 Aug 2026). The group is the warehouse code's suffix
+   (`BRW-BB` -> `BB`), which is the pile ladder v4 nets (`group_netting`); the site pools
+   are one further group of their own, because a pool is reached through
+   `pool_warehouse_id` and is nobody's ownership group.
+   Supply lands in ITS OWN group's free pile at its arrival date, and a demand line draws
+   from its own group's pile, oldest first, at its own date. **UNDECIDED DEMAND NEVER
+   CROSSES A GROUP.** The captain, on a BB line of 507 with no inquiry and no planning
+   sitting on IB's pile: "who is us to decide those BB group takes our IB pile". Nobody -
+   so the walk does not decide it. Cross-group movement exists only as a PINNED hold, born
+   from a board decision somebody confirmed (step 1 above), and until that Confirm the other
+   group's pile is untouched. The ladder still OFFERS it (`free_piles_at`, read by
+   `use_candidates_for`), which is a PROPOSAL a planner accepts or does not.
+   What a line cannot draw is an OPEN SHORTFALL, and the next supply to arrive in ITS OWN
+   group clears the group's open shortfalls, earliest required date first, BEFORE it becomes
+   free for a later line - which is what makes this first-come by REQUIRED DATE rather than
+   by arrival, and it is the case AC-S2-1 pins.
 3. **A past-due line is read at today.** Its date has gone; a column for a month that has
    gone is a column nobody can act in. So it queues at `as_of` (ahead of everything dated
    later) and its debt lands in the CURRENT month (AC-S2-5).
@@ -177,6 +178,11 @@ class Assigned:
     qty: float
     #: True when the hold was pinned rather than queued for.
     pinned: bool = False
+    #: The day IN THE WALK this quantity stopped being free - the drawing line's own date,
+    #: or the arrival that later cleared its shortfall. `None` on a pinned hold, which was
+    #: spent before the walk started and is free at no date at all. Read by `free_piles_at`,
+    #: which is the only way to state a pile as it stood on a date somebody is asking about.
+    at: Optional[date] = None
 
 
 @dataclass(frozen=True)
@@ -220,6 +226,10 @@ class Assignment:
     unlocated: float
     #: Supply that contributed nothing - overdue, or with no arrival date at all (R31).
     uncounted: Tuple[SupplyEvent, ...]
+    #: Every COUNTED event, in no particular order. Carried because `free` states only the
+    #: quantities, and a caller that has to name a pile ("40 free at DC1-IR") needs the
+    #: events themselves. `free_piles_at` reads this and nothing else.
+    supply: Tuple[SupplyEvent, ...] = ()
 
 
 @dataclass
@@ -461,6 +471,7 @@ def assign(
         undated=_round(-totals[BUCKET_UNDATED]),
         unlocated=_round(-totals[BUCKET_UNLOCATED]),
         uncounted=tuple(uncounted),
+        supply=tuple(counted),
     )
 
 
@@ -473,17 +484,23 @@ def _walk(
 ) -> None:
     """The whole product's book, in date order, with a pile per ownership group.
 
-    ONE walk over every group, not a walk per group (AC-S2-1b). Each group keeps its own
-    free pile and its own queue of open shortfalls; a line draws its own group's pile first
-    and then the other PROJECT groups' piles, oldest first. That is ladder step 1 exactly -
-    "use free supply: own group, then the other project groups, no debt" (PLAN 3.2) - and
-    it is why the product-wide month balance and the per-line status now say the same thing.
-    Walking group by group could not: a BB line went `short` while IB stock sat unused, so
-    the cell was green and the drill was red.
+    ONE walk over every group, and **a group draws its OWN pile and nothing else** (R40).
+    Each group keeps its own free pile and its own queue of open shortfalls; a line draws
+    its own group's pile, oldest first, at its own date, and an arrival clears its own
+    group's open shortfalls before it becomes free for a later line of that group.
 
-    A SITE POOL is sealed off in both directions. Its stock is nobody's free supply (taking
-    it is the pool RUNG, which raises an ORDER_BACK, R34), and a pool line has no claim on a
-    project group's pile. So `__pool__` neither lends to nor borrows from anybody here.
+    The 30 August draft let an undecided line reach into the other project groups' piles,
+    on the reading that free is free. The captain refused it on the live book - a BB line of
+    507 with no inquiry and no planning had silently eaten the IB pile - and the rule is
+    now: an undecided line is a line nobody has decided anything about, so the walk decides
+    nothing about it either. Another group's stock reaches this line only through a PINNED
+    hold (step 1 above), which is a Confirm somebody pressed. The OFFER still exists and is
+    still made - `free_piles_at`, read by the ladder's `use_candidates_for` - because
+    proposing is not assuming.
+
+    A SITE POOL is sealed off for a second reason on top of that one: taking pool stock is
+    the pool RUNG, which raises an ORDER_BACK (R34), so it could never have been a free draw
+    even when project groups shared.
 
     Mutates `left` and the line states.
     """
@@ -514,11 +531,13 @@ def _walk(
     #: group -> open, earliest required date first
     shortfalls: Dict[str, List[_Open]] = {}
 
-    for _at, kind, _index, item in steps:
+    for at, kind, _index, item in steps:
         if kind == 0:
             event: SupplyEvent = item  # type: ignore[assignment]
             group = _group_of(event.warehouse, event.is_pool)
-            for state in _shortfall_order(shortfalls, group):
+            # This group's own queue, earliest required date first. A snapshot list,
+            # because the loop removes from the queue as it goes.
+            for state in list(shortfalls.get(group, ())):
                 if left[event.key] <= EPSILON:
                     break
                 take = min(state.remaining, left[event.key])
@@ -527,11 +546,9 @@ def _walk(
                 left[event.key] -= take
                 state.remaining -= take
                 state.late = True
-                state.taken.append(Assigned(event=event, qty=_round(take)))
+                state.taken.append(Assigned(event=event, qty=_round(take), at=at))
                 if state.remaining <= EPSILON:
-                    shortfalls[_group_of(state.line.warehouse, state.line.is_pool)].remove(
-                        state
-                    )
+                    shortfalls[group].remove(state)
             if left[event.key] > EPSILON:
                 piles.setdefault(group, []).append(event)
             continue
@@ -539,7 +556,10 @@ def _walk(
         state: _Open = item  # type: ignore[assignment]
         group = _group_of(state.line.warehouse, state.line.is_pool)
         if state.remaining > EPSILON:
-            for pile, event in _draw_order(piles, group):
+            # Its OWN group's pile, in arrival order (it was appended that way), and no
+            # other group's (R40).
+            pile = piles.setdefault(group, [])
+            for event in list(pile):
                 if state.remaining <= EPSILON:
                     break
                 take = min(state.remaining, left[event.key])
@@ -548,7 +568,7 @@ def _walk(
                     continue
                 left[event.key] -= take
                 state.remaining -= take
-                state.taken.append(Assigned(event=event, qty=_round(take)))
+                state.taken.append(Assigned(event=event, qty=_round(take), at=at))
                 if left[event.key] <= EPSILON:
                     pile.remove(event)
         # Its own date has now passed in the walk, so whatever is left is what this line
@@ -562,56 +582,44 @@ def _walk(
             shortfalls.setdefault(group, []).append(state)
 
 
-def _lends_to(donor_group: str, asking_group: str) -> bool:
-    """Whose free pile a group may draw on: its own, and any other PROJECT group's.
+def free_piles_at(
+    assignment: Assignment, *, at: date, as_of: date
+) -> Dict[str, List[Tuple[SupplyEvent, float]]]:
+    """Every ownership group's free pile AS IT STOOD on `at`, oldest first.
 
-    The site pool is neither a donor nor a borrower here - see `_walk`.
+    THE PROPOSAL HALF OF R40. The walk gives an undecided line its own group and nothing
+    else, so another group's pile is never assumed - but the ladder still has to OFFER it
+    (PLAN 3.2 step 1's second half), and this is the number that offer is made of: what had
+    arrived in that group by `at`, less every quantity spent on or before `at` - the pins,
+    which are spent before the walk starts, and the draws and late clears the walk itself
+    made up to that day.
+
+    Same-day competition counts as spent: a line of that group due on `at` has already
+    queued. That is the conservative reading, and it is the one that keeps the offer from
+    naming stock somebody due the same morning is going to take.
+
+    Returns `group -> [(event, free quantity)]`, with a pool's own group under
+    `POOL_GROUP`; the caller decides which groups it may name.
     """
-    if donor_group == asking_group:
-        return True
-    return POOL_GROUP not in (donor_group, asking_group)
-
-
-def _shortfall_order(
-    shortfalls: "Dict[str, List[_Open]]", group: str
-) -> List[_Open]:
-    """Who this arrival clears, in order: our own queue, then the other project groups'.
-
-    A snapshot list, because the caller removes from the underlying queues as it goes.
-    Within the others, the earliest REQUIRED DATE first - the same first-come rule the
-    single-group queue already follows, applied across the groups it now reaches.
-    """
-    own = list(shortfalls.get(group, ()))
-    others: List[_Open] = []
-    for other, queue in shortfalls.items():
-        if other == group or not _lends_to(group, other):
+    spent: Dict[str, float] = {}
+    for row in assignment.lines:
+        for item in row.assigned:
+            if item.at is not None and item.at > at:
+                continue
+            spent[item.event.key] = spent.get(item.event.key, 0.0) + float(item.qty)
+    out: Dict[str, List[Tuple[SupplyEvent, float]]] = {}
+    for event in assignment.supply:
+        if effective_date(event.at, as_of) > at:
             continue
-        others.extend(queue)
-    others.sort(key=lambda state: _identity(state))
-    return own + others
-
-
-def _draw_order(
-    piles: "Dict[str, List[SupplyEvent]]", group: str
-) -> List[Tuple[List[SupplyEvent], SupplyEvent]]:
-    """What this line may draw, in order: our own pile, then the other project groups'.
-
-    Each entry carries the pile it came from, so the caller can take the event OUT of the
-    right list once it is exhausted. Own pile in arrival order (it was appended that way);
-    the others merged oldest first, because free stock that has been sitting longest is the
-    stock to move.
-    """
-    out: List[Tuple[List[SupplyEvent], SupplyEvent]] = []
-    own = piles.get(group)
-    if own:
-        out.extend((own, event) for event in list(own))
-    others: List[Tuple[List[SupplyEvent], SupplyEvent]] = []
-    for other, pile in piles.items():
-        if other == group or not _lends_to(other, group):
+        free = float(event.qty) - spent.get(event.key, 0.0)
+        if free <= EPSILON:
             continue
-        others.extend((pile, event) for event in list(pile))
-    others.sort(key=lambda pair: _identity(pair[1]))
-    return out + others
+        out.setdefault(_group_of(event.warehouse, event.is_pool), []).append(
+            (event, _round(free))
+        )
+    for pile in out.values():
+        pile.sort(key=lambda pair: (effective_date(pair[0].at, as_of), _identity(pair[0])))
+    return out
 
 
 def _identity(item) -> tuple:
@@ -707,6 +715,7 @@ __all__ = [
     "SupplyEvent",
     "assign",
     "effective_date",
+    "free_piles_at",
     "month_axis",
     "month_key",
     "tone_for",

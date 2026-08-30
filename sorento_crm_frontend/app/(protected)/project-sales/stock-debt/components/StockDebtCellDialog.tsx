@@ -176,10 +176,14 @@ export function StockDebtCellDialog({
         header: 'Status',
         size: 120,
         cell: ({ row }) => {
-          const shortfall = row.original.open_qty - row.original.assigned_qty;
+          // `short_qty` is the SERVER's own figure - what the line went without ON ITS OWN
+          // DATE (R37), which is also what its month books and what the footer below sums.
+          // Re-deriving it as `open - assigned` disagreed with the payload the moment later
+          // supply cleared the shortfall: a `late` line ended fully assigned and printed
+          // "short 0" beside a cell the same line had put in debt.
           const label =
-            row.original.status === 'short' && shortfall > 0
-              ? `short ${shortfall.toLocaleString()}`
+            row.original.status === 'short' && row.original.short_qty > 0
+              ? `short ${row.original.short_qty.toLocaleString()}`
               : row.original.status;
           return (
             <span className={cn(STATUS_PILL_BASE, STATUS_CLASS[row.original.status])}>
