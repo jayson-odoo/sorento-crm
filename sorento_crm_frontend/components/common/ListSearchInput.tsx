@@ -6,6 +6,10 @@ import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 
 export interface ListSearchInputProps {
+  /** Only where a visible `<Label htmlFor>` names the box. */
+  id?: string;
+  /** Kept for the boxes an existing spec already drives by test id. */
+  'data-testid'?: string;
   value: string;
   onChange: (next: string) => void;
   placeholder?: string;
@@ -38,6 +42,8 @@ export interface ListSearchInputProps {
  * that flip makes the browser blur it and drop the rest of the word.
  */
 export function ListSearchInput({
+  id,
+  'data-testid': testId,
   value,
   onChange,
   placeholder = 'Search...',
@@ -61,6 +67,8 @@ export function ListSearchInput({
         />
       )}
       <Input
+        id={id}
+        data-testid={testId}
         placeholder={placeholder}
         aria-label={ariaLabel ?? placeholder}
         title={title}

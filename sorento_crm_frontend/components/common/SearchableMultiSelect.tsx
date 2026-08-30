@@ -12,6 +12,7 @@ import {
   CommandList,
 } from '@/components/ui/command';
 import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/components/ui/popover';
+import { SEARCH_DEBOUNCE_MS } from '@/hooks/useDebouncedSearch';
 import {
   selectTriggerVariants,
   type SelectTriggerSize,
@@ -128,7 +129,7 @@ export function SearchableMultiSelect({
 
   React.useEffect(() => {
     if (!isAsync || !open) return;
-    const t = setTimeout(() => void runFetch(query), query === '' ? 0 : 300);
+    const t = setTimeout(() => void runFetch(query), query === '' ? 0 : SEARCH_DEBOUNCE_MS);
     return () => clearTimeout(t);
   }, [isAsync, open, query, runFetch]);
 

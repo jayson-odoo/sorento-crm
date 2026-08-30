@@ -5,7 +5,8 @@ import Link from 'next/link';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
+import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { Skeleton } from '@/components/ui/skeleton';
 import { getSpecKeyProducts } from '../services/productSpecService';
 import type { SpecKeyProducts as Products } from '../services/productSpecService';
@@ -41,18 +42,20 @@ export default function SpecKeyProducts({
   const [loading, setLoading] = useState(true);
   const [offset, setOffset] = useState(0);
   const [value, setValue] = useState<string | undefined>();
-  const [search, setSearch] = useState('');
-  // Debounced, and the query the request actually carries. Typing straight into the
-  // request fires one round trip per keystroke against 22,805 rows.
-  const [query, setQuery] = useState('');
+  // `query` is what the request carries, one debounce behind the box: typing
+  // straight into the request fires one round trip per keystroke against 22,805
+  // rows.
+  const {
+    value: search,
+    setValue: setSearch,
+    debouncedValue: query,
+    isSettling: searchSettling,
+  } = useDebouncedSearch();
 
+  // A narrower search is a different set, so page 1 is where it starts.
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setQuery(search.trim());
-      setOffset(0);
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [search]);
+    setOffset(0);
+  }, [query]);
 
   useEffect(() => {
     setLoading(true);
@@ -81,12 +84,12 @@ export default function SpecKeyProducts({
           </span>
         </div>
         <div className="flex items-center gap-2">
-          <Input
-            className="h-8 w-64"
+          <ListSearchInput
+            className="w-64"
             value={search}
+            onChange={setSearch}
+            isSettling={searchSettling}
             placeholder="Find a code, description or value"
-            aria-label="Find a code, description or value"
-            onChange={(e) => setSearch(e.target.value)}
           />
           <Button size="sm" variant="outline" onClick={onClose}>
             Close
