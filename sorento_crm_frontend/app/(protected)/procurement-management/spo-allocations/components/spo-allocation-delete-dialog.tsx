@@ -49,8 +49,9 @@ export default function SPOAllocationDeleteDialog({
           <DialogDescription>
             Are you sure you want to delete the SPO allocation{' '}
             <strong>
-              {spoAllocation.spo_number ||
-                `SPO-${spoAllocation.id.slice(0, 8)}`}
+              {spoAllocation.spo_number?.trim() ||
+                spoAllocation.product?.product_name ||
+                'this allocation'}
             </strong>
             ? This action cannot be undone.
           </DialogDescription>

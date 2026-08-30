@@ -79,9 +79,13 @@ export default function SPOAllocationDetail({
       <div className="flex items-center justify-between">
         <div className="space-y-1">
           <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold">
-              {spoAllocation.spo_number || `SPO-${spoAllocation.id.slice(0, 8)}`}
-            </h1>
+            {/* An allocation with no SPO number is named by its product, then
+                by "Untitled allocation" - never by a slice of its id (S5-05). */}
+            <h2 className="text-2xl font-bold">
+              {spoAllocation.spo_number?.trim() ||
+                spoAllocation.product?.product_name ||
+                'Untitled allocation'}
+            </h2>
             <Badge status={spoAllocation.receipt_status}>
               {statusLabel}
             </Badge>
