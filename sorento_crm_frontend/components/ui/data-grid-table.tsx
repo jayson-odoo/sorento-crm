@@ -221,12 +221,15 @@ function DataGridTableHeadRowCell<TData>({
   header,
   dndRef,
   dndStyle,
+  dndDragging,
   rowSpan,
 }: {
   children: ReactNode;
   header: Header<TData, unknown>;
   dndRef?: React.Ref<HTMLTableCellElement>;
   dndStyle?: CSSProperties;
+  /** True while THIS column is the one being dragged (dnd-kit's `isDragging`). */
+  dndDragging?: boolean;
   rowSpan?: number;
 }) {
   const { props } = useDataGrid();
@@ -254,16 +257,23 @@ function DataGridTableHeadRowCell<TData>({
         ...(props.tableLayout?.width === 'fixed' && {
           width: `${header.getSize()}px`,
         }),
-        ...(dndStyle ? dndStyle : null),
-        // LAST, so it beats the drag style. Column drag-and-drop is on by
-        // default and dnd-kit sets `position: relative` + `zIndex: 0` on every
-        // cell; spread after the pinning styles it silently turned the phone's
-        // pinned identifier column back into an ordinary one that scrolled away.
-        // The drag transform and transition survive - only the stickiness wins.
+        // Pinning normally wins. Column drag-and-drop is on by default and
+        // dnd-kit sets `position: relative` + `zIndex: 0` on every cell; spread
+        // after the pinning styles it silently turned the phone's pinned
+        // identifier column back into an ordinary one that scrolled away. The
+        // drag transform and transition survive - only the stickiness wins.
         //
         // Driven by the pinned state itself: under `sm` the grid pins the
         // identifier column whether or not the list opted into pinning.
-        ...(isPinned ? getPinningStyles(column) : null),
+        //
+        // While THIS column is the one being dragged, the order flips: sticky
+        // beats dnd-kit's `position: relative`, so the transform had no effect
+        // and a pinned column could not be dragged at all. That is every column
+        // a phone user can reach, because under `sm` the grid pins the
+        // identifier column for them.
+        ...(dndDragging
+          ? { ...(isPinned ? getPinningStyles(column) : null), ...dndStyle }
+          : { ...dndStyle, ...(isPinned ? getPinningStyles(column) : null) }),
       }}
       data-pinned={isPinned || undefined}
       data-last-col={isLastLeftPinned ? 'left' : isFirstRightPinned ? 'right' : undefined}
@@ -656,11 +666,14 @@ function DataGridTableBodyRowCell<TData>({
   cell,
   dndRef,
   dndStyle,
+  dndDragging,
 }: {
   children: ReactNode;
   cell: Cell<TData, unknown>;
   dndRef?: React.Ref<HTMLTableCellElement>;
   dndStyle?: CSSProperties;
+  /** True while THIS column is the one being dragged (dnd-kit's `isDragging`). */
+  dndDragging?: boolean;
 }) {
   const { props } = useDataGrid();
 
@@ -678,9 +691,11 @@ function DataGridTableBodyRowCell<TData>({
       ref={dndRef}
       {...(props.tableLayout?.columnsDraggable && !isPinned ? { cell } : {})}
       style={{
-        ...(dndStyle ? dndStyle : null),
-        // LAST, so it beats the drag style - see the head cell.
-        ...(isPinned ? getPinningStyles(column) : null),
+        // Pinning last so it beats the drag style, except while this column is
+        // the one being dragged - see the head cell.
+        ...(dndDragging
+          ? { ...(isPinned ? getPinningStyles(column) : null), ...dndStyle }
+          : { ...dndStyle, ...(isPinned ? getPinningStyles(column) : null) }),
       }}
       data-pinned={isPinned || undefined}
       data-last-col={isLastLeftPinned ? 'left' : isFirstRightPinned ? 'right' : undefined}
