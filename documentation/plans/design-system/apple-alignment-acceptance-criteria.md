@@ -21,7 +21,7 @@ primary button. When they act on something that changes or removes a record, no 
 them to confirm: the button becomes a countdown they can cancel, and the server commits the
 action when the window lapses, even if they have closed the tab. Every popup they meet is a
 lightbox that owns the screen; every form and detail view has the same underline tabs; on a
-phone, wide grids scroll sideways with the identifier column pinned, and tab strips scroll
+phone, wide grids scroll sideways as whole rows, and tab strips scroll
 instead of overlapping. Nothing is asked of them that the screen already knew.
 
 ---
@@ -39,7 +39,7 @@ instead of overlapping. Nothing is asked of them that the screen already knew.
 | D7 | Confirmation model: no confirm dialogs. Destructive and reversible actions are server-deferred pending actions (generalising `sla_form_actions`): 10s window for hard delete, 5s for reversible. Countdown on the button for the record on screen, in a toast for list rows. Escape does not cancel. Closing the tab still commits. `ConfirmDeleteDialog` retired. |
 | D8 | Lightbox: dialogs modal by default, scrim 50% black + 8px blur shared by dialog, alert and sheet, height caps everywhere. Passive utility sheets get no scrim. |
 | D9 | Tabs: `variant="line"` is the default and the list owns its horizontal scroller. 19 strips migrate to Users style (icon + label); 17 two-option segmented switches keep pills with an explicit `variant="default"`. |
-| D10 | DataGrid on a phone: horizontal scroll container, first non-checkbox column pinned, right-edge fade. No per-list column choices. |
+| D10 | DataGrid on a phone: horizontal scroll container, right-edge fade. No per-list column choices. **Revised 2026-08-30:** the identifier column is NOT pinned. S1 pinned it; the user tried it and found a column that refuses to move with the rest weirder than losing sight of the name. Explicit `columnPinning` for a list that asks for it is untouched. |
 | D11 | Wayfinding: one `PageHeader`; crumbs derived from `MENU_SIDEBAR` with an override prop; "Home" becomes "Dashboards"; sidebar keeps GRN / SPO, page titles expand them. |
 | D12 | Typeface stays Inter, wired through `--font-sans` with a type scale that bakes tracking and leading per step. Dark tokens are defined; no dark toggle in this run. |
 | D13 | Mobile nav drawer and bottom sheets move to `vaul`; desktop side sheets stay Radix. |
@@ -55,7 +55,7 @@ instead of overlapping. Nothing is asked of them that the screen already knew.
 - **S1-02** Given a dialog, alert dialog or sheet is open, then the overlay is `bg-black/50 backdrop-blur-md` and the blur fades in with the overlay. Under `prefers-reduced-transparency` the blur is off and the scrim is 72% black. [FE][T]
 - **S1-03** Given an AlertDialog or a Sheet taller than the viewport at 375x812, then its body scrolls and its footer buttons are reachable. [FE][E2E]
 - **S1-04** Given a `<TabsList>` with no `variant`, then it renders the `line` variant. Given more triggers than fit the width, then the list scrolls horizontally with no visible scrollbar and the page does not scroll sideways. [FE][T]
-- **S1-05** Given a DataGrid whose columns exceed the container, then the grid scrolls horizontally inside its own container, the first non-checkbox column stays pinned on the left under `sm`, and a fade marks the right edge. The page body never scrolls sideways. [FE][E2E]
+- **S1-05** Given a DataGrid whose columns exceed the container, then the grid scrolls horizontally inside its own container and a fade marks the right edge. The page body never scrolls sideways. Nothing is pinned automatically: at 375 the whole row scrolls as one (revised 2026-08-30, see D10). [FE][E2E]
 - **S1-06** Given a DataGrid with `rowHref`, then every row is an anchor target: click, middle-click and Enter/Space open the href, and the href carries the grid's current page, limit, sort, filters and search via `buildDetailSearch`. Given neither `rowHref` nor `onRowClick`, then rows have no pointer cursor. [FE][T]
 - **S1-07** Given any DataGrid, then `columnResizeMode` is `onChange`, the header is sticky by default, numerals are tabular, and the resize handle uses pointer capture. [FE][T]
 - **S1-08** Given a `<Badge>`, then its shape is `rounded-full`, height 24px (`md`), tinted fill + matching text. Given `<Badge status>`, then a 6px dot precedes the label and colour comes from `getStatusBadgeVariant`. The `ghost` appearance no longer exists. Count badges (`shape="circle"`) render unchanged. [FE][T]

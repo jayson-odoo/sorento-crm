@@ -86,7 +86,7 @@ regrowing.
 
 ### 3.8 DataGrid on a phone
 
-- `DataGridContainer` (`data-grid.tsx:248`) has zero call sites; every list renders `CardTable > ScrollArea > DataGridTable`, so S1 put the scroller (`DataGridScroller`) inside `DataGridTable`. `DataGridContainer` is dead code: S9 deletes it. Original intent, kept for reference: the wrapper gains `overflow-x-auto overscroll-x-contain` and the right-edge fade; table gets `min-w-max` when `table.getTotalSize() > containerWidth` (ResizeObserver, already needed for the fade). Under `sm` the first non-select column is pinned left through TanStack's `columnPinning` (the pinned material exists at `data-grid-table.tsx:186`). No per-list configuration.
+- `DataGridContainer` (`data-grid.tsx:248`) has zero call sites; every list renders `CardTable > ScrollArea > DataGridTable`, so S1 put the scroller (`DataGridScroller`) inside `DataGridTable`. `DataGridContainer` is dead code: S9 deletes it. Original intent, kept for reference: the wrapper gains `overflow-x-auto overscroll-x-contain` and the right-edge fade; table gets `min-w-max` when `table.getTotalSize() > containerWidth` (ResizeObserver, already needed for the fade). No per-list configuration. S1's automatic `columnPinning` of the first non-select column under `sm` was removed on 2026-08-30 at the user's call: the whole row scrolls as one. A list that pins a column deliberately still gets the pinned styles.
 - `data-grid-list-toolbar.tsx`: `flex-wrap`; Quick filters / Group by stay reachable.
 
 ### 3.9 Wayfinding (`components/common/PageHeader.tsx`)
@@ -135,7 +135,7 @@ S1, S2, S4, S7, S8, S9: the Apple-design audit (rounds 1-2). S3: the user's asks
 ## 6. Not built (deferred to `documentation/backlogs/backlog.md`)
 
 - Dark mode toggle (tokens only, D12).
-- Card-per-row mobile grid layout (D10 chose scroll + pin).
+- Card-per-row mobile grid layout (D10 chose scroll; the pin was tried and dropped).
 - Soft-delete / restore endpoints (D7 uses the pending window, not post-commit restore).
 - Deleting `drawer.tsx`/`vaul` (used by S8 instead).
 - `Reports`, `Price Tags`, After-sales screens: not in this tenant's sidebar during the sweep; they inherit the primitives.

@@ -231,42 +231,27 @@ describe('DataGrid scrolls on a phone (S1-05)', () => {
     expect(document.querySelector('[data-slot="data-grid-fade"]')).toBeNull();
   });
 
-  it('S1-05: under sm the first non-checkbox column is pinned left', () => {
+  /**
+   * S1 pinned the identifier column under `sm` so the row stayed labelled while
+   * the grid scrolled sideways. The user tried it and chose the opposite: a
+   * column that refuses to move with the rest reads as broken, and losing sight
+   * of the name for a moment does not (ruling 2026-08-30). So the phone pins
+   * nothing, and this is the test that used to assert the pin.
+   */
+  it('S1-05: at phone width the whole row scrolls as one, nothing sticks', () => {
     setMatchMedia(true);
     render(<Harness />);
 
     const nameHeader = screen.getByText('Name').closest('th') as HTMLTableCellElement;
-    expect(nameHeader).toHaveAttribute('data-pinned', 'left');
-
-    // The checkbox column is not the identifier, so it is not the pinned one.
-    const selectHeader = screen.getByLabelText('Select all rows on this page').closest('th');
-    expect(selectHeader).not.toHaveAttribute('data-pinned');
-  });
-
-  it('S1-05: the pinned column is actually stuck, not merely marked', () => {
-    setMatchMedia(true);
-    render(<Harness />);
-
-    const nameHeader = screen.getByText('Name').closest('th') as HTMLTableCellElement;
-
-    // `data-pinned` is only the STATE. Column drag-and-drop (on by default) sets
-    // `position: relative` on every cell from dnd-kit's transform, and it used to
-    // be spread after the pinning styles - so the identifier column carried the
-    // attribute, the tests passed, and on a phone it scrolled away with the rest.
-    expect(nameHeader.style.position).toBe('sticky');
-    expect(nameHeader.style.left).toBe('0px');
-  });
-
-  it('S1-05: a pinned body cell is stuck too, or the column splits from its header', () => {
-    setMatchMedia(true);
-    render(<Harness />);
+    expect(nameHeader).not.toHaveAttribute('data-pinned');
+    expect(nameHeader.style.position).not.toBe('sticky');
 
     const cell = screen.getByText('Alpha').closest('td') as HTMLTableCellElement;
-    expect(cell.style.position).toBe('sticky');
-    expect(cell.style.left).toBe('0px');
+    expect(cell).not.toHaveAttribute('data-pinned');
+    expect(cell.style.position).not.toBe('sticky');
   });
 
-  it('S1-05: at desktop width nothing is pinned', () => {
+  it('S1-05: at desktop width nothing is pinned either', () => {
     render(<Harness />);
     expect(screen.getByText('Name').closest('th')).not.toHaveAttribute('data-pinned');
   });
