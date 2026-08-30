@@ -624,6 +624,9 @@ def _delete_market_segment(db: Session, payload: dict):
 def _delete_onboarding_request(db: Session, payload: dict):
     from app.services import onboarding_service
 
+    # No service method to call: `DELETE /onboarding-requests/{id}` is these three
+    # lines and no rule of its own (`get_request` already carries the 404 and the
+    # company-scope filter), so there is nothing here that could drift from it.
     request = onboarding_service.get_request(db, _entity_id(payload))
     db.delete(request)
     db.commit()
