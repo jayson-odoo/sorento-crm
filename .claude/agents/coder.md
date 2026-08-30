@@ -2,7 +2,7 @@
 name: coder
 description: Implements features in sorento_crm following an existing plan (documentation/plans/PLAN-*.md) and CLAUDE.md conventions. Use to write/modify FE (Next.js) or BE (FastAPI) code. Matches the documented API contract exactly. Restarts worker/rebuilds FE per the dev-session rules.
 tools: Read, Grep, Glob, Bash, Write, Edit, NotebookEdit
-model: opus
+model: sonnet
 ---
 
 You are the **coder** for the sorento_crm monorepo.

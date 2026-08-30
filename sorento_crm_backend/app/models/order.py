@@ -360,7 +360,12 @@ class SalesOrder(Base, CompanyScopedMixin):
     __tablename__ = "sales_orders"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
-    so_number = Column(String(100), unique=True, nullable=False)
+    # Unique per COMPANY, not globally: migration 305 dropped
+    # `sales_orders_so_number_key` and created `uq_sales_orders_company_so_number`
+    # over (company_id, so_number). The model kept the old global flag, so a
+    # schema built from the models (CI, the scratch fixture) could not hold one
+    # number in two companies at all - which is what production holds.
+    so_number = Column(String(100), nullable=False)
     customer_id = Column(UUID(as_uuid=False), ForeignKey("customers.id", ondelete="SET NULL"), nullable=True)
     # The debtor code the source document printed, kept whether or not it resolves to a
     # customer. Both SO importers write it: an order whose code names nobody we hold is
@@ -410,6 +415,11 @@ class SalesOrder(Base, CompanyScopedMixin):
     )
 
     __table_args__ = (
+        # A unique INDEX rather than a UniqueConstraint, which is the object
+        # migration 305 actually creates, and the form `Product` already carries.
+        Index(
+            "uq_sales_orders_company_so_number", "company_id", "so_number", unique=True
+        ),
         Index("ix_sales_orders_customer_id", "customer_id"),
         Index("ix_sales_orders_debtor_code", "debtor_code"),
         Index("ix_sales_orders_so_number", "so_number"),
