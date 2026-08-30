@@ -251,6 +251,9 @@ export function autoArrange(
         id: copy.id,
         x_mm: slot.x_mm,
         y_mm: slot.y_mm,
+        // The document has to say which copies were DRAGGED, because every copy
+        // carries a position and a position cannot tell the two apart.
+        pinned: Boolean(pin),
       },
     });
   }
@@ -283,12 +286,22 @@ export function pinKeyForPlacement(
   return placementKey(tag.request_line_id, copyIndexOf(tag.id));
 }
 
-/** Every manual drag the saved document is carrying, ready to be re-applied. */
+/**
+ * Every manual drag the saved document is carrying, ready to be re-applied.
+ *
+ * Only `pinned: true` counts. This used to read EVERY placed tag as a pin,
+ * which meant one save and reopen froze the whole sheet: switching the
+ * imposition preset re-imposed nothing, and bumping a line's quantity stacked
+ * the new copy on top of copy 0 because every slot was already claimed. A
+ * document saved before the flag existed therefore opens unpinned and is
+ * re-imposed, which leaves the sheet correct rather than frozen.
+ */
 export function pinnedFromDoc(doc: TagSheetDoc | null): Record<string, PinnedPlacement> {
   const pinned: Record<string, PinnedPlacement> = {};
   if (!doc) return pinned;
   doc.sheets.forEach((sheet, sheetIndex) => {
     for (const tag of sheet.tags) {
+      if (tag.pinned !== true) continue;
       pinned[placementKey(tag.request_line_id, copyIndexOf(tag.id))] = {
         sheet: sheetIndex,
         x_mm: tag.x_mm,

@@ -305,6 +305,17 @@ export interface PlacedTag {
   width_mm: number;
   height_mm: number;
   layers: TagLayer[];
+  /**
+   * This copy was DRAGGED to where it sits, so re-arranging must leave it there.
+   *
+   * Every placed tag carries a position - arrangement is what the document is -
+   * so the position alone cannot say which of them somebody chose. Without this
+   * flag, one save and reopen pinned the entire sheet: switching the imposition
+   * preset re-imposed nothing and a quantity bump dropped the new copy on top of
+   * copy 0. Absent means auto-placed, which is what a document written before
+   * the flag reads as.
+   */
+  pinned?: boolean;
 }
 
 // ---------------------------------------------------------------------------

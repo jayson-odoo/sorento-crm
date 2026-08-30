@@ -348,32 +348,103 @@ describe('pinKeyForPlacement', () => {
 });
 
 describe('pinnedFromDoc', () => {
-  it('reads a saved arrangement back as pins, keyed by line and copy', () => {
+  /**
+   * A pin is a DRAG, not a position.
+   *
+   * Every placed tag in a saved document carries a position, because
+   * arrangement is what a document IS. Reading each of those back as a pin
+   * meant that after one save-and-reopen the whole sheet was pinned: switching
+   * the imposition preset re-imposed nothing, and bumping a line's quantity
+   * dropped the new copy on top of copy 0 rather than into the next free slot.
+   * Only a copy somebody dragged carries `pinned: true`.
+   */
+  it('reads only the copies somebody actually dragged', () => {
     const pinned = pinnedFromDoc({
       kind: 'tag_sheet',
       imposition: A4_3UP,
       sheets: [
         { id: 'sheet-1', tags: [{ ...placed('a-c0', 'l1'), x_mm: 5, y_mm: 6 }] },
-        { id: 'sheet-2', tags: [{ ...placed('a-c1', 'l1'), x_mm: 7, y_mm: 8 }] },
+        {
+          id: 'sheet-2',
+          tags: [{ ...placed('a-c1', 'l1'), x_mm: 7, y_mm: 8, pinned: true }],
+        },
       ],
     });
 
     expect(pinned).toEqual({
-      [placementKey('l1', 0)]: { sheet: 0, x_mm: 5, y_mm: 6 },
       [placementKey('l1', 1)]: { sheet: 1, x_mm: 7, y_mm: 8 },
     });
   });
 
-  it('a document written before copy ids existed still pins its first copy', () => {
+  it('a document saved before the flag existed opens unpinned', () => {
+    // Auto-arrange re-imposes it on open. That is the deliberate trade: those
+    // documents cannot say which of their positions was a drag, and re-imposing
+    // is the answer that leaves the sheet correct rather than frozen.
     const pinned = pinnedFromDoc({
       kind: 'tag_sheet',
       imposition: A4_3UP,
       sheets: [{ id: 's-old', tags: [{ ...placed('t-1756-3', 'l9'), x_mm: 1, y_mm: 2 }] }],
     });
-    expect(pinned).toEqual({ [placementKey('l9', 0)]: { sheet: 0, x_mm: 1, y_mm: 2 } });
+    expect(pinned).toEqual({});
   });
 
   it('answers nothing for a document that does not exist yet', () => {
     expect(pinnedFromDoc(null)).toEqual({});
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Save, reopen, and keep arranging
+// ---------------------------------------------------------------------------
+
+describe('a saved sheet reopens still arrangeable', () => {
+  const items = [
+    { tag: placed('a', 'l1'), quantity: 2 },
+    { tag: placed('b', 'l2'), quantity: 1 },
+  ];
+
+  it('an auto-placed copy is not marked as dragged', () => {
+    const sheets = autoArrange(items, A4_3UP);
+    for (const sheet of sheets) {
+      for (const tag of sheet.tags) expect(tag.pinned).not.toBe(true);
+    }
+  });
+
+  it('a dragged copy is marked, and only that one comes back as a pin', () => {
+    const pinned = { [placementKey('l1', 1)]: { sheet: 1, x_mm: 12.5, y_mm: 33 } };
+    const saved = { kind: 'tag_sheet' as const, imposition: A4_3UP, sheets: autoArrange(items, A4_3UP, pinned) };
+
+    const dragged = saved.sheets[1].tags[0];
+    expect(dragged.id).toBe('a-c1');
+    expect(dragged.pinned).toBe(true);
+    expect(pinnedFromDoc(saved)).toEqual(pinned);
+  });
+
+  it('switching the preset re-imposes everything that was not dragged', () => {
+    const saved = { kind: 'tag_sheet' as const, imposition: A4_3UP, sheets: autoArrange(items, A4_3UP) };
+
+    const reopened = autoArrange(items, A4_2X2, pinnedFromDoc(saved));
+
+    const slots = impositionSlots(A4_2X2, 60, 40);
+    expect(reopened[0].tags.map((t) => ({ x: t.x_mm, y: t.y_mm }))).toEqual(
+      slots.slice(0, 3).map((s) => ({ x: s.x_mm, y: s.y_mm })),
+    );
+  });
+
+  it('a quantity bump lands in the next free slot, not on top of copy 0', () => {
+    const saved = { kind: 'tag_sheet' as const, imposition: A4_3UP, sheets: autoArrange(items, A4_3UP) };
+
+    const bumped = autoArrange(
+      [
+        { tag: placed('a', 'l1'), quantity: 3 },
+        { tag: placed('b', 'l2'), quantity: 1 },
+      ],
+      A4_3UP,
+      pinnedFromDoc(saved),
+    );
+
+    const positions = bumped
+      .flatMap((sheet, index) => sheet.tags.map((t) => `${index}:${t.x_mm},${t.y_mm}`));
+    expect(new Set(positions).size).toBe(positions.length);
   });
 });
