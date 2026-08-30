@@ -26,6 +26,7 @@ import {
 import { ProjectsGrid } from '../../_shared/components/ProjectsGrid';
 import { EmptyState, PipelineBoard } from './PipelineBoard';
 import { RegisterProjectDialog } from './RegisterProjectDialog';
+import { PageHeader } from '@/components/common/PageHeader';
 
 const VIEW_STORAGE_KEY = 'project-sales.pipeline.view';
 
@@ -274,50 +275,51 @@ export function PipelineClient() {
 
   return (
     <div className="space-y-5">
-      <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0">
-          <h1 className="text-xl font-semibold">Pipeline</h1>
-          <p className="text-sm text-muted-foreground">
-            Every project in the company, so nobody works a development twice.
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <div
-            className="inline-flex rounded-md border border-border p-0.5"
-            role="group"
-            aria-label="Pipeline view"
-          >
-            <Button
-              type="button"
-              size="sm"
-              variant={view === 'board' ? 'primary' : 'ghost'}
-              onClick={() => switchView('board')}
-              aria-pressed={view === 'board'}
-              aria-label="Board view"
-              title="Board view"
-              mode="icon"
+      <PageHeader
+        title="Pipeline"
+        actions={
+          <div className="flex flex-wrap items-center gap-2">
+            <div
+              className="inline-flex rounded-md border border-border p-0.5"
+              role="group"
+              aria-label="Pipeline view"
             >
-              <KanbanSquare className="size-4" aria-hidden />
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant={view === 'grid' ? 'primary' : 'ghost'}
-              onClick={() => switchView('grid')}
-              aria-pressed={view === 'grid'}
-              aria-label="Grid view"
-              title="Grid view"
-              mode="icon"
-            >
-              <Table2 className="size-4" aria-hidden />
+              <Button
+                type="button"
+                size="sm"
+                variant={view === 'board' ? 'primary' : 'ghost'}
+                onClick={() => switchView('board')}
+                aria-pressed={view === 'board'}
+                aria-label="Board view"
+                title="Board view"
+                mode="icon"
+              >
+                <KanbanSquare className="size-4" aria-hidden />
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant={view === 'grid' ? 'primary' : 'ghost'}
+                onClick={() => switchView('grid')}
+                aria-pressed={view === 'grid'}
+                aria-label="Grid view"
+                title="Grid view"
+                mode="icon"
+              >
+                <Table2 className="size-4" aria-hidden />
+              </Button>
+            </div>
+            <Button type="button" onClick={() => setRegisterOpen(true)}>
+              <Plus className="size-4" aria-hidden />
+              Register project
             </Button>
           </div>
-          <Button type="button" onClick={() => setRegisterOpen(true)}>
-            <Plus className="size-4" aria-hidden />
-            Register project
-          </Button>
-        </div>
-      </header>
+        }
+      >
+        <p className="text-sm text-muted-foreground">
+          Every project in the company, so nobody works a development twice.
+        </p>
+      </PageHeader>
 
       {/* Board has no grid toolbar to host them, so it carries the same two controls in
           the same order the toolbar uses. Grid view feeds them into the toolbar instead,

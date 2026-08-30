@@ -81,7 +81,7 @@ export function QuotationDetailClient({
             <span className="text-sm text-muted-foreground">{project.data.project_code}</span>
             <OutcomePill outcome={quotation.outcome} />
           </div>
-          <h1 className="mt-1 text-xl font-semibold break-words">{quotation.scope_label}</h1>
+          <h2 className="mt-1 text-xl font-semibold break-words">{quotation.scope_label}</h2>
           <p className="text-sm text-muted-foreground break-words">
             {[
               `${quotation.version_count} revision${quotation.version_count === 1 ? '' : 's'}`,

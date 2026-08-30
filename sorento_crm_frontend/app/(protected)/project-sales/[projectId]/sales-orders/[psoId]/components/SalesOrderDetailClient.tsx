@@ -284,7 +284,7 @@ export function SalesOrderDetailClient({
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0 break-words">
           <div className="flex flex-wrap items-center gap-2">
-            <h1 className="text-xl font-semibold break-words">{reference}</h1>
+            <h2 className="text-xl font-semibold break-words">{reference}</h2>
             <SalesOrderStatusPill status={so.status} />
             {/* Beside the status rather than folded into it: an order can be published AND
                 still awaiting reconciliation, and the header has to be able to say both.

@@ -976,7 +976,7 @@ describe('QuotationDocumentClient letterhead editing', () => {
     // The heading follows the staged copy too, or the card and the title two centimetres above
     // it would disagree about the same document.
     expect(
-      screen.getByRole('heading', { level: 1, name: 'Wrong subject' }),
+      screen.getByRole('heading', { level: 2, name: 'Wrong subject' }),
     ).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
@@ -987,7 +987,7 @@ describe('QuotationDocumentClient letterhead editing', () => {
     expect(screen.getByText('NCSB/2026/117')).toBeInTheDocument();
     expect(screen.getByText('Kelly')).toBeInTheDocument();
     expect(
-      screen.getByRole('heading', { level: 1, name: 'CADANGAN MEMBINA PANGSAPURI' }),
+      screen.getByRole('heading', { level: 2, name: 'CADANGAN MEMBINA PANGSAPURI' }),
     ).toBeInTheDocument();
     expect(screen.queryByText('WRONG-REF')).toBeNull();
     expect(updateQuotationDocument).not.toHaveBeenCalled();

@@ -1,13 +1,6 @@
 import { Metadata } from 'next';
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
 import { Container } from '@/components/common/container';
+import { PageHeader } from '@/components/common/PageHeader';
 import RequireAccess from '@/app/components/common/RequireAccess';
 import { SalesOrderWorksheetClient } from './components/SalesOrderWorksheetClient';
 
@@ -25,37 +18,7 @@ export default async function ProjectSalesOrderWorksheetPage({
   return (
     <RequireAccess permission="projects.projects.view">
       <Container className="space-y-6">
-        <Breadcrumb>
-          <BreadcrumbList>
-            <BreadcrumbItem>
-              <BreadcrumbLink href="/">Home</BreadcrumbLink>
-            </BreadcrumbItem>
-            <BreadcrumbSeparator />
-            <BreadcrumbItem>
-              <BreadcrumbLink href="/project-sales/pipeline">Project Sales</BreadcrumbLink>
-            </BreadcrumbItem>
-            <BreadcrumbSeparator />
-            <BreadcrumbItem>
-              <BreadcrumbLink href={`/project-sales/${projectId}?tab=sales-orders`}>
-                Sales orders
-              </BreadcrumbLink>
-            </BreadcrumbItem>
-            <BreadcrumbSeparator />
-            <BreadcrumbItem>
-              {/* Not "Draft": this page is reached most often from a PUBLISHED order, and
-                  a crumb that calls it a draft contradicts the status pill beside the
-                  reference on the screen. The reference itself is not available here -
-                  the page is a server component and the worksheet is fetched below. */}
-              <BreadcrumbLink href={`/project-sales/${projectId}/sales-orders/${psoId}`}>
-                Sales order
-              </BreadcrumbLink>
-            </BreadcrumbItem>
-            <BreadcrumbSeparator />
-            <BreadcrumbItem>
-              <BreadcrumbPage>Worksheet</BreadcrumbPage>
-            </BreadcrumbItem>
-          </BreadcrumbList>
-        </Breadcrumb>
+        <PageHeader title="Worksheet" />
         <SalesOrderWorksheetClient projectId={projectId} psoId={psoId} />
       </Container>
     </RequireAccess>

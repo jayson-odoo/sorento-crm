@@ -343,7 +343,7 @@ function WorksheetView({
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0 break-words">
           <div className="flex flex-wrap items-center gap-2">
-            <h1 className="text-xl font-semibold break-words">{reference}</h1>
+            <h2 className="text-xl font-semibold break-words">{reference}</h2>
             <SalesOrderStatusPill status={worksheet.status} />
           </div>
           <p className="mt-1 text-sm text-muted-foreground break-words">

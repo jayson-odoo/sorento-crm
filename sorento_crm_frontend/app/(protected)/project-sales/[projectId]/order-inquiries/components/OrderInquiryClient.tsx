@@ -422,7 +422,7 @@ export function OrderInquiryClient({ projectId }: { projectId: string }) {
       <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0 break-words">
           <div className="flex items-center gap-1">
-            <h1 className="text-xl font-semibold">Order inquiry</h1>
+            <h2 className="text-xl font-semibold">Order inquiry</h2>
             <InfoHint label="About the order inquiry">
               <p>
                 Rows are derived when a sales order or an amendment publishes. Quantity a

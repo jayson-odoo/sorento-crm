@@ -21,7 +21,10 @@ export interface ToolbarHeadingProps {
 
 export const Toolbar = ({ children }: ToolbarProps) => {
   return (
-    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between grow pb-5">
+    <div
+      data-slot="toolbar"
+      className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between grow pb-5"
+    >
       {children}
     </div>
   );
@@ -32,7 +35,10 @@ export const ToolbarHeading = ({
   className,
 }: ToolbarHeadingProps) => {
   return (
-    <div className={cn('flex flex-col flex-wrap gap-px', className)}>
+    <div
+      data-slot="toolbar-heading"
+      className={cn('flex flex-col flex-wrap gap-px', className)}
+    >
       {children}
     </div>
   );
@@ -48,7 +54,10 @@ export const ToolbarTitle = ({ className, children }: ToolbarTitleProps) => {
 
 export const ToolbarActions = ({ children }: ToolbarActionsProps) => {
   return (
-    <div className="flex items-center flex-wrap gap-1.5 lg:gap-3.5">
+    <div
+      data-slot="toolbar-actions"
+      className="flex items-center flex-wrap gap-1.5 lg:gap-3.5"
+    >
       {children}
     </div>
   );

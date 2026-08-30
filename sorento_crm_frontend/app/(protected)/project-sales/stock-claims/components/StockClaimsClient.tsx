@@ -31,6 +31,7 @@ import type {
 } from '../../_shared/types/projectAllocation.types';
 import { ALLOCATION_CLAIM_STATE_LABEL } from '../../_shared/types/projectAllocation.types';
 import { formatQty } from '../../[projectId]/components/SalesOrderMoney';
+import { PageHeader } from '@/components/common/PageHeader';
 
 const STATE_BADGE: Record<AllocationClaimState, 'warning' | 'success' | 'destructive'> = {
   requested: 'warning',
@@ -264,20 +265,21 @@ export function StockClaimsClient() {
 
   return (
     <>
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0">
-          <h1 className="text-xl font-semibold break-words">Stock claims</h1>
-          <p className="text-sm text-muted-foreground break-words">
-            Stock one project took from another. Supply is composed in Fulfilment Planning.
-          </p>
-        </div>
-        <Button asChild variant="outline">
-          <Link href="/project-sales/fulfilment-planning">
-            <ClipboardList className="size-4" aria-hidden />
-            Open Fulfilment Planning
-          </Link>
-        </Button>
-      </div>
+      <PageHeader
+        title="Stock claims"
+        actions={
+          <Button asChild variant="outline">
+            <Link href="/project-sales/fulfilment-planning">
+              <ClipboardList className="size-4" aria-hidden />
+              Open Fulfilment Planning
+            </Link>
+          </Button>
+        }
+      >
+        <p className="text-sm text-muted-foreground break-words">
+          Stock one project took from another. Supply is composed in Fulfilment Planning.
+        </p>
+      </PageHeader>
 
       <DataGrid
         table={table}

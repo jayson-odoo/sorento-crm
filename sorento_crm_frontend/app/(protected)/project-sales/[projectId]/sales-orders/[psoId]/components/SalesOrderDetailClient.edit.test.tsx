@@ -244,7 +244,9 @@ describe('the edit view is the read view', () => {
     renderDetail();
 
     expect(
-      await screen.findByRole('heading', { level: 1, name: 'PSO-000123' }),
+      // The record card's identity is an h2: the page's one h1 is the title
+      // PageHeader renders (S5-01).
+      await screen.findByRole('heading', { level: 2, name: 'PSO-000123' }),
     ).toBeInTheDocument();
     expect(screen.getByText('Area group')).toBeInTheDocument();
     expect(screen.queryByRole('textbox', { name: 'Area group' })).not.toBeInTheDocument();

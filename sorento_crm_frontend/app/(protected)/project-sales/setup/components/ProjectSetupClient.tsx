@@ -33,6 +33,7 @@ import type { ProjectTemplate, ProjectType } from '../../_shared/types/project.t
 import { ProjectTypeDialog } from './ProjectTypeDialog';
 import { ProjectTemplateDialog } from './ProjectTemplateDialog';
 import { TemplateChecklistPanel } from './TemplateChecklistPanel';
+import { PageHeader } from '@/components/common/PageHeader';
 
 /**
  * Three levels of configuration on one screen, because they are only understandable
@@ -96,14 +97,13 @@ export function ProjectSetupClient() {
 
   return (
     <div className="space-y-5">
-      <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0 break-words">
-          <h1 className="text-xl font-semibold">Project setup</h1>
-          <p className="text-sm text-muted-foreground">
-            What kinds of project we pursue, and what a new one starts with.
-          </p>
-        </div>
-      </header>
+      <PageHeader
+        title="Project setup"
+      >
+        <p className="text-sm text-muted-foreground">
+          What kinds of project we pursue, and what a new one starts with.
+        </p>
+      </PageHeader>
 
       <div className="grid gap-4 xl:grid-cols-2">
         <ProjectTypesGrid

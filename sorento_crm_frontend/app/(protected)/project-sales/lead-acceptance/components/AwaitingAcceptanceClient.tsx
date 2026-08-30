@@ -32,6 +32,7 @@ import type { AwaitingAcceptanceRow } from '../../_shared/types/leadAcceptance.t
 import { AssignLeadDialog } from '../../leads/components/AssignLeadDialog';
 import { describeWait, informantSummary } from '../../leads/components/acceptance';
 import { NudgeAssigneeDialog } from './NudgeAssigneeDialog';
+import { PageHeader } from '@/components/common/PageHeader';
 
 const ANY_OWNER = '';
 
@@ -247,19 +248,20 @@ export function AwaitingAcceptanceClient() {
 
   return (
     <div className="space-y-5">
-      <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0 break-words">
-          <h1 className="text-xl font-semibold">Awaiting acceptance</h1>
-          <p className="text-sm text-muted-foreground">
-            Leads handed to a salesperson who has not accepted them yet.
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Button asChild variant="outline">
-            <Link href="/project-sales/leads">All leads</Link>
-          </Button>
-        </div>
-      </header>
+      <PageHeader
+        title="Awaiting acceptance"
+        actions={
+          <div className="flex flex-wrap items-center gap-2">
+            <Button asChild variant="outline">
+              <Link href="/project-sales/leads">All leads</Link>
+            </Button>
+          </div>
+        }
+      >
+        <p className="text-sm text-muted-foreground">
+          Leads handed to a salesperson who has not accepted them yet.
+        </p>
+      </PageHeader>
 
       {query.isError ? (
         <div className="rounded-lg border border-destructive/40 bg-destructive/5 px-6 py-10 text-center">

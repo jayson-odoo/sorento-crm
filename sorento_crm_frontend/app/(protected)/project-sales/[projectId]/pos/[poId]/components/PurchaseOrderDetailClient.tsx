@@ -232,7 +232,7 @@ export function PurchaseOrderDetailClient({
               {SOURCE_LABELS[shown.po_source] ?? shown.po_source}
             </Badge>
           </div>
-          <h1 className="mt-1 text-xl font-semibold break-words">{shown.po_number}</h1>
+          <h2 className="mt-1 text-xl font-semibold break-words">{shown.po_number}</h2>
           <p className="text-sm text-muted-foreground break-words">
             {[
               formatMyr(liveTotal ?? po.line_total),

@@ -26,6 +26,7 @@ import { formatDateInMalaysia } from '@/lib/helpers';
 import { useDivergences } from '../../_shared/hooks/useSoDivergence';
 import type { DivergenceSummary } from '../../_shared/types/soDivergence.types';
 import { InfoHint } from '../../[projectId]/components/InfoHint';
+import { PageHeader } from '@/components/common/PageHeader';
 
 const STATUS_OPTIONS = [
   { value: 'open', label: 'Still to reconcile' },
@@ -227,17 +228,19 @@ export function DivergenceListClient() {
 
   return (
     <>
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex min-w-0 items-center gap-2">
-          <h1 className="text-xl font-semibold break-words">AutoCount differences</h1>
-          <InfoHint label="About AutoCount differences">
-            While a sales order lives in both systems, either side can be edited. When an
-            AutoCount document disagrees with what we published, neither side wins
-            automatically: the difference is held here until somebody answers it line by
-            line. The sales order cannot be amended until they do.
-          </InfoHint>
-        </div>
-      </div>
+      <PageHeader
+        title={
+          <span className="inline-flex flex-wrap items-center gap-2">
+            AutoCount differences
+            <InfoHint label="About AutoCount differences">
+              While a sales order lives in both systems, either side can be edited. When an
+              AutoCount document disagrees with what we published, neither side wins
+              automatically: the difference is held here until somebody answers it line by
+              line. The sales order cannot be amended until they do.
+            </InfoHint>
+          </span>
+        }
+      />
 
       <DataGrid
         table={table}

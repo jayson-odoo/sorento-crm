@@ -1,13 +1,6 @@
 import { Metadata } from 'next';
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
 import { Container } from '@/components/common/container';
+import { PageHeader } from '@/components/common/PageHeader';
 import RequireAccess from '@/app/components/common/RequireAccess';
 import BackToList from '@/components/common/BackToList';
 import { LeadDetailClient } from './components/LeadDetailClient';
@@ -28,24 +21,12 @@ export default async function ProjectLeadDetailPage({
       <Container className="space-y-6">
         {/* Crumbs left, one Back right (D6, S3-01). The Back carries the list's
             query string, so it returns to the page the reader left. */}
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <Breadcrumb>
-            <BreadcrumbList>
-              <BreadcrumbItem>
-                <BreadcrumbLink href="/">Home</BreadcrumbLink>
-              </BreadcrumbItem>
-              <BreadcrumbSeparator />
-              <BreadcrumbItem>
-                <BreadcrumbLink href="/project-sales/leads">Leads</BreadcrumbLink>
-              </BreadcrumbItem>
-              <BreadcrumbSeparator />
-              <BreadcrumbItem>
-                <BreadcrumbPage>Lead</BreadcrumbPage>
-              </BreadcrumbItem>
-            </BreadcrumbList>
-          </Breadcrumb>
-          <BackToList listPath="/project-sales/leads" label="Back to leads" />
-        </div>
+        <PageHeader
+          title="Lead"
+          actions={
+            <BackToList listPath="/project-sales/leads" label="Back to leads" />
+          }
+        />
         <LeadDetailClient leadId={leadId} />
       </Container>
     </RequireAccess>
