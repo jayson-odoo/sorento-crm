@@ -18,11 +18,13 @@ import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
-import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
+import {
+  useDeferredRowAction,
+  useRowPending,
+} from '@/hooks/useDeferredRowAction';
 import { EM_DASH } from '../../lib/format';
 import {
   useCreatePolicy,
-  useDeletePolicy,
   useReorderPolicies,
   useUpdatePolicy,
 } from '../hooks/usePolicies';
@@ -62,7 +64,14 @@ export function ReorderPolicyGrid() {
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<ReorderPolicyRow | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<ReorderPolicyRow | null>(null);
+  // Delete asks nothing (D7): the row dims and a toast counts down with Cancel.
+  const deletion = useDeferredRowAction({
+    actionKey: 'reorder_policy.delete',
+    entityType: 'reorder_policy',
+    successMessage: 'Policy deleted',
+    invalidateKeys: [['scm', 'policies', 'reorder']],
+  });
+  const rowPending = useRowPending<ReorderPolicyRow>('reorder_policy');
 
   // Debounce the search input - server-side query (backend covers scope label +
   // product_code / name / category, not just the readable columns).
@@ -82,7 +91,6 @@ export function ReorderPolicyGrid() {
   });
   const createPolicy = useCreatePolicy();
   const updatePolicy = useUpdatePolicy();
-  const deletePolicy = useDeletePolicy();
 
   const rows = useMemo<ReorderPolicyRow[]>(() => data?.data ?? [], [data]);
   const total = data?.total ?? 0;
@@ -213,7 +221,9 @@ export function ReorderPolicyGrid() {
                   size="sm"
                   aria-label="Delete policy"
                   title="Delete policy"
-                  onClick={() => setDeleteTarget(row.original)}
+                  onClick={() =>
+                deletion.run({ id: row.original.id, subject: row.original.scope_label })
+              }
                 >
                   <Trash2 className="size-4 text-destructive" />
                 </Button>
@@ -226,7 +236,7 @@ export function ReorderPolicyGrid() {
         meta: { headerTitle: 'Actions', cellClassName: 'text-right' },
       },
     ],
-    [],
+    [deletion],
   );
 
   const table = useReactTable({
@@ -278,6 +288,7 @@ export function ReorderPolicyGrid() {
         recordCount={total}
         isLoading={isLoading}
         tableLayout={{ width: 'fixed', columnsResizable: true }}
+        rowPending={rowPending}
         emptyMessage="No reorder policies configured."
       >
         <Card>
@@ -345,23 +356,6 @@ export function ReorderPolicyGrid() {
         isSubmitting={createPolicy.isPending || updatePolicy.isPending}
       />
 
-      <ConfirmDeleteDialog
-        open={!!deleteTarget}
-        onOpenChange={(o) => !o && setDeleteTarget(null)}
-        title="Confirm delete"
-        description={
-          <>
-            This action cannot be undone. The{' '}
-            <strong>{deleteTarget ? SCOPE_TYPE_LABEL[deleteTarget.scope_type] : ''}</strong> policy
-            for <strong>{deleteTarget?.scope_label}</strong> will be permanently removed.
-          </>
-        }
-        successMessage="Policy deleted"
-        onDelete={async () => {
-          if (deleteTarget) await deletePolicy.mutateAsync(deleteTarget.id);
-        }}
-        onSuccess={() => setDeleteTarget(null)}
-      />
     </div>
   );
 }

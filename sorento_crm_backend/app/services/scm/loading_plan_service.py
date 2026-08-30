@@ -818,6 +818,30 @@ def has_notices(db: Session, plan_id: str) -> bool:
     )
 
 
+def delete_record(db: Session, plan_id: str) -> None:
+    """Hard delete, with its lines - unless something for it already left the building.
+
+    Q5: a notice is the record of what left, so deleting the plan under it would leave that
+    record pointing at nothing; a sent plan is cancelled instead. Two callers need this whole
+    rule, `DELETE /loading-plans/{id}` and the deferred `loading_plan.delete` record action,
+    so it lives here rather than in the route where only one of them could reach it.
+    """
+    from fastapi import HTTPException
+
+    plan = db.query(LoadingPlan).filter(LoadingPlan.id == plan_id).first()
+    if plan is None:
+        raise HTTPException(status_code=404, detail="Loading plan not found")
+    if has_notices(db, plan_id):
+        # The shape the route has always answered with, kept verbatim: the frontend
+        # service and `test_loading_plan_record` both read `detail.code`.
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "plan_sent", "message": "Sent plans are cancelled, not deleted."},
+        )
+    db.delete(plan)
+    db.commit()
+
+
 def cancel_record(db: Session, plan: LoadingPlan, *, actor: Optional[str] = None) -> LoadingPlan:
     """Cancel, and retire the link THIS PLAN's supplier still holds for it (Q4, R3/R11).
 

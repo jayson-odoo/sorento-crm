@@ -24,6 +24,7 @@ puts both there, so `execute` never has to reach for the action row.
 from __future__ import annotations
 
 import logging
+from typing import Optional
 
 from sqlalchemy.orm import Session
 
@@ -819,3 +820,164 @@ for _key, _entity, _fn, _label in (
             label=_label,
         )
     )
+
+
+# ----- SCM ------------------------------------------------------------------------------
+
+
+def _scm_actor(db: Session, payload: dict) -> Optional[str]:
+    """The caller's human NAME, which is what SCM writes into provenance."""
+    who = _actor(db, payload)
+    return who.get("name") or who.get("email") or None
+
+
+def _delete_loading_plan(db: Session, payload: dict):
+    from app.services.scm import loading_plan_service
+
+    return loading_plan_service.delete_record(db, _entity_id(payload))
+
+
+def _delete_market_topic(db: Session, payload: dict):
+    from app.services.scm import market_research_service
+
+    return market_research_service.delete_topic(db, _entity_id(payload))
+
+
+def _delete_container_size(db: Session, payload: dict):
+    from app.models.scm import ContainerSize
+    from app.services.error_handler import handle_not_found
+
+    # No service method to call: `DELETE /container-sizes/{id}` is these three lines and
+    # no rule of its own, so there is nothing here that could drift from it.
+    row = db.query(ContainerSize).filter(ContainerSize.id == _entity_id(payload)).first()
+    if row is None:
+        raise handle_not_found("Container size", _entity_id(payload))
+    db.delete(row)
+    db.commit()
+
+
+def _delete_currency_rate(db: Session, payload: dict):
+    from app.services.scm import currency_rate_service
+
+    # Keyed by CURRENCY, not a uuid - that is what the route takes too.
+    return currency_rate_service.delete_rate(db, _entity_id(payload))
+
+
+def _delete_reorder_policy(db: Session, payload: dict):
+    from app.services.scm import policy_service
+
+    return policy_service.delete_policy(db, _entity_id(payload))
+
+
+def _delete_scm_sales_order(db: Session, payload: dict):
+    from app.services.scm.sales_order_service import SalesOrderService
+
+    return SalesOrderService(db).delete(_entity_id(payload))
+
+
+def _delete_proforma_invoice(db: Session, payload: dict):
+    from app.services.scm import proforma_invoice_service
+
+    proforma_invoice_service.delete(db, _entity_id(payload))
+    db.commit()
+
+
+def _forget_supplier_code_alias(db: Session, payload: dict):
+    from app.services.scm import supplier_code_alias_service
+
+    out = supplier_code_alias_service.delete(
+        db, _entity_id(payload), actor=_scm_actor(db, payload)
+    )
+    db.commit()
+    return out
+
+
+register(
+    FormAction(
+        key="loading_plan.delete",
+        entity_types=("loading_plan",),
+        execute=_delete_loading_plan,
+        window=WINDOW_DESTRUCTIVE,
+        permission="scm.reorder.run",
+        label="Delete loading plan",
+    )
+)
+
+register(
+    FormAction(
+        key="market_topic.delete",
+        entity_types=("market_topic",),
+        execute=_delete_market_topic,
+        window=WINDOW_DESTRUCTIVE,
+        permission="scm.policy.manage",
+        label="Delete research topic",
+    )
+)
+
+register(
+    FormAction(
+        key="container_size.delete",
+        entity_types=("container_size",),
+        execute=_delete_container_size,
+        window=WINDOW_DESTRUCTIVE,
+        permission="scm.reorder.run",
+        label="Delete container size",
+    )
+)
+
+register(
+    FormAction(
+        key="currency_rate.delete",
+        entity_types=("currency_rate",),
+        execute=_delete_currency_rate,
+        window=WINDOW_DESTRUCTIVE,
+        permission="scm.config.manage",
+        label="Remove exchange rate",
+    )
+)
+
+register(
+    FormAction(
+        key="reorder_policy.delete",
+        entity_types=("reorder_policy",),
+        execute=_delete_reorder_policy,
+        window=WINDOW_DESTRUCTIVE,
+        permission="scm.policy.manage",
+        label="Delete policy",
+    )
+)
+
+register(
+    FormAction(
+        key="scm_sales_order.delete",
+        entity_types=("scm_sales_order",),
+        execute=_delete_scm_sales_order,
+        window=WINDOW_DESTRUCTIVE,
+        permission="scm.reorder.run",
+        label="Delete sales order",
+    )
+)
+
+register(
+    FormAction(
+        key="proforma_invoice.delete",
+        entity_types=("proforma_invoice",),
+        execute=_delete_proforma_invoice,
+        window=WINDOW_DESTRUCTIVE,
+        permission="scm.proforma_invoice.upload",
+        label="Delete proforma invoice",
+    )
+)
+
+register(
+    FormAction(
+        key="supplier_code_alias.forget",
+        entity_types=("supplier_code_alias",),
+        execute=_forget_supplier_code_alias,
+        # Reversible: the rows go back to whatever the ladder says now, and the ruling
+        # can be made again from the same screen.
+        window=WINDOW_REVERSIBLE,
+        permission="scm.reorder.run",
+        label="Forget supplier-code match",
+    )
+)
