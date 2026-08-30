@@ -259,9 +259,29 @@ def resolve_tag_sheet_print_payload(db: Session, download_id: str) -> dict:
     waits on one ready flag, and a picture that starts loading after it prints
     as a blank box.
     """
+    from app.models.base import company_scope
+
+    # Chicken and egg, and the sibling catalogue route solves it the same way.
+    # The caller is unauthenticated, so the session sits at the fail-closed UNSET
+    # scope and would find nothing at all; the page has to be read ACROSS
+    # companies to learn which company this render is for. What used to happen
+    # next was that the whole payload resolved there too - every product, price,
+    # asset and font of every other company in reach of a token issued for this
+    # one. So the widening stops at the lookup, and everything after it is pinned
+    # to the page's own company.
+    with company_scope(db, None):
+        inputs = render_inputs(db, download_id)
+    page = inputs["page"]
+    scope = frozenset({page.company_id}) if page.company_id else None
+
+    with company_scope(db, scope):
+        return _resolved_payload(db, inputs)
+
+
+def _resolved_payload(db: Session, inputs: dict) -> dict:
+    """The payload itself, resolved under whatever scope the caller pinned."""
     from app.services.dealer_kit import asset_service, tag_data_service
 
-    inputs = render_inputs(db, download_id)
     request = inputs["request"]
     doc = inputs["doc"] or {}
 

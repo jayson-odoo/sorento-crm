@@ -136,15 +136,15 @@ def read_tag_sheet_print_payload(
     if not render_token.verify(download_id, token):
         raise AppException(status_code=404, message="Not found")
 
-    from app.models.base import company_scope as _company_scope
     from app.services.dealer_kit.tag_sheet_export_service import (
         resolve_tag_sheet_print_payload,
     )
 
-    # Tag sheet pages are company-scoped; read across all companies to learn
-    # which one, then pin the scope for price resolution.
-    with _company_scope(db, None):
-        payload = resolve_tag_sheet_print_payload(db, download_id)
+    # Scoping lives INSIDE the resolver: it is the only code that knows which
+    # company the page belongs to, and it pins to that company for every read
+    # after the lookup. A `company_scope(db, None)` here would put it back where
+    # it was, resolving another company's products and prices onto these tags.
+    payload = resolve_tag_sheet_print_payload(db, download_id)
 
     # Filter sheets if specific ids were requested.
     if sheet and payload.get("doc"):
