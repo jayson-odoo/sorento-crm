@@ -425,14 +425,162 @@ describe('reorderZ', () => {
     expect([...next].map((l) => l.z_index).sort((a, b) => a - b)).toEqual([1, 2, 3, 4, 5]);
   });
 
-  it('treats a selected child as its top-level block', () => {
+  it('arranges a selected child among its siblings, not among the top-level layers (D60)', () => {
+    // c1 is already the bottom-most child of g, so Send to Back is a no-op
+    // inside the block and the block does not move either.
     expect(order(reorderZ(stack(), ['c1'], 'back'))).toEqual([
+      'x',
       'c1',
       'c2',
       'g',
-      'x',
       'y',
     ]);
+    expect(order(reorderZ(stack(), ['c1'], 'front'))).toEqual([
+      'x',
+      'c2',
+      'c1',
+      'g',
+      'y',
+    ]);
+  });
+
+  /**
+   * The shape the bug was found on: a product block over three children, with
+   * one top-level layer under it and one over it.
+   *
+   *   bg    (top level, z 1)
+   *   photo (child of p, z 2)
+   *   badge (child of p, z 3)
+   *   price (child of p, z 4)
+   *   p     (group,      z 5)
+   *   note  (top level,  z 6)
+   */
+  const blockDoc = () => [
+    box({ id: 'bg', x: 0, y: 0, w: 5, h: 5, z: 1 }),
+    box({ id: 'photo', x: 0, y: 0, w: 5, h: 5, z: 2 }),
+    box({ id: 'badge', x: 0, y: 0, w: 5, h: 5, z: 3 }),
+    box({ id: 'price', x: 0, y: 0, w: 5, h: 5, z: 4 }),
+    group({ id: 'p', x: 0, y: 0, w: 5, h: 5, z: 5, children: ['photo', 'badge', 'price'] }),
+    box({ id: 'note', x: 0, y: 0, w: 5, h: 5, z: 6 }),
+  ];
+
+  it('sends a child to the back of its own block and no further (D60)', () => {
+    expect(order(reorderZ(blockDoc(), ['badge'], 'back'))).toEqual([
+      'bg',
+      'badge',
+      'photo',
+      'price',
+      'p',
+      'note',
+    ]);
+  });
+
+  it('brings a child to the front of its own block and no further (D60)', () => {
+    expect(order(reorderZ(blockDoc(), ['photo'], 'front'))).toEqual([
+      'bg',
+      'badge',
+      'price',
+      'photo',
+      'p',
+      'note',
+    ]);
+  });
+
+  it('steps a child past exactly one sibling (D60)', () => {
+    expect(order(reorderZ(blockDoc(), ['photo'], 'forward'))).toEqual([
+      'bg',
+      'badge',
+      'photo',
+      'price',
+      'p',
+      'note',
+    ]);
+    expect(order(reorderZ(blockDoc(), ['price'], 'backward'))).toEqual([
+      'bg',
+      'photo',
+      'price',
+      'badge',
+      'p',
+      'note',
+    ]);
+  });
+
+  it('keeps the group layer directly above its subtree after every direction (D60)', () => {
+    for (const direction of ['front', 'forward', 'backward', 'back'] as const) {
+      const next = reorderZ(blockDoc(), ['badge'], direction);
+      const ids = order(next);
+      const block = ids.slice(ids.indexOf('p') - 3, ids.indexOf('p'));
+      expect(block.sort()).toEqual(['badge', 'photo', 'price']);
+      expect(byId(next, 'p').z_index).toBe(5);
+      expect(ids[ids.length - 1]).toBe('note');
+      expect(ids[0]).toBe('bg');
+      expect([...next].map((l) => l.z_index).sort((a, b) => a - b)).toEqual([1, 2, 3, 4, 5, 6]);
+    }
+  });
+
+  /**
+   * A block whose first child is itself a group:
+   *
+   *   bg   (top level,  z 1)
+   *   i1   (child of gi, z 2)
+   *   i2   (child of gi, z 3)
+   *   gi   (child of p,  z 4)
+   *   leaf (child of p,  z 5)
+   *   p    (group,       z 6)
+   *   note (top level,   z 7)
+   */
+  const nestedDoc = () => [
+    box({ id: 'bg', x: 0, y: 0, w: 5, h: 5, z: 1 }),
+    box({ id: 'i1', x: 0, y: 0, w: 5, h: 5, z: 2 }),
+    box({ id: 'i2', x: 0, y: 0, w: 5, h: 5, z: 3 }),
+    group({ id: 'gi', x: 0, y: 0, w: 5, h: 5, z: 4, children: ['i1', 'i2'] }),
+    box({ id: 'leaf', x: 0, y: 0, w: 5, h: 5, z: 5 }),
+    group({ id: 'p', x: 0, y: 0, w: 5, h: 5, z: 6, children: ['gi', 'leaf'] }),
+    box({ id: 'note', x: 0, y: 0, w: 5, h: 5, z: 7 }),
+  ];
+
+  it('reorders inside the immediate group only, leaving the outer order alone (D60)', () => {
+    expect(order(reorderZ(nestedDoc(), ['i2'], 'back'))).toEqual([
+      'bg',
+      'i2',
+      'i1',
+      'gi',
+      'leaf',
+      'p',
+      'note',
+    ]);
+  });
+
+  it('moves the inner group among its own siblings when the group itself is selected (D60)', () => {
+    expect(order(reorderZ(nestedDoc(), ['gi'], 'front'))).toEqual([
+      'bg',
+      'leaf',
+      'i1',
+      'i2',
+      'gi',
+      'p',
+      'note',
+    ]);
+  });
+
+  it('falls back to top-level blocks when the selection has no common parent (D60)', () => {
+    expect(order(reorderZ(blockDoc(), ['badge', 'note'], 'back'))).toEqual([
+      'photo',
+      'badge',
+      'price',
+      'p',
+      'note',
+      'bg',
+    ]);
+  });
+
+  it('renumbers 1..n whatever the scope (D60)', () => {
+    for (const ids of [['badge'], ['i2'], ['badge', 'note']]) {
+      const doc = ids[0] === 'i2' ? nestedDoc() : blockDoc();
+      const next = reorderZ(doc, ids, 'front');
+      const z = [...next].map((l) => l.z_index).sort((a, b) => a - b);
+      expect(z).toEqual(Array.from({ length: doc.length }, (_, i) => i + 1));
+    }
   });
 });
 

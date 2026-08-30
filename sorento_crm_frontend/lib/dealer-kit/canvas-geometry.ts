@@ -627,6 +627,12 @@ export type ReorderDirection = 'front' | 'forward' | 'backward' | 'back';
  *
  * Working in blocks rather than in single layers is what stops a "Bring to
  * Front" on a product block leaving its photo behind everything else.
+ *
+ * The move happens at the level of the selection's COMMON parent (D60), which
+ * is how Illustrator arranges within the current group: a badge selected
+ * inside a block is sent to the back OF THAT BLOCK, and the block itself does
+ * not move. A selection whose members sit under different parents has no group
+ * to arrange inside, so each id is taken as its top-level block instead.
  */
 export function reorderZ(
   layers: TagLayer[],
@@ -635,50 +641,66 @@ export function reorderZ(
 ): TagLayer[] {
   if (layers.length === 0 || ids.length === 0) return layers;
 
+  const index = indexById(layers);
   const parents = parentIndex(layers);
   const byZ = [...layers].sort((a, b) => a.z_index - b.z_index);
+  const parentOf = (id: string): string | null => parents.get(id) ?? null;
 
-  // One unit per top-level layer: itself plus everything under it, in z order.
-  const units = byZ
-    .filter((layer) => !parents.has(layer.id))
-    .map((layer) => {
-      const members = new Set([layer.id, ...descendantsOf(layers, layer.id)]);
-      return {
-        rootId: layer.id,
-        ids: byZ.filter((l) => members.has(l.id)).map((l) => l.id),
-      };
-    });
+  const selected = ids.filter((id) => index.has(id));
+  if (selected.length === 0) return layers;
 
-  const selectedRoots = new Set(ids.map((id) => topLevelOf(layers, id)));
-  const isSelected = (unit: { rootId: string }) => selectedRoots.has(unit.rootId);
+  // Arrange within the selection's COMMON parent, the way Illustrator arranges
+  // within the current group (D60). A selection spread over two parents has no
+  // group to arrange inside, so it falls back to whole top-level blocks.
+  const selectionParents = new Set(selected.map(parentOf));
+  const scopeParent = selectionParents.size === 1 ? parentOf(selected[0]) : null;
+  const movingRoots =
+    selectionParents.size === 1
+      ? new Set(selected)
+      : new Set(selected.map((id) => topLevelOf(layers, id)));
 
-  let ordered = [...units];
-  if (direction === 'front') {
-    ordered = [...ordered.filter((u) => !isSelected(u)), ...ordered.filter(isSelected)];
-  } else if (direction === 'back') {
-    ordered = [...ordered.filter(isSelected), ...ordered.filter((u) => !isSelected(u))];
-  } else if (direction === 'forward') {
-    for (let i = ordered.length - 2; i >= 0; i -= 1) {
-      if (isSelected(ordered[i]) && !isSelected(ordered[i + 1])) {
-        [ordered[i], ordered[i + 1]] = [ordered[i + 1], ordered[i]];
-      }
+  const arrange = (siblings: string[]): string[] => {
+    const isSelected = (id: string) => movingRoots.has(id);
+    const ordered = [...siblings];
+    if (direction === 'front') {
+      return [...ordered.filter((id) => !isSelected(id)), ...ordered.filter(isSelected)];
     }
-  } else {
+    if (direction === 'back') {
+      return [...ordered.filter(isSelected), ...ordered.filter((id) => !isSelected(id))];
+    }
+    if (direction === 'forward') {
+      for (let i = ordered.length - 2; i >= 0; i -= 1) {
+        if (isSelected(ordered[i]) && !isSelected(ordered[i + 1])) {
+          [ordered[i], ordered[i + 1]] = [ordered[i + 1], ordered[i]];
+        }
+      }
+      return ordered;
+    }
     for (let i = 1; i < ordered.length; i += 1) {
       if (isSelected(ordered[i]) && !isSelected(ordered[i - 1])) {
         [ordered[i], ordered[i - 1]] = [ordered[i - 1], ordered[i]];
       }
     }
-  }
+    return ordered;
+  };
+
+  // Walk the document bottom-up: a layer is emitted after its own subtree, so
+  // every block stays contiguous with its group layer directly above it, and
+  // only the scope's sibling list is re-ordered.
+  const seen = new Set<string>();
+  const emit = (parent: string | null): string[] => {
+    const siblings = byZ.filter((layer) => parentOf(layer.id) === parent).map((layer) => layer.id);
+    const out: string[] = [];
+    for (const id of parent === scopeParent ? arrange(siblings) : siblings) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+      out.push(...emit(id), id);
+    }
+    return out;
+  };
 
   const rank = new Map<string, number>();
-  let z = 1;
-  for (const unit of ordered) {
-    for (const id of unit.ids) {
-      rank.set(id, z);
-      z += 1;
-    }
-  }
+  emit(null).forEach((id, position) => rank.set(id, position + 1));
 
   return layers.map((layer) => ({ ...layer, z_index: rank.get(layer.id) ?? layer.z_index }));
 }
