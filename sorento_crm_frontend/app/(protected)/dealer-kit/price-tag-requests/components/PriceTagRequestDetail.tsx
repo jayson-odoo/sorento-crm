@@ -4,15 +4,16 @@
  * CRM price tag request detail view.
  *
  * The same page as every other record in this app (D50), and after the Apple
- * alignment S3 merge that means the stock-transfer shape exactly: the breadcrumb
- * and ONE Back on the toolbar row, then a record card carrying the document
- * number, its status pill and the read-only metadata, with `DetailActions`
- * (page-scoped pager, gear, one primary CTA) on its right. The request, its
- * lines, its PO attachments and its proof follow as cards.
+ * alignment S3/S5 merge that means the stock-transfer shape exactly: `PageHeader`
+ * (trail derived from the sidebar, title + ONE Back on the toolbar row), then a
+ * record card carrying the document number, its status pill and the read-only
+ * metadata, with `DetailActions` (page-scoped pager, gear, one primary CTA) on
+ * its right. The request, its lines, its PO attachments and its proof follow as
+ * cards.
  *
- * The breadcrumb's leaf is the DOC NUMBER rather than the word "Details", which
- * is why it lives here and not in the route's server component: that one holds
- * the id, and no id reaches a screen.
+ * The title is the DOC NUMBER rather than the word "Details", which is why it
+ * lives here and not in the route's server component: that one holds the id,
+ * and no id reaches a screen.
  *
  * Which action is primary and which are secondary is `priceTagActions`, so the
  * page never has to decide twice.
@@ -41,14 +42,6 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
@@ -56,6 +49,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import BackToList from '@/components/common/BackToList';
 import DetailActions from '@/components/common/DetailActions';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
+import { PageHeader } from '@/components/common/PageHeader';
 import { priceTagRequestsPagerQuery } from '../lib/listQuery';
 import {
   priceTagStatusLabel,
@@ -233,36 +227,15 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
     />
   );
 
-  /** The leaf is the DOC NUMBER, never the id: no UUID reaches a screen. */
-  const crumbs = (leaf: string) => (
-    <Breadcrumb>
-      <BreadcrumbList>
-        <BreadcrumbItem>
-          <BreadcrumbLink href="/">Home</BreadcrumbLink>
-        </BreadcrumbItem>
-        <BreadcrumbSeparator />
-        <BreadcrumbItem>
-          <BreadcrumbLink href="/dealer-kit">Dealer Kit</BreadcrumbLink>
-        </BreadcrumbItem>
-        <BreadcrumbSeparator />
-        <BreadcrumbItem>
-          <BreadcrumbLink href="/dealer-kit/price-tag-requests">
-            Price Tag Requests
-          </BreadcrumbLink>
-        </BreadcrumbItem>
-        <BreadcrumbSeparator />
-        <BreadcrumbItem>
-          <BreadcrumbPage>{leaf}</BreadcrumbPage>
-        </BreadcrumbItem>
-      </BreadcrumbList>
-    </Breadcrumb>
+  /** The title is the DOC NUMBER, never the id: no UUID reaches a screen. */
+  const header = (title: string) => (
+    <PageHeader title={title} actions={backLink} />
   );
 
   if (loading) {
     return (
       <div className="space-y-4">
-        {crumbs('Loading')}
-        <div className="flex justify-end">{backLink}</div>
+        {header('Price Tag Request')}
         <Skeleton className="h-32 w-full rounded-xl" />
         <Skeleton className="h-64 w-full rounded-xl" />
       </div>
@@ -272,8 +245,7 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
   if (!request) {
     return (
       <div className="space-y-4">
-        {crumbs('Not found')}
-        <div className="flex justify-end">{backLink}</div>
+        {header('Price Tag Request')}
         <Card className="flex flex-col items-center gap-3 p-10 text-center">
           <div className="text-sm font-semibold">Price tag request not found</div>
           <p className="max-w-md text-sm text-muted-foreground">
@@ -289,10 +261,7 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        {crumbs(request.doc_number)}
-        {backLink}
-      </div>
+      {header(request.doc_number)}
 
       {/* The record header - what the request IS, and what can be done to it. */}
       <Card>

@@ -168,7 +168,7 @@ describe('PriceTagRequestDetail', () => {
     renderDetail();
 
     expect(
-      await screen.findByRole('heading', { name: /PT-202608-0001/ }),
+      await screen.findByRole('heading', { name: /PT-202608-0001/, level: 1 }),
     ).toBeTruthy();
     expect(screen.getByText('Designing')).toBeTruthy();
     expect(screen.getByText(/Assigned to: Marketing Mei/)).toBeTruthy();
@@ -193,7 +193,7 @@ describe('PriceTagRequestDetail', () => {
     mockGet.mockResolvedValue(requestWith({ status: 'void' }));
     renderDetail();
 
-    await screen.findByRole('heading', { name: /PT-202608-0001/ });
+    await screen.findByRole('heading', { name: /PT-202608-0001/, level: 1 });
     expect(screen.queryByTestId('price-tag-primary-cta')).toBeNull();
     expect(screen.queryByTestId('gear-menu')).toBeNull();
   });
@@ -210,7 +210,7 @@ describe('PriceTagRequestDetail', () => {
     mockGet.mockResolvedValue(requestWith());
     renderDetail();
 
-    await screen.findByRole('heading', { name: /PT-202608-0001/ });
+    await screen.findByRole('heading', { name: /PT-202608-0001/, level: 1 });
     expect(screen.getByRole('button', { name: 'Previous price tag request' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Next price tag request' })).toBeTruthy();
   });
@@ -219,7 +219,7 @@ describe('PriceTagRequestDetail', () => {
     mockGet.mockResolvedValue(requestWith());
     renderDetail();
 
-    await screen.findByRole('heading', { name: /PT-202608-0001/ });
+    await screen.findByRole('heading', { name: /PT-202608-0001/, level: 1 });
     // The one way out, `BackToList`, which carries the list query the row click
     // wrote. Anything else in this slot is the ad-hoc button S3 removed.
     expect(
@@ -232,7 +232,7 @@ describe('PriceTagRequestDetail', () => {
     mockGet.mockResolvedValue(requestWith({ notes: null, lines: [], attachments: [] }));
     renderDetail();
 
-    await screen.findByRole('heading', { name: /PT-202608-0001/ });
+    await screen.findByRole('heading', { name: /PT-202608-0001/, level: 1 });
     expect(screen.getByText('No lines in this request.')).toBeTruthy();
     expect(screen.getByText('No PO attachments uploaded.')).toBeTruthy();
     expect(screen.getByText('The salesperson left no notes.')).toBeTruthy();

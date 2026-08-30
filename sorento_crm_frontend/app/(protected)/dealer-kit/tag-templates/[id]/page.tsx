@@ -21,12 +21,7 @@ import {
   BreadcrumbSeparator,
 } from '@/components/ui/breadcrumb';
 import { Container } from '@/components/common/container';
-import {
-  Toolbar,
-  ToolbarActions,
-  ToolbarHeading,
-  ToolbarTitle,
-} from '@/components/common/toolbar';
+import { PageHeader } from '@/components/common/PageHeader';
 import { Skeleton } from '@/components/ui/skeleton';
 import dynamic from 'next/dynamic';
 import type { TagTemplate, TagTemplateDoc } from '@/lib/dealer-kit/tag-template-types';
@@ -81,11 +76,7 @@ export default function TagTemplateEditorPage() {
   if (isLoading) {
     return (
       <Container>
-        <Toolbar>
-          <ToolbarHeading>
-            <Skeleton className="h-6 w-48" />
-          </ToolbarHeading>
-        </Toolbar>
+        <PageHeader title={<Skeleton className="h-6 w-48" />} crumbTitle="Loading" />
         <Skeleton className="mt-4 h-[400px] w-full" />
       </Container>
     );
@@ -94,17 +85,15 @@ export default function TagTemplateEditorPage() {
   if (error || !template) {
     return (
       <Container>
-        <Toolbar>
-          <ToolbarHeading>
-            <ToolbarTitle>Template not found</ToolbarTitle>
-          </ToolbarHeading>
-          <ToolbarActions>
+        <PageHeader
+          title="Template not found"
+          actions={
             <Button variant="outline" onClick={() => router.push('/dealer-kit/tag-templates')}>
               <ArrowLeft className="mr-1.5 size-4" />
               Back to templates
             </Button>
-          </ToolbarActions>
-        </Toolbar>
+          }
+        />
         <p className="mt-4 text-sm text-destructive">{error ?? 'Template not found'}</p>
       </Container>
     );
