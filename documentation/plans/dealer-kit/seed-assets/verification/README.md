@@ -468,40 +468,43 @@ every toolbar button.
 ## Round 8, 30 Aug: arrange works inside a group (D60, AC-M.25)
 
 Run on the `:3030` lane, navigated from `/` through the sidebar: Dealer Kit -> Room Designer ->
-Tag Templates -> `Kitchen Sink - Combo`. Nothing was saved at any point, and the reload at the end
-of the run brought the seeded z order back unchanged, which is the proof that the server copy was
-never written.
+Tag Templates -> `Kitchen Sink - Combo`. The view was zoomed to 425% and panned onto the main
+product block so the badge is readable; the wheel and the toolbar `+` both zoom, and the pan was a
+middle-button drag (D34, D44). Nothing was saved: Save was never pressed, and both undos put the
+seeded z order back exactly, asserted id by id against the seed.
+
+The badge under test is `NANO GRAIN`. The Layers panel tree shows it as a DIRECT child of the
+8-child main product block, beside `Image` (the callout disc) and `product image` (the sink
+photo), so the badge and the photo are siblings and Illustrator's answer is to arrange between
+them.
 
 | File | What it shows |
 | --- | --- |
-| `interaction-19-send-to-back-inside-group.png` | The state the reorder was fired from. A double-click on the canvas over the NANO GRAIN badge entered the main product block and selected the badge itself, not the block: the Transformer sits on the 9 x 4.4 mm caption over the sink photo and the Inspector reads `Z-Index 8`. Right-clicking here opened OUR context menu, with Cut / Copy / Paste / Duplicate, Bring to Front / Bring Forward / Send Backward / Send to Back, Group / Select Parent Group, Lock / Hide / Delete, and no browser menu behind it. |
+| `interaction-19-send-to-back-inside-group.png` | After Send to Back from our right-click menu. A double-click had entered the block and selected the badge itself (the Transformer sits on the 9 x 4.4 mm caption, and the menu that opened carried Cut / Copy / Paste / Duplicate, Bring to Front / Bring Forward / Send Backward / Send to Back, Group / Select Parent Group, Lock / Hide / Delete, with no browser menu behind it). The `NANO GRAIN` text is gone: it now draws UNDER the callout disc and the sink photo, with only the selection handles showing where it is. Before this round it stayed on top, because the reorder moved the whole block instead of the badge. |
+| `interaction-20-bring-to-front-inside-group.png` | The same badge after Bring to Front, one undo later. `NANO GRAIN` is legible over the photo again and the Inspector reads `Z-Index 15`, one below the block's group layer at 16, which is the top of ITS block and not the top of the tag: the accessories strip and the three alternative blocks still draw above it. |
 
-Read off the canvas either side of Send to Back, by the ids the Konva nodes carry:
+Read off the canvas by the ids the Konva nodes carry, bottom to top around the block:
 
-| | Draw order, bottom to top, around the block |
+| | Draw order |
 | --- | --- |
-| Before | `... badge-3`, **`hero`**, `callout`, **`callout-caption`**, `code`, `dimensions`, `spec-lines`, `list-price-label`, `list-price`, `price`, `product` (the group) |
-| After Send to Back | `... badge-3`, `list-price-label`, **`callout-caption`**, **`hero`**, `callout`, `code`, `dimensions`, `spec-lines`, `list-price`, `price`, `product` (the group) |
+| Seeded | `... badge-3`, **`hero`**, `callout`, **`callout-caption`**, `code`, `dimensions`, `spec-lines`, `list-price-label`, `list-price`, `price`, `product` (the group) |
+| Send to Back | `... badge-3`, `list-price-label`, **`callout-caption`**, **`hero`**, `callout`, `code`, `dimensions`, `spec-lines`, `list-price`, `price`, `product` |
+| Bring to Front | `... badge-3`, `list-price-label`, **`hero`**, `callout`, `code`, `dimensions`, `spec-lines`, `list-price`, `price`, **`callout-caption`**, `product` |
+| After both undos | identical to Seeded, all 16 ids in order |
 
-That is the bug fixed: the badge went to the bottom OF ITS BLOCK, under the sink photo, and the
-block did not move relative to anything outside it. The block is still contiguous with its group
-layer directly above its own subtree. `list-price-label` is a TOP-LEVEL layer that the seed had
-interleaved inside the block's z range; the renumbering to 1..n moves it out below the block,
-which is D40's rule about blocks being contiguous and predates this round. The badge's own
-`Z-Index` reads 8 before AND after by coincidence, because that layer moving out is worth exactly
-the one place the badge lost, which is why the ordering above is the measurement and the single
-field is not.
+The badge moves to the bottom and to the top of its OWN block and the block does not move relative
+to anything outside it; the block stays contiguous with its group layer directly above its own
+subtree. `list-price-label` is a TOP-LEVEL layer that the seed had interleaved inside the block's
+z range, so the renumbering to 1..n moves it out below the block. That is D40's contiguous-block
+rule and predates this round. It is also why the badge's `Z-Index` field reads 8 both before and
+after Send to Back: the badge lost exactly the one place that layer gained, which is why the
+ordering above is the measurement and the single field on its own is not.
 
-The Layers panel tree confirms the shape the ruling turns on: `NANO GRAIN`, `Image` (the callout
-disc) and `product image` (the sink photo) are all DIRECT children of the same 8-child product
-block, so the badge and the photo are siblings and Illustrator's answer is to arrange between
-them.
-
-**Left undone, with the reason.** The screenshot of the after state, the Bring to Front half and
-the `Ctrl+Z` back to the seeded order were not captured: mid-run the lane's dev server began
-answering every route with `Internal Server Error`, logging
-`EPERM: operation not permitted, scandir '.../app/(protected)/ticket-management'` on each request.
-The process (pid 60055) is still listening on :3030 but can no longer read the repo, and the
-worktree on :3090 went the same way at the same time, so this is not something this branch caused
-and not something a page reload clears. Restarting that server is the captain's call, not a
-coder's; the run picks up from the double-click in one minute once it is back.
+**A trap worth writing down.** Konva interaction needs REAL mouse events, and the shell has a trap
+of its own here: `S="npx -y agent-browser@0.27.0 --session x"; $S mouse move ...` is a
+`command not found` that the usual `>/dev/null 2>&1` swallows, so every step reports nothing and
+the page never moves. Spell the command out, and drive the canvas with one
+`batch "mouse move X Y" "mouse down left" "mouse up left"`, twice over for the double-click that
+enters a group. The DOM half of the page still needs the `MouseEvent('click')` dispatch the round
+7 note describes: the sidebar's `Room Designer` and `Tag Templates`, and the list row, all ignore
+`find role ... click`.
