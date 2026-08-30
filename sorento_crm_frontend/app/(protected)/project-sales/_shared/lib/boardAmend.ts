@@ -34,6 +34,49 @@ import {
 import { ORDER, SHORT_LABELS, rowOf, type SupplyKind } from './supplyVocabulary';
 
 /**
+ * Every field a Borrow carries THROUGH a mapper without ever being edited: who it is
+ * borrowed from, and (ladder v7.1 step 3, S4) which incoming document it comes off.
+ *
+ * ONE spread, used by every mapper in the chain, because the chain is four hops long -
+ * proposal or frozen decision -> `DraftBorrow` -> `BoardDecision` -> `ConfirmLine` - and a
+ * field re-listed at each hop is a field that will one day be listed at three of them. That
+ * is exactly what happened: `supply_key` was added to the two seeders and left out of Save
+ * and Confirm, so a step-3 borrow reached the server as a free-stock borrow at whatever bin
+ * the document is bound for, the placement link came down, and the confirmation re-checked
+ * the quantity against on-hand capacity at a bin holding a container that has not landed.
+ *
+ * Normalised to `null` rather than left `undefined`: the server's schema takes null and the
+ * two mean the same thing here, so one of them is enough.
+ */
+export interface BorrowPassThrough {
+  donor_core_line_id: string | null;
+  donor_so_number: string | null;
+  donor_line_no: number | null;
+  donor_agent_code: string | null;
+  same_agent: boolean;
+  donor_required_date: string | null;
+  supply_key: string | null;
+  supply_document: string | null;
+  arrival_date: string | null;
+}
+
+type BorrowFields = { [K in keyof BorrowPassThrough]?: BorrowPassThrough[K] };
+
+export function borrowPassThrough(row: BorrowFields): BorrowPassThrough {
+  return {
+    donor_core_line_id: row.donor_core_line_id ?? null,
+    donor_so_number: row.donor_so_number ?? null,
+    donor_line_no: row.donor_line_no ?? null,
+    donor_agent_code: row.donor_agent_code ?? null,
+    same_agent: row.same_agent ?? false,
+    donor_required_date: row.donor_required_date ?? null,
+    supply_key: row.supply_key ?? null,
+    supply_document: row.supply_document ?? null,
+    arrival_date: row.arrival_date ?? null,
+  };
+}
+
+/**
  * The engine's proposal for one row, as the editor's opening draft.
  *
  * Seeded from the SERVER's numbers (`qty_proposed_*`) with the source strip as the fallback,
@@ -134,14 +177,9 @@ function draftFromSources(
     qty: source.qty,
     reason: source.reason,
     donor_impact: { free_before: '0', free_after_full_borrow: '0', committed_qty: '0' },
-    donor_core_line_id: source.donor_core_line_id ?? null,
-    donor_so_number: source.donor_so_number ?? null,
-    donor_line_no: source.donor_line_no ?? null,
-    donor_agent_code: source.donor_agent_code ?? null,
-    same_agent: source.same_agent ?? false,
-    // The donor's own delivery date, which is the order-back's urgency: dropped here it was
-    // lost from the posted borrow the moment the composition went through this editor.
-    donor_required_date: source.donor_required_date ?? null,
+    // The donor and the document, carried whole (`borrowPassThrough`): dropped here they
+    // were lost from the posted borrow the moment the composition went through this editor.
+    ...borrowPassThrough(source),
   }));
 
   return {
@@ -228,14 +266,9 @@ function frozenDraft(
           free_after_full_borrow: '0',
           committed_qty: '0',
         },
-      // Group borrow (section 1c): the frozen row already names its donor
-      // line, carried through so re-approving it still checks the live commitment.
-      donor_core_line_id: row.donor_core_line_id ?? null,
-      donor_so_number: row.donor_so_number ?? null,
-      donor_line_no: row.donor_line_no ?? null,
-      donor_agent_code: row.donor_agent_code ?? null,
-      same_agent: row.same_agent ?? false,
-      donor_required_date: row.donor_required_date ?? null,
+      // The frozen row already names its donor line and its document; carried through so
+      // re-approving it still checks the live commitment and moves the same placement.
+      ...borrowPassThrough(row),
     })),
     buy_qty: frozen.buy_qty,
     buy_reason: frozen.buy_reason ?? '',
@@ -341,12 +374,7 @@ export function decisionFromAmendDraft(draft: DraftLine, reason: string): BoardD
       donor_project_id: row.donor_project_id ?? null,
       qty: fromMinor(toMinor(row.qty)),
       reason: row.reason.trim(),
-      donor_core_line_id: row.donor_core_line_id ?? null,
-      donor_so_number: row.donor_so_number ?? null,
-      donor_line_no: row.donor_line_no ?? null,
-      donor_agent_code: row.donor_agent_code ?? null,
-      same_agent: row.same_agent ?? false,
-      donor_required_date: row.donor_required_date ?? null,
+      ...borrowPassThrough(row),
     }));
   return {
     verdict: 'amended',
@@ -394,14 +422,10 @@ export function confirmLineFrom(
       donor_project_id: row.donor_project_id ?? null,
       qty: row.qty,
       reason: row.reason,
-      // Ladder v2 group borrow (section E.4): round-tripped so the confirmation checks
-      // this row against the donor line's live commitment, not against free stock.
-      donor_core_line_id: row.donor_core_line_id ?? null,
-      donor_so_number: row.donor_so_number ?? null,
-      donor_line_no: row.donor_line_no ?? null,
-      donor_agent_code: row.donor_agent_code ?? null,
-      same_agent: row.same_agent ?? false,
-      donor_required_date: row.donor_required_date ?? null,
+      // Round-tripped so the confirmation checks this row against what it is actually
+      // taking from - the donor line's live commitment, or the document's own open
+      // balance - and never against free stock at a bin.
+      ...borrowPassThrough(row),
     }));
   return {
     project_line_id: projectLineId,

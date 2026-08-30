@@ -290,6 +290,25 @@ export interface SupplyComponent {
   order_back_qty?: string | null;
   /** Addressing only, never rendered: re-identifies the donor's own line at confirm. */
   donor_core_line_id?: string | null;
+  /**
+   * The donor's own delivery date: the order-back's urgency, and the month its debt lands
+   * in on the Stock Debt view. The server has always sent it on a borrow component; it is
+   * declared here because the sheet's borrow row now states whose order pays for it.
+   */
+  donor_required_date?: string | null;
+  /**
+   * LADDER v7.1 STEP 3 (`supply_borrow`, S4): the incoming document this quantity comes off.
+   *
+   * `supply_key` addresses it (`spo:<allocation id>` / `po:<purchase order line id>`) and is
+   * NEVER rendered - it is what the Confirm moves the placement link onto. `supply_document`
+   * is how a person names it (`SPO 202607-S0105`, `PO 202607-P0031 line 3`), written by the
+   * server so the drill row and the engine's sentence cannot spell one document two ways.
+   * Both absent on every other rung.
+   */
+  supply_key?: string | null;
+  supply_document?: string | null;
+  /** The day it lands: an SPO's arrival, a PO line's `issue_date + lead time` (R29). */
+  arrival_date?: string | null;
 }
 
 /** One incoming SPO leg at the line's location. Timely covers, advisory does not. */
@@ -421,6 +440,16 @@ export interface SupplyLine {
   pool_cap?: string | null;
   pool_reorder_level?: string | null;
   components: SupplyComponent[];
+  /**
+   * THE FIVE STEPS OF LADDER v7.1 FOR THIS LINE, taken or not (R36, AC-S3-14).
+   *
+   * The same six answers about the same walk the board's contribution carries, so the ONE
+   * table renders on either surface (`BoardLadderOptionsTable`) - the server's schemas are
+   * siblings for the same reason (`SupplyLadderOption` / `BoardLadderOption`). Undeclared
+   * here the sheet dropped a populated array on the floor and the drawer showed no options
+   * at all, which reads as a line the engine never walked.
+   */
+  options?: BoardLadderOption[];
   timely_spo: SupplySpoRef[];
   advisory_spo: SupplySpoRef[];
   borrow_candidates: BorrowCandidate[];
@@ -496,6 +525,18 @@ export interface ConfirmBorrowComponent {
   same_agent?: boolean;
   /** The donor's own required date - the order-back's urgency (section E.4). */
   donor_required_date?: string | null;
+  /**
+   * LADDER v7.1 STEP 3 (`supply_borrow`, S4): the incoming document this quantity comes off.
+   *
+   * `supply_key` addresses it (`spo:<allocation id>` / `po:<purchase order line id>`) and is
+   * NEVER rendered - it is what the Confirm moves the placement link onto. `supply_document`
+   * is how a person names it (`SPO 202607-S0105`, `PO 202607-P0031 line 3`), written by the
+   * server so the drill row and the engine's sentence cannot spell one document two ways.
+   * Both absent on every other rung.
+   */
+  supply_key?: string | null;
+  supply_document?: string | null;
+  arrival_date?: string | null;
 }
 
 export interface ConfirmLine {
@@ -903,6 +944,18 @@ export interface BoardDecisionBorrow {
   donor_required_date?: string | null;
   /** The order-back this component raised: equal to what was taken. */
   order_back_qty?: string | null;
+  /**
+   * LADDER v7.1 STEP 3 (`supply_borrow`, S4): the incoming document this quantity comes off.
+   *
+   * `supply_key` addresses it (`spo:<allocation id>` / `po:<purchase order line id>`) and is
+   * NEVER rendered - it is what the Confirm moves the placement link onto. `supply_document`
+   * is how a person names it (`SPO 202607-S0105`, `PO 202607-P0031 line 3`), written by the
+   * server so the drill row and the engine's sentence cannot spell one document two ways.
+   * Both absent on every other rung.
+   */
+  supply_key?: string | null;
+  supply_document?: string | null;
+  arrival_date?: string | null;
 }
 
 /**
@@ -1302,6 +1355,17 @@ export interface BoardSource {
   donor_core_line_id?: string | null;
   /** The donor's own required date - the order-back's urgency (section E.4). */
   donor_required_date?: string | null;
+  /**
+   * LADDER v7.1 STEP 3 (`supply_borrow`, S4): the incoming document this quantity comes off.
+   *
+   * `supply_key` addresses it (`spo:<allocation id>` / `po:<purchase order line id>`) and is
+   * NEVER rendered - it is what the Confirm moves the placement link onto. `supply_document`
+   * is how a person names it (`SPO 202607-S0105`, `PO 202607-P0031 line 3`), written by the
+   * server so the drill row and the engine's sentence cannot spell one document two ways.
+   * Both absent on every other rung.
+   */
+  supply_key?: string | null;
+  supply_document?: string | null;
 }
 
 /** A donor the engine found for a line's Borrow. Named, never an id. */
@@ -1632,6 +1696,18 @@ export interface BoardBorrowComponent {
   donor_agent_code?: string | null;
   same_agent?: boolean;
   donor_required_date?: string | null;
+  /**
+   * LADDER v7.1 STEP 3 (`supply_borrow`, S4): the incoming document this quantity comes off.
+   *
+   * `supply_key` addresses it (`spo:<allocation id>` / `po:<purchase order line id>`) and is
+   * NEVER rendered - it is what the Confirm moves the placement link onto. `supply_document`
+   * is how a person names it (`SPO 202607-S0105`, `PO 202607-P0031 line 3`), written by the
+   * server so the drill row and the engine's sentence cannot spell one document two ways.
+   * Both absent on every other rung.
+   */
+  supply_key?: string | null;
+  supply_document?: string | null;
+  arrival_date?: string | null;
 }
 
 export interface BoardDecision {

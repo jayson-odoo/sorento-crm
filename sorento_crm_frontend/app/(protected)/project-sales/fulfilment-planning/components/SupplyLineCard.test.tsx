@@ -106,6 +106,60 @@ const BARE = line({
   pool_reorder_level: null,
 });
 
+/**
+ * SO406804 line 19 as `/supply` actually returns it (30 Aug 2026): the whole unit off ONE
+ * purchase-order line nobody is waiting on, a day after the delivery date, and the five
+ * options the ladder answered on the way there.
+ */
+const SUPPLY_BORROW = line({
+  uom: 'EA',
+  open_qty: '4',
+  fulfilment_location: 'BRW-IB',
+  components: [
+    {
+      kind: 'borrow',
+      qty: '4',
+      reason: 'Take 4 on order (PO 202606-S0006 line 5, arriving about 2 Sep 2026)',
+      source_location: 'BRW-IB',
+      source_warehouse_id: WH_BRW,
+      rung: 'supply_borrow',
+      cs_reason: null,
+      supply_key: 'po:f09bdfcf-7fb7-489c-a8d0-7ce2380c0f05',
+      supply_document: 'PO 202606-S0006 line 5',
+      arrival_date: '2026-09-02',
+    },
+  ],
+  options: [
+    { step: 'use', label: 'Use our locations', whole: false, chosen: false },
+    {
+      step: 'order_borrow',
+      label: 'Borrow on hand from a later order',
+      whole: false,
+      chosen: false,
+    },
+    {
+      step: 'supply_borrow',
+      label: 'Borrow incoming from a later order',
+      whole: true,
+      fulfil_date: '2026-09-02',
+      days_late: 1,
+      chosen: true,
+    },
+    { step: 'pool', label: 'Take from the pool', whole: false, chosen: false },
+    {
+      step: 'buy',
+      label: 'Buy',
+      whole: true,
+      fulfil_date: '2026-11-28',
+      days_late: 88,
+      chosen: false,
+    },
+  ],
+  timely_spo: [],
+  advisory_spo: [],
+  borrow_candidates: [],
+});
+
 const onChange = vi.fn();
 
 function renderCard(
@@ -484,6 +538,104 @@ describe('SupplyLineCard', () => {
     );
 
     expect((onChange.mock.calls[0][0] as DraftLine).borrow).toEqual([]);
+  });
+
+  // ------------------------------------------- ladder v7.1 step 3: borrow incoming (S4)
+  it('states the DOCUMENT a step-3 borrow comes off, not a donor’s stock position', () => {
+    // SO406804 line 19 on the dev book: the row printed `0 free before, 0 after taking all
+    // of it, 0 committed` - three true zeroes about a bin, and nothing at all about the
+    // container being taken, which is not on any shelf yet.
+    renderCard(SUPPLY_BORROW);
+
+    const document = screen.getByTestId(`borrow-document-borrow-${LINE_ID}-0`);
+    expect(
+      within(document).getByText('PO 202606-S0006 line 5, 4 EA, arriving 02/09/2026'),
+    ).toBeInTheDocument();
+    // Nobody is waiting on it, so there is no order to name and no debt month to state.
+    expect(
+      within(document).getByText('Free: nobody is waiting on this document.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/free before,/)).not.toBeInTheDocument();
+  });
+
+  it('names the donor order and the month its debt lands in, when one holds the document', () => {
+    renderCard(
+      line({
+        uom: 'EA',
+        open_qty: '50',
+        components: [
+          {
+            kind: 'borrow',
+            qty: '50',
+            reason:
+              'Borrow 50 arriving 15 Sep 2026 (SPO 202607-S0105) from SO414285 line 4 ' +
+              '(JEREMY, due 12 Nov 2026); its debt lands in Nov 2026',
+            source_location: 'BRW-IB',
+            source_warehouse_id: WH_BRW,
+            rung: 'supply_borrow',
+            donor_so_number: 'SO414285',
+            donor_line_no: 4,
+            donor_agent_code: 'JEREMY',
+            donor_required_date: '2026-11-12',
+            supply_key: 'spo:9f2c1a44-1111-4c11-8c11-111111111111',
+            supply_document: 'SPO 202607-S0105',
+            arrival_date: '2026-09-15',
+          },
+        ],
+        timely_spo: [],
+        advisory_spo: [],
+        borrow_candidates: [],
+      }),
+    );
+
+    const document = screen.getByTestId(`borrow-document-borrow-${LINE_ID}-0`);
+    expect(
+      within(document).getByText('SPO 202607-S0105, 50 EA, arriving 15/09/2026'),
+    ).toBeInTheDocument();
+    expect(
+      within(document).getByText(
+        'From SO414285 line 4 (JEREMY), due 12/11/2026; its debt lands in Nov 2026.',
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('opens a step-3 borrow on the engine’s own sentence, so the Confirm is not blocked', () => {
+    renderCard(SUPPLY_BORROW);
+
+    const reason = screen.getByLabelText(/^Reason/) as HTMLTextAreaElement;
+    expect(reason.value).toBe(
+      'Take 4 on order (PO 202606-S0006 line 5, arriving about 2 Sep 2026)',
+    );
+    expect(screen.queryByText(/needs a reason/)).not.toBeInTheDocument();
+  });
+
+  it('renders the ladder’s five options from the /supply payload, marking the chosen one', () => {
+    renderCard(SUPPLY_BORROW);
+
+    const table = screen.getByTestId(`ladder-options-${LINE_ID}`);
+    expect(
+      within(table).getByText('Borrow incoming from a later order'),
+    ).toBeInTheDocument();
+    expect(within(table).getByText('Buy')).toBeInTheDocument();
+    expect(
+      within(table).getByTestId(`ladder-option-date-${LINE_ID}-supply_borrow`),
+    ).toHaveTextContent('02/09/2026');
+    expect(
+      within(table).getByTestId(`ladder-option-late-${LINE_ID}-supply_borrow`),
+    ).toHaveTextContent('1');
+    // Exactly one row is the engine's proposal, and it is the step it composed from.
+    expect(within(table).getAllByText('Chosen')).toHaveLength(1);
+    expect(
+      within(
+        within(table).getByTestId(`ladder-option-${LINE_ID}-supply_borrow`),
+      ).getByText('Chosen'),
+    ).toBeInTheDocument();
+  });
+
+  it('says nothing about options on a line the payload states none for', () => {
+    renderCard(line());
+
+    expect(screen.queryByText('Options')).not.toBeInTheDocument();
   });
 
   it('warns that a discontinued product is discontinued and takes its reason (AC-B11)', () => {

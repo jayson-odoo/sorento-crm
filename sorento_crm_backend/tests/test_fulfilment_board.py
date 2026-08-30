@@ -4540,6 +4540,12 @@ def test_a_line_an_active_decision_covers_says_so_and_carries_what_was_frozen():
                 "donor_core_line_id": None,
                 "donor_required_date": None,
                 "order_back_qty": None,
+                # Ladder v7.1 step 3 (S4): the document a `supply_borrow` names. This
+                # composition is a plain free-stock borrow, so all three are absent - and
+                # the keys are still here, because they are what the editor re-posts.
+                "supply_key": None,
+                "supply_document": None,
+                "arrival_date": None,
             }
         ]
         # A covered line was not bought against a discontinued product, so no reason was

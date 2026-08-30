@@ -250,6 +250,20 @@ class _Open:
     uncounted_pinned: float = 0.0
 
 
+def parse_supply_key(supply_key: str) -> Tuple[Optional[str], Optional[str]]:
+    """`spo:<allocation id>` / `po:<purchase order line id>` split into `(kind, id)`.
+
+    The event key is this module's own address for a document, so it is read back here and
+    nowhere else - it was partitioned by hand in four places across two services, which is a
+    format written once and understood four times. `(None, None)` for anything that is not
+    one, which every caller treats as "no document".
+    """
+    kind, _sep, target = str(supply_key or "").partition(":")
+    if not target or kind not in (KIND_SPO, KIND_PO):
+        return None, None
+    return kind, target
+
+
 def _round(value: float) -> float:
     """Rounded, and NEVER negative zero: `-0.0` reaches a screen as `-0`, which reads as a
     debt of nothing rather than as nothing owed."""
@@ -718,5 +732,6 @@ __all__ = [
     "free_piles_at",
     "month_axis",
     "month_key",
+    "parse_supply_key",
     "tone_for",
 ]

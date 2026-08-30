@@ -162,8 +162,11 @@ const MONTH_NAMES = [
  * `2026-11` -> `Nov 2026`. The FULL year, unlike the Stock Debt board's own `Nov 26`: there
  * fifteen columns share one width, here the month sits beside a borrow sentence that already
  * says "its debt lands in Nov 2026" and the two must read as the same fact.
+ *
+ * Exported because the drawer's borrow row states the same month off the donor's own date
+ * (`SupplyLineCard`), and one spelling of a month is the whole point of this helper.
  */
-function debtMonthLabel(key: string): string {
+export function debtMonthLabel(key: string): string {
   const [year, month] = key.split('-');
   return `${MONTH_NAMES[Number(month) - 1] ?? month} ${year ?? ''}`.trim();
 }

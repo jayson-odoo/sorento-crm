@@ -336,6 +336,29 @@ export async function confirmSupply(
  * `Borrow 30 on hand at MWH-IB from SO414285 line 4 (JEREMY, due 12 Nov 2026); its debt lands
  * in Nov 2026`.
  *
+ * ── LADDER v7.1 STEP 3: BORROW INCOMING (S4, R27/R32/R33/R35) ──────────────────────────
+ *
+ * A step-3 source is kind `borrow` with `rung: 'supply_borrow'`, and it carries three fields
+ * no other rung sends:
+ *
+ *     supply_key:      'spo:<allocation id>' | 'po:<purchase order line id>'   // ADDRESSING ONLY
+ *     supply_document: 'SPO 202607-S0105' | 'PO 202607-P0031 line 3'           // what a person reads
+ *     arrival_date:    'YYYY-MM-DD'                                            // when it lands
+ *
+ * `supply_key` is never rendered: it is the address the Confirm moves the placement link onto
+ * (`order_inquiry_links.spo_allocation_id | po_line_id`), and it is keyed by ID rather than by
+ * document number because a re-import changes the number and not the row. `supply_document` is
+ * the SERVER's spelling of the same document; the client prints it and never assembles it.
+ * All three round-trip through `ConfirmBorrowComponent` verbatim - a proposal approved as it
+ * stands has to move the placement the ENGINE named, and a Confirm that arrives without them
+ * is re-checked against free stock at a bin holding a container that has not landed.
+ *
+ * ONE DOCUMENT COVERS THE WHOLE UNIT OR THE STEP GIVES NOTHING (R33), so every step-3 source
+ * on a line names the SAME document; several of them mean several holders of it (its free
+ * share first, then each donor). A source with no `donor_so_number` is the FREE share: nobody
+ * was waiting on it, so it raises no order-back and its sentence reads "Take" rather than
+ * "Borrow".
+ *
  * `BoardBorrowCandidate` (the manual `BorrowAddDialog`'s list) reads the SAME donors as step 2
  * and in the same order, which the server sets and the dialog never re-sorts:
  * `(same_agent desc, required_date desc, same_group desc, same_warehouse desc)` (R4, R19) -
