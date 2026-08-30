@@ -125,13 +125,10 @@ export function useDeferredAction(
   const pending = parked?.action_key === actionKey ? parked : null;
   const toastIdRef = useRef<string | number | null>(null);
   const lastPendingIdRef = useRef<string | null>(null);
-  /** Only the surface that STARTED the action reports how it ended. */
-  const startedIdRef = useRef<string | null>(null);
 
   const cancelMutation = useMutation({
     mutationFn: (id: string) => cancelPendingAction(id),
     onSuccess: () => {
-      startedIdRef.current = null;
       toast.success('Cancelled. Nothing was applied.');
       queryClient.invalidateQueries({ queryKey });
     },
@@ -148,7 +145,6 @@ export function useDeferredAction(
         commit: commit && ((): Promise<unknown> => commit(override ?? payload ?? {})),
       }),
     onSuccess: (action) => {
-      startedIdRef.current = action.id;
       setWatching(true);
       // The countdown is on screen before the next read comes back: the window is
       // ten seconds, and a second of "nothing happened" is where a second click
@@ -191,21 +187,27 @@ export function useDeferredAction(
 
     const outcome = data?.last_outcome;
     if (!outcome || outcome.id !== previousId) return;
-    if (startedIdRef.current !== previousId) return;
-    startedIdRef.current = null;
+    if (outcome.action_key !== actionKey) return;
 
+    // Two surfaces can be watching one record - the gear and the danger zone -
+    // and a click that re-renders their parent remounts them, so "the one that
+    // started it" is not a thing this can hold on to. The toast is keyed on the
+    // action instead, which is what stops the reader seeing it twice.
     if (outcome.status === 'committed') {
-      toast.success(successMessage);
+      toast.success(successMessage, { id: `pending-outcome-${outcome.id}` });
       for (const key of invalidateKeys ?? []) {
         queryClient.invalidateQueries({ queryKey: key });
       }
       onCommitted?.();
     } else if (outcome.status === 'failed') {
-      toast.error(outcome.error_text || 'The action could not be applied.');
+      toast.error(outcome.error_text || 'The action could not be applied.', {
+        id: `pending-outcome-${outcome.id}`,
+      });
     }
   }, [
     pending,
     data,
+    actionKey,
     watchFromMount,
     successMessage,
     invalidateKeys,
