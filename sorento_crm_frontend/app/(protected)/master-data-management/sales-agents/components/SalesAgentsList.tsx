@@ -10,7 +10,7 @@ import {
   getCoreRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { LoaderCircleIcon, MapPin, Search, Tag, X } from 'lucide-react';
+import { LoaderCircleIcon, MapPin, Tag } from 'lucide-react';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -22,7 +22,6 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Badge, BadgeDot } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { DataGrid } from '@/components/ui/data-grid';
@@ -31,7 +30,6 @@ import { DataGridListToolbar, type ToolbarAction } from '@/components/ui/data-gr
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { buildDetailSearch } from '@/lib/listNavQuery';
@@ -40,6 +38,8 @@ import { DEMAND_CLASS_OPTIONS, demandClassLabel } from '../lib/demandClass';
 import { salesAgentSourceLabel } from '../lib/salesAgentSource';
 import type { SalesAgent } from '../types/salesAgent.types';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
+import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 
 /** Which annotation a bulk dialog is setting. One field at a time, deliberately: a dialog
  *  that sets two at once has to answer "did I mean to clear the other one" every time. */
@@ -61,25 +61,24 @@ const BULK_COPY: Record<BulkField, { title: string; label: string; placeholder: 
 export default function SalesAgentsList() {
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [sorting, setSorting] = useState<SortingState>([{ id: 'sales_agent', desc: false }]);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const {
+    value: searchQuery,
+    setValue: setSearchQuery,
+    debouncedValue: debouncedSearch,
+    isSettling: debouncedSearchSettling,
+    reset: resetSearch,
+  } = useDebouncedSearch();
 
   // Back hands the list its own query string back, and the pager keeps
   // rewriting it, so the list reads it (S3-01). One hook, every list.
   useListStateFromUrl((state) => {
     setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
     setSorting(state.sorting);
-    setSearchQuery(state.searchQuery);
-    setDebouncedSearch(state.searchQuery);
+    resetSearch(state.searchQuery);
   });
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [bulkField, setBulkField] = useState<BulkField | null>(null);
   const [bulkValue, setBulkValue] = useState('');
-
-  useEffect(() => {
-    const t = setTimeout(() => setDebouncedSearch(searchQuery.trim()), 300);
-    return () => clearTimeout(t);
-  }, [searchQuery]);
 
   useEffect(() => {
     setPagination((p) => ({ ...p, pageIndex: 0 }));
@@ -304,26 +303,14 @@ export default function SalesAgentsList() {
             <DataGridListToolbar
               table={table}
               searchSlot={
-                <div className="relative">
-                  <Search className="absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    placeholder="Search agent code..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-64 ps-9"
-                  />
-                  {searchQuery ? (
-                    <Button
-                      mode="icon"
-                      variant="dim"
-                      className="absolute end-1.5 top-1/2 h-6 w-6 -translate-y-1/2"
-                      onClick={() => setSearchQuery('')}
-                      aria-label="Clear search"
-                    >
-                      <X />
-                    </Button>
-                  ) : null}
-                </div>
+                <ListSearchInput
+                  value={searchQuery}
+                  onChange={setSearchQuery}
+                  isSettling={debouncedSearchSettling}
+                  placeholder="Search agent code..."
+                  aria-label="Clear search"
+                  className="w-64"
+                />
               }
               // Selection-gated, and the list HAS a selection column now, so the button is
               // reachable rather than permanently disabled.

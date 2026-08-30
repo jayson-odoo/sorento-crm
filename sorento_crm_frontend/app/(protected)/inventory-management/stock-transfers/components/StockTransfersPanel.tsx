@@ -10,7 +10,7 @@ import {
   getPaginationRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { Check, Search, Truck, X } from 'lucide-react';
+import { Check, Truck } from 'lucide-react';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -22,7 +22,6 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
@@ -31,7 +30,6 @@ import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 
-import { Input } from '@/components/ui/input';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { buildDetailSearch } from '@/lib/listNavQuery';
@@ -52,6 +50,8 @@ import {
 } from './StockTransferActions';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 import { RowActionsMenu } from '@/components/common/RowActionsMenu';
+import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { stockTransferActions } from '../actions';
 
 // Both option lists are derived from the label maps rather than retyped, so a word can only
@@ -142,8 +142,13 @@ export function StockTransfersPanel({
   listingKey,
   showFilters = true,
 }: StockTransfersPanelProps) {
-  const [search, setSearch] = React.useState('');
-  const [debounced, setDebounced] = React.useState('');
+  const {
+    value: search,
+    setValue: setSearch,
+    debouncedValue: debounced,
+    isSettling: debouncedSettling,
+    reset: resetSearch,
+  } = useDebouncedSearch();
   const [state, setState] = React.useState('');
   const [kind, setKind] = React.useState('');
   const [fromWarehouseId, setFromWarehouseId] = React.useState('');
@@ -168,8 +173,7 @@ export function StockTransfersPanel({
   useListStateFromUrl((urlState) => {
     setPagination({ pageIndex: urlState.pageIndex, pageSize: urlState.pageSize });
     setSorting(urlState.sorting);
-    setSearch(urlState.searchQuery);
-    setDebounced(urlState.searchQuery);
+    resetSearch(urlState.searchQuery);
     setState(urlState.filters.state ?? '');
     setKind(urlState.filters.kind ?? '');
     setFromWarehouseId(urlState.filters.from_warehouse_id ?? '');
@@ -182,11 +186,6 @@ export function StockTransfersPanel({
     action: TransferAction;
   } | null>(null);
   const [confirmingBulk, setConfirmingBulk] = React.useState(false);
-
-  React.useEffect(() => {
-    const timer = window.setTimeout(() => setDebounced(search.trim()), 300);
-    return () => window.clearTimeout(timer);
-  }, [search]);
 
   React.useEffect(() => {
     setPagination((previous) => ({ ...previous, pageIndex: 0 }));
@@ -566,30 +565,14 @@ export function StockTransfersPanel({
                 table={table}
                 exportConfig={false}
                 searchSlot={
-                  <div className="relative">
-                    <Search
-                      className="absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
-                      aria-hidden
-                    />
-                    <Input
-                      placeholder="Search by transfer, item, order or location"
-                      value={search}
-                      onChange={(event) => setSearch(event.target.value)}
-                      aria-label="Search stock transfers"
-                      className="w-full ps-9 sm:w-80"
-                    />
-                    {search.length > 0 && (
-                      <Button
-                        mode="icon"
-                        variant="dim"
-                        aria-label="Clear the search"
-                        className="absolute end-1.5 top-1/2 h-6 w-6 -translate-y-1/2"
-                        onClick={() => setSearch('')}
-                      >
-                        <X />
-                      </Button>
-                    )}
-                  </div>
+                  <ListSearchInput
+                    value={search}
+                    onChange={setSearch}
+                    isSettling={debouncedSettling}
+                    placeholder="Search by transfer, item, order or location"
+                    aria-label="Search stock transfers"
+                    className="w-full"
+                  />
                 }
                 bulkActions={
                   showFilters

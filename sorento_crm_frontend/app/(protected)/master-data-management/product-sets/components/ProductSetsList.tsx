@@ -9,7 +9,7 @@ import {
   getCoreRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { Layers, Plus, Search, Sparkles, Trash2, X } from 'lucide-react';
+import { Layers, Plus, Sparkles, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { RowActionsMenu } from '@/components/common/RowActionsMenu';
@@ -24,8 +24,9 @@ import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { buildDetailSearch } from '@/lib/listNavQuery';
-import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
+import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { useProductSets } from '../hooks/useProductSets';
 import type { ProductSet } from '../types/productSet.types';
 import { ProductSetFormModal } from './ProductSetFormModal';
@@ -55,14 +56,13 @@ function priceCell(set: ProductSet) {
 export default function ProductSetsList() {
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [sorting, setSorting] = useState<SortingState>([{ id: 'set_code', desc: false }]);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const {
+    value: searchQuery,
+    setValue: setSearchQuery,
+    debouncedValue: debouncedSearch,
+    isSettling: debouncedSearchSettling,
+  } = useDebouncedSearch();
   const [creating, setCreating] = useState(false);
-
-  useEffect(() => {
-    const t = setTimeout(() => setDebouncedSearch(searchQuery.trim()), 300);
-    return () => clearTimeout(t);
-  }, [searchQuery]);
 
   useEffect(() => {
     setPagination((p) => ({ ...p, pageIndex: 0 }));
@@ -291,26 +291,14 @@ export default function ProductSetsList() {
               <DataGridListToolbar
                 table={table}
                 searchSlot={
-                  <div className="relative">
-                    <Search className="absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                    <Input
-                      placeholder="Search set code or name..."
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      className="w-64 ps-9"
-                    />
-                    {searchQuery ? (
-                      <Button
-                        mode="icon"
-                        variant="dim"
-                        className="absolute end-1.5 top-1/2 h-6 w-6 -translate-y-1/2"
-                        onClick={() => setSearchQuery('')}
-                        aria-label="Clear search"
-                      >
-                        <X />
-                      </Button>
-                    ) : null}
-                  </div>
+                  <ListSearchInput
+                    value={searchQuery}
+                    onChange={setSearchQuery}
+                    isSettling={debouncedSearchSettling}
+                    placeholder="Search set code or name..."
+                    aria-label="Clear search"
+                    className="w-64"
+                  />
                 }
                 exportConfig={false}
                 onRefresh={() => void refetch()}

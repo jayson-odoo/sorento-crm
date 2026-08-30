@@ -84,12 +84,6 @@ import type {
  */
 export const USE_SUMMARY_ORDER_MOCKS = false;
 
-/** How long the mock takes to "fetch", so the loading skeleton is actually visible. */
-const MOCK_LATENCY_MS = 400;
-
-/** The `loading` scenario's delay: long enough to inspect the skeleton, not forever. */
-const LOADING_SCENARIO_MS = 60_000;
-
 /** The date every ageing figure below is counted to. */
 export const AS_OF = '2026-08-03';
 
@@ -1216,16 +1210,9 @@ function buildLocations(productCode: string): OrderSummaryLocations {
 
 // ── the mocked calls ────────────────────────────────────────────────────────
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
-}
-
-/** The mocked report GET. Resolves after a delay so the skeleton is real. */
+/** The mocked report GET. */
 export async function mockOrderSummary(): Promise<OrderSummaryReport> {
   const scenario = frontPlanningScenario();
-  await sleep(scenario === 'loading' ? LOADING_SCENARIO_MS : MOCK_LATENCY_MS);
   const grain = runGrainFields();
   return {
     run_id: MOCK_RUN_ID,
@@ -1242,7 +1229,6 @@ export async function mockOrderSummaryDemand(
   productCode: string,
   kind: OrderSummaryDemandKind,
 ): Promise<OrderSummaryDemandDrill> {
-  await sleep(MOCK_LATENCY_MS);
   return buildDrill(productCode, kind);
 }
 
@@ -1250,7 +1236,6 @@ export async function mockOrderSummaryDemand(
 export async function mockOrderSummaryLocations(
   productCode: string,
 ): Promise<OrderSummaryLocations> {
-  await sleep(MOCK_LATENCY_MS);
   return buildLocations(productCode);
 }
 
@@ -1258,7 +1243,6 @@ export async function mockOrderSummaryLocations(
 export async function mockOrderSummarySuppliers(
   productCode: string,
 ): Promise<OrderSummarySuppliers> {
-  await sleep(MOCK_LATENCY_MS);
   return SUMMARY_ORDER_FIXTURES.suppliers(productCode);
 }
 
@@ -1276,7 +1260,6 @@ export async function mockRecordOrderDecision(
   productCode: string,
   input: OrderSummaryDecisionInput,
 ): Promise<OrderSummaryDecisionResult> {
-  await sleep(MOCK_LATENCY_MS);
   const scenario = frontPlanningScenario();
   const row = ROWS.find((r) => r.product_code === productCode);
 

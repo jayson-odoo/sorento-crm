@@ -16,6 +16,7 @@ import {
   selectTriggerVariants,
   type SelectTriggerSize,
 } from '@/components/common/select-trigger-variants';
+import { SEARCH_DEBOUNCE_MS } from '@/hooks/useDebouncedSearch';
 
 export type SearchableSelectOption = {
   value: string;
@@ -46,7 +47,8 @@ export type SearchableSelectProps = {
   options?: SearchableSelectOption[];
   /**
    * Async mode: server-search. Called with the popover search text (empty on open for the
-   * first page), debounced 300ms. Results replace the list; stale responses are dropped.
+   * first page), debounced by `SEARCH_DEBOUNCE_MS`. Results replace the list; stale
+   * responses are dropped.
    */
   fetchOptions?: (query: string, pageIndex: number) => Promise<SearchableSelectOption[]>;
   /**
@@ -206,7 +208,7 @@ export function SearchableSelect({
   React.useEffect(() => {
     if (!isAsync || !open) return;
     const seeded = query === '' || query === initialQuery;
-    const t = setTimeout(() => void runFetch(query), seeded ? 0 : 300);
+    const t = setTimeout(() => void runFetch(query), seeded ? 0 : SEARCH_DEBOUNCE_MS);
     return () => clearTimeout(t);
   }, [isAsync, open, query, initialQuery, runFetch]);
 

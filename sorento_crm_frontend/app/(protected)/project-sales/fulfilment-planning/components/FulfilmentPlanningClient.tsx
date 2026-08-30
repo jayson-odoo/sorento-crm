@@ -12,7 +12,7 @@ import {
   getPaginationRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { LayoutGrid, PackageSearch, Play, Search, X } from 'lucide-react';
+import { LayoutGrid, PackageSearch, Play } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
@@ -21,7 +21,6 @@ import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
-import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { formatDateInMalaysia } from '@/lib/helpers';
@@ -50,6 +49,8 @@ import { InfoHint } from '../../[projectId]/components/InfoHint';
 import { FulfilmentBoardPanel } from './FulfilmentBoardPanel';
 import { FulfilmentPlanningSheet } from './FulfilmentPlanningSheet';
 import { PageHeader } from '@/components/common/PageHeader';
+import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 
 /**
  * How many orders may be planned together (PLAN 13.2).
@@ -110,8 +111,12 @@ export function FulfilmentPlanningClient() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [reviewState, setReviewState] = React.useState('all');
-  const [search, setSearch] = React.useState('');
-  const [debounced, setDebounced] = React.useState('');
+  const {
+    value: search,
+    setValue: setSearch,
+    debouncedValue: debounced,
+    isSettling: debouncedSettling,
+  } = useDebouncedSearch();
   const [openRow, setOpenRow] = React.useState<FulfilmentPlanningRow | null>(null);
   const [rowSelection, setRowSelection] = React.useState<RowSelectionState>({});
   /**
@@ -164,11 +169,6 @@ export function FulfilmentPlanningClient() {
     if (!field || !SORTABLE_COLUMNS.has(field)) return DEFAULT_SORTING;
     return [{ id: field, desc: searchParams.get('dir') === 'desc' }];
   });
-
-  React.useEffect(() => {
-    const timer = window.setTimeout(() => setDebounced(search.trim()), 300);
-    return () => window.clearTimeout(timer);
-  }, [search]);
 
   // Narrowing the set, or re-ordering it, changes which rows are on which page, so page 3 of
   // the old set is a page of nothing in the new one.
@@ -722,33 +722,14 @@ export function FulfilmentPlanningClient() {
               // are rarely on one page, so the box has to survive the first tick.
               keepSearchWhileSelected
               searchSlot={
-                <div className="relative">
-                  <Search
-                    className="absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
-                    aria-hidden
-                  />
-                  <Input
-                    placeholder="Search sales order, customer, project or product"
-                    // The one surprise, as a hint on the box rather than prose on the page: a
-                    // product needle matches the ORDER, so the row still counts the whole
-                    // order, and only an outstanding line counts as a match.
-                    title="A product match lists the whole order that has an outstanding line for it."
-                    value={search}
-                    onChange={(event) => setSearch(event.target.value)}
-                    className="w-full ps-9 sm:w-72"
-                  />
-                  {search.length > 0 && (
-                    <Button
-                      mode="icon"
-                      variant="dim"
-                      aria-label="Clear the search"
-                      className="absolute end-1.5 top-1/2 h-6 w-6 -translate-y-1/2"
-                      onClick={() => setSearch('')}
-                    >
-                      <X />
-                    </Button>
-                  )}
-                </div>
+                <ListSearchInput
+                  value={search}
+                  onChange={setSearch}
+                  isSettling={debouncedSettling}
+                  placeholder="Search sales order, customer, project or product"
+                  aria-label="Clear the search"
+                  className="w-full"
+                />
               }
               filters={{
                 kind: 'custom',

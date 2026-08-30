@@ -8,7 +8,7 @@ import {
   getCoreRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { Info, Pencil, Plus, Search, Trash2, X } from 'lucide-react';
+import { Info, Pencil, Plus, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardHeading, CardTable, CardToolbar } from '@/components/ui/card';
@@ -16,12 +16,13 @@ import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   useDeferredRowAction,
   useRowPending,
 } from '@/hooks/useDeferredRowAction';
+import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { EM_DASH } from '../../lib/format';
 import {
   useCreatePolicy,
@@ -59,8 +60,12 @@ function triggerSummary(row: ReorderPolicyRow): string {
 export function ReorderPolicyGrid() {
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 10 });
   const [sorting, setSorting] = useState<SortingState>([]);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const {
+    value: searchQuery,
+    setValue: setSearchQuery,
+    debouncedValue: debouncedSearch,
+    isSettling: debouncedSearchSettling,
+  } = useDebouncedSearch();
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<ReorderPolicyRow | null>(null);
@@ -72,13 +77,6 @@ export function ReorderPolicyGrid() {
     invalidateKeys: [['scm', 'policies', 'reorder']],
   });
   const rowPending = useRowPending<ReorderPolicyRow>('reorder_policy');
-
-  // Debounce the search input - server-side query (backend covers scope label +
-  // product_code / name / category, not just the readable columns).
-  useEffect(() => {
-    const t = setTimeout(() => setDebouncedSearch(searchQuery.trim()), 300);
-    return () => clearTimeout(t);
-  }, [searchQuery]);
 
   // Server-side paging / sorting / search - the backend GET /policies honours
   // page/limit/sort/dir/query, so nothing is truncated and search reaches fields
@@ -294,26 +292,14 @@ export function ReorderPolicyGrid() {
         <Card>
           <CardHeader className="flex items-center justify-between gap-3">
             <CardHeading>
-              <div className="relative">
-                <Search className="absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  placeholder="Search scope or type..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-64 ps-9"
-                />
-                {searchQuery ? (
-                  <Button
-                    mode="icon"
-                    variant="dim"
-                    className="absolute end-1.5 top-1/2 h-6 w-6 -translate-y-1/2"
-                    onClick={() => setSearchQuery('')}
-                    aria-label="Clear search"
-                  >
-                    <X />
-                  </Button>
-                ) : null}
-              </div>
+              <ListSearchInput
+                value={searchQuery}
+                onChange={setSearchQuery}
+                isSettling={debouncedSearchSettling}
+                placeholder="Search scope or type..."
+                aria-label="Clear search"
+                className="w-64"
+              />
             </CardHeading>
             <CardToolbar>
               <Button
