@@ -10,6 +10,7 @@ import {
   subscribeToPush,
   unsubscribeFromPush,
 } from '@/services/pushService';
+import { describePushFailure } from '@/lib/pushFailureMessage';
 
 /** Browser push notification opt-in (TCK-33). The subscription is the opt-in;
  *  no separate server pref. */
@@ -26,11 +27,15 @@ export default function PushNotificationPreference() {
   const onEnable = async () => {
     setBusy(true);
     try {
-      const ok = await subscribeToPush();
-      setEnabled(ok);
-      toast[ok ? 'success' : 'error'](
-        ok ? 'Notifications enabled' : 'Could not enable notifications',
-      );
+      const result = await subscribeToPush();
+      setEnabled(result.ok);
+      if (result.ok) {
+        toast.success('Notifications enabled');
+        return;
+      }
+      // Why it failed decides what the user has to go and do about it.
+      const { title, description } = describePushFailure(result.reason);
+      toast.error(title, description ? { description } : undefined);
     } finally {
       setBusy(false);
     }
