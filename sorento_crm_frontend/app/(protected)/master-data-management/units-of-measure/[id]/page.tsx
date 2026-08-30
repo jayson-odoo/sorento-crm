@@ -37,7 +37,9 @@ export default function UOMDetailPage({
     surface: 'inline',
     watchFromMount: true,
     successMessage: 'Unit of measure deleted',
-    invalidateKeys: [['uoms']],
+    // The select is what every product form picks a UOM from; the immediate mutation
+    // refetched both, and only refetching the list leaves a deleted unit selectable.
+    invalidateKeys: [['uoms'], ['uom-select']],
     onCommitted: () => router.push(backHref),
   });
 

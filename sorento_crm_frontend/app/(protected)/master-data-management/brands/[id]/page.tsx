@@ -86,7 +86,7 @@ export default function BrandDetailPage({ params }: { params: Promise<{ id: stri
     surface: 'inline',
     watchFromMount: true,
     successMessage: 'Brand deleted',
-    invalidateKeys: [['brands']],
+    invalidateKeys: [['brands'], ['brand-select']],
     onCommitted: () => router.push(backHref),
   });
 

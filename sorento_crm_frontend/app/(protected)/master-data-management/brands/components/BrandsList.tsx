@@ -36,7 +36,10 @@ export default function BrandsList() {
     actionKey: 'brand.delete',
     entityType: 'brand',
     successMessage: 'Brand deleted',
-    invalidateKeys: [['brands']],
+    // The select feeds every form that picks a brand, so it is refetched beside the
+    // list - the immediate mutation always did both, and a deferred delete that
+    // forgot one leaves a deleted brand pickable until the next hard refresh.
+    invalidateKeys: [['brands'], ['brand-select']],
   });
   const rowPending = useRowPending<Brand>('brand');
 

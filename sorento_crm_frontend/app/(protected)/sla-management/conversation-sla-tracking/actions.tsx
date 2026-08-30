@@ -58,7 +58,9 @@ export function useConversationSlaActions(
     surface,
     watchFromMount: surface === 'inline',
     successMessage: 'Tracking deleted',
-    invalidateKeys: [['conversation-sla-tracking']],
+    // The dashboard counts these records, so it is stale the moment one goes. The
+    // immediate mutation refetched both.
+    invalidateKeys: [['conversation-sla-tracking'], ['sla-tracking-dashboard-metrics']],
     onCommitted: onDeleted,
   });
 
