@@ -127,6 +127,7 @@ import { CanvasToolbar, type CanvasTool } from './CanvasToolbar';
 import { CanvasRulers, RULER_THICKNESS } from './CanvasRulers';
 import { LayersPanel } from './LayersPanel';
 import { InspectorPanel } from './InspectorPanel';
+import { InsertFieldDialog } from './InsertFieldDialog';
 import { useCanvasHistory } from './useCanvasHistory';
 import { useSnapGuides } from './useSnapGuides';
 
@@ -265,6 +266,7 @@ export function TagCanvasEditor({
     null,
   );
   const [fontUploadOpen, setFontUploadOpen] = useState(false);
+  const [insertFieldOpen, setInsertFieldOpen] = useState(false);
   /** True while the middle button is held: the hand tool, borrowed (D44). */
   const [wheelPanning, setWheelPanning] = useState(false);
   /**
@@ -1589,6 +1591,36 @@ export function TagCanvasEditor({
     ? resolveSlotText(selectedLayer, selectedData)
     : null;
 
+  /**
+   * The content the Insert field dialog opens on, and where Done writes it.
+   *
+   * The same rule the Inspector's Content box already follows: a slot-bound
+   * layer is edited through `text_override` so the binding survives, an unbound
+   * one through its own text. Each path is one `setLayers` and one history
+   * entry, so a whole dialog's worth of edits undoes in one step.
+   */
+  const selectedContent = selectedLayer
+    ? selectedLayer.slot_binding
+      ? selectedLayer.text_override ??
+        selectedResolvedText ??
+        (selectedLayer.props.kind === 'text' ? selectedLayer.props.text : '')
+      : selectedLayer.props.kind === 'text'
+        ? selectedLayer.props.text
+        : ''
+    : '';
+
+  const writeSelectedContent = useCallback(
+    (content: string) => {
+      if (!selectedLayer) return;
+      if (selectedLayer.slot_binding) {
+        updateLayer(selectedLayer.id, { text_override: content });
+      } else if (selectedLayer.props.kind === 'text') {
+        updateLayerProps(selectedLayer.id, { ...selectedLayer.props, text: content });
+      }
+    },
+    [selectedLayer, updateLayer, updateLayerProps],
+  );
+
   /** The bound thing, named the way a person recognises it. Never a UUID. */
   const selectedBindingLabel = describeBindingData(selectedData);
 
@@ -1992,6 +2024,7 @@ export function TagCanvasEditor({
             bindingLabel={selectedBindingLabel}
             fontOptions={library.fontOptions}
             onUploadFont={() => setFontUploadOpen(true)}
+            onInsertField={() => setInsertFieldOpen(true)}
             onChooseImage={handleChooseImage}
             onChooseBadge={handleChooseBadge}
             onRebind={handleRebind}
@@ -2073,6 +2106,18 @@ export function TagCanvasEditor({
         title={imagePicker?.badge ? 'Choose a badge' : 'Choose an image'}
         onCancel={() => setImagePicker(null)}
         onPick={handleImagePicked}
+      />
+
+      <InsertFieldDialog
+        open={insertFieldOpen}
+        value={selectedContent}
+        data={selectedData ?? null}
+        specKeys={library.specKeys}
+        onCancel={() => setInsertFieldOpen(false)}
+        onDone={(content) => {
+          setInsertFieldOpen(false);
+          writeSelectedContent(content);
+        }}
       />
 
       <FontUploadDialog

@@ -30,6 +30,8 @@ import {
   getProductTagData,
 } from '../../services/tagDataService';
 import { listAssets, listFontAssets, type KitAsset } from '../../services/assetService';
+import { listSpecKeys } from '../../services/tagDataService';
+import type { SpecKeyOption } from '@/lib/dealer-kit/merge-fields';
 import { STATIC_FONT_OPTIONS } from './InspectorPanel';
 
 // ---------------------------------------------------------------------------
@@ -116,6 +118,8 @@ export interface KitLibrary {
   /** assetId -> signed URL, for image and badge layers. */
   assetUrls: Record<string, string>;
   fonts: KitAsset[];
+  /** The spec vocabulary the Insert field dialog offers under Specs (D58). */
+  specKeys: SpecKeyOption[];
   /** Google fallbacks plus every uploaded brand font. */
   fontOptions: SearchableSelectOption[];
   reload: () => Promise<void>;
@@ -126,6 +130,7 @@ export interface KitLibrary {
 export function useKitLibrary(): KitLibrary {
   const [assets, setAssets] = useState<KitAsset[]>([]);
   const [fonts, setFonts] = useState<KitAsset[]>([]);
+  const [specKeys, setSpecKeys] = useState<SpecKeyOption[]>([]);
 
   const reload = useCallback(async () => {
     try {
@@ -141,6 +146,14 @@ export function useKitLibrary(): KitLibrary {
   useEffect(() => {
     void reload();
   }, [reload]);
+
+  // Fetched once. A registry read that fails leaves the Specs group empty
+  // rather than stopping the canvas: every other field still inserts.
+  useEffect(() => {
+    void listSpecKeys()
+      .then(setSpecKeys)
+      .catch(() => setSpecKeys([]));
+  }, []);
 
   // The seeded templates' stand-in faces (D32). Loaded unconditionally rather
   // than off the asset list, because they come from a stylesheet rather than
@@ -187,5 +200,5 @@ export function useKitLibrary(): KitLibrary {
     return [...brand, ...STATIC_FONT_OPTIONS.filter((o) => !known.has(o.value))];
   }, [fonts]);
 
-  return { assetUrls, fonts, fontOptions, reload, remember };
+  return { assetUrls, fonts, specKeys, fontOptions, reload, remember };
 }

@@ -99,6 +99,7 @@ vi.mock('../../services/tagDataService', () => ({
     })),
   ),
   productSetOptions: vi.fn(async () => []),
+  listSpecKeys: vi.fn(async () => []),
   getProductTagData: vi.fn(async (id: string) => PRODUCTS[id]),
   getProductSetTagData: vi.fn(async () => {
     throw new Error('not used');

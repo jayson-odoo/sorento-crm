@@ -8,7 +8,7 @@
  */
 
 import { useCallback } from 'react';
-import { Eye, LayoutTemplate, Link2, Link2Off, X } from 'lucide-react';
+import { Braces, Eye, LayoutTemplate, Link2, Link2Off, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
@@ -27,6 +27,7 @@ import type {
   TagLayerProps,
 } from '@/lib/dealer-kit/tag-template-types';
 import { imageSourceOf } from '@/lib/dealer-kit/tag-template-types';
+import { isDynamic } from '@/lib/dealer-kit/product-block';
 import { ColorPicker } from './ColorPicker';
 
 // ---------------------------------------------------------------------------
@@ -172,6 +173,8 @@ interface InspectorPanelProps {
   onChooseBadge?: (layerId: string) => void;
   /** Add a brand font without leaving the canvas. */
   onUploadFont?: () => void;
+  /** Open the merge-field catalogue for this text layer (D59). */
+  onInsertField?: () => void;
   /** Point this group's block at a different product or set. */
   onRebind?: (groupId: string) => void;
   /** Clear every text override inside this group. */
@@ -194,6 +197,7 @@ export function InspectorPanel({
   bindingLabel,
   fontOptions,
   onUploadFont,
+  onInsertField,
   onChooseImage,
   onChooseBadge,
   onRebind,
@@ -353,6 +357,7 @@ export function InspectorPanel({
               resolvedText={resolvedText ?? null}
               fontOptions={fontOptions ?? STATIC_FONT_OPTIONS}
               onUploadFont={onUploadFont}
+              onInsertField={onInsertField}
             />
           )}
           {layer.props.kind === 'price_badge' && (
@@ -400,6 +405,7 @@ function TextInspector({
   resolvedText,
   fontOptions,
   onUploadFont,
+  onInsertField,
 }: {
   layer: TagLayer;
   props: Extract<TagLayerProps, { kind: 'text' }>;
@@ -408,12 +414,16 @@ function TextInspector({
   resolvedText: string | null;
   fontOptions: SearchableSelectOption[];
   onUploadFont?: () => void;
+  onInsertField?: () => void;
 }) {
   // A slot-bound layer is edited through `text_override`, never through
   // `props.text`: the binding survives the edit, so "Relink" is simply clearing
   // the override again rather than remembering what the product used to say.
   const bound = Boolean(layer.slot_binding);
   const overridden = bound && layer.text_override != null;
+  // A typed-over layer holding a merge field is still following the product,
+  // so it says so rather than showing the amber broken-link note (D57).
+  const dynamic = isDynamic(layer);
   const shown = bound
     ? layer.text_override ?? resolvedText ?? props.text
     : props.text;
@@ -432,28 +442,48 @@ function TextInspector({
         <div className="flex flex-col gap-1">
           <div className="flex items-center justify-between">
             <Label className="text-xs text-muted-foreground">Content</Label>
-            {overridden && (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-6 px-1.5 text-[10px]"
-                onClick={() => onUpdate({ text_override: null })}
-              >
-                <Link2 className="mr-1 size-3" />
-                Relink
-              </Button>
-            )}
+            <div className="flex items-center gap-1">
+              {overridden && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 px-1.5 text-[10px]"
+                  onClick={() => onUpdate({ text_override: null })}
+                >
+                  <Link2 className="mr-1 size-3" />
+                  Relink
+                </Button>
+              )}
+              {onInsertField && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 px-1.5 text-[10px]"
+                  onClick={onInsertField}
+                >
+                  <Braces className="mr-1 size-3" />
+                  Insert field
+                </Button>
+              )}
+            </div>
           </div>
           <textarea
             className="min-h-[60px] w-full rounded-md border bg-background px-2 py-1 text-xs"
             value={shown}
             onChange={(e) => handleContent(e.target.value)}
           />
-          {overridden && (
+          {overridden && !dynamic && (
             <span className="flex items-center gap-1 text-[10px] text-amber-600">
               <Link2Off className="size-3" />
               Unlinked from product data
+            </span>
+          )}
+          {dynamic && (
+            <span className="flex items-center gap-1 text-[10px] text-sky-600">
+              <Braces className="size-3" />
+              Draws from product data
             </span>
           )}
         </div>
