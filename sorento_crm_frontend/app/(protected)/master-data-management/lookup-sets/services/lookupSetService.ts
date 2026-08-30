@@ -46,11 +46,6 @@ export async function updateLookupSet(id: string, data: Partial<LookupSetFormDat
   return r.json();
 }
 
-export async function deleteLookupSet(id: string): Promise<void> {
-  const r = await apiFetch(`${BASE}/${id}`, { method: 'DELETE' });
-  if (!r.ok) throw new Error(await extractApiError(r, 'Failed to delete lookup set'));
-}
-
 // Options
 
 export async function listOptions(setId: string): Promise<LookupOption[]> {
