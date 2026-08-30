@@ -49,7 +49,13 @@ import { useRowPending } from '@/hooks/useDeferredRowAction';
 function ConversationRowActions({
   tracking,
 }: {
-  tracking: { id: string; respond_io_id?: string | null; contact?: { respond_io_id?: string | null } | null };
+  tracking: {
+    id: string;
+    respond_io_id?: string | null;
+    contact?: { respond_io_id?: string | null } | null;
+    contact_name?: string | null;
+    contact_phone?: string | null;
+  };
 }) {
   const { actions } = useConversationSlaActions(tracking, { surface: 'toast' });
   return <RowActionsMenu ariaLabel="conversation" actions={actions} />;
