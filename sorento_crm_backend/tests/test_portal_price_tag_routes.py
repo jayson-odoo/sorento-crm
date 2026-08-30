@@ -388,6 +388,30 @@ def _revoke_the_grant(db: Session, contact_id: str) -> None:
     db.flush()
 
 
+class TestTheListTheSalespersonReads:
+    def test_a_row_carries_the_line_count_the_card_prints(self, client):
+        """The portal card prints "N lines" and N was ``undefined``.
+
+        ``PriceTagRequestListItem`` never declared ``line_count``, so the field
+        was dropped on the way out and the card rendered nothing where the count
+        belongs.
+        """
+        c, db, _contact_id = client
+        product_id = _seed_product(db)
+        c.post(
+            _BASE,
+            json={
+                "debtor_name": "ZZT Dealer",
+                "lines": [{"line_type": "product", "product_id": product_id}],
+            },
+        )
+
+        rows = c.get(_BASE).json()["items"]
+
+        assert len(rows) == 1
+        assert rows[0]["line_count"] == 1
+
+
 class TestTheGrantGatesEveryRoute:
     def test_the_debtor_lookup_refuses_a_contact_without_the_grant(self, client):
         """A revoked contact cannot enumerate their agent's debtor book.

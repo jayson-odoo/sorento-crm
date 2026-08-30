@@ -120,9 +120,23 @@ class PriceTagRequestResponse(BaseModel):
     page_id: Optional[str] = None
     portal_draft_at: Optional[datetime] = None
     created_by: Optional[str] = None
+    # WHO is designing it. ``created_by`` is the creator and stays that; this is
+    # what the header's "Assigned to" reads, and it read "Unclaimed" forever
+    # because neither the column nor the name existed on the wire.
+    assigned_to_id: Optional[str] = None
     created_at: datetime
     updated_at: datetime
     lines: list[PriceTagRequestLineResponse] = []
+
+    # Resolved, not stored. Filled by
+    # ``PriceTagRequestService.response_with_resolved_lines``; a request holds a
+    # contact id, a user id and a promotion id, and every one of those is a UUID
+    # the screen may not show. Declared here because ``response_model`` removes
+    # what it does not know about without a word.
+    assigned_to_name: Optional[str] = None
+    contact_name: Optional[str] = None
+    promotion_name: Optional[str] = None
+    line_count: int = 0
 
 
 class PriceTagRequestListItem(BaseModel):
@@ -135,7 +149,17 @@ class PriceTagRequestListItem(BaseModel):
     status: str
     doc_number: str
     needed_by_date: Optional[date] = None
+    notes: Optional[str] = None
+    promotion_id: Optional[str] = None
     created_at: datetime
+    # The four things the queue actually draws in its columns, and the four it
+    # drew blank: the request row holds ids, and a listing may not show a UUID.
+    # Resolved for the whole page in two set-based queries, never per row.
+    assigned_to_id: Optional[str] = None
+    assigned_to_name: Optional[str] = None
+    contact_name: Optional[str] = None
+    promotion_name: Optional[str] = None
+    line_count: int = 0
     # A request that was saved and never submitted still carries status "new",
     # so this is the only thing that tells a draft from a submitted request. The
     # portal landing's Draft filter reads it (D45); without it every draft would

@@ -23,7 +23,6 @@ from app.models.portal import PortalToken
 from app.schemas.price_tag import (
     DebtorForAgentItem,
     PriceTagRequestCreate,
-    PriceTagRequestListItem,
     PriceTagRequestResponse,
     PriceTagRequestUpdate,
     TagItemLookupItem,
@@ -66,14 +65,17 @@ def portal_list_price_tag_requests(
     token: PortalToken = Depends(get_portal_token),
     db: Session = Depends(get_db),
 ):
-    """List price tag requests for the authenticated contact."""
+    """List price tag requests for the authenticated contact.
+
+    Drafts included: a draft is the whole point of this screen. Through
+    ``list_items`` for the line count the card prints, which was ``undefined``
+    on every row because the list schema never carried it.
+    """
     _assert_visible(db, token.contact_id)
     results = PriceTagRequestService.list_requests(
         db, contact_id=token.contact_id, search=q,
     )
-    return {
-        "items": [PriceTagRequestListItem.model_validate(r) for r in results],
-    }
+    return {"items": PriceTagRequestService.list_items(db, results)}
 
 
 # ---------------------------------------------------------------------------

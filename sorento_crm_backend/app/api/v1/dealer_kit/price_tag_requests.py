@@ -74,7 +74,7 @@ def list_price_tag_requests(
     results = PriceTagRequestService.list_requests(
         db, status=status_filter, search=q, include_drafts=False,
     )
-    return [PriceTagRequestListItem.model_validate(r) for r in results]
+    return PriceTagRequestService.list_items(db, results)
 
 
 # ---------------------------------------------------------------------------
@@ -128,7 +128,10 @@ def claim_price_tag_request(
         )
     PriceTagRequestService.validate_claimable(req)
 
-    req.created_by = _user_id(user)
+    # The ASSIGNEE, not the creator. This used to write ``created_by``, which
+    # says who made the row and which no reader looks at, so the header said
+    # "Unclaimed" from the claim onwards.
+    req.assigned_to_id = _user_id(user)
     result = PriceTagRequestService.transition_status(
         db, request_id, STATUS_DESIGNING, user_id=_user_id(user),
     )
@@ -148,7 +151,10 @@ def claim_price_tag_request(
         result.page_id = page.id
 
     db.commit()
-    return PriceTagRequestResponse.model_validate(result)
+    # Answered through the same resolver as the detail route: the page renders
+    # this body straight into the header, and a bare model_validate would send
+    # back the claim with no name on it.
+    return _with_resolved_lines(db, result)
 
 
 # ---------------------------------------------------------------------------
@@ -168,7 +174,7 @@ def transition_price_tag_request(
         db, request_id, payload.status, user_id=_user_id(user),
     )
     db.commit()
-    return PriceTagRequestResponse.model_validate(result)
+    return _with_resolved_lines(db, result)
 
 
 # ---------------------------------------------------------------------------

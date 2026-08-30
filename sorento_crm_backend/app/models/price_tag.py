@@ -114,6 +114,16 @@ class PriceTagRequest(Base, CompanyScopedMixin):
     portal_draft_at = Column(DateTime(timezone=False), nullable=True)
     po_extraction_result = Column(JSONB, nullable=True)
     created_by = Column(UUID(as_uuid=False), nullable=True)
+    # WHO is designing this. Claiming used to write the user into ``created_by``,
+    # which says who made the row and which nothing read back, so the page said
+    # "Unclaimed" for the rest of the request's life. String, not UUID, because
+    # ``users.id`` is TEXT - which is also why ``created_by`` has no FK and this
+    # one does.
+    assigned_to_id = Column(
+        String,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     created_at = Column(
         DateTime(timezone=False), server_default=func.now(), nullable=False
     )
@@ -135,6 +145,7 @@ class PriceTagRequest(Base, CompanyScopedMixin):
         Index("ix_price_tag_requests_status", "status"),
         Index("ix_price_tag_requests_contact_id", "contact_id"),
         Index("ix_price_tag_requests_promotion_id", "promotion_id"),
+        Index("ix_price_tag_requests_assigned_to_id", "assigned_to_id"),
         # company_id index is already created by CompanyScopedMixin (index=True).
     )
 

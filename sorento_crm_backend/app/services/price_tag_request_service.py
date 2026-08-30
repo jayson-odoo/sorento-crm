@@ -423,6 +423,73 @@ class PriceTagRequestService:
         )
 
     @staticmethod
+    def resolved_labels(
+        db: Session, request_ids: list[str]
+    ) -> dict[str, dict]:
+        """The names and the line count behind a request's ids, per request id.
+
+        A request row carries a contact id, a user id and a promotion id, and no
+        screen may show a UUID. Two set-based queries answer for the whole page:
+        asking per row would be four queries per row on a fifty-row listing.
+        """
+        if not request_ids:
+            return {}
+
+        from app.models.access import RespondContact
+        from app.models.marketing import Promotion
+        from app.models.user import User
+
+        counts = dict(
+            db.query(
+                PriceTagRequestLine.request_id,
+                func.count(PriceTagRequestLine.id),
+            )
+            .filter(PriceTagRequestLine.request_id.in_(request_ids))
+            .group_by(PriceTagRequestLine.request_id)
+            .all()
+        )
+
+        labels: dict[str, dict] = {}
+        rows = (
+            db.query(
+                PriceTagRequest.id,
+                RespondContact.name,
+                User.name,
+                Promotion.description,
+            )
+            .select_from(PriceTagRequest)
+            .outerjoin(RespondContact, RespondContact.id == PriceTagRequest.contact_id)
+            .outerjoin(User, User.id == PriceTagRequest.assigned_to_id)
+            .outerjoin(Promotion, Promotion.id == PriceTagRequest.promotion_id)
+            .filter(PriceTagRequest.id.in_(request_ids))
+            .all()
+        )
+        for request_id, contact_name, assigned_to_name, promotion_name in rows:
+            labels[request_id] = {
+                "contact_name": contact_name,
+                "assigned_to_name": assigned_to_name,
+                "promotion_name": promotion_name,
+                "line_count": int(counts.get(request_id, 0)),
+            }
+        return labels
+
+    @staticmethod
+    def list_items(db: Session, requests: list[PriceTagRequest]) -> list:
+        """The listing rows the queue draws, names resolved."""
+        from app.schemas.price_tag import PriceTagRequestListItem
+
+        labels = PriceTagRequestService.resolved_labels(
+            db, [request.id for request in requests]
+        )
+        items = []
+        for request in requests:
+            item = PriceTagRequestListItem.model_validate(request)
+            for key, value in labels.get(request.id, {}).items():
+                setattr(item, key, value)
+            items.append(item)
+        return items
+
+    @staticmethod
     def response_with_resolved_lines(db: Session, request: PriceTagRequest):
         """The request, with each line carrying what a person can read off it.
 
@@ -458,6 +525,15 @@ class PriceTagRequestService:
             # is serialised as a JSON STRING and the page's `.toFixed(2)` throws.
             line.list_price = None if row["list_price"] is None else float(row["list_price"])
             line.sell_price = None if row["sell_price"] is None else float(row["sell_price"])
+
+        # The header's names, from the same resolver the listing uses so the two
+        # screens cannot disagree about who claimed a request.
+        for key, value in (
+            PriceTagRequestService.resolved_labels(db, [request.id])
+            .get(request.id, {})
+            .items()
+        ):
+            setattr(response, key, value)
         return response
 
     @staticmethod
