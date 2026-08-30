@@ -26,6 +26,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
 import {
   listNotifications,
   getUnreadCount,
@@ -34,7 +35,6 @@ import {
   markAllRead,
   archive,
   archiveAll,
-  deleteNotification,
   deleteNotificationsBulk,
   deleteAllNotifications,
 } from '@/services/notificationService';
@@ -132,16 +132,26 @@ export function NotificationsSheet({ trigger }: { trigger: ReactNode }) {
     });
   };
 
+  // No prompt (D7), and no one-click delete either: the row parks itself for five
+  // seconds and the toast holds the Cancel, like every other list surface. Five and
+  // not ten because a notification is a copy of something that happened elsewhere -
+  // deleting one destroys no record, and Clear sits beside it asking nothing at all.
+  const deletion = useDeferredRowAction({
+    actionKey: 'notification.delete',
+    entityType: 'notification',
+    successMessage: 'Notification deleted',
+    invalidateKeys: [['notifications']],
+    onCommitted: () => {
+      void refetchUnread();
+    },
+  });
+
   const handleDeleteOne = async (id: string) => {
-    if (!confirm('Delete this notification?')) return;
-    try {
-      await deleteNotification(id);
-      toast.success('Deleted');
-      setSelectedIds((prev) => prev.filter((x) => x !== id));
-      invalidate();
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to delete');
-    }
+    deletion.run({
+      id,
+      subject: items.find((item) => item.id === id)?.title ?? 'this notification',
+    });
+    setSelectedIds((prev) => prev.filter((x) => x !== id));
   };
 
   const runDeleteSelected = async () => {
@@ -190,7 +200,7 @@ export function NotificationsSheet({ trigger }: { trigger: ReactNode }) {
 
   return (
     <>
-      <Sheet open={open} onOpenChange={setOpen}>
+      <Sheet open={open} onOpenChange={setOpen} modal={false}>
         <SheetTrigger asChild>
           <span className="relative inline-flex">
             {trigger}
@@ -204,7 +214,8 @@ export function NotificationsSheet({ trigger }: { trigger: ReactNode }) {
             )}
           </span>
         </SheetTrigger>
-        <SheetContent className="p-0 gap-0 sm:w-[500px] sm:max-w-none inset-5 start-auto h-auto rounded-lg p-0 sm:max-w-none [&_[data-slot=sheet-close]]:top-4.5 [&_[data-slot=sheet-close]]:end-5">
+        {/* Passive utility panel: no scrim (D8). */}
+        <SheetContent overlay={false} className="p-0 gap-0 sm:w-[500px] sm:max-w-none inset-5 start-auto h-auto rounded-lg p-0 sm:max-w-none [&_[data-slot=sheet-close]]:top-4.5 [&_[data-slot=sheet-close]]:end-5">
           <SheetHeader className="mb-0 flex flex-row items-center gap-2 space-y-0 px-3 py-3 pe-12 text-start border-b border-border">
             <Button
               type="button"

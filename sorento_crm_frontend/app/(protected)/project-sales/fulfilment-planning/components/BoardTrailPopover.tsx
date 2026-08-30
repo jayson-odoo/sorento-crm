@@ -18,6 +18,7 @@ import type {
 import { BoardLadderOptionsTable } from './BoardLadderOptionsTable';
 import { ClassificationProofPopover } from './ClassificationProofPopover';
 import { PileQueueDialog } from './PileQueueDialog';
+import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 
 /**
  * How this line's proposal was arrived at: the four questions, and Buy.
@@ -405,38 +406,41 @@ function PoolPile({
     },
   ];
   return (
-    <table
-      data-testid={`trail-pool-${contributionKey}`}
-      className="mt-0.5 text-2xs tabular-nums"
-    >
-      <thead>
-        <tr className="text-muted-foreground">
-          {cells.map((cell) => (
-            <th
-              key={cell.label}
-              scope="col"
-              title={cell.title}
-              className="pe-3 text-end font-medium uppercase tracking-wide"
-            >
-              {cell.label}
-            </th>
-          ))}
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          {cells.map((cell) => (
-            <td
-              key={cell.label}
-              data-testid={`trail-pool-${contributionKey}-${cell.label.toLowerCase().replace(/\s+/g, '-')}`}
-              className="pe-3 text-end"
-            >
-              {cell.value}
-            </td>
-          ))}
-        </tr>
-      </tbody>
-    </table>
+    <ScrollArea>
+      <table
+        data-testid={`trail-pool-${contributionKey}`}
+        className="mt-0.5 text-2xs tabular-nums"
+      >
+        <thead>
+          <tr className="text-muted-foreground">
+            {cells.map((cell) => (
+              <th
+                key={cell.label}
+                scope="col"
+                title={cell.title}
+                className="pe-3 text-end font-medium uppercase tracking-wide"
+              >
+                {cell.label}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            {cells.map((cell) => (
+              <td
+                key={cell.label}
+                data-testid={`trail-pool-${contributionKey}-${cell.label.toLowerCase().replace(/\s+/g, '-')}`}
+                className="pe-3 text-end"
+              >
+                {cell.value}
+              </td>
+            ))}
+          </tr>
+        </tbody>
+      </table>
+      <ScrollBar orientation="horizontal" />
+    </ScrollArea>
   );
 }
 

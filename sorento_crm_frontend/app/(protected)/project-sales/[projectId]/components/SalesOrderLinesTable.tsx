@@ -669,10 +669,7 @@ export function SalesOrderLinesTable({
                 </p>
               </div>
             ) : (
-              <ScrollArea>
-                <DataGridTable />
-                <ScrollBar orientation="horizontal" />
-              </ScrollArea>
+              <DataGridTable />
             )}
           </CardTable>
 

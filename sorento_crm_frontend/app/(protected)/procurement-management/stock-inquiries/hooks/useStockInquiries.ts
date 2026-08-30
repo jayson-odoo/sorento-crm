@@ -1,12 +1,7 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { buildDataGridParams } from '@/lib/api-client';
+
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
-import {
-  useRecordNeighbours,
-  type RecordNeighboursResult,
-} from '@/hooks/useRecordNeighbours';
-import { STOCK_INQUIRY_NEIGHBOURS_PATH } from '../services/stockInquiryService';
 import {
   getStockInquiries,
   getStockInquiry,
@@ -32,46 +27,63 @@ import {
 import type { StockInquiryFormData } from '../types/stockInquiry.types';
 import type { FormPdfExportOptions } from '@/lib/revision-export';
 import { isDeferredFormAction } from '@/app/(protected)/sla-management/_shared/formAction';
+import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
 
 export type StockInquiriesListParams = DataGridApiFetchParams & {
   statuses?: string[];
 };
 
-/**
- * Prev/next neighbours of a stock inquiry within the active filtered+sorted list
- * set. Serializes the list query (search/sort/status) with `buildDataGridParams`
- * - the same serialization the list page uses - so the backend honours filters
- * identically. `page`/`limit` are sent but ignored by the neighbours endpoint.
- */
-export function useStockInquiryNeighbours(
-  inquiryId: string | null,
-  listParams: StockInquiriesListParams,
-): RecordNeighboursResult {
-  const statuses = listParams.statuses?.filter(Boolean) ?? [];
-  const params = buildDataGridParams(listParams, {
-    status: statuses.length ? statuses.join(',') : undefined,
-  });
-  return useRecordNeighbours(STOCK_INQUIRY_NEIGHBOURS_PATH, inquiryId, params);
-}
 
 /**
  * `enabled` lets the list hold the fetch until the user's remembered sort and filter
  * have resolved, so the grid is fetched ONCE with the view already applied instead of
  * fetching the defaults and immediately refetching (PLAN-listing-view-memory, AC-B3).
  */
+/**
+ * The list's React Query key. The detail page's pager rebuilds the SAME key from
+ * the URL, so it reads the page the list already fetched.
+ */
+export function stockInquiriesListQueryKey(
+  params: StockInquiriesListParams,
+): QueryKey {
+  return [
+    'stock-inquiries',
+    params.pageIndex,
+    params.pageSize,
+    params.sorting,
+    params.searchQuery,
+    params.statuses,
+  ];
+}
+
+/** The list query a detail URL describes, in the shape the list passes. */
+export function stockInquiriesListParamsFromUrl(
+  params: ListPagerParams,
+): StockInquiriesListParams {
+  const statuses = params.filters.status;
+  return {
+    pageIndex: params.pageIndex,
+    pageSize: params.pageSize,
+    sorting: params.sorting,
+    searchQuery: params.searchQuery,
+    statuses: statuses ? statuses.split(',') : undefined,
+  };
+}
+
+/** The pager's two hooks into the stock inquiries list. */
+export const stockInquiriesPagerQuery = {
+  listQueryKey: (params: ListPagerParams): QueryKey =>
+    stockInquiriesListQueryKey(stockInquiriesListParamsFromUrl(params)),
+  fetchPage: (params: ListPagerParams): Promise<ListPagerPage> =>
+    getStockInquiries(stockInquiriesListParamsFromUrl(params)),
+};
+
 export function useStockInquiries(
-  params: DataGridApiFetchParams & { statuses?: string[]; enabled?: boolean },
+  params: StockInquiriesListParams & { enabled?: boolean },
 ) {
   const { enabled = true, ...listParams } = params;
   return useQuery({
-    queryKey: [
-      'stock-inquiries',
-      listParams.pageIndex,
-      listParams.pageSize,
-      listParams.sorting,
-      listParams.searchQuery,
-      listParams.statuses,
-    ],
+    queryKey: stockInquiriesListQueryKey(listParams),
     queryFn: () => getStockInquiries(listParams),
     enabled,
     staleTime: Infinity,

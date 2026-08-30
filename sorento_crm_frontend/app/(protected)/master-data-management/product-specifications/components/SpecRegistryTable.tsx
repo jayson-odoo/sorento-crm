@@ -420,9 +420,11 @@ export default function SpecRegistryTable() {
             Spec keys supported (
             {filter.trim() ? `${visible.length} of ${keys.length}` : keys.length})
           </span>
-          <div className="flex items-center gap-2">
+          {/* A w-72 input plus the button is 428px of no-wrap row, which is what
+              pushed this page to a 465px scroll width at 375. */}
+          <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
             <Input
-              className="h-8 w-72"
+              className="h-8 w-full sm:w-72"
               value={filter}
               placeholder="Find a spec, word or product code"
               aria-label="Find a spec, word or product code"

@@ -5,6 +5,16 @@
  * note (a stale link cleaned up on read) shows as an informational banner rather than a
  * toast. The confirm-table (non-converted) path is exercised by `CreateSpoPanel.test.tsx`'s
  * older sibling; this file covers what changed on `SpoPlannerTable` itself.
+ *
+ * A note on the query style here: a `findBy*` result is never used directly -
+ * the find is awaited, then the SAME query is repeated with `getBy*`, and that
+ * node is the one clicked or asserted on. `findBy*` resolves inside RTL's `act`,
+ * and the flush on the way out re-renders this grid and replaces its cells, so
+ * the node the find handed back is already detached: an assertion on it reads
+ * "element could not be found in the document" and a click on it does nothing at
+ * all. That used to be masked by the `ScrollArea` this list wrapped its grid in,
+ * which delayed the table's first DOM; the wrapper is gone (it stopped the grid
+ * from scrolling sideways), so the pattern has to be explicit.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -98,7 +108,8 @@ describe('SpoPlannerTable - already-converted Delete action', () => {
     state.suggestion = suggestion({ already_converted: true, existing_spos: existingSpos() });
     renderTable();
 
-    expect(await screen.findByRole('button', { name: /delete spo/i })).toBeInTheDocument();
+    await screen.findByRole('button', { name: /delete spo/i });
+    expect(screen.getByRole('button', { name: /delete spo/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /download worksheet/i })).toBeInTheDocument();
   });
 
@@ -106,9 +117,11 @@ describe('SpoPlannerTable - already-converted Delete action', () => {
     state.suggestion = suggestion({ already_converted: true, existing_spos: existingSpos() });
     renderTable();
 
-    fireEvent.click(await screen.findByRole('button', { name: /delete spo/i }));
+    await screen.findByRole('button', { name: /delete spo/i });
+    fireEvent.click(screen.getByRole('button', { name: /delete spo/i }));
 
-    expect(await screen.findByText('Confirm delete')).toBeInTheDocument();
+    await screen.findByText('Confirm delete');
+    expect(screen.getByText('Confirm delete')).toBeInTheDocument();
     expect(screen.getByText(/This deletes CRM-SPO-0001/)).toBeInTheDocument();
     expect(screen.getByText(/This action cannot be undone/)).toBeInTheDocument();
   });
@@ -123,7 +136,8 @@ describe('SpoPlannerTable - already-converted Delete action', () => {
     });
     renderTable();
 
-    fireEvent.click(await screen.findByRole('button', { name: /delete spo/i }));
+    await screen.findByRole('button', { name: /delete spo/i });
+    fireEvent.click(screen.getByRole('button', { name: /delete spo/i }));
 
     expect(
       await screen.findByText(/This deletes 2 SPOs: CRM-SPO-0001, CRM-SPO-0002/),
@@ -134,7 +148,8 @@ describe('SpoPlannerTable - already-converted Delete action', () => {
     state.suggestion = suggestion({ already_converted: true, existing_spos: existingSpos() });
     renderTable();
 
-    fireEvent.click(await screen.findByRole('button', { name: /delete spo/i }));
+    await screen.findByRole('button', { name: /delete spo/i });
+    fireEvent.click(screen.getByRole('button', { name: /delete spo/i }));
     await screen.findByText('Confirm delete');
 
     expect(state.deleteSpo).not.toHaveBeenCalled();
@@ -144,7 +159,8 @@ describe('SpoPlannerTable - already-converted Delete action', () => {
     state.suggestion = suggestion({ already_converted: true, existing_spos: existingSpos() });
     renderTable();
 
-    fireEvent.click(await screen.findByRole('button', { name: /delete spo/i }));
+    await screen.findByRole('button', { name: /delete spo/i });
+    fireEvent.click(screen.getByRole('button', { name: /delete spo/i }));
     await screen.findByText('Confirm delete');
     fireEvent.click(screen.getByRole('button', { name: /^delete$/i }));
 
@@ -158,7 +174,8 @@ describe('SpoPlannerTable - already-converted Delete action', () => {
     state.suggestion = suggestion({ already_converted: true, existing_spos: existingSpos() });
     renderTable();
 
-    fireEvent.click(await screen.findByRole('button', { name: /delete spo/i }));
+    await screen.findByRole('button', { name: /delete spo/i });
+    fireEvent.click(screen.getByRole('button', { name: /delete spo/i }));
     await screen.findByText('Confirm delete');
     fireEvent.click(screen.getByRole('button', { name: /cancel/i }));
 
@@ -173,7 +190,8 @@ describe('SpoPlannerTable - already-converted Delete action', () => {
     );
     renderTable();
 
-    fireEvent.click(await screen.findByRole('button', { name: /delete spo/i }));
+    await screen.findByRole('button', { name: /delete spo/i });
+    fireEvent.click(screen.getByRole('button', { name: /delete spo/i }));
     await screen.findByText('Confirm delete');
     fireEvent.click(screen.getByRole('button', { name: /^delete$/i }));
 
@@ -310,6 +328,18 @@ function plannerLine(over: Record<string, unknown> = {}) {
   };
 }
 
+/*
+  A drill is a lightbox, and dialogs are modal since UAC S1-01: while one is open
+  the planner behind it is inert and the operator cannot reach Create SPO. So the
+  tests walk the real flow - open the drill, tick, CLOSE it, then send - which
+  also pins the thing that actually matters about the ticks: they survive the
+  drill closing.
+*/
+async function closeDrill() {
+  fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape', code: 'Escape' });
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+}
+
 describe('F7 - the SPO planner chooses its POs and its SOs', () => {
   beforeEach(() => {
     state.suggestion = suggestion({ lines: [plannerLine()] });
@@ -323,15 +353,20 @@ describe('F7 - the SPO planner chooses its POs and its SOs', () => {
     });
   });
 
-  const openPoDrill = async () =>
-    fireEvent.click(await screen.findByTitle(/which po covers this/i));
-  const openSoDrill = async () =>
-    fireEvent.click(await screen.findByTitle(/which demand this spo is for/i));
+  const openPoDrill = async () => {
+    await screen.findByTitle(/which po covers this/i);
+    fireEvent.click(screen.getByTitle(/which po covers this/i));
+  };
+  const openSoDrill = async () => {
+    await screen.findByTitle(/which demand this spo is for/i);
+    fireEvent.click(screen.getByTitle(/which demand this spo is for/i));
+  };
 
   it('ticks every PO take by default and says how many (AC-G1)', async () => {
     renderTable();
 
-    expect(await screen.findByText('2 of 2 POs')).toBeInTheDocument();
+    await screen.findByText('2 of 2 POs');
+    expect(screen.getByText('2 of 2 POs')).toBeInTheDocument();
     await openPoDrill();
     expect(screen.getByRole('checkbox', { name: 'Draw from 202605-S0060' })).toBeChecked();
     expect(screen.getByRole('checkbox', { name: 'Draw from 202606-S0099' })).toBeChecked();
@@ -343,7 +378,8 @@ describe('F7 - the SPO planner chooses its POs and its SOs', () => {
 
     fireEvent.click(screen.getByRole('checkbox', { name: 'Draw from 202605-S0060' }));
 
-    expect(await screen.findByText('1 of 2 POs')).toBeInTheDocument();
+    await screen.findByText('1 of 2 POs');
+    expect(screen.getByText('1 of 2 POs')).toBeInTheDocument();
     // The remaining PO has 150 open, so it covers the whole 100 packed - not the 40 the
     // cascade happened to take from it while the other one was ticked.
     expect(screen.getByTitle(/what the TICKED POs pull this SPO up to/i)).toHaveValue(100);
@@ -366,6 +402,7 @@ describe('F7 - the SPO planner chooses its POs and its SOs', () => {
     renderTable();
     await openPoDrill();
     fireEvent.click(screen.getByRole('checkbox', { name: 'Draw from 202605-S0060' }));
+    await closeDrill();
     fireEvent.click(screen.getByRole('button', { name: /create spo/i }));
 
     await waitFor(() => expect(state.create).toHaveBeenCalledTimes(1));
@@ -396,7 +433,8 @@ describe('F7 - the SPO planner chooses its POs and its SOs', () => {
 
   it('the ticks drive the location split (AC-G4)', async () => {
     renderTable();
-    fireEvent.click(await screen.findByRole('button', { name: /create spo/i }));
+    await screen.findByRole('button', { name: /create spo/i });
+    fireEvent.click(screen.getByRole('button', { name: /create spo/i }));
 
     await waitFor(() => expect(state.create).toHaveBeenCalledTimes(1));
     const [, lines] = state.create.mock.calls[0];
@@ -413,6 +451,7 @@ describe('F7 - the SPO planner chooses its POs and its SOs', () => {
     renderTable();
     await openSoDrill();
     fireEvent.click(screen.getByRole('checkbox', { name: 'Cover SO-2201' }));
+    await closeDrill();
     fireEvent.click(screen.getByRole('button', { name: /create spo/i }));
 
     await waitFor(() => expect(state.create).toHaveBeenCalledTimes(1));
@@ -433,6 +472,7 @@ describe('F7 - the SPO planner chooses its POs and its SOs', () => {
     expect(
       await screen.findByText(/160 ticked, 100 on this container - SO-2202 partly covered/),
     ).toBeInTheDocument();
+    await closeDrill();
     expect(screen.getByRole('button', { name: /create spo/i })).toBeEnabled();
   });
 });
@@ -519,7 +559,8 @@ describe('F7 - the SO-covered cell and the Create banner are one arithmetic', ()
   it('does not accuse the default ticks of over-ticking the container', async () => {
     renderTable();
 
-    expect(await screen.findByRole('button', { name: /create spo/i })).toBeEnabled();
+    await screen.findByRole('button', { name: /create spo/i });
+    expect(screen.getByRole('button', { name: /create spo/i })).toBeEnabled();
     expect(screen.queryByText(/ticked against/)).not.toBeInTheDocument();
   });
 
@@ -527,14 +568,16 @@ describe('F7 - the SO-covered cell and the Create banner are one arithmetic', ()
     renderTable();
 
     // 19 is all this SPO can pull, so 19 is what the ticked orders get between them.
-    const soCell = await screen.findByTitle(/which demand this spo is for/i);
+    await screen.findByTitle(/which demand this spo is for/i);
+    const soCell = screen.getByTitle(/which demand this spo is for/i);
     expect(soCell).toHaveTextContent('19');
     expect(soCell).not.toHaveTextContent('102');
   });
 
   it('ticks only as far down the list as the SPO can actually serve', async () => {
     renderTable();
-    fireEvent.click(await screen.findByTitle(/which demand this spo is for/i));
+    await screen.findByTitle(/which demand this spo is for/i);
+    fireEvent.click(screen.getByTitle(/which demand this spo is for/i));
 
     // 12 to the first, 7 of the second's 90 - and the third is out of reach entirely.
     expect(screen.getByRole('checkbox', { name: 'Cover SI26-0100' })).toBeChecked();
@@ -544,7 +587,8 @@ describe('F7 - the SO-covered cell and the Create banner are one arithmetic', ()
 
   it('says which order it cannot serve when the operator ticks one it cannot reach', async () => {
     renderTable();
-    fireEvent.click(await screen.findByTitle(/which demand this spo is for/i));
+    await screen.findByTitle(/which demand this spo is for/i);
+    fireEvent.click(screen.getByTitle(/which demand this spo is for/i));
 
     fireEvent.click(screen.getByRole('checkbox', { name: 'Cover SO-2202' }));
 
@@ -553,12 +597,14 @@ describe('F7 - the SO-covered cell and the Create banner are one arithmetic', ()
     expect(
       await screen.findByText(/SO-2202 - this container has nothing left/),
     ).toBeInTheDocument();
+    await closeDrill();
     expect(screen.getByRole('button', { name: /create spo/i })).toBeDisabled();
   });
 
   it('splits only what it can serve, and calls the rest unassigned', async () => {
     renderTable();
-    fireEvent.click(await screen.findByRole('button', { name: /create spo/i }));
+    await screen.findByRole('button', { name: /create spo/i });
+    fireEvent.click(screen.getByRole('button', { name: /create spo/i }));
 
     await waitFor(() => expect(state.create).toHaveBeenCalledTimes(1));
     const [, lines] = state.create.mock.calls[0];
@@ -593,7 +639,8 @@ describe('F7 - unticking then re-ticking a take returns every figure', () => {
   const qtyInput = () => screen.getByTitle(/what the TICKED POs pull this SPO up to/i);
   /** The drill closes on a tick, so each one is its own open-click-read. */
   const tick = async (name: string) => {
-    fireEvent.click(await screen.findByTitle(/which po covers this/i));
+    await screen.findByTitle(/which po covers this/i);
+    fireEvent.click(screen.getByTitle(/which po covers this/i));
     fireEvent.click(screen.getByRole('checkbox', { name }));
   };
 
@@ -621,6 +668,7 @@ describe('F7 - unticking then re-ticking a take returns every figure', () => {
     await tick('Draw from 202606-S0099');
     await tick('Draw from 202606-S0099');
 
+    await closeDrill();
     fireEvent.click(screen.getByRole('button', { name: /create spo/i }));
 
     await waitFor(() => expect(state.create).toHaveBeenCalledTimes(1));
@@ -675,13 +723,15 @@ describe('F7 - unticking an SO line shows up as Unassigned', () => {
 
   it('moves the unassigned share when a tick is dropped', async () => {
     renderTable();
-    fireEvent.click(await screen.findByTitle(/which demand this spo is for/i));
+    await screen.findByTitle(/which demand this spo is for/i);
+    fireEvent.click(screen.getByTitle(/which demand this spo is for/i));
 
     // SI26-0100 is at BRW, which is also the suggested warehouse - so the SPLIT is
     // unchanged and only the unassigned reading can tell the two apart.
     fireEvent.click(screen.getByRole('checkbox', { name: 'Cover SI26-0100' }));
 
-    expect(await screen.findByText(/70 unassigned/)).toBeInTheDocument();
+    await screen.findByText(/70 unassigned/);
+    expect(screen.getByText(/70 unassigned/)).toBeInTheDocument();
   });
 
   it('says nothing about unassigned when every piece is spoken for', async () => {
@@ -723,7 +773,8 @@ describe('F7 - the quantity the operator typed is theirs', () => {
 
   const qtyInput = () => screen.getByTitle(/what the TICKED POs pull this SPO up to/i);
   const toggle = async () => {
-    fireEvent.click(await screen.findByTitle(/which po covers this/i));
+    await screen.findByTitle(/which po covers this/i);
+    fireEvent.click(screen.getByTitle(/which po covers this/i));
     fireEvent.click(screen.getByRole('checkbox', { name: 'Draw from 202605-S0060' }));
   };
 
@@ -781,7 +832,13 @@ describe('R22 - the destinations expand under the row', () => {
   });
 
   /** The Location cell reads "2 locations" for the default split - and IS the chevron. */
-  const chevron = async () => await screen.findByRole('button', { name: /BRW|locations/ });
+  const chevron = async () => {
+    // Re-queried AFTER the find settles: `findBy*` resolves inside RTL's `act`,
+    // and the flush on the way out replaces the grid's cells, so the node the
+    // find handed back is already detached and a click on it does nothing.
+    await screen.findByRole('button', { name: /BRW|locations/ });
+    return screen.getByRole('button', { name: /BRW|locations/ });
+  };
   const qtyRow = (n: number) =>
     screen.getByRole('spinbutton', { name: `Quantity for destination ${n}` });
 
@@ -794,7 +851,8 @@ describe('R22 - the destinations expand under the row', () => {
 
     fireEvent.click(trigger);
 
-    expect(await screen.findByText(/SRTWT7443 - destinations/)).toBeInTheDocument();
+    await screen.findByText(/SRTWT7443 - destinations/);
+    expect(screen.getByText(/SRTWT7443 - destinations/)).toBeInTheDocument();
     // 40 to the project row's BRW plus the unassigned 30, and 30 to the retail row's MWH.
     expect(qtyRow(1)).toHaveValue(70);
     expect(qtyRow(2)).toHaveValue(30);
@@ -868,7 +926,8 @@ describe('R22 - the destinations expand under the row', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /expand all/i }));
 
-    expect(await screen.findByText(/SRTWT7443 - destinations/)).toBeInTheDocument();
+    await screen.findByText(/SRTWT7443 - destinations/);
+    expect(screen.getByText(/SRTWT7443 - destinations/)).toBeInTheDocument();
     expect(screen.getByText(/SRTWT9000 - destinations/)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: /collapse all/i }));
@@ -898,9 +957,11 @@ describe('R22 - the destinations expand under the row', () => {
     });
     renderTable();
 
-    fireEvent.click(await screen.findByRole('button', { name: /expand all/i }));
+    await screen.findByRole('button', { name: /expand all/i });
+    fireEvent.click(screen.getByRole('button', { name: /expand all/i }));
 
-    expect(await screen.findByText(/SRTWT7443 - destinations/)).toBeInTheDocument();
+    await screen.findByText(/SRTWT7443 - destinations/);
+    expect(screen.getByText(/SRTWT7443 - destinations/)).toBeInTheDocument();
     expect(
       screen.queryByText('No destination can be chosen for this line.'),
     ).not.toBeInTheDocument();
@@ -919,7 +980,8 @@ describe('R22 - the destinations expand under the row', () => {
     });
     renderTable();
 
-    const expandAll = await screen.findByRole('button', { name: /expand all/i });
+    await screen.findByRole('button', { name: /expand all/i });
+    const expandAll = screen.getByRole('button', { name: /expand all/i });
     const collapseAll = screen.getByRole('button', { name: /collapse all/i });
     expect(expandAll).toBeDisabled();
     expect(collapseAll).toBeDisabled();
@@ -940,7 +1002,8 @@ describe('R22 - the destinations expand under the row', () => {
     });
     renderTable();
 
-    expect(await screen.findByText('No location')).toBeInTheDocument();
+    await screen.findByText('No location');
+    expect(screen.getByText('No location')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'No location' })).not.toBeInTheDocument();
   });
 });
@@ -967,7 +1030,8 @@ describe('R21 - the four figures open the shared lightbox', () => {
   });
 
   const openFigure = async (title: RegExp) => {
-    fireEvent.click(await screen.findByTitle(title));
+    await screen.findByTitle(title);
+    fireEvent.click(screen.getByTitle(title));
     return screen.getByRole('dialog');
   };
   const PO = /which po covers this/i;

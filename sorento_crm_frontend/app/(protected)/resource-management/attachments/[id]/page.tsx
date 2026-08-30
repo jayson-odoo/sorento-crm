@@ -1,13 +1,7 @@
 import { Metadata } from 'next';
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
 import { Container } from '@/components/common/container';
+import { PageHeader } from '@/components/common/PageHeader';
+import BackToList from '@/components/common/BackToList';
 import AttachmentDetail from '../components/AttachmentDetail';
 
 export const metadata: Metadata = {
@@ -32,23 +26,31 @@ export default async function AttachmentDetailPage({
 
   return (
     <Container>
-      <Breadcrumb>
-        <BreadcrumbList>
-          <BreadcrumbItem>
-            <BreadcrumbLink href="/">Home</BreadcrumbLink>
-          </BreadcrumbItem>
-          <BreadcrumbSeparator />
-          <BreadcrumbItem>
-            <BreadcrumbLink href={backUrl}>
-              {fromDirectories ? 'Files' : 'Attachments'}
-            </BreadcrumbLink>
-          </BreadcrumbItem>
-          <BreadcrumbSeparator />
-          <BreadcrumbItem>
-            <BreadcrumbPage>Details</BreadcrumbPage>
-          </BreadcrumbItem>
-        </BreadcrumbList>
-      </Breadcrumb>
+      <PageHeader
+        title="Attachment"
+        // The sidebar names Files but not the flat Attachments list, so the
+        // trail is passed: it has to name whichever of the two the reader came
+        // from, the same one Back returns to.
+        crumbs={
+          fromDirectories
+            ? [
+                { title: 'Resources' },
+                { title: 'Files', path: backUrl },
+                { title: 'Attachment' },
+              ]
+            : [
+                { title: 'Attachments', path: '/resource-management/attachments' },
+                { title: 'Attachment' },
+              ]
+        }
+        actions={
+          <BackToList
+            listPath={backUrl}
+            label={fromDirectories ? 'Back to files' : 'Back to attachments'}
+            appendListState={!fromDirectories}
+          />
+        }
+      />
       <div className="mt-6">
         <AttachmentDetailWrapper params={params} fromDirectories={fromDirectories} directoryId={directoryId} />
       </div>

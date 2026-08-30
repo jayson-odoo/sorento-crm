@@ -71,7 +71,7 @@ export function QuotationScopeTabs({
       <div className="min-w-0 overflow-x-auto" data-testid="quotation-scope-strip">
         {/* `w-max` so the strip's background runs the full length of the tabs it holds rather
             than stopping at the viewport edge once they overflow. */}
-        <TabsList className="w-max">
+        <TabsList variant="default" className="w-max">
           {scopes.map((scope) => (
             // The chip carries the active styling, not the trigger, so the tab's $ sits INSIDE
             // the selected tab instead of floating beside it. A button cannot be nested in a

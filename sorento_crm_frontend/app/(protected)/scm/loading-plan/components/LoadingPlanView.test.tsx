@@ -36,6 +36,9 @@ if (!window.ResizeObserver) {
 }
 
 const push = vi.fn();
+// The pager has its own tests (hooks/useListPager.test.ts).
+vi.mock('@/components/common/ListPager', () => ({ __esModule: true, default: () => null }));
+
 vi.mock('next/navigation', () => ({
   usePathname: () => '/scm/loading-plan/plan-1',
   useRouter: () => ({ push, replace: vi.fn() }),
@@ -151,6 +154,11 @@ const changeCutOff = vi.fn();
 const refetchBuild = vi.fn();
 
 vi.mock('../../hooks/useFulfilment', () => ({
+  // The pager reads the list page through the entity's shared key + fetch (S3-03).
+  loadingPlanPagerQuery: {
+    listQueryKey: () => ['scm-loading-plans'],
+    fetchPage: async () => ({ data: [], pagination: { total: 0 } }),
+  },
   useContainerRequestBuild: () => ({
     data: { plan: state.plan, rows: state.rows, supplier_id: 'sup-1' },
     isLoading: false,
@@ -234,7 +242,10 @@ describe('LoadingPlanView (the record)', () => {
     expect(subtitle).toContain('Started');
     expect(subtitle).toContain('SO cut-off 30/09/2026');
     expect(subtitle).toContain('Stock list 27/07/2026');
-    expect(screen.getByText('Planning')).toBeTruthy();
+    // The state pill, not the sidebar crumb that also reads "Planning".
+    expect(
+      screen.getAllByText('Planning').some((el) => el.dataset.slot === 'badge'),
+    ).toBe(true);
   });
 
   it('carries no header card and no Upload button of its own (AC-A3, AC-A12)', () => {
@@ -387,7 +398,7 @@ describe('LoadingPlanView (the record)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Change cut-off' }));
     const input = await screen.findByLabelText('Sales order cut-off');
     fireEvent.change(input, { target: { value: '2026-10-31' } });
-    fireEvent.click(screen.getAllByRole('button', { name: 'Save' })[0]);
+    fireEvent.click(screen.getAllByRole('button', { name: 'Save cut-off' })[0]);
 
     await waitFor(() =>
       expect(changeCutOff).toHaveBeenCalledWith('2026-10-31', expect.anything()),
@@ -452,7 +463,7 @@ describe('LoadingPlanView, changing the cut-off with edits on the screen', () =>
     fireEvent.click(screen.getByTestId('type-qty'));
 
     fireEvent.click(screen.getByRole('button', { name: 'Change cut-off' }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Save' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Save cut-off' }));
 
     expect(await screen.findByText('Drop your 1 typed quantity?')).toBeTruthy();
     expect(changeCutOff).not.toHaveBeenCalled();

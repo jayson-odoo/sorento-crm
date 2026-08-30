@@ -18,22 +18,11 @@ import {
   Type,
 } from 'lucide-react';
 
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { BlockInspector } from './BlockInspector';
 import { EMPTY_SELECTION, type ProductSelection } from './ProductPickerDialog';
 import { useQueries, useQueryClient } from '@tanstack/react-query';
@@ -179,9 +168,6 @@ export function PageEditor({
     doc.sections[0]?.id ?? null,
   );
   const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null);
-  const [pendingDelete, setPendingDelete] = useState<Block | null>(null);
-  /** Confirming removal of the active section's artwork. See handleClearBackground. */
-  const [pendingBackgroundClear, setPendingBackgroundClear] = useState(false);
   /**
    * The picker's working copy, keyed by block id. It is NEVER written into the
    * saved document - the document carries a `collectionId` and nothing else, so
@@ -338,7 +324,6 @@ export function PageEditor({
       });
 
       setSelectedBlockId(null);
-      setPendingDelete(null);
     },
     [activeSection, updateSection],
   );
@@ -536,8 +521,6 @@ export function PageEditor({
       delete style.backgroundFit;
       return { ...section, style };
     });
-
-    setPendingBackgroundClear(false);
   }, [activeSection, updateSection]);
 
   const handleRederive = useCallback(() => {
@@ -587,7 +570,7 @@ export function PageEditor({
                   {section.name}
                 </span>
                 {section.printMode === 'breakBefore' && (
-                  <Badge variant="outline" appearance="ghost" className="shrink-0 text-xs">
+                  <Badge variant="outline" className="shrink-0 text-xs">
                     break
                   </Badge>
                 )}
@@ -653,7 +636,10 @@ export function PageEditor({
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => setPendingBackgroundClear(true)}
+                  // Same draft-only rule as the block delete above: the artwork
+                  // stays in the library, and this only stops the DRAFT section
+                  // from using it (D7).
+                  onClick={handleClearBackground}
                 >
                   <ImageOff className="size-3.5" />
                   Remove background
@@ -670,7 +656,7 @@ export function PageEditor({
               <FocusToggle active={focus} onToggle={setFocus} label="canvas" />
 
               <Tabs value={mode} onValueChange={(value) => setMode(value as CanvasMode)}>
-                <TabsList>
+                <TabsList variant="default">
                   {CANVAS_TABS.map(({ value, label, icon: Icon }) => (
                     <TabsTrigger key={value} value={value} className="gap-1.5">
                       <Icon className="size-3.5" />
@@ -743,9 +729,12 @@ export function PageEditor({
                   onPlacementsChange={handlePlacementsChange}
                   onGrowBlock={handleGrowBlock}
                   resolveBlock={resolveBlock}
+                  // Nothing is confirmed and nothing is deferred (D7): the block
+                  // leaves the DRAFT document, not the server. Save is what sends
+                  // it, so until then there is nothing to take back.
                   onDeleteBlock={(blockId) => {
                     const block = activeSection.blocks.find((item) => item.id === blockId);
-                    if (block) setPendingDelete(block);
+                    if (block) handleDeleteBlock(block);
                   }}
                 />
               </>
@@ -776,51 +765,7 @@ export function PageEditor({
         </CollapsiblePanel>
       </aside>
 
-      {/*
-        A confirm, never a bare click: removing the artwork detaches something
-        the seed found and nothing puts it back, and this repo requires a
-        dialog for any destructive or detaching action. AlertDialog rather than
-        ConfirmDeleteDialog because nothing is being deleted - the asset stays
-        in the library, this section simply stops using it - and the shared
-        dialog's button says "Delete" and toasts as though a server call
-        happened.
-      */}
-      <AlertDialog
-        open={pendingBackgroundClear}
-        onOpenChange={setPendingBackgroundClear}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Remove background</AlertDialogTitle>
-            <AlertDialogDescription>
-              Remove the artwork behind{' '}
-              <strong className="text-foreground">{activeSection?.name}</strong>? The
-              picture stays in the library, but this section will not use it again
-              unless you put it back. This action cannot be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              onClick={handleClearBackground}
-            >
-              Remove
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
 
-      <ConfirmDeleteDialog
-        open={Boolean(pendingDelete)}
-        onOpenChange={(open) => !open && setPendingDelete(null)}
-        onDelete={async () => {
-          if (pendingDelete) handleDeleteBlock(pendingDelete);
-        }}
-        successMessage="Block removed"
-        title="Confirm delete"
-        description={`This removes the ${pendingDelete?.type ?? ''} block from this section. This action cannot be undone.`}
-      />
     </div>
     </FocusShell>
   );

@@ -638,40 +638,6 @@ class SupplierService:
             "empty": total == 0
         }
 
-    def neighbours(
-        self,
-        supplier_id: str,
-        query: Optional[str] = None,
-        sort_field: str = "created_at",
-        sort_dir: str = "asc",
-    ) -> dict:
-        """Resolve prev/next neighbours for ``supplier_id`` within the active list
-        query.
-
-        Selects only the ordered ids (not full rows) for efficiency, then defers the
-        position/wrap math to the pure ``compute_neighbours`` helper. If the record is
-        not in the filtered set (deep link, or filtered out after an edit), falls back
-        to the unfiltered, default-sorted set so the pager is never dead (D2).
-        """
-        from app.services.record_navigation import compute_neighbours
-
-        def _ordered_ids(q) -> list[str]:
-            return [str(row[0]) for row in q.with_entities(Supplier.id).all()]
-
-        filtered_q = self._build_list_query(
-            query=query,
-            sort_field=sort_field,
-            sort_dir=sort_dir,
-        )
-        result = compute_neighbours(_ordered_ids(filtered_q), supplier_id)
-        if result["index"] is not None:
-            return result
-
-        # D2: current record not in the filtered set -> fall back to the unfiltered,
-        # default-sorted set so prev/next still works and total reflects all suppliers.
-        unfiltered_q = self._build_list_query()
-        return compute_neighbours(_ordered_ids(unfiltered_q), supplier_id)
-
     def get_supplier(self, supplier_id: str):
         """Get a supplier by ID."""
         supplier = self.db.query(Supplier).filter(Supplier.id == supplier_id).first()
@@ -803,44 +769,6 @@ class InboundShipmentService:
         else:
             q = q.order_by(sort_column.asc(), InboundShipment.id.asc())
         return q, False
-
-    def neighbours(
-        self,
-        shipment_id: str,
-        query: Optional[str] = None,
-        supplier_id: Optional[str] = None,
-        shipment_status: Optional[str] = None,
-        sort_field: str = "created_at",
-        sort_dir: str = "asc",
-    ) -> dict:
-        """Resolve prev/next neighbours for ``shipment_id`` within the active list
-        query.
-
-        Selects only the ordered ids (not full rows) for efficiency, then defers the
-        position/wrap math to the pure ``compute_neighbours`` helper. If the record is
-        not in the filtered set (deep link, or filtered out after an edit), falls back
-        to the unfiltered, default-sorted set so the pager is never dead (D2).
-        """
-        from app.services.record_navigation import compute_neighbours
-
-        def _ordered_ids(q) -> list[str]:
-            return [str(row[0]) for row in q.with_entities(InboundShipment.id).all()]
-
-        filtered_q, _empty = self._build_list_query(
-            query=query,
-            supplier_id=supplier_id,
-            shipment_status=shipment_status,
-            sort_field=sort_field,
-            sort_dir=sort_dir,
-        )
-        result = compute_neighbours(_ordered_ids(filtered_q), shipment_id)
-        if result["index"] is not None:
-            return result
-
-        # D2: current record not in the filtered set -> fall back to the unfiltered,
-        # default-sorted set so prev/next still works and total reflects all shipments.
-        unfiltered_q, _ = self._build_list_query()
-        return compute_neighbours(_ordered_ids(unfiltered_q), shipment_id)
 
     def list_shipments(
         self,
@@ -1450,7 +1378,6 @@ class InboundShipmentService:
         self.db.commit()
         deleted = len(shipments)
         return {"message": f"{deleted} packing list(s) deleted", "deleted_count": deleted}
-
 
 
 def next_spo_line_number(
@@ -2399,50 +2326,6 @@ class PickingHeaderService:
         else:
             q = q.order_by(sort_column.asc().nulls_last(), PickingHeader.id.asc())
         return q, None
-
-    def neighbours(
-        self,
-        grn_id: str,
-        query: Optional[str] = None,
-        product_query: Optional[str] = None,
-        picking_status: Optional[str] = None,
-        inspection_status: Optional[str] = None,
-        sort_field: str = "created_at",
-        sort_dir: str = "asc",
-    ) -> dict:
-        """Resolve prev/next neighbours for ``grn_id`` within the active list query.
-
-        Selects only the ordered ids (not full rows), then defers position/wrap math
-        to the pure ``compute_neighbours`` helper. If the record is not in the
-        filtered set (deep link, or filtered out after an edit), falls back to the
-        unfiltered, default-sorted set so the pager is never dead (D2).
-        """
-        from app.services.record_navigation import compute_neighbours
-
-        # Resolve picking_number/UUID input to the canonical id so the lookup matches
-        # the ordered-id list (which holds PickingHeader.id values).
-        resolved = self.get_grn(grn_id)
-        resolved_id = str(resolved.id)
-
-        def _ordered_ids(q) -> list[str]:
-            return [str(row[0]) for row in q.with_entities(PickingHeader.id).all()]
-
-        filtered_q, _ = self._build_grn_list_query(
-            query=query,
-            product_query=product_query,
-            picking_status=picking_status,
-            inspection_status=inspection_status,
-            sort_field=sort_field,
-            sort_dir=sort_dir,
-        )
-        result = compute_neighbours(_ordered_ids(filtered_q), resolved_id)
-        if result["index"] is not None:
-            return result
-
-        # D2: current record not in the filtered set -> fall back to the unfiltered,
-        # default-sorted set so prev/next still works and total reflects all GRNs.
-        unfiltered_q, _ = self._build_grn_list_query()
-        return compute_neighbours(_ordered_ids(unfiltered_q), resolved_id)
 
     def list_grns(
         self,
@@ -3625,45 +3508,6 @@ class StockInquiryService:
         else:
             q = q.order_by(sort_column.asc().nulls_last(), StockInquiry.id.asc())
         return q
-
-    def neighbours(
-        self,
-        inquiry_id: str,
-        query: Optional[str] = None,
-        sort_field: str = "created_at",
-        sort_dir: str = "desc",
-        contact_id: Optional[str] = None,
-        space_id: Optional[str] = None,
-        statuses: Optional[List[str]] = None,
-    ) -> dict:
-        """Resolve prev/next neighbours for ``inquiry_id`` within the active list query.
-
-        Selects only the ordered ids (not full rows), then defers the position/wrap math
-        to the pure ``compute_neighbours`` helper. If the record is not in the filtered
-        set (deep link, or filtered out after an edit), falls back to the unfiltered,
-        default-sorted set so the pager is never dead (D2).
-        """
-        from app.services.record_navigation import compute_neighbours
-
-        def _ordered_ids(q) -> list[str]:
-            return [str(row[0]) for row in q.with_entities(StockInquiry.id).all()]
-
-        filtered_q = self._build_list_query(
-            query=query,
-            sort_field=sort_field,
-            sort_dir=sort_dir,
-            contact_id=contact_id,
-            space_id=space_id,
-            statuses=statuses,
-        )
-        result = compute_neighbours(_ordered_ids(filtered_q), inquiry_id)
-        if result["index"] is not None:
-            return result
-
-        # D2: current record not in the filtered set -> fall back to the unfiltered,
-        # default-sorted set so prev/next still works and total reflects all inquiries.
-        unfiltered_q = self._build_list_query()
-        return compute_neighbours(_ordered_ids(unfiltered_q), inquiry_id)
 
     def list_inquiries(
         self,
@@ -7200,52 +7044,6 @@ class PurchaseRequestService:
         else:
             q = q.order_by(sort_col.asc().nullsfirst(), PurchaseRequestHeader.id.asc())
         return q
-
-    def neighbours(
-        self,
-        request_id: str,
-        query: Optional[str] = None,
-        request_type: Optional[str] = None,
-        approval_status: Optional[str] = None,
-        sort_field: str = "request_date",
-        sort_dir: str = "desc",
-        contact_id: Optional[str] = None,
-        space_id: Optional[str] = None,
-        assigned_to: Optional[str] = None,
-    ) -> dict:
-        """Resolve prev/next neighbours for ``request_id`` within the active list query.
-
-        Selects only the ordered ids (not full rows) for efficiency, then defers the
-        position/wrap math to the pure ``compute_neighbours`` helper. If the record is
-        not in the filtered set (deep link, or filtered out after an edit), falls back
-        to the default-sorted set so the pager is never dead (D2).
-
-        The D2 fallback preserves ``request_type`` only - so PR navigation can never
-        wrap into sponsorship forms (and vice-versa) even on the fallback path.
-        """
-        from app.services.record_navigation import compute_neighbours
-
-        def _ordered_ids(q) -> list[str]:
-            return [str(row[0]) for row in q.with_entities(PurchaseRequestHeader.id).all()]
-
-        filtered_q = self._build_request_list_query(
-            query=query,
-            request_type=request_type,
-            approval_status=approval_status,
-            sort_field=sort_field,
-            sort_dir=sort_dir,
-            contact_id=contact_id,
-            space_id=space_id,
-            assigned_to=assigned_to,
-        )
-        result = compute_neighbours(_ordered_ids(filtered_q), request_id)
-        if result["index"] is not None:
-            return result
-
-        # D2: current record not in the filtered set -> fall back to the default-sorted
-        # set, still scoped to request_type so PR nav stays in PRs / SF in SFs.
-        unfiltered_q = self._build_request_list_query(request_type=request_type)
-        return compute_neighbours(_ordered_ids(unfiltered_q), request_id)
 
     def list_requests(
         self,

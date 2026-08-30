@@ -25,7 +25,6 @@ import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import {
@@ -343,7 +342,7 @@ function WorksheetView({
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0 break-words">
           <div className="flex flex-wrap items-center gap-2">
-            <h1 className="text-xl font-semibold break-words">{reference}</h1>
+            <h2 className="text-xl font-semibold break-words">{reference}</h2>
             <SalesOrderStatusPill status={worksheet.status} />
           </div>
           <p className="mt-1 text-sm text-muted-foreground break-words">
@@ -436,10 +435,7 @@ function WorksheetView({
                 </Button>
               </div>
             ) : (
-              <ScrollArea>
-                <DataGridTable />
-                <ScrollBar orientation="horizontal" />
-              </ScrollArea>
+              <DataGridTable />
             )}
           </CardTable>
 

@@ -98,7 +98,7 @@ export function PartyDetailClient({ partyId }: { partyId: string }) {
               Parties
             </Link>
           </Button>
-          <h1 className="text-xl font-semibold">{party.name}</h1>
+          <h2 className="text-xl font-semibold">{party.name}</h2>
           <div className="mt-1 flex flex-wrap items-center gap-1.5">
             <Badge variant="secondary">{typeLabel}</Badge>
             {party.is_active ? (

@@ -54,7 +54,7 @@ describe('ContactMarketSegmentSection', () => {
     renderWithClient(<ContactMarketSegmentSection contactId="c1" />);
     fireEvent.click(screen.getByLabelText(/edit market segment/i));
     fireEvent.click(screen.getByLabelText('Project'));
-    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^Save segments$/i }));
     expect(setMutate).toHaveBeenCalledTimes(1);
     expect(setMutate.mock.calls[0][0]).toEqual(['retail', 'project']);
   });
@@ -64,11 +64,11 @@ describe('ContactMarketSegmentSection', () => {
     renderWithClient(<ContactMarketSegmentSection contactId="c1" />);
     fireEvent.click(screen.getByLabelText(/edit market segment/i));
     fireEvent.click(screen.getByLabelText('Retail')); // uncheck
-    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^Save segments$/i }));
     // No immediate mutation - confirmation must appear first.
     expect(setMutate).not.toHaveBeenCalled();
     expect(screen.getByText(/this will unassign retail/i)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: /^confirm$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^Unassign segments$/i }));
     expect(setMutate).toHaveBeenCalledTimes(1);
     expect(setMutate.mock.calls[0][0]).toEqual(['project']);
   });

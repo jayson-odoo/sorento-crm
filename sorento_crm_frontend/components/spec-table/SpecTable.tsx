@@ -19,8 +19,6 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
-import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { readable, readableValue } from '@/lib/spec-readable';
 import { SpecSourceBadge } from './SpecSourceBadge';
 import { SpecValueCell, toDraft } from './SpecValueCell';
@@ -92,10 +90,6 @@ export function SpecTable({
     setEditingKey(row.specKey);
     setEditDraft(toDraft(row.value));
   }, []);
-  /** The row whose removal is being confirmed, and which of the two intents it is. */
-  const [removing, setRemoving] = useState<{ row: SpecTableRow; intent: 'absent' | 'revert' } | null>(
-    null,
-  );
 
   /**
    * A key picked from the dialog that this product does not carry yet.
@@ -279,16 +273,17 @@ export function SpecTable({
                     editor, not a review surface. "Remove" takes the row off the
                     table and records the absence so the next catalogue run does not
                     refill it (a removal that comes back is not a removal); "Reset"
-                    hands the key back to the rules. The confirmation carries the
-                    consequence. */}
+                    hands the key back to the rules. Neither asks first (D7): the
+                    caller parks the clear on the server and the countdown in the
+                    toast is the way back. */}
                 <DropdownMenuContent align="end">
                   <DropdownMenuItem
-                    onClick={() => setRemoving({ row: row.original, intent: 'absent' })}
+                    onClick={() => void callbacks.onTombstone(row.original.specKey)}
                   >
                     Remove
                   </DropdownMenuItem>
                   <DropdownMenuItem
-                    onClick={() => setRemoving({ row: row.original, intent: 'revert' })}
+                    onClick={() => void callbacks.onRevert(row.original.specKey)}
                   >
                     Reset
                   </DropdownMenuItem>
@@ -359,41 +354,11 @@ export function SpecTable({
             {/* Horizontal scroll INSIDE the table's own container: at 375px four
                 columns cannot fit, and without this the page itself scrolls sideways
                 and takes the rest of the product record with it. */}
-            <ScrollArea>
-              <DataGridTable />
-              <ScrollBar orientation="horizontal" />
-            </ScrollArea>
+            <DataGridTable />
           </CardTable>
         </Card>
       </DataGrid>
 
-      <ConfirmDeleteDialog
-        open={removing !== null}
-        onOpenChange={(open) => !open && setRemoving(null)}
-        title={removing?.intent === 'absent' ? 'Confirm delete' : 'Reset'}
-        description={
-          removing?.intent === 'absent' ? (
-            <>
-              <strong>{removing?.row.label}</strong> will be removed from this product and will
-              not be filled in again automatically. This action cannot be undone.
-            </>
-          ) : (
-            <>
-              <strong>{removing?.row.label}</strong> goes back to whatever the rules read from
-              this product. This action cannot be undone.
-            </>
-          )
-        }
-        successMessage={
-          removing?.intent === 'absent' ? 'Specification removed' : 'Back to what the rules read'
-        }
-        onDelete={async () => {
-          if (!removing) return;
-          if (removing.intent === 'absent') await callbacks.onTombstone(removing.row.specKey);
-          else await callbacks.onRevert(removing.row.specKey);
-        }}
-        onSuccess={() => setRemoving(null)}
-      />
     </div>
   );
 }

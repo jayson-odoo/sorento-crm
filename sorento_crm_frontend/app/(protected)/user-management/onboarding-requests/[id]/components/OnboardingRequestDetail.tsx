@@ -16,19 +16,9 @@
  */
 
 import { useMemo, useState } from 'react';
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { CheckCircle2, Copy, KeyRound, Link2Off, Loader2, MoveLeft, Send, Trash2 } from 'lucide-react';
-import { toast } from 'sonner';
+import { CheckCircle2, Loader2, Send } from 'lucide-react';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardHeading, CardTitle } from '@/components/ui/card';
 import {
@@ -38,32 +28,26 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import { Container } from '@/components/common/container';
-import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
-import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
-import {
-  Toolbar,
-  ToolbarActions,
-  ToolbarHeading,
-  ToolbarTitle,
-} from '@/components/common/toolbar';
+import { PageHeader } from '@/components/common/PageHeader';
+import DetailActions from '@/components/common/DetailActions';
+import { useOnboardingRequestActions } from '../../actions';
 import { PeopleGrid } from '@/components/common/onboarding/PeopleGrid';
 import {
   ONBOARDING_STATUS_LABELS,
   ONBOARDING_STATUS_PILL_CODES,
 } from '@/components/common/onboarding/types';
-import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { statusPillClass, STATUS_PILL_BASE } from '@/lib/status-pill';
 import {
   useOnboardingRequest,
   useOnboardingRequestMutations,
 } from '../../hooks/useOnboardingRequests';
-import { OnboardingRequestNavigation } from './OnboardingRequestNavigation';
+import { onboardingPagerQuery } from '../../hooks/useOnboardingRequests';
+import BackToList, { useBackToListHref } from '@/components/common/BackToList';
 
 const BASE_PATH = '/user-management/onboarding-requests';
 
@@ -97,50 +81,41 @@ function DetailShell({ children }: { children: React.ReactNode }) {
   return (
     <>
       <Container>
-        <Toolbar>
-          <ToolbarHeading>
-            <ToolbarTitle>Onboarding Request</ToolbarTitle>
-            <Breadcrumb>
-              <BreadcrumbList>
-                <BreadcrumbItem>
-                  <BreadcrumbLink href="/">Home</BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbPage>User Management</BreadcrumbPage>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbLink href={BASE_PATH}>Onboarding Requests</BreadcrumbLink>
-                </BreadcrumbItem>
-              </BreadcrumbList>
-            </Breadcrumb>
-          </ToolbarHeading>
-          {children}
-        </Toolbar>
+        <PageHeader title="Onboarding Request" actions={children} />
       </Container>
     </>
   );
 }
 
+/** Back carries the list query the row click wrote, so the queue reopens where it was. */
 function BackToQueue() {
-  return (
-    <Button asChild variant="outline">
-      <Link href={BASE_PATH}>
-        <MoveLeft /> Back to onboarding requests
-      </Link>
-    </Button>
-  );
+  return <BackToList listPath={BASE_PATH} label="Back to onboarding requests" />;
 }
 
 export function OnboardingRequestDetail({ requestId }: { requestId: string }) {
   const router = useRouter();
+  const backHref = useBackToListHref(BASE_PATH);
   const [rejecting, setRejecting] = useState<{ id: string; name: string } | null>(null);
   const [rejectReason, setRejectReason] = useState('');
-  const [deleteOpen, setDeleteOpen] = useState(false);
 
   const requestQuery = useOnboardingRequest(requestId);
   const request = requestQuery.data;
+
+  // The set the list row renders too (D15). Delete asks nothing and hands its
+  // countdown back for the primary slot instead (D7).
+  const { actions, pending: actionPending } = useOnboardingRequestActions(
+    request
+      ? {
+          id: request.id,
+          title: request.title,
+          status: request.status,
+          revoked_at: request.revoked_at,
+          intake_url: request.intake_url,
+          people_count: request.people_count,
+        }
+      : null,
+    { onDeleted: () => router.push(backHref) },
+  );
 
   const {
     patchPerson,
@@ -149,14 +124,7 @@ export function OnboardingRequestDetail({ requestId }: { requestId: string }) {
     startReview,
     approveRequest,
     send,
-    revoke,
-    regenerate,
-    remove,
   } = useOnboardingRequestMutations(requestId);
-
-  const { copyToClipboard } = useCopyToClipboard({
-    onCopy: () => toast.success('Link copied'),
-  });
 
   const people = useMemo(() => request?.people ?? [], [request]);
   const counts = useMemo(
@@ -174,9 +142,7 @@ export function OnboardingRequestDetail({ requestId }: { requestId: string }) {
     return (
       <>
         <DetailShell>
-          <ToolbarActions>
-            <BackToQueue />
-          </ToolbarActions>
+          <BackToQueue />
         </DetailShell>
         <Container>
           <div className="flex flex-col gap-4">
@@ -193,9 +159,7 @@ export function OnboardingRequestDetail({ requestId }: { requestId: string }) {
     return (
       <>
         <DetailShell>
-          <ToolbarActions>
-            <BackToQueue />
-          </ToolbarActions>
+          <BackToQueue />
         </DetailShell>
         <Container>
           <Alert variant="destructive">
@@ -209,77 +173,11 @@ export function OnboardingRequestDetail({ requestId }: { requestId: string }) {
 
   const canStartReview = request.status === 'submitted';
   const canApprove = request.status === 'in_review';
-  const linkLive = !request.revoked_at;
-  const canAdministerLink = ['draft', 'sent'].includes(request.status);
 
   return (
     <>
       <DetailShell>
-        <ToolbarActions>
-          <OnboardingRequestNavigation requestId={requestId} />
-          {canStartReview ? (
-            <Button
-              variant="outline"
-              onClick={() => startReview.mutate()}
-              disabled={startReview.isPending}
-            >
-              Start review
-            </Button>
-          ) : null}
-          {canApprove ? (
-            <Button onClick={() => approveRequest.mutate()} disabled={approveRequest.isPending}>
-              {approveRequest.isPending ? (
-                <Loader2 className="size-4 animate-spin" />
-              ) : (
-                <CheckCircle2 className="size-4" />
-              )}
-              Approve and provision
-            </Button>
-          ) : null}
-          <DetailActionsMenu ariaLabel="Request actions">
-            <DropdownMenuItem
-              disabled={!request.intake_url || !linkLive}
-              onSelect={(e) => {
-                e.preventDefault();
-                if (request.intake_url) copyToClipboard(request.intake_url);
-              }}
-            >
-              <Copy className="size-4" />
-              Copy link
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              disabled={!linkLive || !canAdministerLink || revoke.isPending}
-              onSelect={(e) => {
-                e.preventDefault();
-                revoke.mutate();
-              }}
-            >
-              <Link2Off className="size-4" />
-              Revoke link
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              disabled={!canAdministerLink || regenerate.isPending}
-              onSelect={(e) => {
-                e.preventDefault();
-                regenerate.mutate();
-              }}
-            >
-              <KeyRound className="size-4" />
-              Issue a new link
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              className="text-destructive focus:text-destructive"
-              onSelect={(e) => {
-                e.preventDefault();
-                setDeleteOpen(true);
-              }}
-            >
-              <Trash2 className="size-4" />
-              Delete
-            </DropdownMenuItem>
-          </DetailActionsMenu>
-          <BackToQueue />
-        </ToolbarActions>
+        <BackToQueue />
       </DetailShell>
 
       <Container>
@@ -287,8 +185,8 @@ export function OnboardingRequestDetail({ requestId }: { requestId: string }) {
           {/* Meta: the record's own identity plus the read-only facts that have
               no edit counterpart, so they never sit inside a section body. */}
           <Card>
-            <CardHeader>
-              <CardHeading>
+            <CardHeader className="flex-col items-stretch gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <CardHeading className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
                   <CardTitle className="break-words">{request.title}</CardTitle>
                   <span
@@ -303,6 +201,40 @@ export function OnboardingRequestDetail({ requestId }: { requestId: string }) {
                   {request.company_name} · from {request.requester_name}
                 </p>
               </CardHeading>
+              <DetailActions
+                pager={{
+                  ...onboardingPagerQuery,
+                  detailPath: BASE_PATH,
+                  currentId: requestId,
+                  ariaLabel: 'onboarding request',
+                }}
+                actions={actions}
+                gearLabel="Request actions"
+                pendingAction={actionPending}
+                primary={
+                  <>
+                  {canStartReview ? (
+                    <Button
+                      variant="outline"
+                      onClick={() => startReview.mutate()}
+                      disabled={startReview.isPending}
+                    >
+                      Start review
+                    </Button>
+                  ) : null}
+                  {canApprove ? (
+                    <Button onClick={() => approveRequest.mutate()} disabled={approveRequest.isPending}>
+                      {approveRequest.isPending ? (
+                        <Loader2 className="size-4 animate-spin" />
+                      ) : (
+                        <CheckCircle2 className="size-4" />
+                      )}
+                      Approve and provision
+                    </Button>
+                  ) : null}
+                  </>
+                }
+              />
             </CardHeader>
             <CardContent>
               <dl className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
@@ -458,25 +390,6 @@ export function OnboardingRequestDetail({ requestId }: { requestId: string }) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
-      <ConfirmDeleteDialog
-        open={deleteOpen}
-        onOpenChange={setDeleteOpen}
-        description={
-          <>
-            Delete <strong>{request.title}</strong> and its {counts.total}{' '}
-            {counts.total === 1 ? 'person' : 'people'}? This action cannot be undone.
-          </>
-        }
-        onDelete={async () => {
-          await remove.mutateAsync();
-        }}
-        queryKeysToInvalidate={[['onboarding-requests']]}
-        successMessage="Onboarding request deleted"
-        onSuccess={() => {
-          router.push(BASE_PATH);
-        }}
-      />
     </>
   );
 }

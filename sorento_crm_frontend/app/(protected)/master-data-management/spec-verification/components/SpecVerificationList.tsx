@@ -50,7 +50,6 @@ import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
@@ -208,10 +207,11 @@ export default function SpecVerificationList() {
     );
     return {
       pageIndex: Number.isNaN(page) ? 0 : Math.max(0, page - 1),
+      // This worklist's own cap, not the shared one: its rows are wide and its
+      // backend route allows up to MAX_PAGE_LIMIT, so nothing forced it up to
+      // 1000 and a hundred spec rows is already a long scroll.
       pageSize:
-        Number.isNaN(limit) || limit < 1
-          ? DEFAULT_PAGE_SIZE
-          : Math.min(limit, 100),
+        Number.isNaN(limit) || limit < 1 ? DEFAULT_PAGE_SIZE : Math.min(limit, 100),
     };
   });
   const [sorting, setSorting] = useState<SortingState>(() => {
@@ -914,10 +914,7 @@ export default function SpecVerificationList() {
             />
           </CardHeader>
           <CardTable>
-            <ScrollArea>
-              <DataGridTable />
-              <ScrollBar orientation="horizontal" />
-            </ScrollArea>
+            <DataGridTable />
           </CardTable>
           <CardFooter>
             <DataGridPagination />

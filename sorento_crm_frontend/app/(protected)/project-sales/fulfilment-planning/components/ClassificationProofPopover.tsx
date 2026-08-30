@@ -10,6 +10,7 @@ import type {
   ClassificationEvidenceClass,
   ClassificationEvidenceLocation,
 } from '../../_shared/types/fulfilmentPlanning.types';
+import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 
 /**
  * The Proof button: the ranked evidence behind one item's hot/cold verdict.
@@ -123,34 +124,37 @@ function ClassSection({
         </p>
       ) : (
         <>
-          <table className="w-full text-2xs tabular-nums">
-            <thead>
-              <tr className="text-muted-foreground">
-                <th className="pe-2 text-start font-medium uppercase tracking-wide">Location</th>
-                <th className="pe-2 text-end font-medium uppercase tracking-wide">
-                  Delivered last 12 months
-                </th>
-                <th className="pe-2 text-end font-medium uppercase tracking-wide">Rank</th>
-                <th className="pe-2 text-end font-medium uppercase tracking-wide">Its share</th>
-                <th className="text-end font-medium uppercase tracking-wide">Ranked above it</th>
-              </tr>
-            </thead>
-            <tbody>
-              {cls.locations.map((location) => (
-                <tr key={location.warehouse_code} className={location.hot ? 'font-medium' : ''}>
-                  <td className="pe-2 py-0.5">{location.warehouse_code}</td>
-                  <td className="pe-2 py-0.5 text-end">
-                    {Number(location.qty_delivered).toLocaleString()}
-                  </td>
-                  <td className="pe-2 py-0.5 text-end">{`${location.rank} of ${location.of}`}</td>
-                  <td className="pe-2 py-0.5 text-end">
-                    {location.share_pct != null ? `${location.share_pct}%` : '-'}
-                  </td>
-                  <td className="py-0.5 text-end">{rankedAboveText(location, cls.demand_class)}</td>
+          <ScrollArea>
+            <table className="w-auto min-w-full text-2xs tabular-nums">
+              <thead>
+                <tr className="text-muted-foreground">
+                  <th className="pe-2 text-start font-medium uppercase tracking-wide">Location</th>
+                  <th className="pe-2 text-end font-medium uppercase tracking-wide">
+                    Delivered last 12 months
+                  </th>
+                  <th className="pe-2 text-end font-medium uppercase tracking-wide">Rank</th>
+                  <th className="pe-2 text-end font-medium uppercase tracking-wide">Its share</th>
+                  <th className="text-end font-medium uppercase tracking-wide">Ranked above it</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {cls.locations.map((location) => (
+                  <tr key={location.warehouse_code} className={location.hot ? 'font-medium' : ''}>
+                    <td className="pe-2 py-0.5">{location.warehouse_code}</td>
+                    <td className="pe-2 py-0.5 text-end">
+                      {Number(location.qty_delivered).toLocaleString()}
+                    </td>
+                    <td className="pe-2 py-0.5 text-end">{`${location.rank} of ${location.of}`}</td>
+                    <td className="pe-2 py-0.5 text-end">
+                      {location.share_pct != null ? `${location.share_pct}%` : '-'}
+                    </td>
+                    <td className="py-0.5 text-end">{rankedAboveText(location, cls.demand_class)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <ScrollBar orientation="horizontal" />
+          </ScrollArea>
           <p className="mt-1.5 text-2xs text-muted-foreground">
             {`Hot = among the items that together make the first ${hotCutPct}% of quantity `}
             {`delivered to ${cls.demand_class} customers at that location${computedText}.`}

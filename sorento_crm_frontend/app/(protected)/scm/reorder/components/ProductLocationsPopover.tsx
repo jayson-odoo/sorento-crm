@@ -117,9 +117,16 @@ export function ProductLocationsPopover({
             </div>
           ) : (
             <>
-              <div className="max-h-72 overflow-y-auto" data-testid="location-rows">
-                <table className="w-full text-2xs">
-                  <thead className="sticky top-0 bg-muted/60 text-muted-foreground">
+              <div className="max-h-72 overflow-auto" data-testid="location-rows">
+                {/* One scroller, both axes: a nested one broke the sticky head.
+
+                    The head is opaque and layered. `bg-muted/60` let forty rows
+                    of figures show through it as they scrolled past, which reads
+                    as a rendering fault long before it reads as a header.
+                    Measured in the browser first: `border-collapse` does NOT
+                    stop a thead sticking here, so the table keeps it. */}
+                <table className="w-auto min-w-full text-2xs">
+                  <thead className="sticky top-0 z-10 bg-popover text-muted-foreground">
                     <tr>
                       <th className="px-2 py-1.5 text-start font-medium">Location</th>
                       {/* These two are the row's `_need` figures - the confirmed-for-buy

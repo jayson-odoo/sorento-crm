@@ -13,6 +13,9 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  // Back, and the delete that lands where Back lands, read the list state the
+  // row click wrote into this URL.
+  useSearchParams: () => new URLSearchParams(''),
 }));
 vi.mock('@/lib/api', () => ({
   apiFetch: vi.fn().mockResolvedValue({ ok: true, json: async () => ({ settings: {} }) }),
@@ -117,7 +120,14 @@ const revisionEntries = [
   { id: 'rev-1', version_no: 1, revision_no: 1, kind: 'revision', label: 'Revision 1' },
 ];
 
+vi.mock('@/components/common/ListPager', () => ({ __esModule: true, default: () => null }));
+
 vi.mock('../hooks/usePurchaseRequests', () => ({
+  // The pager reads the list page through the entity's shared key + fetch (S3-03).
+  purchaseRequestsPagerQuery: {
+    listQueryKey: () => ['purchase-requests'],
+    fetchPage: async () => ({ data: [], pagination: { total: 0 } }),
+  },
   usePurchaseRequest: (...a: unknown[]) => usePurchaseRequestMock(...a),
   usePurchaseRequestNeighbours: () => ({
     prevId: null,

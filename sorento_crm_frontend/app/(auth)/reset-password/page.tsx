@@ -129,7 +129,7 @@ export default function Page() {
             className="w-full"
           >
             {isProcessing ? <LoaderCircleIcon className="animate-spin" /> : null}
-            Submit
+            Reset password
           </Button>
 
           <div className="space-y-3">

@@ -1,16 +1,8 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { isDeferredFormAction } from '@/app/(protected)/sla-management/_shared/formAction';
-import { buildDataGridParams } from '@/lib/api-client';
-import {
-  useRecordNeighbours,
-  type RecordNeighboursResult,
-} from '@/hooks/useRecordNeighbours';
-import {
-  COMPLAINT_NEIGHBOURS_PATH,
-  complaintListExtraParams,
-  type ComplaintsListParams,
-} from '../services/complaintService';
+
+import { type ComplaintsListParams } from '../services/complaintService';
 import {
   getComplaints,
   getComplaint,
@@ -35,38 +27,57 @@ import {
   type ResponseAttachmentUploadResult,
 } from '../services/complaintService';
 import type { ComplaintFormData } from '../types/complaint.types';
+import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
+
 
 /**
- * Prev/next neighbours of a complaint within the active filtered+sorted list set.
- * Serializes the list query (search/sort/assignee/status) with `buildDataGridParams`
- * - the same serialization the list page uses - so the backend honours filters
- * identically. `page`/`limit` are sent but ignored by the neighbours endpoint.
+ * The list's React Query key. The detail page's pager rebuilds the SAME key from
+ * the URL, so it reads the page the list already fetched (see `hooks/useListPager.ts`).
  */
-export function useComplaintNeighbours(
-  complaintId: string | null,
-  listParams: ComplaintsListParams,
-): RecordNeighboursResult {
-  const params = buildDataGridParams(
-    listParams,
-    complaintListExtraParams(listParams),
-  );
-  return useRecordNeighbours(COMPLAINT_NEIGHBOURS_PATH, complaintId, params);
+export function complaintsListQueryKey(params: ComplaintsListParams): QueryKey {
+  return [
+    'complaints',
+    params.pageIndex,
+    params.pageSize,
+    params.sorting,
+    params.searchQuery,
+    params.assigned_to,
+    params.status,
+    // Join, not the array: a fresh array literal each render would be a new key.
+    params.root_cause_ids?.join(',') ?? '',
+    params.resolution_ids?.join(',') ?? '',
+  ];
 }
+
+/** The list query a detail URL describes, in the shape the list passes. */
+export function complaintsListParamsFromUrl(
+  params: ListPagerParams,
+): ComplaintsListParams {
+  const rootCauses = params.filters.root_cause_ids;
+  const resolutions = params.filters.resolution_ids;
+  return {
+    pageIndex: params.pageIndex,
+    pageSize: params.pageSize,
+    sorting: params.sorting,
+    searchQuery: params.searchQuery,
+    assigned_to: params.filters.assigned_to,
+    status: params.filters.status,
+    root_cause_ids: rootCauses ? rootCauses.split(',') : undefined,
+    resolution_ids: resolutions ? resolutions.split(',') : undefined,
+  };
+}
+
+/** The pager's two hooks into the complaints list. */
+export const complaintsPagerQuery = {
+  listQueryKey: (params: ListPagerParams): QueryKey =>
+    complaintsListQueryKey(complaintsListParamsFromUrl(params)),
+  fetchPage: (params: ListPagerParams): Promise<ListPagerPage> =>
+    getComplaints(complaintsListParamsFromUrl(params)),
+};
 
 export function useComplaints(params: ComplaintsListParams) {
   return useQuery({
-    queryKey: [
-      'complaints',
-      params.pageIndex,
-      params.pageSize,
-      params.sorting,
-      params.searchQuery,
-      params.assigned_to,
-      params.status,
-      // Join, not the array: a fresh array literal each render would be a new key.
-      params.root_cause_ids?.join(',') ?? '',
-      params.resolution_ids?.join(',') ?? '',
-    ],
+    queryKey: complaintsListQueryKey(params),
     queryFn: () => getComplaints(params),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,

@@ -7,7 +7,13 @@
  */
 import { describe, it, expect } from 'vitest';
 
-import { buildDetailSearch, parseDetailSearch } from './listNavQuery';
+import { DEFAULT_PAGE_SIZES } from '@/components/ui/data-grid-pagination';
+
+import {
+  MAX_LIST_PAGE_SIZE,
+  buildDetailSearch,
+  parseDetailSearch,
+} from './listNavQuery';
 
 describe('listNavQuery round-trip', () => {
   it('preserves query, sort, dir, and extra filters through build -> parse', () => {
@@ -83,5 +89,28 @@ describe('listNavQuery round-trip', () => {
     const parsed = parseDetailSearch(sp);
     expect(Object.keys(parsed.filters)).toEqual(['assigned_to']);
     expect(parsed.filters.id).toBeUndefined();
+  });
+});
+
+/**
+ * The menu and the cap are one decision.
+ *
+ * They were not: the menu offered 250, 500 and 1000 to every list while 34 of
+ * the backend's list routes cap `limit` at 100 or 200, so picking one of the top
+ * three sizes returned a 422 from the UI. The menu now stops where the narrowest
+ * routes do, and a list whose route genuinely takes more passes its own `sizes`.
+ */
+describe('the page-size menu and the URL cap agree', () => {
+  it('offers no size the URL parser would refuse', () => {
+    for (const size of DEFAULT_PAGE_SIZES) {
+      expect(size).toBeLessThanOrEqual(MAX_LIST_PAGE_SIZE);
+    }
+  });
+
+  it('caps a hand-typed limit at the largest size the menu offers', () => {
+    const parsed = parseDetailSearch(new URLSearchParams('limit=100000'));
+
+    expect(parsed.pageSize).toBe(MAX_LIST_PAGE_SIZE);
+    expect(parsed.pageSize).toBe(Math.max(...DEFAULT_PAGE_SIZES));
   });
 });

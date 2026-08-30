@@ -4,25 +4,14 @@ import { use } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { MoveLeft, Edit, Trash2 } from 'lucide-react';
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Container } from '@/components/common/container';
-import {
-  Toolbar,
-  ToolbarActions,
-  ToolbarHeading,
-  ToolbarTitle,
-} from '@/components/common/toolbar';
-import { useUOM, useDeleteUOM } from '../hooks/useUOM';
+import { PageHeader } from '@/components/common/PageHeader';
+import { useUOM } from '../hooks/useUOM';
+import { useDeferredAction } from '@/hooks/useDeferredAction';
+import { useBackToListHref } from '@/components/common/BackToList';
 import { formatDate } from '@/lib/helpers';
 
 export default function UOMDetailPage({
@@ -32,54 +21,42 @@ export default function UOMDetailPage({
 }) {
   const { id } = use(params);
   const router = useRouter();
+  // The list wrote its page, sort and search into this URL when the row was
+  // clicked; Back hands the same string back rather than a fresh page 1.
+  const backHref = useBackToListHref('/master-data-management/units-of-measure');
   const { data: uom, isLoading } = useUOM(id);
-  const deleteMutation = useDeleteUOM();
 
-  const handleDelete = async () => {
-    if (!confirm('Are you sure you want to delete this UOM?')) {
-      return;
-    }
-    try {
-      await deleteMutation.mutateAsync(id);
-      router.push('/master-data-management/units-of-measure');
-    } catch (error) {
-      // Error is handled by the mutation hook
-    }
-  };
+  // Delete asks nothing (D7). It parks the deletion for ten seconds and the
+  // countdown takes the Delete button's place, so the way back is Cancel.
+  const deletion = useDeferredAction({
+    actionKey: 'uom.delete',
+    entityType: 'uom',
+    entityId: id,
+    verb: 'Deleting',
+    subject: uom ? `${uom.uom_name} (${uom.uom_code})` : '',
+    surface: 'inline',
+    watchFromMount: true,
+    successMessage: 'Unit of measure deleted',
+    // The select is what every product form picks a UOM from; the immediate mutation
+    // refetched both, and only refetching the list leaves a deleted unit selectable.
+    invalidateKeys: [['uoms'], ['uom-select']],
+    onCommitted: () => router.push(backHref),
+  });
 
   if (isLoading) {
     return (
       <>
         <Container>
-          <Toolbar>
-            <ToolbarHeading>
-              <ToolbarTitle>Unit of Measure</ToolbarTitle>
-              <Breadcrumb>
-                <BreadcrumbList>
-                  <BreadcrumbItem>
-                    <BreadcrumbLink href="/">Home</BreadcrumbLink>
-                  </BreadcrumbItem>
-                  <BreadcrumbSeparator />
-                  <BreadcrumbItem>
-                    <BreadcrumbPage>Product Management</BreadcrumbPage>
-                  </BreadcrumbItem>
-                  <BreadcrumbSeparator />
-                  <BreadcrumbItem>
-                    <BreadcrumbLink href="/master-data-management/units-of-measure">
-                      Units of Measure
-                    </BreadcrumbLink>
-                  </BreadcrumbItem>
-                </BreadcrumbList>
-              </Breadcrumb>
-            </ToolbarHeading>
-            <ToolbarActions>
+          <PageHeader
+            title="Unit of Measure"
+            actions={
               <Button asChild variant="outline">
-                <Link href="/master-data-management/units-of-measure">
+                <Link href={backHref}>
                   <MoveLeft /> Back to UOMs
                 </Link>
               </Button>
-            </ToolbarActions>
-          </Toolbar>
+            }
+          />
         </Container>
         <Container>
           <div className="space-y-6">
@@ -95,42 +72,23 @@ export default function UOMDetailPage({
     return (
       <>
         <Container>
-          <Toolbar>
-            <ToolbarHeading>
-              <ToolbarTitle>Unit of Measure</ToolbarTitle>
-              <Breadcrumb>
-                <BreadcrumbList>
-                  <BreadcrumbItem>
-                    <BreadcrumbLink href="/">Home</BreadcrumbLink>
-                  </BreadcrumbItem>
-                  <BreadcrumbSeparator />
-                  <BreadcrumbItem>
-                    <BreadcrumbPage>Product Management</BreadcrumbPage>
-                  </BreadcrumbItem>
-                  <BreadcrumbSeparator />
-                  <BreadcrumbItem>
-                    <BreadcrumbLink href="/master-data-management/units-of-measure">
-                      Units of Measure
-                    </BreadcrumbLink>
-                  </BreadcrumbItem>
-                </BreadcrumbList>
-              </Breadcrumb>
-            </ToolbarHeading>
-            <ToolbarActions>
+          <PageHeader
+            title="Unit of Measure"
+            actions={
               <Button asChild variant="outline">
-                <Link href="/master-data-management/units-of-measure">
+                <Link href={backHref}>
                   <MoveLeft /> Back to UOMs
                 </Link>
               </Button>
-            </ToolbarActions>
-          </Toolbar>
+            }
+          />
         </Container>
         <Container>
           <div className="text-center py-12">
             <p className="text-muted-foreground">UOM not found</p>
             <Button
               variant="outline"
-              onClick={() => router.push('/master-data-management/units-of-measure')}
+              onClick={() => router.push(backHref)}
               className="mt-4"
             >
               <MoveLeft className="size-4" />
@@ -145,35 +103,16 @@ export default function UOMDetailPage({
   return (
     <>
       <Container>
-        <Toolbar>
-          <ToolbarHeading>
-            <ToolbarTitle>Unit of Measure</ToolbarTitle>
-            <Breadcrumb>
-              <BreadcrumbList>
-                <BreadcrumbItem>
-                  <BreadcrumbLink href="/">Home</BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbPage>Product Management</BreadcrumbPage>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbLink href="/master-data-management/units-of-measure">
-                    Units of Measure
-                  </BreadcrumbLink>
-                </BreadcrumbItem>
-              </BreadcrumbList>
-            </Breadcrumb>
-          </ToolbarHeading>
-          <ToolbarActions>
+        <PageHeader
+          title="Unit of Measure"
+          actions={
             <Button asChild variant="outline">
-              <Link href="/master-data-management/units-of-measure">
+              <Link href={backHref}>
                 <MoveLeft /> Back to UOMs
               </Link>
             </Button>
-          </ToolbarActions>
-        </Toolbar>
+          }
+        />
       </Container>
 
       <Container>
@@ -181,7 +120,7 @@ export default function UOMDetailPage({
           {/* Header */}
           <div className="flex items-center justify-between">
             <div className="space-y-1">
-              <h1 className="text-2xl font-bold">{uom.uom_name}</h1>
+              <h2 className="text-2xl font-bold">{uom.uom_name}</h2>
               <p className="text-sm text-muted-foreground">
                 UOM Code: {uom.uom_code}
               </p>
@@ -194,14 +133,16 @@ export default function UOMDetailPage({
                 <Edit className="size-4" />
                 Edit
               </Button>
-              <Button
-                variant="destructive"
-                onClick={handleDelete}
-                disabled={deleteMutation.isPending}
-              >
-                <Trash2 className="size-4" />
-                Delete
-              </Button>
+              {deletion.countdown ?? (
+                <Button
+                  variant="destructive"
+                  onClick={() => deletion.start()}
+                  disabled={deletion.isPending}
+                >
+                  <Trash2 className="size-4" />
+                  Delete
+                </Button>
+              )}
             </div>
           </div>
 

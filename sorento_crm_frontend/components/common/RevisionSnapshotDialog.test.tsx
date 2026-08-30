@@ -217,10 +217,12 @@ describe('RevisionSnapshotDialog', () => {
     fireEvent.click(badge);
 
     // The preview modal stacks as a second dialog beside the snapshot dialog
-    // (Escape closes the preview first, the version underneath stays open) -
-    // asserted here as a second `dialog` role appearing, not the modal's
-    // internals.
-    expect(screen.getAllByRole('dialog')).toHaveLength(2);
+    // (Escape closes the preview first, the version underneath stays open).
+    // Dialogs are modal since UAC S1-01, so the version underneath is inerted
+    // while the preview is open and no longer answers to the `dialog` ROLE -
+    // stacking is asserted on the DOM instead, which is what "still open
+    // underneath" actually means.
+    expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(2);
     expect(screen.getByText('This attachment has no previewable URL.')).toBeInTheDocument();
   });
 

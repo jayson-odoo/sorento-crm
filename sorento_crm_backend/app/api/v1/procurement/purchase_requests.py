@@ -85,44 +85,6 @@ async def get_purchase_requests(
         raise handle_internal_error(str(e))
 
 
-@router.get("/neighbours")
-async def get_purchase_request_neighbours(
-    id: str = Query(..., description="Purchase request / sponsorship form id to resolve neighbours for"),
-    query: Optional[str] = Query(None),
-    request_type: Optional[str] = Query(None, description="purchase_request or sponsorship_form"),
-    approval_status: Optional[str] = Query(None, description="draft, pending, approved, rejected"),
-    assigned_to: Optional[str] = Query(None, description="users.id of the latest unresolved SLA assignee, or __unassigned__"),
-    sort: Optional[str] = Query("submitted_at"),
-    dir: Optional[str] = Query("desc"),
-    current_user: dict = Depends(get_current_user_or_api_key),
-    db: Session = Depends(get_db),
-):
-    """Prev/next neighbours of a PR/SF within the active filtered+sorted list set.
-
-    Accepts the same filter/sort/search params as the list GET (page/limit are
-    irrelevant and ignored). Returns ``{total, index, prev_id, next_id}`` with the
-    1-based ``index`` and circular wrap-around neighbours. ``request_type`` is part of
-    the filter, so PR navigation stays within PRs and SF within SFs. If the record is
-    not in the filtered set, falls back to the default-sorted set (still scoped to
-    ``request_type``).
-    """
-    try:
-        service = PurchaseRequestService(db)
-        return service.neighbours(
-            request_id=id,
-            query=query,
-            request_type=request_type,
-            approval_status=approval_status,
-            assigned_to=assigned_to,
-            sort_field=sort or "submitted_at",
-            sort_dir=dir or "desc",
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise handle_internal_error(str(e))
-
-
 @router.get("/{request_id}", response_model=PurchaseRequestHeaderResponse)
 async def get_purchase_request(
     request_id: str,

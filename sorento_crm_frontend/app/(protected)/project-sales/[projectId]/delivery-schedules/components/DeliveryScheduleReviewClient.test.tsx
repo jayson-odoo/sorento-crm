@@ -69,21 +69,6 @@ vi.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(''),
 }));
 
-/**
- * The header's prev/next pager, which walks this schedule's own revisions. Mocked at the
- * shared hook so nothing is fetched and the arguments the feature hook passes can be read.
- */
-const recordNeighbours = vi.fn((..._args: unknown[]) => ({
-  prevId: 'v3',
-  nextId: 'v1',
-  index: 2,
-  total: 3,
-  isLoading: false,
-}));
-vi.mock('@/hooks/useRecordNeighbours', () => ({
-  useRecordNeighbours: (...args: unknown[]) => recordNeighbours(...args),
-}));
-
 const getDeliveryScheduleVersion = vi.fn();
 const saveDeliveryScheduleCells = vi.fn();
 const resolveDeliveryScheduleProduct = vi.fn();
@@ -92,9 +77,12 @@ const listDeliveryScheduleVersions = vi.fn();
 const acceptRevisionProposal = vi.fn();
 const rejectRevisionProposal = vi.fn();
 vi.mock('../../../_shared/services/deliveryScheduleService', () => ({
-  DELIVERY_SCHEDULE_VERSION_NEIGHBOURS_PATH:
-    '/api/v1/project-sales/delivery-schedule-versions/neighbours',
-  listDeliverySchedules: vi.fn(),
+  // The pager walks the project's SCHEDULES now, each at its latest version.
+  listDeliverySchedules: vi.fn(async () => [
+    { id: 's0', latest_version_id: 'v-a' },
+    { id: 's1', latest_version_id: 'v2' },
+    { id: 's2', latest_version_id: 'v-c' },
+  ]),
   listDeliveryScheduleVersions: (...args: unknown[]) => listDeliveryScheduleVersions(...args),
   uploadDeliverySchedule: vi.fn(),
   getDeliveryScheduleVersion: (...args: unknown[]) => getDeliveryScheduleVersion(...args),
@@ -715,23 +703,23 @@ describe('DeliveryScheduleReviewClient', () => {
     renderReview();
     await screen.findByTestId('schedule-matrix');
 
-    fireEvent.click(screen.getByRole('button', { name: /^Confirm$/ }));
+    fireEvent.click(screen.getByRole('button', { name: /^Confirm schedule$/ }));
 
     const dialog = within(await screen.findByRole('dialog'));
     expect(dialog.getByText('2 columns do not add up yet.')).toBeInTheDocument();
     // Named in the dialog, with the numbers, so the decision is informed.
     expect(dialog.getByText('SRTFV1001')).toBeInTheDocument();
-    expect(dialog.getByRole('button', { name: /^Confirm$/ })).toBeDisabled();
+    expect(dialog.getByRole('button', { name: /^Confirm schedule$/ })).toBeDisabled();
 
     fireEvent.click(dialog.getByRole('checkbox'));
-    expect(dialog.getByRole('button', { name: /^Confirm$/ })).toBeDisabled();
+    expect(dialog.getByRole('button', { name: /^Confirm schedule$/ })).toBeDisabled();
 
     fireEvent.change(dialog.getByLabelText(/Reason/i), {
       target: { value: 'Customer confirmed the valve quantity by email.' },
     });
-    expect(dialog.getByRole('button', { name: /^Confirm$/ })).toBeEnabled();
+    expect(dialog.getByRole('button', { name: /^Confirm schedule$/ })).toBeEnabled();
 
-    fireEvent.click(dialog.getByRole('button', { name: /^Confirm$/ }));
+    fireEvent.click(dialog.getByRole('button', { name: /^Confirm schedule$/ }));
     await waitFor(() =>
       expect(confirmDeliveryScheduleVersion).toHaveBeenCalledWith('v2', {
         acknowledge_unreconciled: true,
@@ -764,12 +752,12 @@ describe('DeliveryScheduleReviewClient', () => {
     renderReview();
     await screen.findByTestId('schedule-matrix');
 
-    fireEvent.click(screen.getByRole('button', { name: /^Confirm$/ }));
+    fireEvent.click(screen.getByRole('button', { name: /^Confirm schedule$/ }));
     const dialog = within(await screen.findByRole('dialog'));
     expect(dialog.getByText(/Every column agrees with the PO/i)).toBeInTheDocument();
     expect(dialog.queryByRole('checkbox')).toBeNull();
 
-    fireEvent.click(dialog.getByRole('button', { name: /^Confirm$/ }));
+    fireEvent.click(dialog.getByRole('button', { name: /^Confirm schedule$/ }));
     await waitFor(() =>
       expect(confirmDeliveryScheduleVersion).toHaveBeenCalledWith('v2', {}),
     );
@@ -782,7 +770,7 @@ describe('DeliveryScheduleReviewClient', () => {
     renderReview();
 
     expect(await screen.findByText(/Confirmed .* by Eling Tan/)).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /^Confirm$/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Confirm schedule$/ })).toBeNull();
     expect(matrix().getByLabelText('Phase 3, SRTFV1001')).toBeDisabled();
   });
 
@@ -817,28 +805,26 @@ describe('DeliveryScheduleReviewClient', () => {
  * so a reviewer can walk the revisions without going back to the project tab.
  */
 describe('DeliveryScheduleReviewClient header', () => {
-  it('walks this schedule own revisions', async () => {
+  it('S3-03: walks the project schedules this review was opened from', async () => {
     renderReview();
     await screen.findByTestId('schedule-matrix');
 
-    expect(recordNeighbours).toHaveBeenCalledWith(
-      '/api/v1/project-sales/delivery-schedule-versions/neighbours',
-      'v2',
-    );
-    expect(screen.getByText('2 / 3')).toBeInTheDocument();
+    // The walk is the list the reviewer came from - the project's schedules, each
+    // at its latest version - not every version that ever existed in the project.
+    await waitFor(() => expect(screen.getByText('2 / 3')).toBeInTheDocument());
 
-    fireEvent.click(screen.getByRole('button', { name: 'Next schedule version' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Next schedule' }));
 
-    expect(push).toHaveBeenCalledWith('/project-sales/p1/delivery-schedules/v1');
+    expect(push).toHaveBeenCalledWith('/project-sales/p1/delivery-schedules/v-c');
   });
 
   it('keeps Confirm as the one call to action beside the pager', async () => {
     renderReview();
     await screen.findByTestId('schedule-matrix');
 
-    expect(screen.getByRole('button', { name: 'Confirm' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Confirm schedule' })).toBeInTheDocument();
     // The pager is chevrons, not a third and fourth thing to read.
-    expect(screen.getByRole('button', { name: 'Previous schedule version' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Previous schedule' })).toBeInTheDocument();
   });
 });
 
@@ -947,9 +933,9 @@ describe('DeliveryScheduleReviewClient revision diff and amendment banner', () =
     renderReview();
     await screen.findByTestId('schedule-matrix');
 
-    fireEvent.click(screen.getByRole('button', { name: /^Confirm$/ }));
+    fireEvent.click(screen.getByRole('button', { name: /^Confirm schedule$/ }));
     const dialog = within(await screen.findByRole('dialog'));
-    fireEvent.click(dialog.getByRole('button', { name: /^Confirm$/ }));
+    fireEvent.click(dialog.getByRole('button', { name: /^Confirm schedule$/ }));
 
     await waitFor(() => expect(confirmDeliveryScheduleVersion).toHaveBeenCalled());
 

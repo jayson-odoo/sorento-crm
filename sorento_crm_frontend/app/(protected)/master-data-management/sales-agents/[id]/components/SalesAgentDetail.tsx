@@ -1,16 +1,8 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
-import {
-  ArrowLeft,
-  FileText,
-  ListOrdered,
-  LoaderCircleIcon,
-  Move,
-  SquarePen,
-} from 'lucide-react';
+import { FileText, ListOrdered, LoaderCircleIcon, Move, SquarePen } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -30,7 +22,9 @@ import SalesOrdersGrid from '@/app/(protected)/scm/sales-orders/components/Sales
 import { useAnnotateSalesAgent, useSalesAgent } from '../../hooks/useSalesAgents';
 import { DEMAND_CLASS_OPTIONS, demandClassLabel } from '../../lib/demandClass';
 import { salesAgentSourceLabel } from '../../lib/salesAgentSource';
-import SalesAgentNavigation from '../../components/SalesAgentNavigation';
+import DetailActions from '@/components/common/DetailActions';
+import BackToList from '@/components/common/BackToList';
+import { salesAgentsPagerQuery } from '../../hooks/useSalesAgents';
 import type { SalesAgent } from '../../types/salesAgent.types';
 
 /**
@@ -81,7 +75,6 @@ function Field({
 export function SalesAgentDetail({ id }: { id: string }) {
   const { data, isLoading, isError } = useSalesAgent(id);
   const searchParams = useSearchParams();
-  const listSearch = searchParams.toString();
 
   const annotate = useAnnotateSalesAgent();
 
@@ -117,13 +110,12 @@ export function SalesAgentDetail({ id }: { id: string }) {
     beginEdit(data);
   }, [wantsEdit, data]);
 
+  // Back carries the list query the row click wrote (S3-01).
   const backLink = (
-    <Button variant="outline" size="sm" asChild className="w-fit gap-1.5">
-      <Link href={`/master-data-management/sales-agents${listSearch ? `?${listSearch}` : ''}`}>
-        <ArrowLeft className="size-4" />
-        Back to sales agents
-      </Link>
-    </Button>
+    <BackToList
+      listPath="/master-data-management/sales-agents"
+      label="Back to sales agents"
+    />
   );
 
   if (isLoading) {
@@ -215,23 +207,29 @@ export function SalesAgentDetail({ id }: { id: string }) {
                   {annotate.isPending ? (
                     <LoaderCircleIcon className="me-2 size-4 animate-spin" />
                   ) : null}
-                  Save
+                  Save note
                 </Button>
               </div>
             ) : (
-              <div className="flex shrink-0 flex-wrap items-center gap-2">
-                <SalesAgentNavigation salesAgentId={id} />
-                <Button
-                  variant="primary"
-                  size="sm"
-                  className="gap-1.5"
-                  onClick={() => beginEdit(agent)}
-                >
-                  <SquarePen className="size-4" />
-                  Edit
-                </Button>
-                {backLink}
-              </div>
+              <DetailActions
+                pager={{
+                  ...salesAgentsPagerQuery,
+                  detailPath: '/master-data-management/sales-agents',
+                  currentId: id,
+                  ariaLabel: 'sales agent',
+                }}
+                primary={
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    className="gap-1.5"
+                    onClick={() => beginEdit(agent)}
+                  >
+                    <SquarePen className="size-4" />
+                    Edit
+                  </Button>
+                }
+              />
             )}
           </div>
         </CardHeader>

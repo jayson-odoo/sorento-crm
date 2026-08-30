@@ -12,7 +12,6 @@ import { Card, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import type { SearchableSelectOption } from '@/components/common/SearchableSelect';
 import type { ColumnState } from '../lib/scheduleTotals';
 import { DeliveryScheduleProductPicker } from './DeliveryScheduleProductPicker';
@@ -182,10 +181,7 @@ export function DeliveryScheduleReconciliationList({
         <CardTable>
           {/* Seven columns are wider than a phone, so the table scrolls inside its own
               container rather than dragging the page sideways. */}
-          <ScrollArea>
-            <DataGridTable />
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
+          <DataGridTable />
         </CardTable>
       </Card>
     </DataGrid>

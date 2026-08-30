@@ -22,6 +22,9 @@ import { toast } from 'sonner';
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn() }),
+  // Back, and the delete that lands where Back lands, read the list state the
+  // row click wrote into this URL.
+  useSearchParams: () => new URLSearchParams(''),
 }));
 
 // --- SLA / form-tracker plumbing -------------------------------------------------
@@ -141,7 +144,8 @@ vi.mock(
 );
 
 // --- Sibling child components, stubbed to keep the tree small -------------------
-vi.mock('./ComplaintNavigation', () => ({ __esModule: true, default: () => null }));
+// The pager has its own tests (hooks/useListPager.test.ts); here it is noise.
+vi.mock('@/components/common/ListPager', () => ({ __esModule: true, default: () => null }));
 vi.mock('./ComplaintManualAttachmentsSection', () => ({ __esModule: true, default: () => null }));
 vi.mock('@/components/audit/AuditTrail', () => ({ __esModule: true, default: () => null }));
 vi.mock('@/components/my-downloads/EntityDownloadsButton', () => ({
@@ -155,6 +159,7 @@ const updateAndReplyMutateAsync = vi.fn().mockResolvedValue({});
 const uploadResponseAttachmentsMutateAsync = vi.fn();
 
 vi.mock('../hooks/useComplaints', () => ({
+  complaintsPagerQuery: { listQueryKey: () => ['complaints'], fetchPage: async () => ({ data: [], pagination: { total: 0 } }) },
   useComplaint: (...a: unknown[]) => useComplaintMock(...a),
   useUpdateComplaint: () => ({ mutateAsync: updateComplaintMutateAsync, isPending: false }),
   useUpdateComplaintAndReply: () => ({ mutateAsync: updateAndReplyMutateAsync, isPending: false }),

@@ -156,7 +156,7 @@ export default function ContactMarketSegmentSection({ contactId }: { contactId: 
               Cancel
             </Button>
             <Button onClick={onSave} disabled={setSegments.isPending}>
-              Save
+              Save segments
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -182,7 +182,7 @@ export default function ContactMarketSegmentSection({ contactId }: { contactId: 
               disabled={setSegments.isPending}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
-              Confirm
+              Unassign segments
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

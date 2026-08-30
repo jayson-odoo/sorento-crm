@@ -7,11 +7,11 @@ import { Badge } from '@/components/ui/badge';
  */
 export function ProductTypeBadge({ isVariant }: { isVariant?: boolean }) {
   return isVariant ? (
-    <Badge variant="info" appearance="ghost">
+    <Badge variant="info">
       Variant
     </Badge>
   ) : (
-    <Badge variant="secondary" appearance="ghost">
+    <Badge variant="secondary">
       Base
     </Badge>
   );

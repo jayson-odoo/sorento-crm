@@ -169,7 +169,7 @@ export function AmendmentReviewClient({
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0 break-words">
           <div className="flex flex-wrap items-center gap-2">
-            <h1 className="text-xl font-semibold break-words">{`Revision review: ${reference}`}</h1>
+            <h2 className="text-xl font-semibold break-words">{`Revision review: ${reference}`}</h2>
             <SalesOrderStatusPill status={so.status} />
           </div>
           <p className="mt-1 break-words text-sm text-muted-foreground">

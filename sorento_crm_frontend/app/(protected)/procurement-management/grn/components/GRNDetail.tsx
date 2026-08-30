@@ -2,19 +2,11 @@
 
 import { useState, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
-import Link from 'next/link';
-import { Edit, Trash2, Settings, Check, Search, X, MoveLeft } from 'lucide-react';
+import { Edit, Search, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { useBackToListHref } from '@/components/common/BackToList';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   Table,
@@ -24,23 +16,17 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { useGRN, useUpdateGRN } from '../hooks/useGRN';
+import { useGRN, grnPagerQuery } from '../hooks/useGRN';
 import { formatDate } from '@/lib/helpers';
 import { formatStatusLabel } from '@/lib/status-badge';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { SpoAllocationCell } from '@/components/common/SpoAllocationCell';
-import GRNDeleteDialog from './grn-delete-dialog';
-import GRNNavigation from './GRNNavigation';
+import DetailActions from '@/components/common/DetailActions';
+import { useGrnActions } from '../actions';
 
 interface GRNDetailProps {
   grnId: string;
 }
-
-const STATUS_OPTIONS = [
-  { value: 'draft', label: 'Draft' },
-  { value: 'approved', label: 'Approved' },
-  { value: 'rejected', label: 'Rejected' },
-] as const;
 
 /** How the GRN reached the system, in words a user recognises. */
 const GRN_SOURCE_LABELS: Record<string, string> = {
@@ -51,9 +37,11 @@ const GRN_SOURCE_LABELS: Record<string, string> = {
 
 export default function GRNDetail({ grnId }: GRNDetailProps) {
   const router = useRouter();
+  const backHref = useBackToListHref('/procurement-management/grn');
   const { data: grn, isLoading } = useGRN(grnId);
-  const updateMutation = useUpdateGRN();
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const { actions, dialogs } = useGrnActions(grn, {
+    onDeleted: () => router.push(backHref),
+  });
   const [lineSearch, setLineSearch] = useState('');
   const allLines = grn?.picking_lines ?? [];
   const filteredLines = useMemo(() => {
@@ -110,7 +98,7 @@ export default function GRNDetail({ grnId }: GRNDetailProps) {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0 space-y-1">
           <div className="flex flex-wrap items-center gap-3">
-            <h1 className="text-2xl font-bold break-words">{grn.picking_number}</h1>
+            <h2 className="text-2xl font-bold break-words">{grn.picking_number}</h2>
             <span
               className={`${STATUS_PILL_BASE} ${statusPillClass(grn.picking_status)}`}
             >
@@ -122,79 +110,26 @@ export default function GRNDetail({ grnId }: GRNDetailProps) {
             {grn.picking_date ? formatDate(new Date(grn.picking_date)) : '-'}
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <GRNNavigation grnId={grnId} />
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="icon" aria-label="GRN options">
-                <Settings className="size-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuLabel>Change status</DropdownMenuLabel>
-              {STATUS_OPTIONS.map((opt) => (
-                <DropdownMenuItem
-                  key={opt.value}
-                  onClick={async () => {
-                    try {
-                      await updateMutation.mutateAsync({
-                        id: grnId,
-                        data: { picking_status: opt.value },
-                      });
-                    } catch {
-                      // toast handled by mutation
-                    }
-                  }}
-                  disabled={updateMutation.isPending || grn.picking_status === opt.value}
-                >
-                  <span className="inline-flex w-5 shrink-0">
-                    {grn.picking_status === opt.value ? (
-                      <Check className="size-4" />
-                    ) : null}
-                  </span>
-                  {opt.label}
-                </DropdownMenuItem>
-              ))}
-              <DropdownMenuSeparator />
-              {/* Delete lives in the menu, not as a standing red button beside
-                  Edit: it is the one irreversible action here and does not earn
-                  permanent space in the header. The confirm dialog still gates it. */}
-              <DropdownMenuItem
-                variant="destructive"
-                onClick={() => setDeleteDialogOpen(true)}
-              >
-                <Trash2 className="size-4" />
-                Delete GRN
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-          <Button
-            variant="outline"
-            onClick={() =>
-              router.push(`/procurement-management/grn/${grnId}/edit`)
-            }
-          >
-            <Edit className="size-4" />
-            Edit
-          </Button>
-          <Button asChild variant="outline">
-            <Link href="/procurement-management/grn">
-              <MoveLeft className="size-4" /> Back to GRN
-            </Link>
-          </Button>
-        </div>
-      </div>
-
-      {grn && (
-        <GRNDeleteDialog
-          open={deleteDialogOpen}
-          closeDialog={() => setDeleteDialogOpen(false)}
-          grn={grn}
-          onSuccess={() => {
-            router.push('/procurement-management/grn');
+        <DetailActions
+          pager={{
+            ...grnPagerQuery,
+            detailPath: '/procurement-management/grn',
+            currentId: grnId,
+            ariaLabel: 'GRN',
           }}
+          actions={actions}
+          dialogs={dialogs}
+          gearLabel="GRN options"
+          primary={
+            <Button
+              onClick={() => router.push(`/procurement-management/grn/${grnId}/edit`)}
+            >
+              <Edit className="size-4" />
+              Edit
+            </Button>
+          }
         />
-      )}
+      </div>
 
       <Card>
         <CardHeader>

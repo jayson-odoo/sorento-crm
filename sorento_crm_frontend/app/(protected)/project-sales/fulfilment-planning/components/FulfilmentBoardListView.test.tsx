@@ -138,7 +138,7 @@ describe('FulfilmentBoardListView', () => {
     expect(screen.queryByRole('button', { name: /^approve$/i })).not.toBeInTheDocument();
     await screen.findByText('SO397450');
     fireEvent.click(screen.getByText('JEREMY'));
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
 
     await waitFor(() =>
       expect(onDecide).toHaveBeenCalledWith('so-1:line-10', {

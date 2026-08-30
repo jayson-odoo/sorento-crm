@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
+
 import {
   ColumnDef,
   PaginationState,
@@ -12,7 +12,7 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { AlertTriangle, ChevronRight, Plus, Search, Trash2, X } from 'lucide-react';
+import { AlertTriangle, Plus, Search, Trash2, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -24,7 +24,6 @@ import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
@@ -32,7 +31,12 @@ import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 // valid_until is a DATE column: formatDateInMalaysia keeps the civil date
 // stable regardless of the viewer's machine timezone.
 import { formatDateInMalaysia } from '@/lib/helpers';
-import { useBulkDeleteCertificates, useCertificates } from '../hooks/useCertificates';
+import { useBulkDeleteCertificates,
+  useCertificates } from '../hooks/useCertificates';
+import {
+  useDeferredRowAction,
+  useRowPending,
+} from '@/hooks/useDeferredRowAction';
 import {
   EXPIRING_WITHIN_OPTIONS,
   NEEDS_REVIEW_OPTIONS,
@@ -46,6 +50,9 @@ import {
 } from '../lib/certificateDisplay';
 import type { Certificate } from '../types/certificate.types';
 import CertificateFormDialog from './CertificateFormDialog';
+import { buildDetailSearch } from '@/lib/listNavQuery';
+import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
+import { RowActionsMenu } from '@/components/common/RowActionsMenu';
 
 /**
  * The list opens UNFILTERED. It used to default to "needs attention" + active
@@ -65,7 +72,6 @@ function validityStateParam(filter: string): string | undefined {
 }
 
 export default function CertificatesList() {
-  const router = useRouter();
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [sorting, setSorting] = useState<SortingState>([{ id: 'valid_until', desc: false }]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -74,11 +80,35 @@ export default function CertificatesList() {
   const [schemeFilter, setSchemeFilter] = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<string>(DEFAULT_STATUS);
   const [needsReviewFilter, setNeedsReviewFilter] = useState<string>('any');
+
+  // Back hands the list its own query string back, and the pager keeps rewriting
+  // it, so the list reads it (S3-01). One hook, every list.
+  useListStateFromUrl((state) => {
+    setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
+    setSorting(state.sorting);
+    setSearchQuery(state.searchQuery);
+    setValidityFilter(state.filters.validity_state ?? DEFAULT_VALIDITY);
+    setExpiringWithin(state.filters.expiring_within_days ?? 'any');
+    setSchemeFilter(state.filters.scheme ?? 'all');
+    setStatusFilter(state.filters.status ?? 'all');
+    setNeedsReviewFilter(state.filters.needs_review === 'true' ? 'true' : 'any');
+  });
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [formOpen, setFormOpen] = useState(false);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
-
   const bulkDeleteMutation = useBulkDeleteCertificates();
+
+  // Delete asks nothing (D7): the row dims and a toast counts down with Cancel.
+  // Bulk delete keeps its dialog - selecting rows and pressing Delete selected is
+  // already a deliberate two-step gesture, and one countdown cannot speak for a
+  // set (see S6-10 notes in the plan).
+  const deletion = useDeferredRowAction({
+    actionKey: 'certificate.delete',
+    entityType: 'certificate',
+    successMessage: 'Certificate deleted',
+    invalidateKeys: [['certificates']],
+  });
+  const rowPending = useRowPending<Certificate>('certificate');
 
   useEffect(() => {
     setPagination((prev) => ({ ...prev, pageIndex: 0 }));
@@ -240,13 +270,32 @@ export default function CertificatesList() {
       {
         accessorKey: 'actions',
         header: '',
-        cell: () => <ChevronRight className="text-muted-foreground/70 size-3.5" />,
-        size: 40,
+        cell: ({ row }) => (
+          // The record's gear also carries Merge, which needs the certificate's
+          // revisions to pick a target, so that one stays on the record.
+          <RowActionsMenu
+            ariaLabel="certificate"
+            actions={[
+              {
+                key: 'certificate.delete',
+                label: 'Delete certificate',
+                icon: Trash2,
+                kind: 'destructive',
+                run: () =>
+                  deletion.run({
+                    id: row.original.id,
+                    subject: `${row.original.scheme} ${row.original.certificate_number}`,
+                  }),
+              },
+            ]}
+          />
+        ),
+        size: 60,
         enableHiding: false,
         enableResizing: false,
       },
     ],
-    [],
+    [deletion],
   );
 
   const table = useReactTable({
@@ -271,18 +320,46 @@ export default function CertificatesList() {
 
   const selectedCount = selectedRowIds(table).length;
 
+  // The one offer this listing makes, in both places it belongs: the
+  // toolbar, and the empty state's next step (S5-06).
+  const listPrimaryAction = (
+    <Button onClick={() => setFormOpen(true)}>
+      <Plus />
+      Add Certificate
+    </Button>
+  );
+
   return (
     <DataGrid
       table={table}
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
-      onRowClick={(row: Certificate) => router.push(`/master-data-management/certificates/${row.id}`)}
+      rowPending={rowPending}
+      rowHref={(row: Certificate) => {
+        const search = buildDetailSearch(
+          {
+            pageIndex: pagination.pageIndex,
+            pageSize: pagination.pageSize,
+            sorting,
+            searchQuery,
+          },
+          {
+            validity_state: validityStateParam(validityFilter),
+            expiring_within_days: expiringWithin !== 'any' ? expiringWithin : undefined,
+            scheme: schemeFilter !== 'all' ? schemeFilter : undefined,
+            status: statusFilter !== 'all' ? statusFilter : undefined,
+            needs_review: needsReviewFilter === 'true' ? 'true' : undefined,
+          },
+        );
+        return `/master-data-management/certificates/${row.id}${search ? `?${search}` : ''}`;
+      }}
       standardToolbar={false}
       // Column preferences are keyed on the RBAC view slug, not the route path:
       // the column-config endpoint authorizes by treating everything before `::`
       // as a permission slug, and a pathname is not one.
       listingKey="master_data.certificates.view"
       tableLayout={{ width: 'fixed', columnsVisibility: true, columnsResizable: true }}
+      emptyAction={listPrimaryAction}
     >
       <Card>
         <CardHeader className="block">
@@ -378,12 +455,7 @@ export default function CertificatesList() {
             exportConfig={{ filename: 'certificates_export.xlsx' }}
             onRefresh={() => void refetch()}
             isRefreshing={isFetching && !isLoading}
-            primaryAction={
-              <Button onClick={() => setFormOpen(true)}>
-                <Plus />
-                Add Certificate
-              </Button>
-            }
+            primaryAction={listPrimaryAction}
             bulkActions={[
               {
                 key: 'delete',
@@ -396,10 +468,7 @@ export default function CertificatesList() {
           />
         </CardHeader>
         <CardTable>
-          <ScrollArea>
-            <DataGridTable />
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
+          <DataGridTable />
         </CardTable>
         <CardFooter>
           <DataGridPagination />

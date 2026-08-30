@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import {
   ColumnDef,
@@ -12,17 +12,21 @@ import {
 import { Layers, Plus, Search, Sparkles, Trash2, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { RowActionsMenu } from '@/components/common/RowActionsMenu';
+import {
+  useDeferredRowAction,
+  useRowPending,
+} from '@/hooks/useDeferredRowAction';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
+import { buildDetailSearch } from '@/lib/listNavQuery';
 import { Input } from '@/components/ui/input';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
-import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
-import { useDeleteProductSet, useProductSets } from '../hooks/useProductSets';
+import { useProductSets } from '../hooks/useProductSets';
 import type { ProductSet } from '../types/productSet.types';
 import { ProductSetFormModal } from './ProductSetFormModal';
 
@@ -54,7 +58,6 @@ export default function ProductSetsList() {
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [creating, setCreating] = useState(false);
-  const [deleting, setDeleting] = useState<ProductSet | null>(null);
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(searchQuery.trim()), 300);
@@ -71,12 +74,36 @@ export default function ProductSetsList() {
     sorting,
     searchQuery: debouncedSearch,
   });
-  const remove = useDeleteProductSet();
+  // Delete asks nothing (D7): the row dims and a toast counts down with Cancel.
+  const deletion = useDeferredRowAction({
+    actionKey: 'product_set.delete',
+    entityType: 'product_set',
+    successMessage: 'Product set deleted',
+    invalidateKeys: [['product-sets']],
+  });
+  const rowPending = useRowPending<ProductSet>('product_set');
 
   const rows = useMemo<ProductSet[]>(() => data?.data ?? [], [data]);
   const total = data?.pagination.total ?? 0;
   /** No rows AND no search: the difference between "none exist" and "none match". */
   const isTrulyEmpty = !isLoading && !isError && total === 0 && debouncedSearch === '';
+
+  // The whole row opens the set, carrying the list query the pager rebuilds its
+  // key from. Only the set-code link opened it before, so most of the row was dead.
+  // Memoised, and in the columns' deps: a columns memo that captured the first
+  // `rowHref` would keep linking every row to page 1 of an unfiltered list.
+  const rowHref = useCallback(
+    (row: ProductSet) => {
+      const search = buildDetailSearch({
+        pageIndex: pagination.pageIndex,
+        pageSize: pagination.pageSize,
+        sorting,
+        searchQuery: debouncedSearch,
+      });
+      return `/master-data-management/product-sets/${row.id}${search ? `?${search}` : ''}`;
+    },
+    [pagination.pageIndex, pagination.pageSize, sorting, debouncedSearch],
+  );
 
   const columns = useMemo<ColumnDef<ProductSet>[]>(
     () => [
@@ -85,9 +112,10 @@ export default function ProductSetsList() {
         header: ({ column }) => <DataGridColumnHeader title="Set code" column={column} />,
         cell: ({ row }) => (
           <Link
-            href={`/master-data-management/product-sets/${row.original.id}`}
+            href={rowHref(row.original)}
             className="truncate font-medium text-primary hover:underline"
             title={row.original.set_code}
+            onClick={(event) => event.stopPropagation()}
           >
             {row.original.set_code}
           </Link>
@@ -154,18 +182,26 @@ export default function ProductSetsList() {
       {
         id: 'actions',
         header: '',
+        // The row opens the record, so the cell carries only the secondary and
+        // destructive actions, in the "..." menu the record page's gear mirrors
+        // (D15).
         cell: ({ row }) => (
-          <div className="flex justify-end">
-            <Button
-              mode="icon"
-              variant="ghost"
-              title="Delete set"
-              aria-label={`Delete ${row.original.set_code}`}
-              onClick={() => setDeleting(row.original)}
-            >
-              <Trash2 className="size-4" />
-            </Button>
-          </div>
+          <RowActionsMenu
+            ariaLabel={`product set ${row.original.set_code}`}
+            actions={[
+              {
+                key: 'product_set.delete',
+                label: 'Delete product set',
+                icon: Trash2,
+                kind: 'destructive',
+                run: () =>
+                  deletion.run({
+                    id: row.original.id,
+                    subject: `${row.original.name} (${row.original.set_code})`,
+                  }),
+              },
+            ]}
+          />
         ),
         size: 70,
         enableSorting: false,
@@ -173,7 +209,7 @@ export default function ProductSetsList() {
         meta: { headerTitle: 'Actions', cellClassName: 'text-right' },
       },
     ],
-    [],
+    [rowHref, deletion],
   );
 
   const table = useReactTable({
@@ -192,6 +228,21 @@ export default function ProductSetsList() {
     columnResizeMode: 'onChange',
     enableColumnResizing: true,
   });
+
+  // The one offer this listing makes, in both places it belongs: the
+  // toolbar, and the empty state's next step (S5-06).
+  const listPrimaryAction = (
+    <div className="flex flex-wrap items-center gap-2">
+      <Button variant="outline" asChild>
+        <Link href="/master-data-management/product-sets/proposals">
+          <Sparkles className="size-4" /> Propose
+        </Link>
+      </Button>
+      <Button onClick={() => setCreating(true)}>
+        <Plus className="size-4" /> Add set
+      </Button>
+    </div>
+  );
 
   return (
     <div className="space-y-3">
@@ -228,9 +279,12 @@ export default function ProductSetsList() {
           table={table}
           recordCount={total}
           isLoading={isLoading}
+          rowHref={rowHref}
+          rowPending={rowPending}
           listingKey="master_data.product_sets.view"
           tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
           emptyMessage="No product sets match that search."
+          emptyAction={listPrimaryAction}
         >
           <Card>
             <CardHeader className="block">
@@ -261,25 +315,11 @@ export default function ProductSetsList() {
                 exportConfig={false}
                 onRefresh={() => void refetch()}
                 isRefreshing={isFetching && !isLoading}
-                primaryAction={
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Button variant="outline" asChild>
-                      <Link href="/master-data-management/product-sets/proposals">
-                        <Sparkles className="size-4" /> Propose
-                      </Link>
-                    </Button>
-                    <Button onClick={() => setCreating(true)}>
-                      <Plus className="size-4" /> Add set
-                    </Button>
-                  </div>
-                }
+                primaryAction={listPrimaryAction}
               />
             </CardHeader>
             <CardTable>
-              <ScrollArea>
-                <DataGridTable />
-                <ScrollBar orientation="horizontal" />
-              </ScrollArea>
+              <DataGridTable />
             </CardTable>
             <CardFooter>
               <DataGridPagination />
@@ -289,25 +329,6 @@ export default function ProductSetsList() {
       )}
 
       <ProductSetFormModal open={creating} onOpenChange={setCreating} />
-
-      <ConfirmDeleteDialog
-        open={deleting !== null}
-        onOpenChange={(open) => {
-          if (!open) setDeleting(null);
-        }}
-        title="Delete this product set?"
-        description={
-          deleting
-            ? `${deleting.set_code} will be removed permanently. Its ${deleting.member_count} member product${deleting.member_count === 1 ? '' : 's'} are not affected.`
-            : ''
-        }
-        successMessage="Product set deleted"
-        onDelete={async () => {
-          if (!deleting) return;
-          await remove.mutateAsync(deleting.id);
-        }}
-        onSuccess={() => setDeleting(null)}
-      />
     </div>
   );
 }

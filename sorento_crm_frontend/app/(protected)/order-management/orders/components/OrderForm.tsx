@@ -4,7 +4,14 @@ import { useEffect, useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { useRouter } from 'next/navigation';
-import { LoaderCircleIcon, Save, Settings } from 'lucide-react';
+import {
+  Info,
+  LoaderCircleIcon,
+  Save,
+  Settings,
+  StickyNote,
+  Truck,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Form,
@@ -321,10 +328,20 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
           </div>
         )}
         <Tabs defaultValue="basic" className="w-full">
-          <TabsList className="grid w-full grid-cols-3">
-            <TabsTrigger value="basic">Basic Information</TabsTrigger>
-            <TabsTrigger value="remarks">Remarks</TabsTrigger>
-            <TabsTrigger value="tracking">Delivery & Tracking</TabsTrigger>
+          {/* Same tab set, same order and the same underline as the read view. */}
+          <TabsList className="mb-5">
+            <TabsTrigger value="basic">
+              <Info />
+              <span>Basic Information</span>
+            </TabsTrigger>
+            <TabsTrigger value="remarks">
+              <StickyNote />
+              <span>Remarks</span>
+            </TabsTrigger>
+            <TabsTrigger value="tracking">
+              <Truck />
+              <span>Delivery &amp; Tracking</span>
+            </TabsTrigger>
           </TabsList>
 
           {/* Tab 1: Basic Information */}

@@ -7,12 +7,12 @@ import { AlertCircle, Package, Plus, Trash2 } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
-import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
+// Cards, not a DataGrid, so there is no `rowPending` to hand a grid here.
+import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
 import { Skeleton } from '@/components/ui/skeleton';
 import { BundleCard } from '../../components/BundleCard';
-import { deleteBundle, listBundles } from '../../services/catalogueService';
+import { listBundles } from '../../services/catalogueService';
 import { BundleDialog } from './BundleDialog';
-import type { ResolvedBundle } from '@/lib/dealer-kit/types';
 
 /**
  * Bundles, shown as the cards they render as.
@@ -28,7 +28,13 @@ import type { ResolvedBundle } from '@/lib/dealer-kit/types';
  */
 export function BundlesList() {
   const [creating, setCreating] = useState(false);
-  const [deleting, setDeleting] = useState<ResolvedBundle | null>(null);
+  // Delete asks nothing (D7): the row dims and a toast counts down with Cancel.
+  const deletion = useDeferredRowAction({
+    actionKey: 'dk_bundle.delete',
+    entityType: 'dk_bundle',
+    successMessage: 'Bundle deleted',
+    invalidateKeys: [['dealer-kit', 'bundles']],
+  });
 
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ['dealer-kit', 'bundles'],
@@ -96,7 +102,7 @@ export function BundlesList() {
                   size="sm"
                   className="absolute end-1 top-1 bg-background/80"
                   aria-label={`Delete ${bundle.name}`}
-                  onClick={() => setDeleting(bundle)}
+                  onClick={() => deletion.run({ id: bundle.id, subject: bundle.name })}
                 >
                   <Trash2 className="size-4 text-destructive" />
                 </Button>
@@ -108,22 +114,6 @@ export function BundlesList() {
 
       <BundleDialog open={creating} onOpenChange={setCreating} />
 
-      <ConfirmDeleteDialog
-        open={!!deleting}
-        onOpenChange={(open) => !open && setDeleting(null)}
-        title="Confirm delete"
-        description={
-          <>
-            Delete <strong>{deleting?.name}</strong>? Any page showing it loses the block&rsquo;s
-            contents. This action cannot be undone.
-          </>
-        }
-        successMessage="Bundle deleted"
-        queryKeysToInvalidate={[['dealer-kit', 'bundles']]}
-        onDelete={async () => {
-          if (deleting) await deleteBundle(deleting.id);
-        }}
-      />
     </Card>
   );
 }

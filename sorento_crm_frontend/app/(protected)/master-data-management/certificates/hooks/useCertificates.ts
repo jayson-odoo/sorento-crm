@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
   addCertificateProduct,
@@ -13,6 +13,7 @@ import {
 } from '../services/certificateService';
 import type { CertificatesListParams } from '../services/certificateService';
 import type { CertificateFormData } from '../types/certificate.types';
+import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
 
 /**
  * Certificate register hooks.
@@ -25,20 +26,54 @@ import type { CertificateFormData } from '../types/certificate.types';
  * needed touching.
  */
 
+/**
+ * The list's React Query key. The detail page's pager rebuilds the SAME key from
+ * the URL, so it reads the page the list already fetched.
+ */
+export function certificatesListQueryKey(params: CertificatesListParams): QueryKey {
+  return [
+    'certificates',
+    params.pageIndex,
+    params.pageSize,
+    params.sorting,
+    params.searchQuery,
+    params.validity_state,
+    params.expiring_within_days,
+    params.scheme,
+    params.status,
+    params.needs_review,
+  ];
+}
+
+/** The list query a detail URL describes, in the shape the list passes. */
+export function certificatesListParamsFromUrl(params: ListPagerParams): CertificatesListParams {
+  const f = params.filters;
+  return {
+    pageIndex: params.pageIndex,
+    pageSize: params.pageSize,
+    sorting: params.sorting,
+    searchQuery: params.searchQuery,
+    validity_state: f.validity_state as CertificatesListParams['validity_state'],
+    expiring_within_days: f.expiring_within_days
+      ? Number(f.expiring_within_days)
+      : undefined,
+    scheme: f.scheme,
+    status: f.status as CertificatesListParams['status'],
+    needs_review: f.needs_review === 'true' ? true : undefined,
+  };
+}
+
+/** The pager's two hooks into the certificates list. */
+export const certificatesPagerQuery = {
+  listQueryKey: (params: ListPagerParams): QueryKey =>
+    certificatesListQueryKey(certificatesListParamsFromUrl(params)),
+  fetchPage: (params: ListPagerParams): Promise<ListPagerPage> =>
+    getCertificates(certificatesListParamsFromUrl(params)),
+};
+
 export function useCertificates(params: CertificatesListParams) {
   return useQuery({
-    queryKey: [
-      'certificates',
-      params.pageIndex,
-      params.pageSize,
-      params.sorting,
-      params.searchQuery,
-      params.validity_state,
-      params.expiring_within_days,
-      params.scheme,
-      params.status,
-      params.needs_review,
-    ],
+    queryKey: certificatesListQueryKey(params),
     queryFn: () => getCertificates(params),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,

@@ -15,6 +15,9 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  // Back, and the delete that lands where Back lands, read the list state the
+  // row click wrote into this URL.
+  useSearchParams: () => new URLSearchParams(''),
 }));
 
 // Every network call PurchaseRequestDetail makes directly (system-settings,
@@ -149,7 +152,14 @@ vi.mock('../services/purchaseRequestService', () => ({
 }));
 
 const usePurchaseRequestMock = vi.fn();
+vi.mock('@/components/common/ListPager', () => ({ __esModule: true, default: () => null }));
+
 vi.mock('../hooks/usePurchaseRequests', () => ({
+  // The pager reads the list page through the entity's shared key + fetch (S3-03).
+  purchaseRequestsPagerQuery: {
+    listQueryKey: () => ['purchase-requests'],
+    fetchPage: async () => ({ data: [], pagination: { total: 0 } }),
+  },
   usePurchaseRequest: (...a: unknown[]) => usePurchaseRequestMock(...a),
   usePurchaseRequestNeighbours: () => ({ prevId: null, nextId: null, index: null, total: 0, isLoading: false }),
   useDeletePurchaseRequestAttachment: () => ({ mutateAsync: vi.fn(), isPending: false }),

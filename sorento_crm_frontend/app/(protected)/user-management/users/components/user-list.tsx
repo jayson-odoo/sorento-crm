@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { redirect } from 'next/navigation';
+
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ColumnDef,
@@ -13,10 +13,8 @@ import {
   SortingState,
   useReactTable,
 } from '@tanstack/react-table';
-import { ChevronRight, LoaderCircleIcon, Mail, Plus, Search, Trash2, UserCheck, UserCog, UserX, X } from 'lucide-react';
+import { LoaderCircleIcon, Mail, Plus, Search, Trash2, UserCheck, UserX, X } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
-import { useSession } from 'next-auth/react';
-import { useImpersonation } from '@/hooks/useImpersonation';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -29,14 +27,10 @@ import {
 } from '@/components/ui/alert-dialog';
 import { formatDateSafe, formatDateTimeInMalaysia, getInitials } from '@/lib/helpers';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { Badge, BadgeDot } from '@/components/ui/badge';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
-import {
-  DataGrid,
-  DataGridApiFetchParams,
-  DataGridApiResponse,
-} from '@/components/ui/data-grid';
+import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridListToolbar, type ToolbarAction } from '@/components/ui/data-grid-list-toolbar';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
@@ -44,15 +38,22 @@ import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { User, UserStatus } from '@/app/models/user';
+import { buildDetailSearch } from '@/lib/listNavQuery';
+import { UserRowActions } from '../actions';
+import { pendingEntityKey, usePendingEntityKeys } from '@/lib/pending-entity-store';
+import {
+  fetchUsersListPage,
+  usersListFilters,
+  usersListQueryKey,
+} from '../lib/listQuery';
 import { useRoleSelectQuery } from '../../roles/hooks/use-role-select-query';
 import { getUserStatusProps, UserStatusProps } from '../constants/status';
-import { getStatusBadgeVariant } from '@/lib/status-badge';
 import UserInviteDialog from './user-add-dialog';
 import { toast } from 'sonner';
+import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 
 const UserList = () => {
   const queryClient = useQueryClient();
@@ -73,68 +74,20 @@ const UserList = () => {
   const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false);
   const [bulkConfirmAction, setBulkConfirmAction] = useState<'delete' | 'activate' | 'deactivate' | 'permanent_delete' | 'resend_invite' | null>(null);
   const [togglingSubscriptionByUser, setTogglingSubscriptionByUser] = useState<Record<string, boolean>>({});
-  const [impersonateTarget, setImpersonateTarget] = useState<User | null>(null);
-  const { data: nextAuthSession } = useSession();
-  const { start: startImpersonate, starting: startingImpersonate } = useImpersonation();
-  const currentUserId = nextAuthSession?.user?.id;
 
   // Role select query
   const { data: roleList } = useRoleSelectQuery();
 
-  // Fetch users from the server API
-  const fetchUsers = async ({
-    pageIndex,
-    pageSize,
-    sorting,
-    searchQuery,
-    selectedRole,
-    selectedStatus,
-    selectedTrashed,
-  }: DataGridApiFetchParams & {
-    selectedRole: string | null;
-    selectedStatus: string | null;
-    selectedTrashed: string;
-  }): Promise<DataGridApiResponse<User>> => {
-    const sortField = sorting?.[0]?.id || '';
-    const sortDirection = sorting?.[0]?.desc ? 'desc' : 'asc';
-
-    const params = new URLSearchParams({
-      page: String(pageIndex + 1),
-      limit: String(pageSize),
-      ...(sortField ? { sort: sortField, dir: sortDirection } : {}),
-      ...(searchQuery ? { query: searchQuery } : {}),
-      ...(selectedRole && selectedRole !== 'all'
-        ? { roleId: selectedRole }
-        : {}),
-      ...(selectedStatus && selectedStatus !== 'all'
-        ? { status: selectedStatus }
-        : {}),
-      ...(selectedTrashed && selectedTrashed !== 'exclude'
-        ? { trashed: selectedTrashed }
-        : {}),
-    });
-
-    const response = await apiFetch(
-      `/api/user-management/users?${params.toString()}`,
-    );
-
-    if (!response.ok) {
-      throw new Error(
-        'Oops! Something didn’t go as planned. Please try again in a moment.',
-      );
-    }
-
-    const json = await response.json();
-    if (json.data?.length) {
-      json.data = json.data.map((u: Record<string, unknown>) => ({
-        ...u,
-        isTrashed: u.is_trashed ?? u.isTrashed,
-        dailySlaSummarySubscribed:
-          u.daily_sla_summary_subscribed ?? u.dailySlaSummarySubscribed ?? true,
-      }));
-    }
-    return json;
-  };
+  // Back hands the list its own query string back, and the pager keeps
+  // rewriting it, so the list reads it (S3-01). One hook, every list.
+  useListStateFromUrl((state) => {
+    setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
+    setSorting(state.sorting);
+    setSearchQuery(state.searchQuery);
+    setSelectedRole(state.filters.roleId ?? 'all');
+    setSelectedStatus(state.filters.status ?? 'all');
+    setSelectedTrashed(state.filters.trashed ?? 'exclude');
+  });
 
   const updateDailySummarySubscription = async (userId: string, subscribed: boolean) => {
     setTogglingSubscriptionByUser((prev) => ({ ...prev, [userId]: true }));
@@ -160,27 +113,26 @@ const UserList = () => {
     }
   };
 
-  // Users query
-  const { data, isLoading } = useQuery({
-    queryKey: [
-      'user-users',
-      pagination,
+  // The list query, built through the shared key + fetch so the detail page's
+  // pager reads THIS cache entry instead of asking the server again.
+  const listParams = useMemo(
+    () => ({
+      pageIndex: pagination.pageIndex,
+      pageSize: pagination.pageSize,
       sorting,
       searchQuery,
-      selectedRole,
-      selectedStatus,
-      selectedTrashed,
-    ],
-    queryFn: () =>
-      fetchUsers({
-        pageIndex: pagination.pageIndex,
-        pageSize: pagination.pageSize,
-        sorting,
-        searchQuery,
-        selectedRole,
-        selectedStatus,
-        selectedTrashed,
+      filters: usersListFilters({
+        role: selectedRole,
+        status: selectedStatus,
+        trashed: selectedTrashed,
       }),
+    }),
+    [pagination, sorting, searchQuery, selectedRole, selectedStatus, selectedTrashed],
+  );
+
+  const { data, isLoading } = useQuery({
+    queryKey: usersListQueryKey(listParams),
+    queryFn: () => fetchUsersListPage(listParams),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60, // 60 minutes
     refetchOnWindowFocus: false,
@@ -188,25 +140,19 @@ const UserList = () => {
     retry: 1,
   });
 
-  const handleRoleSelection = (roleId: string) => {
-    setSelectedRole(roleId);
-    setPagination({ ...pagination, pageIndex: 0 });
+  // The whole row opens the record, carrying the list query the pager rebuilds
+  // its key from. The search lives in component state, not in the grid's
+  // `globalFilter`, so the href writes the whole query itself rather than
+  // leaving `query` to the grid.
+  const rowHref = (row: User) => {
+    const search = buildDetailSearch(listParams, listParams.filters);
+    return `/user-management/users/${row.id}${search ? `?${search}` : ''}`;
   };
 
-  const handleStatusSelection = (status: string) => {
-    setSelectedStatus(status);
-    setPagination({ ...pagination, pageIndex: 0 });
-  };
-
-  const handleTrashedSelection = (trashed: string) => {
-    setSelectedTrashed(trashed);
-    setPagination({ ...pagination, pageIndex: 0 });
-  };
-
-  const handleRowClick = (row: User) => {
-    const userId = row.id;
-    redirect(`/user-management/users/${userId}`);
-  };
+  // A user whose trashing is counting down stays on the list, dimmed, until the
+  // window lapses - the toast holds the Cancel, this says which row it is for.
+  const pendingKeys = usePendingEntityKeys();
+  const rowPending = (row: User) => pendingKeys.has(pendingEntityKey('user', row.id));
 
   const selectedRowIds = useMemo(() => Object.keys(rowSelection), [rowSelection]);
 
@@ -371,14 +317,13 @@ const UserList = () => {
             row.original.status as UserStatus,
           );
           const isTrashed = row.original.isTrashed;
-          const variant = getStatusBadgeVariant(row.original.status);
 
           return (
             <div className="inline-flex gap-2.5">
-              <Badge variant={variant} appearance="ghost">
-                <BadgeDot />
-                {statusProps.label}
-              </Badge>
+              {/* The pill resolves its own colour and draws its own dot from the
+                  raw status (D2); pairing the two by hand is how two lists came
+                  to disagree about a colour. */}
+              <Badge status={row.original.status}>{statusProps.label}</Badge>
               {isTrashed && (
                 <Badge variant="destructive" appearance="light">
                   Trashed
@@ -482,34 +427,7 @@ const UserList = () => {
       {
         accessorKey: 'actions',
         header: '',
-        cell: ({ row }) => {
-          const user = row.original as User;
-          const canImpersonate =
-            !!currentUserId &&
-            user.id !== currentUserId &&
-            user.status === UserStatus.ACTIVE &&
-            !user.isProtected;
-          return (
-            <div className="flex items-center justify-end gap-1">
-              {canImpersonate && (
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  className="size-7"
-                  title="Impersonate user"
-                  data-testid={`impersonate-${user.id}`}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setImpersonateTarget(user);
-                  }}
-                >
-                  <UserCog className="size-3.5" />
-                </Button>
-              )}
-              <ChevronRight className="text-muted-foreground/70 size-3.5" />
-            </div>
-          );
-        },
+        cell: ({ row }) => <UserRowActions user={row.original as User} />,
         meta: {
           skeleton: <Skeleton className="size-4" />,
         },
@@ -519,7 +437,7 @@ const UserList = () => {
         enableResizing: false,
       },
     ],
-    [togglingSubscriptionByUser, currentUserId],
+    [togglingSubscriptionByUser],
   );
 
   const [columnOrder, setColumnOrder] = useState<string[]>(() =>
@@ -550,6 +468,20 @@ const UserList = () => {
     manualSorting: true,
     manualFiltering: true,
   });
+
+  // The one offer this listing makes, in both places it belongs: the toolbar,
+  // and the empty state's next step (S5-06).
+  const addUserButton = (
+    <Button
+      disabled={isLoading && true}
+      onClick={() => {
+        setInviteDialogOpen(true);
+      }}
+    >
+      <Plus />
+      Add user
+    </Button>
+  );
 
   const DataGridToolbar = () => {
     const [inputValue, setInputValue] = useState(searchQuery);
@@ -776,17 +708,7 @@ const UserList = () => {
           }}
           exportConfig={{ filename: 'users_export.xlsx' }}
           bulkActions={bulkActions}
-          primaryAction={
-            <Button
-              disabled={isLoading && true}
-              onClick={() => {
-                setInviteDialogOpen(true);
-              }}
-            >
-              <Plus />
-              Add user
-            </Button>
-          }
+          primaryAction={addUserButton}
         />
       </CardHeader>
     );
@@ -796,9 +718,11 @@ const UserList = () => {
     <>
       <DataGrid
         table={table}
+        emptyAction={addUserButton}
         recordCount={data?.pagination.total || 0}
         isLoading={isLoading}
-        onRowClick={handleRowClick}
+        rowHref={rowHref}
+        rowPending={rowPending}
         standardToolbar={false}
         tableLayout={{
           columnsResizable: true,
@@ -813,10 +737,7 @@ const UserList = () => {
         <Card>
           <DataGridToolbar />
           <CardTable>
-            <ScrollArea>
-              <DataGridTable />
-              <ScrollBar orientation="horizontal" />
-            </ScrollArea>
+            <DataGridTable />
           </CardTable>
           <CardFooter>
             <DataGridPagination />
@@ -872,62 +793,6 @@ const UserList = () => {
         </AlertDialogContent>
       </AlertDialog>
 
-      <AlertDialog
-        open={!!impersonateTarget}
-        onOpenChange={(open) => {
-          if (!open) setImpersonateTarget(null);
-        }}
-      >
-        <AlertDialogContent data-testid="impersonate-confirm-dialog">
-          <AlertDialogHeader>
-            <AlertDialogTitle>Confirm Impersonation</AlertDialogTitle>
-            <AlertDialogDescription>
-              You will browse the system as{' '}
-              <strong>
-                {impersonateTarget?.name || impersonateTarget?.email || ''}
-              </strong>{' '}
-              with their access rights. All records you create or modify will
-              still be attributed to you. Continue?
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={startingImpersonate}>
-              Cancel
-            </AlertDialogCancel>
-            <AlertDialogAction
-              data-testid="impersonate-confirm"
-              onClick={async (e) => {
-                e.preventDefault();
-                if (!impersonateTarget) return;
-                try {
-                  await startImpersonate(impersonateTarget.id);
-                  setImpersonateTarget(null);
-                  toast.success(
-                    `Now impersonating ${impersonateTarget.name || impersonateTarget.email}`,
-                  );
-                  if (typeof window !== 'undefined') {
-                    window.location.reload();
-                  }
-                } catch (err) {
-                  toast.error(
-                    err instanceof Error ? err.message : 'Failed to start impersonation',
-                  );
-                }
-              }}
-              disabled={startingImpersonate}
-            >
-              {startingImpersonate ? (
-                <>
-                  <LoaderCircleIcon className="size-4 animate-spin" />
-                  Starting...
-                </>
-              ) : (
-                'Impersonate'
-              )}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </>
   );
 };

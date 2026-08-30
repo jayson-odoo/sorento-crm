@@ -529,7 +529,7 @@ function ProposalCard({
                       setResolved((r) => ({ ...r, [line.row_id]: 'confirmed' }));
                     }}
                   >
-                    Confirm
+                    Confirm suggestion
                   </Button>
                   <Button
                     variant="ghost"

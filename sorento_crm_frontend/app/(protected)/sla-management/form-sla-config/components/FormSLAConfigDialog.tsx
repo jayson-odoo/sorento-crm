@@ -452,7 +452,7 @@ export default function FormSLAConfigDialog({
             Cancel
           </Button>
           <Button onClick={submit} disabled={saveMut.isPending}>
-            {saveMut.isPending ? 'Saving…' : 'Save'}
+            {saveMut.isPending ? 'Saving…' : 'Save SLA config'}
           </Button>
         </DialogFooter>
       </DialogContent>

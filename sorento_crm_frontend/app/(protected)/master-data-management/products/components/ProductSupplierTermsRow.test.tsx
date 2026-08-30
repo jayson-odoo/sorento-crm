@@ -42,7 +42,12 @@ function link(over: Partial<ProductSupplier> = {}): ProductSupplier {
   } as ProductSupplier;
 }
 
-function renderRow(ps: ProductSupplier, onSave = vi.fn(), onRemove = vi.fn(async () => {})) {
+function renderRow(
+  ps: ProductSupplier,
+  onSave = vi.fn(),
+  onRemove = vi.fn(),
+  { isDeleting = false }: { isDeleting?: boolean } = {},
+) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     React.createElement(
@@ -54,7 +59,7 @@ function renderRow(ps: ProductSupplier, onSave = vi.fn(), onRemove = vi.fn(async
         onSave,
         onRemove,
         isSaving: false,
-        isDeleting: false,
+        isDeleting,
       }),
     ),
   );
@@ -83,9 +88,9 @@ describe('ProductSupplierTermsRow - what it shows', () => {
 
   it('offers Save only once something has changed', () => {
     renderRow(link());
-    expect(screen.queryByRole('button', { name: 'Save' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Save terms' })).toBeNull();
     fireEvent.change(screen.getByLabelText('Minimum order'), { target: { value: '50' } });
-    expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save terms' })).toBeInTheDocument();
   });
 });
 
@@ -95,24 +100,31 @@ describe('ProductSupplierTermsRow - a price has to say what money it is in', () 
     fireEvent.change(screen.getByLabelText('Unit cost'), { target: { value: '12.5' } });
 
     expect(screen.getByRole('alert')).toHaveTextContent(/currency/i);
-    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Save terms' })).toBeDisabled();
     expect(onSave).not.toHaveBeenCalled();
   });
 
   it('saves once the currency is chosen', () => {
     const { onSave } = renderRow(link({ unit_cost: 12.5, currency: 'CNY' }));
     fireEvent.change(screen.getByLabelText('Unit cost'), { target: { value: '13' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save terms' }));
     expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ unit_cost: '13', currency: 'CNY' }));
   });
 });
 
-describe('ProductSupplierTermsRow - removing a supplier', () => {
-  it('asks before unlinking, and only then calls through', () => {
+describe('ProductSupplierTermsRow - removing a supplier (S6-10)', () => {
+  it('parks the detach on the first press, with no dialog in the way', () => {
+    // D7: the way back is the countdown's Cancel, in the toast the caller's
+    // `useDeferredRowAction` raises, not a dialog the reader has to read first.
     const { onRemove } = renderRow(link());
     fireEvent.click(screen.getByRole('button', { name: /Remove Acme Tiles/i }));
-    expect(screen.getByText('Confirm delete')).toBeInTheDocument();
-    expect(onRemove).not.toHaveBeenCalled();
+    expect(onRemove).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText('Confirm delete')).not.toBeInTheDocument();
+  });
+
+  it('goes quiet while its own removal is counting down', () => {
+    renderRow(link(), vi.fn(), vi.fn(), { isDeleting: true });
+    expect(screen.getByRole('button', { name: /Remove Acme Tiles/i })).toBeDisabled();
   });
 });
 

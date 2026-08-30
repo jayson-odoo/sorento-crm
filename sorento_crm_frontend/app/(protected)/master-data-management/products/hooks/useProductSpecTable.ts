@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useMemo } from 'react';
+import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 
@@ -13,7 +14,6 @@ import {
 } from '@/components/spec-table';
 import {
   addValueToSpecKey,
-  clearSpecValueByHand,
   createSpecKey,
   getApplicableSpecKeys,
   getProductSpecDetail,
@@ -169,11 +169,20 @@ export function useProductSpecTable(productId: string): UseProductSpecTableResul
     onError: (error: Error) => toast.error(error.message, { duration: 10_000 }),
   });
 
-  const removeMutation = useMutation({
-    mutationFn: ({ specKey, mode }: { specKey: string; mode: 'absent' | 'revert' }) =>
-      clearSpecValueByHand(productId, specKey, mode),
-    onSuccess: invalidate,
-    onError: (error: Error) => toast.error(error.message, { duration: 10_000 }),
+  // Remove and Reset ask nothing (D7, S6b): they park `product_spec_value.clear`
+  // on the server and a toast counts down with Cancel. The two modes differ in
+  // what they mean, not in how they are taken back, so one runner carries both
+  // and the mode travels in the payload.
+  // The record is one product's value for one key, so it is addressed as
+  // `<product id>:<spec key>`. The key alone is shared by every product that holds it:
+  // two people clearing `width` on two different products would collide on the engine's
+  // one-pending-action-per-record index and read each other's outcome as their own.
+  const removal = useDeferredRowAction({
+    actionKey: 'product_spec_value.clear',
+    entityType: 'product_spec_value',
+    verb: 'Clearing',
+    successMessage: 'Specification cleared',
+    invalidateKeys: [DETAIL_KEY(productId), [WORKLIST_KEY]],
   });
 
   const addValueMutation = useMutation({
@@ -288,10 +297,18 @@ export function useProductSpecTable(productId: string): UseProductSpecTableResul
       await setValueMutation.mutateAsync({ specKey, value });
     },
     tombstone: async (specKey) => {
-      await removeMutation.mutateAsync({ specKey, mode: 'absent' });
+      removal.run({
+        id: `${productId}:${specKey}`,
+        subject: registry.find((key) => key.spec_key === specKey)?.label ?? specKey,
+        payload: { mode: 'absent' },
+      });
     },
     revert: async (specKey) => {
-      await removeMutation.mutateAsync({ specKey, mode: 'revert' });
+      removal.run({
+        id: `${productId}:${specKey}`,
+        subject: registry.find((key) => key.spec_key === specKey)?.label ?? specKey,
+        payload: { mode: 'revert' },
+      });
     },
     addValue: async (specKey, value) => {
       await addValueMutation.mutateAsync({ specKey, value });

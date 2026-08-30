@@ -2,7 +2,20 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { Plus, Trash2, Save, Rocket, ArrowLeft, Link2, ExternalLink } from 'lucide-react';
+import {
+  ArrowLeft,
+  Bell,
+  ExternalLink,
+  Eye,
+  GitBranch,
+  Link2,
+  ListChecks,
+  Plus,
+  Rocket,
+  Save,
+  Trash2,
+  Workflow,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -397,12 +410,29 @@ export default function WorkflowFormBuilder({ definitionId }: { definitionId: st
       </Card>
 
       <Tabs defaultValue="form">
-        <TabsList className="flex flex-wrap h-auto gap-1">
-          <TabsTrigger value="form">Form fields</TabsTrigger>
-          <TabsTrigger value="workflow">States &amp; transitions</TabsTrigger>
-          <TabsTrigger value="notify">Notifications</TabsTrigger>
-          <TabsTrigger value="preview">Preview</TabsTrigger>
-          <TabsTrigger value="flow">Flow view</TabsTrigger>
+        {/* Wrapping the pills doubled the strip's height on a phone and still
+            cut the last label; the line strip scrolls on one row instead. */}
+        <TabsList className="mb-4">
+          <TabsTrigger value="form">
+            <ListChecks />
+            <span>Form fields</span>
+          </TabsTrigger>
+          <TabsTrigger value="workflow">
+            <Workflow />
+            <span>States &amp; transitions</span>
+          </TabsTrigger>
+          <TabsTrigger value="notify">
+            <Bell />
+            <span>Notifications</span>
+          </TabsTrigger>
+          <TabsTrigger value="preview">
+            <Eye />
+            <span>Preview</span>
+          </TabsTrigger>
+          <TabsTrigger value="flow">
+            <GitBranch />
+            <span>Flow view</span>
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="form" className="space-y-4 mt-4">

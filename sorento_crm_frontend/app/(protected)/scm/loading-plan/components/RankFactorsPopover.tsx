@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/components/ui/popover';
 import { EM_DASH, fmtDecimal } from '../../lib/format';
 import type { RankFactor } from '../../services/fulfilmentService';
+import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 
 /**
  * Why this line ranked where it did (AC-E7).
@@ -54,26 +55,29 @@ export function RankFactorsPopover({ line }: { line: RankedLine }) {
       <PopoverPortal>
         <PopoverContent className="w-72" align="end">
           <h4 className="text-xs font-semibold">How this line ranked</h4>
-          <table className="mt-2 w-full text-2xs">
-            <thead className="text-muted-foreground">
-              <tr>
-                <th className="text-start font-normal">Factor</th>
-                <th className="text-end font-normal">Weight</th>
-                <th className="text-end font-normal">Value</th>
-              </tr>
-            </thead>
-            <tbody>
-              {line.factors.map((f) => (
-                <tr key={f.key} className={f.weight === 0 ? 'text-muted-foreground' : undefined}>
-                  <td className="py-0.5">{FACTOR_LABELS[f.key] ?? f.key}</td>
-                  <td className="py-0.5 text-end tabular-nums">{f.weight}</td>
-                  <td className="py-0.5 text-end tabular-nums">
-                    {f.present ? pct(f.value) : 'not known'}
-                  </td>
+          <ScrollArea>
+            <table className="mt-2 w-auto min-w-full text-2xs">
+              <thead className="text-muted-foreground">
+                <tr>
+                  <th className="text-start font-normal">Factor</th>
+                  <th className="text-end font-normal">Weight</th>
+                  <th className="text-end font-normal">Value</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {line.factors.map((f) => (
+                  <tr key={f.key} className={f.weight === 0 ? 'text-muted-foreground' : undefined}>
+                    <td className="py-0.5">{FACTOR_LABELS[f.key] ?? f.key}</td>
+                    <td className="py-0.5 text-end tabular-nums">{f.weight}</td>
+                    <td className="py-0.5 text-end tabular-nums">
+                      {f.present ? pct(f.value) : 'not known'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <ScrollBar orientation="horizontal" />
+          </ScrollArea>
           <p className="mt-2 text-2xs text-muted-foreground">
             Score {score}. A factor with no weight does not move it.
           </p>

@@ -146,19 +146,19 @@ export default function StatusGraphsClient() {
                       <td className="px-3 py-2">
                         <span className="flex flex-wrap gap-1">
                           {status.is_initial && (
-                            <Badge variant="primary" size="sm" appearance="ghost">Start</Badge>
+                            <Badge variant="primary" size="sm">Start</Badge>
                           )}
                           {status.is_terminal && (
-                            <Badge variant="secondary" size="sm" appearance="ghost">Final</Badge>
+                            <Badge variant="secondary" size="sm">Final</Badge>
                           )}
                           {!status.is_active && (
-                            <Badge variant="warning" size="sm" appearance="ghost">
+                            <Badge variant="warning" size="sm">
                               <BadgeDot />
                               Inactive
                             </Badge>
                           )}
                           {status.is_system && (
-                            <Badge variant="secondary" size="sm" appearance="ghost">System</Badge>
+                            <Badge variant="secondary" size="sm">System</Badge>
                           )}
                         </span>
                       </td>
@@ -266,13 +266,12 @@ export default function StatusGraphsClient() {
                             <Badge
                               variant="info"
                               size="sm"
-                              appearance="ghost"
                               title="Fired by the system when its conditions are met. Configured in code."
                             >
                               Automatic
                             </Badge>
                           ) : (
-                            <Badge variant="secondary" size="sm" appearance="ghost">
+                            <Badge variant="secondary" size="sm">
                               Manual
                             </Badge>
                           )}

@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import type { SortingState } from '@tanstack/react-table';
 import {
@@ -7,8 +7,9 @@ import {
   updatePurchaseOrder,
 } from '../services/purchaseOrderService';
 import type { PurchaseOrderUpdateData } from '../types/scm.types';
+import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
 
-interface UsePurchaseOrdersParams {
+export interface UsePurchaseOrdersParams {
   pageIndex: number;
   pageSize: number;
   sorting: SortingState;
@@ -25,9 +26,62 @@ interface UsePurchaseOrdersParams {
   documents?: string[] | null;
 }
 
+/**
+ * The list's React Query key. The detail page's pager rebuilds the SAME key from
+ * the URL, so it reads the page the list already fetched.
+ */
+export function purchaseOrdersListQueryKey(
+  params: UsePurchaseOrdersParams,
+): QueryKey {
+  return ['scm', 'purchase-orders', params];
+}
+
+/** The list query a detail URL describes, in the shape the list passes. */
+export function purchaseOrdersListParamsFromUrl(
+  params: ListPagerParams,
+): UsePurchaseOrdersParams {
+  return {
+    pageIndex: params.pageIndex,
+    pageSize: params.pageSize,
+    sorting: params.sorting,
+    searchQuery: params.searchQuery,
+    status: params.filters.status || null,
+    supplier: null,
+    productCode: params.filters.product_code || null,
+    // Three states, not two: the list's All / Outstanding / Completed toggle
+    // writes `true`, `false` or nothing, and reading a missing param as `false`
+    // would silently narrow the walk to the completed orders.
+    outstanding: params.filters.outstanding
+      ? params.filters.outstanding === 'true'
+      : null,
+  };
+}
+
+/** The pager's two hooks into the purchase orders list. */
+export const purchaseOrdersPagerQuery = {
+  listQueryKey: (params: ListPagerParams): QueryKey =>
+    purchaseOrdersListQueryKey(purchaseOrdersListParamsFromUrl(params)),
+  fetchPage: (params: ListPagerParams): Promise<ListPagerPage> => {
+    const p = purchaseOrdersListParamsFromUrl(params);
+    return getPurchaseOrders({
+      pageIndex: p.pageIndex,
+      pageSize: p.pageSize,
+      sortField: p.sorting?.[0]?.id,
+      sortDir: p.sorting?.[0]?.desc ? 'desc' : 'asc',
+      searchQuery: p.searchQuery,
+      status: p.status,
+      supplier: p.supplier,
+      productCode: p.productCode ?? null,
+      outstanding: p.outstanding ?? null,
+      allocated: p.allocated ?? null,
+      documents: p.documents ?? null,
+    });
+  },
+};
+
 export function usePurchaseOrders(params: UsePurchaseOrdersParams) {
   return useQuery({
-    queryKey: ['scm', 'purchase-orders', params],
+    queryKey: purchaseOrdersListQueryKey(params),
     queryFn: () =>
       getPurchaseOrders({
         pageIndex: params.pageIndex,

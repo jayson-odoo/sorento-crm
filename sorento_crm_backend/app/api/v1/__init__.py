@@ -31,7 +31,12 @@ from app.api.v1 import (
     reports,
     scm,
 )
-from app.api.v1.system import modules_runtime, rule_facts, companies as system_companies
+from app.api.v1.system import (
+    modules_runtime,
+    pending_actions,
+    rule_facts,
+    companies as system_companies,
+)
 from app.api.v1.assistant import record_context as assistant_record_context
 from app.modules.runtime.guards import require_module_enabled, require_module_enabled_with_api_key
 
@@ -176,6 +181,17 @@ api_router.include_router(system.router, prefix="/system", tags=["system"])
 # Rule-facts catalog for the RuleBuilder (nested AND/OR condition builder in the
 # Automation edit form). JWT + automation.view permission; never X-API-Key.
 api_router.include_router(rule_facts.router, prefix="/rule-facts", tags=["rule-facts"])
+# Deferred record actions (D7, S6) - the grace window that replaced the confirmation
+# dialog. Cross-cutting by design (products, orders, users), so it is mounted at the
+# root under `base` rather than inside one domain; each action enforces its OWN
+# permission slug when it is parked. JWT only: an X-API-Key caller has no countdown to
+# cancel in, so it should call the domain route and have the effect immediately.
+api_router.include_router(
+    pending_actions.router,
+    prefix="/pending-actions",
+    tags=["pending-actions"],
+    dependencies=[Depends(require_module_enabled("base"))],
+)
 # Bubble record-context assembler (JWT+RBAC only; never exposed to EXTERNAL_API_KEY).
 api_router.include_router(
     assistant_record_context.router,

@@ -165,7 +165,7 @@ export function PortalRevisionConfigDialog({
             Cancel
           </Button>
           <Button onClick={handleSave} disabled={isSaving || maxInvalid}>
-            {isSaving ? 'Saving…' : 'Save'}
+            {isSaving ? 'Saving…' : 'Save revision policy'}
           </Button>
         </DialogFooter>
       </DialogContent>

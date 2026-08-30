@@ -10,6 +10,7 @@ unsent.
 from __future__ import annotations
 
 import logging
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Optional
@@ -92,6 +93,50 @@ def _audit(
         except Exception:
             pass
         logger.exception("Audit write failed for form action %s", getattr(row, "id", None))
+
+
+#: Postgres foreign-key violation. The one failure a hard delete meets in normal use,
+#: and the only one worth a sentence of its own.
+_FK_VIOLATION = "23503"
+
+
+def _reader_facing_error(exc: Exception, row: "SlaFormAction") -> str:
+    """What a failed commit is allowed to SAY, as opposed to what it is allowed to log.
+
+    `error_text` is handed to the frontend by `GET /pending-actions/current` and
+    rendered straight into a toast, because a countdown that simply disappears reads
+    exactly like success. That makes it user-facing copy, and a raw exception is not:
+    a psycopg2 IntegrityError stringifies to the failing INSERT/DELETE, the constraint
+    name and the bound parameters, so a product that could not be deleted showed the
+    reader the SQL and the row's own values. The full exception still reaches the log,
+    where whoever is on call can read it.
+
+    A deliberate 4xx is the exception: the domain wrote that sentence for a person
+    ("Conversation is already responded."). A 500 is `handle_internal_error(str(e))`
+    somewhere below, which is the same raw exception wearing a message field. So a
+    handler with something specific to say raises an AppException with a 4xx; anything
+    else that escapes is a defect, and a defect's message is not copy.
+    """
+    subject = (row.source_entity_type or "record").replace("_", " ")
+    deleting = str(row.action_key or "").endswith(".delete")
+
+    if isinstance(exc, AppException) and 400 <= int(getattr(exc, "status_code", 500)) < 500:
+        detail = getattr(exc, "detail", None)
+        message = detail.get("message") if isinstance(detail, dict) else detail
+        if message:
+            return str(message)[:2000]
+    elif isinstance(exc, IntegrityError):
+        if getattr(getattr(exc, "orig", None), "pgcode", None) == _FK_VIOLATION:
+            return (
+                f"Cannot delete this {subject}: other records still reference it."
+                if deleting
+                else f"Cannot change this {subject}: another record depends on it."
+            )
+        return f"Cannot save this {subject}: it conflicts with a record that already exists."
+
+    if deleting:
+        return f"This {subject} could not be deleted. Nothing was changed."
+    return f"This {subject} could not be updated. Nothing was changed."
 
 
 @dataclass(frozen=True)
@@ -258,14 +303,33 @@ class FormActionService:
             # `ineligible`, not `failed`: nothing is broken, the action simply must not
             # be applied on top of what happened instead (AC-D-8).
             if 400 <= int(getattr(exc, "status_code", 500)) < 500:
-                self.void_as_ineligible(row, str(getattr(exc, "detail", exc)))
+                # The reason is read off the screen, so it is the domain's sentence -
+                # not `str(detail)`, which is the dict AppException wraps it in.
+                self.void_as_ineligible(row, _reader_facing_error(exc, row))
                 return False
             raise
         return True
 
     def _active_tracker_id(self, entity_type: str, entity_id: str) -> Optional[str]:
-        """The unresolved form-SLA stage tracker for this form, if any."""
+        """The unresolved form-SLA stage tracker for this form, if any.
+
+        `conversation_sla_tracking.source_entity_id` is a uuid COLUMN, and since S6b a
+        record action's entity id is a key rather than necessarily a uuid: a currency
+        rate is addressed by its three-letter code, a stock-visibility policy at the
+        access-type tier by that code, the sign-in background by a constant. Asking this
+        question about one of those raised `invalid input syntax for type uuid` INSIDE
+        the commit, which aborted the request's transaction and turned the poll that was
+        watching the countdown into a 500.
+
+        A record action never has a tracker anyway - a product is not a form submission -
+        so a non-uuid key is answered without going to the database at all.
+        """
         from app.models.sla import ConversationSLATracking
+
+        try:
+            uuid.UUID(str(entity_id))
+        except (ValueError, AttributeError, TypeError):
+            return None
 
         row = (
             self.db.query(ConversationSLATracking.id)
@@ -295,12 +359,15 @@ class FormActionService:
             result = action.execute(self.db, dict(row.payload_json or {}))
         except Exception as exc:
             self.db.rollback()
+            # Never `str(exc)`: this string is shown to the user (see
+            # `_reader_facing_error`). The exception itself goes to the log below.
+            error_text = _reader_facing_error(exc, row)
             if already_claimed:
                 row_id = str(row.id)
                 self.db.query(SlaFormAction).filter(SlaFormAction.id == row_id).update(
                     {
                         "status": FORM_ACTION_FAILED,
-                        "error_text": str(exc)[:2000],
+                        "error_text": error_text,
                         "resolved_at": _utc_naive_now(),
                     },
                     synchronize_session=False,
@@ -309,11 +376,11 @@ class FormActionService:
                 # The row was never persisted; record the failure as a fresh terminal
                 # row so the history still shows the attempt.
                 row.status = FORM_ACTION_FAILED
-                row.error_text = str(exc)[:2000]
+                row.error_text = error_text
                 row.resolved_at = _utc_naive_now()
                 self.db.add(row)
             self.db.commit()
-            logger.warning("Form action %s failed: %s", row.id, exc)
+            logger.exception("Form action %s failed", row.id)
             raise
 
         # Whatever stage is open now is the one the commit spawned - unless nothing

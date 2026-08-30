@@ -18,6 +18,7 @@ import type {
   ContainerRequestSoLine,
 } from '../../services/fulfilmentService';
 import { ContainerRequestHistoryBars } from './ContainerRequestHistory';
+import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 
 function dateLabel(iso: string | null): string {
   return iso ? formatDateInMalaysia(iso) : EM_DASH;
@@ -131,49 +132,52 @@ export function ContainerRequestRowDialog({
         <DialogBody className="min-h-0 flex-1 space-y-5 overflow-y-auto p-4 sm:p-6">
           <section>
             <h4 className="text-sm font-semibold">Where the stock is</h4>
-            <table className="mt-2 w-full text-xs" data-testid="row-locations">
-              <thead>
-                <tr className="text-muted-foreground">
-                  <th className="py-1 text-start font-medium">Location</th>
-                  <th className="py-1 text-start font-medium">Where</th>
-                  <th className="py-1 text-end font-medium">On hand</th>
-                  <th className="py-1 text-end font-medium">SPO</th>
-                  <th className="py-1 text-end font-medium">Counted</th>
-                </tr>
-              </thead>
-              <tbody>
-                {row.sites.map((site) => (
-                  <tr key={site.warehouse_code} className="border-t border-border">
-                    <td className="py-1 font-medium">{site.warehouse_code}</td>
-                    <td className="py-1 text-muted-foreground">Site pool</td>
-                    <td className="py-1 text-end tabular-nums">{fmtInt(site.on_hand)}</td>
-                    <td className="py-1 text-end tabular-nums">{fmtInt(site.incoming_spo)}</td>
-                    <td className="py-1 text-end tabular-nums">
-                      {fmtInt(site.on_hand + site.incoming_spo)}
-                    </td>
+            <ScrollArea>
+              <table className="mt-2 w-auto min-w-full text-xs" data-testid="row-locations">
+                <thead>
+                  <tr className="text-muted-foreground">
+                    <th className="py-1 text-start font-medium">Location</th>
+                    <th className="py-1 text-start font-medium">Where</th>
+                    <th className="py-1 text-end font-medium">On hand</th>
+                    <th className="py-1 text-end font-medium">SPO</th>
+                    <th className="py-1 text-end font-medium">Counted</th>
                   </tr>
-                ))}
-                {/* Muted, and its Counted column is a dash: this stock is real and it is
-                    deliberately not part of the ask, so showing it as zero would read as a
-                    missing number rather than a decision. */}
-                <tr className="border-t border-border text-muted-foreground">
-                  <td className="py-1" title={row.group_locations.warehouse_codes.join(', ')}>
-                    {row.group_locations.warehouse_codes.slice(0, 2).join(', ') || EM_DASH}
-                    {row.group_locations.count > 2
-                      ? `, ... (${row.group_locations.count})`
-                      : ''}
-                  </td>
-                  <td className="py-1">Group locations</td>
-                  <td className="py-1 text-end tabular-nums">
-                    {fmtInt(row.group_locations.on_hand)}
-                  </td>
-                  <td className="py-1 text-end tabular-nums">
-                    {fmtInt(row.group_locations.incoming_spo)}
-                  </td>
-                  <td className="py-1 text-end">{EM_DASH}</td>
-                </tr>
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {row.sites.map((site) => (
+                    <tr key={site.warehouse_code} className="border-t border-border">
+                      <td className="py-1 font-medium">{site.warehouse_code}</td>
+                      <td className="py-1 text-muted-foreground">Site pool</td>
+                      <td className="py-1 text-end tabular-nums">{fmtInt(site.on_hand)}</td>
+                      <td className="py-1 text-end tabular-nums">{fmtInt(site.incoming_spo)}</td>
+                      <td className="py-1 text-end tabular-nums">
+                        {fmtInt(site.on_hand + site.incoming_spo)}
+                      </td>
+                    </tr>
+                  ))}
+                  {/* Muted, and its Counted column is a dash: this stock is real and it is
+                      deliberately not part of the ask, so showing it as zero would read as a
+                      missing number rather than a decision. */}
+                  <tr className="border-t border-border text-muted-foreground">
+                    <td className="py-1" title={row.group_locations.warehouse_codes.join(', ')}>
+                      {row.group_locations.warehouse_codes.slice(0, 2).join(', ') || EM_DASH}
+                      {row.group_locations.count > 2
+                        ? `, ... (${row.group_locations.count})`
+                        : ''}
+                    </td>
+                    <td className="py-1">Group locations</td>
+                    <td className="py-1 text-end tabular-nums">
+                      {fmtInt(row.group_locations.on_hand)}
+                    </td>
+                    <td className="py-1 text-end tabular-nums">
+                      {fmtInt(row.group_locations.incoming_spo)}
+                    </td>
+                    <td className="py-1 text-end">{EM_DASH}</td>
+                  </tr>
+                </tbody>
+              </table>
+              <ScrollBar orientation="horizontal" />
+            </ScrollArea>
           </section>
 
           <section>
@@ -227,40 +231,43 @@ export function ContainerRequestRowDialog({
                 No open sales-order line behind this row.
               </p>
             ) : (
-              <table className="mt-2 w-full text-xs" data-testid="row-so-lines">
-                <thead>
-                  <tr className="text-muted-foreground">
-                    <th className="py-1 text-start font-medium">Order</th>
-                    <th className="py-1 text-start font-medium">Customer</th>
-                    <th className="py-1 text-end font-medium">Qty</th>
-                    <th className="py-1 text-end font-medium">Delivery</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {soLines.map((line, i) => (
-                    <tr
-                      key={`${line.so_number ?? 'so'}-${i}`}
-                      className="border-t border-border"
-                    >
-                      <td className="py-1 font-medium">{line.so_number ?? EM_DASH}</td>
-                      <td
-                        className={cn(
-                          'py-1',
-                          line.demand_class === 'project'
-                            ? 'text-foreground'
-                            : 'text-muted-foreground',
-                        )}
-                      >
-                        {line.customer_label ?? EM_DASH}
-                      </td>
-                      <td className="py-1 text-end tabular-nums">{fmtInt(line.qty)}</td>
-                      <td className="py-1 text-end tabular-nums">
-                        {dateLabel(line.required_date)}
-                      </td>
+              <ScrollArea>
+                <table className="mt-2 w-auto min-w-full text-xs" data-testid="row-so-lines">
+                  <thead>
+                    <tr className="text-muted-foreground">
+                      <th className="py-1 text-start font-medium">Order</th>
+                      <th className="py-1 text-start font-medium">Customer</th>
+                      <th className="py-1 text-end font-medium">Qty</th>
+                      <th className="py-1 text-end font-medium">Delivery</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {soLines.map((line, i) => (
+                      <tr
+                        key={`${line.so_number ?? 'so'}-${i}`}
+                        className="border-t border-border"
+                      >
+                        <td className="py-1 font-medium">{line.so_number ?? EM_DASH}</td>
+                        <td
+                          className={cn(
+                            'py-1',
+                            line.demand_class === 'project'
+                              ? 'text-foreground'
+                              : 'text-muted-foreground',
+                          )}
+                        >
+                          {line.customer_label ?? EM_DASH}
+                        </td>
+                        <td className="py-1 text-end tabular-nums">{fmtInt(line.qty)}</td>
+                        <td className="py-1 text-end tabular-nums">
+                          {dateLabel(line.required_date)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <ScrollBar orientation="horizontal" />
+              </ScrollArea>
             )}
           </section>
         </DialogBody>

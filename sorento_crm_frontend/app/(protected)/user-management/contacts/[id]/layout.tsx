@@ -2,31 +2,49 @@
 
 import React, { use, useEffect, useMemo, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { KeyRound, MessageSquare, MoveLeft, Route, Trash2, UserPen } from 'lucide-react';
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
+import { KeyRound, MessageSquare, Route, UserPen } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Container } from '@/components/common/container';
-import {
-  Toolbar,
-  ToolbarActions,
-  ToolbarHeading,
-  ToolbarTitle,
-} from '@/components/common/toolbar';
-import RecordNavigation from '@/components/common/RecordNavigation';
+import { PageHeader } from '@/components/common/PageHeader';
+import DetailActions from '@/components/common/DetailActions';
+import BackToList, { useBackToListHref } from '@/components/common/BackToList';
+import { contactsPagerQuery } from '../lib/listQuery';
 import PortalLinkButton from '@/components/contacts/PortalLinkButton';
 import ContactDeleteDialog from '../components/ContactDeleteDialog';
 import { ContactProvider } from './components/contact-context';
 import ContactHero from './components/contact-hero';
 import { useContactQuery } from './hooks/useContactQuery';
-import { useContactNavigationQuery } from './hooks/useContactNavigationQuery';
+import { contactActions } from '../actions';
+import { ContactImpersonateDialog } from '../components/ContactImpersonateDialog';
+import type { RespondContact } from '../types/contact.types';
+import { formatDateTimeInMalaysia } from '@/lib/helpers';
+
+/**
+ * The contact's read-only record metadata, in the page header.
+ *
+ * Read-only values with no edit counterpart belong in the header, never in a
+ * tab body and never beside the actions (ADR product standards). Sitting in the
+ * record card's right-hand column, this grid stacked under the identity below
+ * `lg` and turned the pager, gear and primary button into a footer strip.
+ */
+function ContactMeta({ contact }: { contact: RespondContact }) {
+  const items: [string, string][] = [
+    ['Respond.io ID', contact.respond_io_id || 'Not set'],
+    ['Created At', formatDateTimeInMalaysia(contact.created_at)],
+    ['Updated At', formatDateTimeInMalaysia(contact.updated_at)],
+  ];
+
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-2sm text-muted-foreground">
+      {items.map(([label, value]) => (
+        <span key={label} className="break-words">
+          {label}: <span className="text-foreground">{value}</span>
+        </span>
+      ))}
+    </div>
+  );
+}
 
 type NavRoutes = Record<
   string,
@@ -49,7 +67,11 @@ export default function ContactLayout({
   const { id } = use(params);
   const pathname = usePathname();
   const router = useRouter();
+  const backHref = useBackToListHref('/user-management/contacts');
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  // Impersonate is on the record now as well as the row (D15), through the one
+  // dialog both surfaces share.
+  const [impersonateTarget, setImpersonateTarget] = useState<RespondContact | null>(null);
   const [activeTab, setActiveTab] = useState<string>('general');
 
   const navRoutes = useMemo<NavRoutes>(
@@ -89,75 +111,30 @@ export default function ContactLayout({
 
   const { data: contact, isLoading } = useContactQuery(id);
 
-  const { data: navigationData } = useContactNavigationQuery();
-  const navigationItems = navigationData?.data ?? [];
 
   const handleTabClick = (key: string, path: string) => {
     setActiveTab(key);
     router.push(path);
   };
 
-  // Prev/next keeps the tab the user is reading, so stepping through contacts to
-  // compare the same section does not bounce back to Profile on every record.
-  const handleRecordSelect = (nextId: string) => {
-    const segment = navRoutes[activeTab]?.segment ?? '';
-    router.push(`/user-management/contacts/${nextId}${segment}`);
-  };
 
   const notFound = !isLoading && !contact;
 
   return (
     <ContactProvider contact={contact} isLoading={isLoading} contactId={id}>
       <Container>
-        <Toolbar>
-          <ToolbarHeading>
-            <ToolbarTitle>Contact Details</ToolbarTitle>
-            <Breadcrumb>
-              <BreadcrumbList>
-                <BreadcrumbItem>
-                  <BreadcrumbLink href="/">Home</BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbLink href="/user-management/contacts">
-                    User Management
-                  </BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbPage>Contacts</BreadcrumbPage>
-                </BreadcrumbItem>
-              </BreadcrumbList>
-            </Breadcrumb>
-          </ToolbarHeading>
-          <ToolbarActions>
-            <RecordNavigation
-              currentId={id}
-              items={navigationItems}
-              basePath="/user-management/contacts"
-              onSelect={handleRecordSelect}
-            />
-            <PortalLinkButton
-              contactId={id}
-              contactLabel={contact?.name ?? contact?.phone_number ?? 'this contact'}
-              canSendViaRespondIo={!!contact?.respond_io_id}
-            />
-            <Button
-              variant="outline"
-              onClick={() => setDeleteDialogOpen(true)}
-              disabled={!contact}
-              className="text-destructive border-destructive/50 hover:bg-destructive/10"
-            >
-              <Trash2 className="size-4 mr-2" />
-              Delete contact
-            </Button>
-            <Button asChild variant="outline">
-              <button onClick={() => router.push('/user-management/contacts')}>
-                <MoveLeft /> Back to contacts
-              </button>
-            </Button>
-          </ToolbarActions>
-        </Toolbar>
+        <PageHeader
+          title="Contact Details"
+          crumbs={[
+            { title: 'Internal Users', path: '/user-management/contacts' },
+            { title: 'Contact Details' },
+          ]}
+          actions={
+            <BackToList listPath="/user-management/contacts" label="Back to contacts" />
+          }
+        >
+          {contact ? <ContactMeta contact={contact} /> : null}
+        </PageHeader>
 
         {notFound ? (
           <div className="text-center py-12">
@@ -167,12 +144,47 @@ export default function ContactLayout({
               onClick={() => router.push('/user-management/contacts')}
               className="mt-4"
             >
-              Back to Contacts
+              Back to contacts
             </Button>
           </div>
         ) : (
           <>
-            <ContactHero contact={contact} isLoading={isLoading} />
+            <ContactHero
+              contact={contact}
+              isLoading={isLoading}
+              actions={
+                <DetailActions
+                  pager={{
+                    ...contactsPagerQuery,
+                    detailPath: '/user-management/contacts',
+                    currentId: id,
+                    ariaLabel: 'contact',
+                    // Stepping keeps the tab being read, so comparing the same
+                    // section across contacts does not bounce back to Profile.
+                    hrefFor: (nextId, search) =>
+                      `/user-management/contacts/${nextId}${
+                        navRoutes[activeTab]?.segment ?? ''
+                      }${search ? `?${search}` : ''}`,
+                  }}
+                  actions={
+                    contact
+                      ? contactActions(contact, {
+                          impersonate: () => setImpersonateTarget(contact),
+                          remove: () => setDeleteDialogOpen(true),
+                        })
+                      : []
+                  }
+                  gearLabel="Contact options"
+                  primary={
+                    <PortalLinkButton
+                      contactId={id}
+                      contactLabel={contact?.name ?? contact?.phone_number ?? 'this contact'}
+                      canSendViaRespondIo={!!contact?.respond_io_id}
+                    />
+                  }
+                />
+              }
+            />
             <Tabs defaultValue={activeTab} value={activeTab}>
               <TabsList variant="line" className="mb-5">
                 {Object.entries(navRoutes).map(([key, { title, icon: Icon, path }]) => (
@@ -191,13 +203,17 @@ export default function ContactLayout({
             {children}
           </>
         )}
+        <ContactImpersonateDialog
+          contact={impersonateTarget}
+          onClose={() => setImpersonateTarget(null)}
+        />
       </Container>
 
       <ContactDeleteDialog
         open={deleteDialogOpen}
         onOpenChange={setDeleteDialogOpen}
         contact={contact ?? null}
-        onSuccess={() => router.push('/user-management/contacts')}
+        onSuccess={() => router.push(backHref)}
       />
     </ContactProvider>
   );

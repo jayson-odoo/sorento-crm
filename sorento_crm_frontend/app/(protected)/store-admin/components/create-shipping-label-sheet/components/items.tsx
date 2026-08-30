@@ -59,7 +59,7 @@ export const Items = () => {
                       <span className="font-medium text-mono">{item.sku}</span>
                     </div>
 
-                    <Badge appearance="ghost" variant="destructive">
+                    <Badge variant="destructive">
                       <BadgeDot className="size-1 bg-muted-foreground/60" />
                     </Badge>
 

@@ -39,6 +39,8 @@ Element.prototype.scrollIntoView = vi.fn();
 // A `let`, not a literal return, so the `?edit=1` auto-open test can point it at a URL
 // carrying the param without a second mock module.
 let searchParams = new URLSearchParams();
+vi.mock('@/components/common/ListPager', () => ({ __esModule: true, default: () => null }));
+
 vi.mock('next/navigation', () => ({
   usePathname: () => '/scm/sales-orders/so-1',
   useRouter: () => ({ push: vi.fn() }),
@@ -65,9 +67,16 @@ vi.mock(
 const useSalesOrder = vi.fn();
 const updateSalesOrderMutateAsync = vi.fn();
 vi.mock('../../../hooks/useSalesOrders', () => ({
+  // The pager reads the list page through the entity's shared key + fetch (S3-03).
+  salesOrdersPagerQuery: {
+    listQueryKey: () => ['scm-sales-orders'],
+    fetchPage: async () => ({ data: [], pagination: { total: 0 } }),
+  },
   useSalesOrder: (...a: unknown[]) => useSalesOrder(...a),
-  // The header's prev/next pager reads the same list the user came from. One row means no
-  // neighbours, so the pager renders nothing and these tests stay about the record itself.
+  // The record's gear renders the shared action set, whose Delete needs this.
+  useDeleteSalesOrder: () => ({ isPending: false, mutateAsync: vi.fn() }),
+  // The header's prev/next pager reads the same list the user came from. An empty page
+  // holds no record, so the pager renders nothing and these tests stay about the record.
   useSalesOrders: () => ({ data: { data: [], pagination: { total: 0, page: 1, limit: 25 } } }),
   useUpdateSalesOrder: () => ({ mutateAsync: updateSalesOrderMutateAsync, isPending: false }),
 }));
@@ -810,7 +819,7 @@ describe('SalesOrderDetail - the lines say what the customer was charged', () =>
       target: { value: '88.50' },
     });
     fireEvent.change(screen.getByLabelText('Discount on SKU-A'), { target: { value: '' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save sales order' }));
 
     await screen.findByRole('button', { name: /^Edit$/ });
     const body = updateSalesOrderMutateAsync.mock.calls[0][0].data;
@@ -841,7 +850,7 @@ describe('SalesOrderDetail - the order type round trip', () => {
 
     fireEvent.click(screen.getByRole('combobox', { name: 'Order type' }));
     fireEvent.click(await screen.findByRole('option', { name: 'Retail' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save sales order' }));
 
     await screen.findByRole('button', { name: /^Edit$/ });
     const body = updateSalesOrderMutateAsync.mock.calls[0][0].data;
@@ -864,7 +873,7 @@ describe('SalesOrderDetail - the order type round trip', () => {
     expect(screen.getByRole('combobox', { name: 'Order type' })).toHaveTextContent(
       'Unclassified',
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save sales order' }));
 
     await screen.findByRole('button', { name: /^Edit$/ });
     expect(screen.queryByText('Select an order type.')).not.toBeInTheDocument();
@@ -879,7 +888,7 @@ describe('SalesOrderDetail - the order type round trip', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
     fireEvent.change(screen.getByLabelText('Order date'), { target: { value: '2026-05-04' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save sales order' }));
 
     await screen.findByRole('button', { name: /^Edit$/ });
     expect(updateSalesOrderMutateAsync.mock.calls[0][0].data).toMatchObject({
@@ -1050,7 +1059,7 @@ describe('SalesOrderDetail - view and edit are the same layout', () => {
     expect(screen.getByLabelText('Delivery date')).toHaveValue('2026-08-30');
 
     // Save / Cancel replace the pager and the way out; nothing else changed shape.
-    expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save sales order' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^Edit$/ })).not.toBeInTheDocument();
   });
@@ -1060,11 +1069,11 @@ describe('SalesOrderDetail - view and edit are the same layout', () => {
     renderDetail();
 
     fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
-    expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save sales order' })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
 
-    expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Save sales order' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /^Edit$/ })).toBeInTheDocument();
     expect(updateSalesOrderMutateAsync).not.toHaveBeenCalled();
   });
@@ -1074,7 +1083,7 @@ describe('SalesOrderDetail - view and edit are the same layout', () => {
     useSalesOrder.mockReturnValue({ data: record(), isLoading: false, isError: false });
     renderDetail();
 
-    expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save sales order' })).toBeInTheDocument();
   });
 
   it('a header-only save (no line touched) omits `lines` from the write, so the BE leaves them alone', async () => {
@@ -1085,7 +1094,7 @@ describe('SalesOrderDetail - view and edit are the same layout', () => {
     fireEvent.change(screen.getByLabelText('Delivery date'), {
       target: { value: '2026-09-15' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save sales order' }));
 
     await screen.findByRole('button', { name: /^Edit$/ });
     expect(updateSalesOrderMutateAsync).toHaveBeenCalledWith({
@@ -1110,7 +1119,7 @@ describe('SalesOrderDetail - view and edit are the same layout', () => {
     // carries a warehouse.
     const agentCombo = screen.getByRole('combobox', { name: 'Agent' });
     fireEvent.pointerDown(within(agentCombo).getByRole('button', { name: 'Clear selection' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save sales order' }));
 
     await screen.findByRole('button', { name: /^Edit$/ });
     expect(updateSalesOrderMutateAsync).toHaveBeenCalledWith({
@@ -1127,7 +1136,7 @@ describe('SalesOrderDetail - view and edit are the same layout', () => {
     openTab('Lines');
     const qtyInputs = screen.getAllByDisplayValue('320');
     fireEvent.change(qtyInputs[0], { target: { value: '400' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save sales order' }));
 
     await screen.findByRole('button', { name: /^Edit$/ });
     const body = updateSalesOrderMutateAsync.mock.calls[0][0].data;
@@ -1179,7 +1188,7 @@ describe('SalesOrderDetail - view and edit are the same layout', () => {
     fireEvent.click(screen.getByRole('combobox', { name: 'UoM on CW-BASIN-450' }));
     fireEvent.click(await screen.findByRole('option', { name: 'Box' }));
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save sales order' }));
 
     await screen.findByRole('button', { name: /^Edit$/ });
     const body = updateSalesOrderMutateAsync.mock.calls[0][0].data;
@@ -1232,7 +1241,7 @@ describe('SalesOrderDetail - view and edit are the same layout', () => {
     );
     const uomCombo = screen.getByRole('combobox', { name: 'UoM on CW-BASIN-450' });
     fireEvent.pointerDown(within(uomCombo).getByRole('button', { name: 'Clear selection' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save sales order' }));
 
     await screen.findByRole('button', { name: /^Edit$/ });
     const body = updateSalesOrderMutateAsync.mock.calls[0][0].data;
@@ -1250,7 +1259,7 @@ describe('SalesOrderDetail - view and edit are the same layout', () => {
     renderDetail();
 
     fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save sales order' }));
 
     expect(await screen.findByText('Planning changes raised on 2 lines')).toBeInTheDocument();
     // AC-P3-1: straight to the BOARD, on this order and this batch. There is no batch

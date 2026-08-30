@@ -45,6 +45,12 @@ vi.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 
+// The pager has its own tests; here it is only the first slot in the group.
+vi.mock('@/components/common/ListPager', () => ({
+  __esModule: true,
+  default: () => <div data-testid="pager-slot" />,
+}));
+
 vi.mock('@/components/common/ActivitiesNotesPanel/EntityActivitiesLayout', () => ({
   default: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
@@ -54,6 +60,11 @@ const deleteProject = vi.fn();
 let projectFixture: Project;
 
 vi.mock('../../_shared/hooks/useProjects', () => ({
+  // The pager reads the pipeline page through the entity's shared key + fetch (S3-03).
+  projectsPagerQuery: {
+    listQueryKey: () => ['projects'],
+    fetchPage: async () => ({ data: [], pagination: { total: 0 } }),
+  },
   useProject: () => ({ data: projectFixture, isLoading: false, isError: false }),
   useChangeProjectStatus: () => ({ mutate: changeStatus, isPending: false }),
   useDeleteProject: () => ({ mutateAsync: deleteProject }),
@@ -206,9 +217,29 @@ describe('the project header', () => {
       'button',
     );
     expect(actions).toHaveLength(2);
+    // Gear then primary (D6): the primary used to sit first, which is the one
+    // order the standard does not allow.
+    expect(actions[0]).toHaveAttribute('aria-label', 'Project actions');
     // The forward move is NAMED, never a generic "Move stage" that opens a menu.
-    expect(actions[0]).toHaveTextContent('Tendering');
-    expect(actions[1]).toHaveAttribute('aria-label', 'Project actions');
+    expect(actions[1]).toHaveTextContent('Tendering');
+  });
+
+  it('reads pager, gear, primary from left to right (D6)', () => {
+    renderDetail();
+
+    const group = screen.getByTestId('project-header-actions');
+    const rendered = Array.from(group.children).map(
+      (el) =>
+        el.getAttribute('data-testid') ??
+        el.getAttribute('aria-label') ??
+        (el.textContent || '').trim(),
+    );
+
+    expect(rendered.slice(0, 3)).toEqual([
+      'pager-slot',
+      'Project actions',
+      'Tendering',
+    ]);
   });
 
   it('names the move outright when the graph allows only one, and fires it', () => {

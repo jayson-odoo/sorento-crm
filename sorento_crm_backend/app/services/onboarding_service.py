@@ -325,39 +325,6 @@ def list_requests(
     return rows, total
 
 
-def request_neighbours(
-    db: Session,
-    request_id: str,
-    *,
-    status_key: Optional[str] = None,
-    query: Optional[str] = None,
-    sort_field: str = DEFAULT_LIST_SORT,
-    sort_dir: str = DEFAULT_LIST_DIR,
-) -> dict:
-    """Prev/next within the same filtered+sorted queue the reviewer came from.
-
-    Falls back to the unfiltered, default-sorted set when the request is not in
-    the filtered one (a deep link, or a row that left the filter after a
-    verdict), so the pager is never dead.
-    """
-    from app.services.record_navigation import compute_neighbours
-
-    def _ids(q) -> list[str]:
-        return [str(row[0]) for row in q.with_entities(OnboardingRequest.id).all()]
-
-    filtered = _list_query(
-        db,
-        status_key=status_key,
-        query=query,
-        sort_field=sort_field,
-        sort_dir=sort_dir,
-    )
-    result = compute_neighbours(_ids(filtered), request_id)
-    if result["index"] is not None:
-        return result
-    return compute_neighbours(_ids(_list_query(db)), request_id)
-
-
 def create_request(
     db: Session,
     *,

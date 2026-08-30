@@ -41,7 +41,6 @@ from app.schemas.projects import (
     SponsorshipConversionResponse,
 )
 from app.services import project_po_service as po_svc
-from app.services import project_record_navigation as record_nav
 from app.services import project_sample_service as sample_svc
 from app.services import project_service as projects
 from app.services.error_handler import handle_internal_error
@@ -182,28 +181,6 @@ async def list_purchase_orders(
         projects.get_project_or_404(db, project_id)
         rows = po_svc.list_pos(db, project_id=project_id)
         return _envelope(po_svc.serialize_pos(db, rows))
-    except Exception as exc:
-        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
-
-
-@router.get("/projects/{project_id}/purchase-orders/neighbours")
-async def get_purchase_order_neighbours(
-    project_id: str,
-    id: str = Query(..., description="Purchase order id to resolve neighbours for"),
-    _user: dict = Depends(require_permission(VIEW)),
-    db: Session = Depends(get_db),
-):
-    """Prev/next of one PO within this project's POs.
-
-    The same set, in the same order, the list above returns - so the detail pager and the
-    tab the user came from cannot disagree. Returns ``{total, index, prev_id, next_id}``
-    with a 1-based ``index`` and circular neighbours.
-    """
-    try:
-        validate_uuid_path(project_id, resource="Project")
-        validate_uuid_path(id, resource="Purchase order")
-        projects.get_project_or_404(db, project_id)
-        return record_nav.purchase_order_neighbours(db, project_id=project_id, po_id=id)
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 

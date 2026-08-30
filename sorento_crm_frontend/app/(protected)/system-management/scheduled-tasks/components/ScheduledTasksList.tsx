@@ -16,14 +16,12 @@ import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { useScheduledTasks } from '../hooks/useScheduledTasks';
 import type { ScheduledTask } from '../types/scheduledTask.types';
-import { getStatusBadgeVariant } from '@/lib/status-badge';
 import { ChevronRight } from 'lucide-react';
 
 const INTERVAL_LABELS: Record<string, string> = {
@@ -71,7 +69,7 @@ export default function ScheduledTasksList() {
         accessorKey: 'key',
         header: ({ column }) => <DataGridColumnHeader title="Key" column={column} />,
         cell: ({ row }) => (
-          <Badge variant="secondary" appearance="ghost">
+          <Badge variant="secondary">
             {row.original.key}
           </Badge>
         ),
@@ -123,7 +121,7 @@ export default function ScheduledTasksList() {
         cell: ({ row }) => {
           const status = row.original.last_status || '-';
           return (
-            <Badge variant={getStatusBadgeVariant(status)}>
+            <Badge status={status}>
               {status}
             </Badge>
           );
@@ -186,10 +184,7 @@ export default function ScheduledTasksList() {
           />
         </CardHeader>
         <CardTable>
-          <ScrollArea className="w-full">
-            <DataGridTable />
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
+          <DataGridTable />
         </CardTable>
         <CardFooter className="flex justify-between border-t px-4 py-3">
           <DataGridPagination />

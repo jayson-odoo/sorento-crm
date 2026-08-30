@@ -1,11 +1,12 @@
 'use client';
 
-import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, keepPreviousData, type QueryKey } from '@tanstack/react-query';
 import { getIntegrationLogs, getIntegrationLog, retryIntegrationLog, updateIntegrationLog } from '../services/integrationLogService';
 import type { IntegrationLog, IntegrationLogResponse } from '../types/integrationLog.types';
 import type { DataGridApiFetchParams, DataGridApiResponse } from '@/components/ui/data-grid';
+import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
 
-export function useIntegrationLogs(params: DataGridApiFetchParams & {
+export type IntegrationLogsListParams = DataGridApiFetchParams & {
   status?: string;
   integration_channel?: string;
   business_table?: string;
@@ -14,9 +15,49 @@ export function useIntegrationLogs(params: DataGridApiFetchParams & {
   created_to?: string;
   status_code?: string;
   error_contains?: string[];
-}) {
+};
+
+/**
+ * The list's React Query key. The detail page's pager rebuilds the SAME key from
+ * the URL, so it reads the page the list already fetched.
+ */
+export function integrationLogsListQueryKey(
+  params: IntegrationLogsListParams,
+): QueryKey {
+  return ['integrationLogs', params];
+}
+
+/** The list query a detail URL describes, in the shape the list passes. */
+export function integrationLogsListParamsFromUrl(
+  params: ListPagerParams,
+): IntegrationLogsListParams {
+  const f = params.filters;
+  return {
+    pageIndex: params.pageIndex,
+    pageSize: params.pageSize,
+    sorting: params.sorting,
+    searchQuery: params.searchQuery,
+    status: f.status,
+    integration_channel: f.integration_channel,
+    business_table: f.business_table,
+    created_from: f.created_from,
+    created_to: f.created_to,
+    status_code: f.status_code,
+    error_contains: f.error_contains ? f.error_contains.split(',') : undefined,
+  };
+}
+
+/** The pager's two hooks into the integration logs list. */
+export const integrationLogsPagerQuery = {
+  listQueryKey: (params: ListPagerParams): QueryKey =>
+    integrationLogsListQueryKey(integrationLogsListParamsFromUrl(params)),
+  fetchPage: (params: ListPagerParams): Promise<ListPagerPage> =>
+    getIntegrationLogs(integrationLogsListParamsFromUrl(params)),
+};
+
+export function useIntegrationLogs(params: IntegrationLogsListParams) {
   return useQuery<DataGridApiResponse<IntegrationLog>>({
-    queryKey: ['integrationLogs', params],
+    queryKey: integrationLogsListQueryKey(params),
     queryFn: () => getIntegrationLogs(params),
     placeholderData: keepPreviousData,
   });

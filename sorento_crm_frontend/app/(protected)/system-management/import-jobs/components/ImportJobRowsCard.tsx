@@ -15,7 +15,6 @@ import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -235,7 +234,7 @@ export function ImportJobRowsCard({
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
               <p className="text-sm font-medium">Rows</p>
-              <Badge variant="secondary" appearance="ghost">
+              <Badge variant="secondary">
                 {total.toLocaleString()} matching
               </Badge>
               {result?.rows_truncated && (
@@ -337,10 +336,7 @@ export function ImportJobRowsCard({
               )}
             </div>
           ) : (
-            <ScrollArea>
-              <DataGridTable />
-              <ScrollBar orientation="horizontal" />
-            </ScrollArea>
+            <DataGridTable />
           )}
         </CardTable>
         {total > 0 && (

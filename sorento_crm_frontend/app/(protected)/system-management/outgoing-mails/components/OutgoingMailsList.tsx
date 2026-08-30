@@ -17,7 +17,6 @@ import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -33,7 +32,6 @@ import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { Eye, Search, X } from 'lucide-react';
 import { useOutgoingMails } from '../hooks/useOutgoingMails';
 import type { OutgoingMail } from '../types/outgoingMail.types';
-import { getStatusBadgeVariant } from '@/lib/status-badge';
 
 function stripHtml(html: string): string {
   return html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
@@ -156,7 +154,7 @@ export default function OutgoingMailsList() {
         accessorKey: 'status',
         header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
         cell: ({ row }) => (
-          <Badge variant={getStatusBadgeVariant(row.original.status)} appearance="ghost">
+          <Badge status={row.original.status}>
             {row.original.status}
           </Badge>
         ),
@@ -265,10 +263,7 @@ export default function OutgoingMailsList() {
           />
         </CardHeader>
         <CardTable>
-          <ScrollArea>
-            <DataGridTable />
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
+          <DataGridTable />
         </CardTable>
         <CardFooter>
           <DataGridPagination />

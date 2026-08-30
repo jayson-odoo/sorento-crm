@@ -7,6 +7,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useProjectDashboard } from '../../_shared/hooks/useProjects';
 import type { ForecastBand } from '../../_shared/types/project.types';
 import { formatMyr } from '../../[projectId]/components/QuotationsPanel';
+import { PageHeader } from '@/components/common/PageHeader';
 
 /**
  * Management reporting (AC-I4), built around the one rule that matters: the three numbers
@@ -62,13 +63,12 @@ export function ForecastClient() {
 
   return (
     <div className="space-y-5">
-      <header className="min-w-0">
-        <h1 className="text-xl font-semibold">Forecast and reports</h1>
+      <PageHeader title="Forecast and reports">
         <p className="text-sm text-muted-foreground">
           What is on the table, what it is worth after probability, and what has actually
           been ordered. Three numbers, kept apart.
         </p>
-      </header>
+      </PageHeader>
 
       {!hasAnything ? (
         <div className="rounded-lg border border-dashed border-border px-6 py-12 text-center">

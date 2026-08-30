@@ -15,7 +15,6 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { getStatusBadgeVariant } from '@/lib/status-badge';
 import { formatDate } from '@/lib/helpers';
 import { useComplaintFulfilmentOrders } from '../hooks/useComplaintFulfilmentOrders';
 import type { FulfilmentOrder } from '../services/complaintFulfilmentService';
@@ -132,7 +131,7 @@ export default function ComplaintFulfilmentOrdersSection({
                       </Link>
                     </TableCell>
                     <TableCell>
-                      <Badge variant={getStatusBadgeVariant(order.status)}>
+                      <Badge status={order.status}>
                         {order.status_label}
                       </Badge>
                     </TableCell>

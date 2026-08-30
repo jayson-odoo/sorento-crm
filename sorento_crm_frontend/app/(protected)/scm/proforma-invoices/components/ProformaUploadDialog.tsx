@@ -349,7 +349,7 @@ export function ProformaUploadDialog({
                 }
               >
                 {applying ? <LoaderCircle className="size-4 animate-spin" /> : null}
-                Confirm
+                Import proforma invoice
               </Button>
             </>
           ) : null}

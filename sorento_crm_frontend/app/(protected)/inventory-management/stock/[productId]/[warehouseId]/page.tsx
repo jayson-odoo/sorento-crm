@@ -2,9 +2,9 @@
 
 import { use } from 'react';
 import { useRouter } from 'next/navigation';
-import Link from 'next/link';
-import { MoveLeft } from 'lucide-react';
 import RecordNavigation from '@/components/common/RecordNavigation';
+import DetailActions from '@/components/common/DetailActions';
+import BackToList from '@/components/common/BackToList';
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -14,23 +14,13 @@ import {
   getCoreRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
-import { Button } from '@/components/ui/button';
 import { Container } from '@/components/common/container';
-import { Toolbar, ToolbarActions, ToolbarHeading, ToolbarTitle } from '@/components/common/toolbar';
+import { PageHeader } from '@/components/common/PageHeader';
 import { Card, CardContent, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
@@ -86,6 +76,15 @@ export default function StockDetailPage({ params }: StockDetailPageProps) {
     [sortedNavigationItems],
   );
   const currentRecordId = `${productId}/${warehouseId}`;
+  // A stock record is a product AND a warehouse, so its "id" is the pair. The
+  // pager is presentational here: the walk is this in-memory balance, not a
+  // paged list URL, so there is no list query to rebuild.
+  const stockIndex = navigationItemsForRecordNav.findIndex(
+    (item) => item.id === currentRecordId,
+  );
+  const goToStock = (item: { id: string } | undefined) => {
+    if (item) router.push(`/inventory-management/stock/${item.id}`);
+  };
 
   const columns = useMemo<ColumnDef<StockLedgerEntry>[]>(
     () => [
@@ -93,7 +92,7 @@ export default function StockDetailPage({ params }: StockDetailPageProps) {
         accessorKey: 'transaction_type',
         header: ({ column }) => <DataGridColumnHeader title="Type" column={column} />,
         cell: ({ row }) => (
-          <Badge variant="secondary" appearance="ghost">
+          <Badge variant="secondary">
             {row.original.transaction_type}
           </Badge>
         ),
@@ -146,6 +145,15 @@ export default function StockDetailPage({ params }: StockDetailPageProps) {
     [],
   );
 
+  const recordTitle = stock
+    ? [
+        stock.product?.product_code || stock.product?.product_name,
+        stock.warehouse?.warehouse_name,
+      ]
+        .filter(Boolean)
+        .join(' at ') || 'Stock Balance'
+    : 'Stock Balance';
+
   const table = useReactTable({
     columns,
     data: ledgerQuery.data?.data || [],
@@ -162,33 +170,12 @@ export default function StockDetailPage({ params }: StockDetailPageProps) {
     return (
       <>
         <Container>
-          <Toolbar>
-            <ToolbarHeading>
-              <ToolbarTitle>Stock</ToolbarTitle>
-              <Breadcrumb>
-                <BreadcrumbList>
-                  <BreadcrumbItem>
-                    <BreadcrumbLink href="/">Home</BreadcrumbLink>
-                  </BreadcrumbItem>
-                  <BreadcrumbSeparator />
-                  <BreadcrumbItem>
-                    <BreadcrumbPage>Inventory Management</BreadcrumbPage>
-                  </BreadcrumbItem>
-                  <BreadcrumbSeparator />
-                  <BreadcrumbItem>
-                    <BreadcrumbLink href="/inventory-management/stock">Stock</BreadcrumbLink>
-                  </BreadcrumbItem>
-                </BreadcrumbList>
-              </Breadcrumb>
-            </ToolbarHeading>
-            <ToolbarActions>
-              <Button asChild variant="outline">
-                <Link href="/inventory-management/stock">
-                  <MoveLeft /> Back to Stock
-                </Link>
-              </Button>
-            </ToolbarActions>
-          </Toolbar>
+          <PageHeader
+            title="Stock"
+            actions={
+              <BackToList listPath="/inventory-management/stock" label="Back to stock" />
+            }
+          />
         </Container>
         <Container>
           <div className="space-y-6">
@@ -204,40 +191,19 @@ export default function StockDetailPage({ params }: StockDetailPageProps) {
     return (
       <>
         <Container>
-          <Toolbar>
-            <ToolbarHeading>
-              <ToolbarTitle>Stock</ToolbarTitle>
-              <Breadcrumb>
-                <BreadcrumbList>
-                  <BreadcrumbItem>
-                    <BreadcrumbLink href="/">Home</BreadcrumbLink>
-                  </BreadcrumbItem>
-                  <BreadcrumbSeparator />
-                  <BreadcrumbItem>
-                    <BreadcrumbPage>Inventory Management</BreadcrumbPage>
-                  </BreadcrumbItem>
-                  <BreadcrumbSeparator />
-                  <BreadcrumbItem>
-                    <BreadcrumbLink href="/inventory-management/stock">Stock</BreadcrumbLink>
-                  </BreadcrumbItem>
-                </BreadcrumbList>
-              </Breadcrumb>
-            </ToolbarHeading>
-            <ToolbarActions>
-              <Button asChild variant="outline">
-                <Link href="/inventory-management/stock">
-                  <MoveLeft /> Back to Stock
-                </Link>
-              </Button>
-            </ToolbarActions>
-          </Toolbar>
+          <PageHeader
+            title="Stock"
+            actions={
+              <BackToList listPath="/inventory-management/stock" label="Back to stock" />
+            }
+          />
         </Container>
         <Container>
           <div className="text-center py-12">
             <p className="text-muted-foreground">Stock record not found</p>
-            <Button variant="outline" onClick={() => router.push('/inventory-management/stock')} className="mt-4">
-              Back to Stock
-            </Button>
+            <div className="mt-4 flex justify-center">
+              <BackToList listPath="/inventory-management/stock" label="Back to stock" />
+            </div>
           </div>
         </Container>
       </>
@@ -247,52 +213,31 @@ export default function StockDetailPage({ params }: StockDetailPageProps) {
   return (
     <>
       <Container>
-        <Toolbar>
-          <ToolbarHeading>
-            <ToolbarTitle>Stock Balance</ToolbarTitle>
-            <Breadcrumb>
-              <BreadcrumbList>
-                <BreadcrumbItem>
-                  <BreadcrumbLink href="/">Home</BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbPage>Inventory Management</BreadcrumbPage>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbLink href="/inventory-management/stock">Stock</BreadcrumbLink>
-                </BreadcrumbItem>
-              </BreadcrumbList>
-            </Breadcrumb>
-          </ToolbarHeading>
-          <ToolbarActions>
-            <div className="flex items-center gap-2">
-              <RecordNavigation
-                basePath="/inventory-management/stock"
-                currentId={currentRecordId}
-                items={navigationItemsForRecordNav}
-                totalCount={navigationItemsForRecordNav.length}
-                ariaLabel="stock"
-              />
-              <Button asChild variant="outline">
-                <Link href="/inventory-management/stock">
-                  <MoveLeft /> Back to Stock
-                </Link>
-              </Button>
-            </div>
-          </ToolbarActions>
-        </Toolbar>
+        {/* The title names the record the way a reader would: the product's own
+            code and the warehouse it sits in. Neither is an id (S5-05). */}
+        <PageHeader
+          title={recordTitle}
+          crumbTitle={recordTitle}
+          actions={
+            <>
+              {/* One Back, and nothing else on this row (D6, S3-01). The pager moved
+                  down onto the record card, where every other detail page keeps it. */}
+              <BackToList listPath="/inventory-management/stock" label="Back to stock" />
+            </>
+          }
+        />
       </Container>
 
       <Container>
         <div className="space-y-6">
           <Card>
             <CardHeader>
-              <div className="flex items-center justify-between">
-                <div className="space-y-1">
-                  <div className="flex items-center gap-3">
-                    <h1 className="text-2xl font-bold">{stock.product?.product_code || '-'}</h1>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div className="space-y-1 min-w-0">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <h2 className="text-2xl font-bold break-words min-w-0">
+                      {stock.product?.product_code || '-'}
+                    </h2>
                     {stock.product?.product_name && (
                       <Badge variant="secondary">
                         {stock.product.product_name}
@@ -303,6 +248,28 @@ export default function StockDetailPage({ params }: StockDetailPageProps) {
                     {stock.warehouse?.warehouse_name || 'No warehouse'} • Available: {stock.quantity_available ?? 0}
                   </p>
                 </div>
+                {/* Pager, gear, primary (D6). This record has neither a gear nor a
+                    primary: a stock balance is derived, so there is nothing to edit
+                    or delete here. The whole set it walks is already in memory, so
+                    it hands over a presentational RecordNavigation. */}
+                <DetailActions
+                  pagerNode={
+                    <RecordNavigation
+                      index={stockIndex >= 0 ? stockIndex + 1 : null}
+                      total={navigationItemsForRecordNav.length}
+                      hasPrevious={stockIndex > 0}
+                      hasNext={
+                        stockIndex >= 0 &&
+                        stockIndex < navigationItemsForRecordNav.length - 1
+                      }
+                      onPrevious={() =>
+                        goToStock(navigationItemsForRecordNav[stockIndex - 1])
+                      }
+                      onNext={() => goToStock(navigationItemsForRecordNav[stockIndex + 1])}
+                      ariaLabel="stock"
+                    />
+                  }
+                />
               </div>
             </CardHeader>
             <CardContent>
@@ -335,10 +302,7 @@ export default function StockDetailPage({ params }: StockDetailPageProps) {
                 <div className="text-lg font-semibold">Stock Ledger</div>
               </CardHeader>
               <CardTable>
-                <ScrollArea>
-                  <DataGridTable />
-                  <ScrollBar orientation="horizontal" />
-                </ScrollArea>
+                <DataGridTable />
               </CardTable>
               <CardFooter>
                 <DataGridPagination />

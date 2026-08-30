@@ -20,13 +20,13 @@ import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { usePlanningChangeBatches } from '../../_shared/hooks/usePlanningChanges';
 import {
   PLANNING_CHANGE_SOURCE_KIND_LABEL,
   type PlanningChangeBatchSummary,
 } from '../../_shared/types/planningChange.types';
+import { PageHeader } from '@/components/common/PageHeader';
 
 /**
  * Where a batch is decided: the fulfilment board, opened on the orders it moved (AC-P3-1).
@@ -219,14 +219,13 @@ export function PlanningChangesListClient() {
 
   return (
     <div className="space-y-5">
-      <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0 break-words">
-          <h1 className="text-xl font-semibold">Planning changes</h1>
-          <p className="mt-0.5 text-sm text-muted-foreground">
-            Every re-uploaded sales order book that moved a planned line.
-          </p>
-        </div>
-      </header>
+      <PageHeader
+        title="Planning changes"
+      >
+        <p className="mt-0.5 text-sm text-muted-foreground">
+          Every re-uploaded sales order book that moved a planned line.
+        </p>
+      </PageHeader>
 
       <nav
         aria-label="State"
@@ -315,10 +314,7 @@ export function PlanningChangesListClient() {
                 </p>
               </div>
             ) : (
-              <ScrollArea>
-                <DataGridTable />
-                <ScrollBar orientation="horizontal" />
-              </ScrollArea>
+              <DataGridTable />
             )}
           </CardTable>
 

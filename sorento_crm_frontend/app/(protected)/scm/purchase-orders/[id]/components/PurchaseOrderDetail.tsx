@@ -1,7 +1,6 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import {
   ColumnDef,
@@ -13,7 +12,6 @@ import {
   useReactTable,
 } from '@tanstack/react-table';
 import {
-  ArrowLeft,
   Columns3,
   FileText,
   ListOrdered,
@@ -39,7 +37,6 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -60,7 +57,8 @@ import {
   searchSupplierOptions,
 } from '../../../services/scmOptionsService';
 import { getSalesOrderUoms } from '../../../services/salesOrderService';
-import PurchaseOrderNavigation from '../../components/PurchaseOrderNavigation';
+import DetailActions from '@/components/common/DetailActions';
+import { purchaseOrdersPagerQuery } from '../../../hooks/usePurchaseOrders';
 import { PurchaseOrderAllocations } from './PurchaseOrderAllocations';
 import { BASE_CURRENCY, fmtDate, fmtInt } from '../../../lib/format';
 import {
@@ -69,6 +67,7 @@ import {
   purchaseOrderStatusPill,
 } from '../../../lib/purchaseOrderStatus';
 import type { PurchaseOrder, PurchaseOrderLine } from '../../../types/scm.types';
+import BackToList from '@/components/common/BackToList';
 
 /**
  * The purchase-order detail, built section for section as the twin of `SalesOrderDetail`.
@@ -239,7 +238,6 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
   const { data, isLoading, isError } = usePurchaseOrder(id);
   const searchParams = useSearchParams();
   // Back returns to the list the user actually had open, filters and page included.
-  const listSearch = searchParams.toString();
 
   const updateMut = useUpdatePurchaseOrder();
   const warehouseOptions = useWarehouseOptions();
@@ -772,13 +770,10 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
 
   // Back and prev/next live on the RIGHT of the record header, next to each other, the way
   // the sales-order and users screens do it.
+  // Back carries the list query the row click wrote (S3-01). It lives on the
+  // toolbar row now; the empty states below keep one of their own.
   const backLink = (
-    <Button variant="outline" size="sm" asChild className="w-fit gap-1.5">
-      <Link href={`/scm/purchase-orders${listSearch ? `?${listSearch}` : ''}`}>
-        <ArrowLeft className="size-4" />
-        Back to purchase orders
-      </Link>
-    </Button>
+    <BackToList listPath="/scm/purchase-orders" label="Back to purchase orders" />
   );
 
   if (isLoading) {
@@ -896,12 +891,20 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
                   {updateMut.isPending ? (
                     <LoaderCircleIcon className="me-2 size-4 animate-spin" />
                   ) : null}
-                  Save
+                  Save purchase order
                 </Button>
               </div>
             ) : (
-              <div className="flex shrink-0 flex-wrap items-center gap-2">
-                <PurchaseOrderNavigation purchaseOrderId={id} />
+              <DetailActions
+                pager={{
+                  ...purchaseOrdersPagerQuery,
+                  detailPath: '/scm/purchase-orders',
+                  currentId: id,
+                  ariaLabel: 'purchase order',
+                }}
+                gearLabel="Purchase order options"
+                primary={
+                  <>
                 {/* The main action on this page, so it wears the main colour - the same
                     filled primary button an Add is on every list. */}
                 <Button
@@ -913,8 +916,9 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
                   <SquarePen className="size-4" />
                   Edit
                 </Button>
-                {backLink}
-              </div>
+                  </>
+                }
+              />
             )}
           </div>
           {isEditing && error ? (
@@ -1123,10 +1127,7 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
                 </CardToolbar>
               </CardHeader>
               <CardTable>
-                <ScrollArea>
-                  <DataGridTable />
-                  <ScrollBar orientation="horizontal" />
-                </ScrollArea>
+                <DataGridTable />
               </CardTable>
               {/* The same footer every list in the product carries - "1 - 25 of 213" and the
                   page sizes. */}

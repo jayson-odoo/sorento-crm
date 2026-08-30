@@ -68,7 +68,7 @@ describe('a save that was not about the suppressed value', () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save specification' }));
 
     await waitFor(() => expect(mockUpdate).toHaveBeenCalled());
     const [, payload] = mockUpdate.mock.calls[0];

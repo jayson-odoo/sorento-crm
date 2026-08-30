@@ -1,27 +1,19 @@
 'use client';
 
-import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Edit, Trash2, Settings } from 'lucide-react';
+import { Banknote, Edit, Info, Truck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
-import { useOrder, useUpdateOrder } from '../hooks/useOrders';
-import { useOrderStatusSelectQuery } from '../../shared/hooks/use-order-status-select-query';
+import DetailActions from '@/components/common/DetailActions';
+import { useOrder, ordersPagerQuery } from '../hooks/useOrders';
+import { useOrderActions } from '../actions';
+import { useDeletedRecordGuard } from '@/hooks/useDeletedRecordGuard';
 import { formatDate } from '@/lib/helpers';
-import { getStatusBadgeVariant } from '@/lib/status-badge';
-import OrderDeleteDialog from './order-delete-dialog';
 import OrderLinesCard from './OrderLinesCard';
 import OrderFulfilledComplaintsCard from './OrderFulfilledComplaintsCard';
-import OrderNavigation from './OrderNavigation';
 
 interface OrderDetailProps {
   orderId: string;
@@ -34,23 +26,17 @@ export default function OrderDetail({ orderId, listSearch }: OrderDetailProps) {
   const router = useRouter();
   const { data: order, isLoading } = useOrder(orderId);
   const listQs = listSearch ? `?${listSearch}` : '';
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  const updateMutation = useUpdateOrder();
-  const { data: orderStatuses = [] } = useOrderStatusSelectQuery();
-  const statusList = orderStatuses ?? [];
-  const newOrDeliveredStatuses = statusList.filter((s) => {
-    const code = (s.status_code ?? '').toString().trim().toLowerCase();
-    return code === 'new' || code === 'delivered';
+  const { actions, dialogs, pending } = useOrderActions(order, {
+    onDeleted: () => router.push(`/order-management/orders${listQs}`),
   });
-  const gearStatuses = newOrDeliveredStatuses.length > 0 ? newOrDeliveredStatuses : statusList;
 
-  const handleStatusChange = async (statusId: string) => {
-    try {
-      await updateMutation.mutateAsync({ id: orderId, data: { order_status_id: statusId } });
-    } catch {
-      // Error toast is handled by the mutation
-    }
-  };
+  // A delivery order this tab deleted a moment ago is gone on purpose, so a stale
+  // link to it returns to the list instead of reading as a fault (S6 feedback C).
+  const alreadyDeleted = useDeletedRecordGuard({
+    entityId: orderId,
+    notFound: !isLoading && !order,
+    listPath: `/order-management/orders${listQs}`,
+  });
 
   if (isLoading) {
     return (
@@ -62,6 +48,7 @@ export default function OrderDetail({ orderId, listSearch }: OrderDetailProps) {
   }
 
   if (!order) {
+    if (alreadyDeleted) return null;
     return (
       <div className="text-center py-12">
         <p className="text-muted-foreground">Delivery order not found</p>
@@ -78,76 +65,61 @@ export default function OrderDetail({ orderId, listSearch }: OrderDetailProps) {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="space-y-1">
-          <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold">{order.order_number}</h1>
+      {/* Header: identity left; pager, gear and the one primary button right (D6). */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="space-y-1 min-w-0">
+          <div className="flex flex-wrap items-center gap-3">
+            <h2 className="text-2xl font-bold break-words min-w-0">{order.order_number}</h2>
             {order.order_status && (
-              <Badge variant={getStatusBadgeVariant(order.order_status.status_name)}>
+              <Badge status={order.order_status.status_name}>
                 {order.order_status.status_name}
               </Badge>
             )}
           </div>
-          <p className="text-sm text-muted-foreground">
+          <p className="text-sm text-muted-foreground break-words">
             {order.debtor_name || order.debtor_code || '-'} • Delivery order date: {order.order_date ? formatDate(new Date(order.order_date)) : '-'}
           </p>
         </div>
-        <div className="flex gap-2">
-          <OrderNavigation orderId={orderId} />
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button type="button" variant="outline" size="icon" aria-label="Change delivery order status">
-                <Settings className="size-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              {gearStatuses.map((status) => (
-                <DropdownMenuItem
-                  key={status.id}
-                  onClick={() => handleStatusChange(status.id)}
-                  disabled={updateMutation.isPending}
-                >
-                  {status.status_name}
-                </DropdownMenuItem>
-              ))}
-              {gearStatuses.length === 0 && (
-                <DropdownMenuItem disabled>No statuses available</DropdownMenuItem>
-              )}
-            </DropdownMenuContent>
-          </DropdownMenu>
-          <Button
-            variant="outline"
-            onClick={() =>
-              router.push(`/order-management/orders/${orderId}/edit${listQs}`)
-            }
-          >
-            <Edit className="size-4" />
-            Edit
-          </Button>
-          <Button variant="destructive" onClick={() => setDeleteDialogOpen(true)}>
-            <Trash2 className="size-4" />
-            Delete
-          </Button>
-        </div>
+        <DetailActions
+          pager={{
+            detailPath: '/order-management/orders',
+            currentId: orderId,
+            ...ordersPagerQuery,
+            ariaLabel: 'delivery order',
+          }}
+          actions={actions}
+          dialogs={dialogs}
+          pendingAction={pending}
+          gearLabel="Delivery order options"
+          primary={
+            <Button
+              onClick={() =>
+                router.push(`/order-management/orders/${orderId}/edit${listQs}`)
+              }
+            >
+              <Edit className="size-4" />
+              Edit
+            </Button>
+          }
+        />
       </div>
 
-      {order && (
-        <OrderDeleteDialog
-          open={deleteDialogOpen}
-          closeDialog={() => setDeleteDialogOpen(false)}
-          order={order}
-          onSuccess={() => {
-            router.push(`/order-management/orders${listQs}`);
-          }}
-        />
-      )}
-
       <Tabs defaultValue="information" className="w-full">
-        <TabsList variant="line" className="mb-4 w-full justify-start overflow-x-auto">
-          <TabsTrigger value="information">Delivery order information</TabsTrigger>
-          <TabsTrigger value="financial">Financial summary</TabsTrigger>
-          <TabsTrigger value="delivery">Delivery &amp; tracking</TabsTrigger>
+        {/* `overflow-x-auto` is the list's own since S1; the icons are what make
+            a scrolled strip readable when a label is half off the edge. */}
+        <TabsList className="mb-4">
+          <TabsTrigger value="information">
+            <Info />
+            <span>Delivery order information</span>
+          </TabsTrigger>
+          <TabsTrigger value="financial">
+            <Banknote />
+            <span>Financial summary</span>
+          </TabsTrigger>
+          <TabsTrigger value="delivery">
+            <Truck />
+            <span>Delivery &amp; tracking</span>
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="information" className="mt-0 space-y-6 focus-visible:outline-none">
@@ -193,7 +165,7 @@ export default function OrderDetail({ orderId, listSearch }: OrderDetailProps) {
                   <p className="text-sm text-muted-foreground">Delivery Order Status</p>
                   <p className="font-medium">
                     {order.order_status ? (
-                      <Badge variant={getStatusBadgeVariant(order.order_status.status_name)}>{order.order_status.status_name}</Badge>
+                      <Badge status={order.order_status.status_name}>{order.order_status.status_name}</Badge>
                     ) : (
                       '-'
                     )}

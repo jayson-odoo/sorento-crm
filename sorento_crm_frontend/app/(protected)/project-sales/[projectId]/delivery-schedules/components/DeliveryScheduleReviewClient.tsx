@@ -17,6 +17,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
+import DetailActions from '@/components/common/DetailActions';
 import RecordNavigation from '@/components/common/RecordNavigation';
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -26,7 +27,7 @@ import {
   useDeliverySchedulePriorVersion,
   useDeliveryScheduleVersion,
   useDeliveryScheduleVersionMutations,
-  useDeliveryScheduleVersionNeighbours,
+  useDeliverySchedules,
 } from '../../../_shared/hooks/useDeliverySchedules';
 import { usePOVersion } from '../../../_shared/hooks/usePOIntake';
 import { resolveExtractionPhase } from '../../../_shared/types/deliverySchedule.types';
@@ -58,6 +59,7 @@ import { poProductOptions } from './DeliveryScheduleProductPicker';
 import { DeliveryScheduleReconciliationList } from './DeliveryScheduleReconciliationList';
 import { DeliveryScheduleRevisionDiff } from './DeliveryScheduleRevisionDiff';
 import { DeliveryScheduleRevisionProposals } from './DeliveryScheduleRevisionProposals';
+import { useRouter } from 'next/navigation';
 
 /**
  * Reviewing one version of a delivery schedule.
@@ -98,7 +100,25 @@ export function DeliveryScheduleReviewClient({
   /** Which proposal a request is in flight for, so only its own card shows pending. */
   const [pendingProposalIndex, setPendingProposalIndex] = React.useState<number | null>(null);
   // The demo screen has no server behind it, so it has no neighbours to ask for either.
-  const neighbours = useDeliveryScheduleVersionNeighbours(versionId, { enabled: !demo });
+  /**
+   * The walk is the project's SCHEDULES, the list this review was opened from,
+   * each stepped to at its latest version - not "every version in the project",
+   * which was never a list anybody was looking at. Opening an older version is
+   * not on that list, so the pager hides itself there (S3-05).
+   */
+  const router = useRouter();
+  const schedules = useDeliverySchedules(demo ? undefined : projectId);
+  const scheduleRows = schedules.data ?? [];
+  const scheduleIndex = scheduleRows.findIndex(
+    (row) => row.latest_version_id === versionId,
+  );
+  const goToSchedule = (row: { latest_version_id: string | null } | undefined) => {
+    if (row?.latest_version_id) {
+      router.push(
+        `/project-sales/${projectId}/delivery-schedules/${row.latest_version_id}`,
+      );
+    }
+  };
   // The version this one revises, for the was -> now diff. No-op on a version 1 or on demo.
   const priorVersion = useDeliverySchedulePriorVersion(version, { enabled: !demo });
 
@@ -401,11 +421,11 @@ export function DeliveryScheduleReviewClient({
       {/* flex-col until sm: a wrapping title and the actions cannot share a row on a phone. */}
       <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0 break-words">
-          <h1 className="text-xl font-semibold">
+          <h2 className="text-xl font-semibold">
             {version.po_number
               ? `Delivery schedule for ${version.po_number}`
               : 'Delivery schedule'}
-          </h1>
+          </h2>
           <p className="mt-0.5 flex flex-wrap items-center gap-x-3 text-sm text-muted-foreground">
             <span>{`Version ${version.version_no}`}</span>
             {version.revision_label && <span>{version.revision_label}</span>}
@@ -422,53 +442,64 @@ export function DeliveryScheduleReviewClient({
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          {/* This schedule's own revisions, walked one after another rather than through the
-              project tab between each. Same pager as the user record. */}
-          <RecordNavigation
-            basePath={`/project-sales/${projectId}/delivery-schedules`}
-            prevId={neighbours.prevId}
-            nextId={neighbours.nextId}
-            currentIndex={neighbours.index != null ? neighbours.index - 1 : undefined}
-            totalCount={neighbours.total}
-            isLoading={neighbours.isLoading}
-            ariaLabel="schedule version"
-          />
-          {/* Everything that only takes you somewhere lives behind the gear. The header used
-              to carry a button per destination, and the row of them competed with Confirm,
-              which is the one thing this screen is for. Both open in a new tab: the reviewer
-              is mid-reconciliation and leaving the page loses the cells they have typed. */}
-          {(poHref || version.document_url) && (
-            <DetailActionsMenu ariaLabel="Schedule actions">
-              {poHref && (
-                <DropdownMenuItem asChild>
-                  <a href={poHref} target="_blank" rel="noopener noreferrer">
-                    <ExternalLink className="size-4" aria-hidden />
-                    View PO
-                  </a>
-                </DropdownMenuItem>
-              )}
-              {version.document_url && (
-                <DropdownMenuItem asChild>
-                  <a href={version.document_url} target="_blank" rel="noopener noreferrer">
-                    <FileText className="size-4" aria-hidden />
-                    View document
-                  </a>
-                </DropdownMenuItem>
-              )}
-            </DetailActionsMenu>
-          )}
-          {!version.confirmed_at && (
-            <Button
-              type="button"
-              size="sm"
-              disabled={!canEdit || readingNow || columns.length === 0}
-              onClick={() => setConfirming(true)}
-            >
-              Confirm
-            </Button>
-          )}
-        </div>
+        {/* The project's schedules, each at its latest version, walked one after
+            another rather than through the project tab between each. */}
+        <DetailActions
+          pagerNode={
+            <RecordNavigation
+              index={scheduleIndex >= 0 ? scheduleIndex + 1 : null}
+              total={scheduleRows.length}
+              hasPrevious={scheduleIndex > 0}
+              hasNext={scheduleIndex >= 0 && scheduleIndex < scheduleRows.length - 1}
+              onPrevious={() => goToSchedule(scheduleRows[scheduleIndex - 1])}
+              onNext={() => goToSchedule(scheduleRows[scheduleIndex + 1])}
+              isLoading={schedules.isLoading}
+              ariaLabel="schedule"
+            />
+          }
+          gear={
+            <>
+            {/* Everything that only takes you somewhere lives behind the gear. The header used
+                to carry a button per destination, and the row of them competed with Confirm,
+                which is the one thing this screen is for. Both open in a new tab: the reviewer
+                is mid-reconciliation and leaving the page loses the cells they have typed. */}
+            {(poHref || version.document_url) && (
+              <DetailActionsMenu ariaLabel="Schedule actions">
+                {poHref && (
+                  <DropdownMenuItem asChild>
+                    <a href={poHref} target="_blank" rel="noopener noreferrer">
+                      <ExternalLink className="size-4" aria-hidden />
+                      View PO
+                    </a>
+                  </DropdownMenuItem>
+                )}
+                {version.document_url && (
+                  <DropdownMenuItem asChild>
+                    <a href={version.document_url} target="_blank" rel="noopener noreferrer">
+                      <FileText className="size-4" aria-hidden />
+                      View document
+                    </a>
+                  </DropdownMenuItem>
+                )}
+              </DetailActionsMenu>
+            )}
+            </>
+          }
+          primary={
+            <>
+            {!version.confirmed_at && (
+              <Button
+                type="button"
+                size="sm"
+                disabled={!canEdit || readingNow || columns.length === 0}
+                onClick={() => setConfirming(true)}
+              >
+                Confirm schedule
+              </Button>
+            )}
+            </>
+          }
+        />
       </header>
 
       {version.confirmed_at && (
