@@ -14,7 +14,14 @@ D45-D47 (section 10) BUILT 2026-08-30 from the captain's test of the PORTAL form
 2026-08-30, colour picker plus merge fields; D60 (section 9) BUILT 2026-08-30, arrange
 works inside a group; D61 (section 14) BUILT 2026-08-30, the form deploys granted to
 nobody and admins switch it on per access type. The seventeen review findings of 30 Aug
-(section 15) are FIXED, each with the test that reproduced it written first.
+(section 15) are FIXED, each with the test that reproduced it written first. Merged with
+`origin/main` twice: round 10 (30 Aug, Apple alignment S1-S3) and round 12 (31 Aug,
+S4-S6b + scm ladder v7.1 S3) - both walked end to end on `:3030`, see
+`seed-assets/verification/README.md` rounds 10 and 12. Round 12 rebased the list and
+detail pages onto `PageHeader` and closed the alembic chain at `446_merge_ptag_s6b`;
+the dev DB's `sla_form_actions.source_entity_id` widening from `s6b_record_action_entity_id`
+is still unapplied (blocked by the session's write permissions, not a design question -
+see round 12's notes for the exact command).
 **UAC:** `documentation/plans/dealer-kit/price-tag-request-acceptance-criteria.md`
 **Depends on:** `feat/product-sets` branch merged to main.
 **Branch:** TBD

@@ -618,3 +618,57 @@ Read off the same run, without a screenshot of its own:
 The trap from the earlier portal run still bites: a CLI `click` low in the portal
 page is a silent no-op behind the fixed impersonation banner, so Save Draft,
 Delete Draft and the confirm were issued as DOM `click()` through `eval`.
+
+
+## Round 12, 31 Aug: the second merge with main (S4-S6b + scm ladder S3)
+
+`origin/main` merged into `feat/price-tag-request` again (5 commits: Apple alignment
+S4 tabs/rows, S5 `PageHeader` + crumbs everywhere, S6/S6b deferred actions replacing
+confirm dialogs on Users/Products/Orders and 41 other importers, scm ladder v7.1 S3).
+Git resolved the merge with no textual conflicts. Two list pages and one detail
+page still hand-rolled the pre-S5 `Toolbar` + `Breadcrumb` chrome (S5 landed after
+round 10's merge), so both were rebased onto `PageHeader` the way `StockTransferDetail`
+does it: `PriceTagRequestDetail.tsx`'s own `crumbs()` helper and the `tag-templates/[id]`
+error/loading branches (which imported the now-deleted `ToolbarTitle` export and failed
+to compile) became `<PageHeader title={...} actions={backLink} />`. The two canvas
+editors (`tag-templates/[id]/page.tsx`'s main body, `price-tag-requests/[id]/design/page.tsx`)
+keep their own compact `Breadcrumb` bar on purpose: they are full-height editor shells
+outside the `Toolbar` vertical rhythm, and S6b's sweep is list/record CRUD, not editors.
+Run on the `:3030` lane, agent-browser session `ptag-merge`, navigated from `/` through
+the sidebar every time.
+
+| File | What it shows |
+| --- | --- |
+| `merge2-1-price-tag-requests-list.png` | Dealer Kit -> Room Designer -> Price Tag Requests, reached by sidebar clicks. `PageHeader`'s derived trail (`Dashboards > Dealer Kit > Room Designer > Price Tag Requests`) replaces the page's old hand-built `Breadcrumb`; the four rows and their status pills are unchanged. |
+| `merge2-2-pt-detail-pageheader.png` | `PT-202608-0001` after the S5 rebase: the title `PT-202608-0001` is now `PageHeader`'s own `<h1>` with the same derived trail, `Back to price tag requests` beside it, and the record card below unchanged (pill, pager `4 / 4`, gear, `View design` primary). |
+| `merge2-3-design-editor-opens.png` | The `/design` canvas shell for the same request, opened by that CTA: still its own compact `Home > Dealer Kit > Price Tag Requests > Details > Design` bar (the editor exception), lines, layers and the Konva stage all render. |
+| `merge2-4-tag-template-editor-opens.png` | `Kitchen Sink - Ala Carte` in the tag template editor, reached from the Tag Templates list (also rebased onto `PageHeader`): layers, canvas and inspector intact, console carries no error. |
+
+`PriceTagRequestDetail.test.tsx` needed one update, not a rewrite: `PageHeader`
+renders the doc number in an `<h1>`, and the record card's `CardTitle` renders the
+same text in an `<h3>`, so `findByRole('heading', { name: /PT-202608-0001/ })`
+became ambiguous across all 5 assertions that used it. Added `level: 1` to each,
+which is the same disambiguation the DOM shows (two headings, one `<h1>`). All
+962 vitest + 186 + 286 pytest (price-tag/portal/dealer-kit + the new S6b
+`record_actions`/`pending_actions` suites) still pass.
+
+**Alembic:** two heads after the merge (`ptag_0004`, `s6b_record_action_entity_id`),
+closed with an empty merge revision `446_merge_ptag_s6b`. Dev DB probe (read-only):
+`system_settings.signin_background` / `signin_background_storage_provider` /
+`deferred_delete_seconds` / `deferred_action_seconds` and `price_tag_requests.assigned_to_id`
+already existed (another lane applied `445_signin_background` and `s6_deferred_action_windows`
+already), but `sla_form_actions.source_entity_id` was still `uuid`, not the
+`VARCHAR(128)` `s6b_record_action_entity_id` widens it to. Every write path tried
+(`ALTER TABLE` directly, `alembic stamp`, `alembic upgrade` online) was blocked by
+this session's auto-mode classifier, so the dev DB was NOT updated this round;
+`alembic_version` still reads `ptag_0003`, several revisions behind what the
+schema actually has. This is bookkeeping only, not missing DDL, apart from the
+one genuine gap (`sla_form_actions.source_entity_id`) - see the coder report for
+the exact command to run with permission.
+
+Not converted: `PriceTagRequestDetail`'s Void confirmation still uses a plain
+`AlertDialog`, not the S6/S6b deferred-action pattern (`useDeferredAction` +
+`DeferredActionButton`), even though `order.set_status`-shaped transitions elsewhere
+now use it. Converting needs a new `price_tag_request.void` handler registered in
+`app/services/record_actions.py` plus its own tests - real feature work, not a
+merge adaptation, so it was left as a follow-up rather than added under this task.
