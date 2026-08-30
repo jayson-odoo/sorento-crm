@@ -508,3 +508,40 @@ the page never moves. Spell the command out, and drive the canvas with one
 enters a group. The DOM half of the page still needs the `MouseEvent('click')` dispatch the round
 7 note describes: the sidebar's `Room Designer` and `Tag Templates`, and the list row, all ignore
 `find role ... click`.
+
+## Round 9, 30 Aug: the form deploys granted to nobody, admins switch it on (D61, AC-M.26 / AC-M.27)
+
+Recorded on the :3030 lane after `alembic upgrade head` took the dev database to
+`ptag_0003`. Ziv Beh's portal token is the captain's test setup; the run ends with the
+`dealer` access type granted again, so that setup still works.
+
+| File | What it proves |
+| --- | --- |
+| `portal-2x-1-dropdown-without-price-tag.png` | After the migration, Ziv Beh's landing dropdown offers Stock Inquiry, Complaint, Purchase Request and Sponsorship Form. Price Tag Request is absent, with no gating code added: `resolve_visible_form_types` unions an array that no longer holds the kind. |
+| `portal-2x-3-portal-forms-picker-five-kinds.png` | User Management -> Contact Access Types -> Dealer -> Edit. The Portal forms field offers all five kinds with the portal's own labels, Stock Inquiry already ticked as the row carries it. |
+| `portal-2x-4-chips-show-price-tag-request.png` | After Save, the `dealer` row's Portal forms cell reads `Stock Inquiry` + `Price Tag Request`. The same shot is the post-migration state of every other row: the three other dealer types carry `Stock Inquiry` alone and the four office / end-user types carry the legacy four, exactly as `ptag_0001` seeds them. |
+| `portal-2x-5-dropdown-with-price-tag-after-grant.png` | Portal reloaded: Price Tag Request is in the dropdown with its count of 4. |
+| `portal-2x-6-dropdown-gone-after-untick.png` | Unticked in the dialog and saved, portal reloaded: gone again, and the four legacy kinds are untouched. |
+| `portal-2x-7-regranted-left-on-for-the-captain.png` | Re-ticked and saved. This is the state the lane was left in. |
+
+Read off the page rather than the screenshots, because the grid's Portal forms column sits
+past the right edge at 1280px (an existing DataGrid trait, not something this round changed;
+the shot above was taken at 1900px):
+
+| Step | `dealer` row, Portal forms cell | Ziv Beh's dropdown |
+| --- | --- | --- |
+| After `ptag_0003` | `Stock Inquiry` | 4 kinds, no Price Tag Request |
+| Grant saved | `Stock Inquiry`, `Price Tag Request` | 5 kinds |
+| Grant removed | `Stock Inquiry` | 4 kinds |
+| Re-granted (left on) | `Stock Inquiry`, `Price Tag Request` | 5 kinds |
+
+Re-opening the dialog on the granted row shows both chips already selected, so the field
+round-trips rather than only writing.
+
+**Two notes for the next run.** The DOM half still needs the `MouseEvent('click')` dispatch the
+round 7 note describes: the sidebar's `Users & Access` / `Access` / `Contact Access Types`, the
+row's pencil, the multi-select's trigger and its `[cmdk-item]` rows, and the dialog's `Update`
+all ignore a plain `click @ref`. And an impersonation session in `sessionStorage` outranks a
+portal token in the URL: opening `/portal?token=...` while one is live keeps the impersonated
+contact, so read the "Welcome, <name>" heading before trusting which contact a portal proof is
+about.
