@@ -26,7 +26,10 @@ from app.services.error_handler import AppException
 from app.middleware.logging_middleware import LoggingMiddleware
 from app.middleware.idempotency_middleware import IdempotencyMiddleware
 from app.middleware.api_call_log_middleware import ApiCallLogMiddleware
-from app.middleware.relative_redirect_middleware import RelativeRedirectMiddleware
+from app.middleware.relative_redirect_middleware import (
+    RelativeRedirectMiddleware,
+    SlashTolerantPathMiddleware,
+)
 
 # Configure logging
 logging.basicConfig(
@@ -50,10 +53,11 @@ app = FastAPI(
 # Add logging middleware
 app.add_middleware(LoggingMiddleware)
 
-# Own-host redirects (the trailing-slash 307) become path-only, so a browser that
-# reached us through a proxy on another host follows them back through that proxy.
+# A list route called without its trailing slash is served as the slashed route, no 307;
+# any redirect that still happens to our own host gets a path-only Location.
 # See app/middleware/relative_redirect_middleware.py.
 app.add_middleware(RelativeRedirectMiddleware)
+app.add_middleware(SlashTolerantPathMiddleware, routes=app.router.routes)
 
 # Request idempotency: dedupe replays of allowlisted action endpoints (double-click,
 # proxy retry, two tabs) so harmful side effects (SLA assignment, Respond sends,

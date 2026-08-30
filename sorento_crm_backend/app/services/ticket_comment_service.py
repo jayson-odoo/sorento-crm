@@ -567,12 +567,13 @@ class TicketCommentService:
         tracking: Optional[ConversationSLATracking] = None,
         contact: Optional[RespondContact] = None,
     ) -> None:
-        """In-app notification with a deep link, one per mentioned user (AC-L1).
+        """In-app + email notification with a deep link, one per mentioned user (AC-L1).
 
-        In-app lane only per the AC (no email, no WhatsApp); the notification
-        service still mirrors in-app to web push for users who subscribed their
-        browser, which IS the in-app lane's delivery. Best-effort: the comment
-        is committed, so a notification failure must not fail the save.
+        In-app always fires; email is gated on the recipient's
+        notify_email_on_mention toggle (defaults on). No WhatsApp for this event.
+        The notification service also mirrors in-app to web push for users who
+        subscribed their browser, which IS the in-app lane's delivery. Best-effort:
+        the comment is committed, so a notification failure must not fail the save.
 
         Two lanes, one body. A note written in a drawer names its ticket, so the
         link opens that ticket. A note written in the Conversations inbox is
@@ -632,7 +633,8 @@ class TicketCommentService:
                     # same ticket is a second notification, not a stale dedupe.
                     event_type=f"comment_mention:{comment.id}",
                     send_in_app=True,
-                    send_email=False,
+                    send_email=True,
+                    email_pref_attr="notify_email_on_mention",
                     send_whatsapp=False,
                 )
         except Exception as exc:  # noqa: BLE001 - the comment already committed

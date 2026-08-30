@@ -101,6 +101,10 @@ class WarehouseService:
             "warehouse_name": Warehouse.warehouse_name,
             "location": Warehouse.location,
             "is_active": Warehouse.is_active,
+            # The Warehouses list carries a Fulfilment planning column, so it carries its
+            # sort too (borrow ladder v7.1 S1): "show me the bins that are in" is the
+            # admin's first question after flagging one.
+            "fulfilment_planning": Warehouse.fulfilment_planning,
             "created_at": Warehouse.created_at,
             "updated_at": Warehouse.updated_at,
             "zones_count": zones_count_sq,

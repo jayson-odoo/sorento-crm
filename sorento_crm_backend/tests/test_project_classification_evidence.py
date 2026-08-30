@@ -62,6 +62,7 @@ def _warehouse(db, code: str, *, active: bool = True, available: bool = True) ->
         warehouse_name=code,
         is_active=active,
         counts_as_available=available,
+        fulfilment_planning=True,
     )
     db.add(row)
     db.flush()

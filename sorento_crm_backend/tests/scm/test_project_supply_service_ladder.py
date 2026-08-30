@@ -130,7 +130,6 @@ def test_a_line_beyond_the_coverage_date_proposes_buy_all_only():
         priority.create_revision(
             db, name="zzt-coverage", factors={}, demand_class_weights={},
             reorder_coverage_until=date(2026, 10, 31),
-            cross_group_borrow_max_qty=50, cross_group_borrow_max_pct=10.0,
         )
         db.commit()
 
@@ -156,7 +155,6 @@ def test_a_line_on_or_before_the_coverage_date_runs_the_ladder_normally():
         priority.create_revision(
             db, name="zzt-coverage-2", factors={}, demand_class_weights={},
             reorder_coverage_until=date(2026, 10, 31),
-            cross_group_borrow_max_qty=50, cross_group_borrow_max_pct=10.0,
         )
         db.commit()
 
@@ -651,7 +649,13 @@ def test_a_higher_ranked_donor_of_ANOTHER_agent_is_not_offered_at_all():
 # --------------------------------------------------------------------- rung 4: cross-group
 
 
-def test_cross_group_borrow_is_capped_by_the_small_quantity_limit():
+def test_cross_group_borrow_is_no_longer_capped_by_a_quantity_limit():
+    """v7.1 R5 (migration 443): the small-quantity cap is dropped - any ownership group may
+    donate - so the line that used to be refused for exceeding it now borrows whole.
+
+    What still refuses a cross-group borrow is the whole-line rule and the donor group's own
+    net, both asserted in their own tests. This one pins that SIZE alone no longer does.
+    """
     with blank_session() as db:
         company_id, _eling, project, product = _world(db)
         outside = _warehouse(db, f"ZZTHP-{_uid()[:4]}")
@@ -659,25 +663,24 @@ def test_cross_group_borrow_is_capped_by_the_small_quantity_limit():
         priority.create_revision(
             db, name="zzt-cap", factors={}, demand_class_weights={},
             reorder_coverage_until=None,
-            cross_group_borrow_max_qty=20, cross_group_borrow_max_pct=0.0,
         )
         db.commit()
 
         # Two INDEPENDENT groups, so the small and the big line never compete for the
-        # same group_borrow pile - each is judged on the cross-group cap alone.
+        # same group_borrow pile - each is judged on its own.
         _group_1, sites_1 = _group_sites(db)
         own_small, _pool_1 = sites_1["BRW"]
         _group_2, sites_2 = _group_sites(db)
         own_big, _pool_2 = sites_2["BRW"]
 
-        # Under the cap: 15 <= 20.
+        # A small line: 15.
         order_small, _l1, _c1, _cl1 = _seed_line(
             db, company_id, project, product, own_small, qty_ordered="15", line_no=1,
         )
         proposal_small = ProjectSupplyService(db).proposal_for(order_small)
         small_components = proposal_small["lines"][0]["components"]
 
-        # Over the cap: 25 > 20.
+        # A bigger one: 25, which the retired cap of 20 used to refuse.
         order_big, _l2, _c2, _cl2 = _seed_line(
             db, company_id, project, product, own_big, qty_ordered="25", line_no=1,
         )
@@ -690,7 +693,10 @@ def test_cross_group_borrow_is_capped_by_the_small_quantity_limit():
     assert small_components[0]["source_location"] == outside.warehouse_code
 
     assert len(big_components) == 1
-    assert big_components[0]["kind"] == "buy"
+    assert big_components[0]["kind"] == "borrow", (
+        "size alone no longer refuses a cross-group borrow"
+    )
+    assert big_components[0]["rung"] == "cross_group_borrow"
     assert big_components[0]["qty"] == "25"
 
 

@@ -174,16 +174,18 @@ def policy_weights(policy: Optional[PriorityPolicy]) -> tuple[dict, dict]:
 # Fulfilment policy admin (PLAN-demo-followups-19aug-ladder-v2.md C1/C2)
 # --------------------------------------------------------------------------- #
 
-#: What `reorder_coverage_until` / `cross_group_borrow_max_qty` / `cross_group_borrow_max_pct`
-#: answer for a policy-less database. `reorder_coverage_until` defaults to None - a fresh
-#: install has no coverage limit set, never a guessed date. `cross_group_borrow_max_*` mirror
-#: the literals migration `ed706a98ddc6` seeds as `server_default`, kept here (not imported)
-#: for the same "migrations stay standalone" reason 385 states. The ladder (workstream E) is
-#: the eventual reader; this slice only stores and surfaces them.
+#: The date every install starts its TBA line on. Mirrors the literal migration 443 seeds as
+#: `server_default`, kept here (not imported) for the same "migrations stay standalone"
+#: reason 385 states.
+DEFAULT_TBA_DATE_FROM = date(2029, 1, 1)
+
+#: What `reorder_coverage_until` / `tba_date_from` answer for a policy-less database.
+#: `reorder_coverage_until` defaults to None - a fresh install has no coverage limit set,
+#: never a guessed date. `tba_date_from` cannot default to None: the column is NOT NULL and
+#: "no TBA line" would let a 2030 placeholder compete for real stock.
 FULFILMENT_SETTINGS_DEFAULTS = {
     "reorder_coverage_until": None,
-    "cross_group_borrow_max_qty": 50,
-    "cross_group_borrow_max_pct": 10.0,
+    "tba_date_from": DEFAULT_TBA_DATE_FROM,
 }
 
 #: What the admin screen shows when NO policy has ever been activated (a database that
@@ -195,16 +197,16 @@ _NO_POLICY_NAME = "Fulfilment priority (no policy activated yet)"
 
 
 def fulfilment_settings(policy: Optional[PriorityPolicy]) -> dict:
-    """`{reorder_coverage_until, cross_group_borrow_max_qty, cross_group_borrow_max_pct}` for
-    a policy, or the documented default. A sibling of `policy_weights` for the fields C2
-    added: this slice does not wire them into scoring (that is workstream E), but the admin
-    screen - and later the ladder - both need one place to read them off the active row."""
+    """`{reorder_coverage_until, tba_date_from}` for a policy, or the documented default.
+
+    A sibling of `policy_weights` for the ladder's two calendar dates: one place reads them
+    off the active row, so the admin screen and the engine cannot come to different views of
+    how far purchasing covers and where TBA starts."""
     if policy is None:
         return dict(FULFILMENT_SETTINGS_DEFAULTS)
     return {
         "reorder_coverage_until": policy.reorder_coverage_until,
-        "cross_group_borrow_max_qty": int(policy.cross_group_borrow_max_qty),
-        "cross_group_borrow_max_pct": float(policy.cross_group_borrow_max_pct),
+        "tba_date_from": policy.tba_date_from or DEFAULT_TBA_DATE_FROM,
     }
 
 
@@ -284,8 +286,7 @@ def create_revision(
     factors: Mapping[str, float],
     demand_class_weights: Mapping[str, float],
     reorder_coverage_until: Optional[date],
-    cross_group_borrow_max_qty: int,
-    cross_group_borrow_max_pct: float,
+    tba_date_from: Optional[date] = None,
     notes: Optional[str] = None,
 ) -> PriorityPolicy:
     """Write a NEW policy revision and activate it. Never mutates an old row.
@@ -319,8 +320,7 @@ def create_revision(
         factors=dict(factors),
         demand_class_weights=dict(demand_class_weights),
         reorder_coverage_until=reorder_coverage_until,
-        cross_group_borrow_max_qty=int(cross_group_borrow_max_qty),
-        cross_group_borrow_max_pct=cross_group_borrow_max_pct,
+        tba_date_from=tba_date_from or DEFAULT_TBA_DATE_FROM,
         notes=notes,
     )
     savepoint = db.begin_nested()

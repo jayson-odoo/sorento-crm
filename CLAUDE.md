@@ -87,7 +87,7 @@ For any development task, Claude boots and owns the local stack as **background 
 |----------|------------------------------------------------------------------------------------------------|------|-----------------|
 | Backend  | `venv/bin/uvicorn app.main:app --reload --host 0.0.0.0 --port 8000` (in `sorento_crm_backend/`) | 8000 | `--reload` - backend file edits auto-restart uvicorn; nothing to do |
 | Worker   | `no_proxy='*' PGGSSENCMODE=disable OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES venv/bin/python worker.py` (in `sorento_crm_backend/`) | -    | **No reload.** Restart manually after editing any RQ task (`app/tasks/*`). |
-| Frontend | `npm run dev` (in `sorento_crm_frontend/`)                                                      | 3000 | **HMR - edits hot-reload; no rebuild.** ONE dev server machine-wide; see "Frontend dev loop". |
+| Frontend | `npm run dev` (Turbopack; in `sorento_crm_frontend/`)                                                      | 3000 | **HMR - edits hot-reload; no rebuild.** ONE dev server machine-wide; see "Frontend dev loop". |
 | MCP      | `CRM_BASE_URL=http://localhost:8000 EXTERNAL_API_KEY=<from backend .env> backend venv's python -m sorento_crm_mcp` (in `sorento_crm_mcp/`; package installed in the backend venv) | 8765 | Restart manually after MCP code/catalog changes |
 
 - Run each as `run_in_background: true` Bash so logs are inspectable and sessions survive across turns.

@@ -91,6 +91,7 @@ def _warehouse(db, code: str, *, segment=None, pool_warehouse_id=None) -> Wareho
     row = Warehouse(
         id=_uid(), warehouse_code=code, warehouse_name=code, location="ZZT",
         is_active=True, segment=segment, pool_warehouse_id=pool_warehouse_id,
+        fulfilment_planning=True,
     )
     db.add(row)
     db.flush()

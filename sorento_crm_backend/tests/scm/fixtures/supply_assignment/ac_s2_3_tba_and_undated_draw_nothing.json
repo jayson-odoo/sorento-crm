@@ -1,0 +1,81 @@
+{
+  "case": "AC-S2-3",
+  "why": [
+    "A line dated on or after the policy's `tba_date_from` is a placeholder, not a promise, and",
+    "a line with no date states nothing at all. Neither may take supply a dated line will need,",
+    "so both sit in their own bucket with their whole quantity as debt and are never covered.",
+    "The dated line beside them takes the on hand as usual."
+  ],
+  "as_of": "2026-09-01",
+  "tba_from": "2029-01-01",
+  "lead_days": 90,
+  "supply": [
+    {
+      "key": "on_hand:BRW-BB",
+      "kind": "on_hand",
+      "warehouse": "BRW-BB",
+      "at": "2026-09-01",
+      "qty": 100,
+      "ref": null
+    }
+  ],
+  "demand": [
+    {
+      "key": "N",
+      "so_number": "SO400020",
+      "line_no": 1,
+      "warehouse": "BRW-BB",
+      "agent_code": "JAY",
+      "required_date": "2026-09-10",
+      "open_qty": 60
+    },
+    {
+      "key": "T",
+      "so_number": "SO400021",
+      "line_no": 1,
+      "warehouse": "BRW-BB",
+      "agent_code": "JOHNSON",
+      "required_date": "2030-01-01",
+      "open_qty": 100
+    },
+    {
+      "key": "U",
+      "so_number": "SO400022",
+      "line_no": 1,
+      "warehouse": "BRW-BB",
+      "agent_code": "JAY",
+      "required_date": null,
+      "open_qty": 40
+    }
+  ],
+  "pinned": [],
+  "expect": {
+    "lines": [
+      {
+        "key": "N",
+        "status": "covered",
+        "uncovered": 0,
+        "bucket": "2026-09",
+        "assigned": [["on_hand:BRW-BB", 60]]
+      },
+      {
+        "key": "T",
+        "status": "short",
+        "uncovered": 100,
+        "bucket": "tba",
+        "assigned": []
+      },
+      {
+        "key": "U",
+        "status": "short",
+        "uncovered": 40,
+        "bucket": "undated",
+        "assigned": []
+      }
+    ],
+    "months": [{ "key": "2026-09", "balance": 40, "tone": "green" }],
+    "tba": -100,
+    "undated": -40,
+    "uncounted": []
+  }
+}

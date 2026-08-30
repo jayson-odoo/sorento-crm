@@ -102,6 +102,9 @@ export interface DataGridProps<TData extends object> {
   /**
    * Optional per-user per-listing key for persisting column visibility/order.
    * Expected to be the RBAC view permission slug (e.g. `order_management.orders.view`).
+   *
+   * Omitted, the grid persists under the pathname. Pass `null` to turn persistence OFF
+   * entirely - the right call when the columns are data rather than a fixed set.
    */
   listingKey?: string | null;
   tableLayout?: {
@@ -264,7 +267,14 @@ function DataGrid<TData extends object>({ children, table, listingKey, ...props 
     }
   }, [table]);
 
-  const effectiveListingKey = listingKey ?? pathname;
+  // `listingKey={null}` is a real opt-out: nothing is fetched, applied or saved, and the
+  // column menu loses its "Reset to defaults" entry because there is no config to reset.
+  // A listing whose columns are DATA (the stock-debt calendar) needs this: a row saved
+  // under the pathname fallback is re-applied against whichever columns happen to exist
+  // when it arrives, which reorders the screen and names columns that are not there yet.
+  // `undefined` keeps the pathname fallback, so every other listing is untouched.
+  const persistenceDisabled = listingKey === null;
+  const effectiveListingKey = persistenceDisabled ? null : (listingKey ?? pathname);
 
   const { resetToDefaults, isLoading: isPrefsLoading } = useListingColumnPreferences({
     table,
@@ -274,7 +284,7 @@ function DataGrid<TData extends object>({ children, table, listingKey, ...props 
   return (
     <DataGridProvider
       table={table}
-      columnPreferences={{ resetToDefaults }}
+      columnPreferences={persistenceDisabled ? undefined : { resetToDefaults }}
       isColumnPreferencesLoading={isPrefsLoading}
       {...mergedProps}
     >

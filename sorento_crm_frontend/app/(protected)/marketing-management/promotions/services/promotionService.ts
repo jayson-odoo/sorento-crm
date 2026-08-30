@@ -127,7 +127,7 @@ export async function bulkUpdateAccessLevels(
 }
 
 export async function getPromotionProducts(promotionId: string): Promise<PromotionProduct[]> {
-  const response = await apiFetch(`/api/v1/marketing/promotions/${promotionId}/products`);
+  const response = await apiFetch(`/api/v1/marketing/promotions/${promotionId}/products/`);
   if (!response.ok) throw new Error('Failed to fetch promotion products');
   return response.json();
 }
@@ -148,7 +148,7 @@ export async function createPromotionGroup(
     foc_tiers?: FocTier[] | null;
   },
 ): Promise<PromotionGroup> {
-  const response = await apiFetch(`/api/v1/marketing/promotions/${promotionId}/groups`, {
+  const response = await apiFetch(`/api/v1/marketing/promotions/${promotionId}/groups/`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
@@ -202,7 +202,7 @@ export async function addPromotionProduct(
   promotionGroupId?: string,
   dealerDiscountPercent?: number | null,
 ): Promise<PromotionProduct> {
-  const response = await apiFetch(`/api/v1/marketing/promotions/${promotionId}/products`, {
+  const response = await apiFetch(`/api/v1/marketing/promotions/${promotionId}/products/`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({

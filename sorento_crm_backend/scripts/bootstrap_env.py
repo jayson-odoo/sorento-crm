@@ -465,6 +465,62 @@ def seed_scm_module_data() -> None:
     log.info("scm module data seeded -> aliases=%d priority_policy=%d", aliases, policies)
 
 
+def seed_fulfilment_planning_flags() -> None:
+    """Replay migration 443's warehouse seed, which create_all cannot produce.
+
+    Same create_all gap as 311/338/347: `create_all` builds the COLUMN from the ORM and
+    knows nothing about rows, so the one-off "turn the flag on for the active
+    `-BB/-IB/-IR/-NTC/-AM` bins" UPDATE does not happen on a freshly built database. Without
+    it every warehouse reads `fulfilment_planning = false`, which is "nothing is planned
+    against anything" - the ladder proposes Buy for every line and the board's verdict is
+    `Outside fulfilment planning` on all of them.
+
+    Calls the migration's own function rather than restating the predicate, so the two paths
+    cannot drift.
+
+    Runs ONLY on the FIRST bootstrap of a database, which is the same guard the migration
+    states with its `add_column` branch: the seed is a one-off STARTING POSITION and the
+    flag is configuration an admin edits on the Warehouses screen from then on. Bootstrap
+    re-runs on every deploy, so replaying it unconditionally would turn back on every bin
+    somebody had deliberately turned off.
+
+    "First bootstrap" is read off `alembic_version`, which `stamp_head()` writes at the end
+    of this same run: absent or empty means this database has never been bootstrapped, and
+    that is the only moment the column can have been created by the `create_all` above.
+    """
+    import importlib.util
+    from pathlib import Path
+
+    from sqlalchemy import text
+
+    from app.database import engine
+
+    versions = Path(__file__).resolve().parent.parent / "alembic" / "versions"
+    spec = importlib.util.spec_from_file_location(
+        "_seed_443", versions / "443_fulfilment_planning_flag_tba_date.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    with engine.begin() as conn:
+        # Two statements, not one CASE: Postgres plans a subquery even on the branch it
+        # will not take, so a single expression referencing `alembic_version` fails
+        # outright on the fresh database this guard exists to recognise.
+        has_version_table = conn.execute(
+            text("SELECT to_regclass('alembic_version') IS NOT NULL")
+        ).scalar()
+        stamped = (
+            conn.execute(text("SELECT count(*) FROM alembic_version")).scalar()
+            if has_version_table
+            else 0
+        )
+        if stamped:
+            log.info("fulfilment planning flags left as configured -> seed skipped")
+            return
+        flagged = module.seed_fulfilment_planning_flags(conn)
+    log.info("fulfilment planning flags seeded -> warehouses=%d", flagged)
+
+
 def seed_customer_import_aliases() -> None:
     """Replay migration 353's `customer` header aliases (same create_all gap as 311/338/347).
 
@@ -633,6 +689,7 @@ def main() -> int:
     if not args.skip_seed:
         seed_reference_data()
         seed_scm_module_data()
+        seed_fulfilment_planning_flags()
         seed_customer_import_aliases()
     stamp_head()
     log.info("bootstrap complete")

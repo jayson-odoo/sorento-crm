@@ -2212,6 +2212,7 @@ class ProductCategoryService:
                 "description": category.description,
                 "parent_category_id": str(category.parent_category_id) if category.parent_category_id else None,
                 "is_active": category.is_active,
+                "is_searchable": category.is_searchable,
                 "display_order": category.display_order or 0,
                 "created_by": str(category.created_by) if category.created_by else None,
                 "created_at": category.created_at,
