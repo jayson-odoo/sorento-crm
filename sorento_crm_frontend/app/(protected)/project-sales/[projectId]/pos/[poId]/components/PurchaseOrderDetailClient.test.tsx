@@ -161,7 +161,7 @@ async function openEditor() {
   // pressed before that seeding would carry a set the user never saw.
   await screen.findByText('Wall-hung WC');
   fireEvent.click(await screen.findByRole('button', { name: /Edit the PO/i }));
-  const save = await screen.findByRole('button', { name: 'Save' });
+  const save = await screen.findByRole('button', { name: 'Save purchase order' });
   await screen.findByRole('textbox', { name: 'Code on the PO on SRT-WC-01' });
   return save;
 }
@@ -229,7 +229,7 @@ describe('PurchaseOrderDetailClient states', () => {
     // Read-only metadata sits in the header, never in a section that has an edit counterpart.
     expect(screen.getByText(/Last updated/i)).toBeInTheDocument();
     expect(screen.queryByRole('textbox')).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Save' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Save purchase order' })).toBeNull();
   });
 
   it('still renders every section, and no way in, for a reader', async () => {
@@ -467,7 +467,7 @@ describe('PurchaseOrderDetailClient header', () => {
 
     expect(screen.queryByRole('button', { name: /Edit the PO/i })).toBeNull();
     expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save purchase order' })).toBeInTheDocument();
   });
 
   it('offers a reader neither a call to action nor a gear', async () => {

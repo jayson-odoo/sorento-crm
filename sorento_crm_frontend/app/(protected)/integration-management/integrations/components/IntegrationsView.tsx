@@ -16,6 +16,7 @@ import { Plus, Search } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { PageHeader } from '@/components/common/PageHeader';
 import { Card, CardFooter, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
@@ -23,7 +24,6 @@ import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 
 import { useIntegrations } from '../hooks/useIntegrations';
@@ -195,15 +195,22 @@ export function IntegrationsView() {
     );
   }
 
+  // The one offer this listing makes, in both places it belongs: the
+  // toolbar, and the empty state's next step (S5-06).
+  const listPrimaryAction = (
+    <Button onClick={() => setFormOpen(true)}>
+      <Plus className="size-4" /> Connect integration
+    </Button>
+  );
+
   return (
     <div className="space-y-4 p-4 md:p-6">
-      <div>
-        <h1 className="text-xl font-semibold">Integrations</h1>
+      <PageHeader title="Integrations">
         <p className="text-sm text-muted-foreground">
           Systems that call Sorento with an API key. Each authenticates as its own user, so
           that user&apos;s role decides what it can reach.
         </p>
-      </div>
+      </PageHeader>
 
       <DataGrid
         table={table}
@@ -213,6 +220,7 @@ export function IntegrationsView() {
         onRowClick={(row) =>
           router.push(`/integration-management/integrations/${row.id}`)
         }
+        emptyAction={listPrimaryAction}
       >
         <Card>
           <DataGridListToolbar
@@ -228,18 +236,11 @@ export function IntegrationsView() {
                 />
               </div>
             }
-            primaryAction={
-              <Button onClick={() => setFormOpen(true)}>
-                <Plus className="size-4" /> Connect integration
-              </Button>
-            }
+            primaryAction={listPrimaryAction}
             exportConfig={false}
           />
           <CardTable>
-            <ScrollArea>
-              <DataGridTable />
-              <ScrollBar orientation="horizontal" />
-            </ScrollArea>
+            <DataGridTable />
           </CardTable>
           <CardFooter>
             <DataGridPagination />

@@ -13,7 +13,6 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardHeader, CardTable } from '@/components/ui/card';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
@@ -110,6 +109,20 @@ export default function CompaniesList() {
     );
   }
 
+  // The one offer this listing makes, in both places it belongs: the
+  // toolbar, and the empty state's next step (S5-06).
+  const listPrimaryAction = (
+    <Button
+      onClick={() => {
+        setEditingCompanyId(undefined);
+        setFormOpen(true);
+      }}
+    >
+      <Plus className="size-4" />
+      Create Company
+    </Button>
+  );
+
   return (
     <>
       <DataGrid
@@ -117,6 +130,7 @@ export default function CompaniesList() {
         recordCount={filteredCompanies.length}
         isLoading={isLoading}
         tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
+        emptyAction={listPrimaryAction}
       >
         <Card>
           <CardHeader className="block">
@@ -174,24 +188,11 @@ export default function CompaniesList() {
                 ),
               }}
               exportConfig={{ filename: 'companies_export.xlsx' }}
-              primaryAction={
-                <Button
-                  onClick={() => {
-                    setEditingCompanyId(undefined);
-                    setFormOpen(true);
-                  }}
-                >
-                  <Plus className="size-4" />
-                  Create Company
-                </Button>
-              }
+              primaryAction={listPrimaryAction}
             />
           </CardHeader>
           <CardTable>
-            <ScrollArea>
-              <DataGridTable />
-              <ScrollBar orientation="horizontal" />
-            </ScrollArea>
+            <DataGridTable />
           </CardTable>
         </Card>
       </DataGrid>

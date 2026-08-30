@@ -20,7 +20,6 @@ import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import {
@@ -201,10 +200,7 @@ export function TileDesignsList() {
         </CardHeader>
 
         <CardTable>
-          <ScrollArea>
-            <DataGridTable />
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
+          <DataGridTable />
         </CardTable>
 
         <CardFooter>

@@ -21,7 +21,6 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridListToolbar, type ListToolbarFilters } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import type { LeadWithAcceptance } from '../../_shared/types/leadAcceptance.types';
@@ -388,10 +387,7 @@ export function LeadsGrid({
           />
         </CardHeader>
         <CardTable>
-          <ScrollArea>
-            <DataGridTable />
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
+          <DataGridTable />
         </CardTable>
         <CardFooter>
           <DataGridPagination />

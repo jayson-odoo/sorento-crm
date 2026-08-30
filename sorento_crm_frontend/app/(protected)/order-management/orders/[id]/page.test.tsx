@@ -16,6 +16,7 @@ const searchString = 'page=2&limit=50&sort=created_at&dir=desc&order_status_id=s
 vi.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(searchString),
   useRouter: () => ({ push: vi.fn() }),
+  usePathname: () => '/order-management/orders/o-1',
 }));
 
 // The record card has its own tests; this one is about the toolbar row.

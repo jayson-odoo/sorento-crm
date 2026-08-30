@@ -348,7 +348,7 @@ export function WorkflowSubmissionDetail({ submissionId }: { submissionId: strin
           {canEdit && !terminal && schema ? (
             <Button size="sm" onClick={save} disabled={updateMut.isPending}>
               <Save className="size-4 mr-1" />
-              Save
+              Save submission
             </Button>
           ) : null}
           {canTransition && (allowed?.transitions?.length ?? 0) > 0 ? (
@@ -483,7 +483,7 @@ export function WorkflowSubmissionDetail({ submissionId }: { submissionId: strin
               Cancel
             </Button>
             <Button onClick={confirmTransition} disabled={applyMut.isPending}>
-              Confirm
+              Confirm transition
             </Button>
           </DialogFooter>
         </DialogContent>

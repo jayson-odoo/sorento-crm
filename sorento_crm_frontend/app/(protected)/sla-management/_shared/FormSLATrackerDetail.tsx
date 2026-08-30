@@ -737,7 +737,7 @@ export default function FormSLATrackerDetail({
               }}
               disabled={overrideMut.isPending}
             >
-              Save
+              Save assignee
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -784,7 +784,7 @@ export default function FormSLATrackerDetail({
               }}
               disabled={overrideMut.isPending}
             >
-              Save
+              Save tier start
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -826,7 +826,7 @@ export default function FormSLATrackerDetail({
               }}
               disabled={overrideMut.isPending}
             >
-              Save
+              Save initiated time
             </Button>
           </DialogFooter>
         </DialogContent>

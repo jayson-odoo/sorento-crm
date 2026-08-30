@@ -146,7 +146,7 @@ export function ProductSupplierTermsRow({
               ) : (
                 <Save className="size-4" />
               )}
-              Save
+              Save terms
             </Button>
           ) : null}
           <Button

@@ -18,6 +18,11 @@ export interface SystemSetting {
   id: string;
   name: string;
   logo?: string | null;
+  /**
+   * The photograph behind the sign-in card, already signed by the backend so an <img>
+   * can load it. Null means none is set and the sign-in page draws its designed default.
+   */
+  signinBackground?: string | null;
   active: boolean;
   address?: string | null;
   websiteURL?: string | null;
@@ -49,6 +54,16 @@ export interface SystemSetting {
   takeoverCooldownSeconds?: number;
   /** Global default undo grace window for form-SLA actions, in seconds. */
   formSlaGraceSeconds?: number;
+
+  /**
+   * The two grace windows a deferred record action waits out (D16).
+   *
+   * The product asks for no confirmation: a delete or a status change parks on the
+   * server and the countdown is the way back, so its LENGTH is the only thing left
+   * to tune. Destructive covers every `<entity>.delete`; reversible covers the rest.
+   */
+  deferredDeleteSeconds?: number;
+  deferredActionSeconds?: number;
 
   /**
    * SCM front planning: which grain new plans are DECIDED at (AC-F01).

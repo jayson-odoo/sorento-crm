@@ -421,11 +421,11 @@ export function DeliveryScheduleReviewClient({
       {/* flex-col until sm: a wrapping title and the actions cannot share a row on a phone. */}
       <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0 break-words">
-          <h1 className="text-xl font-semibold">
+          <h2 className="text-xl font-semibold">
             {version.po_number
               ? `Delivery schedule for ${version.po_number}`
               : 'Delivery schedule'}
-          </h1>
+          </h2>
           <p className="mt-0.5 flex flex-wrap items-center gap-x-3 text-sm text-muted-foreground">
             <span>{`Version ${version.version_no}`}</span>
             {version.revision_label && <span>{version.revision_label}</span>}
@@ -494,7 +494,7 @@ export function DeliveryScheduleReviewClient({
                 disabled={!canEdit || readingNow || columns.length === 0}
                 onClick={() => setConfirming(true)}
               >
-                Confirm
+                Confirm schedule
               </Button>
             )}
             </>

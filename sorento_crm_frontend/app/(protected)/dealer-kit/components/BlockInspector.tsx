@@ -406,7 +406,7 @@ export function BlockInspector({
                 }
               }}
             >
-              {saving ? 'Saving' : 'Save'}
+              {saving ? 'Saving' : 'Save block'}
             </Button>
           </DialogFooter>
         </DialogContent>

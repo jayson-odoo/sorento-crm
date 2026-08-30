@@ -16,20 +16,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Container } from '@/components/common/container';
-import {
-  Toolbar,
-  ToolbarActions,
-  ToolbarHeading,
-  ToolbarTitle,
-} from '@/components/common/toolbar';
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
+import { PageHeader } from '@/components/common/PageHeader';
 import DetailActions from '@/components/common/DetailActions';
 import BackToList from '@/components/common/BackToList';
 import {
@@ -148,38 +135,15 @@ export default function IntegrationLogDetailPage() {
   return (
     <>
       <Container>
-        <Toolbar>
-          <ToolbarHeading>
-            <ToolbarTitle>Integration Log Details</ToolbarTitle>
-            <Breadcrumb>
-              <BreadcrumbList>
-                <BreadcrumbItem>
-                  <BreadcrumbLink href="/">Home</BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbPage>System Management</BreadcrumbPage>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbLink href="/integration-management/integration-logs">
-                    Integration Logs
-                  </BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbPage>Integration Log</BreadcrumbPage>
-                </BreadcrumbItem>
-              </BreadcrumbList>
-            </Breadcrumb>
-          </ToolbarHeading>
-          <ToolbarActions>
+        <PageHeader
+          title="Integration Log Details"
+          actions={
             <BackToList
               listPath="/integration-management/integration-logs"
               label="Back to integration logs"
             />
-          </ToolbarActions>
-        </Toolbar>
+          }
+        />
 
         {/* The record's own actions: pager, gear, primary (D6). They sit under the
             toolbar rather than on it, and wrap at 375. */}

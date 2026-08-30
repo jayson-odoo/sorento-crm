@@ -21,15 +21,7 @@ import { ChartContainer, ChartTooltip, ChartTooltipContent } from '@/components/
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Container } from '@/components/common/container';
-import { Toolbar, ToolbarHeading, ToolbarTitle } from '@/components/common/toolbar';
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
+import { PageHeader } from '@/components/common/PageHeader';
 import {
   useQueryDetail,
   useRecentQueries,
@@ -141,26 +133,7 @@ export default function AIUsagePage() {
   return (
     <>
       <Container>
-        <Toolbar>
-          <ToolbarHeading>
-            <ToolbarTitle>AI Usage</ToolbarTitle>
-            <Breadcrumb>
-              <BreadcrumbList>
-                <BreadcrumbItem>
-                  <BreadcrumbLink href="/">Home</BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbLink href="/system-management/ai-assistant">AI Assistant</BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbPage>Usage</BreadcrumbPage>
-                </BreadcrumbItem>
-              </BreadcrumbList>
-            </Breadcrumb>
-          </ToolbarHeading>
-        </Toolbar>
+        <PageHeader title="AI Usage" />
       </Container>
       <Container className="space-y-4">
         {/* Two w-60 controls in a no-wrap row is 480px of content in a 375px

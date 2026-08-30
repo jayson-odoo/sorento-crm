@@ -5,24 +5,12 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import { Activity, UserPen } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Container } from '@/components/common/container';
-import {
-  Toolbar,
-  ToolbarActions,
-  ToolbarHeading,
-  ToolbarTitle,
-} from '@/components/common/toolbar';
+import { PageHeader } from '@/components/common/PageHeader';
 import BackToList from '@/components/common/BackToList';
 import { useHasPermission } from '@/hooks/usePermissions';
+import { useDeletedRecordGuard } from '@/hooks/useDeletedRecordGuard';
 import { UserProvider } from './components/user-context';
 import UserHero from './components/user-hero';
 
@@ -145,6 +133,14 @@ export default function UserLayout({
     retry: 1,
   });
 
+  // A user this tab deleted a moment ago is gone on purpose, so a stale link to
+  // them returns to the list quietly instead of reading as a fault (S6 feedback C).
+  useDeletedRecordGuard({
+    entityId: id,
+    notFound: !isLoading && !user,
+    listPath: '/user-management/users',
+  });
+
   const handleTabClick = (key: string, path: string) => {
     setActiveTab(key);
     router.push(path);
@@ -153,29 +149,12 @@ export default function UserLayout({
   return (
     <UserProvider user={user} isLoading={isLoading}>
       <Container>
-        <Toolbar>
-          <ToolbarHeading>
-            <ToolbarTitle>User</ToolbarTitle>
-            <Breadcrumb>
-              <BreadcrumbList>
-                <BreadcrumbItem>
-                  <BreadcrumbLink href="/">Home</BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbPage>User Management</BreadcrumbPage>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbLink href="/user-management/users">Users</BreadcrumbLink>
-                </BreadcrumbItem>
-              </BreadcrumbList>
-            </Breadcrumb>
-          </ToolbarHeading>
-          <ToolbarActions>
+        <PageHeader
+          title="User"
+          actions={
             <BackToList listPath="/user-management/users" label="Back to users" />
-          </ToolbarActions>
-        </Toolbar>
+          }
+        />
         <UserHero user={user} isLoading={isLoading} />
         <Tabs defaultValue={activeTab} value={activeTab}>
           <TabsList variant="line" className="mb-5">

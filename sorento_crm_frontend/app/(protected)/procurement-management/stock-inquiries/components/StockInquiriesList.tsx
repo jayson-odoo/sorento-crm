@@ -26,7 +26,6 @@ import {
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Separator } from '@/components/ui/separator';
 import { cn } from '@/lib/utils';
@@ -426,6 +425,19 @@ export default function StockInquiriesList() {
     manualFiltering: true,
   });
 
+  // The one offer this listing makes, in both places it belongs: the
+  // toolbar, and the empty state's next step (S5-06).
+  const listPrimaryAction = (
+    <Button
+      onClick={() =>
+        router.push('/procurement-management/stock-inquiries/new')
+      }
+    >
+      <Plus />
+      Create Stock Inquiry
+    </Button>
+  );
+
   return (
     <DataGrid
       table={table}
@@ -434,6 +446,7 @@ export default function StockInquiriesList() {
       rowHref={rowHref}
       standardToolbar={false}
       tableLayout={{ columnsVisibility: true }}
+      emptyAction={listPrimaryAction}
     >
       <Card>
         <CardHeader className="block">
@@ -521,16 +534,7 @@ export default function StockInquiriesList() {
             exportConfig={{ filename: 'stock_inquiries_export.xlsx' }}
             onRefresh={() => void refetch()}
             isRefreshing={isFetching && !isLoading}
-            primaryAction={
-              <Button
-                onClick={() =>
-                  router.push('/procurement-management/stock-inquiries/new')
-                }
-              >
-                <Plus />
-                Create Stock Inquiry
-              </Button>
-            }
+            primaryAction={listPrimaryAction}
             bulkActions={[
               {
                 key: 'delete',
@@ -543,10 +547,7 @@ export default function StockInquiriesList() {
           />
         </CardHeader>
         <CardTable>
-          <ScrollArea>
-            <DataGridTable />
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
+          <DataGridTable />
         </CardTable>
         <CardFooter>
           <DataGridPagination />

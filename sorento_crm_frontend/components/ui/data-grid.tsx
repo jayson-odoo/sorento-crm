@@ -70,10 +70,27 @@ export interface DataGridProps<TData extends object> {
    * `onRowClick` stays for the lists whose record is edited in a lightbox.
    */
   rowHref?: (row: TData) => string;
+  /**
+   * True for a row with an action parked on it (D7, S6-07).
+   *
+   * The countdown for a row action lives in a toast, so the row itself has to say
+   * which record that toast belongs to: it stays where it is, dimmed, and carries
+   * `data-pending` until the server commits or the reader cancels. Read the ids
+   * from `usePendingEntityKeys()`.
+   */
+  rowPending?: (row: TData) => boolean;
   isLoading?: boolean;
   loadingMode?: 'skeleton' | 'spinner';
   loadingMessage?: ReactNode | string;
   emptyMessage?: ReactNode | string;
+  /**
+   * The next step an empty listing offers: the list's own Add button, usually.
+   *
+   * "No data available" tells the reader the grid worked and says nothing about
+   * what to do, and on a list whose Add sits in a card header above a long
+   * filter row that button is not where the eye is (S5-06).
+   */
+  emptyAction?: ReactNode;
   /**
    * Optional row grouping. Return a label when `row` starts a new group, or
    * null/undefined otherwise; the grid draws a divider row above it.

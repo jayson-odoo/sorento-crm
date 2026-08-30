@@ -16,28 +16,6 @@ import { toAbsoluteUrl } from '@/lib/helpers';
 import { useHorizontalOverflow } from '@/hooks/use-horizontal-overflow';
 import { cn } from '@/lib/utils';
 
-/** The id `buildSelectColumn` gives the row-selection column. */
-const SELECT_COLUMN_ID = 'select';
-
-/**
- * True under Tailwind's `sm` breakpoint, where a wide grid has to pin its
- * identifier column or the user scrolls away from the only thing that says
- * which row they are reading.
- */
-function useIsUnderSm() {
-  const [isUnderSm, setIsUnderSm] = React.useState(false);
-
-  React.useEffect(() => {
-    const mql = window.matchMedia('(max-width: 639px)');
-    const onChange = () => setIsUnderSm(mql.matches);
-    onChange();
-    mql.addEventListener('change', onChange);
-    return () => mql.removeEventListener('change', onChange);
-  }, []);
-
-  return isUnderSm;
-}
-
 /**
  * Appends the list state the grid is showing to a row's detail href.
  *
@@ -112,8 +90,15 @@ function DataGridTableBase({ children }: { children: ReactNode }) {
 
   // What stops a `table-fixed w-full` grid from squeezing six columns into a
   // phone: the table is at least as wide as its columns want to be, and the
-  // scroller (data-grid-scroller, or the list's own ScrollArea) carries the
-  // overflow. Where the columns already fit, `w-full` still wins.
+  // scroller (data-grid-scroller) carries the overflow. Where the columns
+  // already fit, `w-full` still wins.
+  //
+  // The grid has to be the ONLY scrollport on that axis. A list that wrapped it
+  // in a Radix `ScrollArea` gave the table a `display: table` ancestor, which
+  // shrink-fits: `data-grid-scroller` then measured scrollWidth === clientWidth,
+  // never overflowed, and still swallowed the wheel gesture through
+  // `overscroll-x-contain` - so 161 lists could not be scrolled sideways at all.
+  // Those wrappers are gone; keep it that way.
   //
   // It has to be a DEFINITE length. `min-width: max-content` is meaningless on a
   // `table-layout: fixed` table - fixed layout ignores content by design - and
@@ -214,12 +199,15 @@ function DataGridTableHeadRowCell<TData>({
   header,
   dndRef,
   dndStyle,
+  dndDragging,
   rowSpan,
 }: {
   children: ReactNode;
   header: Header<TData, unknown>;
   dndRef?: React.Ref<HTMLTableCellElement>;
   dndStyle?: CSSProperties;
+  /** True while THIS column is the one being dragged (dnd-kit's `isDragging`). */
+  dndDragging?: boolean;
   rowSpan?: number;
 }) {
   const { props } = useDataGrid();
@@ -247,16 +235,21 @@ function DataGridTableHeadRowCell<TData>({
         ...(props.tableLayout?.width === 'fixed' && {
           width: `${header.getSize()}px`,
         }),
-        ...(dndStyle ? dndStyle : null),
-        // LAST, so it beats the drag style. Column drag-and-drop is on by
-        // default and dnd-kit sets `position: relative` + `zIndex: 0` on every
-        // cell; spread after the pinning styles it silently turned the phone's
-        // pinned identifier column back into an ordinary one that scrolled away.
-        // The drag transform and transition survive - only the stickiness wins.
+        // Pinning normally wins. Column drag-and-drop is on by default and
+        // dnd-kit sets `position: relative` + `zIndex: 0` on every cell; spread
+        // after the pinning styles it silently turned a pinned column back into
+        // an ordinary one that scrolled away. The drag transform and transition
+        // survive - only the stickiness wins.
         //
-        // Driven by the pinned state itself: under `sm` the grid pins the
-        // identifier column whether or not the list opted into pinning.
-        ...(isPinned ? getPinningStyles(column) : null),
+        // Driven by the pinned state itself, so it follows whatever the list
+        // pinned rather than assuming a column.
+        //
+        // While THIS column is the one being dragged, the order flips: sticky
+        // beats dnd-kit's `position: relative`, so the transform had no effect
+        // and a pinned column could not be dragged at all.
+        ...(dndDragging
+          ? { ...(isPinned ? getPinningStyles(column) : null), ...dndStyle }
+          : { ...dndStyle, ...(isPinned ? getPinningStyles(column) : null) }),
       }}
       data-pinned={isPinned || undefined}
       data-last-col={isLastLeftPinned ? 'left' : isFirstRightPinned ? 'right' : undefined}
@@ -514,14 +507,20 @@ function DataGridTableBodyRow<TData>({
   // 78 of 193 lists did this and 26 had a detail route with no way to reach it.
   const href = props.rowHref ? appendListState(props.rowHref(row.original), table) : undefined;
 
+  // A record on its way out stays visible and says so, rather than vanishing
+  // before the reader can cancel (S6-07).
+  const isPending = props.rowPending?.(row.original) ?? false;
+
   const rowProps: React.ComponentProps<'tr'> = {
     ref: dndRef,
     style: { ...(dndStyle ? dndStyle : null) },
     'data-state': table.options.enableRowSelection && row.getIsSelected() ? 'selected' : undefined,
+    'data-pending': isPending ? 'true' : undefined,
     ...(dndAttributes ?? {}),
     ...(dndListeners ?? {}),
     className: cn(
       'hover:bg-muted/40 data-[state=selected]:bg-muted/50',
+      isPending && 'opacity-50',
       (href || props.onRowClick) && 'cursor-pointer',
       !props.tableLayout?.stripped &&
         props.tableLayout?.rowBorder &&
@@ -649,11 +648,14 @@ function DataGridTableBodyRowCell<TData>({
   cell,
   dndRef,
   dndStyle,
+  dndDragging,
 }: {
   children: ReactNode;
   cell: Cell<TData, unknown>;
   dndRef?: React.Ref<HTMLTableCellElement>;
   dndStyle?: CSSProperties;
+  /** True while THIS column is the one being dragged (dnd-kit's `isDragging`). */
+  dndDragging?: boolean;
 }) {
   const { props } = useDataGrid();
 
@@ -671,9 +673,11 @@ function DataGridTableBodyRowCell<TData>({
       ref={dndRef}
       {...(props.tableLayout?.columnsDraggable && !isPinned ? { cell } : {})}
       style={{
-        ...(dndStyle ? dndStyle : null),
-        // LAST, so it beats the drag style - see the head cell.
-        ...(isPinned ? getPinningStyles(column) : null),
+        // Pinning last so it beats the drag style, except while this column is
+        // the one being dragged - see the head cell.
+        ...(dndDragging
+          ? { ...(isPinned ? getPinningStyles(column) : null), ...dndStyle }
+          : { ...dndStyle, ...(isPinned ? getPinningStyles(column) : null) }),
       }}
       data-pinned={isPinned || undefined}
       data-last-col={isLastLeftPinned ? 'left' : isFirstRightPinned ? 'right' : undefined}
@@ -715,8 +719,12 @@ function DataGridTableEmpty() {
         than hugging the border.
       */}
       <td colSpan={totalColumns} className="p-0 text-muted-foreground">
-        <div className="sticky start-0 w-fit px-4 py-6 text-start">
-          {props.emptyMessage || 'No data available'}
+        <div
+          data-slot="data-grid-empty"
+          className="sticky start-0 flex w-fit flex-col items-start gap-3 px-4 py-6 text-start"
+        >
+          <span>{props.emptyMessage || 'No data available'}</span>
+          {props.emptyAction}
         </div>
       </td>
     </tr>
@@ -836,17 +844,26 @@ export function moveColumnKeepingGroups(
  * or, where it did overflow, pushed the whole PAGE sideways. The scrollbar is
  * the only affordance a mouse user gets, so a right-edge fade marks that there
  * is more to see and disappears once the end is reached.
+ *
+ * `min-w-0` on both divs is what makes the scroller scroll at all. `CardTable`
+ * is a `grid`, `Card` is a `flex` column, and an item of either has
+ * `min-width: auto` by default, which resolves to its MIN-CONTENT width. The
+ * table asks for `min-width: 2178px`, so the item refused to be narrower than
+ * that and the track blew out with it: measured on Orders at 1280, the scroller
+ * reported clientWidth 2178 === scrollWidth 2178, i.e. "nothing to scroll",
+ * inside a 950px card. `min-width: 0` lets the item take the width it is given
+ * and the overflow lands where it belongs.
  */
 function DataGridScroller({ children }: { children: ReactNode }) {
   const { ref, isFading } = useHorizontalOverflow<HTMLDivElement>();
 
   return (
-    <div className="relative">
+    <div className="relative min-w-0">
       <div
         ref={ref}
         data-slot="data-grid-scroller"
         data-fade={isFading}
-        className="overflow-x-auto overscroll-x-contain"
+        className="min-w-0 overflow-x-auto overscroll-x-contain"
       >
         {children}
       </div>
@@ -864,29 +881,11 @@ function DataGridScroller({ children }: { children: ReactNode }) {
 function DataGridTable<TData>() {
   const { table, isLoading, props } = useDataGrid();
   const pagination = table.getState().pagination;
-  const isUnderSm = useIsUnderSm();
-  // `null` means "we have not pinned anything", which is NOT the same as the
-  // empty pinning state an unpinned grid starts in - `if (ref.current)` was
-  // falsy for both, so widening the window left the phone pin in place.
-  const pinningBeforeNarrow = React.useRef<ReturnType<typeof table.getState>['columnPinning'] | null>(null);
-
-  // On a phone the grid scrolls sideways, so the column that says WHICH row this
-  // is has to stay put - otherwise the user scrolls to a number with nothing to
-  // attach it to. The checkbox column is not that column.
-  React.useEffect(() => {
-    if (!isUnderSm) {
-      if (pinningBeforeNarrow.current !== null) {
-        table.setColumnPinning(pinningBeforeNarrow.current);
-        pinningBeforeNarrow.current = null;
-      }
-      return;
-    }
-    const identifier = table.getVisibleLeafColumns().find((column) => column.id !== SELECT_COLUMN_ID);
-    if (!identifier || table.getState().columnPinning?.left?.[0] === identifier.id) return;
-
-    pinningBeforeNarrow.current = table.getState().columnPinning ?? {};
-    table.setColumnPinning({ left: [identifier.id], right: [] });
-  }, [isUnderSm, table]);
+  // A phone does NOT pin the identifier column. S1 pinned it under `sm` so the
+  // row stayed labelled while the grid scrolled sideways; the user tried it and
+  // found a column that refuses to move with the rest weirder than losing sight
+  // of the name (ruling 2026-08-30). The whole row scrolls as one. Explicit
+  // pinning still works for the lists that ask for it.
 
   if (props.tableLayout?.columnsDraggable) {
     const handleDragEnd = (event: DragEndEvent) => {

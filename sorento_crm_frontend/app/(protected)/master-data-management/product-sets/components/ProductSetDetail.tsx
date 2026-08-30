@@ -364,7 +364,7 @@ export default function ProductSetDetail({ id }: { id: string }) {
                 </Button>
                 <Button onClick={() => void handleSave()} disabled={!canSave}>
                   {update.isPending ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}
-                  Save
+                  Save product set
                 </Button>
               </div>
             ) : (

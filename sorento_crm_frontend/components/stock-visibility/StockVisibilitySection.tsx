@@ -241,7 +241,10 @@ export function StockVisibilitySection({
         </Badge>
       </div>
 
-      <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2">
+      {/* `items-start`, or the two columns stretch to the taller one: Locations
+          carries a picker plus two buttons, and the select trigger is `min-h`,
+          so Mode was drawn two to three times a control's height. */}
+      <div className="mt-3 grid grid-cols-1 items-start gap-4 md:grid-cols-2">
         <div className="grid gap-2">
           <Label htmlFor="stock-visibility-mode">Mode</Label>
           <SearchableSelect
@@ -319,7 +322,7 @@ export function StockVisibilitySection({
           }
           disabled={!canSave}
         >
-          Save
+          Save stock visibility
         </Button>
         {canRemove ? (
           <Button

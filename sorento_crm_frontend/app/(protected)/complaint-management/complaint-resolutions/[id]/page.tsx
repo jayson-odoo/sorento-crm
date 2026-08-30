@@ -1,13 +1,7 @@
 import { Metadata } from 'next';
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
 import { Container } from '@/components/common/container';
+import { PageHeader } from '@/components/common/PageHeader';
+import BackToList from '@/components/common/BackToList';
 
 import ComplaintResolutionDetail from './ComplaintResolutionDetail';
 
@@ -24,27 +18,10 @@ export default async function ComplaintResolutionDetailPage({
   const { id } = await params;
   return (
     <Container>
-      <Breadcrumb>
-        <BreadcrumbList>
-          <BreadcrumbItem>
-            <BreadcrumbLink href="/">Home</BreadcrumbLink>
-          </BreadcrumbItem>
-          <BreadcrumbSeparator />
-          <BreadcrumbItem>
-            <BreadcrumbPage>Complaint Management</BreadcrumbPage>
-          </BreadcrumbItem>
-          <BreadcrumbSeparator />
-          <BreadcrumbItem>
-            <BreadcrumbLink href="/complaint-management/complaint-resolutions">
-              Resolutions
-            </BreadcrumbLink>
-          </BreadcrumbItem>
-          <BreadcrumbSeparator />
-          <BreadcrumbItem>
-            <BreadcrumbPage>Details</BreadcrumbPage>
-          </BreadcrumbItem>
-        </BreadcrumbList>
-      </Breadcrumb>
+      <PageHeader
+        title="Resolution"
+        actions={<BackToList listPath="/complaint-management/complaint-resolutions" label="Back to resolutions" />}
+      />
       <div className="mt-6">
         <ComplaintResolutionDetail id={id} />
       </div>

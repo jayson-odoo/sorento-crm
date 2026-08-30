@@ -124,7 +124,7 @@ describe('PageEditorScreen header', () => {
     ).filter((element) => !gear.contains(element));
 
     expect(headerButtons.map((element) => element.textContent?.trim())).toEqual([
-      'Save',
+      'Save page',
       'Publish',
     ]);
   });
@@ -135,7 +135,7 @@ describe('PageEditorScreen header', () => {
     // saving is a step towards publishing, not the goal.
     renderScreen();
     const publish = await screen.findByRole('button', { name: /publish/i });
-    const save = screen.getByRole('button', { name: /^save$/i });
+    const save = screen.getByRole('button', { name: /^Save page$/i });
 
     expect(publish.className).not.toMatch(/border-input|bg-background/);
     expect(save.className).toMatch(/border|outline/);

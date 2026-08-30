@@ -491,7 +491,7 @@ export default function PurchaseRequestDetail({
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="space-y-1 min-w-0">
-          <h1 className="text-2xl font-bold break-words">
+          <h2 className="text-2xl font-bold break-words">
             {typeLabel}
             {request.request_number
               ? ` - ${withRevisionSuffix(request.request_number, revisionNo)}`
@@ -500,7 +500,7 @@ export default function PurchaseRequestDetail({
                 : request.project_title
                   ? ` - ${request.project_title}`
                   : ''}
-          </h1>
+          </h2>
           <p className="text-sm text-muted-foreground">
             {request.submitted_at
               ? formatDate(new Date(request.submitted_at))

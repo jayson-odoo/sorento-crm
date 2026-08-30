@@ -1,7 +1,7 @@
 'use client';
 import { use } from 'react';
 import { Container } from '@/components/common/container';
-import { Toolbar, ToolbarHeading, ToolbarTitle } from '@/components/common/toolbar';
+import { PageHeader } from '@/components/common/PageHeader';
 import { useLookupSet } from '../hooks/useLookupSets';
 import SetInfoCard from '../components/SetInfoCard';
 import OptionsSection from '../components/OptionsSection';
@@ -16,11 +16,7 @@ export default function LookupSetDetailPage({ params }: { params: Promise<{ id: 
   return (
     <>
       <Container>
-        <Toolbar>
-          <ToolbarHeading>
-            <ToolbarTitle>{set.name}</ToolbarTitle>
-          </ToolbarHeading>
-        </Toolbar>
+        <PageHeader title={set.name} />
       </Container>
       <Container className="space-y-6">
         <SetInfoCard set={set} />

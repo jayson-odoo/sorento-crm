@@ -4,24 +4,11 @@ import { useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { ArrowLeft, Pencil, Play } from 'lucide-react';
 import { toast } from 'sonner';
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Container } from '@/components/common/container';
-import {
-  Toolbar,
-  ToolbarActions,
-  ToolbarHeading,
-  ToolbarTitle,
-} from '@/components/common/toolbar';
+import { PageHeader } from '@/components/common/PageHeader';
 import { Switch } from '@/components/ui/switch';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import {
@@ -50,49 +37,34 @@ export default function AutomationDetailPage() {
   return (
     <>
       <Container>
-        <Toolbar>
-          <ToolbarHeading>
-            <ToolbarTitle>{automation?.name ?? 'Automation'}</ToolbarTitle>
-            <Breadcrumb>
-              <BreadcrumbList>
-                <BreadcrumbItem>
-                  <BreadcrumbLink href="/">Home</BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbLink href="/system-management/automation">Automation</BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbPage>{automation?.name ?? '...'}</BreadcrumbPage>
-                </BreadcrumbItem>
-              </BreadcrumbList>
-            </Breadcrumb>
-          </ToolbarHeading>
-          <ToolbarActions>
-            <Button variant="outline" size="sm" onClick={() => router.push('/system-management/automation')}>
-              <ArrowLeft className="mr-1 size-4" /> Back
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={!automation || runMut.isPending}
-              onClick={async () => {
-                try {
-                  const r = await runMut.mutateAsync();
-                  toast.success(`Run queued: ${r.recipients_attempted} recipient(s)`);
-                } catch (err) {
-                  toast.error((err as Error).message || 'Run failed');
-                }
-              }}
-            >
-              <Play className="mr-1 size-4" /> Run now
-            </Button>
-            <Button size="sm" onClick={() => setEditing(true)} disabled={!automation}>
-              <Pencil className="mr-1 size-4" /> Edit
-            </Button>
-          </ToolbarActions>
-        </Toolbar>
+        <PageHeader
+          title={automation?.name ?? 'Automation'}
+          actions={
+            <>
+              <Button variant="outline" size="sm" onClick={() => router.push('/system-management/automation')}>
+                <ArrowLeft className="mr-1 size-4" /> Back
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={!automation || runMut.isPending}
+                onClick={async () => {
+                  try {
+                    const r = await runMut.mutateAsync();
+                    toast.success(`Run queued: ${r.recipients_attempted} recipient(s)`);
+                  } catch (err) {
+                    toast.error((err as Error).message || 'Run failed');
+                  }
+                }}
+              >
+                <Play className="mr-1 size-4" /> Run now
+              </Button>
+              <Button size="sm" onClick={() => setEditing(true)} disabled={!automation}>
+                <Pencil className="mr-1 size-4" /> Edit
+              </Button>
+            </>
+          }
+        />
       </Container>
 
       <Container>

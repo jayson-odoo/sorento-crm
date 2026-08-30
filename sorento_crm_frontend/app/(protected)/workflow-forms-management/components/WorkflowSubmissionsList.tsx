@@ -25,7 +25,6 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useHasPermission } from '@/hooks/usePermissions';
@@ -362,10 +361,7 @@ export default function WorkflowSubmissionsList({
             </div>
           ) : null}
           <CardTable>
-            <ScrollArea>
-              <DataGridTable />
-              <ScrollBar orientation="horizontal" />
-            </ScrollArea>
+            <DataGridTable />
           </CardTable>
           <CardFooter>
             <DataGridPagination />

@@ -24,7 +24,6 @@ import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
@@ -305,6 +304,15 @@ export default function CertificatesList() {
 
   const selectedCount = selectedRowIds(table).length;
 
+  // The one offer this listing makes, in both places it belongs: the
+  // toolbar, and the empty state's next step (S5-06).
+  const listPrimaryAction = (
+    <Button onClick={() => setFormOpen(true)}>
+      <Plus />
+      Add Certificate
+    </Button>
+  );
+
   return (
     <DataGrid
       table={table}
@@ -334,6 +342,7 @@ export default function CertificatesList() {
       // as a permission slug, and a pathname is not one.
       listingKey="master_data.certificates.view"
       tableLayout={{ width: 'fixed', columnsVisibility: true, columnsResizable: true }}
+      emptyAction={listPrimaryAction}
     >
       <Card>
         <CardHeader className="block">
@@ -429,12 +438,7 @@ export default function CertificatesList() {
             exportConfig={{ filename: 'certificates_export.xlsx' }}
             onRefresh={() => void refetch()}
             isRefreshing={isFetching && !isLoading}
-            primaryAction={
-              <Button onClick={() => setFormOpen(true)}>
-                <Plus />
-                Add Certificate
-              </Button>
-            }
+            primaryAction={listPrimaryAction}
             bulkActions={[
               {
                 key: 'delete',
@@ -447,10 +451,7 @@ export default function CertificatesList() {
           />
         </CardHeader>
         <CardTable>
-          <ScrollArea>
-            <DataGridTable />
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
+          <DataGridTable />
         </CardTable>
         <CardFooter>
           <DataGridPagination />

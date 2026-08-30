@@ -189,7 +189,7 @@ function testButton() {
 }
 
 function confirmButton() {
-  return screen.getByRole('button', { name: /^Confirm$/i });
+  return screen.getByRole('button', { name: /^Import proforma invoice$/i });
 }
 
 function supplierSelect(): HTMLSelectElement {
@@ -560,7 +560,7 @@ describe('ProformaUploadDialog - what the apply reports', () => {
     await screen.findByText(/Created 1 invoice/);
     expect(screen.queryByText('No errors')).not.toBeInTheDocument();
     // And the footer is done: Cancel becomes Close, and Test and Confirm are gone.
-    expect(screen.queryByRole('button', { name: /^Confirm$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Import proforma invoice$/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^Test$/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^Cancel$/i })).not.toBeInTheDocument();
   });

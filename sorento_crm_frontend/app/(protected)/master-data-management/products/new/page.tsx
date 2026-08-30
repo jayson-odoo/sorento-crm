@@ -1,25 +1,11 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { Metadata } from 'next';
 import Link from 'next/link';
 import { MoveLeft } from 'lucide-react';
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
 import { Button } from '@/components/ui/button';
 import { Container } from '@/components/common/container';
-import {
-  Toolbar,
-  ToolbarActions,
-  ToolbarHeading,
-  ToolbarTitle,
-} from '@/components/common/toolbar';
+import { PageHeader } from '@/components/common/PageHeader';
 import ProductForm from '../components/ProductForm';
 
 export default function NewProductPage() {
@@ -28,35 +14,16 @@ export default function NewProductPage() {
   return (
     <>
       <Container>
-        <Toolbar>
-          <ToolbarHeading>
-            <ToolbarTitle>Create Product</ToolbarTitle>
-            <Breadcrumb>
-              <BreadcrumbList>
-                <BreadcrumbItem>
-                  <BreadcrumbLink href="/">Home</BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbPage>Product Management</BreadcrumbPage>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbLink href="/master-data-management/products">
-                    Products
-                  </BreadcrumbLink>
-                </BreadcrumbItem>
-              </BreadcrumbList>
-            </Breadcrumb>
-          </ToolbarHeading>
-          <ToolbarActions>
+        <PageHeader
+          title="Create Product"
+          actions={
             <Button asChild variant="outline">
               <Link href="/master-data-management/products">
                 <MoveLeft /> Back to products
               </Link>
             </Button>
-          </ToolbarActions>
-        </Toolbar>
+          }
+        />
       </Container>
 
       <Container>

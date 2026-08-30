@@ -8,7 +8,6 @@ import { Button } from '@/components/ui/button';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import {
@@ -178,10 +177,7 @@ export function DeliveryScheduleVersionsGrid({
         isLoading={isLoading}
         tableLayout={{ width: 'fixed', columnsResizable: true }}
       >
-        <ScrollArea className="w-full">
-          <DataGridTable />
-          <ScrollBar orientation="horizontal" />
-        </ScrollArea>
+        <DataGridTable />
       </DataGrid>
 
       <ConfirmDeleteDialog

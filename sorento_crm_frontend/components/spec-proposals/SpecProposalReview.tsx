@@ -13,7 +13,6 @@ import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { cn } from '@/lib/utils';
 import { readable, readableValue } from '@/lib/spec-readable';
@@ -318,10 +317,7 @@ export function SpecProposalReview({
           {/* Horizontal scroll INSIDE the table's own container: at 375px five
               columns cannot fit, and without this the page itself scrolls sideways
               and takes the rest of the record with it. */}
-          <ScrollArea>
-            <DataGridTable />
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
+          <DataGridTable />
         </CardTable>
       </Card>
     </DataGrid>

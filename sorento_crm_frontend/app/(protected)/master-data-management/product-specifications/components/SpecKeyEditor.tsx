@@ -521,7 +521,7 @@ export default function SpecKeyEditor({
 
       <div className="flex gap-2">
         <Button onClick={save} disabled={saving}>
-          {saving ? 'Saving…' : 'Save'}
+          {saving ? 'Saving…' : 'Save specification'}
         </Button>
         <Button variant="outline" onClick={onCancel} disabled={saving}>
           Cancel

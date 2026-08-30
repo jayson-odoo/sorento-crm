@@ -34,7 +34,6 @@ import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
@@ -1031,10 +1030,7 @@ export function ContainerRequestSection({
           {view === 'table' ? (
             <>
               <CardTable>
-                <ScrollArea>
-                  <DataGridTable />
-                  <ScrollBar orientation="horizontal" />
-                </ScrollArea>
+                <DataGridTable />
               </CardTable>
               <CardFooter>
                 <DataGridPagination />

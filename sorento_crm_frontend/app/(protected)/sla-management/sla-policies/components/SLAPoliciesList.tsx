@@ -24,7 +24,6 @@ import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useSLAPolicies } from '../hooks/useSLAPolicies';
@@ -132,6 +131,15 @@ export default function SLAPoliciesList() {
     manualFiltering: true,
   });
 
+  // The one offer this listing makes, in both places it belongs: the
+  // toolbar, and the empty state's next step (S5-06).
+  const listPrimaryAction = (
+    <Button onClick={() => router.push('/sla-management/sla-policies/new')}>
+      <Plus />
+      Create SLA Policy
+    </Button>
+  );
+
   return (
     <DataGrid
       table={table}
@@ -140,6 +148,7 @@ export default function SLAPoliciesList() {
       onRowClick={handleRowClick}
       standardToolbar={false}
       tableLayout={{ columnsVisibility: true }}
+      emptyAction={listPrimaryAction}
     >
       <Card>
         <CardHeader className="block">
@@ -199,19 +208,11 @@ export default function SLAPoliciesList() {
             exportConfig={{ filename: 'sla_policies_export.xlsx' }}
             onRefresh={() => void refetch()}
             isRefreshing={isFetching && !isLoading}
-            primaryAction={
-              <Button onClick={() => router.push('/sla-management/sla-policies/new')}>
-                <Plus />
-                Create SLA Policy
-              </Button>
-            }
+            primaryAction={listPrimaryAction}
           />
         </CardHeader>
         <CardTable>
-          <ScrollArea>
-            <DataGridTable />
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
+          <DataGridTable />
         </CardTable>
         <CardFooter>
           <DataGridPagination />

@@ -16,6 +16,7 @@ import type { LeadWithAcceptance } from '../../_shared/types/leadAcceptance.type
 import { AssignLeadDialog } from './AssignLeadDialog';
 import { LeadsGrid } from './LeadsGrid';
 import { LeadWizardDialog } from './LeadWizardDialog';
+import { PageHeader } from '@/components/common/PageHeader';
 
 const OUTCOME_OPTIONS = [
   { value: 'open', label: 'Open' },
@@ -157,19 +158,20 @@ export function LeadsClient() {
 
   return (
     <div className="space-y-5">
-      <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0 break-words">
-          <h1 className="text-xl font-semibold">Leads</h1>
-          <p className="text-sm text-muted-foreground">
-            Developments we have heard about. Nobody owns one until a salesperson
-            accepts it.
-          </p>
-        </div>
-        <Button type="button" onClick={() => setWizardOpen(true)}>
-          <Plus className="size-4" aria-hidden />
-          Record a lead
-        </Button>
-      </header>
+      <PageHeader
+        title="Leads"
+        actions={
+          <Button type="button" onClick={() => setWizardOpen(true)}>
+            <Plus className="size-4" aria-hidden />
+            Record a lead
+          </Button>
+        }
+      >
+        <p className="text-sm text-muted-foreground">
+          Developments we have heard about. Nobody owns one until a salesperson
+          accepts it.
+        </p>
+      </PageHeader>
 
       {leads.isError ? (
         <div className="rounded-lg border border-destructive/40 bg-destructive/5 px-6 py-10 text-center">

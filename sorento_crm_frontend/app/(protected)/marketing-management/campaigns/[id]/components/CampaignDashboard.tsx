@@ -11,9 +11,9 @@ import { campaignsPagerQuery, useCampaign, useDeleteCampaign } from '../../hooks
 import BackToList, { useBackToListHref } from '@/components/common/BackToList';
 import DetailActions from '@/components/common/DetailActions';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
-import { Toolbar, ToolbarActions, ToolbarHeading, ToolbarTitle } from '@/components/common/toolbar';
 import { formatDate } from '@/lib/helpers';
 import BudgetTracker from './BudgetTracker';
+import { PageHeader } from '@/components/common/PageHeader';
 
 interface CampaignDashboardProps {
   campaignId: string;
@@ -54,20 +54,18 @@ export default function CampaignDashboard({ campaignId }: CampaignDashboardProps
       {/* Toolbar row: title and breadcrumb left, ONE Back right (D6, S3-01).
           The lone back-arrow button that used to sit beside the title said
           nothing about where it went and carried none of the list's state. */}
-      <Toolbar>
-        <ToolbarHeading>
-          <ToolbarTitle>Campaign</ToolbarTitle>
-        </ToolbarHeading>
-        <ToolbarActions>
+      <PageHeader
+        title="Campaign"
+        actions={
           <BackToList listPath="/marketing-management/campaigns" label="Back to campaigns" />
-        </ToolbarActions>
-      </Toolbar>
+        }
+      />
 
       {/* Record header: identity left, then pager, gear, primary. Wraps under
           the identity at 375. */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex min-w-0 flex-wrap items-center gap-3">
-          <h1 className="text-2xl font-bold break-words">{campaign.campaign_name}</h1>
+          <h2 className="text-2xl font-bold break-words">{campaign.campaign_name}</h2>
           <Badge status={campaign.status}>
             {campaign.status.charAt(0).toUpperCase() + campaign.status.slice(1)}
           </Badge>

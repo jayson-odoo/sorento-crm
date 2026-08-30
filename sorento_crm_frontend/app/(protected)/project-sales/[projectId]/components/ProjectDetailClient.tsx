@@ -184,7 +184,7 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
             )}
             {!project.can_edit && <Badge variant="outline">Read only</Badge>}
           </div>
-          <h1 className="mt-1 text-xl font-semibold">{project.title}</h1>
+          <h2 className="mt-1 text-xl font-semibold">{project.title}</h2>
           <p className="text-sm text-muted-foreground">
             {[project.developer_name, project.location].filter(Boolean).join(' · ') ||
               'No developer or location recorded yet'}

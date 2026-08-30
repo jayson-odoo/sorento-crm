@@ -69,7 +69,7 @@ describe('ContactAttachmentTypesSection', () => {
     await screen.findByText('Container Status');
     fireEvent.click(screen.getByLabelText(/edit document types/i));
     fireEvent.click(await screen.findByRole('checkbox', { name: /product photos/i }));
-    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^Save attachment types$/i }));
 
     await waitFor(() => {
       const put = apiFetch.mock.calls.find((c) => (c[1] as { method?: string })?.method === 'PUT');
@@ -85,14 +85,14 @@ describe('ContactAttachmentTypesSection', () => {
     await screen.findByText('Container Status');
     fireEvent.click(screen.getByLabelText(/edit document types/i));
     fireEvent.click(await screen.findByRole('checkbox', { name: /container status/i }));
-    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^Save attachment types$/i }));
 
     expect(await screen.findByText(/this action cannot be undone/i)).toBeInTheDocument();
     expect(apiFetch.mock.calls.some((c) => (c[1] as { method?: string })?.method === 'PUT')).toBe(
       false,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: /^confirm$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^Remove attachment types$/i }));
     await waitFor(() => {
       const put = apiFetch.mock.calls.find((c) => (c[1] as { method?: string })?.method === 'PUT');
       expect(JSON.parse((put![1] as { body: string }).body)).toEqual({ attachment_type_ids: [] });

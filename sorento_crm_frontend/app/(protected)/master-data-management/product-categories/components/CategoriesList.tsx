@@ -21,12 +21,6 @@ export default function CategoriesList() {
   const [categoryToDelete, setCategoryToDelete] = useState<CategoryTreeItem | null>(null);
   const { data: categories, isLoading } = useCategoriesTree();
 
-  const handleEdit = (category: CategoryTreeItem) => {
-    setCopyFromCategory(null);
-    setEditingCategoryId(category.id);
-    setFormOpen(true);
-  };
-
   const handleDuplicate = (category: CategoryTreeItem) => {
     setEditingCategoryId(undefined);
     setCopyFromCategory(category);
@@ -80,7 +74,6 @@ export default function CategoriesList() {
               <CategoryTree
                 categories={categories || []}
                 searchQuery={searchQuery}
-                onEdit={handleEdit}
                 onDuplicate={handleDuplicate}
                 onDelete={handleDelete}
               />

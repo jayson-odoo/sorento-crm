@@ -17,7 +17,6 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { EM_DASH } from '../../lib/format';
@@ -326,10 +325,7 @@ export function ReorderPolicyGrid() {
           ) : null}
 
           <CardTable>
-            <ScrollArea>
-              <DataGridTable />
-              <ScrollBar orientation="horizontal" />
-            </ScrollArea>
+            <DataGridTable />
           </CardTable>
           <CardFooter>
             <DataGridPagination />

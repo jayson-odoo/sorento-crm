@@ -3,23 +3,10 @@
 import React, { use, useEffect, useMemo, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { KeyRound, MessageSquare, Route, UserPen } from 'lucide-react';
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Container } from '@/components/common/container';
-import {
-  Toolbar,
-  ToolbarActions,
-  ToolbarHeading,
-  ToolbarTitle,
-} from '@/components/common/toolbar';
+import { PageHeader } from '@/components/common/PageHeader';
 import DetailActions from '@/components/common/DetailActions';
 import BackToList, { useBackToListHref } from '@/components/common/BackToList';
 import { contactsPagerQuery } from '../lib/listQuery';
@@ -31,6 +18,33 @@ import { useContactQuery } from './hooks/useContactQuery';
 import { contactActions } from '../actions';
 import { ContactImpersonateDialog } from '../components/ContactImpersonateDialog';
 import type { RespondContact } from '../types/contact.types';
+import { formatDateTimeInMalaysia } from '@/lib/helpers';
+
+/**
+ * The contact's read-only record metadata, in the page header.
+ *
+ * Read-only values with no edit counterpart belong in the header, never in a
+ * tab body and never beside the actions (ADR product standards). Sitting in the
+ * record card's right-hand column, this grid stacked under the identity below
+ * `lg` and turned the pager, gear and primary button into a footer strip.
+ */
+function ContactMeta({ contact }: { contact: RespondContact }) {
+  const items: [string, string][] = [
+    ['Respond.io ID', contact.respond_io_id || 'Not set'],
+    ['Created At', formatDateTimeInMalaysia(contact.created_at)],
+    ['Updated At', formatDateTimeInMalaysia(contact.updated_at)],
+  ];
+
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-2sm text-muted-foreground">
+      {items.map(([label, value]) => (
+        <span key={label} className="break-words">
+          {label}: <span className="text-foreground">{value}</span>
+        </span>
+      ))}
+    </div>
+  );
+}
 
 type NavRoutes = Record<
   string,
@@ -109,31 +123,18 @@ export default function ContactLayout({
   return (
     <ContactProvider contact={contact} isLoading={isLoading} contactId={id}>
       <Container>
-        <Toolbar>
-          <ToolbarHeading>
-            <ToolbarTitle>Contact Details</ToolbarTitle>
-            <Breadcrumb>
-              <BreadcrumbList>
-                <BreadcrumbItem>
-                  <BreadcrumbLink href="/">Home</BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbLink href="/user-management/contacts">
-                    User Management
-                  </BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbPage>Contacts</BreadcrumbPage>
-                </BreadcrumbItem>
-              </BreadcrumbList>
-            </Breadcrumb>
-          </ToolbarHeading>
-          <ToolbarActions>
+        <PageHeader
+          title="Contact Details"
+          crumbs={[
+            { title: 'Internal Users', path: '/user-management/contacts' },
+            { title: 'Contact Details' },
+          ]}
+          actions={
             <BackToList listPath="/user-management/contacts" label="Back to contacts" />
-          </ToolbarActions>
-        </Toolbar>
+          }
+        >
+          {contact ? <ContactMeta contact={contact} /> : null}
+        </PageHeader>
 
         {notFound ? (
           <div className="text-center py-12">
@@ -143,7 +144,7 @@ export default function ContactLayout({
               onClick={() => router.push('/user-management/contacts')}
               className="mt-4"
             >
-              Back to Contacts
+              Back to contacts
             </Button>
           </div>
         ) : (

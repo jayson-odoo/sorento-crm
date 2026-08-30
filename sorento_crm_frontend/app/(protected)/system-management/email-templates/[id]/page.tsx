@@ -3,23 +3,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { ArrowLeft, Pencil } from 'lucide-react';
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Container } from '@/components/common/container';
-import {
-  Toolbar,
-  ToolbarActions,
-  ToolbarHeading,
-  ToolbarTitle,
-} from '@/components/common/toolbar';
+import { PageHeader } from '@/components/common/PageHeader';
 import { Badge } from '@/components/ui/badge';
 import {
   useEmailTemplate,
@@ -48,34 +35,19 @@ export default function EmailTemplateDetailPage() {
   return (
     <>
       <Container>
-        <Toolbar>
-          <ToolbarHeading>
-            <ToolbarTitle>{template?.name ?? 'Email Template'}</ToolbarTitle>
-            <Breadcrumb>
-              <BreadcrumbList>
-                <BreadcrumbItem>
-                  <BreadcrumbLink href="/">Home</BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbLink href="/system-management/email-templates">Email Templates</BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbPage>{template?.code ?? '...'}</BreadcrumbPage>
-                </BreadcrumbItem>
-              </BreadcrumbList>
-            </Breadcrumb>
-          </ToolbarHeading>
-          <ToolbarActions>
-            <Button variant="outline" size="sm" onClick={() => router.push('/system-management/email-templates')}>
-              <ArrowLeft className="mr-1 size-4" /> Back
-            </Button>
-            <Button size="sm" onClick={() => setEditing(true)} disabled={!template}>
-              <Pencil className="mr-1 size-4" /> Edit
-            </Button>
-          </ToolbarActions>
-        </Toolbar>
+        <PageHeader
+          title={template?.name ?? 'Email Template'}
+          actions={
+            <>
+              <Button variant="outline" size="sm" onClick={() => router.push('/system-management/email-templates')}>
+                <ArrowLeft className="mr-1 size-4" /> Back
+              </Button>
+              <Button size="sm" onClick={() => setEditing(true)} disabled={!template}>
+                <Pencil className="mr-1 size-4" /> Edit
+              </Button>
+            </>
+          }
+        />
       </Container>
 
       <Container>

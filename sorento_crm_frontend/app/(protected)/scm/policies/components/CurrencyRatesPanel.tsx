@@ -247,7 +247,7 @@ export function CurrencyRatesPanel() {
               onClick={() => draft && save.mutate(draft)}
               disabled={!valid || save.isPending}
             >
-              Save
+              Save currency rate
             </Button>
           </DialogFooter>
         </DialogContent>

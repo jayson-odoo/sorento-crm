@@ -13,7 +13,6 @@ import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { useAutomationRuns } from '../hooks/useAutomations';
 import type { AutomationRun } from '../types/automation.types';
@@ -120,10 +119,7 @@ export default function AutomationRunsTable({ automationId }: { automationId: st
           <CardTitle>Run history</CardTitle>
         </CardHeader>
         <CardTable>
-          <ScrollArea className="w-full">
-            <DataGridTable />
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
+          <DataGridTable />
         </CardTable>
         {total > pagination.pageSize && (
           <CardFooter className="flex justify-between border-t px-4 py-3">

@@ -38,12 +38,12 @@ import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { User, UserStatus } from '@/app/models/user';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import { UserRowActions } from '../actions';
+import { pendingEntityKey, usePendingEntityKeys } from '@/lib/pending-entity-store';
 import {
   fetchUsersListPage,
   usersListFilters,
@@ -148,6 +148,11 @@ const UserList = () => {
     const search = buildDetailSearch(listParams, listParams.filters);
     return `/user-management/users/${row.id}${search ? `?${search}` : ''}`;
   };
+
+  // A user whose trashing is counting down stays on the list, dimmed, until the
+  // window lapses - the toast holds the Cancel, this says which row it is for.
+  const pendingKeys = usePendingEntityKeys();
+  const rowPending = (row: User) => pendingKeys.has(pendingEntityKey('user', row.id));
 
   const selectedRowIds = useMemo(() => Object.keys(rowSelection), [rowSelection]);
 
@@ -464,6 +469,20 @@ const UserList = () => {
     manualFiltering: true,
   });
 
+  // The one offer this listing makes, in both places it belongs: the toolbar,
+  // and the empty state's next step (S5-06).
+  const addUserButton = (
+    <Button
+      disabled={isLoading && true}
+      onClick={() => {
+        setInviteDialogOpen(true);
+      }}
+    >
+      <Plus />
+      Add user
+    </Button>
+  );
+
   const DataGridToolbar = () => {
     const [inputValue, setInputValue] = useState(searchQuery);
     type UserFilterField = 'role' | 'status' | 'trashed';
@@ -689,17 +708,7 @@ const UserList = () => {
           }}
           exportConfig={{ filename: 'users_export.xlsx' }}
           bulkActions={bulkActions}
-          primaryAction={
-            <Button
-              disabled={isLoading && true}
-              onClick={() => {
-                setInviteDialogOpen(true);
-              }}
-            >
-              <Plus />
-              Add user
-            </Button>
-          }
+          primaryAction={addUserButton}
         />
       </CardHeader>
     );
@@ -709,9 +718,11 @@ const UserList = () => {
     <>
       <DataGrid
         table={table}
+        emptyAction={addUserButton}
         recordCount={data?.pagination.total || 0}
         isLoading={isLoading}
         rowHref={rowHref}
+        rowPending={rowPending}
         standardToolbar={false}
         tableLayout={{
           columnsResizable: true,
@@ -726,10 +737,7 @@ const UserList = () => {
         <Card>
           <DataGridToolbar />
           <CardTable>
-            <ScrollArea>
-              <DataGridTable />
-              <ScrollBar orientation="horizontal" />
-            </ScrollArea>
+            <DataGridTable />
           </CardTable>
           <CardFooter>
             <DataGridPagination />

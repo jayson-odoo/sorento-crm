@@ -13,7 +13,6 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -149,12 +148,9 @@ export default function NumberingRulesList() {
               exportConfig={{ filename: 'numbering_rules_export.xlsx' }}
             />
           </CardHeader>
-          <ScrollArea>
-            <CardTable>
-              <DataGridTable />
-            </CardTable>
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
+          <CardTable>
+            <DataGridTable />
+          </CardTable>
         </DataGrid>
       </Card>
       <NumberingRuleEditDialog

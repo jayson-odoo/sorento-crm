@@ -224,7 +224,7 @@ async function chooseAction(name: RegExp) {
 
 async function startEditing() {
   await chooseAction(/Edit this sales order/);
-  await screen.findByRole('button', { name: 'Save' });
+  await screen.findByRole('button', { name: 'Save sales order' });
 }
 
 beforeEach(() => {
@@ -244,11 +244,13 @@ describe('the edit view is the read view', () => {
     renderDetail();
 
     expect(
-      await screen.findByRole('heading', { level: 1, name: 'PSO-000123' }),
+      // The record card's identity is an h2: the page's one h1 is the title
+      // PageHeader renders (S5-01).
+      await screen.findByRole('heading', { level: 2, name: 'PSO-000123' }),
     ).toBeInTheDocument();
     expect(screen.getByText('Area group')).toBeInTheDocument();
     expect(screen.queryByRole('textbox', { name: 'Area group' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Save sales order' })).not.toBeInTheDocument();
   });
 
   it('swaps the one editable field for an input where it already stood', async () => {
@@ -268,11 +270,11 @@ describe('the edit view is the read view', () => {
     await startEditing();
 
     expect(screen.getByText('Nothing is written until you press Save.')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Save sales order' })).toBeDisabled();
 
     fireEvent.change(screen.getByLabelText('Area group'), { target: { value: 'PODIUM' } });
 
-    expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Save sales order' })).toBeEnabled();
   });
 
   it('withholds Publish while a session is open, so nothing acts on unsaved changes', async () => {
@@ -291,7 +293,7 @@ describe('arriving from the list with ?edit=1', () => {
     search = new URLSearchParams('edit=1');
     renderDetail();
 
-    expect(await screen.findByRole('button', { name: 'Save' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Save sales order' })).toBeInTheDocument();
     expect(screen.getByLabelText('Area group')).toHaveValue('TOWER');
   });
 
@@ -302,7 +304,7 @@ describe('arriving from the list with ?edit=1', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Cancel' }));
 
     await waitFor(() =>
-      expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument(),
+      expect(screen.queryByRole('button', { name: 'Save sales order' })).not.toBeInTheDocument(),
     );
   });
 
@@ -312,7 +314,7 @@ describe('arriving from the list with ?edit=1', () => {
     renderDetail();
 
     await screen.findByRole('button', { name: 'Sales order actions' });
-    expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Save sales order' })).not.toBeInTheDocument();
   });
 });
 
@@ -322,14 +324,14 @@ describe('one Save', () => {
     await startEditing();
 
     fireEvent.change(screen.getByLabelText('Area group'), { target: { value: 'PODIUM' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save sales order' }));
 
     await waitFor(() => expect(saveSalesOrderDocument).toHaveBeenCalledTimes(1));
     expect(saveSalesOrderDocument).toHaveBeenCalledWith('so-1', { area_group: 'PODIUM' });
     await waitFor(() => expect(toastSuccess).toHaveBeenCalledWith('Sales order saved'));
     // Back to the read view.
     await waitFor(() =>
-      expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument(),
+      expect(screen.queryByRole('button', { name: 'Save sales order' })).not.toBeInTheDocument(),
     );
   });
 
@@ -340,7 +342,7 @@ describe('one Save', () => {
     fireEvent.change(screen.getByRole('textbox', { name: /Qty on CB6633/ }), {
       target: { value: '601' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save sales order' }));
 
     await waitFor(() => expect(saveSalesOrderDocument).toHaveBeenCalledTimes(1));
     const [, body] = saveSalesOrderDocument.mock.calls[0];
@@ -359,7 +361,7 @@ describe('one Save', () => {
     fireEvent.change(screen.getAllByRole('textbox', { name: /^Qty on line 3/ })[0], {
       target: { value: '5' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save sales order' }));
 
     await waitFor(() =>
       expect(toastError).toHaveBeenCalledWith(
@@ -377,7 +379,7 @@ describe('one Save', () => {
     // Staged, not done: no dialog yet.
     expect(screen.queryByText('Confirm delete')).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save sales order' }));
 
     const dialog = await screen.findByRole('alertdialog');
     expect(within(dialog).getByText('Confirm delete')).toBeInTheDocument();

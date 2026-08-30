@@ -98,7 +98,7 @@ export default function GRNDetail({ grnId }: GRNDetailProps) {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0 space-y-1">
           <div className="flex flex-wrap items-center gap-3">
-            <h1 className="text-2xl font-bold break-words">{grn.picking_number}</h1>
+            <h2 className="text-2xl font-bold break-words">{grn.picking_number}</h2>
             <span
               className={`${STATUS_PILL_BASE} ${statusPillClass(grn.picking_status)}`}
             >

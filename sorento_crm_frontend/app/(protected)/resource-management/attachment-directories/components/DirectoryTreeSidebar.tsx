@@ -694,7 +694,7 @@ export default function DirectoryTreeSidebar({
               Cancel
             </Button>
             <Button onClick={handleRename} disabled={!renameName.trim() || updateMutation.isPending}>
-              Save
+              Rename folder
             </Button>
           </DialogFooter>
         </DialogContent>

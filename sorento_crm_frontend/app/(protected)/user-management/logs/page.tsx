@@ -1,12 +1,6 @@
 import { Metadata } from 'next';
 import { Container } from '@/components/common/container';
-/*
-import {
-  Toolbar,
-  ToolbarActions,
-  ToolbarHeading,
-  ToolbarTitle,
-} from '@/components/common/toolbar';*/
+import { PageHeader } from '@/components/common/PageHeader';
 import LogList from './components/log-list';
 
 export const metadata: Metadata = {
@@ -17,16 +11,10 @@ export const metadata: Metadata = {
 export default async function ActivityLogsPage() {
   return (
     <>
-      {/*
       <Container>
-        <Toolbar>
-          <ToolbarHeading>
-            <ToolbarTitle>Logs</ToolbarTitle>
-          </ToolbarHeading>
-          <ToolbarActions></ToolbarActions>
-        </Toolbar>
+        <PageHeader title="Logs" />
       </Container>
-      */}
+
       <Container>
         <LogList />
       </Container>

@@ -15,9 +15,10 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
 import { Skeleton } from '@/components/ui/skeleton';
+import DeferredActionButton from '@/components/common/DeferredActionButton';
 import { User } from '@/app/models/user';
 import { useForceLogoutUserMutation } from '@/hooks/useSessions';
-import UserDeleteDialog from './user-delete-dialog';
+import { useDeferredAction } from '@/hooks/useDeferredAction';
 import UserRestoreDialog from './user-restore-dialog';
 import UserPermanentDeleteDialog from './user-permanent-delete-dialog';
 
@@ -28,10 +29,23 @@ const UserDangerZone = ({
   user: User;
   isLoading: boolean;
 }) => {
-  const [isDeleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [isRestoreDialogOpen, setRestoreDialogOpen] = useState(false);
   const [isPermanentDeleteDialogOpen, setPermanentDeleteDialogOpen] = useState(false);
   const forceLogout = useForceLogoutUserMutation();
+
+  // The same parked action the gear starts (D7): whichever surface began it, both
+  // show the countdown, because the server holds one per record.
+  const trashing = useDeferredAction({
+    actionKey: 'user.delete',
+    entityType: 'user',
+    entityId: user?.id,
+    verb: 'Trashing',
+    subject: user?.name || user?.email || '',
+    surface: 'inline',
+    watchFromMount: true,
+    successMessage: 'User moved to the trash',
+    invalidateKeys: [['user-users'], ['user-user', user?.id]],
+  });
 
   // Render skeleton when loading
   const Loading = () => (
@@ -88,20 +102,22 @@ const UserDangerZone = ({
           <p className="text-sm text-muted-foreground mb-4">
             This will move the user to the trash. They can be restored later from the user list (Trashed only filter).
           </p>
-          <Button
-            variant="destructive"
-            onClick={() => setDeleteDialogOpen(true)}
-            disabled={user.role?.isProtected}
-          >
-            Trash user
-          </Button>
+          <DeferredActionButton
+            pending={trashing.pending}
+            verb="Trashing"
+            onCancel={trashing.cancel}
+            idle={
+              <Button
+                variant="destructive"
+                onClick={() => trashing.start()}
+                disabled={user.role?.isProtected || trashing.isBlocked}
+              >
+                Trash user
+              </Button>
+            }
+          />
         </CardContent>
       </Card>
-      <UserDeleteDialog
-        open={isDeleteDialogOpen}
-        closeDialog={() => setDeleteDialogOpen(false)}
-        user={user}
-      />
     </div>
   );
 

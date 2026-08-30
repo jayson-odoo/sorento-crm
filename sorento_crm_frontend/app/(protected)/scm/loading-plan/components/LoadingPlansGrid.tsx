@@ -20,7 +20,6 @@ import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
@@ -303,6 +302,15 @@ export function LoadingPlansGrid() {
     enableColumnResizing: true,
   });
 
+  // The one offer this listing makes, in both places it belongs: the
+  // toolbar, and the empty state's next step (S5-06).
+  const listPrimaryAction = (
+    <Button onClick={() => setUploadOpen(true)} data-testid="open-plan-container">
+      <Upload className="size-4" />
+      Upload
+    </Button>
+  );
+
   return (
     <>
       <DataGrid
@@ -317,17 +325,13 @@ export function LoadingPlansGrid() {
         onRowClick={(row) => router.push(`/scm/loading-plan/${row.id}`)}
         tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
         listingKey="scm.dashboard.view::loading-plans"
+        emptyAction={listPrimaryAction}
       >
         <Card>
           <CardHeader className="block">
             <DataGridListToolbar
               table={table}
-              primaryAction={
-                <Button onClick={() => setUploadOpen(true)} data-testid="open-plan-container">
-                  <Upload className="size-4" />
-                  Upload
-                </Button>
-              }
+              primaryAction={listPrimaryAction}
               filters={{
                 kind: 'custom',
                 active: status !== 'active',
@@ -389,10 +393,7 @@ export function LoadingPlansGrid() {
             />
           </CardHeader>
           <CardTable>
-            <ScrollArea>
-              <DataGridTable />
-              <ScrollBar orientation="horizontal" />
-            </ScrollArea>
+            <DataGridTable />
           </CardTable>
           <CardFooter>
             <DataGridPagination />

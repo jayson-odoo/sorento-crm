@@ -2,8 +2,10 @@
 
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
-import { ChevronRight, ChevronDown, Folder, FolderOpen, ExternalLink, Edit, Copy, Trash2 } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { ChevronRight, ChevronDown, Folder, FolderOpen, ExternalLink, Copy, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { RowActionsMenu } from '@/components/common/RowActionsMenu';
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import {
   Tooltip,
@@ -16,7 +18,6 @@ interface CategoryTreeProps {
   categories: CategoryTreeItem[];
   searchQuery?: string;
   level?: number;
-  onEdit?: (category: CategoryTreeItem) => void;
   onDuplicate?: (category: CategoryTreeItem) => void;
   onDelete?: (category: CategoryTreeItem) => void;
 }
@@ -36,7 +37,8 @@ function flattenVisible(
   return result;
 }
 
-export default function CategoryTree({ categories, searchQuery = '', level = 0, onEdit, onDuplicate, onDelete }: CategoryTreeProps) {
+export default function CategoryTree({ categories, searchQuery = '', level = 0, onDuplicate, onDelete }: CategoryTreeProps) {
+  const router = useRouter();
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
   const toggleExpand = (id: string) => {
@@ -107,9 +109,20 @@ export default function CategoryTree({ categories, searchQuery = '', level = 0, 
           return (
             // `border-separate`, so the row rule is drawn by the CELLS: a
             // border on a `<tr>` is not painted at all in separate mode.
+            // The row IS the link to the record (D3): a click anywhere on it
+            // opens the category, and the expander, the products link and the
+            // actions menu stop the click before it gets here.
             <tr
               key={category.id}
-              className="group transition-colors hover:bg-accent/50 [&>td]:border-b [&>td]:border-border/70"
+              role="link"
+              tabIndex={0}
+              onClick={() => router.push(`/master-data-management/product-categories/${category.id}`)}
+              onKeyDown={(event) => {
+                if (event.key !== 'Enter' && event.key !== ' ') return;
+                event.preventDefault();
+                router.push(`/master-data-management/product-categories/${category.id}`);
+              }}
+              className="group cursor-pointer transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30 [&>td]:border-b [&>td]:border-border/70"
             >
               <td className="sticky start-0 z-10 px-3 py-2 align-middle before:absolute before:inset-0 before:-z-10 before:bg-card before:content-[''] group-hover:bg-accent/50">
                 <div
@@ -199,44 +212,37 @@ export default function CategoryTree({ categories, searchQuery = '', level = 0, 
                   </div>
                 )}
               </td>
+              {/* The row opens the record, where Edit happens in place, so the
+                  cell carries only what is left: Duplicate, then Delete in red
+                  (D15). */}
               <td className="px-3 py-2">
-                <div className="flex items-center gap-1">
-                  <Button
-                    mode="icon"
-                    variant="ghost"
-                    size="sm"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onEdit?.(category);
-                    }}
-                    title="Edit"
-                  >
-                    <Edit className="size-4" />
-                  </Button>
-                  <Button
-                    mode="icon"
-                    variant="ghost"
-                    size="sm"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onDuplicate?.(category);
-                    }}
-                    title="Duplicate"
-                  >
-                    <Copy className="size-4" />
-                  </Button>
-                  <Button
-                    mode="icon"
-                    variant="ghost"
-                    size="sm"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onDelete?.(category);
-                    }}
-                    title="Delete"
-                  >
-                    <Trash2 className="size-4" />
-                  </Button>
+                <div className="flex items-center justify-end gap-1">
+                  <RowActionsMenu
+                    ariaLabel={`category ${category.category_code}`}
+                    actions={[
+                      ...(onDuplicate
+                        ? [
+                            {
+                              key: 'product_category.duplicate',
+                              label: 'Duplicate category',
+                              icon: Copy,
+                              run: () => onDuplicate(category),
+                            },
+                          ]
+                        : []),
+                      ...(onDelete
+                        ? [
+                            {
+                              key: 'product_category.delete',
+                              label: 'Delete category',
+                              icon: Trash2,
+                              kind: 'destructive' as const,
+                              run: () => onDelete(category),
+                            },
+                          ]
+                        : []),
+                    ]}
+                  />
                   <ChevronRight className="text-muted-foreground/70 size-3.5 shrink-0" />
                 </div>
               </td>

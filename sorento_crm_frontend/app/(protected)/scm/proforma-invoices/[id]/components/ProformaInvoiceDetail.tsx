@@ -42,7 +42,6 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -1070,7 +1069,7 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
                 </Button>
                 <Button size="sm" onClick={() => void saveEdit()} disabled={saving}>
                   {saving ? <LoaderCircle className="me-2 size-4 animate-spin" /> : null}
-                  Save
+                  Save proforma invoice
                 </Button>
               </div>
             ) : (
@@ -1293,10 +1292,7 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
                 </CardToolbar>
               </CardHeader>
               <CardTable>
-                <ScrollArea>
-                  <DataGridTable />
-                  <ScrollBar orientation="horizontal" />
-                </ScrollArea>
+                <DataGridTable />
               </CardTable>
             </Card>
           </DataGrid>

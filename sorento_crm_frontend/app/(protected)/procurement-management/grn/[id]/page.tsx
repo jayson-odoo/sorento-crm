@@ -1,13 +1,6 @@
 import { Metadata } from 'next';
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
 import { Container } from '@/components/common/container';
+import { PageHeader } from '@/components/common/PageHeader';
 import BackToList from '@/components/common/BackToList';
 import GRNDetail from '../components/GRNDetail';
 
@@ -23,28 +16,13 @@ export default function GRNDetailPage({
 }) {
   return (
     <Container>
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <Breadcrumb>
-          <BreadcrumbList>
-            <BreadcrumbItem>
-              <BreadcrumbLink href="/">Home</BreadcrumbLink>
-            </BreadcrumbItem>
-            <BreadcrumbSeparator />
-            <BreadcrumbItem>
-              <BreadcrumbLink href="/procurement-management">Procurement</BreadcrumbLink>
-            </BreadcrumbItem>
-            <BreadcrumbSeparator />
-            <BreadcrumbItem>
-              <BreadcrumbLink href="/procurement-management/grn">GRN</BreadcrumbLink>
-            </BreadcrumbItem>
-            <BreadcrumbSeparator />
-            <BreadcrumbItem>
-              <BreadcrumbPage>Details</BreadcrumbPage>
-            </BreadcrumbItem>
-          </BreadcrumbList>
-        </Breadcrumb>
-        <BackToList listPath="/procurement-management/grn" label="Back to GRN" />
-      </div>
+      <PageHeader
+        title="Goods Receipt Note"
+        eyebrow="GRN"
+        actions={
+          <BackToList listPath="/procurement-management/grn" label="Back to GRN" />
+        }
+      />
       <div className="mt-6">
         <GRNDetailWrapper params={params} />
       </div>

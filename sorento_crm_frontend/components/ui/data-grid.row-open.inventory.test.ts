@@ -22,6 +22,11 @@ import { describe, it, expect } from 'vitest';
 const ROW_HREF = [
   'app/(protected)/marketing-management/campaigns/components/CampaignsList.tsx',
   'app/(protected)/master-data-management/units-of-measure/components/UOMList.tsx',
+  // Brands moved out of ROW_LIGHTBOX in the S5 fix round: `/brands/[id]` existed
+  // but nothing linked to it, so the row opened an edit lightbox and the record
+  // page could only be typed. The record now reads and edits in one layout, and
+  // the row opens it; Add is still a lightbox.
+  'app/(protected)/master-data-management/brands/components/BrandsList.tsx',
 ];
 
 /**
@@ -29,7 +34,6 @@ const ROW_HREF = [
  * click opens that lightbox instead (D3, second clause).
  */
 const ROW_LIGHTBOX = [
-  'app/(protected)/master-data-management/brands/components/BrandsList.tsx',
   'app/(protected)/user-management/access-agents/components/ContactAccessAgentsTable.tsx',
   'app/(protected)/user-management/contacts/[id]/components/ContactAccessAgentsTable.tsx',
   // Audit Logs looks like a log table and is not one: a row opens an "Audit

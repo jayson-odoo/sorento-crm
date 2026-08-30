@@ -39,6 +39,7 @@ import { getPromotionsByProductId } from '@/app/(protected)/marketing-management
 import { PriceFloorPanel } from '@/app/(protected)/project-sales/_shared/components/PriceFloorPanel';
 import DetailActions from '@/components/common/DetailActions';
 import { useProductActions } from '../../actions';
+import { useDeletedRecordGuard } from '@/hooks/useDeletedRecordGuard';
 import { productsPagerQuery } from '../../lib/listQuery';
 import AuditTrail from '@/components/audit/AuditTrail';
 import FieldAttachmentTooltip from './FieldAttachmentTooltip';
@@ -93,8 +94,9 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
   const navigationBasePath = '/master-data-management/products';
   const navigationQueryString = searchParams.toString();
 
-  // Delete lives in the gear and opens the same dialog the list row opens.
-  const { actions, dialogs } = useProductActions(
+  // Delete lives in the gear, and parks a ten-second window whose countdown takes
+  // the primary button's place until it lapses (D7).
+  const { actions, dialogs, pending } = useProductActions(
     product
       ? {
           id: product.id,
@@ -108,6 +110,14 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
     { onDeleted: () => router.push(backHref) },
   );
 
+  // A product this tab deleted a moment ago is gone on purpose, so a stale link
+  // to it returns to the list instead of reading as a fault (S6 feedback C).
+  const alreadyDeleted = useDeletedRecordGuard({
+    entityId: productId,
+    notFound: !isLoading && !product,
+    listPath: backHref,
+  });
+
   if (isLoading) {
     return (
       <div className="space-y-6">
@@ -118,6 +128,7 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
   }
 
   if (!product) {
+    if (alreadyDeleted) return null;
     return (
       <div className="text-center py-12">
         <p className="text-muted-foreground">Product not found</p>
@@ -139,7 +150,7 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="space-y-1 min-w-0">
           <div className="flex flex-wrap items-center gap-3">
-            <h1 className="text-2xl font-bold break-words min-w-0">{product.product_name}</h1>
+            <h2 className="text-2xl font-bold break-words min-w-0">{product.product_name}</h2>
             <Badge
               variant={product.is_active ? 'success' : 'secondary'}
             >
@@ -159,6 +170,7 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
           }}
           actions={actions}
           dialogs={dialogs}
+          pendingAction={pending}
           gearLabel="Product options"
           primary={
             <Button

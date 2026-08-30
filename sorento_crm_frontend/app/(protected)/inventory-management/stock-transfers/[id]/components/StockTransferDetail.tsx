@@ -3,14 +3,6 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { FileText, History } from 'lucide-react';
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardHeading, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -27,6 +19,7 @@ import { TransferStatePill } from '../../components/StockTransfersPanel';
 import DetailActions from '@/components/common/DetailActions';
 import { stockTransferActions } from '../../actions';
 import BackToList from '@/components/common/BackToList';
+import { PageHeader } from '@/components/common/PageHeader';
 import { stockTransfersPagerQuery } from '../../hooks/useStockTransfers';
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
@@ -68,32 +61,15 @@ export function StockTransferDetail({ id }: { id: string }) {
     />
   );
 
-  /** The leaf is the transfer NUMBER, never the id: no UUID reaches a screen. */
-  const crumbs = (leaf: string) => (
-    <Breadcrumb>
-      <BreadcrumbList>
-        <BreadcrumbItem>
-          <BreadcrumbLink href="/">Home</BreadcrumbLink>
-        </BreadcrumbItem>
-        <BreadcrumbSeparator />
-        <BreadcrumbItem>
-          <BreadcrumbLink href="/inventory-management/stock-transfers">
-            Stock Transfers
-          </BreadcrumbLink>
-        </BreadcrumbItem>
-        <BreadcrumbSeparator />
-        <BreadcrumbItem>
-          <BreadcrumbPage>{leaf}</BreadcrumbPage>
-        </BreadcrumbItem>
-      </BreadcrumbList>
-    </Breadcrumb>
+  /** The title is the transfer NUMBER, never the id: no UUID reaches a screen. */
+  const header = (title: string) => (
+    <PageHeader title={title} actions={backLink} />
   );
 
   if (isLoading) {
     return (
       <div className="space-y-4">
-        {crumbs('Loading')}
-        <div className="flex justify-end">{backLink}</div>
+        {header('Stock Transfer')}
         <Skeleton className="h-32 w-full rounded-xl" />
         <Skeleton className="h-64 w-full rounded-xl" />
       </div>
@@ -103,8 +79,7 @@ export function StockTransferDetail({ id }: { id: string }) {
   if (isError || !data) {
     return (
       <div className="space-y-4">
-        {crumbs('Not found')}
-        <div className="flex justify-end">{backLink}</div>
+        {header('Stock Transfer')}
         <Card className="flex flex-col items-center gap-3 p-10 text-center">
           <div className="text-sm font-semibold">Stock transfer not found</div>
           <p className="max-w-md text-sm text-muted-foreground">
@@ -120,10 +95,7 @@ export function StockTransferDetail({ id }: { id: string }) {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        {crumbs(transfer.transfer_no)}
-        {backLink}
-      </div>
+      {header(transfer.transfer_no)}
       <Card>
         <CardHeader className="block py-4">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">

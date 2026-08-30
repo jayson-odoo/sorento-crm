@@ -8,6 +8,7 @@ import { ArrowLeft, KeyRound, Pencil, Plug, RefreshCw, Trash2 } from 'lucide-rea
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { PageHeader } from '@/components/common/PageHeader';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 
@@ -199,25 +200,26 @@ export function IntegrationDetailView({ id }: { id: string }) {
 
   return (
     <div className="space-y-4 p-4 md:p-6">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h1 className="truncate text-xl font-semibold">{integration.name}</h1>
-          <p className="text-sm text-muted-foreground">{integration.type}</p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Button variant="outline" onClick={() => setEditOpen(true)}>
-            <Pencil className="size-4" /> Edit
-          </Button>
-          <Button variant="outline" onClick={() => setConfirmDelete(true)}>
-            <Trash2 className="size-4" /> Delete
-          </Button>
-          <Button variant="outline" asChild>
-            <Link href="/integration-management/integrations">
-              <ArrowLeft className="size-4" /> Back to integrations
-            </Link>
-          </Button>
-        </div>
-      </div>
+      <PageHeader
+        title={integration.name}
+        actions={
+          <>
+            <Button variant="outline" onClick={() => setEditOpen(true)}>
+              <Pencil className="size-4" /> Edit
+            </Button>
+            <Button variant="outline" onClick={() => setConfirmDelete(true)}>
+              <Trash2 className="size-4" /> Delete
+            </Button>
+            <Button variant="outline" asChild>
+              <Link href="/integration-management/integrations">
+                <ArrowLeft className="size-4" /> Back to integrations
+              </Link>
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm text-muted-foreground">{integration.type}</p>
+      </PageHeader>
 
       <Card>
         <CardHeader>

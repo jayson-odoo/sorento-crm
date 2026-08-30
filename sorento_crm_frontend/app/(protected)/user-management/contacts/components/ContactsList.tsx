@@ -22,7 +22,6 @@ import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiFetch } from '@/lib/api';
@@ -337,6 +336,15 @@ export default function ContactsList() {
       { onSuccess: clearSelection },
     );
 
+  // The one offer this listing makes, in both places it belongs: the
+  // toolbar, and the empty state's next step (S5-06).
+  const listPrimaryAction = (
+    <Button onClick={() => setCreateDialogOpen(true)}>
+      <Plus className="size-4 mr-2" />
+      Create Contact
+    </Button>
+  );
+
   return (
     <DataGrid
       table={table}
@@ -344,6 +352,7 @@ export default function ContactsList() {
       recordCount={data?.pagination?.total || 0}
       isLoading={isLoading}
       rowHref={rowHref}
+      emptyAction={listPrimaryAction}
     >
       <Card>
         <CardHeader className="block">
@@ -379,12 +388,7 @@ export default function ContactsList() {
             exportConfig={{ filename: 'contacts_export.xlsx' }}
             onRefresh={() => void refetch()}
             isRefreshing={isFetching && !isLoading}
-            primaryAction={
-              <Button onClick={() => setCreateDialogOpen(true)}>
-                <Plus className="size-4 mr-2" />
-                Create Contact
-              </Button>
-            }
+            primaryAction={listPrimaryAction}
             bulkActions={[
               {
                 key: 'outbound-enable',
@@ -425,10 +429,7 @@ export default function ContactsList() {
           />
         </CardHeader>
         <CardTable>
-          <ScrollArea>
-            <DataGridTable />
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
+          <DataGridTable />
         </CardTable>
         <CardFooter>
           <DataGridPagination />

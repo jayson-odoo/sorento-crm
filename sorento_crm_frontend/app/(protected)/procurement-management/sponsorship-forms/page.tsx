@@ -1,19 +1,6 @@
 import { Metadata } from 'next';
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
 import { Container } from '@/components/common/container';
-import {
-  Toolbar,
-  ToolbarHeading,
-  ToolbarTitle,
-  ToolbarActions,
-} from '@/components/common/toolbar';
+import { PageHeader } from '@/components/common/PageHeader';
 import PurchaseRequestsList from '../purchase-requests/components/PurchaseRequestsList';
 
 export const metadata: Metadata = {
@@ -25,23 +12,7 @@ export default function SponsorshipFormsPage() {
   return (
     <>
       <Container>
-        <Toolbar>
-          <ToolbarHeading>
-            <ToolbarTitle>Sponsorship Forms</ToolbarTitle>
-            <Breadcrumb>
-              <BreadcrumbList>
-                <BreadcrumbItem>
-                  <BreadcrumbLink href="/">Home</BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbPage>Project Sales Admin</BreadcrumbPage>
-                </BreadcrumbItem>
-              </BreadcrumbList>
-            </Breadcrumb>
-          </ToolbarHeading>
-          <ToolbarActions />
-        </Toolbar>
+        <PageHeader title="Sponsorship Forms" />
       </Container>
 
       <Container>

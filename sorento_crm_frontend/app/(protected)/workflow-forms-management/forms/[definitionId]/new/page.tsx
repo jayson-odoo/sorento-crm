@@ -1,19 +1,7 @@
 import { Suspense } from 'react';
 import { Metadata } from 'next';
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
 import { Container } from '@/components/common/container';
-import {
-  Toolbar,
-  ToolbarHeading,
-  ToolbarTitle,
-} from '@/components/common/toolbar';
+import { PageHeader } from '@/components/common/PageHeader';
 import { NewWorkflowSubmission } from '../../../components/WorkflowSubmissionEditor';
 
 export const metadata: Metadata = {
@@ -29,32 +17,18 @@ export default async function NewWorkflowSubmissionForFormPage({
   return (
     <>
       <Container>
-        <Toolbar>
-          <ToolbarHeading>
-            <ToolbarTitle>New submission</ToolbarTitle>
-            <Breadcrumb>
-              <BreadcrumbList>
-                <BreadcrumbItem>
-                  <BreadcrumbLink href="/">Home</BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbLink href="/workflow-forms-management/definitions">Workflow Forms</BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbLink href={`/workflow-forms-management/forms/${definitionId}/submissions`}>
-                    Submissions
-                  </BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbPage>New</BreadcrumbPage>
-                </BreadcrumbItem>
-              </BreadcrumbList>
-            </Breadcrumb>
-          </ToolbarHeading>
-        </Toolbar>
+        <PageHeader
+          title="New submission"
+          crumbs={[
+            { title: 'Workflow Forms' },
+            { title: 'Definitions', path: '/workflow-forms-management/definitions' },
+            {
+              title: 'Submissions',
+              path: `/workflow-forms-management/forms/${definitionId}/submissions`,
+            },
+            { title: 'New submission' },
+          ]}
+        />
       </Container>
       <Container>
         <Suspense fallback={<p className="text-muted-foreground p-2">Loading…</p>}>

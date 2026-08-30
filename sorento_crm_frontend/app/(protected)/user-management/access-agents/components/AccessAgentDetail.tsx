@@ -189,7 +189,7 @@ export default function AccessAgentDetail({ accessAgentId }: AccessAgentDetailPr
       <div className="flex items-center justify-between">
         <div className="space-y-1">
           <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold">{accessAgent.name}</h1>
+            <h2 className="text-2xl font-bold">{accessAgent.name}</h2>
             <Badge variant={accessAgent.is_active ? 'success' : 'secondary'}>
               <BadgeDot />
               {accessAgent.is_active ? 'Active' : 'Inactive'}

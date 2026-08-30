@@ -92,7 +92,7 @@ export function DeadStockSettings() {
               disabled={!valid || !dirty || save.isPending}
             >
               {save.isPending ? <Loader2 className="size-4 animate-spin" /> : null}
-              Save
+              Save dead stock window
             </Button>
           </div>
         </div>

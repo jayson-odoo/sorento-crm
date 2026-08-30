@@ -162,9 +162,9 @@ export function POIntakeConfirmClient({
             {stamps.countersigned_at && <Badge variant="secondary">Countersigned</Badge>}
             {!canEdit && <Badge variant="outline">Read only</Badge>}
           </div>
-          <h1 className="mt-1 text-xl font-semibold">
+          <h2 className="mt-1 text-xl font-semibold">
             {stamps.po_number ? `PO ${stamps.po_number}` : 'PO number not read yet'}
-          </h1>
+          </h2>
           <p className="text-sm text-muted-foreground">
             {[
               version.header.admin_ref,

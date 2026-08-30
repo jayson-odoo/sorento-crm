@@ -26,7 +26,6 @@ import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable, DataGridTableRowSelect, DataGridTableRowSelectAll } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useAttachments, useAttachmentTypesList, useBulkRestoreAttachments, useDirectoryTree } from '../hooks/useAttachments';
 import { resubmitAttachmentWebhook } from '../services/attachmentService';
@@ -529,10 +528,7 @@ export default function AttachmentBrowser() {
             />
           </CardHeader>
         <CardTable>
-          <ScrollArea>
-            <DataGridTable />
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
+          <DataGridTable />
         </CardTable>
         <CardFooter>
           <DataGridPagination />

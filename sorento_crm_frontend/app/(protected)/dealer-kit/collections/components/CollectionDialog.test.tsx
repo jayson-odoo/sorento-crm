@@ -84,7 +84,7 @@ describe('CollectionDialog', () => {
       fireEvent.change(screen.getByLabelText(/name/i), { target: { value: 'Best sellers' } });
     });
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+      fireEvent.click(screen.getByRole('button', { name: /^Save collection$/i }));
     });
 
     await waitFor(() =>
@@ -97,7 +97,7 @@ describe('CollectionDialog', () => {
   it('will not save a collection with no name', () => {
     renderDialog(null);
 
-    expect(screen.getByRole('button', { name: /^save$/i })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /^Save collection$/i })).toBeDisabled();
   });
 
   it('opens an existing collection with its name filled in', () => {
@@ -134,7 +134,7 @@ describe('CollectionDialog', () => {
       fireEvent.change(screen.getByLabelText(/name/i), { target: { value: 'Renamed' } });
     });
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+      fireEvent.click(screen.getByRole('button', { name: /^Save collection$/i }));
     });
 
     await waitFor(() =>

@@ -1,20 +1,7 @@
 import { Metadata } from 'next';
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
 import { Container } from '@/components/common/container';
+import { PageHeader } from '@/components/common/PageHeader';
 import BackToList from '@/components/common/BackToList';
-import {
-  Toolbar,
-  ToolbarActions,
-  ToolbarHeading,
-  ToolbarTitle,
-} from '@/components/common/toolbar';
 import { ProformaInvoiceDetail } from './components/ProformaInvoiceDetail';
 
 export const metadata: Metadata = {
@@ -32,33 +19,12 @@ export default async function ProformaInvoiceDetailPage({
   return (
     <>
       <Container>
-        <Toolbar>
-          <ToolbarHeading>
-            <ToolbarTitle>Proforma Invoice</ToolbarTitle>
-            <Breadcrumb>
-              <BreadcrumbList>
-                <BreadcrumbItem>
-                  <BreadcrumbLink href="/">Home</BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbLink href="/scm">Supply Chain</BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbLink href="/scm/proforma-invoices">Proforma Invoices</BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbPage>Detail</BreadcrumbPage>
-                </BreadcrumbItem>
-              </BreadcrumbList>
-            </Breadcrumb>
-          </ToolbarHeading>
-          <ToolbarActions>
+        <PageHeader
+          title="Proforma Invoice"
+          actions={
             <BackToList listPath="/scm/proforma-invoices" label="Back to proforma invoices" />
-          </ToolbarActions>
-        </Toolbar>
+          }
+        />
       </Container>
 
       <Container>

@@ -391,7 +391,7 @@ describe('SalesAgentDetail - saving', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
     fireEvent.change(screen.getByLabelText('Person'), { target: { value: 'Sean Lim' } });
     fireEvent.change(screen.getByLabelText('Location group'), { target: { value: 'hp' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save note' }));
 
     await waitFor(() =>
       expect(mutateAsync).toHaveBeenCalledWith({
@@ -414,7 +414,7 @@ describe('SalesAgentDetail - saving', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
     fireEvent.click(screen.getByRole('switch', { name: 'Active' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save note' }));
 
     await waitFor(() =>
       expect(mutateAsync).toHaveBeenCalledWith(
@@ -430,7 +430,7 @@ describe('SalesAgentDetail - saving', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
     fireEvent.change(screen.getByLabelText('Demand class'), { target: { value: '' } });
     fireEvent.change(screen.getByLabelText('Person'), { target: { value: '  ' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save note' }));
 
     await waitFor(() =>
       expect(mutateAsync).toHaveBeenCalledWith(

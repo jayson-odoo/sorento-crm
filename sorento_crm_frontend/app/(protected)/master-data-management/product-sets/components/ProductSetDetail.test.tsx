@@ -154,7 +154,7 @@ describe('ProductSetDetail - editing members', () => {
 
     enterEdit();
     fireEvent.click(screen.getByRole('checkbox', { name: /SRTWCX8608-RL sets the price/i }));
-    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^Save product set$/i }));
 
     await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
     const [{ data: payload }] = mutateAsync.mock.calls[0];
@@ -172,7 +172,7 @@ describe('ProductSetDetail - editing members', () => {
     enterEdit();
     const qtyInput = screen.getByRole('spinbutton', { name: /quantity for SRTWCX8608-RL/i });
     fireEvent.change(qtyInput, { target: { value: '3' } });
-    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^Save product set$/i }));
 
     await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
     const [{ data: payload }] = mutateAsync.mock.calls[0];
@@ -236,7 +236,7 @@ describe('ProductSetDetail - price override', () => {
     enterEdit();
     const overrideInput = screen.getByLabelText('Price override');
     fireEvent.change(overrideInput, { target: { value: '1500' } });
-    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^Save product set$/i }));
 
     await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
     const [{ data: payload }] = mutateAsync.mock.calls[0];
@@ -265,7 +265,7 @@ describe('ProductSetDetail - price override', () => {
     const overrideInput = screen.getByLabelText('Price override') as HTMLInputElement;
     expect(overrideInput.value).toBe('1150');
     fireEvent.change(overrideInput, { target: { value: '' } });
-    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^Save product set$/i }));
 
     await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
     const [{ data: payload }] = mutateAsync.mock.calls[0];

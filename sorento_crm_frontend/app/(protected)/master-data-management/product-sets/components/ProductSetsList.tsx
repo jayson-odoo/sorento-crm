@@ -12,6 +12,7 @@ import {
 import { Layers, Plus, Search, Sparkles, Trash2, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { RowActionsMenu } from '@/components/common/RowActionsMenu';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
@@ -20,7 +21,6 @@ import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import { Input } from '@/components/ui/input';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { useDeleteProductSet, useProductSets } from '../hooks/useProductSets';
@@ -173,18 +173,22 @@ export default function ProductSetsList() {
       {
         id: 'actions',
         header: '',
+        // The row opens the record, so the cell carries only the secondary and
+        // destructive actions, in the "..." menu the record page's gear mirrors
+        // (D15).
         cell: ({ row }) => (
-          <div className="flex justify-end">
-            <Button
-              mode="icon"
-              variant="ghost"
-              title="Delete set"
-              aria-label={`Delete ${row.original.set_code}`}
-              onClick={() => setDeleting(row.original)}
-            >
-              <Trash2 className="size-4" />
-            </Button>
-          </div>
+          <RowActionsMenu
+            ariaLabel={`product set ${row.original.set_code}`}
+            actions={[
+              {
+                key: 'product_set.delete',
+                label: 'Delete product set',
+                icon: Trash2,
+                kind: 'destructive',
+                run: () => setDeleting(row.original),
+              },
+            ]}
+          />
         ),
         size: 70,
         enableSorting: false,
@@ -211,6 +215,21 @@ export default function ProductSetsList() {
     columnResizeMode: 'onChange',
     enableColumnResizing: true,
   });
+
+  // The one offer this listing makes, in both places it belongs: the
+  // toolbar, and the empty state's next step (S5-06).
+  const listPrimaryAction = (
+    <div className="flex flex-wrap items-center gap-2">
+      <Button variant="outline" asChild>
+        <Link href="/master-data-management/product-sets/proposals">
+          <Sparkles className="size-4" /> Propose
+        </Link>
+      </Button>
+      <Button onClick={() => setCreating(true)}>
+        <Plus className="size-4" /> Add set
+      </Button>
+    </div>
+  );
 
   return (
     <div className="space-y-3">
@@ -251,6 +270,7 @@ export default function ProductSetsList() {
           listingKey="master_data.product_sets.view"
           tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
           emptyMessage="No product sets match that search."
+          emptyAction={listPrimaryAction}
         >
           <Card>
             <CardHeader className="block">
@@ -281,25 +301,11 @@ export default function ProductSetsList() {
                 exportConfig={false}
                 onRefresh={() => void refetch()}
                 isRefreshing={isFetching && !isLoading}
-                primaryAction={
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Button variant="outline" asChild>
-                      <Link href="/master-data-management/product-sets/proposals">
-                        <Sparkles className="size-4" /> Propose
-                      </Link>
-                    </Button>
-                    <Button onClick={() => setCreating(true)}>
-                      <Plus className="size-4" /> Add set
-                    </Button>
-                  </div>
-                }
+                primaryAction={listPrimaryAction}
               />
             </CardHeader>
             <CardTable>
-              <ScrollArea>
-                <DataGridTable />
-                <ScrollBar orientation="horizontal" />
-              </ScrollArea>
+              <DataGridTable />
             </CardTable>
             <CardFooter>
               <DataGridPagination />

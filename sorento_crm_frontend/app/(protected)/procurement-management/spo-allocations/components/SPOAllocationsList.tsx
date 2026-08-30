@@ -356,6 +356,17 @@ export default function SPOAllocationsList() {
     enableColumnResizing: true,
   });
 
+  // The one offer this listing makes, in both places it belongs: the
+  // toolbar, and the empty state's next step (S5-06).
+  const listPrimaryAction = (
+    <Button
+      onClick={() => router.push('/procurement-management/spo-allocations/new')}
+    >
+      <Plus className="size-4" />
+      Create SPO Allocation
+    </Button>
+  );
+
   return (
     <DataGrid
       table={table}
@@ -363,6 +374,7 @@ export default function SPOAllocationsList() {
       isLoading={isLoading}
       standardToolbar={false}
       tableLayout={{ columnsVisibility: true }}
+      emptyAction={listPrimaryAction}
     >
       <Card>
         <CardHeader className="block">
@@ -447,14 +459,7 @@ export default function SPOAllocationsList() {
                 dataGuideTarget: 'procurement.spo-allocations.import-options-button',
               },
             ]}
-            primaryAction={
-              <Button
-                onClick={() => router.push('/procurement-management/spo-allocations/new')}
-              >
-                <Plus className="size-4" />
-                Create SPO Allocation
-              </Button>
-            }
+            primaryAction={listPrimaryAction}
           />
         </CardHeader>
         <SPOImportDialog

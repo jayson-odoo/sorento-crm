@@ -519,7 +519,14 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="space-y-1 min-w-0">
           <div className="flex flex-wrap items-center gap-3">
-            <h1 className="text-2xl font-bold break-words min-w-0">{promotion.description?.trim() || `Promotion ${promotion.id.slice(0, 8)}`}</h1>
+            {/* A promotion with no description falls back to its type, then to
+                a plain "Untitled promotion" - never to a slice of its id, which
+                names nothing the user has ever seen (S5-05). */}
+            <h2 className="text-2xl font-bold break-words min-w-0">
+              {promotion.description?.trim() ||
+                promotion.promotion_type_name?.trim() ||
+                'Untitled promotion'}
+            </h2>
             <Badge variant={promotion.is_active ? 'success' : 'secondary'}>
               <BadgeDot />
               {promotion.is_active ? 'Active' : 'Inactive'}

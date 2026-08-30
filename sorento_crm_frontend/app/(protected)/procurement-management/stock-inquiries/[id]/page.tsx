@@ -1,13 +1,6 @@
 import { Metadata } from 'next';
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
 import { Container } from '@/components/common/container';
+import { PageHeader } from '@/components/common/PageHeader';
 import BackToList from '@/components/common/BackToList';
 import StockInquiryDetail from '../components/StockInquiryDetail';
 import FormDetailTabsWithRevisions from '@/app/(protected)/sla-management/_shared/FormDetailTabsWithRevisions';
@@ -25,33 +18,15 @@ export default function StockInquiryDetailPage({
 }) {
   return (
     <Container>
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <Breadcrumb>
-          <BreadcrumbList>
-            <BreadcrumbItem>
-              <BreadcrumbLink href="/">Home</BreadcrumbLink>
-            </BreadcrumbItem>
-            <BreadcrumbSeparator />
-            <BreadcrumbItem>
-              <BreadcrumbLink href="/procurement-management">Procurement</BreadcrumbLink>
-            </BreadcrumbItem>
-            <BreadcrumbSeparator />
-            <BreadcrumbItem>
-              <BreadcrumbLink href="/procurement-management/stock-inquiries">
-                Stock Inquiries
-              </BreadcrumbLink>
-            </BreadcrumbItem>
-            <BreadcrumbSeparator />
-            <BreadcrumbItem>
-              <BreadcrumbPage>Details</BreadcrumbPage>
-            </BreadcrumbItem>
-          </BreadcrumbList>
-        </Breadcrumb>
-        <BackToList
-          listPath="/procurement-management/stock-inquiries"
-          label="Back to stock inquiries"
-        />
-      </div>
+      <PageHeader
+        title="Stock Inquiry"
+        actions={
+          <BackToList
+            listPath="/procurement-management/stock-inquiries"
+            label="Back to stock inquiries"
+          />
+        }
+      />
       <div className="mt-6">
         <StockInquiryDetailWrapper params={params} />
       </div>

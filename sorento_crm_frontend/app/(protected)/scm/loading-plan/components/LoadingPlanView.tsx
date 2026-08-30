@@ -40,12 +40,6 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
-import {
-  Toolbar,
-  ToolbarActions,
-  ToolbarHeading,
-  ToolbarTitle,
-} from '@/components/common/toolbar';
 import DetailActions from '@/components/common/DetailActions';
 import AttachmentPreviewModal, {
   type AttachmentPreviewItem,
@@ -78,6 +72,7 @@ import { ContainerRequestSection } from './ContainerRequestSection';
 import { SendRequestDialog } from './SendRequestDialog';
 import { requestLinesFrom } from './containerRequestSummary';
 import { copyPublicLink } from './copyPublicLink';
+import { PageHeader } from '@/components/common/PageHeader';
 
 /**
  * One loading plan, as a record (R5).
@@ -311,27 +306,10 @@ export function LoadingPlanView({ planId }: { planId: string }) {
 
   return (
     <div className="space-y-4">
-      <Toolbar>
-        <ToolbarHeading className="min-w-0">
-          {/* `w-full`, not just `min-w-0`: ToolbarHeading is a WRAPPING column flex container,
-              so its lines are sized to their content and a long supplier name would push the
-              header past the viewport at 375px instead of ellipsing. */}
-          <div
-            className="flex w-full min-w-0 flex-wrap items-center gap-2"
-            title={plan.supplier_name ?? ''}
-          >
-            <ToolbarTitle className="min-w-0 max-w-full truncate">
-              {plan.supplier_name ?? EM_DASH}
-            </ToolbarTitle>
-            <Badge variant={STATUS_VARIANT[plan.status]} appearance="light" size="sm">
-              {STATUS_LABEL[plan.status]}
-            </Badge>
-          </div>
-          <p className="w-full text-xs text-muted-foreground" data-testid="plan-subtitle">
-            {subtitle}
-          </p>
-        </ToolbarHeading>
-        <ToolbarActions>
+      <PageHeader
+        title={plan.supplier_name ?? EM_DASH}
+        titleClassName="max-w-full truncate"
+        actions={
           <Button
             variant="outline"
             onClick={() => (unsaved ? setLeaveOpen(true) : goBack())}
@@ -340,8 +318,24 @@ export function LoadingPlanView({ planId }: { planId: string }) {
             <ArrowLeft className="size-4" />
             Back to loading plans
           </Button>
-        </ToolbarActions>
-      </Toolbar>
+        }
+      >
+        {/* `w-full`, not just `min-w-0`: ToolbarHeading is a WRAPPING column flex container,
+            so its lines are sized to their content and a long supplier name would push the
+            header past the viewport at 375px instead of ellipsing. */}
+        <div
+          className="flex w-full min-w-0 flex-wrap items-center gap-2"
+          title={plan.supplier_name ?? ''}
+        >
+            
+          <Badge variant={STATUS_VARIANT[plan.status]} appearance="light" size="sm">
+            {STATUS_LABEL[plan.status]}
+          </Badge>
+        </div>
+        <p className="w-full text-xs text-muted-foreground" data-testid="plan-subtitle">
+          {subtitle}
+        </p>
+      </PageHeader>
 
       {/* The plan's own actions: pager, gear, primary (D6). They sit under the
           toolbar rather than on it, and wrap at 375. */}
@@ -624,7 +618,7 @@ export function LoadingPlanView({ planId }: { planId: string }) {
               onClick={() => (editedCount > 0 ? setCutOffDropOpen(true) : void applyCutOff())}
             >
               {changeCutOff.isPending ? <LoaderCircle className="size-4 animate-spin" /> : null}
-              Save
+              Save cut-off
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -1,13 +1,6 @@
 import { Metadata } from 'next';
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
 import { Container } from '@/components/common/container';
+import { PageHeader } from '@/components/common/PageHeader';
 import BackToList from '@/components/common/BackToList';
 import PurchaseRequestDetail from '../components/PurchaseRequestDetail';
 import FormDetailTabsWithRevisions from '@/app/(protected)/sla-management/_shared/FormDetailTabsWithRevisions';
@@ -25,33 +18,15 @@ export default function PurchaseRequestDetailPage({
 }) {
   return (
     <Container>
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <Breadcrumb>
-          <BreadcrumbList>
-            <BreadcrumbItem>
-              <BreadcrumbLink href="/">Home</BreadcrumbLink>
-            </BreadcrumbItem>
-            <BreadcrumbSeparator />
-            <BreadcrumbItem>
-              <BreadcrumbPage>Project Sales Admin</BreadcrumbPage>
-            </BreadcrumbItem>
-            <BreadcrumbSeparator />
-            <BreadcrumbItem>
-              <BreadcrumbLink href="/procurement-management/purchase-requests">
-                Purchase Requests
-              </BreadcrumbLink>
-            </BreadcrumbItem>
-            <BreadcrumbSeparator />
-            <BreadcrumbItem>
-              <BreadcrumbPage>Details</BreadcrumbPage>
-            </BreadcrumbItem>
-          </BreadcrumbList>
-        </Breadcrumb>
-        <BackToList
-          listPath="/procurement-management/purchase-requests"
-          label="Back to purchase requests"
-        />
-      </div>
+      <PageHeader
+        title="Purchase Request"
+        actions={
+          <BackToList
+            listPath="/procurement-management/purchase-requests"
+            label="Back to purchase requests"
+          />
+        }
+      />
       <div className="mt-6">
         <PurchaseRequestDetailWrapper params={params} />
       </div>

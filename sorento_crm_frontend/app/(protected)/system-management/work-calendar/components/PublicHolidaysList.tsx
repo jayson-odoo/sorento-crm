@@ -20,7 +20,6 @@ import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { PublicHoliday } from '../types/workCalendar.types';
 import { usePublicHolidays } from '../hooks/useWorkCalendar';
@@ -118,6 +117,20 @@ export default function PublicHolidaysList() {
     pageCount: data ? Math.ceil(data.pagination.total / pagination.pageSize) : 0,
   });
 
+  // The one offer this listing makes, in both places it belongs: the
+  // toolbar, and the empty state's next step (S5-06).
+  const listPrimaryAction = (
+    <Button
+      onClick={() => {
+        setSelectedHoliday(null);
+        setIsFormOpen(true);
+      }}
+    >
+      <Plus className="size-4 mr-2" />
+      Add Holiday
+    </Button>
+  );
+
   return (
     <>
       <DataGrid
@@ -125,6 +138,7 @@ export default function PublicHolidaysList() {
         recordCount={data?.pagination.total || 0}
         isLoading={isLoading}
         tableLayout={{ columnsVisibility: true }}
+        emptyAction={listPrimaryAction}
       >
         <Card>
           <CardHeader className="block space-y-3">
@@ -137,24 +151,11 @@ export default function PublicHolidaysList() {
               exportConfig={{ filename: 'public_holidays_export.xlsx' }}
               onRefresh={() => void refetch()}
               isRefreshing={isFetching && !isLoading}
-              primaryAction={
-                <Button
-                  onClick={() => {
-                    setSelectedHoliday(null);
-                    setIsFormOpen(true);
-                  }}
-                >
-                  <Plus className="size-4 mr-2" />
-                  Add Holiday
-                </Button>
-              }
+              primaryAction={listPrimaryAction}
             />
           </CardHeader>
           <CardTable>
-            <ScrollArea className="w-full">
-              <DataGridTable />
-              <ScrollBar orientation="horizontal" />
-            </ScrollArea>
+            <DataGridTable />
           </CardTable>
           <CardFooter>
             <DataGridPagination />

@@ -15,7 +15,6 @@ import { CardContent } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiFetch } from '@/lib/api';
@@ -233,10 +232,7 @@ export default function ContactAccessAgentsTable({ contactId }: ContactAccessAge
             isLoading={isLoading}
             onRowClick={handleEdit}
           >
-            <ScrollArea>
-              <DataGridTable />
-              <ScrollBar orientation="horizontal" />
-            </ScrollArea>
+            <DataGridTable />
           </DataGrid>
         )}
       </CardContent>
