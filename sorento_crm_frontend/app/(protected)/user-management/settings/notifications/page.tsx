@@ -85,6 +85,7 @@ const NotificationSettingsPage = () => {
 
   const form = useForm<NotificationSettingsSchemaType>({
     resolver: zodResolver(NotificationSettingsSchema),
+    mode: 'onTouched',
     defaultValues: notificationSettings.reduce<
       Partial<NotificationSettingsSchemaType>
     >(

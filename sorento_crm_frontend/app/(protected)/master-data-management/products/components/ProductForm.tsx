@@ -100,7 +100,7 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
       reorder_quantity: 50,
       base_uom_id: '',
     },
-    mode: 'onSubmit',
+    mode: 'onTouched',
   });
 
   // Track which product we've initialized so we don't reset on every render.

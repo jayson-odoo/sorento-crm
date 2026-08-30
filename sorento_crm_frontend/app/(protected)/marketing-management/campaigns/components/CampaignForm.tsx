@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useMemo } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { useRouter } from 'next/navigation';
@@ -65,6 +65,27 @@ export default function CampaignForm({ campaignId, onSuccess }: CampaignFormProp
   const createMutation = useCreateCampaign();
   const updateMutation = useUpdateCampaign();
 
+  // The campaign fills the form through `values`, not a reset scheduled in an
+  // effect behind a `formInitialized` flag (S7-03), which meant a refetched
+  // campaign never reached the inputs.
+  const editValues = useMemo<CampaignSchemaType | undefined>(
+    () =>
+      campaign && isEditMode
+        ? {
+            campaign_code: campaign.campaign_code,
+            campaign_name: campaign.campaign_name,
+            campaign_type_id: campaign.campaign_type_id,
+            description: campaign.description || '',
+            start_date: toDateInput(campaign.start_date),
+            end_date: toDateInput(campaign.end_date),
+            budget: campaign.budget != null ? String(campaign.budget) : '',
+            target_audience: campaign.target_audience || '',
+            status: (campaign.status?.toLowerCase() as CampaignSchemaType['status']) || 'planning',
+          }
+        : undefined,
+    [campaign, isEditMode],
+  );
+
   const form = useForm<CampaignSchemaType>({
     resolver: zodResolver(CampaignSchema),
     defaultValues: {
@@ -78,34 +99,13 @@ export default function CampaignForm({ campaignId, onSuccess }: CampaignFormProp
       target_audience: '',
       status: 'planning',
     },
-    mode: 'onSubmit',
+    values: editValues,
+    // A refetch arriving mid-edit updates the fields nobody has touched and
+    // leaves the ones being typed in alone.
+    resetOptions: { keepDirtyValues: true },
+    // A field answers when the reader leaves it, not on submit.
+    mode: 'onTouched',
   });
-
-  const [formInitialized, setFormInitialized] = useState(false);
-
-  useEffect(() => {
-    if (campaign && isEditMode && !formInitialized) {
-      const timeoutId = setTimeout(() => {
-        form.reset({
-          campaign_code: campaign.campaign_code,
-          campaign_name: campaign.campaign_name,
-          campaign_type_id: campaign.campaign_type_id,
-          description: campaign.description || '',
-          start_date: toDateInput(campaign.start_date),
-          end_date: toDateInput(campaign.end_date),
-          budget: campaign.budget != null ? String(campaign.budget) : '',
-          target_audience: campaign.target_audience || '',
-          status: (campaign.status?.toLowerCase() as CampaignSchemaType['status']) || 'planning',
-        });
-        setFormInitialized(true);
-      }, 0);
-      return () => clearTimeout(timeoutId);
-    }
-  }, [campaign, isEditMode, form, formInitialized]);
-
-  useEffect(() => {
-    setFormInitialized(false);
-  }, [campaignId]);
 
   const onSubmit = async (data: CampaignSchemaType) => {
     try {

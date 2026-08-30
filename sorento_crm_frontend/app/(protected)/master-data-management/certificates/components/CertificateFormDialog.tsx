@@ -55,6 +55,7 @@ export default function CertificateFormDialog({
 
   const form = useForm<z.infer<typeof CertificateSchema>>({
     resolver: zodResolver(CertificateSchema),
+    mode: 'onTouched',
     defaultValues: EMPTY,
   });
 

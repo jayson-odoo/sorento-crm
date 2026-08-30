@@ -45,6 +45,27 @@ export default function FormForm({ formId, onSuccess }: FormFormProps) {
   const { data: accessTypeOptions = [] } = useContactAccessTypes();
   const defaultAccessLevels = useMemo(() => accessTypeOptions.map((opt) => opt.code), [accessTypeOptions]);
 
+  // The form record fills the fields through `values`, not a reset scheduled in
+  // an effect behind a `formInitialized` flag (S7-03), which meant a refetched
+  // record never reached the inputs. Undefined in create mode, so the defaults
+  // (and the access-level seed below) stand.
+  const editValues = useMemo<FormSchemaInput | undefined>(
+    () =>
+      form && isEditMode
+        ? {
+            code: form.code,
+            name: form.name,
+            form_type: form.form_type || 'marketing',
+            purpose: form.purpose || null,
+            language: form.language,
+            is_active: form.is_active,
+            attachment_id: form.attachment_id || null,
+            access_levels: form.access_levels?.length ? form.access_levels : defaultAccessLevels,
+          }
+        : undefined,
+    [form, isEditMode, defaultAccessLevels],
+  );
+
   const formHook = useForm<FormSchemaInput, unknown, FormSchemaType>({
     resolver: zodResolver(FormSchema),
     defaultValues: {
@@ -57,11 +78,16 @@ export default function FormForm({ formId, onSuccess }: FormFormProps) {
       attachment_id: null,
       access_levels: [],
     },
-    mode: 'onSubmit',
+    values: editValues,
+    // A refetch arriving mid-edit updates the fields nobody has touched and
+    // leaves the ones being typed in alone.
+    resetOptions: { keepDirtyValues: true },
+    // A field answers when the reader leaves it, not on submit.
+    mode: 'onTouched',
   });
 
-  // Track if form has been initialized to prevent multiple resets
-  const [formInitialized, setFormInitialized] = useState(false);
+  // Create-mode only: has the access-level seed already been applied once?
+  const [accessLevelsSeeded, setAccessLevelsSeeded] = useState(false);
 
   const handlePreview = async (attachmentId: string) => {
     try {
@@ -74,45 +100,24 @@ export default function FormForm({ formId, onSuccess }: FormFormProps) {
     }
   };
 
-  // Load form data when editing
-  useEffect(() => {
-    if (form && isEditMode && !formInitialized) {
-      const timeoutId = setTimeout(() => {
-        formHook.reset({
-          code: form.code,
-          name: form.name,
-          form_type: form.form_type || 'marketing',
-          purpose: form.purpose || null,
-          language: form.language,
-          is_active: form.is_active,
-          attachment_id: form.attachment_id || null,
-          access_levels: form.access_levels?.length ? form.access_levels : defaultAccessLevels,
-        });
-        setFormInitialized(true);
-      }, 0);
-
-      return () => clearTimeout(timeoutId);
-    }
-  }, [defaultAccessLevels, form, isEditMode, formHook, formInitialized]);
-
   // Create-mode seed: fill default access levels exactly once, the first
   // time the catalog arrives. Do NOT re-seed when the field is later cleared
   // - that would block "Clear all" in the multi-select.
   useEffect(() => {
     if (
       !isEditMode &&
-      !formInitialized &&
+      !accessLevelsSeeded &&
       defaultAccessLevels.length > 0 &&
       formHook.getValues('access_levels').length === 0
     ) {
       formHook.setValue('access_levels', defaultAccessLevels);
-      setFormInitialized(true);
+      setAccessLevelsSeeded(true);
     }
-  }, [defaultAccessLevels, formHook, isEditMode, formInitialized]);
+  }, [defaultAccessLevels, formHook, isEditMode, accessLevelsSeeded]);
 
-  // Reset formInitialized when formId changes
+  // A different record is a different seed.
   useEffect(() => {
-    setFormInitialized(false);
+    setAccessLevelsSeeded(false);
   }, [formId]);
 
   // Fetch attachments for selection

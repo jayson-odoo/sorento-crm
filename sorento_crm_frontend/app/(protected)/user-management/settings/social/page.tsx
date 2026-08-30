@@ -39,7 +39,7 @@ const SocialSettingsPage = () => {
       socialPinterest: settings.socialPinterest || '',
       socialYoutube: settings.socialYoutube || '',
     },
-    mode: 'onSubmit',
+    mode: 'onTouched',
   });
 
   const mutation = useMutation({

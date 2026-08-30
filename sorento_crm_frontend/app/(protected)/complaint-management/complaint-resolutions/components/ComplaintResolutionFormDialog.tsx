@@ -48,6 +48,7 @@ export default function ComplaintResolutionFormDialog({ open, onOpenChange, rowI
 
   const form = useForm<z.infer<typeof FormSchema>>({
     resolver: zodResolver(FormSchema),
+    mode: 'onTouched',
     defaultValues: { name: '', description: '', is_active: true },
   });
 

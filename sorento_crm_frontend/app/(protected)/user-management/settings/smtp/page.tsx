@@ -52,6 +52,7 @@ export default function SmtpSettingsPage() {
 
   const form = useForm<SmtpSettingsSchemaType>({
     resolver: zodResolver(SmtpSettingsSchema),
+    mode: 'onTouched',
     defaultValues,
     values: {
       ...defaultValues,

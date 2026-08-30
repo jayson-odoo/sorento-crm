@@ -49,6 +49,7 @@ export default function SPOAllocationForm({
 
   const form = useForm<SPOAllocationSchemaType>({
     resolver: zodResolver(spoAllocationSchema),
+    mode: 'onTouched',
     defaultValues: {
       spo_number: '',
       product_id: '',

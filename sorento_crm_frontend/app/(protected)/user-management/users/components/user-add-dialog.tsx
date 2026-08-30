@@ -63,7 +63,7 @@ const UserAddDialog = ({
       superior_id: null,
       companyIds: [],
     },
-    mode: 'onSubmit',
+    mode: 'onTouched',
   });
 
   useEffect(() => {

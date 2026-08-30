@@ -265,7 +265,7 @@ export default function Page() {
   const form = useForm<GeneralSettingsSchemaType>({
     resolver: zodResolver(GeneralSettingsSchema),
     defaultValues: transformedSettings,
-    mode: 'onSubmit',
+    mode: 'onTouched',
   });
 
   // When settings are refetched (e.g. after save), reset form so saved values show

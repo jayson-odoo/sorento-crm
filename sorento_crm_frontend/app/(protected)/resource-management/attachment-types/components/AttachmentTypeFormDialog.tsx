@@ -62,7 +62,7 @@ export default function AttachmentTypeFormDialog({
       is_certificate: false,
       max_validity_months: null,
     },
-    mode: 'onSubmit',
+    mode: 'onTouched',
   });
 
   // Reset form when dialog opens or attachment type changes

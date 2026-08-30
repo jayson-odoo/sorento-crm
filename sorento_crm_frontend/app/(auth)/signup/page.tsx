@@ -37,6 +37,7 @@ export default function Page() {
 
   const form = useForm<SignupSchemaType>({
     resolver: zodResolver(getSignupSchema()),
+    mode: 'onTouched',
     defaultValues: {
       name: '',
       email: '',
