@@ -8,7 +8,7 @@
  */
 
 import { useCallback } from 'react';
-import { LayoutTemplate, Link2, Link2Off } from 'lucide-react';
+import { Eye, LayoutTemplate, Link2, Link2Off, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
@@ -178,6 +178,12 @@ interface InspectorPanelProps {
   onRelinkGroup?: (groupId: string) => void;
   /** Re-clone this whole tag from another template (D51, the request designer). */
   onUseTemplate?: () => void;
+  /** The previewable block the selection sits in, if any (D53). */
+  previewBlockId?: string | null;
+  /** What that block is previewing with, `CODE - name`, or null. */
+  previewBlockLabel?: string | null;
+  onPreviewBlock?: (groupId: string) => void;
+  onClearBlockPreview?: (groupId: string) => void;
 }
 
 export function InspectorPanel({
@@ -193,6 +199,10 @@ export function InspectorPanel({
   onRebind,
   onRelinkGroup,
   onUseTemplate,
+  previewBlockId,
+  previewBlockLabel,
+  onPreviewBlock,
+  onClearBlockPreview,
 }: InspectorPanelProps) {
   const update = useCallback(
     (changes: Partial<TagLayer>) => {
@@ -320,6 +330,16 @@ export function InspectorPanel({
               onRebind={onRebind}
               onRelinkGroup={onRelinkGroup}
               onUseTemplate={onUseTemplate}
+            />
+          )}
+
+          {/* -- Preview (D53): this block alone, against a real product -- */}
+          {previewBlockId && onPreviewBlock && (
+            <PreviewBlockInspector
+              groupId={previewBlockId}
+              label={previewBlockLabel ?? null}
+              onPreview={onPreviewBlock}
+              onClear={onClearBlockPreview}
             />
           )}
 
@@ -693,6 +713,68 @@ function PriceBadgeInspector({
           Show NETT
         </label>
       </div>
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Preview inspector (D53)
+// ---------------------------------------------------------------------------
+
+/**
+ * Preview THIS block, from wherever the selection is inside it.
+ *
+ * The toolbar asks about the whole tag; a designer working on one alternative
+ * wants that alternative, and going back to the toolbar to pick it out of a
+ * list of four is a longer way round than the block already selected.
+ */
+function PreviewBlockInspector({
+  groupId,
+  label,
+  onPreview,
+  onClear,
+}: {
+  groupId: string;
+  label: string | null;
+  onPreview: (groupId: string) => void;
+  onClear?: (groupId: string) => void;
+}) {
+  return (
+    <section>
+      <h4 className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+        Preview
+      </h4>
+      {label ? (
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            className="min-w-0 flex-1 truncate text-left text-[11px] font-medium hover:underline"
+            onClick={() => onPreview(groupId)}
+            title={label}
+          >
+            {label}
+          </button>
+          <button
+            type="button"
+            className="shrink-0 rounded-sm p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+            onClick={() => onClear?.(groupId)}
+            title="Stop previewing this block"
+          >
+            <X className="size-3" />
+          </button>
+        </div>
+      ) : (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-7 w-full text-xs"
+          onClick={() => onPreview(groupId)}
+        >
+          <Eye className="mr-1 size-3" />
+          Preview this block with...
+        </Button>
+      )}
     </section>
   );
 }

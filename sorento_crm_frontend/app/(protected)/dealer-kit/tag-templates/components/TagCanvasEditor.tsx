@@ -81,6 +81,12 @@ import {
   type ReparentTarget,
 } from '@/lib/dealer-kit/canvas-geometry';
 import {
+  previewBindingFor,
+  previewBlockOf,
+  previewableBlocks,
+  type PreviewMap,
+} from '@/lib/dealer-kit/preview';
+import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
@@ -112,6 +118,7 @@ import {
 import { AssetPickerDialog } from './AssetPickerDialog';
 import { FontUploadDialog } from './FontUploadDialog';
 import { ProductPickDialog, type PickMode } from './ProductPickDialog';
+import { PreviewBlocksDialog, type PreviewChoice } from './PreviewBlocksDialog';
 import { cn } from '@/lib/utils';
 import { useKitLibrary, useTagBindings } from './useTagBindings';
 import { getProductTagData } from '../../services/tagDataService';
@@ -139,6 +146,20 @@ let idCounter = 0;
 function newLayerId(): string {
   idCounter += 1;
   return `layer-${Date.now()}-${idCounter}`;
+}
+
+/**
+ * Whatever is bound, named the way a person recognises it. Never a UUID.
+ *
+ * One function for the Inspector's "Bound to" line and for the preview chip,
+ * because a product that reads one way in one of them and another way in the
+ * other is two names for one thing.
+ */
+function describeBindingData(data: TagBindingData | null | undefined): string | null {
+  if (!data) return null;
+  if (data.kind === 'product') return `${data.product.code} - ${data.product.name}`;
+  if (data.kind === 'set') return `${data.set.set_code} - ${data.set.name}`;
+  return `${data.line.code} - ${data.line.name}`;
 }
 
 /** One press of the toolbar's zoom buttons. The wheel uses its own factor. */
@@ -197,7 +218,7 @@ type PickerState =
   | { kind: 'rebind'; groupId: string; mode: PickMode }
   | { kind: 'alternatives' }
   | { kind: 'accessories' }
-  | { kind: 'preview' };
+  | { kind: 'preview'; groupId: string; mode: PickMode };
 
 /** What a drag is carrying, captured once when it starts. */
 interface DragSession {
@@ -246,14 +267,19 @@ export function TagCanvasEditor({
   /** True while the middle button is held: the hand tool, borrowed (D44). */
   const [wheelPanning, setWheelPanning] = useState(false);
   /**
-   * The product the canvas is DRAWN against while previewing (D41).
+   * What each product BLOCK is DRAWN against while previewing (D53).
+   *
+   * Keyed by group id, because a tag carries several blocks and they are
+   * several different products: the sink combo shows one sink and three
+   * alternative taps. A block that is not in the map keeps its placeholders.
    *
    * Editor state only. It is never written into `layers` and Save never sees
    * it, which is the whole point: a template ships unbound so it can be reused
    * for any product in its family, and looking at it with real data must not
    * quietly bind it.
    */
-  const [preview, setPreview] = useState<GroupBinding | null>(null);
+  const [previews, setPreviews] = useState<PreviewMap>({});
+  const [previewDialogOpen, setPreviewDialogOpen] = useState(false);
 
   const bindings = useTagBindings(promotionId);
   const library = useKitLibrary();
@@ -468,26 +494,32 @@ export function TagCanvasEditor({
 
   const bindingOf = useCallback(
     (layer: TagLayer): GroupBinding | undefined => {
-      // While previewing, EVERY layer resolves against the preview (D41): a
-      // template ships unbound on purpose, so consulting the group first would
-      // leave every slot empty and there would be nothing to look at.
-      if (preview) return preview;
-      if (layer.props.kind === 'group') return layer.props.binding;
+      // The preview of the layer's own BLOCK wins (D53), then whatever the
+      // document binds. Asking the document first would leave every slot empty
+      // on a template, which ships unbound on purpose.
+      const previewed = previewBindingFor(layer, previews, groupOfChild, layers);
+      if (previewed) return previewed;
+      if (layer.props.kind === 'group') return layer.props.binding ?? undefined;
       const group = groupOfChild.get(layer.id);
-      return group && group.props.kind === 'group' ? group.props.binding : undefined;
+      return group && group.props.kind === 'group'
+        ? group.props.binding ?? undefined
+        : undefined;
     },
-    [groupOfChild, preview],
+    [groupOfChild, layers, previews],
   );
 
   const dataOf = useCallback(
     (layer: TagLayer) => {
-      // The host already knows what this canvas is about (D51), so nothing has
-      // to be looked up per layer. A preview still wins: it is the deliberate
-      // "show me this other thing" and the host's data is the default.
-      if (!preview && boundData) return boundData;
+      // A previewed block is the deliberate "show me this other thing", so it
+      // outranks even the data the host handed in (D51). Per layer rather than
+      // per canvas: previewing ONE block of a request's tag must not blank the
+      // rest of it.
+      const previewed = previewBindingFor(layer, previews, groupOfChild, layers);
+      if (previewed) return bindings.get(previewed);
+      if (boundData) return boundData;
       return bindings.get(bindingOf(layer));
     },
-    [bindings, bindingOf, preview, boundData],
+    [bindings, bindingOf, boundData, groupOfChild, layers, previews],
   );
 
   // Resolve whatever the document already carries, once, on open. A template
@@ -573,14 +605,71 @@ export function TagCanvasEditor({
   }, []);
 
   /**
-   * Whether the template is about a SET rather than a product.
+   * The blocks the user may preview, and what each of them wants (D53).
    *
    * Read off the layers rather than off a binding, because a template carries
    * no binding: a `set_members` slot is the document saying what it is for.
    */
-  const previewMode: PickMode = useMemo(
-    () => (layers.some((layer) => layer.slot_binding === 'set_members') ? 'set' : 'product'),
-    [layers],
+  const previewBlocks = useMemo(() => previewableBlocks(layers), [layers]);
+
+  /**
+   * Open the right surface for the number of blocks there are: one block is
+   * one question, so it keeps D41's single picker; several need a row each.
+   */
+  const openPreviewPicker = useCallback(() => {
+    if (previewBlocks.length === 0) return;
+    if (previewBlocks.length === 1) {
+      const [block] = previewBlocks;
+      setPicker({ kind: 'preview', groupId: block.groupId, mode: block.mode });
+      return;
+    }
+    setPreviewDialogOpen(true);
+  }, [previewBlocks]);
+
+  /** One block, from the Inspector: the same picker, aimed at that block. */
+  const openBlockPreview = useCallback(
+    (groupId: string) => {
+      const block = previewBlocks.find((b) => b.groupId === groupId);
+      if (!block) return;
+      setPicker({ kind: 'preview', groupId: block.groupId, mode: block.mode });
+    },
+    [previewBlocks],
+  );
+
+  const clearBlockPreview = useCallback((groupId: string) => {
+    setPreviews((prev) => {
+      const next = { ...prev };
+      delete next[groupId];
+      return next;
+    });
+  }, []);
+
+  /** Every block the dialog was given a product for, loaded then shown. */
+  const applyPreviews = useCallback(
+    async (choices: Record<string, PreviewChoice>) => {
+      setPickerBusy(true);
+      try {
+        const next: PreviewMap = {};
+        for (const block of previewBlocks) {
+          const choice = choices[block.groupId];
+          if (!choice) continue;
+          const loaded =
+            block.mode === 'set'
+              ? await bindings.loadSet(choice.id)
+              : await bindings.loadProduct(choice.id);
+          if (!loaded) continue;
+          next[block.groupId] =
+            block.mode === 'set'
+              ? { product_set_id: choice.id }
+              : { product_id: choice.id };
+        }
+        setPreviews(next);
+        setPreviewDialogOpen(false);
+      } finally {
+        setPickerBusy(false);
+      }
+    },
+    [bindings, previewBlocks],
   );
 
   const handlePick = useCallback(
@@ -611,12 +700,16 @@ export function TagCanvasEditor({
             }),
           );
         } else if (picker.kind === 'preview') {
-          const isSet = previewMode === 'set';
+          const isSet = picker.mode === 'set';
+          const groupId = picker.groupId;
           const loaded = isSet
             ? await bindings.loadSet(ids[0])
             : await bindings.loadProduct(ids[0]);
           if (!loaded) return;
-          setPreview(isSet ? { product_set_id: ids[0] } : { product_id: ids[0] });
+          setPreviews((prev) => ({
+            ...prev,
+            [groupId]: isSet ? { product_set_id: ids[0] } : { product_id: ids[0] },
+          }));
         } else if (picker.kind === 'alternatives') {
           const products = [];
           for (const id of ids) {
@@ -702,7 +795,6 @@ export function TagCanvasEditor({
       layers,
       history,
       promotionId,
-      previewMode,
       closePicker,
     ],
   );
@@ -1494,24 +1586,41 @@ export function TagCanvasEditor({
     : null;
 
   /** The bound thing, named the way a person recognises it. Never a UUID. */
-  const selectedBindingLabel = !selectedData
-    ? null
-    : selectedData.kind === 'product'
-      ? `${selectedData.product.code} - ${selectedData.product.name}`
-      : selectedData.kind === 'set'
-        ? `${selectedData.set.set_code} - ${selectedData.set.name}`
-        : `${selectedData.line.code} - ${selectedData.line.name}`;
+  const selectedBindingLabel = describeBindingData(selectedData);
 
-  const previewData = preview ? bindings.get(preview) : null;
-  const previewLabel = !previewData
-    ? preview
-      ? 'loading'
-      : null
-    : previewData.kind === 'product'
-      ? `${previewData.product.code} - ${previewData.product.name}`
-      : previewData.kind === 'set'
-        ? `${previewData.set.set_code} - ${previewData.set.name}`
-        : `${previewData.line.code} - ${previewData.line.name}`;
+  /** What each previewed block is showing, named for a person (D53). */
+  const previewChoices = useMemo(() => {
+    const out: Record<string, PreviewChoice> = {};
+    for (const [groupId, binding] of Object.entries(previews)) {
+      const id = binding.product_id ?? binding.product_set_id;
+      const label = describeBindingData(bindings.get(binding));
+      if (id && label) out[groupId] = { id, label };
+    }
+    return out;
+  }, [previews, bindings]);
+
+  const previewCount = Object.keys(previews).length;
+
+  /**
+   * The block the selection sits in, so the Inspector can preview THAT block.
+   * A child answers for its block: somebody who clicked the code text wants the
+   * whole block's product, not a binding on one text layer.
+   */
+  const selectedBlock = selectedLayer
+    ? previewBlockOf(selectedLayer, previewBlocks, groupOfChild)
+    : null;
+
+  /**
+   * The chip on the toolbar. A one-block tag names its product, because that is
+   * the whole fact; a tag with several is tracked by how many of them are
+   * showing something, which is what the user is actually keeping count of.
+   */
+  const previewLabel =
+    previewCount === 0
+      ? null
+      : previewBlocks.length <= 1
+        ? `Previewing: ${Object.values(previewChoices)[0]?.label ?? 'loading'}`
+        : `Previewing ${previewCount} of ${previewBlocks.length} blocks`;
 
   /** The bound product's photos, for the image picker's first tab. */
   const pickerProductImages = useMemo(() => {
@@ -1566,8 +1675,9 @@ export function TagCanvasEditor({
         hasMultiSelection={selectedIds.size >= 2}
         selectionIsGroup={selectionIsGroup}
         previewLabel={previewLabel}
-        onPreview={() => setPicker({ kind: 'preview' })}
-        onClearPreview={() => setPreview(null)}
+        canPreview={previewBlocks.length > 0}
+        onPreview={openPreviewPicker}
+        onClearPreview={() => setPreviews({})}
       />
 
       <div className="flex flex-1 overflow-hidden">
@@ -1856,7 +1966,10 @@ export function TagCanvasEditor({
                   <ContextMenuShortcut>Ctrl+1</ContextMenuShortcut>
                 </ContextMenuItem>
                 <ContextMenuSeparator />
-                <ContextMenuItem onSelect={() => setPicker({ kind: 'preview' })}>
+                <ContextMenuItem
+                  onSelect={openPreviewPicker}
+                  disabled={previewBlocks.length === 0}
+                >
                   <Eye />
                   Preview with a product
                 </ContextMenuItem>
@@ -1880,6 +1993,12 @@ export function TagCanvasEditor({
             onRebind={handleRebind}
             onRelinkGroup={handleRelinkGroup}
             onUseTemplate={onUseTemplate}
+            previewBlockId={selectedBlock?.groupId ?? null}
+            previewBlockLabel={
+              selectedBlock ? previewChoices[selectedBlock.groupId]?.label ?? null : null
+            }
+            onPreviewBlock={openBlockPreview}
+            onClearBlockPreview={clearBlockPreview}
           />
         </div>
       </div>
@@ -1894,7 +2013,7 @@ export function TagCanvasEditor({
             : picker.kind === 'rebind'
               ? picker.mode
               : picker.kind === 'preview'
-                ? previewMode
+                ? picker.mode
                 : 'product'
         }
         multiple={picker.kind === 'alternatives' || picker.kind === 'accessories'}
@@ -1904,7 +2023,9 @@ export function TagCanvasEditor({
             : picker.kind === 'rebind'
               ? 'Change what this block is about'
               : picker.kind === 'preview'
-                ? 'Preview this template with'
+                ? previewBlocks.length > 1
+                  ? 'Preview this block with'
+                  : 'Preview this template with'
                 : picker.kind === 'alternatives'
                   ? 'Add an alternatives row'
                   : picker.kind === 'accessories'
@@ -1922,6 +2043,21 @@ export function TagCanvasEditor({
         onCancel={closePicker}
         onConfirm={(ids) => {
           void handlePick(ids);
+        }}
+      />
+
+      <PreviewBlocksDialog
+        open={previewDialogOpen}
+        blocks={previewBlocks}
+        value={previewChoices}
+        busy={pickerBusy}
+        onCancel={() => setPreviewDialogOpen(false)}
+        onClearAll={() => {
+          setPreviews({});
+          setPreviewDialogOpen(false);
+        }}
+        onApply={(choices) => {
+          void applyPreviews(choices);
         }}
       />
 

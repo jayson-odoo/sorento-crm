@@ -76,8 +76,10 @@ interface CanvasToolbarProps {
   hasSelection: boolean;
   hasMultiSelection: boolean;
   selectionIsGroup: boolean;
-  /** `CODE - name` while a preview product is set, else null. */
+  /** The whole chip text while anything is previewing, else null (D53). */
   previewLabel: string | null;
+  /** False when the template has no block a product could be shown in. */
+  canPreview?: boolean;
   onPreview: () => void;
   onClearPreview: () => void;
 }
@@ -153,6 +155,7 @@ export function CanvasToolbar({
   hasMultiSelection,
   selectionIsGroup,
   previewLabel,
+  canPreview = true,
   onPreview,
   onClearPreview,
 }: CanvasToolbarProps) {
@@ -277,7 +280,7 @@ export function CanvasToolbar({
         disabled={!selectionIsGroup}
       />
 
-      {/* Preview chip (D41). Sits right so it reads as state, not as an action. */}
+      {/* Preview chip (D41, D53). Sits right so it reads as state, not as an action. */}
       <div className="ml-auto flex items-center gap-1">
         {previewLabel ? (
           <div className="flex h-7 items-center gap-1 rounded-full border bg-muted/60 pl-2.5 pr-1 text-xs">
@@ -285,9 +288,9 @@ export function CanvasToolbar({
               type="button"
               className="max-w-[220px] truncate hover:underline"
               onClick={onPreview}
-              title={`Previewing: ${previewLabel}`}
+              title={previewLabel}
             >
-              Previewing: {previewLabel}
+              {previewLabel}
             </button>
             <button
               type="button"
@@ -299,7 +302,12 @@ export function CanvasToolbar({
             </button>
           </div>
         ) : (
-          <ToolbarButton icon={Eye} label="Preview with a product" onClick={onPreview} />
+          <ToolbarButton
+            icon={Eye}
+            label="Preview with a product"
+            onClick={onPreview}
+            disabled={!canPreview}
+          />
         )}
       </div>
     </div>
