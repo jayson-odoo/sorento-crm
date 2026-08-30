@@ -45,6 +45,7 @@ interface Draft {
   category_name: string;
   description: string;
   is_active: boolean;
+  is_searchable: boolean;
   display_order: string;
 }
 
@@ -160,6 +161,7 @@ export default function ProductCategoryDetailPage({
       category_name: category.category_name,
       description: category.description ?? '',
       is_active: category.is_active,
+      is_searchable: category.is_searchable ?? true,
       display_order: String(category.display_order ?? 0),
     });
     setEditing(true);
@@ -179,6 +181,7 @@ export default function ProductCategoryDetailPage({
         category_name: draft.category_name.trim(),
         description: draft.description.trim() || undefined,
         is_active: draft.is_active,
+        is_searchable: draft.is_searchable,
         display_order: Number(draft.display_order) || 0,
       },
     });
@@ -325,6 +328,26 @@ export default function ProductCategoryDetailPage({
                   ) : (
                     <Badge variant={category.is_active ? 'success' : 'secondary'}>
                       {category.is_active ? 'Active' : 'Inactive'}
+                    </Badge>
+                  )}
+                </Field>
+
+                {/* The tree shows this as its Chat column, and the row opens
+                    this page rather than the lightbox that used to carry the
+                    switch, so the flag is edited here or nowhere. */}
+                <Field label="Chat searchable" htmlFor="category-searchable">
+                  {editing && draft ? (
+                    <div className="flex items-center gap-2">
+                      <Switch
+                        id="category-searchable"
+                        checked={draft.is_searchable}
+                        onCheckedChange={(value) => setDraft({ ...draft, is_searchable: value })}
+                      />
+                      <span>{draft.is_searchable ? 'Searchable' : 'Hidden'}</span>
+                    </div>
+                  ) : (
+                    <Badge variant={category.is_searchable === false ? 'secondary' : 'success'}>
+                      {category.is_searchable === false ? 'Hidden' : 'Searchable'}
                     </Badge>
                   )}
                 </Field>

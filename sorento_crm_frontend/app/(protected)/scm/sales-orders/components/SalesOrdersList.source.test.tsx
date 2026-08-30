@@ -49,7 +49,7 @@ if (!window.ResizeObserver) {
 }
 
 vi.mock('sonner', () => ({
-  toast: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() },
+  toast: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn(), dismiss: vi.fn() },
 }));
 
 // The row-click handler asks for the router, which is not mounted under jsdom.
