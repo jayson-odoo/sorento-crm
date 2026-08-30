@@ -13,7 +13,8 @@ D45-D47 (section 10) BUILT 2026-08-30 from the captain's test of the PORTAL form
 2026-08-30, preview per block on a multi-product template; D54-D59 (section 13) BUILT
 2026-08-30, colour picker plus merge fields; D60 (section 9) BUILT 2026-08-30, arrange
 works inside a group; D61 (section 14) BUILT 2026-08-30, the form deploys granted to
-nobody and admins switch it on per access type.
+nobody and admins switch it on per access type. The seventeen review findings of 30 Aug
+(section 15) are FIXED, each with the test that reproduced it written first.
 **UAC:** `documentation/plans/dealer-kit/price-tag-request-acceptance-criteria.md`
 **Depends on:** `feat/product-sets` branch merged to main.
 **Branch:** TBD
@@ -909,3 +910,42 @@ twice against the same row leaves the same array, and leaves the other kinds alo
 answers without it. vitest: the edit dialog opens with the row's kinds selected, the multi-select
 offers all five with the portal's labels, and Save submits the chosen codes; the list column draws
 one chip per kind and a dash for none.
+
+
+## 15. Review findings, 30 Aug
+
+**Status:** FIXED 2026-08-30. `/code-review` on the branch raised ten findings above the
+severity cap and a tail of smaller ones; every one was reproduced with a failing test before it
+was fixed. One line each, in the order they were raised.
+
+| # | What was wrong | The fix |
+|---|----------------|---------|
+| 1 | `generate_doc_number` counted the surviving rows of one company while `doc_number` is globally unique and a draft hard-deletes, so the create after any delete died on `price_tag_requests_doc_number_key` and two companies in one month collided | The sequence is MAX over the month's suffix, read with the company scope off because the numbering space is the table, plus a SAVEPOINT retry so a lost insert race takes the next number instead of a 500 |
+| 2 | The tag sheet print payload resolved entirely inside `company_scope(db, None)`, so another company's products, prices, photos, assets and fonts were in reach of a token issued for this one | The widening stops at the page lookup and everything after is read inside `frozenset({page.company_id})`, which is what the sibling catalogue route already did |
+| 3 | `GET /lookups/debtors-for-agent` was the one portal route with no `_assert_visible`, so a revoked contact could still enumerate their agent's whole debtor book | It calls `_assert_visible` like the other nine |
+| 4 | A portal draft carries status `new`, so it sat in marketing's queue and could be claimed; the salesperson's later Submit then reset it to `new`, wiping the claim and firing the SLA twice | The CRM listing asks for `include_drafts=False`, the portal list keeps its drafts, and Claim refuses a draft outright through `validate_claimable` |
+| 5 | Claiming wrote `created_by`, which nothing reads back, and the list and response schemas declared none of `line_count`, `contact_name`, `assigned_to_id`, `assigned_to_name`, `promotion_name`, so `response_model` dropped them and both screens drew blanks | `price_tag_requests.assigned_to_id` (migration `ptag_0004`, FK to `users`, backfilled from the overloaded `created_by`), the claim writes it, and the five fields are resolved for a whole page in two set-based queries |
+| 6 | A set offer counted a member the pricing engine could not price as RM 0, printing a set offer far below the sum of its parts | An unpriceable contributing member abandons the offer and the tag prints the set's list price |
+| 7 | `pinnedFromDoc` read every placed tag as a manual pin, so one save and reopen froze the sheet: a preset switch re-imposed nothing and a quantity bump stacked the new copy on copy 0 | A dragged copy carries `pinned: true` and only that is read back. **A document saved before the flag opens unpinned and auto-arrange re-imposes it**, which leaves the sheet correct rather than frozen |
+| 8 | `Decimal(part)` on a measurement that came from JSONB is a float, so 407.3 printed as 28 digits on a physical tag | `Decimal(str(part))`, and the catalogue tile that delegates to the same formatter is fixed with it |
+| 9 | The `price_field` kind drew a hardcoded "RM 1,550" on the canvas while print resolved the real price, and its `format` prop was read by nothing | **Deleted end to end.** The read-only probe first: 0 of 9 stored `tag_template` docs and 0 of 6 `tag_sheet` `page_version` docs carry `"kind": "price_field"`, so nothing on this database loses a layer. `price_badge` stays and is how a tag prints a price |
+| 10 | `SUPPORTED_TYPES` answered two questions, so the generic listing returned `200 []` for `price_tag_request`, a dead revision-config row appeared, and the router include order was load-bearing | `GRANTABLE_PORTAL_FORM_TYPES` for what an admin may grant; `SUPPORTED_TYPES` back to the four generic kinds. `test_portal_revision_config_routes` is green again as a result |
+| 11 | The landing awaited its five lists in one `Promise.all`, so one kind's 403 or 500 blanked the whole page | `allSettled` per leg; a failed leg is that kind empty, and an expired token is still rethrown |
+| 12 | The sales agent contact picker read its label off the agent row, so choosing somebody else made the field say "Not linked" with a real person selected | The picked option is kept through `onOptionChange` and named until the row catches up |
+| 13 | The CRM list fetched the whole table and paged it in the browser, hand-rolling its query string | The route takes page/limit/sort/dir/query/status and answers the `data` + `pagination` envelope with a real count; the service builds its string with `buildDataGridParams`; both new grids gained `columnResizeMode: 'onChange'` |
+| 14 | The FE branched on a `draft` STATUS the backend never writes | Removed; draft-ness is `portal_draft_at` and nothing else |
+| 15 | The portal's PO zone said "Drop PO files here" and had no drag handlers, so a dropped file opened in the browser tab | The shared `FileDropzone` |
+| 16 | `data-dk-print-ready` flipped when the payload arrived, so the PDF could be taken while the photos were still loading | Every picture is counted and waited for, settling on `error` too |
+| 17 | `sales_agents.contact_id` has no unique constraint and the debtor lookup took `.first()` off an unordered query | Ordered by agent code then id, and a second link is logged rather than hidden |
+
+### Named, not built
+
+- **`Customer.sales_agent_id` still has no writer.** The debtor lookup reads it and the column is
+  populated by an import that has not landed; nothing in this feature writes it, and inventing a
+  writer here would be guessing at a mapping the import owns. Trigger: the customer-to-agent import
+  ships, or the captain asks for the link to be editable in the CRM.
+- **`resolve_request_line_data` costs about six queries per line.** Every line resolves its product,
+  its spec row, its images and its prices separately. It is correct and it is fast enough for the
+  handful of lines a request carries; the trigger for batching it is a request with tens of lines,
+  or the designer's panel becoming slow enough to notice.
+- **The four legacy portal-forms toggles are still decorative.** That is D61d, unchanged.
