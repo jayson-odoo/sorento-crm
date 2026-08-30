@@ -997,6 +997,47 @@ class TestDraftWithoutRequiredFields:
         assert rows[0].debtor_name is None
 
 
+class TestTheDebtorLookupIsDeterministic:
+    """Two agents linked to one contact must not answer differently per call.
+
+    ``sales_agents.contact_id`` carries no unique constraint, and the lookup took
+    ``.first()`` off an unordered query: Postgres is free to return either row,
+    so the same salesperson could open the form twice and be offered two
+    different debtor books with nothing on screen to explain it.
+    """
+
+    def test_the_same_contact_answers_the_same_agent_every_time(self, db: Session):
+        contact = _make_contact(db)
+        first = _make_sales_agent(db, contact_id=contact.id)
+        second = _make_sales_agent(db, contact_id=contact.id)
+        _make_customer(db, sales_agent_id=first.id)
+        _make_customer(db, sales_agent_id=second.id)
+
+        answers = [
+            {
+                row["customer_code"]
+                for row in PriceTagRequestService.lookup_debtors_for_agent(
+                    db, contact.id
+                )
+            }
+            for _ in range(3)
+        ]
+
+        assert answers[0] == answers[1] == answers[2]
+        # And it is the ordering the code names, not whichever row came back.
+        expected = min([first, second], key=lambda agent: (agent.sales_agent, agent.id))
+        customers = {
+            row["customer_code"]
+            for row in PriceTagRequestService.lookup_debtors_for_agent(db, contact.id)
+        }
+        assert customers == {
+            customer.customer_code
+            for customer in db.query(Customer)
+            .filter(Customer.sales_agent_id == expected.id)
+            .all()
+        }
+
+
 class TestSubmitCompleteness:
     def test_submit_names_every_missing_field(self, db: Session):
         contact = _make_contact(db)

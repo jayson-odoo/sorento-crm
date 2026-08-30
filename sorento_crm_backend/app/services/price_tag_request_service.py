@@ -627,14 +627,31 @@ class PriceTagRequestService:
         from app.models.order import Customer, Order
         from app.models.sales_agent import SalesAgent
 
-        # Find the SalesAgent linked to this contact.
-        agent = (
+        # The SalesAgent linked to this contact. `sales_agents.contact_id` carries
+        # no unique constraint, so an unordered `.first()` let Postgres return
+        # either row: the same salesperson could open the form twice and be
+        # offered two different debtor books with nothing on screen to explain
+        # it. Ordered by the agent code and then the id, so the answer is the
+        # same every time, and a second link is logged rather than hidden -
+        # linking one contact to two agents is a data problem for a human, not
+        # something to guess at here.
+        agents = (
             db.query(SalesAgent)
             .filter(SalesAgent.contact_id == contact_id)
-            .first()
+            .order_by(SalesAgent.sales_agent, SalesAgent.id)
+            .all()
         )
-        if not agent:
+        if not agents:
             return []
+        agent = agents[0]
+        if len(agents) > 1:
+            logger.warning(
+                "Portal contact %s is linked to %s sales agents; answering for "
+                "%s. Only one link is meant to exist.",
+                contact_id,
+                len(agents),
+                agent.sales_agent,
+            )
 
         debtors: dict[str, dict] = {}
 
