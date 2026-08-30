@@ -1,6 +1,6 @@
 import { Metadata } from 'next';
 import { Container } from '@/components/common/container';
-import { Toolbar, ToolbarHeading, ToolbarTitle } from '@/components/common/toolbar';
+import { PageHeader } from '@/components/common/PageHeader';
 import PromotionAttachmentsList from './components/PromotionAttachmentsList';
 
 export const metadata: Metadata = {
@@ -11,11 +11,7 @@ export default function PromotionAttachmentsPage() {
   return (
     <>
       <Container>
-        <Toolbar>
-          <ToolbarHeading>
-            <ToolbarTitle>Promotion Attachments</ToolbarTitle>
-          </ToolbarHeading>
-        </Toolbar>
+        <PageHeader title="Promotion Attachments" />
       </Container>
 
       <Container>
