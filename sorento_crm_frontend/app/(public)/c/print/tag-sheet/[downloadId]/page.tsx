@@ -6,7 +6,8 @@
  * Follows the same pattern as the catalogue print page:
  * 1. Fetches the pre-resolved payload (tag sheet doc + resolved product/price data).
  * 2. Renders each sheet as an A4-sized div with absolutely positioned tags.
- * 3. Sets data-dk-print-ready="true" when rendering is complete.
+ * 3. Sets data-dk-print-ready="true" once every picture on the sheet has
+ *    loaded or failed, never merely when the payload has arrived.
  *
  * Three things this page must get right:
  * 1. It decides nothing about prices. The payload arrives already resolved.
@@ -68,6 +69,7 @@ export default function TagSheetPrintPage({
 
   const [payload, setPayload] = useState<TagSheetPrintPayload | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
+  const [imagesSettled, setImagesSettled] = useState(false);
 
   useEffect(() => {
     let live = true;
@@ -118,13 +120,60 @@ export default function TagSheetPrintPage({
     };
   }, [downloadId, token, resolvedSearch.sheet]);
 
+  // Ready means FINISHED, not "the data arrived".
+  //
+  // The flag used to flip the moment the payload landed, so Chromium was free to
+  // call page.pdf() while the product photos and the badge artwork were still in
+  // flight and the tags printed with blank boxes where the pictures belong. Every
+  // picture the sheet can draw is counted and waited for; loading each URL
+  // through an Image puts it in the same HTTP cache the tags read, so this waits
+  // for the real fetch rather than a copy of it. A broken picture settles on
+  // `error` rather than holding the render open until the worker times out.
+  useEffect(() => {
+    if (!payload) return;
+
+    let cancelled = false;
+    const pending: { addEventListener: (t: string, h: () => void) => void }[] =
+      Array.from(document.images).filter((image) => !image.complete);
+
+    const urls = [
+      ...Object.values(payload.assets ?? {}),
+      ...Object.values(payload.images ?? {}),
+    ];
+    for (const url of urls) {
+      const preload = new Image();
+      preload.src = url;
+      if (!preload.complete) pending.push(preload);
+    }
+
+    if (pending.length === 0) {
+      setImagesSettled(true);
+      return;
+    }
+
+    let remaining = pending.length;
+    const settle = () => {
+      remaining -= 1;
+      if (remaining <= 0 && !cancelled) setImagesSettled(true);
+    };
+
+    pending.forEach((image) => {
+      image.addEventListener('load', settle);
+      image.addEventListener('error', settle);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [payload]);
+
   if (failed) {
     return <main data-dk-print-failed>{failed}</main>;
   }
 
   return (
     <main
-      data-dk-print-ready={payload ? 'true' : 'false'}
+      data-dk-print-ready={payload && imagesSettled ? 'true' : 'false'}
       style={{
         width: '100%',
         background: '#ffffff',
