@@ -587,7 +587,7 @@ export function PageEditor({
                   {section.name}
                 </span>
                 {section.printMode === 'breakBefore' && (
-                  <Badge variant="outline" appearance="ghost" className="shrink-0 text-xs">
+                  <Badge variant="outline" className="shrink-0 text-xs">
                     break
                   </Badge>
                 )}
@@ -670,7 +670,7 @@ export function PageEditor({
               <FocusToggle active={focus} onToggle={setFocus} label="canvas" />
 
               <Tabs value={mode} onValueChange={(value) => setMode(value as CanvasMode)}>
-                <TabsList>
+                <TabsList variant="default">
                   {CANVAS_TABS.map(({ value, label, icon: Icon }) => (
                     <TabsTrigger key={value} value={value} className="gap-1.5">
                       <Icon className="size-3.5" />

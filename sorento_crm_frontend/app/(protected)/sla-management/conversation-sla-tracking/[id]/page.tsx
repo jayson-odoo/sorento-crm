@@ -1,9 +1,6 @@
 'use client';
 
 import { use } from 'react';
-import { useRouter } from 'next/navigation';
-import Link from 'next/link';
-import { MoveLeft } from 'lucide-react';
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -12,14 +9,13 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from '@/components/ui/breadcrumb';
-import { Button } from '@/components/ui/button';
 import { Container } from '@/components/common/container';
+import BackToList from '@/components/common/BackToList';
 import { Toolbar, ToolbarActions, ToolbarHeading, ToolbarTitle } from '@/components/common/toolbar';
 import ConversationSLATrackingDetail from '../components/ConversationSLATrackingDetail';
 
 export default function ConversationSLATrackingDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
-  const router = useRouter();
 
   return (
     <>
@@ -44,11 +40,10 @@ export default function ConversationSLATrackingDetailPage({ params }: { params: 
             </Breadcrumb>
           </ToolbarHeading>
           <ToolbarActions>
-            <Button asChild variant="outline">
-              <Link href="/sla-management/conversation-sla-tracking">
-                <MoveLeft /> Back to tracking
-              </Link>
-            </Button>
+            <BackToList
+              listPath="/sla-management/conversation-sla-tracking"
+              label="Back to conversation SLA"
+            />
           </ToolbarActions>
         </Toolbar>
       </Container>

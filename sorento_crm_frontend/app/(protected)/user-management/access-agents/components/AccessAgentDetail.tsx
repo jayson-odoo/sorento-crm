@@ -2,22 +2,28 @@
 
 import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Edit, Trash2, ChevronDown, ChevronRight, RefreshCw, ContactRound, Copy } from 'lucide-react';
+import { Edit, ChevronDown, ChevronRight, RefreshCw, ContactRound, Copy } from 'lucide-react';
 import AccessAgentFormModal from './AccessAgentFormModal';
 import { useCompany } from '@/app/providers/CompanyProvider';
 import { Button } from '@/components/ui/button';
+import { useBackToListHref } from '@/components/common/BackToList';
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { toast } from 'sonner';
-import { useAccessAgent, useAgentTeams, useTeams } from '../hooks/useAccessAgents';
+import {
+  useAccessAgent,
+  useAgentTeams,
+  useTeams,
+  accessAgentsPagerQuery,
+} from '../hooks/useAccessAgents';
 import { formatDate } from '@/lib/helpers';
-import AccessAgentDeleteDialog from './access-agent-delete-dialog';
 import ContactAccessAgentsTable from './ContactAccessAgentsTable';
 import AgentFieldAccessCard from './AgentFieldAccessCard';
-import AccessAgentNavigation from './AccessAgentNavigation';
+import DetailActions from '@/components/common/DetailActions';
+import { useAccessAgentActions } from '../actions';
 import MemberMarketSegmentEditor from './MemberMarketSegmentEditor';
 import MemberBrandEditor from './MemberBrandEditor';
 import type { AgentTeamMemberInfo, AgentTeamAssignment } from '../services/accessAgentService';
@@ -106,6 +112,7 @@ function TeamMemberRespondIoButton({ member }: { member: AgentTeamMemberInfo }) 
 
 export default function AccessAgentDetail({ accessAgentId }: AccessAgentDetailProps) {
   const router = useRouter();
+  const backHref = useBackToListHref('/user-management/access-agents');
   const { data: accessAgent, isLoading } = useAccessAgent(accessAgentId);
   const {
     data: agentTeamsData,
@@ -114,7 +121,9 @@ export default function AccessAgentDetail({ accessAgentId }: AccessAgentDetailPr
   } = useAgentTeams(accessAgentId);
   const { data: teamsList = [] } = useTeams();
   const { activeCompany } = useCompany();
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const { actions, dialogs } = useAccessAgentActions(accessAgent, {
+    onDeleted: () => router.push(backHref),
+  });
   const [editModalOpen, setEditModalOpen] = useState(false);
 
   const assignments = agentTeamsData?.assignments ?? [];
@@ -181,7 +190,7 @@ export default function AccessAgentDetail({ accessAgentId }: AccessAgentDetailPr
         <div className="space-y-1">
           <div className="flex items-center gap-3">
             <h1 className="text-2xl font-bold">{accessAgent.name}</h1>
-            <Badge variant={accessAgent.is_active ? 'success' : 'secondary'} appearance="ghost">
+            <Badge variant={accessAgent.is_active ? 'success' : 'secondary'}>
               <BadgeDot />
               {accessAgent.is_active ? 'Active' : 'Inactive'}
             </Badge>
@@ -190,17 +199,23 @@ export default function AccessAgentDetail({ accessAgentId }: AccessAgentDetailPr
             Code: {accessAgent.code}
           </p>
         </div>
-        <div className="flex gap-2">
-          <AccessAgentNavigation accessAgentId={accessAgentId} />
-          <Button variant="outline" onClick={() => setEditModalOpen(true)}>
-            <Edit className="size-4" />
-            Edit
-          </Button>
-          <Button variant="destructive" onClick={() => setDeleteDialogOpen(true)}>
-            <Trash2 className="size-4" />
-            Delete
-          </Button>
-        </div>
+        <DetailActions
+          pager={{
+            ...accessAgentsPagerQuery,
+            detailPath: '/user-management/access-agents',
+            currentId: accessAgentId,
+            ariaLabel: 'access agent',
+          }}
+          actions={actions}
+          dialogs={dialogs}
+          gearLabel="Access agent options"
+          primary={
+            <Button onClick={() => setEditModalOpen(true)}>
+              <Edit className="size-4" />
+              Edit
+            </Button>
+          }
+        />
       </div>
 
       {/* Access Agent Information */}
@@ -220,7 +235,7 @@ export default function AccessAgentDetail({ accessAgentId }: AccessAgentDetailPr
             </div>
             <div>
               <p className="text-sm text-muted-foreground">Status</p>
-              <Badge variant={accessAgent.is_active ? 'success' : 'secondary'} appearance="ghost">
+              <Badge variant={accessAgent.is_active ? 'success' : 'secondary'}>
                 <BadgeDot />
                 {accessAgent.is_active ? 'Active' : 'Inactive'}
               </Badge>
@@ -344,7 +359,6 @@ export default function AccessAgentDetail({ accessAgentId }: AccessAgentDetailPr
                                         ? 'secondary'
                                         : 'primary'
                                     }
-                                    appearance="ghost"
                                     className="text-xs font-normal"
                                   >
                                     {(a as AgentTeamAssignment).notify_on_extension === false
@@ -476,17 +490,6 @@ export default function AccessAgentDetail({ accessAgentId }: AccessAgentDetailPr
         accessAgentId={accessAgentId}
       />
 
-      {/* Delete Dialog */}
-      {accessAgent && (
-        <AccessAgentDeleteDialog
-          open={deleteDialogOpen}
-          closeDialog={() => setDeleteDialogOpen(false)}
-          accessAgent={accessAgent}
-          onSuccess={() => {
-            router.push('/user-management/access-agents');
-          }}
-        />
-      )}
     </div>
   );
 }

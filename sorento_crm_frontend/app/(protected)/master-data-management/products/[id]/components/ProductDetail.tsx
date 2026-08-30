@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useState } from 'react';
+import { useCallback } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import {
   ArrowLeft,
@@ -12,10 +12,10 @@ import {
   Receipt,
   ScrollText,
   Tag,
-  Trash2,
   Truck,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { useBackToListHref } from '@/components/common/BackToList';
 import { Badge } from '@/components/ui/badge';
 import Link from 'next/link';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -37,8 +37,9 @@ import { getPromotionsByProductId } from '@/app/(protected)/marketing-management
 // The floor is project-sales pricing POLICY, not a product column, so the panel and its
 // rules live with the rest of that policy and are only surfaced here.
 import { PriceFloorPanel } from '@/app/(protected)/project-sales/_shared/components/PriceFloorPanel';
-import ProductDeleteDialog from '../../components/product-delete-dialog';
-import ProductNavigation from './ProductNavigation';
+import DetailActions from '@/components/common/DetailActions';
+import { useProductActions } from '../../actions';
+import { productsPagerQuery } from '../../lib/listQuery';
 import AuditTrail from '@/components/audit/AuditTrail';
 import FieldAttachmentTooltip from './FieldAttachmentTooltip';
 import { NO_CURRENCY_NOTE, formatUnitCost } from '../lib/cost';
@@ -49,9 +50,9 @@ interface ProductDetailProps {
 
 export default function ProductDetail({ productId }: ProductDetailProps) {
   const router = useRouter();
+  const backHref = useBackToListHref('/master-data-management/products');
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
 
   // Kept in the URL, not component state: ProductNavigation reads the CURRENT url's
   // search params when Next/Prev is clicked, so a tab living here is the only way it
@@ -92,6 +93,21 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
   const navigationBasePath = '/master-data-management/products';
   const navigationQueryString = searchParams.toString();
 
+  // Delete lives in the gear and opens the same dialog the list row opens.
+  const { actions, dialogs } = useProductActions(
+    product
+      ? {
+          id: product.id,
+          product_code: product.product_code,
+          product_name: product.product_name,
+          list_price: product.list_price,
+          is_active: product.is_active,
+          created_at: product.created_at,
+        }
+      : null,
+    { onDeleted: () => router.push(backHref) },
+  );
+
   if (isLoading) {
     return (
       <div className="space-y-6">
@@ -119,14 +135,13 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
+      {/* Header: identity left; pager, gear and the one primary button right (D6). */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="space-y-1 min-w-0">
           <div className="flex flex-wrap items-center gap-3">
             <h1 className="text-2xl font-bold break-words min-w-0">{product.product_name}</h1>
             <Badge
               variant={product.is_active ? 'success' : 'secondary'}
-              appearance="ghost"
             >
               {product.is_active ? 'Active' : 'Inactive'}
             </Badge>
@@ -135,27 +150,29 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
             Product Code: {product.product_code}
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <ProductNavigation productId={productId} />
-          <Button
-            variant="outline"
-            onClick={() =>
-              router.push(
-                `${navigationBasePath}/${productId}/edit${navigationQueryString ? `?${navigationQueryString}` : ''}`,
-              )
-            }
-          >
-            <Edit className="size-4" />
-            Edit
-          </Button>
-          <Button
-            variant="destructive"
-            onClick={() => setDeleteDialogOpen(true)}
-          >
-            <Trash2 className="size-4" />
-            Delete
-          </Button>
-        </div>
+        <DetailActions
+          pager={{
+            detailPath: navigationBasePath,
+            currentId: productId,
+            ...productsPagerQuery,
+            ariaLabel: 'product',
+          }}
+          actions={actions}
+          dialogs={dialogs}
+          gearLabel="Product options"
+          primary={
+            <Button
+              onClick={() =>
+                router.push(
+                  `${navigationBasePath}/${productId}/edit${navigationQueryString ? `?${navigationQueryString}` : ''}`,
+                )
+              }
+            >
+              <Edit className="size-4" />
+              Edit
+            </Button>
+          }
+        />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
@@ -191,7 +208,6 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
                 <p className="text-sm text-muted-foreground">Status</p>
                 <Badge
                   variant={product.is_active ? 'success' : 'secondary'}
-                  appearance="ghost"
                 >
                   {product.is_active ? 'Active' : 'Inactive'}
                 </Badge>
@@ -333,7 +349,7 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
 
                   <div>
                     <h3 className="font-semibold mb-2">Pricing Summary</h3>
-                    <div className="grid grid-cols-3 gap-4 text-sm">
+                    <div className="grid grid-cols-1 gap-x-6 gap-y-4 text-sm sm:grid-cols-3">
                       <div>
                         <p className="text-muted-foreground">List Price</p>
                         <p className="font-medium text-lg">
@@ -561,19 +577,6 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
         </div>
       </div>
 
-      <ProductDeleteDialog
-        open={deleteDialogOpen}
-        closeDialog={() => setDeleteDialogOpen(false)}
-        product={{
-          id: product.id,
-          product_code: product.product_code,
-          product_name: product.product_name,
-          list_price: product.list_price,
-          is_active: product.is_active,
-          created_at: product.created_at,
-        }}
-        onSuccess={() => router.push('/master-data-management/products')}
-      />
     </div>
   );
 }

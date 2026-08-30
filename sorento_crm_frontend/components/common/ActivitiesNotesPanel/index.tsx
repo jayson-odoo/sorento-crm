@@ -93,7 +93,7 @@ export default function ActivitiesNotesPanel({ entityType, entityId }: Props) {
         <Button
           variant="primary"
           size="icon"
-          className="fixed right-4 bottom-4 z-30 size-12 rounded-full shadow-xl bg-red-600 hover:bg-red-700 animate-pulse"
+          className="fixed end-12 bottom-4 z-30 size-12 rounded-full shadow-xl bg-red-600 hover:bg-red-700 animate-pulse"
           aria-label="Open activities & notes"
         >
           <Activity className="size-5 text-white" />
@@ -115,7 +115,7 @@ export default function ActivitiesNotesPanel({ entityType, entityId }: Props) {
           className="flex-1 flex flex-col overflow-hidden"
         >
           <div className="px-3 pt-3">
-            <TabsList className="grid grid-cols-3 w-full">
+            <TabsList variant="default" className="w-full">
               <TabsTrigger value="activities" aria-label="Activities">
                 <Activity className="size-4" />
               </TabsTrigger>

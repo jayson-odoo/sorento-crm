@@ -36,7 +36,6 @@ import { exportStockBalance, bulkImportStock, validateStockImport } from '../ser
 import { replaceLatestStockList, getCurrentStockListAttachment } from '@/app/(protected)/resource-management/attachments/services/attachmentService';
 import { useImportJobDrawer } from '@/components/upload-activity';
 import StockBulkDeleteDialog from './StockBulkDeleteDialog';
-import { getStatusBadgeVariant } from '@/lib/status-badge';
 import { useQueryClient, useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { generateExcelFile, type ColumnOption } from '@/lib/excel-utils';
@@ -176,7 +175,7 @@ export default function StockBalanceGrid() {
         cell: ({ row }) => {
           const status = row.original.status || 'normal';
           return (
-            <Badge variant={getStatusBadgeVariant(status)} appearance="ghost">
+            <Badge status={status}>
               {(status || '').charAt(0).toUpperCase() + (status || '').slice(1)}
             </Badge>
           );

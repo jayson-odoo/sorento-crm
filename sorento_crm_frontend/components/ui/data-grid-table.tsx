@@ -1,5 +1,8 @@
+'use client';
+
 import * as React from 'react';
 import { CSSProperties, Fragment, ReactNode } from 'react';
+import { useRouter } from 'next/navigation';
 import type { DragEndEvent } from '@dnd-kit/core';
 import { arrayMove } from '@dnd-kit/sortable';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -8,7 +11,61 @@ import { DataGridTableDnd } from '@/components/ui/data-grid-table-dnd';
 import { Cell, Column, flexRender, Header, HeaderGroup, Row, Table } from '@tanstack/react-table';
 import { cva } from 'class-variance-authority';
 import { mergeColumnOrderWithLeafColumns } from '@/lib/listing-column-preferences/mergeColumnOrder';
+import { buildDetailSearch } from '@/lib/listNavQuery';
+import { toAbsoluteUrl } from '@/lib/helpers';
+import { useHorizontalOverflow } from '@/hooks/use-horizontal-overflow';
 import { cn } from '@/lib/utils';
+
+/** The id `buildSelectColumn` gives the row-selection column. */
+const SELECT_COLUMN_ID = 'select';
+
+/**
+ * True under Tailwind's `sm` breakpoint, where a wide grid has to pin its
+ * identifier column or the user scrolls away from the only thing that says
+ * which row they are reading.
+ */
+function useIsUnderSm() {
+  const [isUnderSm, setIsUnderSm] = React.useState(false);
+
+  React.useEffect(() => {
+    const mql = window.matchMedia('(max-width: 639px)');
+    const onChange = () => setIsUnderSm(mql.matches);
+    onChange();
+    mql.addEventListener('change', onChange);
+    return () => mql.removeEventListener('change', onChange);
+  }, []);
+
+  return isUnderSm;
+}
+
+/**
+ * Appends the list state the grid is showing to a row's detail href.
+ *
+ * The detail page's pager walks the page the user came FROM, so the URL has to
+ * name that page. Param names come from `buildDetailSearch` (the same builder
+ * the list GET uses), and anything the caller put in its own query string wins -
+ * that is where a filter the list keeps outside TanStack rides along.
+ */
+function appendListState<TData>(href: string, table: Table<TData>): string {
+  // A fragment has to survive, and it sits AFTER the query string - splitting on
+  // '?' alone turns `/orders/a1#lines` into a param named `a1#lines`.
+  const hashAt = href.indexOf('#');
+  const hash = hashAt === -1 ? '' : href.slice(hashAt);
+  const [path, ownSearch] = (hashAt === -1 ? href : href.slice(0, hashAt)).split('?');
+  const state = table.getState();
+  const params = new URLSearchParams(
+    buildDetailSearch({
+      pageIndex: state.pagination?.pageIndex ?? 0,
+      pageSize: state.pagination?.pageSize ?? 50,
+      sorting: state.sorting,
+      searchQuery: typeof state.globalFilter === 'string' ? state.globalFilter : '',
+    }),
+  );
+  if (ownSearch) {
+    for (const [key, value] of new URLSearchParams(ownSearch)) params.set(key, value);
+  }
+  return `${path}?${params.toString()}${hash}`;
+}
 
 const headerCellSpacingVariants = cva('', {
   variants: {
@@ -51,13 +108,32 @@ function getPinningStyles<TData>(column: Column<TData>): CSSProperties {
 }
 
 function DataGridTableBase({ children }: { children: ReactNode }) {
-  const { props } = useDataGrid();
+  const { props, table } = useDataGrid();
+
+  // What stops a `table-fixed w-full` grid from squeezing six columns into a
+  // phone: the table is at least as wide as its columns want to be, and the
+  // scroller (data-grid-scroller, or the list's own ScrollArea) carries the
+  // overflow. Where the columns already fit, `w-full` still wins.
+  //
+  // It has to be a DEFINITE length. `min-width: max-content` is meaningless on a
+  // `table-layout: fixed` table - fixed layout ignores content by design - and
+  // Chrome resolves it to its "infinite" sentinel of 1,000,000px, then the fixed
+  // algorithm scales every column up to fill it. Measured on Products at
+  // 1280x800: columns summing to 2367px laid out 1,000,000px wide, each column
+  // 422x its size, the last header at x=962,282 and nothing but the checkbox on
+  // screen. `getTotalSize()` is the sum of the visible leaf column sizes, so it
+  // is that same width as a number the browser has nothing to resolve - and it
+  // tracks a column the user has resized, or one restored from their saved
+  // listing preferences.
+  const minWidth = table.getTotalSize();
 
   return (
     <table
       data-slot="data-grid-table"
+      style={minWidth > 0 ? { minWidth: `${minWidth}px` } : undefined}
       className={cn(
-        'w-full align-middle caption-bottom text-left rtl:text-right text-foreground font-normal text-sm',
+        // `tabular-nums` keeps figures aligned down a column.
+        'w-full tabular-nums align-middle caption-bottom text-left rtl:text-right text-foreground font-normal text-sm',
         !props.tableLayout?.columnsDraggable && 'border-separate border-spacing-0',
         props.tableLayout?.width === 'fixed' ? 'table-fixed' : 'table-auto',
         props.tableClassNames?.base,
@@ -171,8 +247,16 @@ function DataGridTableHeadRowCell<TData>({
         ...(props.tableLayout?.width === 'fixed' && {
           width: `${header.getSize()}px`,
         }),
-        ...(props.tableLayout?.columnsPinnable && column.getCanPin() && getPinningStyles(column)),
         ...(dndStyle ? dndStyle : null),
+        // LAST, so it beats the drag style. Column drag-and-drop is on by
+        // default and dnd-kit sets `position: relative` + `zIndex: 0` on every
+        // cell; spread after the pinning styles it silently turned the phone's
+        // pinned identifier column back into an ordinary one that scrolled away.
+        // The drag transform and transition survive - only the stickiness wins.
+        //
+        // Driven by the pinned state itself: under `sm` the grid pins the
+        // identifier column whether or not the list opted into pinning.
+        ...(isPinned ? getPinningStyles(column) : null),
       }}
       data-pinned={isPinned || undefined}
       data-last-col={isLastLeftPinned ? 'left' : isFirstRightPinned ? 'right' : undefined}
@@ -181,8 +265,7 @@ function DataGridTableHeadRowCell<TData>({
         headerCellSpacing,
         props.tableLayout?.cellBorder && 'border-e',
         props.tableLayout?.columnsResizable && column.getCanResize() && 'truncate',
-        props.tableLayout?.columnsPinnable &&
-          column.getCanPin() &&
+        isPinned &&
           '[&:not([data-pinned]):has(+[data-pinned])_div.cursor-col-resize:last-child]:opacity-0 [&[data-last-col=left]_div.cursor-col-resize:last-child]:opacity-0 [&[data-pinned=left][data-last-col=left]]:border-e! [&[data-pinned=right]:last-child_div.cursor-col-resize:last-child]:opacity-0 [&[data-pinned=right][data-last-col=right]]:border-s! [&[data-pinned][data-last-col]]:border-border data-pinned:bg-muted/90 data-pinned:backdrop-blur-xs',
         header.column.columnDef.meta?.headerClassName,
         column.getIndex() === 0 || column.getIndex() === header.headerGroup.headers.length - 1
@@ -206,6 +289,9 @@ function DataGridTableHeadRowCellResize<TData>({ header }: { header: Header<TDat
         onPointerDown: (e: React.PointerEvent) => {
           // Prevent dnd-kit from starting a column drag while the user is resizing.
           e.stopPropagation();
+          // Capture the pointer so a fast drag that leaves the 16px handle - or
+          // leaves the window - keeps resizing instead of silently stopping.
+          (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
         },
         onMouseDown: (e: React.MouseEvent) => {
           e.stopPropagation();
@@ -249,7 +335,7 @@ function DataGridTableBodyRowSkeleton({ children }: { children: ReactNode }) {
     <tr
       className={cn(
         'hover:bg-muted/40 data-[state=selected]:bg-muted/50',
-        props.onRowClick && 'cursor-pointer',
+        (props.rowHref || props.onRowClick) && 'cursor-pointer',
         !props.tableLayout?.stripped &&
           props.tableLayout?.rowBorder &&
           'border-b border-border [&:not(:last-child)>td]:border-b',
@@ -291,6 +377,122 @@ function DataGridTableBodyRowSkeletonCell<TData>({ children, column }: { childre
   );
 }
 
+/**
+ * Anything inside a row that owns its own click.
+ *
+ * A row that opens a record must not also swallow the checkbox, the action
+ * button, the inline editor or the menu item sitting in one of its cells. The
+ * alternative is every one of those remembering `stopPropagation`, and the one
+ * that forgets navigates away in the middle of an action.
+ */
+const ROW_INTERACTIVE_SELECTOR =
+  'a,button,input,select,textarea,label,[role="checkbox"],[role="menuitem"],[role="combobox"]';
+
+/**
+ * Click, middle-click and keyboard handling for a row that opens something.
+ *
+ * Shared by BOTH row branches on purpose. The `rowHref` branch had all of this
+ * and the `onRowClick` branch had a bare `onClick` on the `<tr>`, so a Brands
+ * row carrying a "View products" link navigated to products AND set the edit
+ * lightbox's state on the way out - which is why the row read as doing nothing.
+ * The same hole put the row's open action out of reach of the keyboard and left
+ * it with no role for assistive tech to announce.
+ *
+ * `opensUrl` is what separates the two: a row that opens a URL honours the
+ * modifiers an anchor honours and can go to a new tab; a row that opens a
+ * lightbox has no second tab, so a modified click just opens it here.
+ *
+ * No `role` on the `<tr>`. S1 put `role="link"` there and it looked right, but
+ * an explicit role REPLACES the implicit one, so the row stopped being a `row`
+ * to assistive tech and the table lost its grid semantics with it. The
+ * fulfilment board's own tests caught it - `getAllByRole('row')` returned
+ * nothing. `tabIndex` plus Enter and Space is what S1-06 and D3 actually ask
+ * for ("the whole row is the target, keyboard included"), and it costs the
+ * table nothing.
+ */
+function rowOpenProps({
+  opensUrl,
+  open,
+}: {
+  opensUrl: boolean;
+  open: (newTab: boolean) => void;
+}): React.ComponentProps<'tr'> {
+  const fromOwnControl = (target: EventTarget | null) =>
+    Boolean((target as Element | null)?.closest?.(ROW_INTERACTIVE_SELECTOR));
+
+  return {
+    tabIndex: 0,
+    onClick: (event) => {
+      // The PRIMARY button only. A real middle click fires auxclick alone, but a
+      // synthetic dispatch, assistive tech and Firefox autoscroll also deliver a
+      // `click` carrying button 1 - and React's onClick does not filter by
+      // button. Without this the row opened the record in a new tab from
+      // auxclick AND pushed the current tab to the same record from the click,
+      // so the user lost the list they were reading. Opening on both would be
+      // no better: two tabs. auxclick owns the new tab, click owns this one.
+      if (event.button !== 0) return;
+      // A control in a cell keeps its own click.
+      if (fromOwnControl(event.target)) return;
+      // Same modifiers an anchor honours, so the row behaves like the link it claims to be.
+      open(opensUrl && (event.metaKey || event.ctrlKey || event.shiftKey));
+    },
+    onAuxClick: (event) => {
+      if (!opensUrl) return;
+      if (event.button !== 1) return;
+      if (fromOwnControl(event.target)) return;
+      event.preventDefault();
+      open(true);
+    },
+    onKeyDown: (event) => {
+      // Only the ROW's own keystrokes: Space in a cell's text input types a
+      // space, and Space on the selection checkbox ticks the row.
+      if (event.target !== event.currentTarget) return;
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      // Space scrolls the page otherwise, and Enter would submit a surrounding form.
+      event.preventDefault();
+      open(opensUrl && (event.metaKey || event.ctrlKey || event.shiftKey));
+    },
+  };
+}
+
+/**
+ * The row when the list gave it a record to open.
+ *
+ * Split out so `useRouter` is only called by a grid that actually navigates -
+ * Next throws "expected app router to be mounted" rather than returning null,
+ * and a grid whose rows are not links must not require a router to render.
+ */
+function LinkableBodyRow({
+  href,
+  rowProps,
+  children,
+}: {
+  href: string;
+  rowProps: React.ComponentProps<'tr'>;
+  children: ReactNode;
+}) {
+  const router = useRouter();
+
+  const openRecord = (newTab = false) => {
+    if (newTab) {
+      // `router.push` applies the deploy base path itself; `window.open` does not,
+      // so a sub-path deploy would open a 404 in the new tab.
+      window.open(toAbsoluteUrl(href), '_blank', 'noopener,noreferrer');
+    } else {
+      router.push(href);
+    }
+  };
+
+  return (
+    // `rowOpenProps` BEFORE the dnd listeners `rowProps` carries: a future
+    // list that is both draggable and openable would otherwise have its
+    // keyboard-drag onKeyDown replaced by this one, silently.
+    <tr {...rowOpenProps({ opensUrl: true, open: openRecord })} {...rowProps}>
+      {children}
+    </tr>
+  );
+}
+
 function DataGridTableBodyRow<TData>({
   children,
   row,
@@ -308,29 +510,50 @@ function DataGridTableBodyRow<TData>({
 }) {
   const { props, table } = useDataGrid();
 
-  return (
-    <tr
-      ref={dndRef}
-      style={{ ...(dndStyle ? dndStyle : null) }}
-      data-state={table.options.enableRowSelection && row.getIsSelected() ? 'selected' : undefined}
-      onClick={() => props.onRowClick && props.onRowClick(row.original)}
-      {...(dndAttributes ?? {})}
-      {...(dndListeners ?? {})}
-      className={cn(
-        'hover:bg-muted/40 data-[state=selected]:bg-muted/50',
-        props.onRowClick && 'cursor-pointer',
-        !props.tableLayout?.stripped &&
-          props.tableLayout?.rowBorder &&
-          'border-b border-border [&:not(:last-child)>td]:border-b',
-        props.tableLayout?.cellBorder && '[&_>:last-child]:border-e-0',
-        props.tableLayout?.stripped && 'odd:bg-muted/90 hover:bg-transparent odd:hover:bg-muted',
-        table.options.enableRowSelection && '[&_>:first-child]:relative',
-        props.tableClassNames?.bodyRow,
-      )}
-    >
-      {children}
-    </tr>
-  );
+  // The whole row opens the record, from anywhere on it, by mouse or by keyboard.
+  // 78 of 193 lists did this and 26 had a detail route with no way to reach it.
+  const href = props.rowHref ? appendListState(props.rowHref(row.original), table) : undefined;
+
+  const rowProps: React.ComponentProps<'tr'> = {
+    ref: dndRef,
+    style: { ...(dndStyle ? dndStyle : null) },
+    'data-state': table.options.enableRowSelection && row.getIsSelected() ? 'selected' : undefined,
+    ...(dndAttributes ?? {}),
+    ...(dndListeners ?? {}),
+    className: cn(
+      'hover:bg-muted/40 data-[state=selected]:bg-muted/50',
+      (href || props.onRowClick) && 'cursor-pointer',
+      !props.tableLayout?.stripped &&
+        props.tableLayout?.rowBorder &&
+        'border-b border-border [&:not(:last-child)>td]:border-b',
+      props.tableLayout?.cellBorder && '[&_>:last-child]:border-e-0',
+      props.tableLayout?.stripped && 'odd:bg-muted/90 hover:bg-transparent odd:hover:bg-muted',
+      table.options.enableRowSelection && '[&_>:first-child]:relative',
+      props.tableClassNames?.bodyRow,
+    ),
+  } as React.ComponentProps<'tr'>;
+
+  if (href) {
+    return (
+      <LinkableBodyRow href={href} rowProps={rowProps}>
+        {children}
+      </LinkableBodyRow>
+    );
+  }
+
+  if (props.onRowClick) {
+    // A lightbox, not a URL: there is no second tab to open it in.
+    return (
+      <tr
+        {...rowOpenProps({ opensUrl: false, open: () => props.onRowClick?.(row.original) })}
+        {...rowProps}
+      >
+        {children}
+      </tr>
+    );
+  }
+
+  return <tr {...rowProps}>{children}</tr>;
 }
 
 /**
@@ -448,8 +671,9 @@ function DataGridTableBodyRowCell<TData>({
       ref={dndRef}
       {...(props.tableLayout?.columnsDraggable && !isPinned ? { cell } : {})}
       style={{
-        ...(props.tableLayout?.columnsPinnable && column.getCanPin() && getPinningStyles(column)),
         ...(dndStyle ? dndStyle : null),
+        // LAST, so it beats the drag style - see the head cell.
+        ...(isPinned ? getPinningStyles(column) : null),
       }}
       data-pinned={isPinned || undefined}
       data-last-col={isLastLeftPinned ? 'left' : isFirstRightPinned ? 'right' : undefined}
@@ -459,8 +683,7 @@ function DataGridTableBodyRowCell<TData>({
         props.tableLayout?.cellBorder && 'border-e',
         props.tableLayout?.columnsResizable && column.getCanResize() && 'truncate',
         cell.column.columnDef.meta?.cellClassName,
-        props.tableLayout?.columnsPinnable &&
-          column.getCanPin() &&
+        isPinned &&
           '[&[data-pinned=left][data-last-col=left]]:border-e! [&[data-pinned=right][data-last-col=right]]:border-s! [&[data-pinned][data-last-col]]:border-border data-pinned:bg-background/90 data-pinned:backdrop-blur-xs"',
         column.getIndex() === 0 || column.getIndex() === row.getVisibleCells().length - 1
           ? props.tableClassNames?.edgeCell
@@ -605,9 +828,65 @@ export function moveColumnKeepingGroups(
   return arrayMove(order, oldIndex, overIndex);
 }
 
+/**
+ * The grid's own horizontal scroll container.
+ *
+ * Without one, a `table-fixed w-full` grid squeezed its columns into whatever
+ * width it was given - Stock showed one column at 375, Categories crushed six -
+ * or, where it did overflow, pushed the whole PAGE sideways. The scrollbar is
+ * the only affordance a mouse user gets, so a right-edge fade marks that there
+ * is more to see and disappears once the end is reached.
+ */
+function DataGridScroller({ children }: { children: ReactNode }) {
+  const { ref, isFading } = useHorizontalOverflow<HTMLDivElement>();
+
+  return (
+    <div className="relative">
+      <div
+        ref={ref}
+        data-slot="data-grid-scroller"
+        data-fade={isFading}
+        className="overflow-x-auto overscroll-x-contain"
+      >
+        {children}
+      </div>
+      {isFading && (
+        <div
+          aria-hidden="true"
+          data-slot="data-grid-fade"
+          className="pointer-events-none absolute inset-y-0 end-0 w-8 bg-gradient-to-l from-background to-transparent"
+        />
+      )}
+    </div>
+  );
+}
+
 function DataGridTable<TData>() {
   const { table, isLoading, props } = useDataGrid();
   const pagination = table.getState().pagination;
+  const isUnderSm = useIsUnderSm();
+  // `null` means "we have not pinned anything", which is NOT the same as the
+  // empty pinning state an unpinned grid starts in - `if (ref.current)` was
+  // falsy for both, so widening the window left the phone pin in place.
+  const pinningBeforeNarrow = React.useRef<ReturnType<typeof table.getState>['columnPinning'] | null>(null);
+
+  // On a phone the grid scrolls sideways, so the column that says WHICH row this
+  // is has to stay put - otherwise the user scrolls to a number with nothing to
+  // attach it to. The checkbox column is not that column.
+  React.useEffect(() => {
+    if (!isUnderSm) {
+      if (pinningBeforeNarrow.current !== null) {
+        table.setColumnPinning(pinningBeforeNarrow.current);
+        pinningBeforeNarrow.current = null;
+      }
+      return;
+    }
+    const identifier = table.getVisibleLeafColumns().find((column) => column.id !== SELECT_COLUMN_ID);
+    if (!identifier || table.getState().columnPinning?.left?.[0] === identifier.id) return;
+
+    pinningBeforeNarrow.current = table.getState().columnPinning ?? {};
+    table.setColumnPinning({ left: [identifier.id], right: [] });
+  }, [isUnderSm, table]);
 
   if (props.tableLayout?.columnsDraggable) {
     const handleDragEnd = (event: DragEndEvent) => {
@@ -637,14 +916,14 @@ function DataGridTable<TData>() {
     };
 
     return (
-      <div className="relative">
+      <DataGridScroller>
         <DataGridTableDnd<TData> handleDragEnd={handleDragEnd} />
-      </div>
+      </DataGridScroller>
     );
   }
 
   return (
-    <div className="relative">
+    <DataGridScroller>
       <DataGridTableBase>
         <DataGridTableHead>
           {table.getHeaderGroups().map((headerGroup: HeaderGroup<TData>, index) => {
@@ -754,12 +1033,13 @@ function DataGridTable<TData>() {
           </DataGridTableFoot>
         )}
       </DataGridTableBase>
-    </div>
+    </DataGridScroller>
   );
 }
 
 export {
   footerGroupsWithContent,
+  DataGridScroller,
   headerRowSpan,
   skipMergedLeafHeader,
   DataGridTable,

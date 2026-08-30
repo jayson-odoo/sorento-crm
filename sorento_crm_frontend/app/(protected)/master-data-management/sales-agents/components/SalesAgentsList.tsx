@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import {
   ColumnDef,
   PaginationState,
@@ -41,6 +40,7 @@ import { useBulkAnnotateSalesAgents, useSalesAgents } from '../hooks/useSalesAge
 import { DEMAND_CLASS_OPTIONS, demandClassLabel } from '../lib/demandClass';
 import { salesAgentSourceLabel } from '../lib/salesAgentSource';
 import type { SalesAgent } from '../types/salesAgent.types';
+import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 
 /** Which annotation a bulk dialog is setting. One field at a time, deliberately: a dialog
  *  that sets two at once has to answer "did I mean to clear the other one" every time. */
@@ -64,6 +64,15 @@ export default function SalesAgentsList() {
   const [sorting, setSorting] = useState<SortingState>([{ id: 'sales_agent', desc: false }]);
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
+
+  // Back hands the list its own query string back, and the pager keeps
+  // rewriting it, so the list reads it (S3-01). One hook, every list.
+  useListStateFromUrl((state) => {
+    setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
+    setSorting(state.sorting);
+    setSearchQuery(state.searchQuery);
+    setDebouncedSearch(state.searchQuery);
+  });
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [bulkField, setBulkField] = useState<BulkField | null>(null);
   const [bulkValue, setBulkValue] = useState('');
@@ -84,7 +93,6 @@ export default function SalesAgentsList() {
     searchQuery: debouncedSearch,
   });
   const bulkAnnotate = useBulkAnnotateSalesAgents();
-  const router = useRouter();
 
   const rows = useMemo<SalesAgent[]>(() => data?.data ?? [], [data]);
   const total = data?.pagination.total ?? 0;
@@ -198,7 +206,7 @@ export default function SalesAgentsList() {
         accessorKey: 'is_active',
         header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
         cell: ({ row }) => (
-          <Badge variant={row.original.is_active ? 'success' : 'secondary'} appearance="ghost">
+          <Badge variant={row.original.is_active ? 'success' : 'secondary'}>
             <BadgeDot />
             {row.original.is_active ? 'Active' : 'Inactive'}
           </Badge>
@@ -290,7 +298,7 @@ export default function SalesAgentsList() {
         emptyMessage="No sales agents found."
         // The whole row opens the record. The agent-code link stays a real anchor so
         // middle-click and copy-link still work, and stops its own click propagating.
-        onRowClick={(row) => router.push(detailHref(row))}
+        rowHref={(row) => detailHref(row)}
       >
         <Card>
           <CardHeader className="block">

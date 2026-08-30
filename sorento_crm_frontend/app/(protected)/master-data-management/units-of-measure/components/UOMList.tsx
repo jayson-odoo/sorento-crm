@@ -28,6 +28,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useUOMs } from '../hooks/useUOM';
 import type { UnitOfMeasure } from '../types/uom.types';
 import UOMDeleteDialog from './UOMDeleteDialog';
+import { buildDetailSearch } from '@/lib/listNavQuery';
+import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 
 export default function UOMList() {
   const router = useRouter();
@@ -35,6 +37,14 @@ export default function UOMList() {
   const [sorting, setSorting] = useState<SortingState>([{ id: 'created_at', desc: true }]);
   const [searchQuery, setSearchQuery] = useState('');
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
+
+  // Back hands the list its own query string back, and the pager keeps
+  // rewriting it, so the list has to read it (S3-01).
+  useListStateFromUrl((state) => {
+    setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
+    setSorting(state.sorting);
+    setSearchQuery(state.searchQuery);
+  });
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [uomToDelete, setUomToDelete] = useState<UnitOfMeasure | null>(null);
 
@@ -44,6 +54,18 @@ export default function UOMList() {
     sorting,
     searchQuery,
   });
+
+  // D3: the row opens the unit's page. The chevron button was the only way in,
+  // which meant hitting a 20px target to read a record.
+  const rowHref = (row: UnitOfMeasure) => {
+    const search = buildDetailSearch({
+      pageIndex: pagination.pageIndex,
+      pageSize: pagination.pageSize,
+      sorting,
+      searchQuery,
+    });
+    return `/master-data-management/units-of-measure/${row.id}${search ? `?${search}` : ''}`;
+  };
 
   const columns = useMemo<ColumnDef<UnitOfMeasure>[]>(
     () => [
@@ -93,7 +115,6 @@ export default function UOMList() {
         cell: ({ row }) => (
           <Badge
             variant={row.original.is_active ? 'success' : 'secondary'}
-            appearance="ghost"
           >
             <BadgeDot />
             {row.original.is_active ? 'Active' : 'Inactive'}
@@ -109,13 +130,6 @@ export default function UOMList() {
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => router.push(`/master-data-management/units-of-measure/${row.original.id}`)}
-            >
-              <ChevronRight className="text-muted-foreground/70 size-3.5" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
               onClick={(e) => {
                 e.stopPropagation();
                 setUomToDelete(row.original);
@@ -125,13 +139,15 @@ export default function UOMList() {
             >
               <Trash2 className="size-4 text-muted-foreground" />
             </Button>
+            {/* The row is the way in now, so this says so rather than being it. */}
+            <ChevronRight className="text-muted-foreground/70 size-3.5 shrink-0" />
           </div>
         ),
         size: 80,
         enableHiding: false,
       },
     ],
-    [router],
+    [],
   );
 
   const table = useReactTable({
@@ -154,6 +170,7 @@ export default function UOMList() {
 
   return (
     <DataGrid table={table} recordCount={data?.pagination.total || 0} isLoading={isLoading}
+      rowHref={rowHref}
       tableLayout={{ columnsVisibility: true }}
     >
       <Card>

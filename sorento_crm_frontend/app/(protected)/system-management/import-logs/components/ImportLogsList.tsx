@@ -99,7 +99,7 @@ export default function ImportLogsList() {
         accessorKey: 'entity_type',
         header: ({ column }) => <DataGridColumnHeader title="Entity" column={column} />,
         cell: ({ row }) => (
-          <Badge variant="secondary" appearance="ghost">
+          <Badge variant="secondary">
             {row.original.entity_type}
           </Badge>
         ),

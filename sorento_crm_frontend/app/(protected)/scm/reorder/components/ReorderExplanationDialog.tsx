@@ -924,6 +924,8 @@ export function ReorderExplanationDialog({
 }) {
   const isBuyLike = rec?.type === 'buy' || rec?.type === 'exception';
   const canPage = !!recs && recs.length > 1 && !!rec && !!onNavigate;
+  // Where this recommendation sits in the page the dialog was opened from.
+  const recIndex = recs && rec ? recs.findIndex((r) => r.id === rec.id) : -1;
 
   // Arrow-key stepping between recommendations while the popup is open. Ignore
   // arrows fired from a text field (the M5 Ask input lives in this DialogContent),
@@ -963,18 +965,14 @@ export function ReorderExplanationDialog({
             <DialogTitle>How this recommendation was reached</DialogTitle>
             {canPage ? (
               <RecordNavigation
-                basePath=""
-                currentId={rec!.id}
-                items={recs!}
-                totalCount={totalCount}
-                pageItemOffset={pageItemOffset ?? 0}
-                circular={false}
+                index={(pageItemOffset ?? 0) + recIndex + 1}
+                total={totalCount ?? recs!.length}
+                hasPrevious={recIndex > 0}
+                hasNext={recIndex >= 0 && recIndex < recs!.length - 1}
+                onPrevious={() => onNavigate!(recs![recIndex - 1])}
+                onNext={() => onNavigate!(recs![recIndex + 1])}
                 ariaLabel="recommendation"
                 className="shrink-0"
-                onSelect={(id) => {
-                  const next = recs!.find((r) => r.id === id);
-                  if (next) onNavigate!(next);
-                }}
               />
             ) : null}
           </div>

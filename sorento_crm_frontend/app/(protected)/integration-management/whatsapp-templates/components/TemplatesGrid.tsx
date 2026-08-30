@@ -88,7 +88,7 @@ export default function TemplatesGrid() {
         accessorKey: 'category',
         header: ({ column }) => <DataGridColumnHeader title="Category" column={column} />,
         cell: ({ row }) => (
-          <Badge variant="secondary" appearance="ghost">
+          <Badge variant="secondary">
             {row.original.category}
           </Badge>
         ),
@@ -101,7 +101,6 @@ export default function TemplatesGrid() {
         cell: ({ row }) => (
           <Badge
             variant={STATUS_BADGE_VARIANT[row.original.status]}
-            appearance="ghost"
             className="capitalize"
           >
             {row.original.status}

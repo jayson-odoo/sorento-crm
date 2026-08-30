@@ -186,31 +186,6 @@ def create_request(
     return _detail(db, request)
 
 
-@router.get("/requests/neighbours")
-def request_neighbours(
-    id: str = Query(..., description="Onboarding request id to resolve neighbours for"),
-    query: Optional[str] = Query(default=None),
-    status_key: Optional[str] = Query(default=None),
-    sort: Optional[str] = Query(default="created_at"),
-    dir: Optional[str] = Query(default="desc"),
-    current_user: dict = Depends(require_permission("user_management.onboarding.view")),
-    db: Session = Depends(get_db),
-):
-    """Prev/next within the active queue query, for the detail page's pager.
-
-    Declared before `/requests/{request_id}` on purpose: FastAPI matches in
-    declaration order, so the other way round "neighbours" is read as an id.
-    """
-    return onboarding_service.request_neighbours(
-        db,
-        id,
-        status_key=status_key,
-        query=query,
-        sort_field=sort or "created_at",
-        sort_dir=dir or "desc",
-    )
-
-
 @router.get("/requests/{request_id}", response_model=RequestDetailOut)
 def get_request(
     request_id: str,

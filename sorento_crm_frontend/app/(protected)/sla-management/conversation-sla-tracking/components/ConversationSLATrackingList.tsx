@@ -14,7 +14,7 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { AlertCircle, CheckCircle, ChevronRight, Clock, Search, UserRound, X } from 'lucide-react';
+import { AlertCircle, CheckCircle, Clock, Search, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -27,16 +27,38 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+
 import { Skeleton } from '@/components/ui/skeleton';
 import { Progress } from '@/components/ui/progress';
-import { useConversationSLATracking, useSyncAssigneeFromRespond } from '../hooks/useConversationSLATracking';
+import { useConversationSLATracking } from '../hooks/useConversationSLATracking';
 import type { ConversationSLATracking } from '../types/conversationSLATracking.types';
 import { formatDateTime, formatDuration, formatDurationWithSeconds, parseDateTimeAsUTC } from '@/lib/helpers';
 import { apiFetch } from '@/lib/api';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import { CONVERSATION_SLA_TRACKING_PATH } from '../lib/historyLinks';
 import { slaHandler } from '../lib/slaHandler';
+import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
+import { RowActionsMenu } from '@/components/common/RowActionsMenu';
+import { useConversationSlaActions } from '../actions';
+
+/**
+ * The row's "..." (D15): the same set the record's gear renders, minus the verbs
+ * that need the fetched tracking. Its own component because the action set is a
+ * hook, and a hook cannot be called inside a `cell` callback.
+ */
+function ConversationRowActions({
+  tracking,
+}: {
+  tracking: { id: string; respond_io_id?: string | null; contact?: { respond_io_id?: string | null } | null };
+}) {
+  const { actions, dialogs } = useConversationSlaActions(tracking);
+  return (
+    <>
+      <RowActionsMenu ariaLabel="conversation" actions={actions} />
+      {dialogs}
+    </>
+  );
+}
 
 export default function ConversationSLATrackingList() {
   const router = useRouter();
@@ -68,6 +90,15 @@ export default function ConversationSLATrackingList() {
   const [searchQuery, setSearchQuery] = useState('');
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [assignedToFilter, setAssignedToFilter] = useState('__all__');
+
+  // Back hands the list its own query string back, and the pager keeps
+  // rewriting it, so the list reads it (S3-01). One hook, every list.
+  useListStateFromUrl((state) => {
+    setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
+    setSorting(state.sorting);
+    setSearchQuery(state.searchQuery);
+    setAssignedToFilter(state.filters.assigned_to ?? '__all__');
+  });
 
   useEffect(() => {
     setPagination((prev) => ({ ...prev, pageIndex: 0 }));
@@ -101,12 +132,10 @@ export default function ConversationSLATrackingList() {
     await queryClient.invalidateQueries({ queryKey: ['conversation-sla-tracking-detail'] });
   };
 
-  const syncAssigneeMutation = useSyncAssigneeFromRespond();
 
-  const handleRowClick = (row: ConversationSLATracking) => {
-    const trackingId = row.id;
-    // Carry the active list query (search/sort/filters) into the detail URL so the
-    // detail pager walks the exact same filtered+sorted set the user is viewing.
+  // The whole row opens the record, carrying the list query the pager rebuilds
+  // its key from.
+  const rowHref = (row: ConversationSLATracking) => {
     const search = buildDetailSearch(
       {
         pageIndex: pagination.pageIndex,
@@ -124,9 +153,7 @@ export default function ConversationSLATrackingList() {
         resolved_by: resolvedByFilter,
       },
     );
-    router.push(
-      `/sla-management/conversation-sla-tracking/${trackingId}${search ? `?${search}` : ''}`,
-    );
+    return `/sla-management/conversation-sla-tracking/${row.id}${search ? `?${search}` : ''}`;
   };
 
   const getTimeRemaining = (dueAt: string | Date, backendSeconds?: number | null) => {
@@ -428,7 +455,7 @@ export default function ConversationSLATrackingList() {
         cell: ({ row }) => {
           if (row.original.is_resolved) {
             return (
-              <Badge variant="success" appearance="ghost">
+              <Badge variant="success">
                 <CheckCircle className="size-3 mr-1" />
                 Resolved
               </Badge>
@@ -436,14 +463,14 @@ export default function ConversationSLATrackingList() {
           }
           if (row.original.escalated_at) {
             return (
-              <Badge variant="warning" appearance="ghost">
+              <Badge variant="warning">
                 <AlertCircle className="size-3 mr-1" />
                 Escalated
               </Badge>
             );
           }
           return (
-            <Badge variant="info" appearance="ghost">
+            <Badge variant="info">
               <Clock className="size-3 mr-1" />
               Pending
             </Badge>
@@ -455,35 +482,12 @@ export default function ConversationSLATrackingList() {
       {
         accessorKey: 'actions',
         header: () => <span className="sr-only">Actions</span>,
-        cell: ({ row }) => (
-          <div className="flex items-center gap-1">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8"
-                  disabled={syncAssigneeMutation.isPending}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    syncAssigneeMutation.mutate(row.original.id);
-                  }}
-                >
-                  <UserRound className="size-4 text-muted-foreground" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                Sync assignee from Respond.io (match contact’s assignee in Respond.io to CRM user)
-              </TooltipContent>
-            </Tooltip>
-            <ChevronRight className="text-muted-foreground/70 size-3.5" />
-          </div>
-        ),
-        size: 80,
+        cell: ({ row }) => <ConversationRowActions tracking={row.original} />,
+        size: 60,
         enableHiding: false,
       },
     ],
-    [syncAssigneeMutation],
+    [],
   );
 
   const table = useReactTable({
@@ -541,7 +545,7 @@ export default function ConversationSLATrackingList() {
       tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
-      onRowClick={handleRowClick}
+      rowHref={rowHref}
     >
       <Card>
         <CardHeader className="block">

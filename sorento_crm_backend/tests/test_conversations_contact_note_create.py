@@ -357,7 +357,10 @@ def test_a_mentioned_colleague_is_notified_with_a_link_to_the_inbox(client, db, 
         .all()
     }
     assert "in_app" in channels
-    assert "email" not in channels, "AC-L1 is the in-app lane only"
+    # Email joined the lane with notify_email_on_mention (default on); the seeded
+    # user leaves it at the default. WhatsApp has no twin for this event.
+    assert "email" in channels
+    assert "whatsapp" not in channels
 
 
 def test_mentioning_yourself_notifies_nobody(client, db, seed):

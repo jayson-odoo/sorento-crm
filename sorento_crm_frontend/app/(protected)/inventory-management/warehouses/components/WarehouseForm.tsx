@@ -4,7 +4,7 @@ import { useEffect, useMemo } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { useRouter } from 'next/navigation';
-import { LoaderCircleIcon, Save } from 'lucide-react';
+import { CalendarRange, Info, LoaderCircleIcon, Save } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Form,
@@ -140,8 +140,14 @@ export default function WarehouseForm({ warehouseId, onSuccess }: WarehouseFormP
             {/* Same tab set, same field order, and the same grid spans as the read view. */}
             <Tabs defaultValue="basic">
               <TabsList>
-                <TabsTrigger value="basic">Basic Information</TabsTrigger>
-                <TabsTrigger value="planning">Planning</TabsTrigger>
+                <TabsTrigger value="basic">
+                  <Info />
+                  <span>Basic Information</span>
+                </TabsTrigger>
+                <TabsTrigger value="planning">
+                  <CalendarRange />
+                  <span>Planning</span>
+                </TabsTrigger>
               </TabsList>
 
               <TabsContent value="basic" className="mt-6">

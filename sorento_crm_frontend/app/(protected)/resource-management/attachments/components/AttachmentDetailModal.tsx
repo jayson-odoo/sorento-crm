@@ -2,7 +2,25 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
-import { Download, ExternalLink, Eye, Link2, LoaderCircleIcon, Plus, RefreshCw, SlidersHorizontal, Trash2, Unlink } from 'lucide-react';
+import {
+  BadgeCheck,
+  Boxes,
+  ClipboardList,
+  Download,
+  ExternalLink,
+  Eye,
+  Info,
+  Link2,
+  LoaderCircleIcon,
+  Megaphone,
+  Package,
+  Plug,
+  Plus,
+  RefreshCw,
+  SlidersHorizontal,
+  Trash2,
+  Unlink,
+} from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
@@ -296,21 +314,28 @@ function LinkagesTabs({
   return (
     <>
       <Tabs defaultValue="products" className="w-full">
-        <TabsList className="grid h-auto w-full grid-cols-2 gap-1 sm:grid-cols-3 lg:grid-cols-5">
+        {/* Five link kinds wrapped onto three rows of squeezed pills at 375; the
+            line strip scrolls on one row and the icon survives the scroll. */}
+        <TabsList className="mb-1">
           <TabsTrigger value="products">
-            Products {products.length > 0 && `(${products.length})`}
+            <Package />
+            <span>Products {products.length > 0 && `(${products.length})`}</span>
           </TabsTrigger>
           <TabsTrigger value="promotions">
-            Promotions {promotions.length > 0 && `(${promotions.length})`}
+            <Megaphone />
+            <span>Promotions {promotions.length > 0 && `(${promotions.length})`}</span>
           </TabsTrigger>
           <TabsTrigger value="forms">
-            Forms {form ? '(1)' : ''}
+            <ClipboardList />
+            <span>Forms {form ? '(1)' : ''}</span>
           </TabsTrigger>
           <TabsTrigger value="packing_lists">
-            Packing Lists {packingLists.length > 0 && `(${packingLists.length})`}
+            <Boxes />
+            <span>Packing Lists {packingLists.length > 0 && `(${packingLists.length})`}</span>
           </TabsTrigger>
           <TabsTrigger value="certificates">
-            Certificates {certificates.length > 0 && `(${certificates.length})`}
+            <BadgeCheck />
+            <span>Certificates {certificates.length > 0 && `(${certificates.length})`}</span>
           </TabsTrigger>
         </TabsList>
         <TabsContent value="products" className="mt-4">
@@ -757,6 +782,10 @@ export default function AttachmentDetailModal({
   neighbourItems = [],
   onAttachmentChange,
 }: AttachmentDetailModalProps) {
+  // Where the open attachment sits in the page the modal was opened from.
+  const modalIndex = attachmentId
+    ? neighbourItems.findIndex((item) => item.id === attachmentId)
+    : -1;
   const queryClient = useQueryClient();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -850,11 +879,13 @@ export default function AttachmentDetailModal({
             </DialogTitle>
             {neighbourItems.length > 0 && onAttachmentChange && attachmentId && (
               <RecordNavigation
-                basePath=""
-                currentId={attachmentId}
-                items={neighbourItems}
+                index={modalIndex + 1}
+                total={neighbourItems.length}
+                hasPrevious={modalIndex > 0}
+                hasNext={modalIndex >= 0 && modalIndex < neighbourItems.length - 1}
+                onPrevious={() => onAttachmentChange!(neighbourItems[modalIndex - 1].id)}
+                onNext={() => onAttachmentChange!(neighbourItems[modalIndex + 1].id)}
                 ariaLabel="attachment"
-                onSelect={onAttachmentChange}
               />
             )}
           </DialogHeader>
@@ -934,12 +965,14 @@ export default function AttachmentDetailModal({
                     }
                   >
                     <CardHeader className="py-3 pb-0">
-                      <TabsList variant="line" className="px-0">
+                      <TabsList className="px-0">
                         <TabsTrigger value="details">
-                          Attachment Details
+                          <Info />
+                          <span>Attachment Details</span>
                         </TabsTrigger>
                         <TabsTrigger value="integration">
-                          Integration
+                          <Plug />
+                          <span>Integration</span>
                         </TabsTrigger>
                       </TabsList>
                     </CardHeader>
@@ -1014,7 +1047,6 @@ export default function AttachmentDetailModal({
                         <p className="text-sm text-muted-foreground">Status</p>
                         <Badge
                           variant={attachment.is_deleted ? 'destructive' : 'success'}
-                          appearance="ghost"
                         >
                           <BadgeDot />
                           {attachment.is_deleted ? 'Deleted' : 'Active'}

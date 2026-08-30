@@ -1,11 +1,9 @@
 'use client';
 
 import React, { use, useEffect, useMemo, useState } from 'react';
-import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Activity, Mail, MoveLeft, Settings, UserPen } from 'lucide-react';
-import { toast } from 'sonner';
+import { useQuery } from '@tanstack/react-query';
+import { Activity, UserPen } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import {
   Breadcrumb,
@@ -15,22 +13,15 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from '@/components/ui/breadcrumb';
-import { Button } from '@/components/ui/button';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Container } from '@/components/common/container';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 import {
   Toolbar,
   ToolbarActions,
   ToolbarHeading,
   ToolbarTitle,
 } from '@/components/common/toolbar';
-import RecordNavigation from '@/components/common/RecordNavigation';
+import BackToList from '@/components/common/BackToList';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { UserProvider } from './components/user-context';
 import UserHero from './components/user-hero';
@@ -55,8 +46,6 @@ export default function UserLayout({
   const { id } = use(params);
   const pathname = usePathname();
   const router = useRouter();
-  const queryClient = useQueryClient();
-  const [resendInvitePending, setResendInvitePending] = useState(false);
 
   // Use local state to control active tab
   const [activeTab, setActiveTab] = useState<string>('');
@@ -133,6 +122,7 @@ export default function UserLayout({
         notifyWhatsappOnDeadlineExtended: data.notify_whatsapp_on_deadline_extended ?? data.notifyWhatsappOnDeadlineExtended ?? false,
         notifyEmailOnHandling: data.notify_email_on_handling ?? data.notifyEmailOnHandling ?? true,
         notifyWhatsappOnHandling: data.notify_whatsapp_on_handling ?? data.notifyWhatsappOnHandling ?? false,
+        notifyEmailOnMention: data.notify_email_on_mention ?? data.notifyEmailOnMention ?? true,
         notifyEmailOnProductDiscontinued: data.notify_email_on_product_discontinued ?? data.notifyEmailOnProductDiscontinued ?? false,
         notifyWhatsappOnProductDiscontinued: data.notify_whatsapp_on_product_discontinued ?? data.notifyWhatsappOnProductDiscontinued ?? false,
         productDiscontinuedScopes: data.product_discontinued_scopes ?? data.productDiscontinuedScopes ?? [],
@@ -155,76 +145,9 @@ export default function UserLayout({
     retry: 1,
   });
 
-  const navigationParams = useMemo(
-    () => ({
-      pageIndex: 0,
-      pageSize: 100,
-      sorting: [{ id: 'createdAt', desc: true }],
-      searchQuery: '',
-      selectedRole: null,
-      selectedStatus: null,
-    }),
-    [],
-  );
-  const { data: navigationData } = useQuery({
-    queryKey: ['user-users-nav', navigationParams],
-    queryFn: async () => {
-      const sortField = navigationParams.sorting?.[0]?.id || '';
-      const sortDirection = navigationParams.sorting?.[0]?.desc ? 'desc' : 'asc';
-      const params = new URLSearchParams();
-      params.set('page', String(navigationParams.pageIndex + 1));
-      params.set('limit', String(navigationParams.pageSize));
-      if (sortField) {
-        params.set('sort', sortField);
-        params.set('dir', sortDirection);
-      }
-      if (navigationParams.searchQuery) {
-        params.set('query', navigationParams.searchQuery);
-      }
-      if (navigationParams.selectedRole && navigationParams.selectedRole !== 'all') {
-        params.set('roleId', navigationParams.selectedRole);
-      }
-      if (navigationParams.selectedStatus && navigationParams.selectedStatus !== 'all') {
-        params.set('status', navigationParams.selectedStatus);
-      }
-
-      const response = await apiFetch(`/api/user-management/users?${params.toString()}`);
-      if (!response.ok) {
-        throw new Error('Failed to fetch users');
-      }
-      return response.json();
-    },
-    staleTime: Infinity,
-    gcTime: 1000 * 60 * 60,
-    refetchOnWindowFocus: false,
-    refetchOnReconnect: false,
-    retry: 1,
-  });
-  const navigationItems = navigationData?.data ?? [];
-
   const handleTabClick = (key: string, path: string) => {
     setActiveTab(key);
     router.push(path);
-  };
-
-  const handleResendInvite = async () => {
-    setResendInvitePending(true);
-    try {
-      const res = await apiFetch(`/api/user-management/users/${id}/resend-invite`, {
-        method: 'POST',
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        toast.error(data.detail ?? data.message ?? 'Failed to send invitation link.');
-        return;
-      }
-      toast.success(data.message ?? 'Invitation link sent.');
-      queryClient.invalidateQueries({ queryKey: ['user-user', id] });
-    } catch {
-      toast.error('Failed to send invitation link.');
-    } finally {
-      setResendInvitePending(false);
-    }
   };
 
   return (
@@ -250,31 +173,7 @@ export default function UserLayout({
             </Breadcrumb>
           </ToolbarHeading>
           <ToolbarActions>
-            <RecordNavigation
-              currentId={id}
-              items={navigationItems}
-              basePath="/user-management/users"
-            />
-            {user && (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="outline" size="icon" disabled={resendInvitePending} aria-label="User options">
-                    <Settings className="size-4" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuItem onClick={handleResendInvite} disabled={resendInvitePending}>
-                    <Mail className="size-4" />
-                    Send invitation link
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            )}
-            <Button asChild variant="outline">
-              <Link href="/user-management/users">
-                <MoveLeft /> Back to users
-              </Link>
-            </Button>
+            <BackToList listPath="/user-management/users" label="Back to users" />
           </ToolbarActions>
         </Toolbar>
         <UserHero user={user} isLoading={isLoading} />

@@ -98,10 +98,14 @@ export default function BrandsList() {
 
   return (
     <>
+      {/* A brand is edited in a lightbox, so the row opens that rather than a page
+          (D3, second clause) - the trailing chevron promised a page there is no
+          route to from here. */}
       <DataGrid
         table={table}
         recordCount={filteredBrands.length}
         isLoading={isLoading}
+        onRowClick={handleEdit}
         tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
       >
         <Card>

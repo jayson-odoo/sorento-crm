@@ -22,10 +22,11 @@ if (!window.matchMedia) {
 }
 
 const push = vi.fn();
+let listSearch = '';
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push, replace: vi.fn() }),
   usePathname: () => '/inventory-management/stock-transfers',
-  useSearchParams: () => new URLSearchParams(''),
+  useSearchParams: () => new URLSearchParams(listSearch),
 }));
 
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
@@ -106,8 +107,10 @@ function transfer(overrides: Partial<StockTransfer> = {}): StockTransfer {
  * Radix opens on pointerdown, which jsdom does not synthesize from a click, so drive it by
  * keyboard instead (ArrowDown opens and focuses the first item).
  */
-async function openRowMenu(transferNo = 'TR-000001') {
-  const trigger = await screen.findByRole('button', { name: `Actions for ${transferNo}` });
+async function openRowMenu() {
+  // One menu per row, named for the record type (RowActionsMenu); the fixtures
+  // render a single row, so there is exactly one.
+  const trigger = await screen.findByRole('button', { name: 'stock transfer actions' });
   trigger.focus();
   fireEvent.keyDown(trigger, { key: 'ArrowDown', code: 'ArrowDown' });
   return screen.findByRole('menu');
@@ -130,6 +133,7 @@ function renderPanel(props: Partial<React.ComponentProps<typeof StockTransfersPa
 
 beforeEach(() => {
   vi.clearAllMocks();
+  listSearch = '';
   listStockTransfers.mockResolvedValue(envelope([transfer()]));
 });
 
@@ -177,7 +181,7 @@ describe('StockTransfersPanel - row actions', () => {
     const menu = await openRowMenu();
 
     expect(within(menu).getByRole('menuitem', { name: 'Approve' })).toBeInTheDocument();
-    expect(within(menu).getByRole('menuitem', { name: 'Cancel' })).toBeInTheDocument();
+    expect(within(menu).getByRole('menuitem', { name: 'Cancel transfer' })).toBeInTheDocument();
     expect(within(menu).queryByRole('menuitem', { name: 'Mark moved' })).toBeNull();
   });
 
@@ -195,7 +199,7 @@ describe('StockTransfersPanel - row actions', () => {
     renderPanel();
 
     await screen.findByText('TR-000001');
-    expect(screen.queryByRole('button', { name: 'Actions for TR-000001' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'stock transfer actions' })).toBeNull();
   });
 
   it('confirms before approving, and only then posts', async () => {
@@ -215,7 +219,7 @@ describe('StockTransfersPanel - row actions', () => {
     cancelStockTransfer.mockResolvedValue(transfer({ state: 'cancelled' }));
     renderPanel();
     const menu = await openRowMenu();
-    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Cancel' }));
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Cancel transfer' }));
 
     expect(await screen.findByText('Cancel TR-000001?')).toBeInTheDocument();
     const confirm = screen.getByRole('button', { name: 'Cancel transfer' });
@@ -301,5 +305,33 @@ describe('StockTransfersPanel - empty state', () => {
     expect(
       screen.getByText('Confirming supply from another location raises the movement here.'),
     ).toBeInTheDocument();
+  });
+});
+
+describe('StockTransfersPanel - the state Back hands back', () => {
+  /**
+   * The apply callback sets pagination and sorting, so it has to run BELOW their
+   * declarations: `useListStateFromUrl` applies during the render, and a `const`
+   * read before its line throws a ReferenceError rather than reading undefined.
+   * The panel mounted fine from the sidebar (empty query string, callback never
+   * called) and blew up on every arrival from a record.
+   */
+  it('restores the page, sort, search and filters from the query string', async () => {
+    listSearch = 'page=2&limit=10&sort=transfer_no&dir=asc&query=TR-0000&state=approved';
+
+    renderPanel();
+
+    await waitFor(() =>
+      expect(listStockTransfers).toHaveBeenCalledWith(
+        expect.objectContaining({
+          page: 2,
+          limit: 10,
+          sort: 'transfer_no',
+          dir: 'asc',
+          query: 'TR-0000',
+          state: 'approved',
+        }),
+      ),
+    );
   });
 });

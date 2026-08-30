@@ -12,7 +12,7 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Plus, Search, Upload, X, ChevronRight } from 'lucide-react';
+import { Plus, Search, Upload, X } from 'lucide-react';
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -31,11 +31,13 @@ import { useImportJobDrawer } from '@/components/upload-activity';
 import { useCustomers } from '../hooks/useCustomers';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import type { Customer } from '../types/customer.types';
+import { CustomerRowActions } from '../actions';
 import { CustomerImportDialog } from './CustomerImportDialog';
 import {
   importCustomers,
   validateCustomerImport,
 } from '../services/customerImportService';
+import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 
 export default function CustomersList() {
   const router = useRouter();
@@ -45,6 +47,15 @@ export default function CustomersList() {
   const [sorting, setSorting] = useState<SortingState>([{ id: 'created_at', desc: true }]);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
+
+  // Back hands the list its own query string back, and the pager keeps
+  // rewriting it, so the list reads it (S3-01). One hook, every list.
+  useListStateFromUrl((state) => {
+    setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
+    setSorting(state.sorting);
+    setSearchQuery(state.searchQuery);
+    setStatusFilter(state.filters.status ?? 'all');
+  });
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
   const { data, isLoading, refetch, isFetching } = useCustomers({
@@ -60,18 +71,21 @@ export default function CustomersList() {
     setRowSelection({});
   }, [searchQuery, statusFilter, pagination.pageIndex, pagination.pageSize, sorting]);
 
-  const handleRowClick = (row: Customer) => {
-    const customerId = row.id;
-    // Carry the active list query into the detail URL so its prev/next pager
-    // walks the same filtered+sorted set.
-    const search = buildDetailSearch({
-      pageIndex: pagination.pageIndex,
-      pageSize: pagination.pageSize,
-      sorting,
-      searchQuery,
-    });
+  // The whole row opens the record, carrying the list query the pager rebuilds
+  // its key from - the status filter included, or the pager would page a wider
+  // set than the user was looking at.
+  const rowHref = (row: Customer) => {
+    const search = buildDetailSearch(
+      {
+        pageIndex: pagination.pageIndex,
+        pageSize: pagination.pageSize,
+        sorting,
+        searchQuery,
+      },
+      { status: statusFilter === 'all' ? undefined : statusFilter },
+    );
     const qs = search ? `?${search}` : '';
-    router.push(`/order-management/customers/${customerId}${qs}`);
+    return `/order-management/customers/${row.id}${qs}`;
   };
 
   const columns = useMemo<ColumnDef<Customer>[]>(
@@ -105,7 +119,7 @@ export default function CustomersList() {
         accessorKey: 'is_active',
         header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
         cell: ({ row }) => (
-          <Badge variant={row.original.is_active ? 'success' : 'secondary'} appearance="ghost">
+          <Badge variant={row.original.is_active ? 'success' : 'secondary'}>
             <BadgeDot />
             {row.original.is_active ? 'Active' : 'Inactive'}
           </Badge>
@@ -116,9 +130,11 @@ export default function CustomersList() {
       {
         accessorKey: 'actions',
         header: '',
-        cell: () => <ChevronRight className="text-muted-foreground/70 size-3.5" />,
-        size: 40,
+        cell: ({ row }) => <CustomerRowActions customer={row.original} />,
+        size: 60,
+        enableSorting: false,
         enableHiding: false,
+        enableResizing: false,
       },
     ],
     [],
@@ -147,7 +163,7 @@ export default function CustomersList() {
       table={table}
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
-      onRowClick={handleRowClick}
+      rowHref={rowHref}
       tableLayout={{ columnsVisibility: true }}
     >
       <Card>

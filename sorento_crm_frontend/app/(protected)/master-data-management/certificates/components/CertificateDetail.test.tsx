@@ -86,6 +86,11 @@ const hooks = vi.hoisted(() => ({
   deleteAsync: vi.fn(),
 }));
 vi.mock('../hooks/useCertificates', () => ({
+  // The pager reads the list page through the entity's shared key + fetch (S3-03).
+  certificatesPagerQuery: {
+    listQueryKey: () => ['certificates', 'test-page'],
+    fetchPage: async () => pagerPage ?? { data: [], pagination: { total: 0 } },
+  },
   useCertificate: (...a: unknown[]) => hooks.useCertificate(...a),
   // The detail page pulls an unfiltered page of certificates to feed the
   // prev/next chevrons.
@@ -133,8 +138,12 @@ function bareCertificate(over: Partial<Certificate> = {}): Certificate {
   } as Certificate;
 }
 
+/** The list page the pager walks, seeded the way the list leaves it behind. */
+let pagerPage: { data: { id: string }[]; pagination: { total: number } } | null = null;
+
 function renderDetail() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  if (pagerPage) client.setQueryData(['certificates', 'test-page'], pagerPage);
   return render(
     <QueryClientProvider client={client}>
       <CertificateDetail certificateId="cert-1" />
@@ -402,7 +411,7 @@ describe('CertificateDetail - delete confirmation (FE-8)', () => {
     });
     renderDetail();
     openGearMenu();
-    fireEvent.click(await screen.findByRole('menuitem', { name: /^Delete$/ }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: /^Delete certificate$/ }));
     expect(await screen.findByText('Confirm delete')).toBeInTheDocument();
     expect(
       screen.getByText(
@@ -418,7 +427,7 @@ describe('CertificateDetail - delete confirmation (FE-8)', () => {
     hooks.useCertificate.mockReturnValue({ data: bareCertificate(), isLoading: false });
     renderDetail();
     openGearMenu();
-    fireEvent.click(await screen.findByRole('menuitem', { name: /^Delete$/ }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: /^Delete certificate$/ }));
     const dialog = await screen.findByRole('dialog');
     const confirm = Array.from(dialog.querySelectorAll('button')).find(
       (b) => (b.textContent ?? '').trim() === 'Delete',
@@ -461,13 +470,10 @@ describe('CertificateDetail - Malaysia time (backend sends naive UTC)', () => {
 describe('CertificateDetail - record navigation', () => {
   it('renders the chevrons with the index / total counter between them', () => {
     hooks.useCertificate.mockReturnValue({ data: bareCertificate(), isLoading: false });
-    hooks.useCertificates.mockReturnValue({
-      data: {
-        data: [{ id: 'cert-0' }, { id: 'cert-1' }, { id: 'cert-2' }],
-        pagination: { total: 3, page: 1, limit: 500 },
-      },
-      isLoading: false,
-    });
+    pagerPage = {
+      data: [{ id: 'cert-0' }, { id: 'cert-1' }, { id: 'cert-2' }],
+      pagination: { total: 3 },
+    };
     renderDetail();
     expect(screen.getByRole('button', { name: /Previous certificate/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Next certificate/i })).toBeInTheDocument();
@@ -476,21 +482,21 @@ describe('CertificateDetail - record navigation', () => {
 
   it('routes to the next certificate', () => {
     hooks.useCertificate.mockReturnValue({ data: bareCertificate(), isLoading: false });
-    hooks.useCertificates.mockReturnValue({
-      data: {
-        data: [{ id: 'cert-0' }, { id: 'cert-1' }, { id: 'cert-2' }],
-        pagination: { total: 3, page: 1, limit: 500 },
-      },
-      isLoading: false,
-    });
+    pagerPage = {
+      data: [{ id: 'cert-0' }, { id: 'cert-1' }, { id: 'cert-2' }],
+      pagination: { total: 3 },
+    };
     renderDetail();
     fireEvent.click(screen.getByRole('button', { name: /Next certificate/i }));
-    expect(push).toHaveBeenCalledWith('/master-data-management/certificates/cert-2');
+    // The step names the page the record now sits on, so the walk survives it.
+    expect(push).toHaveBeenCalledWith(
+      '/master-data-management/certificates/cert-2?page=1&limit=50',
+    );
   });
 
   it('does not crash before the navigation list has loaded', () => {
     hooks.useCertificate.mockReturnValue({ data: bareCertificate(), isLoading: false });
-    hooks.useCertificates.mockReturnValue({ data: undefined, isLoading: true });
+    pagerPage = null;
     renderDetail();
     expect(screen.getByRole('heading', { name: 'PPS PPS 123/2024' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Next certificate/i })).toBeDisabled();

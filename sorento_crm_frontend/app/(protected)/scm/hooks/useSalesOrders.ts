@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import type { SortingState } from '@tanstack/react-table';
 import {
@@ -12,8 +12,9 @@ import {
   updateSalesOrder,
 } from '../services/salesOrderService';
 import type { SalesOrderFormData } from '../types/scm.types';
+import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
 
-interface UseSalesOrdersParams {
+export interface UseSalesOrdersParams {
   pageIndex: number;
   pageSize: number;
   sorting: SortingState;
@@ -33,9 +34,63 @@ interface UseSalesOrdersParams {
   demandClass?: string | null;
 }
 
+/**
+ * The list's React Query key. The detail page's pager rebuilds the SAME key from
+ * the URL, so it reads the page the list already fetched.
+ */
+export function salesOrdersListQueryKey(params: UseSalesOrdersParams): QueryKey {
+  return ['scm', 'sales-orders', params];
+}
+
+/** The list query a detail URL describes, in the shape the list passes. */
+export function salesOrdersListParamsFromUrl(
+  params: ListPagerParams,
+): UseSalesOrdersParams {
+  return {
+    pageIndex: params.pageIndex,
+    pageSize: params.pageSize,
+    sorting: params.sorting,
+    searchQuery: params.searchQuery,
+    status: params.filters.status || null,
+    priority: params.filters.priority || null,
+    source: params.filters.source || null,
+    dateFrom: params.filters.date_from || null,
+    dateTo: params.filters.date_to || null,
+    customerId: params.filters.customer_id || null,
+    outstanding: params.filters.outstanding === 'true',
+    salesAgentId: params.filters.sales_agent_id || null,
+    demandClass: params.filters.demand_class || null,
+  };
+}
+
+/** The pager's two hooks into the sales orders list. */
+export const salesOrdersPagerQuery = {
+  listQueryKey: (params: ListPagerParams): QueryKey =>
+    salesOrdersListQueryKey(salesOrdersListParamsFromUrl(params)),
+  fetchPage: (params: ListPagerParams): Promise<ListPagerPage> => {
+    const p = salesOrdersListParamsFromUrl(params);
+    return getSalesOrders({
+      pageIndex: p.pageIndex,
+      pageSize: p.pageSize,
+      sortField: p.sorting?.[0]?.id,
+      sortDir: p.sorting?.[0]?.desc ? 'desc' : 'asc',
+      searchQuery: p.searchQuery,
+      status: p.status,
+      priority: p.priority,
+      source: p.source ?? null,
+      dateFrom: p.dateFrom ?? null,
+      dateTo: p.dateTo ?? null,
+      customerId: p.customerId ?? null,
+      outstanding: p.outstanding ?? false,
+      salesAgentId: p.salesAgentId ?? null,
+      demandClass: p.demandClass ?? null,
+    });
+  },
+};
+
 export function useSalesOrders(params: UseSalesOrdersParams) {
   return useQuery({
-    queryKey: ['scm', 'sales-orders', params],
+    queryKey: salesOrdersListQueryKey(params),
     queryFn: () =>
       getSalesOrders({
         pageIndex: params.pageIndex,

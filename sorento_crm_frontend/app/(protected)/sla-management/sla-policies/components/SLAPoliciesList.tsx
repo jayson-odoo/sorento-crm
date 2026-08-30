@@ -95,7 +95,7 @@ export default function SLAPoliciesList() {
         accessorKey: 'is_active',
         header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
         cell: ({ row }) => (
-          <Badge variant={row.original.is_active ? 'success' : 'secondary'} appearance="ghost">
+          <Badge variant={row.original.is_active ? 'success' : 'secondary'}>
             <BadgeDot />
             {row.original.is_active ? 'Active' : 'Inactive'}
           </Badge>

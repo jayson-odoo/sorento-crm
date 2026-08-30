@@ -63,6 +63,7 @@ import type {
 import { EM_DASH, fmtDate, fmtInt, fmtQty, fmtSupplierCost } from '../../lib/format';
 import { OverCapacityDialog } from './OverCapacityDialog';
 import { ProformaUploadDialog } from './ProformaUploadDialog';
+import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 
 /**
  * What is on file per supplier: the priced document the loading plan and the eventual
@@ -154,6 +155,15 @@ export function ProformaInvoicesView() {
   // anyone opening this screen: which of these still has to go into a container (AC-F6).
   const [placement, setPlacement] = useState<ProformaPlacement | null>('not_converted');
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 25 });
+
+  // Back hands the list its own query string back, and the pager keeps
+  // rewriting it, so the list reads it (S3-01). One hook, every list.
+  useListStateFromUrl((state) => {
+    setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
+    setSearchQuery(state.searchQuery);
+    setSupplierId(state.filters.supplier_id ?? null);
+    setPlacement((state.filters.placement as ProformaPlacement) ?? null);
+  });
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [uploadOpen, setUploadOpen] = useState(false);
   const [bulkDeleteIds, setBulkDeleteIds] = useState<string[] | null>(null);
@@ -520,7 +530,7 @@ export function ProformaInvoicesView() {
         tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
         emptyMessage={emptyMessage}
         listingKey={LISTING_KEY}
-        onRowClick={(row) => router.push(detailHref(row))}
+        rowHref={(row) => detailHref(row)}
       >
         <Card>
           <CardHeader className="block">
@@ -679,7 +689,11 @@ export function ProformaInvoicesView() {
             </ScrollArea>
           </CardTable>
           <CardFooter>
-            <DataGridPagination />
+            {/* The list GET caps `limit` at 100 (`Query(25, ge=1, le=100)`), so the
+                bigger sizes the grid offers by default would 422 the fetch AND put a
+                page size in the detail URL that the pager cannot honour. Capping the
+                choice is the one place both sides can agree on. */}
+            <DataGridPagination sizes={[25, 50, 100]} />
           </CardFooter>
         </Card>
       </DataGrid>

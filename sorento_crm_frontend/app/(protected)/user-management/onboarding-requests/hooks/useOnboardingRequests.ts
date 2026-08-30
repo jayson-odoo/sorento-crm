@@ -11,21 +11,16 @@
  * person patch is the exception and says why on itself.
  */
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { buildDataGridParams } from '@/lib/api-client';
-import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
-import {
-  useRecordNeighbours,
-  type RecordNeighboursResult,
-} from '@/hooks/useRecordNeighbours';
+
+
 import {
   applyPersonPatch,
   type OnboardingPersonPatch,
   type OnboardingRequestDetail,
 } from '@/components/common/onboarding/types';
 import {
-  ONBOARDING_NEIGHBOURS_PATH,
   approveOnboardingPerson,
   approveOnboardingRequest,
   createOnboardingRequest,
@@ -41,20 +36,52 @@ import {
   type CreateOnboardingRequestInput,
   type OnboardingRequestListParams,
 } from '../services/onboardingService';
+import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
 
 export const ONBOARDING_LIST_KEY = 'onboarding-requests';
 export const ONBOARDING_DETAIL_KEY = 'onboarding-request';
 
+/**
+ * The list's React Query key. The detail page's pager rebuilds the SAME key from
+ * the URL, so it reads the page the list already fetched.
+ */
+export function onboardingListQueryKey(
+  params: OnboardingRequestListParams,
+): QueryKey {
+  return [
+    ONBOARDING_LIST_KEY,
+    params.pageIndex,
+    params.pageSize,
+    params.sorting,
+    params.searchQuery,
+    params.statusKey,
+  ];
+}
+
+/** The list query a detail URL describes, in the shape the list passes. */
+export function onboardingListParamsFromUrl(
+  params: ListPagerParams,
+): OnboardingRequestListParams {
+  return {
+    pageIndex: params.pageIndex,
+    pageSize: params.pageSize,
+    sorting: params.sorting,
+    searchQuery: params.searchQuery,
+    statusKey: params.filters.status_key,
+  };
+}
+
+/** The pager's two hooks into the onboarding requests list. */
+export const onboardingPagerQuery = {
+  listQueryKey: (params: ListPagerParams): QueryKey =>
+    onboardingListQueryKey(onboardingListParamsFromUrl(params)),
+  fetchPage: (params: ListPagerParams): Promise<ListPagerPage> =>
+    listOnboardingRequests(onboardingListParamsFromUrl(params)),
+};
+
 export function useOnboardingRequests(params: OnboardingRequestListParams) {
   return useQuery({
-    queryKey: [
-      ONBOARDING_LIST_KEY,
-      params.pageIndex,
-      params.pageSize,
-      params.sorting,
-      params.searchQuery,
-      params.statusKey,
-    ],
+    queryKey: onboardingListQueryKey(params),
     queryFn: () => listOnboardingRequests(params),
   });
 }
@@ -70,18 +97,6 @@ export function useOnboardingRequest(id: string | null) {
   });
 }
 
-/**
- * Prev/next within the list query the reviewer navigated from. Serialized with
- * `buildDataGridParams`, the same way the list page sends it, so the backend
- * walks the identical filtered+sorted set.
- */
-export function useOnboardingRequestNeighbours(
-  requestId: string | null,
-  listParams: DataGridApiFetchParams & { statusKey?: string },
-): RecordNeighboursResult {
-  const params = buildDataGridParams(listParams, { status_key: listParams.statusKey });
-  return useRecordNeighbours(ONBOARDING_NEIGHBOURS_PATH, requestId, params);
-}
 
 export function useCreateOnboardingRequest() {
   const queryClient = useQueryClient();
@@ -107,9 +122,6 @@ export function useOnboardingRequestMutations(requestId: string) {
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: [ONBOARDING_DETAIL_KEY, requestId] });
     queryClient.invalidateQueries({ queryKey: [ONBOARDING_LIST_KEY] });
-    // The pager is cached for 30s, so a verdict that moves this request out of
-    // the filtered set would otherwise leave prev/next walking the old one.
-    queryClient.invalidateQueries({ queryKey: ['record-neighbours'] });
   };
 
   const fail = (error: Error) => toast.error(error.message);

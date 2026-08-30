@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
+
 import {
   ColumnDef,
   PaginationState,
@@ -12,7 +12,7 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { AlertTriangle, ChevronRight, Plus, Search, Trash2, X } from 'lucide-react';
+import { AlertTriangle, Plus, Search, Trash2, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -32,7 +32,8 @@ import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 // valid_until is a DATE column: formatDateInMalaysia keeps the civil date
 // stable regardless of the viewer's machine timezone.
 import { formatDateInMalaysia } from '@/lib/helpers';
-import { useBulkDeleteCertificates, useCertificates } from '../hooks/useCertificates';
+import { useBulkDeleteCertificates,
+  useDeleteCertificate, useCertificates } from '../hooks/useCertificates';
 import {
   EXPIRING_WITHIN_OPTIONS,
   NEEDS_REVIEW_OPTIONS,
@@ -46,6 +47,9 @@ import {
 } from '../lib/certificateDisplay';
 import type { Certificate } from '../types/certificate.types';
 import CertificateFormDialog from './CertificateFormDialog';
+import { buildDetailSearch } from '@/lib/listNavQuery';
+import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
+import { RowActionsMenu } from '@/components/common/RowActionsMenu';
 
 /**
  * The list opens UNFILTERED. It used to default to "needs attention" + active
@@ -65,7 +69,6 @@ function validityStateParam(filter: string): string | undefined {
 }
 
 export default function CertificatesList() {
-  const router = useRouter();
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [sorting, setSorting] = useState<SortingState>([{ id: 'valid_until', desc: false }]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -74,11 +77,27 @@ export default function CertificatesList() {
   const [schemeFilter, setSchemeFilter] = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<string>(DEFAULT_STATUS);
   const [needsReviewFilter, setNeedsReviewFilter] = useState<string>('any');
+
+  // Back hands the list its own query string back, and the pager keeps rewriting
+  // it, so the list reads it (S3-01). One hook, every list.
+  useListStateFromUrl((state) => {
+    setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
+    setSorting(state.sorting);
+    setSearchQuery(state.searchQuery);
+    setValidityFilter(state.filters.validity_state ?? DEFAULT_VALIDITY);
+    setExpiringWithin(state.filters.expiring_within_days ?? 'any');
+    setSchemeFilter(state.filters.scheme ?? 'all');
+    setStatusFilter(state.filters.status ?? 'all');
+    setNeedsReviewFilter(state.filters.needs_review === 'true' ? 'true' : 'any');
+  });
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [formOpen, setFormOpen] = useState(false);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  // The row's own Delete, the same action the record's gear offers (D15).
+  const [deleting, setDeleting] = useState<Certificate | null>(null);
 
   const bulkDeleteMutation = useBulkDeleteCertificates();
+  const deleteMutation = useDeleteCertificate();
 
   useEffect(() => {
     setPagination((prev) => ({ ...prev, pageIndex: 0 }));
@@ -240,8 +259,23 @@ export default function CertificatesList() {
       {
         accessorKey: 'actions',
         header: '',
-        cell: () => <ChevronRight className="text-muted-foreground/70 size-3.5" />,
-        size: 40,
+        cell: ({ row }) => (
+          // The record's gear also carries Merge, which needs the certificate's
+          // revisions to pick a target, so that one stays on the record.
+          <RowActionsMenu
+            ariaLabel="certificate"
+            actions={[
+              {
+                key: 'certificate.delete',
+                label: 'Delete certificate',
+                icon: Trash2,
+                kind: 'destructive',
+                run: () => setDeleting(row.original),
+              },
+            ]}
+          />
+        ),
+        size: 60,
         enableHiding: false,
         enableResizing: false,
       },
@@ -276,7 +310,24 @@ export default function CertificatesList() {
       table={table}
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
-      onRowClick={(row: Certificate) => router.push(`/master-data-management/certificates/${row.id}`)}
+      rowHref={(row: Certificate) => {
+        const search = buildDetailSearch(
+          {
+            pageIndex: pagination.pageIndex,
+            pageSize: pagination.pageSize,
+            sorting,
+            searchQuery,
+          },
+          {
+            validity_state: validityStateParam(validityFilter),
+            expiring_within_days: expiringWithin !== 'any' ? expiringWithin : undefined,
+            scheme: schemeFilter !== 'all' ? schemeFilter : undefined,
+            status: statusFilter !== 'all' ? statusFilter : undefined,
+            needs_review: needsReviewFilter === 'true' ? 'true' : undefined,
+          },
+        );
+        return `/master-data-management/certificates/${row.id}${search ? `?${search}` : ''}`;
+      }}
       standardToolbar={false}
       // Column preferences are keyed on the RBAC view slug, not the route path:
       // the column-config endpoint authorizes by treating everything before `::`
@@ -408,6 +459,26 @@ export default function CertificatesList() {
 
       {/* Mounted only while open so the form state resets between openings. */}
       {formOpen && <CertificateFormDialog open={formOpen} onOpenChange={setFormOpen} />}
+
+      <ConfirmDeleteDialog
+        open={deleting !== null}
+        onOpenChange={(open) => {
+          if (!open) setDeleting(null);
+        }}
+        title="Confirm delete"
+        description={
+          <>
+            Delete {deleting?.certificate_number}, its revisions and its covered product
+            links. The uploaded files are kept. This action cannot be undone.
+          </>
+        }
+        successMessage="Certificate deleted"
+        onDelete={async () => {
+          if (deleting) await deleteMutation.mutateAsync(deleting.id);
+        }}
+        onSuccess={() => setDeleting(null)}
+        queryKeysToInvalidate={[['certificates']]}
+      />
 
       <ConfirmDeleteDialog
         open={bulkDeleteOpen}

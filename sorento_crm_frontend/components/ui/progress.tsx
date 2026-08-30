@@ -95,7 +95,7 @@ function ProgressCircle({
           strokeDasharray={circumference}
           strokeDashoffset={offset}
           strokeLinecap="round"
-          className={cn('text-primary transition-all duration-300 ease-in-out', indicatorClassName)}
+          className={cn('text-primary transition-all duration-(--duration-slow) ease-(--ease-standard)', indicatorClassName)}
         />
       </svg>
       {children && (
@@ -209,7 +209,7 @@ function ProgressRadial({
           strokeWidth={strokeWidth}
           fill="none"
           strokeLinecap="round"
-          className={cn('text-primary transition-all duration-300 ease-in-out', indicatorClassName)}
+          className={cn('text-primary transition-all duration-(--duration-slow) ease-(--ease-standard)', indicatorClassName)}
         />
       </svg>
       {(showLabel || children) && (

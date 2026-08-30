@@ -13,7 +13,6 @@ import {
   useReactTable,
 } from '@tanstack/react-table';
 import {
-  ArrowLeft,
   Columns3,
   FileText,
   ListOrdered,
@@ -67,7 +66,8 @@ import {
   searchProductOptions,
 } from '../../../services/scmOptionsService';
 import { useSalesAgentOptions } from '../../hooks/useSalesAgentOptions';
-import SalesOrderNavigation from '../../components/SalesOrderNavigation';
+import DetailActions from '@/components/common/DetailActions';
+import { salesOrdersPagerQuery } from '../../../hooks/useSalesOrders';
 import { getSalesOrderUoms, type SalesOrderPlanningChangeBatch } from '../../../services/salesOrderService';
 import { fmtDate, fmtInt } from '../../../lib/format';
 import { demandClassBadge } from '../../../lib/demandClass';
@@ -86,6 +86,9 @@ import type {
 // with the planning board rather than restated here.
 import { describe as describeSupply } from '../../../../project-sales/_shared/lib/supplyVocabulary';
 import { lateDaysOf } from '../../../../project-sales/_shared/lib/orderInquiryWorklist';
+import { useRouter } from 'next/navigation';
+import BackToList, { useBackToListHref } from '@/components/common/BackToList';
+import { useSalesOrderActions } from '../../actions';
 
 /**
  * The sales-order detail, built to mirror `PurchaseOrderDetail` section for section: the
@@ -338,9 +341,16 @@ function SupplyText({
 }
 
 export function SalesOrderDetail({ id }: { id: string }) {
+  const router = useRouter();
   const { data, isLoading, isError } = useSalesOrder(id);
+  const backHref = useBackToListHref('/scm/sales-orders');
+  // The set the list row's "..." renders too (D15). Delete used to be a red icon
+  // in the list and nothing at all here, so a record could only be removed by
+  // finding it again in the list.
+  const { actions, dialogs } = useSalesOrderActions(data, {
+    onDeleted: () => router.push(backHref),
+  });
   const searchParams = useSearchParams();
-  const listSearch = searchParams.toString();
 
   const updateMut = useUpdateSalesOrder();
   const agentOptions = useSalesAgentOptions();
@@ -1035,13 +1045,10 @@ export function SalesOrderDetail({ id }: { id: string }) {
 
   // Back and prev/next live on the RIGHT of the record header, next to each other, the way
   // the purchase-order and users screens do it.
+  // Back carries the list query the row click wrote (S3-01). It lives on the
+  // toolbar row now; the empty states below keep one of their own.
   const backLink = (
-    <Button variant="outline" size="sm" asChild className="w-fit gap-1.5">
-      <Link href={`/scm/sales-orders${listSearch ? `?${listSearch}` : ''}`}>
-        <ArrowLeft className="size-4" />
-        Back to sales orders
-      </Link>
-    </Button>
+    <BackToList listPath="/scm/sales-orders" label="Back to sales orders" />
   );
 
   if (isLoading) {
@@ -1163,16 +1170,27 @@ export function SalesOrderDetail({ id }: { id: string }) {
                 </Button>
               </div>
             ) : (
-              <div className="flex shrink-0 flex-wrap items-center gap-2">
-                <SalesOrderNavigation salesOrderId={id} />
+              <DetailActions
+                pager={{
+                  ...salesOrdersPagerQuery,
+                  detailPath: '/scm/sales-orders',
+                  currentId: id,
+                  ariaLabel: 'sales order',
+                }}
+                actions={actions}
+                dialogs={dialogs}
+                gearLabel="Sales order options"
+                primary={
+                  <>
                 {/* The main action on this page, so it wears the main colour - the same
                     filled primary button an Add is on every list. */}
                 <Button variant="primary" size="sm" className="gap-1.5" onClick={() => beginEdit(so)}>
                   <SquarePen className="size-4" />
                   Edit
                 </Button>
-                {backLink}
-              </div>
+                  </>
+                }
+              />
             )}
           </div>
           {isEditing && error ? (

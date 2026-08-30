@@ -55,7 +55,7 @@ export default function PromotionTypesList() {
           <div className="flex items-center gap-2 truncate" title={row.original.type_name}>
             <span className="truncate">{row.original.type_name}</span>
             {row.original.is_default && (
-              <Badge variant="secondary" appearance="ghost">
+              <Badge variant="secondary">
                 Default
               </Badge>
             )}
@@ -79,7 +79,7 @@ export default function PromotionTypesList() {
         header: ({ column }) => <DataGridColumnHeader title="When expired" column={column} />,
         cell: ({ row }) => (
           <div className="flex items-center gap-2">
-            <Badge variant={row.original.show_expired ? 'success' : 'destructive'} appearance="ghost">
+            <Badge variant={row.original.show_expired ? 'success' : 'destructive'}>
               <BadgeDot />
               {row.original.show_expired ? 'Still served' : 'Not served'}
             </Badge>

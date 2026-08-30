@@ -68,7 +68,7 @@ export default function WhatsAppTemplatesView() {
             <div className="flex items-center gap-2">
               <span className="text-muted-foreground">Channel:</span>
               <span className="font-medium">{workspace.channel_name}</span>
-              <Badge variant="secondary" appearance="ghost">
+              <Badge variant="secondary">
                 {workspace.channel_type}
               </Badge>
             </div>

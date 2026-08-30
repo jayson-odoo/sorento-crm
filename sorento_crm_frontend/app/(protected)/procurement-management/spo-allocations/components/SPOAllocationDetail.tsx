@@ -15,7 +15,7 @@ import {
 } from '../hooks/useSPOAllocations';
 import { toast } from 'sonner';
 import { formatDate } from '@/lib/helpers';
-import { getStatusBadgeVariant, formatStatusLabel } from '@/lib/status-badge';
+import { formatStatusLabel } from '@/lib/status-badge';
 import SPOAllocationDeleteDialog from './spo-allocation-delete-dialog';
 import Link from 'next/link';
 
@@ -82,7 +82,7 @@ export default function SPOAllocationDetail({
             <h1 className="text-2xl font-bold">
               {spoAllocation.spo_number || `SPO-${spoAllocation.id.slice(0, 8)}`}
             </h1>
-            <Badge variant={getStatusBadgeVariant(spoAllocation.receipt_status)}>
+            <Badge status={spoAllocation.receipt_status}>
               {statusLabel}
             </Badge>
           </div>
@@ -190,7 +190,7 @@ export default function SPOAllocationDetail({
               <div>
                 <p className="text-sm text-muted-foreground">Status</p>
                 <Badge
-                  variant={getStatusBadgeVariant(spoAllocation.receipt_status)}
+                  status={spoAllocation.receipt_status}
                 >
                   {statusLabel}
                 </Badge>

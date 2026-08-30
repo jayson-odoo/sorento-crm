@@ -119,7 +119,7 @@ export default function ApiCallLogsPage() {
         accessorKey: 'source',
         header: ({ column }) => <DataGridColumnHeader title="Source" column={column} />,
         cell: ({ row }) => (
-          <Badge variant="secondary" appearance="ghost">
+          <Badge variant="secondary">
             {row.original.source}
           </Badge>
         ),

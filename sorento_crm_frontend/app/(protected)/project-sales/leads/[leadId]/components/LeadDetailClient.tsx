@@ -5,20 +5,38 @@ import Link from 'next/link';
 import type { ColumnDef } from '@tanstack/react-table';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useSession } from 'next-auth/react';
-import { RotateCcw, Check, Loader2, Pencil, Trash2, UserPlus, Users } from 'lucide-react';
+import {
+  ArrowRightLeft,
+  Building2,
+  Check,
+  FolderKanban,
+  History,
+  Info,
+  Loader2,
+  Pencil,
+  RotateCcw,
+  Trash2,
+  UserPlus,
+  UserRound,
+  Users,
+} from 'lucide-react';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
+import { useBackToListHref } from '@/components/common/BackToList';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
+import DetailActions from '@/components/common/DetailActions';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { PanelDataGrid } from '../../../_shared/components/PanelDataGrid';
 import { ProjectStatusPill } from '../../../[projectId]/components/ProjectStatusPill';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { useStatusGraph } from '@/app/(protected)/system-management/status-graphs/hooks/useStatusGraphs';
 import {
+  leadsPagerQuery,
   useCustomerPortfolio,
   useLead,
   useLeadMutations,
@@ -53,12 +71,12 @@ import { QualifyLeadDialog } from './QualifyLeadDialog';
  * that is honesty rather than duplication.
  */
 const TABS = [
-  { id: 'overview', label: 'Overview' },
-  { id: 'informant', label: 'Who told us' },
-  { id: 'handover', label: 'Handover' },
-  { id: 'buyer', label: 'Buyer' },
-  { id: 'projects', label: 'Projects' },
-  { id: 'activity', label: 'Activity' },
+  { id: 'overview', label: 'Overview', icon: Info },
+  { id: 'informant', label: 'Who told us', icon: UserRound },
+  { id: 'handover', label: 'Handover', icon: ArrowRightLeft },
+  { id: 'buyer', label: 'Buyer', icon: Building2 },
+  { id: 'projects', label: 'Projects', icon: FolderKanban },
+  { id: 'activity', label: 'Activity', icon: History },
 ] as const;
 
 type TabId = (typeof TABS)[number]['id'];
@@ -74,6 +92,7 @@ type HeaderAction = {
 
 export function LeadDetailClient({ leadId }: { leadId: string }) {
   const router = useRouter();
+  const backHref = useBackToListHref('/project-sales/leads');
   const searchParams = useSearchParams();
   const requestedTab = searchParams.get('tab') as TabId | null;
   const activeTab: TabId =
@@ -233,47 +252,56 @@ export function LeadDetailClient({ leadId }: { leadId: string }) {
           />
         </div>
 
-        {/* ONE named action, and everything else behind the gear. Seven buttons across two
-            rows - Accept, Decline, Reassign, a stage dropdown, Qualify, Disqualify, Delete -
-            gave the commonest step no more weight than deleting the record, and the client's
-            words were "I don't really know what each button do". */}
-        <div
+        {/* Pager, gear, primary (D6). ONE named action, and everything else behind
+            the gear: seven buttons across two rows - Accept, Decline, Reassign, a
+            stage dropdown, Qualify, Disqualify, Delete - gave the commonest step no
+            more weight than deleting the record, and the client's words were "I
+            don't really know what each button do". */}
+        <DetailActions
           data-testid="lead-header-actions"
-          className="flex flex-wrap items-center gap-2"
-        >
-          {primaryAction && (
-            <Button
-              type="button"
-              disabled={primaryAction.pending}
-              onClick={primaryAction.run}
-            >
-              {primaryAction.icon}
-              {primaryAction.label}
-            </Button>
-          )}
-          {(secondaryActions.length > 0 || lead.can_edit) && (
-            <DetailActionsMenu ariaLabel="Lead actions">
-              {secondaryActions.map((action) => (
-                <DropdownMenuItem
-                  key={action.key}
-                  disabled={action.pending}
-                  onSelect={action.run}
-                >
-                  {action.label}
-                </DropdownMenuItem>
-              ))}
-              {lead.can_edit && (
-                <DropdownMenuItem
-                  variant="destructive"
-                  onSelect={() => setConfirmDelete(true)}
-                >
-                  <Trash2 className="size-4" aria-hidden />
-                  Delete lead
-                </DropdownMenuItem>
-              )}
-            </DetailActionsMenu>
-          )}
-        </div>
+          pager={{
+            ...leadsPagerQuery,
+            detailPath: '/project-sales/leads',
+            currentId: lead.id,
+            ariaLabel: 'lead',
+          }}
+          gear={
+            (secondaryActions.length > 0 || lead.can_edit) && (
+              <DetailActionsMenu ariaLabel="Lead actions">
+                {secondaryActions.map((action) => (
+                  <DropdownMenuItem
+                    key={action.key}
+                    disabled={action.pending}
+                    onSelect={action.run}
+                  >
+                    {action.label}
+                  </DropdownMenuItem>
+                ))}
+                {lead.can_edit && (
+                  <DropdownMenuItem
+                    variant="destructive"
+                    onSelect={() => setConfirmDelete(true)}
+                  >
+                    <Trash2 className="size-4" aria-hidden />
+                    Delete lead
+                  </DropdownMenuItem>
+                )}
+              </DetailActionsMenu>
+            )
+          }
+          primary={
+            primaryAction && (
+              <Button
+                type="button"
+                disabled={primaryAction.pending}
+                onClick={primaryAction.run}
+              >
+                {primaryAction.icon}
+                {primaryAction.label}
+              </Button>
+            )
+          }
+        />
       </header>
 
       {/* Above the strip, not inside a tab: it is true of the whole record, and somebody
@@ -291,58 +319,62 @@ export function LeadDetailClient({ leadId }: { leadId: string }) {
         </div>
       )}
 
-      {/* Horizontal scroll on the tab strip only, so six tabs never make the page itself
-          scroll sideways at phone width. */}
-      <nav
-        className="-mx-1 flex gap-1 overflow-x-auto border-b border-border px-1"
-        aria-label="Lead sections"
-      >
-        {TABS.map((tab) => (
-          <button
-            key={tab.id}
-            type="button"
-            onClick={() => selectTab(tab.id)}
-            aria-current={activeTab === tab.id ? 'page' : undefined}
-            className={
-              activeTab === tab.id
-                ? 'shrink-0 border-b-2 border-primary px-3 py-2 text-sm font-medium text-foreground'
-                : 'shrink-0 border-b-2 border-transparent px-3 py-2 text-sm text-muted-foreground hover:text-foreground'
-            }
-          >
-            {tab.label}
-          </button>
-        ))}
-      </nav>
+      {/* The shared strip rather than a hand-rolled `<nav>`: same scroller, same
+          underline, and the keyboard behaviour the buttons never had.
 
-      {activeTab === 'overview' && <HeardCard lead={view} />}
+          The sections are TabsContent inside the same `<Tabs>`, not siblings
+          after it: a trigger points `aria-controls` at its panel, and with the
+          panels outside it pointed at nothing and the sections themselves had
+          no `role="tabpanel"`. Routing is unchanged - `value` still comes from
+          the URL and `onValueChange` still writes it back, so each section is
+          reached by its own link exactly as before, and only the open one
+          mounts. */}
+      <Tabs value={activeTab} onValueChange={(value) => selectTab(value as TabId)}>
+        <TabsList aria-label="Lead sections">
+          {TABS.map((tab) => (
+            <TabsTrigger key={tab.id} value={tab.id}>
+              <tab.icon />
+              <span>{tab.label}</span>
+            </TabsTrigger>
+          ))}
+        </TabsList>
 
-      {activeTab === 'informant' && (
-        <InformantCard
-          lead={view}
-          canEdit={lead.can_edit}
-          onEdit={() => setEditingWho(true)}
-        />
-      )}
+        <TabsContent value="overview">
+          <HeardCard lead={view} />
+        </TabsContent>
 
-      {activeTab === 'handover' && (
-        <AcceptanceCard
-          lead={view}
-          canAssign={canAssign}
-          onAssign={() => setAssigning(true)}
-        />
-      )}
+        <TabsContent value="informant">
+          <InformantCard
+            lead={view}
+            canEdit={lead.can_edit}
+            onEdit={() => setEditingWho(true)}
+          />
+        </TabsContent>
 
-      {activeTab === 'buyer' && (
-        <AccountPanel
-          lead={view}
-          canEdit={lead.can_edit}
-          onSetBuyer={() => setEditingWho(true)}
-        />
-      )}
+        <TabsContent value="handover">
+          <AcceptanceCard
+            lead={view}
+            canAssign={canAssign}
+            onAssign={() => setAssigning(true)}
+          />
+        </TabsContent>
 
-      {activeTab === 'projects' && <QualifiedProjects lead={view} />}
+        <TabsContent value="buyer">
+          <AccountPanel
+            lead={view}
+            canEdit={lead.can_edit}
+            onSetBuyer={() => setEditingWho(true)}
+          />
+        </TabsContent>
 
-      {activeTab === 'activity' && <LeadTimelinePanel lead={view} />}
+        <TabsContent value="projects">
+          <QualifiedProjects lead={view} />
+        </TabsContent>
+
+        <TabsContent value="activity">
+          <LeadTimelinePanel lead={view} />
+        </TabsContent>
+      </Tabs>
 
       {qualifying && (
         <QualifyLeadDialog lead={lead} onDone={() => setQualifying(false)} />
@@ -396,7 +428,7 @@ export function LeadDetailClient({ leadId }: { leadId: string }) {
         onDelete={async () => {
           await remove.mutateAsync(lead.id);
         }}
-        onSuccess={() => router.push('/project-sales/leads')}
+        onSuccess={() => router.push(backHref)}
         successMessage="Lead deleted"
       />
 

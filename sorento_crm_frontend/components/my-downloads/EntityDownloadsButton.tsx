@@ -48,6 +48,13 @@ interface EntityDownloadsButtonProps {
   /** Precomputed count (DataGrid row). Omit to derive it from the feed. */
   count?: number | null;
   className?: string;
+  /**
+   * Drive the modal from somewhere else - a record page's gear item, where the
+   * chip itself has no business sitting (the record card carries the pager, the
+   * gear and one primary, nothing else). Supplying this renders the dialog only.
+   */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }
 
 export function EntityDownloadsButton({
@@ -56,8 +63,13 @@ export function EntityDownloadsButton({
   label,
   count,
   className,
+  open: openProp,
+  onOpenChange,
 }: EntityDownloadsButtonProps) {
-  const [open, setOpen] = useState(false);
+  const [ownOpen, setOwnOpen] = useState(false);
+  const controlled = openProp !== undefined;
+  const open = controlled ? openProp : ownOpen;
+  const setOpen = controlled ? (onOpenChange ?? (() => {})) : setOwnOpen;
   const hasCountProp = typeof count === 'number';
 
   const query = useQuery<MyDownloadsResponse>({
@@ -84,6 +96,7 @@ export function EntityDownloadsButton({
 
   return (
     <>
+      {!controlled && (
       <button
         type="button"
         onClick={(e) => {
@@ -100,6 +113,7 @@ export function EntityDownloadsButton({
         <Printer className="size-3.5" />
         <span className="tabular-nums">{displayCount}</span>
       </button>
+      )}
 
       <Dialog open={open} onOpenChange={setOpen} modal>
         <DialogContent

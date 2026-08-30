@@ -249,40 +249,6 @@ async def get_packing_lists(
         raise handle_internal_error(str(e))
 
 
-@router.get("/neighbours")
-async def get_packing_list_neighbours(
-    id: str = Query(..., description="Packing list (inbound shipment) id to resolve neighbours for"),
-    query: Optional[str] = Query(None),
-    supplier_id: Optional[str] = Query(None),
-    shipment_status: Optional[str] = Query(None),
-    sort: Optional[str] = Query("created_at"),
-    dir: Optional[str] = Query("asc"),
-    current_user: dict = Depends(get_current_user_or_api_key),
-    db: Session = Depends(get_db),
-):
-    """Prev/next neighbours of a packing list within the active filtered+sorted list set.
-
-    Accepts the same filter/sort/search params as the list GET (page/limit are
-    irrelevant and ignored). Returns ``{total, index, prev_id, next_id}`` with the
-    1-based ``index`` and circular wrap-around neighbours. If the record is not in
-    the filtered set, falls back to the unfiltered, default-sorted set (D2).
-    """
-    try:
-        service = InboundShipmentService(db)
-        return service.neighbours(
-            shipment_id=id,
-            query=query,
-            supplier_id=supplier_id,
-            shipment_status=shipment_status,
-            sort_field=sort or "created_at",
-            sort_dir=dir or "asc",
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise handle_internal_error(str(e))
-
-
 @router.get("/{shipment_id}", response_model=InboundShipmentResponse)
 async def get_packing_list(
     shipment_id: str,

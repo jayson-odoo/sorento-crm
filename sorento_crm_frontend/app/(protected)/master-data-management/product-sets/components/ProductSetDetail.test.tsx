@@ -23,6 +23,9 @@ class ResizeObserverStub {
 Element.prototype.scrollIntoView = Element.prototype.scrollIntoView ?? (() => {});
 Element.prototype.hasPointerCapture = Element.prototype.hasPointerCapture ?? (() => false);
 
+// The pager has its own tests (hooks/useListPager.test.ts).
+vi.mock('@/components/common/ListPager', () => ({ __esModule: true, default: () => null }));
+
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), custom: vi.fn() } }));
 
 const useProductSet = vi.hoisted(() => vi.fn());
@@ -30,6 +33,11 @@ const useProductSets = vi.hoisted(() => vi.fn());
 const useUpdateProductSet = vi.hoisted(() => vi.fn());
 
 vi.mock('../hooks/useProductSets', () => ({
+  // The pager reads the list page through the entity's shared key + fetch (S3-03).
+  productSetsPagerQuery: {
+    listQueryKey: () => ['product-sets'],
+    fetchPage: async () => ({ data: [], pagination: { total: 0 } }),
+  },
   useProductSet,
   useProductSets,
   useUpdateProductSet,

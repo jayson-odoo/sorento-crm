@@ -17,6 +17,7 @@ type ChannelPrefs = {
   notify_whatsapp_on_deadline_extended: boolean;
   notify_email_on_handling: boolean;
   notify_whatsapp_on_handling: boolean;
+  notify_email_on_mention: boolean;
 };
 
 const SLA_TOGGLES: { key: keyof ChannelPrefs; label: string }[] = [
@@ -28,6 +29,7 @@ const SLA_TOGGLES: { key: keyof ChannelPrefs; label: string }[] = [
   { key: 'notify_whatsapp_on_deadline_extended', label: 'WhatsApp on deadline extended' },
   { key: 'notify_email_on_handling', label: 'Email on handling (claimed / taken over / released)' },
   { key: 'notify_whatsapp_on_handling', label: 'WhatsApp on handling (claimed / taken over / released)' },
+  { key: 'notify_email_on_mention', label: 'Email on mention in a note' },
 ];
 
 /**
@@ -46,6 +48,7 @@ export default function NotificationChannelsPreference() {
     notify_whatsapp_on_deadline_extended: false,
     notify_email_on_handling: true,
     notify_whatsapp_on_handling: false,
+    notify_email_on_mention: true,
   });
   const [loading, setLoading] = useState(true);
 
@@ -65,6 +68,7 @@ export default function NotificationChannelsPreference() {
           notify_whatsapp_on_deadline_extended: Boolean(data.notify_whatsapp_on_deadline_extended),
           notify_email_on_handling: data.notify_email_on_handling ?? true,
           notify_whatsapp_on_handling: Boolean(data.notify_whatsapp_on_handling),
+          notify_email_on_mention: data.notify_email_on_mention ?? true,
         });
       } catch {
         // keep defaults; don't block the page

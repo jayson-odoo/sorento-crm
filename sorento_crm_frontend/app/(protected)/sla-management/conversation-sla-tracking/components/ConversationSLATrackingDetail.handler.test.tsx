@@ -15,7 +15,14 @@ import type { ConversationSLATracking } from '../types/conversationSLATracking.t
 
 const useConversationSLATrackingDetail = vi.fn();
 
+vi.mock('@/components/common/ListPager', () => ({ __esModule: true, default: () => null }));
+
 vi.mock('../hooks/useConversationSLATracking', () => ({
+  // The pager reads the list page through the entity's shared key + fetch (S3-03).
+  conversationSlaPagerQuery: {
+    listQueryKey: () => ['conversation-sla-tracking'],
+    fetchPage: async () => ({ data: [], pagination: { total: 0 } }),
+  },
   useConversationSLATrackingDetail: (...a: unknown[]) =>
     useConversationSLATrackingDetail(...a),
   useDeleteConversationSLATracking: () => ({ mutate: vi.fn(), isPending: false }),
@@ -31,6 +38,9 @@ vi.mock('@tanstack/react-query', () => ({
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  // Back, and the delete that lands where Back lands, read the list state the
+  // row click wrote into this URL.
+  useSearchParams: () => new URLSearchParams(''),
 }));
 
 vi.mock('@/hooks/usePermissions', () => ({ useHasPermission: () => false }));

@@ -105,7 +105,7 @@ export function OutcomeBreakdownCard({
         <div className="flex flex-wrap items-center justify-between gap-2">
           <CardTitle>Outcome breakdown</CardTitle>
           {result?.rows_truncated && (
-            <Badge variant="secondary" appearance="ghost">
+            <Badge variant="secondary">
               Row capture truncated
             </Badge>
           )}

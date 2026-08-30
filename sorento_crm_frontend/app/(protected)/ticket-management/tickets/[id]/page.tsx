@@ -279,7 +279,9 @@ export default function TicketDetailPage({ params }: PageProps) {
       <Container>
         <Toolbar>
           <ToolbarHeading>
-            <ToolbarTitle>{ticket.ticket_number ?? 'Ticket'}</ToolbarTitle>
+            <ToolbarTitle className="whitespace-nowrap">
+              {ticket.ticket_number ?? 'Ticket'}
+            </ToolbarTitle>
             <Breadcrumb>
               <BreadcrumbList>
                 <BreadcrumbItem>

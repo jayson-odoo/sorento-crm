@@ -118,6 +118,11 @@ const hooks = vi.hoisted(() => ({
   useSalesAgents: vi.fn(),
   useAnnotateSalesAgent: vi.fn(),
   useBulkAnnotateSalesAgents: vi.fn(),
+  // The pager reads the list page through the entity's shared key + fetch (S3-03).
+  salesAgentsPagerQuery: {
+    listQueryKey: () => ['sales-agents', 'test-page'],
+    fetchPage: vi.fn(),
+  },
 }));
 vi.mock('../../hooks/useSalesAgents', () => hooks);
 
@@ -192,13 +197,18 @@ function withAgent(row: SalesAgent | null, over: Record<string, unknown> = {}) {
 
 /** The page of the list the record pager walks. */
 function withNeighbours(ids: string[]) {
-  hooks.useSalesAgents.mockReturnValue({
-    data: {
-      data: ids.map((id) => ({ id })),
-      pagination: { total: ids.length, page: 1, limit: 50 },
-    },
-  });
+  const page = {
+    data: ids.map((id) => ({ id })),
+    pagination: { total: ids.length, page: 1, limit: 50 },
+  };
+  hooks.useSalesAgents.mockReturnValue({ data: page });
+  // The pager asks the entity for the page the URL names.
+  hooks.salesAgentsPagerQuery.fetchPage.mockResolvedValue(page);
+  pagerPage = page;
 }
+
+/** The page the pager should find in the cache, seeded per test. */
+let pagerPage: { data: { id: string }[]; pagination: { total: number } } | null = null;
 
 function withOrders(rows: SalesOrder[]) {
   useSalesOrders.mockReturnValue({
@@ -215,6 +225,9 @@ function withOrders(rows: SalesOrder[]) {
 
 function renderDetail(id = 'agent-1') {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  // The list page the pager walks, in the cache under the entity's own key -
+  // exactly what the list leaves behind when the row is clicked.
+  if (pagerPage) qc.setQueryData(['sales-agents', 'test-page'], pagerPage);
   return render(
     <QueryClientProvider client={qc}>
       <SalesAgentDetail id={id} />
@@ -512,12 +525,15 @@ describe('SalesAgentDetail - the Sales orders tab', () => {
 });
 
 describe('SalesAgentDetail - walking the list', () => {
-  it('offers no pager when the page holds one record', () => {
+  it('S3-04: shows the pager disabled at both ends when the page holds one record', () => {
     withAgent(agent());
     withNeighbours(['agent-1']);
     renderDetail();
 
-    expect(screen.queryByRole('button', { name: 'Next sales agent' })).not.toBeInTheDocument();
+    // The shared pager states the position ("1 / 1") rather than vanishing: it
+    // disappears only when the record is not on the page the URL names (S3-05).
+    expect(screen.getByRole('button', { name: 'Next sales agent' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Previous sales agent' })).toBeDisabled();
   });
 
   it('steps to the next record on the page, carrying the list query', () => {

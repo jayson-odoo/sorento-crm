@@ -1,9 +1,6 @@
 'use client';
 
 import { use } from 'react';
-import { useRouter } from 'next/navigation';
-import Link from 'next/link';
-import { MoveLeft } from 'lucide-react';
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -12,8 +9,8 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from '@/components/ui/breadcrumb';
-import { Button } from '@/components/ui/button';
 import { Container } from '@/components/common/container';
+import BackToList from '@/components/common/BackToList';
 import {
   Toolbar,
   ToolbarActions,
@@ -28,7 +25,6 @@ export default function SupplierDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = use(params);
-  const router = useRouter();
 
   return (
     <>
@@ -55,11 +51,10 @@ export default function SupplierDetailPage({
             </Breadcrumb>
           </ToolbarHeading>
           <ToolbarActions>
-            <Button asChild variant="outline">
-              <Link href="/procurement-management/suppliers">
-                <MoveLeft /> Back to suppliers
-              </Link>
-            </Button>
+            <BackToList
+              listPath="/procurement-management/suppliers"
+              label="Back to suppliers"
+            />
           </ToolbarActions>
         </Toolbar>
       </Container>

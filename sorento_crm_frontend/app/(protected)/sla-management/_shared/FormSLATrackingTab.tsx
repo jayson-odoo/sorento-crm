@@ -406,7 +406,7 @@ export default function FormSLATrackingTab({
           const o = row.original;
           if (o.is_resolved) {
             return (
-              <Badge variant="success" appearance="ghost">
+              <Badge variant="success">
                 <CheckCircle className="mr-1 size-3" />
                 Resolved
               </Badge>
@@ -414,14 +414,14 @@ export default function FormSLATrackingTab({
           }
           if (o.escalated_at) {
             return (
-              <Badge variant="warning" appearance="ghost">
+              <Badge variant="warning">
                 <AlertCircle className="mr-1 size-3" />
                 Escalated
               </Badge>
             );
           }
           return (
-            <Badge variant="info" appearance="ghost">
+            <Badge variant="info">
               <Clock className="mr-1 size-3" />
               Pending
             </Badge>

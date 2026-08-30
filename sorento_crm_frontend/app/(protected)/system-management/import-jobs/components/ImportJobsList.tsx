@@ -29,7 +29,6 @@ import { getImportJob } from '../services/importJobService';
 import { useImportJobs, useCancelImportJob } from '../hooks/useImportJobs';
 import type { ImportJob } from '../types/importJob.types';
 import { toast } from 'sonner';
-import { getStatusBadgeVariant } from '@/lib/status-badge';
 
 const JOB_TYPE_LABELS: Record<string, string> = {
   order_import: 'Order Import',
@@ -77,7 +76,7 @@ export default function ImportJobsList() {
         accessorKey: 'job_type',
         header: ({ column }) => <DataGridColumnHeader title="Type" column={column} />,
         cell: ({ row }) => (
-          <Badge variant="secondary" appearance="ghost">
+          <Badge variant="secondary">
             {getJobTypeLabel(row.original.job_type)}
           </Badge>
         ),
@@ -89,7 +88,7 @@ export default function ImportJobsList() {
         accessorKey: 'status',
         header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
         cell: ({ row }) => (
-          <Badge variant={getStatusBadgeVariant(row.original.status)}>
+          <Badge status={row.original.status}>
             {(row.original.status || '').toUpperCase()}
           </Badge>
         ),

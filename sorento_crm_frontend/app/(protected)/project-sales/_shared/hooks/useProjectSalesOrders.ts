@@ -1,43 +1,11 @@
 'use client';
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import {
-  useRecordNeighbours,
-  type RecordNeighboursResult,
-} from '@/hooks/useRecordNeighbours';
 import { saveBlobAs } from '../services/fileDownload';
 import { projectKey } from './useProjects';
 import { allocationsKey } from './useProjectAllocations';
-import {
-  acknowledgeFinding,
-  acknowledgeScheduleFinding,
-  buildSalesOrders,
-  bulkDeleteProjectSalesOrders,
-  bulkSetLinesStockLocation,
-  createAmendment,
-  deleteProjectSalesOrder,
-  downloadAmendmentAutocountChangeListXlsx,
-  downloadSalesOrderImportFile,
-  getAmendment,
-  getAmendmentAutocountChangeList,
-  getProjectSalesOrder,
-  getSalesOrderWorksheet,
-  listPoVersions,
-  listProjectSalesOrders,
-  listScheduleFindings,
-  listScheduleVersions,
-  previewAmendment,
-  publishAmendment,
-  publishSalesOrder,
-  regroupSalesOrder,
-  reorderSalesOrderLines,
-  salesOrderNeighboursPath,
-  saveSalesOrderDocument,
-  unpublishSalesOrder,
-  updateAmendmentRowDecisions,
-  updateSalesOrderLine,
-} from '../services/projectSalesOrderService';
+import { acknowledgeFinding, acknowledgeScheduleFinding, buildSalesOrders, bulkDeleteProjectSalesOrders, bulkSetLinesStockLocation, createAmendment, deleteProjectSalesOrder, downloadAmendmentAutocountChangeListXlsx, downloadSalesOrderImportFile, getAmendment, getAmendmentAutocountChangeList, getProjectSalesOrder, getSalesOrderWorksheet, listPoVersions, listProjectSalesOrders, listScheduleFindings, listScheduleVersions, previewAmendment, publishAmendment, publishSalesOrder, regroupSalesOrder, reorderSalesOrderLines, saveSalesOrderDocument, unpublishSalesOrder, updateAmendmentRowDecisions, updateSalesOrderLine } from '../services/projectSalesOrderService';
 import type {
   AmendmentCreateBody,
   AmendmentDetail,
@@ -51,6 +19,7 @@ import type {
   SalesOrderRegroupGroup,
   SalesOrderSplitBy,
 } from '../types/projectSalesOrder.types';
+import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
 
 export const SALES_ORDERS_KEY = 'project-sales-orders';
 export const SALES_ORDER_KEY = 'project-sales-order';
@@ -66,6 +35,36 @@ export const salesOrdersKey = (projectId: string, params: ProjectSalesOrderListP
   params,
 ];
 export const salesOrderKey = (psoId: string) => [SALES_ORDER_KEY, psoId];
+
+/**
+ * The list query a record URL describes, in the shape the list passes.
+ *
+ * The project sales orders list pages with 1-based `page`, so the URL's 0-based
+ * `pageIndex` is converted here rather than at each call site.
+ */
+export function projectSalesOrdersListParamsFromUrl(
+  params: ListPagerParams,
+): ProjectSalesOrderListParams {
+  return {
+    page: params.pageIndex + 1,
+    limit: params.pageSize,
+    sort: params.sorting?.[0]?.id,
+    dir: params.sorting?.[0]?.desc ? 'desc' : 'asc',
+    query: params.searchQuery || undefined,
+    status: params.filters.status,
+    purchase_order_id: params.filters.purchase_order_id,
+  };
+}
+
+/** The pager's two hooks into one project's sales orders list. */
+export function projectSalesOrdersPagerQuery(projectId: string) {
+  return {
+    listQueryKey: (params: ListPagerParams): QueryKey =>
+      salesOrdersKey(projectId, projectSalesOrdersListParamsFromUrl(params)),
+    fetchPage: (params: ListPagerParams): Promise<ListPagerPage> =>
+      listProjectSalesOrders(projectId, projectSalesOrdersListParamsFromUrl(params)),
+  };
+}
 
 export function useProjectSalesOrders(
   projectId: string | undefined,
@@ -86,23 +85,6 @@ export function useProjectSalesOrder(psoId: string | undefined) {
   });
 }
 
-/**
- * Prev/next within the project's sales orders, so a reviewer can walk them one by one
- * rather than going back to the list between each.
- *
- * No list params are sent: the detail page is reached from a tab rather than from a
- * filtered grid, so the sequence is the project's own default order (newest first), which
- * is what the tab shows.
- */
-export function useProjectSalesOrderNeighbours(
-  projectId: string | undefined,
-  psoId: string | undefined,
-): RecordNeighboursResult {
-  return useRecordNeighbours(
-    salesOrderNeighboursPath(projectId ?? ''),
-    projectId ? (psoId ?? null) : null,
-  );
-}
 
 /**
  * The AutoCount worksheet for one order. Separate from the draft query rather than a field

@@ -22,12 +22,12 @@ import {
 } from '@/components/ui/alert-dialog';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
+import DetailActions from '@/components/common/DetailActions';
 import RecordNavigation from '@/components/common/RecordNavigation';
 import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
 import {
   useProject,
   usePurchaseOrderMutations,
-  usePurchaseOrderNeighbours,
   usePurchaseOrders,
 } from '../../../../_shared/hooks/useProjects';
 import type {
@@ -77,7 +77,9 @@ export function PurchaseOrderDetailClient({
   const { update, remove } = usePurchaseOrderMutations(projectId);
   const edit = usePurchaseOrderEditSession();
   // The pager's set is the project's own POs, in the order the tab lists them.
-  const neighbours = usePurchaseOrderNeighbours(projectId, poId);
+  // The project's POs are already in memory (the record itself is read out of
+  // them), so the pager is presentational rather than a second endpoint.
+  const poIndex = (purchaseOrders.data ?? []).findIndex((row) => row.id === poId);
 
   const [uploading, setUploading] = React.useState(false);
   const [confirmDelete, setConfirmDelete] = React.useState(false);
@@ -252,79 +254,97 @@ export function PurchaseOrderDetailClient({
         </div>
 
         <div className="flex flex-col items-stretch gap-1.5 sm:items-end">
-          <div className="flex flex-wrap items-center gap-2">
-            {/* Walking a project's POs one after another is the normal case, so the pager
+          {/* Pager, gear, primary (D6), through the shared group rather than a hand-rolled
+              row: the order is the same rule on all 39 detail pages, and a copy of it here
+              is a copy that can drift. */}
+          <DetailActions
+            pagerNode={
+              /* Walking a project's POs one after another is the normal case, so the pager
                 comes first, the way it does on the user record.
 
                 Hidden while a session is open, exactly as the quotation document hides it. The
                 staged work would in fact survive a step away - it lives in the session, not in
                 the table - but a pager sitting beside Cancel and Save READS like it will
-                discard it, and a control nobody dares press is worse than one that is absent. */}
-            {!isEditing && (
-              <RecordNavigation
-                basePath={`/project-sales/${projectId}/pos`}
-                prevId={neighbours.prevId}
-                nextId={neighbours.nextId}
-                currentIndex={neighbours.index != null ? neighbours.index - 1 : undefined}
-                totalCount={neighbours.total}
-                isLoading={neighbours.isLoading}
-                ariaLabel="purchase order"
-              />
-            )}
-            {/* Everything that is not the one call to action lives behind the gear. Only
-                rendered for somebody who may act: a reader has nothing to put in it. */}
-            {canEdit && (
-              <DetailActionsMenu ariaLabel="Purchase order actions">
-                <DropdownMenuItem
-                  disabled={isEditing}
-                  onSelect={() => setUploading(true)}
-                >
-                  <Upload className="size-4" aria-hidden />
-                  Upload a document
-                </DropdownMenuItem>
-                {/* Destructive last, and behind a separator. */}
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  variant="destructive"
-                  disabled={isEditing}
-                  onSelect={() => setConfirmDelete(true)}
-                >
-                  <Trash2 className="size-4" aria-hidden />
-                  Delete this PO
-                </DropdownMenuItem>
-              </DetailActionsMenu>
-            )}
-            {/* The one thing this record is for: correcting what was read off the document.
+                discard it, and a control nobody dares press is worse than one that is absent. */
+              !isEditing && (
+                <RecordNavigation
+                  index={poIndex >= 0 ? poIndex + 1 : null}
+                  total={(purchaseOrders.data ?? []).length}
+                  hasPrevious={poIndex > 0}
+                  hasNext={poIndex >= 0 && poIndex < (purchaseOrders.data ?? []).length - 1}
+                  onPrevious={() =>
+                    router.push(
+                      `/project-sales/${projectId}/pos/${(purchaseOrders.data ?? [])[poIndex - 1].id}`,
+                    )
+                  }
+                  onNext={() =>
+                    router.push(
+                      `/project-sales/${projectId}/pos/${(purchaseOrders.data ?? [])[poIndex + 1].id}`,
+                    )
+                  }
+                  isLoading={purchaseOrders.isLoading}
+                  ariaLabel="purchase order"
+                />
+              )
+            }
+            gear={
+              /* Everything that is not the one call to action lives behind the gear. Only
+                rendered for somebody who may act: a reader has nothing to put in it. */
+              canEdit && (
+                <DetailActionsMenu ariaLabel="Purchase order actions">
+                  <DropdownMenuItem
+                    disabled={isEditing}
+                    onSelect={() => setUploading(true)}
+                  >
+                    <Upload className="size-4" aria-hidden />
+                    Upload a document
+                  </DropdownMenuItem>
+                  {/* Destructive last, and behind a separator. */}
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    variant="destructive"
+                    disabled={isEditing}
+                    onSelect={() => setConfirmDelete(true)}
+                  >
+                    <Trash2 className="size-4" aria-hidden />
+                    Delete this PO
+                  </DropdownMenuItem>
+                </DetailActionsMenu>
+              )
+            }
+            primary={
+              /* The one thing this record is for: correcting what was read off the document.
                 Once a session is open, Cancel and Save ARE the header's controls and the
-                entry point has nothing left to say. */}
-            {canEdit && isEditing ? (
-              <>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  disabled={isSaving}
-                  onClick={() => edit.cancel()}
-                >
-                  Cancel
+                entry point has nothing left to say. */
+              canEdit && isEditing ? (
+                <>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={isSaving}
+                    onClick={() => edit.cancel()}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={isSaving || !edit.isDirty}
+                    title={edit.isDirty ? undefined : 'Nothing has changed yet'}
+                    onClick={requestSave}
+                  >
+                    {isSaving ? 'Saving...' : 'Save'}
+                  </Button>
+                </>
+              ) : canEdit ? (
+                <Button type="button" size="sm" onClick={() => edit.begin()}>
+                  <SquarePen className="size-4" aria-hidden />
+                  Edit the PO
                 </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  disabled={isSaving || !edit.isDirty}
-                  title={edit.isDirty ? undefined : 'Nothing has changed yet'}
-                  onClick={requestSave}
-                >
-                  {isSaving ? 'Saving...' : 'Save'}
-                </Button>
-              </>
-            ) : canEdit ? (
-              <Button type="button" size="sm" onClick={() => edit.begin()}>
-                <SquarePen className="size-4" aria-hidden />
-                Edit the PO
-              </Button>
-            ) : null}
-          </div>
+              ) : null
+            }
+          />
           {/* Visible, not only a tooltip: a reason hidden behind a hover is unreadable on the
               phone this page also has to work on. */}
           {headerHints.map((hint) => (

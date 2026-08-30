@@ -10,7 +10,7 @@ import {
   getSortedRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { Check, Download, Settings2 } from 'lucide-react';
+import { ChartColumn, Check, Download, Settings2, TableProperties } from 'lucide-react';
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -610,11 +610,17 @@ export function ReportPage({
 
           {!runError && result && result.row_count > 0 && detailLayout && summary && (
             <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-              <TabsList className="w-full justify-start overflow-x-auto">
+              <TabsList>
                 <TabsTrigger value="detail">
-                  {detailTitle} ({result.row_count})
+                  <TableProperties />
+                  <span>
+                    {detailTitle} ({result.row_count})
+                  </span>
                 </TabsTrigger>
-                <TabsTrigger value="summary">{summary.title}</TabsTrigger>
+                <TabsTrigger value="summary">
+                  <ChartColumn />
+                  <span>{summary.title}</span>
+                </TabsTrigger>
               </TabsList>
 
               <TabsContent value="detail" className="mt-5">

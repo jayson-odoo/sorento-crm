@@ -235,7 +235,7 @@ export function ImportJobRowsCard({
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
               <p className="text-sm font-medium">Rows</p>
-              <Badge variant="secondary" appearance="ghost">
+              <Badge variant="secondary">
                 {total.toLocaleString()} matching
               </Badge>
               {result?.rows_truncated && (

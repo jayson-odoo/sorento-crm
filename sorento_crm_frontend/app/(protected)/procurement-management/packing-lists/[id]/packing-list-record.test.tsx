@@ -63,8 +63,15 @@ const state = {
 
 const updatePackingList = vi.fn();
 
+// The pager has its own tests (hooks/useListPager.test.ts); here it is noise.
+vi.mock('@/components/common/ListPager', () => ({ __esModule: true, default: () => null }));
+
 vi.mock('../hooks/usePackingLists', () => ({
   usePackingList: () => ({ data: state.packingList, isLoading: false }),
+  packingListsPagerQuery: {
+    listQueryKey: () => ['packing-lists'],
+    fetchPage: async () => ({ data: [], pagination: { total: 0 } }),
+  },
   useDeletePackingList: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useUpdatePackingList: () => ({ mutateAsync: updatePackingList, isPending: false }),
   usePackingListSourceInvoices: () => ({ data: state.sourceInvoices, isLoading: false }),
