@@ -47,7 +47,7 @@ export default function SLAPolicyDetail({ slaPolicyId }: SLAPolicyDetailProps) {
       <div className="flex items-center justify-between">
         <div className="space-y-1">
           <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold">{slaPolicy.name}</h1>
+            <h2 className="text-2xl font-bold">{slaPolicy.name}</h2>
             <Badge variant={slaPolicy.is_active ? 'success' : 'secondary'}>
               <BadgeDot />
               {slaPolicy.is_active ? 'Active' : 'Inactive'}

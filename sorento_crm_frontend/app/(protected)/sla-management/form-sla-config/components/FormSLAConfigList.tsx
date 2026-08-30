@@ -104,7 +104,6 @@ export default function FormSLAConfigList() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Form SLA Configuration</h1>
           <p className="text-sm text-muted-foreground">
             Per-form SLA stage rules. Each row defines which form transition starts a
             tracker, marks it responded, and marks it resolved. Chain stages via the

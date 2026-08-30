@@ -18,6 +18,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { PageHeader } from '@/components/common/PageHeader';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridTable } from '@/components/ui/data-grid-table';
@@ -462,24 +463,28 @@ export function SLAKpiDashboardContent({ defaultWindowDays }: { defaultWindowDay
 
   return (
     <div className="space-y-6">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex min-w-0 flex-wrap items-center gap-2">
-            <h1 className="text-xl font-semibold min-w-0 break-words">SLA KPI Dashboard</h1>
-            {defaultWindowDays ? (
-              <Badge variant="secondary" className="font-normal">Last {defaultWindowDays} days</Badge>
-            ) : null}
-          </div>
-          <SearchableSelect
-            value={scope}
-            onChange={(v) => { setScope(v as KpiScope); clearFilter(); }}
-            options={[
-              { value: 'all', label: 'All SLA' },
-              { value: 'form', label: 'Form SLA' },
-              { value: 'conversation', label: 'Conversation SLA' },
-            ]}
-            triggerClassName="w-48"
-          />
-        </div>
+        <PageHeader
+          title={
+            <span className="inline-flex flex-wrap items-center gap-2">
+              SLA KPI Dashboard
+              {defaultWindowDays ? (
+                <Badge variant="secondary" className="font-normal">Last {defaultWindowDays} days</Badge>
+              ) : null}
+            </span>
+          }
+          actions={
+            <SearchableSelect
+              value={scope}
+              onChange={(v) => { setScope(v as KpiScope); clearFilter(); }}
+              options={[
+                { value: 'all', label: 'All SLA' },
+                { value: 'form', label: 'Form SLA' },
+                { value: 'conversation', label: 'Conversation SLA' },
+              ]}
+              triggerClassName="w-48"
+            />
+          }
+        />
 
         {/* Stage breakdown - MECE partition of the total (sums to Opened) */}
         {summaryQ.isLoading ? (

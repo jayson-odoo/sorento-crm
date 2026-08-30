@@ -310,12 +310,12 @@ export default function ConversationSLATrackingDetail({
       <div className="flex items-center justify-between">
         <div className="space-y-1">
           <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold">
+            <h2 className="text-2xl font-bold">
               Contact: {tracking.contact_phone || tracking.contact?.phone_number || '-'}
               {tracking.contact_name || tracking.contact?.name 
                 ? ` (${tracking.contact_name || tracking.contact?.name})` 
                 : ''}
-            </h1>
+            </h2>
             {tracking.is_resolved ? (
               <Badge variant="success">
                 <CheckCircle className="size-3 mr-1" />
