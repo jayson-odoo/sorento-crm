@@ -7,7 +7,8 @@
 **Slug:** `price-tag-request` | **Domain:** dealer-kit (sub-feature)
 **Status:** S0-S5 + S3b BUILT (PR #289). S3c (section 9, D33-D41) BUILT 2026-08-29 from the
 captain's test of the S3b bed; D42-D44 BUILT 2026-08-30 from the second round of that test;
-D45-D47 (section 10) BUILT 2026-08-30 from the captain's test of the PORTAL form.
+D45-D47 (section 10) BUILT 2026-08-30 from the captain's test of the PORTAL form; D48-D49
+(section 11) BUILT 2026-08-30 from the round that followed it.
 **UAC:** `documentation/plans/dealer-kit/price-tag-request-acceptance-criteria.md`
 **Depends on:** `feat/product-sets` branch merged to main.
 **Branch:** TBD
@@ -614,3 +615,84 @@ a `?type=price_tag_request` deep link for that second contact falls back instead
 debtor notice appears on an empty lookup and not on a failed one, and the lines table posts
 `line_type: 'product_set'` for a picked set and `'product'` for a picked product with alternatives
 disabled on the set row.
+
+---
+
+## 11. Round 4, 30 Aug: a draft that saves, and a Submit that says what is missing
+
+**Status:** BUILT 2026-08-30. The captain filled the form (debtor ARDENCY CONSTRUCTION, needed by
+31/08/2026, notes, a CABANA set on line 1 and product SRTWC286-SH on line 2), pressed Submit, and
+could not tell what was still required. Second item, verbatim: "save as draft shouldn't need to
+check for required fields."
+
+### Step 0: what the reproduction found
+
+Rebuilt exactly that form state on the lane and pressed Submit. The toast reads **"Field required"**
+and nothing else. The backend log has the matching line:
+
+```
+POST /api/v1/public/portal/submissions/price_tag_request - Status: 422
+{"detail":[{"type":"missing","loc":["body","fields"],"msg":"Field required", ...}]}
+```
+
+`body.fields` is not a field of a price tag request. **The request never reached the price tag
+route.** `app/api/v1/public/__init__.py` includes `portal.router` BEFORE `portal_price_tag.router`,
+both under `/portal`, and Starlette serves the first route whose path matches. `portal.py` declares
+`POST /submissions/{kind}`, `PUT /submissions/{kind}/{id}`, `GET /submissions/{kind}/{id}` and
+`POST /submissions/{kind}/{id}/submit`; every price tag path of that shape matches them first.
+`price_tag_request` is in `SUPPORTED_TYPES`, so `_check_kind` waves it through instead of rejecting
+it, and the generic handler's `SubmissionPayload` requires a `fields` dict the price tag payload has
+never had. The 422 the salesperson sees is a pydantic error about a schema for a different form.
+
+The same shadowing had already broken the rest of the flow, unnoticed because only the list was ever
+exercised in a browser:
+
+| Path | Went to | Result before this round |
+|------|---------|--------------------------|
+| `GET /submissions/price_tag_request` | the price tag route (one segment, matches no generic route) | worked, which is why the landing looked healthy |
+| `POST /submissions/price_tag_request` | `portal.py` `POST /submissions/{kind}` | 422 "Field required" - no request could be created at all |
+| `GET /submissions/price_tag_request/{id}` | `portal.py` `GET /submissions/{kind}/{id}` | 400 "Unsupported submission type" from `PortalService.get_submission`, which has no branch for the kind. The FE reads that as "not found" and bounces back |
+| `PUT /submissions/price_tag_request/{id}` | `portal.py` `PUT /submissions/{kind}/{id}` | 422 "Field required" |
+| `POST /submissions/price_tag_request/{id}/submit` | `portal.py` submit | 400 "Unsupported submission type" |
+
+So the honest summary of the captain's report: Submit did not fail validation, it never ran. This is
+the SLA route-shadowing lesson again, one router apart instead of one file.
+
+Two further findings from reading the same path:
+
+- There is no `GET` detail route for a price tag request on the portal at all. Even unshadowed,
+  reopening a saved draft had nothing to call.
+- `Save Draft` refused to run without a debtor, and `price_tag_requests.debtor_name` and
+  `needed_by_date` are `NOT NULL`, so a sloppy draft could not be stored even if the route worked.
+
+### Decisions
+
+| ID | Decision |
+|----|----------|
+| D48a | **Save as draft validates nothing.** The only client-side requirement is that there is something to save: a debtor, a date the salesperson changed, a note, or a line. The backend accepts a draft create or update with no debtor and no needed-by date, which takes DDL: both columns become nullable. `PriceTagRequestCreate` declares them `Optional`, and so do `PriceTagRequestResponse` and `PriceTagRequestListItem`, because a schema drops nothing but it does refuse to serialise a `None` into a non-optional field. Every reader renders a dash rather than crashing: the portal list card, the portal detail, the CRM list and detail, and the landing summary adapter (whose card title falls back to the doc number). **Completeness is enforced on SUBMIT, not on save** - a draft can be sloppy, a submitted request cannot. |
+| D48b | **Submit explains itself.** The button stays ENABLED whenever the form is not busy. The click runs the checks and renders them where the problem is: red text under Debtor and under Needed by, a message on each incomplete row and on any row the server's set guard named, and one summary line above the actions ("2 things need attention"). The first error is scrolled into view. A server refusal lands on the same surfaces: `AppException.detail` carries a comma-separated list of field keys (`debtor_name`, `needed_by_date`, `lines`, `line:<sort_order>`) beside the human sentence in `message`, the form routes each key it recognises to its inline surface, and anything it does not recognise falls back to the toast it shows today. `detail` is a plain string because that is what `AppException` declares; a key the form cannot place is a message, not a crash. |
+| D48c | **A draft is a real record: it saves, it lists, it reopens, and it can be deleted.** After a draft save the form routes to the portal landing filtered to the kind, where the row reads Draft (`portal_draft_at`). Reopening it loads the partial state - a null debtor is an empty select, a null date an empty date input - and the form is editable because it is a draft, which is `portal_draft_at`, not `status === 'draft'` (a draft's status is `new`; the old check was against a status that never exists and would have shown a read-only page). Save on an already-saved draft UPDATES it instead of creating a second one, lines included. Delete draft is offered on the draft's own form behind an `AlertDialog`, exactly as `SubmissionForm` offers it for the legacy kinds, and hard-deletes the request with its lines. |
+| D49 | **The price tag router is mounted before the generic portal router, and the two routes it was missing are added.** Mount order is the whole fix for the shadowing: `portal_price_tag.router` declares only literal `price_tag_request` and `price-tag-*` paths, so putting it first captures exactly the requests meant for it and leaves every legacy path with the generic handler. `price_tag_request` stays in `SUPPORTED_TYPES` (the attachment helpers and the visibility service read that list) - the ordering, not the list, is what decides who serves the request. Added beside it: `GET /submissions/price_tag_request/{id}`, answering the same body the CRM detail route does (lines resolved to code, name and both prices through `tag_data_service`, so the portal and the print payload cannot disagree), and `DELETE /submissions/price_tag_request/{id}` for a draft only. The line resolution helper moves from the CRM route module into `PriceTagRequestService` so both routes call the one implementation. |
+
+### What is deliberately NOT built
+
+- No structured (JSON) error body. `AppException.detail` is a string in this codebase and one
+  comma-separated list of field keys answers the whole journey. The trigger for a richer shape:
+  the first error that needs to carry a value as well as a field name.
+- No client-side mirror of the Bathroom Furniture set guard. It stays server-enforced and its 422
+  now lands on the offending row instead of a toast, which is what was missing.
+- No draft autosave, and no unsaved-changes prompt. Save Draft is one button away.
+- No `NOT NULL` replacement for the two columns at submit time (a partial index or a check
+  constraint). Submit validates in the service, where the message that names the missing field is
+  written; a constraint would only produce a violation nobody can read.
+
+### Tests
+
+pytest: a draft created with nothing but one line, a draft created with nothing but a debtor, a
+draft update that clears the debtor, submit refused with every missing field named in `detail`,
+submit refused for a line with no item, the set guard naming the line index, the happy submit
+unchanged, and the mounted route order actually serving the price tag create (a create through the
+app, not through the service, is the only thing that would have caught the shadowing). vitest: Save
+Draft posts with a null debtor and a null date, Save Draft is disabled only while the form is
+completely empty, a Submit click with an empty debtor renders the inline error and posts nothing,
+and a server 422 naming `line:0` lands on the first row.
