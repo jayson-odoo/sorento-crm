@@ -245,6 +245,11 @@ export default function WarehouseDetailPage({
                       {warehouse.counts_as_available === false ? 'Excluded' : 'Counted'}
                     </Badge>
                   </Field>
+                  <Field label="Fulfilment planning" className="md:col-span-2">
+                    <Badge variant={warehouse.fulfilment_planning ? 'success' : 'secondary'}>
+                      {warehouse.fulfilment_planning ? 'On' : 'Off'}
+                    </Badge>
+                  </Field>
                   <Field label="Draws stock from">{poolCode || 'Stands alone'}</Field>
                   {/* Same field, same position as the edit view: the read view is what
                       teaches the user where things are. */}

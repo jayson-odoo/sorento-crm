@@ -521,3 +521,54 @@ def test_resolve_route_the_three_placeholders_no_longer_answer_sorento(api, worl
     )
     assert res.status_code == 200, res.text
     assert [m["uuid"] for m in res.json()["resolutions"][0]["matches"]] == [real_tap]
+
+
+# --------------------------------------------------------------------------- #
+# Category flag through the API                                               #
+# --------------------------------------------------------------------------- #
+def test_category_flag_is_read_and_written_through_the_category_api(api, world, db, monkeypatch):
+    """Issue #390: Sorento's RPACC sits in MISC (is_searchable False) and so
+    never resolves, while nothing on the categories page let anyone see or
+    change that. The category response carries the flag, and PUT flips it."""
+    from app.services.user_service import UserPermissionService
+
+    # The category routes sit behind require_permission and the principal above
+    # has no role rows; the permission layer is not what this test is about.
+    monkeypatch.setattr(UserPermissionService, "check_user_has_permission", lambda *_a, **_k: True)
+    cid = world.junk_cat
+    db.commit()
+
+    detail = api.get(f"/api/v1/master-data/product-categories/{cid}")
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["is_searchable"] is False
+    # The categories page reads the hand-built tree, not the response model.
+    tree = api.get("/api/v1/master-data/product-categories/tree")
+    assert tree.status_code == 200, tree.text
+    assert {n["id"]: n["is_searchable"] for n in tree.json()}[cid] is False
+
+    res = api.put(f"/api/v1/master-data/product-categories/{cid}", json={"is_searchable": True})
+    assert res.status_code == 200, res.text
+    assert res.json()["is_searchable"] is True
+    assert api.get(f"/api/v1/master-data/product-categories/{cid}").json()["is_searchable"] is True
+
+    # A product in that category is now a chat answer, with no product edit.
+    code = f"{STEM}CATFLIP"
+    pid = world.product(code, category=cid)
+    db.commit()
+    set_company_scope(db, frozenset({SORENTO_ID}))
+    assert [m.uuid for m in _resolution(db, code).matches] == [pid]
+
+    # Create accepts it too, and it defaults to searchable. (Through the service:
+    # a create needs ONE active company to stamp, and the api fixture holds two.)
+    from app.schemas.product import ProductCategoryCreate
+    from app.services.product_service import ProductCategoryService
+
+    svc = ProductCategoryService(db)
+    junk = svc.create_category(
+        ProductCategoryCreate(category_code=unique_code("C")[:50], category_name="junk", is_searchable=False)
+    )
+    real = svc.create_category(
+        ProductCategoryCreate(category_code=unique_code("C")[:50], category_name="real")
+    )
+    assert junk.is_searchable is False
+    assert real.is_searchable is True

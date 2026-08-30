@@ -12,6 +12,9 @@ class ProductCategoryBase(BaseModel):
     description: Optional[str] = None
     parent_category_id: Optional[str] = None
     is_active: bool = True
+    # False for categories with no class meaning (MISC, PROJECT ...): every product
+    # in them is hidden from the chatbot whatever its own flag says (issue #300).
+    is_searchable: bool = True
     display_order: Optional[int] = 0
 
 
@@ -24,6 +27,7 @@ class ProductCategoryUpdate(BaseModel):
     description: Optional[str] = None
     parent_category_id: Optional[str] = None
     is_active: Optional[bool] = None
+    is_searchable: Optional[bool] = None
     display_order: Optional[int] = None
 
 

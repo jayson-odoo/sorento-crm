@@ -85,6 +85,10 @@ from app.services.project_supply_service import (
 from app.services.scm import priority
 from app.services.scm import sales_agent_service
 from app.services.scm.history_sources import SPO_HISTORY_SOURCE
+from app.services.scm.planning_predicate import (
+    OUTSIDE_FULFILMENT_PLANNING,
+    outside_fulfilment_planning,
+)
 from app.services.scm.demand import demand_qty, is_open_demand, is_plan_demand_line
 from app.services.scm.front_planning_engine import (
     BORROW,
@@ -330,6 +334,7 @@ class _Row:
         "so_qty_ahead", "lines_ahead", "available_to_this_line",
         "decision", "item_flags", "order_inquiry", "lent_to",
         "unit_qty", "unit_line_count",
+        "outside_planning",
     )
 
     def __init__(self, **kw: Any) -> None:
@@ -404,8 +409,25 @@ class _Row:
 
     @property
     def unplannable(self) -> bool:
-        """No location on the sales-order line, so nothing can be sourced for it (AC-FP16)."""
-        return not self.warehouse_id
+        """Nothing can be sourced for this line, so no ladder is walked for it.
+
+        Two ways in. No location on the sales-order line (AC-FP16), and - since borrow
+        ladder v7.1 - a location FLAGGED OUT of fulfilment planning (R17 / AC-S1-6): a bin
+        that is off has no pile, no group net and no donor, so a proposal for it would be
+        computed from stock the rest of the engine cannot see.
+
+        **The flag verdict applies to UNDECIDED lines only.** A line an active decision
+        covers is covered - the stock was found, promised and confirmed - and turning the
+        bin's switch off afterwards is a statement about what may be PROPOSED next, never a
+        retraction of what was already decided. Counting such a line as unplannable made a
+        settled order read `Needs a location` / `blocked`, dropped it out of the frontend's
+        `confirmLinesFor`, and had confirm refuse a verbatim re-send of the very composition
+        it had itself written. A line with no location at all is still unplannable either
+        way: there is nothing to have decided about.
+        """
+        if not self.warehouse_id:
+            return True
+        return bool(self.outside_planning) and self.decision is None
 
     @property
     def key(self) -> str:
@@ -1078,6 +1100,12 @@ class FulfilmentBoardService:
                 required_date=line.required_date,
                 warehouse_id=str(line.warehouse_id) if line.warehouse_id else None,
                 location=warehouse.warehouse_code if warehouse else None,
+                # R17: read here, off the warehouse row the demand query already joins, so
+                # the board's verdict and the supply service's `unplannable_reason` come
+                # from the one predicate rather than from two lookups that could disagree.
+                # ACTIVE and flagged off - an inactive bin keeps whatever verdict it carried
+                # before the flag existed (`outside_fulfilment_planning`).
+                outside_planning=outside_fulfilment_planning(warehouse),
                 priority=line.priority,
                 demand_class=order.demand_class,
             )
@@ -1662,8 +1690,12 @@ class FulfilmentBoardService:
         """
         # Covered rows still count towards the STOCK reads: a cell whose only line is decided
         # still has a location, and dropping it here would blank that location's position.
+        # Since the ruling above, a COVERED row is never unplannable while it has a location
+        # - the flag verdict belongs to undecided lines - so `plannable` already carries it
+        # and there is no second list to union in.
         plannable = [row for row in served if not row.unplannable]
         proposable = [row for row in plannable if not row.covered]
+        counted = plannable
         for row in served:
             if row.covered:
                 self._apply_frozen(row)
@@ -1675,16 +1707,18 @@ class FulfilmentBoardService:
                         "location": None,
                         "warehouse_id": None,
                         "reason": (
-                            "No fulfilment location on the sales order line, so nothing can "
-                            "be sourced for it."
+                            OUTSIDE_FULFILMENT_PLANNING
+                            if row.outside_planning
+                            else "No fulfilment location on the sales order line, so "
+                            "nothing can be sourced for it."
                         ),
                         "spo_number": None,
                         "arrival_date": None,
                     }
                 ]
 
-        product_ids = {row.product_id for row in plannable if row.product_id}
-        warehouse_ids = {row.warehouse_id for row in plannable if row.warehouse_id}
+        product_ids = {row.product_id for row in counted if row.product_id}
+        warehouse_ids = {row.warehouse_id for row in counted if row.warehouse_id}
         # The agents' ownership groups, resolved to warehouses ONCE for the whole board. Their
         # ids join the read set below so the group's rows carry the same demand pressure and
         # incoming figures the line's own location does - a group warehouse listed with two of
@@ -1709,7 +1743,7 @@ class FulfilmentBoardService:
         }
         warehouse_ids |= set(self._pool_warehouses)
         self._pool_of = self._pool_by_warehouse()
-        # EVERY OTHER ACTIVE WAREHOUSE, for AC-V3 (ladder v5, section 1e). A cited donor's
+        # EVERY OTHER PLANNING WAREHOUSE, for AC-V3 (ladder v5, section 1e). A cited donor's
         # whole ownership group is listed in the cell table now, with its own signed available
         # per row and the donor group's net as the subtotal - and WHICH group that is is not
         # known until the engine has composed, which is after this read set would otherwise be
@@ -1718,7 +1752,7 @@ class FulfilmentBoardService:
         # planner can check. Any group could be the donor, so the honest read set is all of
         # them: it is the same three grouped queries with a wider `IN`, and the product filter
         # is what makes them cheap.
-        warehouse_ids |= set(self.supply._active_warehouses())
+        warehouse_ids |= set(self.supply._planning_warehouses())
         # WHICH warehouses the three batched reads below were actually asked about. A location
         # OUTSIDE this set has no fact and no absence of one: nothing looked, and the table
         # prints a dash rather than a zero. With the line above there is normally no such
@@ -3001,7 +3035,6 @@ class FulfilmentBoardService:
             return None
         shown = " · ".join(
             f"{c['warehouse_code']} {qty_text(_dec(c.get('free_qty', 0)))}"
-            f"{' (over cap)' if c.get('over_cap') else ''}"
             for c in donors[:3]
         )
         more = len(donors) - 3
@@ -3051,35 +3084,14 @@ class FulfilmentBoardService:
                 for c in candidates
             )
             if outcome == "took":
-                return f"Free stock at {where}, within the cross-group borrow limit."
-            # OFFERED and not taken. The limit is named here too, because it is the fact
-            # that tells this No from the one below it: the donor cleared the cap and the
-            # whole-line rule is what dropped it, which sends a planner somewhere else
-            # entirely from "the cap refused this".
-            return (
-                f"Free stock at {where}, within the cross-group borrow limit. "
-                f"{_WHOLE_LINE_RULE_DROPPED}"
-            )
-        # Nothing offered. Was there stock outside the group at all, and did the CAP refuse
-        # it? `borrow_candidates` carries every donor the walk saw, over-cap ones included,
-        # which is exactly the distinction this sentence has to draw.
+                return f"Free stock at {where}."
+            # OFFERED and not taken: the whole-line rule is what dropped it. There is no
+            # cross-group cap left to blame since v7.1 (R5), so this is the only No that
+            # can be given once a donor has been offered.
+            return f"Free stock at {where}. {_WHOLE_LINE_RULE_DROPPED}"
+        # Nothing offered at all. `borrow_candidates` carries every donor the walk saw, so
+        # the sentence can still name which groups were looked at and what they net.
         donors = [c for c in row.borrow_candidates if c.get("rung") == "cross_group_borrow"]
-        capped = [c for c in donors if c.get("over_cap")]
-        if capped:
-            max_qty, _max_pct = self.supply._cross_group_cap()
-            named = ", ".join(
-                f"{c['warehouse_code']} {qty_text(_dec(c.get('free_qty', 0)))}"
-                for c in capped[:3]
-            )
-            limit = (
-                f"the cross-group borrow limit is {qty_text(_dec(max_qty))}"
-                if max_qty is not None
-                else "the cross-group borrow limit"
-            )
-            return (
-                f"{named} holds stock outside this group, but {limit} and "
-                f"{qty_text(residual)} is still needed, so none of it may be drawn."
-            )
         groups = sorted(
             {
                 sales_agent_service.group_of_warehouse_code(c.get("warehouse_code"))
@@ -3240,10 +3252,11 @@ class FulfilmentBoardService:
     # ------------------------------------------------------------ the answer
 
     def _warehouses_by_group(self) -> Dict[str, List[Tuple[str, str]]]:
-        """Every active warehouse, indexed by the ownership group its code carries.
+        """Every warehouse fulfilment planning reads, indexed by the ownership group its
+        code carries. A bin flagged OUT of planning is in no group at all (R17).
 
         ONE read for the whole board (the supply service's own request-scoped
-        `_active_warehouses`, which ladder v4's netting has already paid for), then the
+        `_planning_warehouses`, which ladder v4's netting has already paid for), then the
         ladder's OWN suffix rule (`sales_agent_service.group_of_warehouse_code`) decides
         which group each code belongs to. Filtering in SQL with a `LIKE '%-BB'` would be a
         second definition of "the BB group", and the two would drift the first time a code
@@ -3255,7 +3268,7 @@ class FulfilmentBoardService:
         """
         if self._warehouses_by_group_cache is None:
             index: Dict[str, List[Tuple[str, str]]] = defaultdict(list)
-            for warehouse_id, warehouse in self.supply._active_warehouses().items():
+            for warehouse_id, warehouse in self.supply._planning_warehouses().items():
                 group = sales_agent_service.group_of_warehouse_code(
                     warehouse.warehouse_code
                 )

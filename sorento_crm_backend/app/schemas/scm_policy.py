@@ -197,8 +197,27 @@ class FulfilmentPriorityWrite(BaseModel):
     # day count): a line required after this date is proposed as `Buy now`, untouched.
     # None clears the setting - no coverage limit is in force.
     reorder_coverage_until: Optional[date] = None
-    cross_group_borrow_max_qty: int
-    cross_group_borrow_max_pct: float
+    # Borrow ladder v7.1 (R20, migration 443). Demand dated ON or AFTER this date is TBA:
+    # it takes no supply, is never covered, and never donates.
+    #
+    # OPTIONAL on the body, and None means "leave the configured date alone" - the route
+    # falls back to the ACTIVE revision's value the way it already does for `name` and
+    # `notes`. A default of `2029-01-01` here would let any writer that does not know the
+    # field yet (an older bundle, a script, n8n) silently move the TBA line back to the
+    # column default while saving something else entirely.
+    #
+    # FRESHNESS is checked in the ROUTE, not here (fixed 30 Aug, review of S2). A TBA date
+    # in the past turns every open order into a placeholder overnight - every line dated on
+    # or after it stops taking supply, and "on or after yesterday" is the whole book - so
+    # SETTING one is refused with 422. But the rule is about a CHANGE: once a configured
+    # date has quietly passed, this panel saves weights, coverage dates and class weights
+    # too, and refusing all of them because a field nobody touched is now historic locked
+    # the whole screen. The comparison needs the active revision's value, which is a
+    # database read, so it cannot live in a schema validator.
+    #
+    # `cross_group_borrow_max_qty` / `cross_group_borrow_max_pct` were dropped with the
+    # cap they gated (R5): any ownership group may donate now.
+    tba_date_from: Optional[date] = None
 
     @model_validator(mode="after")
     def _check(self) -> "FulfilmentPriorityWrite":
@@ -208,15 +227,26 @@ class FulfilmentPriorityWrite(BaseModel):
         for key, value in self.demand_class_weights.items():
             if value < 0:
                 raise ValueError(f"the demand-class weight for {key!r} must be >= 0")
-        if self.cross_group_borrow_max_qty < 0:
-            raise ValueError("cross_group_borrow_max_qty must be >= 0")
-        if not (0 <= self.cross_group_borrow_max_pct <= 100):
-            raise ValueError("cross_group_borrow_max_pct must be between 0 and 100")
+        # The TBA freshness rule is NOT here. It has to compare the submitted date with
+        # the ACTIVE policy's own, which needs the database, so it lives in the route
+        # (`policies.put_fulfilment_priority`). See the note on `tba_date_from` above.
         return self
 
 
-class FulfilmentPriorityPolicy(FulfilmentPriorityWrite):
-    """GET/PUT response - the active policy, or a documented default when none exists yet."""
+class FulfilmentPriorityPolicy(BaseModel):
+    """GET/PUT response - the active policy, or a documented default when none exists yet.
+
+    A SIBLING of `FulfilmentPriorityWrite`, deliberately not a subclass of it. The write
+    body carries a FRESHNESS rule (`tba_date_from` may not be in the past), which is a rule
+    about what a person may SET today; inherited here it would validate what is READ, so
+    every GET of a policy whose date has since passed would 500 on its own stored value.
+    """
+    factors: Dict[str, float]
+    demand_class_weights: Dict[str, float]
+    reorder_coverage_until: Optional[date] = None
+    #: NOT NULL on the row, so a response always states it - past dates included, because
+    #: this is what WAS saved and history is allowed to be old.
+    tba_date_from: date
     name: str
     #: False only on a database that has never activated a fulfilment-priority policy at
     #: all - every seeded/migrated database (migration 385) has one.

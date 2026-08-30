@@ -100,9 +100,9 @@ const GROUP_BORROW: BorrowCandidate = {
   same_agent: true,
 };
 
-/** A cross-group donor outside the small-quantity cap (section E rule 5): shown, never
- * selectable without an override. */
-const OVER_CAP: BorrowCandidate = {
+/** A cross-group donor. Uncapped since v7.1 (R5): any ownership group may donate, so this
+ * row is offered and selectable like any other. */
+const CROSS_GROUP: BorrowCandidate = {
   source: 'other_location',
   warehouse_code: 'WH3',
   warehouse_id: 'wh-wh3',
@@ -118,8 +118,6 @@ const OVER_CAP: BorrowCandidate = {
   recommended: false,
   donor_impact: { free_before: '500', free_after_full_borrow: '480', committed_qty: '0' },
   rung: 'cross_group_borrow',
-  over_cap: true,
-  cap_reason: 'Outside the cross-group borrow limit (50 units or 10%).',
 };
 
 const onAdd = vi.fn();
@@ -392,34 +390,29 @@ describe('BorrowAddDialog', () => {
 
 /**
  * Ladder v2's group-aware donor list (section E.4, section 8): a donor named by its own
- * SALES ORDER LINE, an over-cap donor shown but never selectable, and a "Same agent" badge -
- * the captain's "she can authorise CS to move stock between her own orders" (S13 of the 19
- * August review findings).
+ * SALES ORDER LINE and a "Same agent" badge - the captain's "she can authorise CS to move
+ * stock between her own orders" (S13 of the 19 August review findings). The cross-group cap
+ * this block also used to cover is gone (v7.1, R5): every donor offered is selectable.
  */
 describe('BorrowAddDialog: ladder v2 group-aware donors', () => {
-  it('disables an over-cap donor and never lets it become the valid choice', () => {
-    renderDialog([OVER_CAP]);
+  it('offers a cross-group donor like any other and lets it be taken', () => {
+    renderDialog([CROSS_GROUP]);
 
     const row = screen.getByTestId('borrow-donor-WH3');
-    expect(within(row).getByRole('radio')).toBeDisabled();
-    expect(screen.getByTestId('borrow-cap-reason-WH3')).toHaveTextContent(
-      'Outside the cross-group borrow limit (50 units or 10%).',
-    );
+    expect(within(row).getByRole('radio')).toBeEnabled();
 
     fireEvent.change(screen.getByLabelText('Quantity'), { target: { value: '20' } });
     fireEvent.change(screen.getByLabelText(/Reason/), {
-      target: { value: 'Small enough to borrow.' },
+      target: { value: 'The other group can wait.' },
     });
-    expect(screen.getByRole('button', { name: 'Add the borrow' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Add the borrow' })).toBeEnabled();
   });
 
-  it('skips an over-cap donor for the default selection, opening on the first selectable one', () => {
-    renderDialog([OVER_CAP, OTHER_LOCATION]);
+  it('opens on the first donor of the ranked list, cross-group or not', () => {
+    renderDialog([CROSS_GROUP, OTHER_LOCATION]);
 
-    expect(within(screen.getByTestId('borrow-donor-HQ')).getByRole('radio')).toBeChecked();
-    expect(
-      within(screen.getByTestId('borrow-donor-WH3')).getByRole('radio'),
-    ).not.toBeChecked();
+    expect(within(screen.getByTestId('borrow-donor-WH3')).getByRole('radio')).toBeChecked();
+    expect(within(screen.getByTestId('borrow-donor-HQ')).getByRole('radio')).not.toBeChecked();
   });
 
   it('shows a Same agent badge for a donor sharing this line’s own sales agent', () => {

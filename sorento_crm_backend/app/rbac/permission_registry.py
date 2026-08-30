@@ -550,6 +550,14 @@ PERMISSION_REGISTRY.extend([
         ),
     },
     {
+        "slug": "projects.stock_debt.view",
+        "name": "View Stock Debt",
+        "description": (
+            "View the Stock Debt month-by-product balance and drill into a month's demand "
+            "and supply."
+        ),
+    },
+    {
         "slug": "projects.types.view",
         "name": "View Project Types and Templates",
         "description": "View configurable project types, templates and stakeholder roles.",

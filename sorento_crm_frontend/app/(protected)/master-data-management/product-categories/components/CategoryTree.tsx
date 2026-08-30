@@ -94,6 +94,7 @@ export default function CategoryTree({ categories, searchQuery = '', level = 0, 
           <th className="border-b border-border text-left font-medium text-muted-foreground px-3 py-2.5">Code</th>
           <th className="border-b border-border text-left font-medium text-muted-foreground px-3 py-2.5">Description</th>
           <th className="border-b border-border text-left font-medium text-muted-foreground px-3 py-2.5">Active</th>
+          <th className="border-b border-border text-left font-medium text-muted-foreground px-3 py-2.5">Chat</th>
           <th className="border-b border-border text-left font-medium text-muted-foreground px-3 py-2.5">Products</th>
           <th className="border-b border-border text-left font-medium text-muted-foreground px-3 py-2.5">Actions</th>
         </tr>
@@ -156,6 +157,16 @@ export default function CategoryTree({ categories, searchQuery = '', level = 0, 
                 >
                   <BadgeDot />
                   {category.is_active ? 'Active' : 'Inactive'}
+                </Badge>
+              </td>
+              <td className="px-3 py-2">
+                <Badge
+                  variant={category.is_searchable === false ? 'secondary' : 'success'}
+                  size="sm"
+                  className="shrink-0"
+                >
+                  <BadgeDot />
+                  {category.is_searchable === false ? 'Hidden' : 'Searchable'}
                 </Badge>
               </td>
               <td className="px-3 py-2">

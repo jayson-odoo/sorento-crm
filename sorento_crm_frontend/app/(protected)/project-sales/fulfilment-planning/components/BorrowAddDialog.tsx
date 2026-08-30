@@ -65,19 +65,17 @@ export function BorrowAddDialog({
   onDone: () => void;
   onAdd: (candidate: BorrowCandidate, qty: string, reason: string) => void;
 }) {
-  // The default selection is the first SELECTABLE candidate - an over-cap row (section E
-  // rule 5) is shown but disabled, and defaulting onto it would open the dialog with no
-  // valid choice made until the planner clicks something themselves.
-  const firstSelectable = candidates.find((candidate) => !candidate.over_cap) ?? candidates[0];
-  const [selectedKey, setSelectedKey] = React.useState(
-    firstSelectable ? candidateKey(firstSelectable) : '',
-  );
-  const [qty, setQty] = React.useState(openingQty(firstSelectable));
+  // Every candidate is selectable since v7.1 (R5): the cross-group cap that used to show a
+  // row disabled and unselectable is gone, so the opening selection is simply the first of
+  // the ranked list - which is also the recommended one.
+  const first = candidates[0];
+  const [selectedKey, setSelectedKey] = React.useState(first ? candidateKey(first) : '');
+  const [qty, setQty] = React.useState(openingQty(first));
   const [reason, setReason] = React.useState('');
   const [authorisation, setAuthorisation] = React.useState('');
 
   const selected =
-    candidates.find((candidate) => candidateKey(candidate) === selectedKey) ?? firstSelectable;
+    candidates.find((candidate) => candidateKey(candidate) === selectedKey) ?? first;
   const trimmed = reason.trim();
   const authorised = authorisation.trim();
   const needsAuthorisation = Boolean(selected?.same_agent);
@@ -85,7 +83,6 @@ export function BorrowAddDialog({
   const typed = Number.isFinite(amount) && amount > 0 ? amount : null;
   const valid =
     Boolean(selected) &&
-    !selected.over_cap &&
     typed !== null &&
     Boolean(trimmed) &&
     (!needsAuthorisation || Boolean(authorised));
@@ -151,20 +148,12 @@ export function BorrowAddDialog({
                             ? (candidate.donor_project_ref ?? 'Another project')
                             : code;
                         const chosen = key === selectedKey;
-                        const disabled = Boolean(candidate.over_cap);
                         return (
-                          <tr
-                            key={key}
-                            data-testid={`borrow-donor-${code}`}
-                            className={disabled ? 'opacity-60' : undefined}
-                          >
+                          <tr key={key} data-testid={`borrow-donor-${code}`}>
                             <td className={cn(SOURCE_COL, BODY_CELL)}>
                               <label
                                 htmlFor={`borrow-${lineNo}-${key}`}
-                                className={cn(
-                                  'flex items-start gap-2',
-                                  disabled ? 'cursor-not-allowed' : 'cursor-pointer',
-                                )}
+                                className="flex cursor-pointer items-start gap-2"
                               >
                                 <input
                                   id={`borrow-${lineNo}-${key}`}
@@ -172,7 +161,6 @@ export function BorrowAddDialog({
                                   name={`borrow-source-${lineNo}`}
                                   className="mt-0.5"
                                   checked={chosen}
-                                  disabled={disabled}
                                   onChange={() => {
                                     setSelectedKey(key);
                                     setQty(openingQty(candidate));
@@ -222,14 +210,6 @@ export function BorrowAddDialog({
                                       </span>
                                     )}
                                   </span>
-                                  {disabled && (
-                                    <span
-                                      data-testid={`borrow-cap-reason-${code}`}
-                                      className="mt-0.5 block text-2xs text-muted-foreground"
-                                    >
-                                      {candidate.cap_reason ?? 'Outside the cross-group borrow limit.'}
-                                    </span>
-                                  )}
                                 </span>
                               </label>
                             </td>

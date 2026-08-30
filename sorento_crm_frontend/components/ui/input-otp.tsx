@@ -49,6 +49,8 @@ function InputOTPSlot({
       {char}
       {hasFakeCaret && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+          {/* duration-1000 is the caret's blink PERIOD, not a transition, so it is not
+              one of the --duration-* motion steps. See css/design-tokens.test.ts. */}
           <div className="animate-caret-blink bg-foreground h-4 w-px duration-1000" />
         </div>
       )}

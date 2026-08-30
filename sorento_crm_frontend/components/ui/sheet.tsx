@@ -35,7 +35,7 @@ function SheetOverlay({ className, ...props }: React.ComponentProps<typeof Sheet
 
 const sheetVariants = cva(
   // `overflow-y-auto` so a sheet with no SheetBody still reaches its footer.
-  'flex flex-col items-strech fixed z-50 gap-4 overflow-y-auto bg-background p-6 shadow-lg transition ease-in-out data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:duration-300 data-[state=open]:duration-400',
+  'flex flex-col items-strech fixed z-50 gap-4 overflow-y-auto bg-background p-6 shadow-lg transition ease-(--ease-standard) data-[state=open]:animate-in data-[state=closed]:animate-out duration-(--duration-slow)',
   {
     variants: {
       // A left/right sheet is `h-full`, which already caps it at the viewport; a

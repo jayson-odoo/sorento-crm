@@ -60,6 +60,7 @@ export default function WarehouseForm({ warehouseId, onSuccess }: WarehouseFormP
       manager_id: null,
       is_active: true,
       counts_as_available: true,
+      fulfilment_planning: false,
       pool_warehouse_id: null,
       segment: null,
     },
@@ -90,6 +91,7 @@ export default function WarehouseForm({ warehouseId, onSuccess }: WarehouseFormP
         manager_id: warehouse.manager_id || null,
         is_active: warehouse.is_active,
         counts_as_available: warehouse.counts_as_available ?? true,
+        fulfilment_planning: warehouse.fulfilment_planning ?? false,
         // A location whose pool is itself is the "no pooling" default, so it reads as empty.
         pool_warehouse_id:
           warehouse.pool_warehouse_id && warehouse.pool_warehouse_id !== warehouse.id
@@ -231,6 +233,21 @@ export default function WarehouseForm({ warehouseId, onSuccess }: WarehouseFormP
                         <div className="min-w-0 space-y-0.5">
                           <FormLabel className="text-base">Available for planning</FormLabel>
                           <FormDescription>Off: cannot cover demand.</FormDescription>
+                        </div>
+                        <FormControl>
+                          <Switch checked={field.value} onCheckedChange={field.onChange} />
+                        </FormControl>
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="fulfilment_planning"
+                    render={({ field }) => (
+                      <FormItem className="md:col-span-2 flex flex-row items-center justify-between gap-4 rounded-lg border p-4">
+                        <div className="min-w-0 space-y-0.5">
+                          <FormLabel className="text-base">Fulfilment planning</FormLabel>
                         </div>
                         <FormControl>
                           <Switch checked={field.value} onCheckedChange={field.onChange} />
