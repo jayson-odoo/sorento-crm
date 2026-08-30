@@ -335,16 +335,20 @@ function ProjectTypesGrid({
       listingKey="projects.types.view::types"
       tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
       emptyMessage={
-        <div className="px-6 py-10 text-center">
-          <p className="text-sm font-semibold">No project types yet</p>
-          <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-            A type is the kind of job: property development, hotel, fitout.
-          </p>
-          <Button type="button" className="mt-4" onClick={onAdd}>
-            <Plus className="size-4" aria-hidden />
-            Add the first type
-          </Button>
-        </div>
+        <span className="block max-w-md">
+          <span className="block text-sm font-semibold text-foreground">
+            No project types yet
+          </span>
+          A type is the kind of job: property development, hotel, fitout.
+        </span>
+      }
+      // The same offer as the toolbar's, worded as the next step it is here
+      // (S5-06). It renders under the message, in the empty state's own slot.
+      emptyAction={
+        <Button type="button" onClick={onAdd}>
+          <Plus className="size-4" aria-hidden />
+          Add the first type
+        </Button>
       }
     >
       <Card>
@@ -502,25 +506,31 @@ function ProjectTemplatesGrid({
       tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
       emptyMessage={
         !hasType ? (
-          <div className="px-6 py-10 text-center">
-            <p className="text-sm font-semibold">No project type selected</p>
-            <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-              Select a project type to see its templates.
-            </p>
-          </div>
+          <span className="block max-w-md">
+            <span className="block text-sm font-semibold text-foreground">
+              No project type selected
+            </span>
+            Select a project type to see its templates.
+          </span>
         ) : (
-          <div className="px-6 py-10 text-center">
-            <p className="text-sm font-semibold">This type has no templates</p>
-            <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-              Without one, a project of this type has no roles to pick from and no
-              checklist to start with.
-            </p>
-            <Button type="button" className="mt-4" onClick={onAdd}>
-              <Plus className="size-4" aria-hidden />
-              Add the first template
-            </Button>
-          </div>
+          <span className="block max-w-md">
+            <span className="block text-sm font-semibold text-foreground">
+              This type has no templates
+            </span>
+            Without one, a project of this type has no roles to pick from and no
+            checklist to start with.
+          </span>
         )
+      }
+      // Nothing to offer until a type is chosen: the next step is the choice
+      // itself, and it is in the list beside this one.
+      emptyAction={
+        hasType ? (
+          <Button type="button" onClick={onAdd}>
+            <Plus className="size-4" aria-hidden />
+            Add the first template
+          </Button>
+        ) : undefined
       }
     >
       <Card>
