@@ -80,9 +80,9 @@ export function MasterDataComplaintsDetail({
       {/* Wraps on mobile: a long name beside actions overflows the page otherwise. */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0 break-words">
-          <h1 className="text-xl sm:text-2xl font-semibold leading-tight">
+          <h2 className="text-xl sm:text-2xl font-semibold leading-tight">
             {noun} - {record.name}
-          </h1>
+          </h2>
           <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
             <Badge
               variant={record.is_active ? 'success' : 'secondary'}
