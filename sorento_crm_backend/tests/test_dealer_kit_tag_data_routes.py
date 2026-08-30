@@ -683,3 +683,103 @@ def test_request_detail_line_survives_a_product_that_is_gone(api):
     lines = res.json()["lines"]
     assert len(lines) == 1
     assert lines[0]["product_id"] == product.id
+
+
+# ---------------------------------------------------------------------------
+# The print payload carries each line's photos (D42)
+# ---------------------------------------------------------------------------
+
+
+def test_print_payload_lines_carry_their_photos(api):
+    """A photo slot with no pinned attachment follows the product's PRIMARY
+    photo (D42). The page can only pick it if the payload sends the line's
+    images, and the payload is a plain dict, so this is the test that keeps
+    the key from quietly disappearing."""
+    db, _as = api
+    from app.models.access import RespondContact
+    from app.models.dealer_kit import ExportRequest, Page, PageVersion
+    from app.models.download import DownloadStatus, UserDownload
+    from app.services.dealer_kit.tag_sheet_export_service import (
+        resolve_tag_sheet_print_payload,
+    )
+    from app.services.price_tag_request_service import PriceTagRequestService
+
+    product = _product(db)
+    photo = _image(db, product)
+
+    contact = RespondContact(
+        id=str(uuid.uuid4()),
+        phone_number=f"+60{uuid.uuid4().hex[:9]}",
+        name=unique_code("contact"),
+    )
+    db.add(contact)
+    db.flush()
+
+    request = PriceTagRequestService.create_request(
+        db,
+        contact_id=contact.id,
+        company_id=SORENTO,
+        data={
+            "debtor_name": "ZZT Dealer",
+            "needed_by_date": date.today() + timedelta(days=7),
+            "lines": [
+                {
+                    "line_type": "product",
+                    "product_id": product.id,
+                    "show_promo_price": False,
+                    "quantity": 1,
+                }
+            ],
+        },
+    )
+    db.flush()
+    line_id = request.lines[0].id
+
+    stem = unique_code("zzttag").lower()
+    page = Page(
+        name=f"ZZT tags {stem}",
+        slug=f"zzt-tags-{stem}",
+        kind="tag_sheet",
+        company_id=SORENTO,
+    )
+    db.add(page)
+    db.flush()
+    version = PageVersion(
+        page_id=page.id,
+        version=1,
+        doc={"kind": "tag_sheet", "imposition": {}, "sheets": []},
+    )
+    db.add(version)
+    db.flush()
+    request.page_id = page.id
+
+    download = UserDownload(
+        user_id=_DESIGNER_ID,
+        kind="dealer_kit_tag_sheet_pdf",
+        source_entity_type="price_tag_request",
+        source_entity_id=request.id,
+        status=DownloadStatus.PENDING.value,
+        filename="zzt-tags.pdf",
+    )
+    db.add(download)
+    db.flush()
+    db.add(
+        ExportRequest(
+            download_id=download.id,
+            page_id=page.id,
+            page_version_id=version.id,
+            audience="staff",
+            show_invoice_price=False,
+            requested_by=_DESIGNER_ID,
+        )
+    )
+    db.commit()
+
+    payload = resolve_tag_sheet_print_payload(db, download.id)
+
+    row = payload["resolvedData"][line_id]
+    assert [img["attachment_id"] for img in row["images"]] == [photo.id]
+    assert row["images"][0]["is_primary"] is True
+    assert row["images"][0]["url"].startswith("https://")
+    # And the same photo is in the signed map the page preloads.
+    assert photo.id in payload["images"]
