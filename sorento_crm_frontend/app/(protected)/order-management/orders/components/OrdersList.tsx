@@ -33,8 +33,8 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
-import OrderBulkDeleteDialog from './OrderBulkDeleteDialog';
 import { OrderRowActions } from '../actions';
+import { useDeferredBulkAction } from '@/hooks/useDeferredBulkAction';
 import { pendingEntityKey, usePendingEntityKeys } from '@/lib/pending-entity-store';
 import { useOrders } from '../hooks/useOrders';
 import { useOrderStatusSelectQuery } from '../../shared/hooks/use-order-status-select-query';
@@ -68,7 +68,6 @@ export default function OrdersList() {
   const [orderLinesImportOpen, setOrderLinesImportOpen] = useState(false);
   const [advancedFilter, setAdvancedFilter] = useState<ListQueryFilterGroup | null>(null);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
-  const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [linesFilter, setLinesFilter] = useState<'all' | 'yes' | 'no'>('all');
 
@@ -125,6 +124,17 @@ export default function OrdersList() {
   // until the window lapses - the toast holds the Cancel, this says which row.
   const pendingKeys = usePendingEntityKeys();
   const rowPending = (row: Order) => pendingKeys.has(pendingEntityKey('order', row.id));
+
+  // Delete selected asks nothing either (D7): one action per selected row, ONE
+  // countdown over them, one Cancel that withdraws the lot, and every selected row
+  // dimmed by the same `rowPending` a single delete uses.
+  const bulkDeletion = useDeferredBulkAction({
+    actionKey: 'order.delete',
+    entityType: 'order',
+    describe: (count) => `${count} delivery order${count === 1 ? '' : 's'}`,
+    invalidateKeys: [['orders']],
+    onStarted: () => setRowSelection({}),
+  });
 
   const rowHref = (row: Order) => {
     const search = buildDetailSearch(
@@ -383,7 +393,8 @@ export default function OrdersList() {
                 label: 'Delete',
                 icon: Trash2,
                 destructive: true,
-                onClick: () => setBulkDeleteDialogOpen(true),
+                onClick: () =>
+                  bulkDeletion.run(selectedRowIds(table).map((id) => ({ id }))),
               },
             ]}
           />
@@ -481,12 +492,6 @@ export default function OrdersList() {
           queryClient.invalidateQueries({ queryKey: ['orders'] });
           queryClient.invalidateQueries({ queryKey: ['import-jobs'] });
         }}
-      />
-      <OrderBulkDeleteDialog
-        open={bulkDeleteDialogOpen}
-        onOpenChange={setBulkDeleteDialogOpen}
-        orderIds={selectedRowIds(table)}
-        onSuccess={() => setRowSelection({})}
       />
     </DataGrid>
   );

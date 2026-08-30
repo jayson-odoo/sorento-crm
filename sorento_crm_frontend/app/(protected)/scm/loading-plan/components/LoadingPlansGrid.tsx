@@ -22,13 +22,15 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
-import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
+import {
+  useDeferredRowAction,
+  useRowPending,
+} from '@/hooks/useDeferredRowAction';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { ConfirmActionDialog } from '../../components/ConfirmActionDialog';
 import { EM_DASH, fmtDate, fmtInt, fmtOpens, fmtTrimmedDecimal } from '../../lib/format';
 import { useCancelLoadingPlan, useLoadingPlanList } from '../../hooks/useFulfilment';
 import {
-  deleteLoadingPlan,
   type LoadingPlanRecord,
   type LoadingPlanStatus,
 } from '../../services/fulfilmentService';
@@ -76,7 +78,16 @@ export function LoadingPlansGrid() {
   const [status, setStatus] = useState<LoadingPlanStatus | 'active'>('active');
   const [uploadOpen, setUploadOpen] = useState(false);
   const [cancelling, setCancelling] = useState<LoadingPlanRecord | null>(null);
-  const [deleting, setDeleting] = useState<LoadingPlanRecord | null>(null);
+  // Delete asks nothing (D7): the row dims and a toast counts down with Cancel. A
+  // plan whose notice already went out is refused by the server, which is the same
+  // rule the button's disabled state states up front.
+  const deletion = useDeferredRowAction({
+    actionKey: 'loading_plan.delete',
+    entityType: 'loading_plan',
+    successMessage: 'Plan deleted',
+    invalidateKeys: [['scm-loading-plans']],
+  });
+  const rowPending = useRowPending<LoadingPlanRecord>('loading_plan');
 
   const list = useLoadingPlanList({
     pageIndex: pagination.pageIndex,
@@ -267,7 +278,10 @@ export function LoadingPlansGrid() {
                 title={sent ? 'Sent plans are cancelled, not deleted' : 'Delete this plan'}
                 onClick={(e) => {
                   e.stopPropagation();
-                  setDeleting(plan);
+                  deletion.run({
+                    id: plan.id,
+                    subject: plan.supplier_name ?? 'this plan',
+                  });
                 }}
                 aria-label="Delete plan"
               >
@@ -281,7 +295,7 @@ export function LoadingPlansGrid() {
         enableSorting: false,
       },
     ],
-    [],
+    [deletion],
   );
 
   const rows = list.data?.data ?? [];
@@ -323,6 +337,7 @@ export function LoadingPlansGrid() {
             : 'No container plans yet. Upload a supplier stock list or proforma invoice to start one.'
         }
         onRowClick={(row) => router.push(`/scm/loading-plan/${row.id}`)}
+        rowPending={rowPending}
         tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
         listingKey="scm.dashboard.view::loading-plans"
         emptyAction={listPrimaryAction}
@@ -416,26 +431,6 @@ export function LoadingPlansGrid() {
         }}
       />
 
-      <ConfirmDeleteDialog
-        open={!!deleting}
-        onOpenChange={(next) => !next && setDeleting(null)}
-        title="Delete this plan?"
-        description={
-          <>
-            {deleting?.supplier_name ?? 'This plan'}, started{' '}
-            {deleting ? formatDateTimeInMalaysia(deleting.started_at) : ''}. The plan and the
-            quantities typed on it are removed. This cannot be undone.
-          </>
-        }
-        successMessage="Plan deleted"
-        onDelete={async () => {
-          if (deleting) await deleteLoadingPlan(deleting.id);
-        }}
-        onSuccess={() => {
-          setDeleting(null);
-          void list.refetch();
-        }}
-      />
     </>
   );
 }

@@ -18,7 +18,10 @@ import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { useBrands } from '../hooks/useBrands';
 import { buildBrandColumns } from './BrandTable';
 import BrandFormDialog from './BrandFormDialog';
-import BrandDeleteDialog from './BrandDeleteDialog';
+import {
+  useDeferredRowAction,
+  useRowPending,
+} from '@/hooks/useDeferredRowAction';
 import type { Brand } from '../types/brand.types';
 
 export default function BrandsList() {
@@ -28,8 +31,17 @@ export default function BrandsList() {
   const [formOpen, setFormOpen] = useState(false);
   const [editingBrandId, setEditingBrandId] = useState<string | undefined>(undefined);
   const [copyFromBrand, setCopyFromBrand] = useState<Brand | null>(null);
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  const [brandToDelete, setBrandToDelete] = useState<Brand | null>(null);
+  // Delete asks nothing (D7): the row dims and a toast counts down with Cancel.
+  const deletion = useDeferredRowAction({
+    actionKey: 'brand.delete',
+    entityType: 'brand',
+    successMessage: 'Brand deleted',
+    // The select feeds every form that picks a brand, so it is refetched beside the
+    // list - the immediate mutation always did both, and a deferred delete that
+    // forgot one leaves a deleted brand pickable until the next hard refresh.
+    invalidateKeys: [['brands'], ['brand-select']],
+  });
+  const rowPending = useRowPending<Brand>('brand');
 
   const { data, isLoading } = useBrands({
     pageIndex: 0,
@@ -44,8 +56,7 @@ export default function BrandsList() {
   };
 
   const handleDelete = (brand: Brand) => {
-    setBrandToDelete(brand);
-    setDeleteDialogOpen(true);
+    deletion.run({ id: brand.id, subject: `${brand.brand_name} (${brand.brand_code})` });
   };
 
   const handleFormClose = (open: boolean) => {
@@ -114,6 +125,7 @@ export default function BrandsList() {
         recordCount={filteredBrands.length}
         isLoading={isLoading}
         rowHref={(row) => `/master-data-management/brands/${row.id}`}
+        rowPending={rowPending}
         tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
         emptyAction={listPrimaryAction}
       >
@@ -188,17 +200,6 @@ export default function BrandsList() {
         brandId={editingBrandId}
         copyFromBrand={copyFromBrand}
       />
-
-      {brandToDelete && (
-        <BrandDeleteDialog
-          open={deleteDialogOpen}
-          closeDialog={() => {
-            setDeleteDialogOpen(false);
-            setBrandToDelete(null);
-          }}
-          brand={brandToDelete}
-        />
-      )}
     </>
   );
 }

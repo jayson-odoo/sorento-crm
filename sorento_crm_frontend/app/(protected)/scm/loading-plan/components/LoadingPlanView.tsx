@@ -44,7 +44,7 @@ import DetailActions from '@/components/common/DetailActions';
 import AttachmentPreviewModal, {
   type AttachmentPreviewItem,
 } from '@/components/common/AttachmentPreviewModal';
-import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
+import { useDeferredAction } from '@/hooks/useDeferredAction';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { ConfirmActionDialog } from '../../components/ConfirmActionDialog';
 import { EM_DASH, fmtDate } from '../../lib/format';
@@ -61,7 +61,6 @@ import {
 } from '../../hooks/useFulfilment';
 import { useRematchSupplierCodes } from '../../hooks/useSupplierCodeAliases';
 import {
-  deleteLoadingPlan,
   type CodedError,
   type ContainerRequestRow,
   type ContainerRequestSendOptions,
@@ -120,7 +119,6 @@ export function LoadingPlanView({ planId }: { planId: string }) {
   // the "Send saves first" rule need to know about.
   const [edits, setEdits] = useState<Record<string, number>>({});
   const [cancelOpen, setCancelOpen] = useState(false);
-  const [deleteOpen, setDeleteOpen] = useState(false);
   const [sendOpen, setSendOpen] = useState(false);
   const [cutOffOpen, setCutOffOpen] = useState(false);
   const [cutOffDraft, setCutOffDraft] = useState('');
@@ -223,6 +221,21 @@ export function LoadingPlanView({ planId }: { planId: string }) {
   const liveLinkNotice = requestNotices.find((n) => !!n.public_url) ?? null;
 
   const goBack = () => router.push('/scm/loading-plan');
+
+  // Delete asks nothing (D7): the countdown counts down in the toast and Cancel is
+  // the way back. A plan whose notice already went out is refused by the server,
+  // which is the same rule the menu item's disabled state states up front.
+  const deletion = useDeferredAction({
+    actionKey: 'loading_plan.delete',
+    entityType: 'loading_plan',
+    entityId: planId,
+    verb: 'Deleting',
+    subject: plan?.supplier_name ?? 'this plan',
+    surface: 'toast',
+    successMessage: 'Plan deleted',
+    invalidateKeys: [['scm-loading-plans']],
+    onCommitted: goBack,
+  });
 
   /**
    * The new cut-off, with the typed quantities dropped first.
@@ -429,7 +442,7 @@ export function LoadingPlanView({ planId }: { planId: string }) {
                   variant="destructive"
                   disabled={!!plan.sent_at}
                   title={plan.sent_at ? 'Sent plans are cancelled, not deleted' : undefined}
-                  onSelect={() => setDeleteOpen(true)}
+                  onSelect={() => deletion.start()}
                 >
                   <Trash2 className="size-4" />
                   Delete plan
@@ -553,22 +566,6 @@ export function LoadingPlanView({ planId }: { planId: string }) {
             },
           })
         }
-      />
-
-      <ConfirmDeleteDialog
-        open={deleteOpen}
-        onOpenChange={setDeleteOpen}
-        title="Delete this plan?"
-        description={
-          <>
-            {plan.supplier_name ?? 'This plan'}, started{' '}
-            {formatDateTimeInMalaysia(plan.started_at)}. The plan and the quantities typed on it
-            are removed. This cannot be undone.
-          </>
-        }
-        successMessage="Plan deleted"
-        onDelete={() => deleteLoadingPlan(planId)}
-        onSuccess={goBack}
       />
 
       <ConfirmActionDialog

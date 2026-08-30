@@ -4,7 +4,7 @@ import { toast } from 'sonner';
 
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
-import { getAccessAgents, getAccessAgent, createAccessAgent, updateAccessAgent, deleteAccessAgent, getContactAccessAgents, createContactAgentAccess, updateContactAgentAccess, deleteContactAgentAccess, getAgentTeams, setAgentTeams, getTeams, getAgentFieldAccess, setAgentFieldAccess } from '../services/accessAgentService';
+import { getAccessAgents, getAccessAgent, createAccessAgent, updateAccessAgent, getContactAccessAgents, createContactAgentAccess, updateContactAgentAccess, deleteContactAgentAccess, getAgentTeams, setAgentTeams, getTeams, getAgentFieldAccess, setAgentFieldAccess } from '../services/accessAgentService';
 import type { AccessAgentFormData, ContactAgentAccessFormData } from '../types/accessAgent.types';
 
 
@@ -89,17 +89,6 @@ export function useUpdateAccessAgent() {
       queryClient.invalidateQueries({ queryKey: ['access-agents'] });
       queryClient.invalidateQueries({ queryKey: ['access-agent'] });
     },
-  });
-}
-
-export function useDeleteAccessAgent() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => deleteAccessAgent(id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['access-agents'] });
-    },
-    onError: (error: Error) => toast.error(error.message || 'Failed to delete access agent'),
   });
 }
 

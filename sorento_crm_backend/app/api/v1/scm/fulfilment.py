@@ -590,17 +590,10 @@ def delete_loading_plan(
     Q5: a notice is the record of what left the building, so deleting the plan under it would
     leave that record pointing at nothing. A sent plan is cancelled instead.
     """
-    plan = _plan_or_404(db, plan_id)
-    if loading_plan_service.has_notices(db, plan_id):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "code": "plan_sent",
-                "message": "Sent plans are cancelled, not deleted.",
-            },
-        )
-    db.delete(plan)
-    db.commit()
+    # Shared with the deferred `loading_plan.delete` record action, so the sent-plan
+    # rule cannot hold on one path and not the other.
+    _plan_or_404(db, plan_id)
+    loading_plan_service.delete_record(db, plan_id)
 
 
 # --------------------------------------------------------------------------- #

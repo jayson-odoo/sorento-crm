@@ -101,8 +101,9 @@ export function OnboardingRequestDetail({ requestId }: { requestId: string }) {
   const requestQuery = useOnboardingRequest(requestId);
   const request = requestQuery.data;
 
-  // The set the list row renders too (D15). Delete brings its own confirmation.
-  const { actions, dialogs: actionDialogs } = useOnboardingRequestActions(
+  // The set the list row renders too (D15). Delete asks nothing and hands its
+  // countdown back for the primary slot instead (D7).
+  const { actions, pending: actionPending } = useOnboardingRequestActions(
     request
       ? {
           id: request.id,
@@ -209,6 +210,7 @@ export function OnboardingRequestDetail({ requestId }: { requestId: string }) {
                 }}
                 actions={actions}
                 gearLabel="Request actions"
+                pendingAction={actionPending}
                 primary={
                   <>
                   {canStartReview ? (
@@ -388,8 +390,6 @@ export function OnboardingRequestDetail({ requestId }: { requestId: string }) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
-      {actionDialogs}
     </>
   );
 }

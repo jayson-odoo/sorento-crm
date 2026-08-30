@@ -8,8 +8,8 @@
  *   E3 "Dealer pool" fills the `segment=dealer` warehouses
  *   E4 Save PUTs, invalidates and toasts; the error path toasts the
  *      `extractApiError` message the service threw
- *   E5 Remove goes through ConfirmDeleteDialog (never `confirm()`), DELETEs, and
- *      the card falls back to the inherited policy
+ *   E5 Remove asks nothing (D7, S6-10): it parks `stock_visibility_policy.remove`
+ *      on the server for its window and the countdown replaces the button
  *   E8 empty Locations reads "All locations" and saves `warehouse_ids: null`
  *   E9 "Hide zero-quantity locations" renders from the effective policy, toggles,
  *      and rides the same wholesale Save
@@ -154,6 +154,21 @@ const service = vi.hoisted(() => ({
   deleteStockVisibility: vi.fn(),
   searchStockVisibilityWarehouses: vi.fn(),
   getDealerPoolWarehouses: vi.fn(),
+}));
+
+/* The grace window is the server's; what this file proves is that the button parks one. */
+const createPendingAction = vi.fn().mockResolvedValue({
+  id: 'pa-1',
+  action_key: 'stock_visibility_policy.remove',
+  entity_type: 'stock_visibility_policy',
+  entity_id: 'c-1',
+  commit_at: '2026-08-30T10:00:05',
+  window_seconds: 5,
+});
+vi.mock('@/services/pendingActionService', () => ({
+  createPendingAction: (...args: unknown[]) => createPendingAction(...args),
+  cancelPendingAction: vi.fn(),
+  getCurrentPendingAction: vi.fn().mockResolvedValue({ pending: null, last_outcome: null }),
 }));
 
 vi.mock('@/services/stockVisibilityService', async (importOriginal) => {
@@ -559,15 +574,11 @@ describe('E4 / E8 - Save', () => {
   });
 });
 
-describe('E5 - Remove override', () => {
-  it('confirms in a dialog, deletes, and falls back to the inherited policy', async () => {
+describe('E5 - Remove override (S6-10)', () => {
+  it('parks the removal on the server, with no dialog and no browser prompt', async () => {
     const confirmSpy = vi.spyOn(window, 'confirm');
     const own = policy('compact', [BRW], 'contact');
     respondWith(() => ({ effective: own, override: own }));
-    service.deleteStockVisibility.mockResolvedValue({
-      effective: policy('availability', [BRW, MWH, DC1], 'access_type', 'Dealer'),
-      override: null,
-    });
 
     renderSection(CONTACT_SCOPE);
     await waitForCard();
@@ -575,31 +586,26 @@ describe('E5 - Remove override', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Remove override' }));
 
-    // The dialog, not the browser prompt.
+    // D7: the first press IS the action. The way back is the countdown's Cancel,
+    // and the server applies it when the window lapses - which is why the DELETE
+    // the old dialog fired no longer happens in the browser at all.
     await waitFor(() =>
-      expect(
-        screen.getByText(
-          'This contact will fall back to the policy from its access type, or the default.',
-        ),
-      ).toBeInTheDocument(),
+      expect(createPendingAction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          actionKey: 'stock_visibility_policy.remove',
+          entityType: 'stock_visibility_policy',
+          entityId: CONTACT_SCOPE.contactId,
+          payload: { scope_kind: 'contact' },
+        }),
+      ),
     );
     expect(service.deleteStockVisibility).not.toHaveBeenCalled();
     expect(confirmSpy).not.toHaveBeenCalled();
-
-    // The refetch the invalidation fires must not put the deleted override back.
-    respondWith(() => ({
-      effective: policy('availability', [BRW, MWH, DC1], 'access_type', 'Dealer'),
-      override: null,
-    }));
-    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
-
-    await waitFor(() =>
-      expect(service.deleteStockVisibility).toHaveBeenCalledWith(CONTACT_SCOPE),
-    );
-    await waitFor(() => expect(screen.getByText('Access type: Dealer')).toBeInTheDocument());
-    await waitFor(() => expect(modeSelect().value).toBe('availability'));
-    expect(screen.queryByRole('button', { name: 'Remove override' })).not.toBeInTheDocument();
-    expect(confirmSpy).not.toHaveBeenCalled();
+    expect(
+      screen.queryByText(
+        'This contact will fall back to the policy from its access type, or the default.',
+      ),
+    ).not.toBeInTheDocument();
   });
 });
 

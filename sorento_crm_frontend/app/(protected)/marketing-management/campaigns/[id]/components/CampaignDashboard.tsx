@@ -1,16 +1,15 @@
 'use client';
 
-import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, Edit, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { campaignsPagerQuery, useCampaign, useDeleteCampaign } from '../../hooks/useCampaigns';
+import { campaignsPagerQuery, useCampaign } from '../../hooks/useCampaigns';
+import { useDeferredAction } from '@/hooks/useDeferredAction';
 import BackToList, { useBackToListHref } from '@/components/common/BackToList';
 import DetailActions from '@/components/common/DetailActions';
-import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { formatDate } from '@/lib/helpers';
 import BudgetTracker from './BudgetTracker';
 import { PageHeader } from '@/components/common/PageHeader';
@@ -24,9 +23,21 @@ export default function CampaignDashboard({ campaignId }: CampaignDashboardProps
   // The list wrote its page, sort, search and status into this URL when the row
   // was clicked; Back hands the same string back rather than a fresh page 1.
   const backHref = useBackToListHref('/marketing-management/campaigns');
-  const deleteCampaign = useDeleteCampaign();
-  const [deleteOpen, setDeleteOpen] = useState(false);
   const { data: campaign, isLoading } = useCampaign(campaignId);
+  // Delete asks nothing (D7): the countdown takes the primary button's place
+  // and Cancel is the way back.
+  const deletion = useDeferredAction({
+    actionKey: 'campaign.delete',
+    entityType: 'campaign',
+    entityId: campaignId,
+    verb: 'Deleting',
+    subject: campaign ? campaign.campaign_name : '',
+    surface: 'inline',
+    watchFromMount: true,
+    successMessage: 'Campaign deleted',
+    invalidateKeys: [['campaigns']],
+    onCommitted: () => router.push(backHref),
+  });
 
   if (isLoading) {
     return (
@@ -83,27 +94,17 @@ export default function CampaignDashboard({ campaignId }: CampaignDashboardProps
               label: 'Delete campaign',
               icon: Trash2,
               kind: 'destructive' as const,
-              run: () => setDeleteOpen(true),
+              disabled: deletion.isPending,
+              run: deletion.start,
             },
           ]}
           gearLabel="Campaign options"
+          pendingAction={deletion.countdown}
           primary={
             <Button onClick={() => router.push(`/marketing-management/campaigns/${campaignId}/edit`)}>
               <Edit className="size-4" />
               Edit
             </Button>
-          }
-          dialogs={
-            <ConfirmDeleteDialog
-              open={deleteOpen}
-              onOpenChange={setDeleteOpen}
-              title="Delete campaign"
-              description={`Delete ${campaign.campaign_name}? This action cannot be undone.`}
-              onDelete={async () => {
-                await deleteCampaign.mutateAsync(campaignId);
-              }}
-              onSuccess={() => router.push(backHref)}
-            />
           }
         />
       </div>

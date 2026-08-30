@@ -1,8 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import type { PaginationState, SortingState } from '@tanstack/react-table';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
-import { getBrands, getBrand, createBrand, updateBrand, deleteBrand } from '../services/brandService';
+import { getBrands, getBrand, createBrand, updateBrand } from '../services/brandService';
 import type { BrandFormData } from '../types/brand.types';
 
 export function useBrands(params: DataGridApiFetchParams) {
@@ -55,15 +54,3 @@ export function useUpdateBrand() {
   });
 }
 
-export function useDeleteBrand() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => deleteBrand(id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['brands'] });
-      queryClient.invalidateQueries({ queryKey: ['brand-select'] });
-      toast.success('Brand deleted successfully');
-    },
-    onError: (error: Error) => toast.error(error.message || 'Failed to delete brand'),
-  });
-}

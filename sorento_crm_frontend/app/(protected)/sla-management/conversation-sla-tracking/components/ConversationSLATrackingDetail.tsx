@@ -101,9 +101,9 @@ export default function ConversationSLATrackingDetail({
   // Delete lands where Back lands: the list page, sort, search and filters the
   // reader left, which the row click wrote into this URL.
   const backListHref = useBackToListHref(backHref);
-  // Everything a list row can do too, declared once (D15). Delete brings its own
-  // confirmation dialog, mounted with the actions below.
-  const { actions: sharedActions, dialogs: sharedDialogs } = useConversationSlaActions(
+  // Everything a list row can do too, declared once (D15). Delete asks nothing
+  // and hands its countdown back for the primary slot instead (D7).
+  const { actions: sharedActions, pending: sharedPending } = useConversationSlaActions(
     tracking,
     { onDeleted: () => router.push(backListHref) },
   );
@@ -354,7 +354,7 @@ export default function ConversationSLATrackingDetail({
                 }
               : undefined
           }
-          dialogs={sharedDialogs}
+          pendingAction={sharedPending}
           gear={
             /* Through the shared menu, not a raw DropdownMenu: `DetailActions`
                renders a `gear` node verbatim, so a raw one keeps whatever order

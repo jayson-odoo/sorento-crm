@@ -5262,10 +5262,56 @@ class ConversationSLATrackingService:
         return self.get_tracking(tracking_id)
 
     def delete_tracking(self, tracking_id: str):
-        """Delete a tracking record."""
-        tracking = self.get_tracking(tracking_id)
-        self.db.delete(tracking)
-        self.db.commit()
+        """Delete a tracking record, and record that it happened.
+
+        The integration log is written HERE rather than in the route because the delete
+        now has TWO callers: the immediate `DELETE /sla/conversation-tracking/{id}` and
+        the deferred `sla_tracking.delete` record action, which commits from the sweeper
+        or from a poll ten seconds after the click (S6b). A log kept by one caller is a
+        log the other silently stops keeping, and this channel is what the SLA
+        integration is reconciled against.
+        """
+        from app.schemas.integration import IntegrationLogCreate
+        from app.services.error_handler import AppException
+        from app.services.integration_service import IntegrationLogService
+
+        tracking_id = str(tracking_id)
+
+        def _log(status: str, error: str | None = None) -> None:
+            # Best-effort: a log that cannot be written must not turn a completed delete
+            # into a 500 the caller retries against a row that is already gone.
+            try:
+                IntegrationLogService(self.db).create_integration_log(
+                    IntegrationLogCreate(
+                        integration_channel="sla_management",
+                        business_table="conversation_sla_tracking",
+                        business_id=tracking_id,
+                        external_reference=tracking_id,
+                        direction="inbound",
+                        endpoint="/api/v1/sla/conversation-tracking/{tracking_id}",
+                        http_method="DELETE",
+                        status=status,
+                        error_message=error,
+                    ),
+                )
+            except Exception:
+                _module_logger.warning(
+                    "integration log for tracking delete %s failed", tracking_id, exc_info=True
+                )
+
+        try:
+            tracking = self.get_tracking(tracking_id)
+            self.db.delete(tracking)
+            self.db.commit()
+        except AppException:
+            # A deliberate 4xx is a refusal, not an integration failure. Logging it as
+            # `failed` is what once made every historical sla_management failure one
+            # benign idempotency race.
+            raise
+        except Exception as exc:
+            _log("failed", str(exc))
+            raise
+        _log("success")
         return tracking
 
     def delete_event_log(self, log_id: str):

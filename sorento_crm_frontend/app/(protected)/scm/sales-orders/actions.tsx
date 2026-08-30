@@ -12,12 +12,10 @@
  * click opens the record.
  */
 
-import { useState } from 'react';
 import { Trash2 } from 'lucide-react';
 
-import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import type { RecordAction, RecordActionSet } from '@/components/common/recordActions';
-import { useDeleteSalesOrder } from '../hooks/useSalesOrders';
+import { useDeferredAction } from '@/hooks/useDeferredAction';
 
 /** What both surfaces hand over: a list row carries exactly this much. */
 export interface SalesOrderActionTarget {
@@ -29,16 +27,35 @@ export interface SalesOrderActionTarget {
 export interface UseSalesOrderActionsOptions {
   /** Where to go once the order is gone (the record page returns to the list). */
   onDeleted?: () => void;
+  /**
+   * The record page shows the countdown in place of its primary button; a list
+   * row has nowhere to put one, so it travels to a toast (S6-06, S6-07).
+   */
+  surface?: 'inline' | 'toast';
 }
 
 export function useSalesOrderActions(
   order: SalesOrderActionTarget | null | undefined,
-  { onDeleted }: UseSalesOrderActionsOptions = {},
+  { onDeleted, surface = 'inline' }: UseSalesOrderActionsOptions = {},
 ): RecordActionSet {
-  const remove = useDeleteSalesOrder();
-  const [deleteOpen, setDeleteOpen] = useState(false);
+  // Delete asks nothing (D7): the countdown takes the record's primary slot, or
+  // the toast on a list row, and Cancel is the way back.
+  const deletion = useDeferredAction({
+    actionKey: 'scm_sales_order.delete',
+    entityType: 'scm_sales_order',
+    entityId: order?.id,
+    verb: 'Deleting',
+    subject: order
+      ? `${order.so_number ?? 'this order'}${order.customer_name ? ` for ${order.customer_name}` : ''}`
+      : '',
+    surface,
+    watchFromMount: surface === 'inline',
+    successMessage: 'Sales order deleted.',
+    invalidateKeys: [['scm', 'sales-orders']],
+    onCommitted: onDeleted,
+  });
 
-  if (!order) return { actions: [] };
+  if (!order) return { actions: [], dialogs: null, pending: null };
 
   const actions: RecordAction[] = [
     {
@@ -46,29 +63,10 @@ export function useSalesOrderActions(
       label: 'Delete',
       icon: Trash2,
       kind: 'destructive',
-      disabled: remove.isPending,
-      run: () => setDeleteOpen(true),
+      disabled: deletion.isPending,
+      run: deletion.start,
     },
   ];
 
-  const dialogs = (
-    <ConfirmDeleteDialog
-      open={deleteOpen}
-      onOpenChange={setDeleteOpen}
-      description={
-        <>
-          Delete sales order <span className="font-medium">{order.so_number}</span>
-          {order.customer_name ? ` for ${order.customer_name}` : ''}? This action cannot be
-          undone.
-        </>
-      }
-      successMessage="Sales order deleted."
-      onDelete={async () => {
-        await remove.mutateAsync(order.id);
-      }}
-      onSuccess={onDeleted}
-    />
-  );
-
-  return { actions, dialogs };
+  return { actions, dialogs: null, pending: deletion.countdown };
 }

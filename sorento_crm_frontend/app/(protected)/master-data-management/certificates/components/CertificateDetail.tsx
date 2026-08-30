@@ -11,7 +11,6 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import RecordEntityRegistrar from '@/components/common/RecordEntityRegistrar';
 import DetailActions from '@/components/common/DetailActions';
 import { certificatesPagerQuery } from '../hooks/useCertificates';
@@ -22,7 +21,8 @@ import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 // valid_from / valid_until / issued_at are DATE columns, so they go through
 // formatDateInMalaysia, which keeps a civil date stable on any machine.
 import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
-import { useCertificate, useDeleteCertificate } from '../hooks/useCertificates';
+import { useCertificate } from '../hooks/useCertificates';
+import { useDeferredAction } from '@/hooks/useDeferredAction';
 import {
   STATUS_LABELS,
   VALIDITY_STATE_LABELS,
@@ -41,11 +41,24 @@ export default function CertificateDetail({ certificateId }: { certificateId: st
   const router = useRouter();
   const backHref = useBackToListHref(LIST_PATH);
   const { data: certificate, isLoading } = useCertificate(certificateId);
-  const deleteMutation = useDeleteCertificate();
+
+  // Delete asks nothing (D7). The countdown stands where Edit stands and Cancel
+  // is the way back; the uploaded files survive either way.
+  const deletion = useDeferredAction({
+    actionKey: 'certificate.delete',
+    entityType: 'certificate',
+    entityId: certificateId,
+    verb: 'Deleting',
+    subject: certificate ? `${certificate.scheme} ${certificate.certificate_number}` : '',
+    surface: 'inline',
+    watchFromMount: true,
+    successMessage: 'Certificate deleted',
+    invalidateKeys: [['certificates']],
+    onCommitted: () => router.push(backHref),
+  });
 
   const [editOpen, setEditOpen] = useState(false);
   const [mergeOpen, setMergeOpen] = useState(false);
-  const [deleteOpen, setDeleteOpen] = useState(false);
   // The revision file opens in the shared resource-management modal rather
   // than routing away, so the reader keeps their place in the timeline.
   const [attachmentModalId, setAttachmentModalId] = useState<string | null>(null);
@@ -120,10 +133,12 @@ export default function CertificateDetail({ certificateId }: { certificateId: st
               label: 'Delete certificate',
               icon: Trash2,
               kind: 'destructive' as const,
-              run: () => setDeleteOpen(true),
+              disabled: deletion.isPending,
+              run: deletion.start,
             },
           ]}
           gearLabel="Certificate options"
+          pendingAction={deletion.countdown}
           primary={
             <Button onClick={() => setEditOpen(true)}>
               <Pencil className="size-4" />
@@ -322,26 +337,6 @@ export default function CertificateDetail({ certificateId }: { certificateId: st
         onOpenChange={setMergeOpen}
         certificate={certificate}
         onMerged={(targetId) => router.push(`${LIST_PATH}/${targetId}`)}
-      />
-
-      <ConfirmDeleteDialog
-        open={deleteOpen}
-        onOpenChange={setDeleteOpen}
-        title="Confirm delete"
-        description={
-          <>
-            Delete {title}, its {revisions.length} revision
-            {revisions.length === 1 ? '' : 's'} and its {certificate.covered_product_count} covered
-            product link{certificate.covered_product_count === 1 ? '' : 's'}. The uploaded files are
-            kept. This action cannot be undone.
-          </>
-        }
-        successMessage="Certificate deleted"
-        onDelete={async () => {
-          await deleteMutation.mutateAsync(certificate.id);
-        }}
-        onSuccess={() => router.push(backHref)}
-        queryKeysToInvalidate={[['certificates']]}
       />
     </div>
   );

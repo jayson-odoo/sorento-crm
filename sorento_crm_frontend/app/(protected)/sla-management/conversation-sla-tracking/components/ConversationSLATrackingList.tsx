@@ -39,6 +39,7 @@ import { slaHandler } from '../lib/slaHandler';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 import { RowActionsMenu } from '@/components/common/RowActionsMenu';
 import { useConversationSlaActions } from '../actions';
+import { useRowPending } from '@/hooks/useDeferredRowAction';
 
 /**
  * The row's "..." (D15): the same set the record's gear renders, minus the verbs
@@ -50,18 +51,15 @@ function ConversationRowActions({
 }: {
   tracking: { id: string; respond_io_id?: string | null; contact?: { respond_io_id?: string | null } | null };
 }) {
-  const { actions, dialogs } = useConversationSlaActions(tracking);
-  return (
-    <>
-      <RowActionsMenu ariaLabel="conversation" actions={actions} />
-      {dialogs}
-    </>
-  );
+  const { actions } = useConversationSlaActions(tracking, { surface: 'toast' });
+  return <RowActionsMenu ariaLabel="conversation" actions={actions} />;
 }
 
 export default function ConversationSLATrackingList() {
   const router = useRouter();
   const queryClient = useQueryClient();
+  // A row whose delete is counting down stays visible and dims (S6-07).
+  const rowPending = useRowPending<{ id: string }>('sla_tracking');
   // AC-M2 history deep links: the drawer's "View history" (one contact) and the
   // worklist's "Recently resolved" (what I resolved) land here pre-filtered. The
   // filters are applied by the SAME server-side list query as every other filter
@@ -545,6 +543,7 @@ export default function ConversationSLATrackingList() {
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
       rowHref={rowHref}
+      rowPending={rowPending}
     >
       <Card>
         <CardHeader className="block">

@@ -618,21 +618,23 @@ describe('the edit draft, which now lives above every tab', () => {
     expect(within(total).getByText('17.25')).toBeInTheDocument();
   });
 
-  it('asks before removing a line, and only then drops it', async () => {
+  it('drops a line from the draft on the first press, asking nothing (S6-10)', async () => {
     routerState.pathname = '/procurement-management/packing-lists/pl-1/lines';
     await renderTab(<LinesPage />);
     fireEvent.click(within(await openGear()).getByText('Edit'));
 
     const row = screen.getByLabelText('Quantity for SRTWT7443').closest('tr') as HTMLElement;
     fireEvent.click(within(row).getByRole('button', { name: /remove/i }));
-    expect(
-      screen.getByText(/This removes SRTWT7443 from this packing list/),
-    ).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: /^delete$/i }));
+    // D7: neither confirmed nor deferred, because the line leaves the DRAFT and
+    // Save is what sends it. The last assertion is the whole reason: nothing has
+    // reached the server, so there is nothing there to take back.
     await waitFor(() =>
       expect(screen.queryByLabelText('Quantity for SRTWT7443')).not.toBeInTheDocument(),
     );
+    expect(
+      screen.queryByText(/This removes SRTWT7443 from this packing list/),
+    ).not.toBeInTheDocument();
     expect(updatePackingList).not.toHaveBeenCalled();
   });
 

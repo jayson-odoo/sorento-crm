@@ -3,7 +3,6 @@ import { toast } from 'sonner';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 import {
   createProductSet,
-  deleteProductSet,
   getProductSet,
   getProductSets,
   updateProductSet,
@@ -92,14 +91,3 @@ export function useUpdateProductSet() {
   });
 }
 
-export function useDeleteProductSet() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => deleteProductSet(id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['product-sets'] });
-      toast.success('Product set deleted');
-    },
-    onError: (error: Error) => toast.error(error.message || 'Failed to delete product set'),
-  });
-}

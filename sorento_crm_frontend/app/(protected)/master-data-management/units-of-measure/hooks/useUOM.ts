@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
-import { getUOMs, getUOM, createUOM, updateUOM, deleteUOM } from '../services/uomService';
+import { getUOMs, getUOM, createUOM, updateUOM } from '../services/uomService';
 import type { UOMFormData } from '../types/uom.types';
 
 export function useUOMs(params: DataGridApiFetchParams) {
@@ -54,15 +54,3 @@ export function useUpdateUOM() {
   });
 }
 
-export function useDeleteUOM() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => deleteUOM(id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['uoms'] });
-      queryClient.invalidateQueries({ queryKey: ['uom-select'] });
-      toast.success('UOM deleted successfully');
-    },
-    onError: (error: Error) => toast.error(error.message || 'Failed to delete UOM'),
-  });
-}

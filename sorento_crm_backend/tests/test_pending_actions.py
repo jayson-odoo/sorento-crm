@@ -564,7 +564,12 @@ def test_a_handler_failure_is_captured_and_leaves_the_record_alone(client):
     assert body["pending"] is None
     outcome = body["last_outcome"]
     assert outcome["status"] == "failed"
-    assert "warehouse" in (outcome["error_text"] or "")
+    # The reader is told the delete did not happen, in a sentence. NOT the exception:
+    # `error_text` goes straight into a toast, and an exception that escaped a handler
+    # is a defect whose message may be a SQL statement and its parameters.
+    said = outcome["error_text"] or ""
+    assert said == "This product could not be deleted. Nothing was changed."
+    assert "warehouse" not in said
     assert db.query(Product).filter(Product.id == product.id).first() is not None
     assert (
         db.query(SlaFormAction).filter(SlaFormAction.id == parked["id"]).one().status

@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient, type QueryKey } from '@tanstack/
 import { toast } from 'sonner';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 import type { ListPagerPage, ListPagerParams } from '@/hooks/useListPager';
-import { getCampaigns, getCampaign, getCampaignTypes, createCampaign, updateCampaign, deleteCampaign } from '../services/campaignService';
+import { getCampaigns, getCampaign, getCampaignTypes, createCampaign, updateCampaign } from '../services/campaignService';
 import type { CampaignFormData } from '../types/campaign.types';
 
 type CampaignsListParams = DataGridApiFetchParams & {
@@ -112,14 +112,3 @@ export function useUpdateCampaign() {
   });
 }
 
-export function useDeleteCampaign() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => deleteCampaign(id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['campaigns'] });
-      toast.success('Campaign deleted successfully');
-    },
-    onError: (error: Error) => toast.error(error.message || 'Failed to delete campaign'),
-  });
-}

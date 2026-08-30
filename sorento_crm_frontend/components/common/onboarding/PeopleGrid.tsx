@@ -700,10 +700,15 @@ export function PeopleGrid({
         </Card>
       </DataGrid>
 
-      {/* Removing a row throws away what she typed, so it is confirmed like any
-          other destructive action rather than being one click. Mounted only
-          where removal is offered: the dialog is query-client backed, and a
-          read-only grid has no business requiring one. */}
+      {/* KEPT as a dialog, deliberately, where S6b turned the rest into grace
+          windows (D7). The only surface that offers removal is the TOKEN-SCOPED
+          intake screen under `app/(auth)/onboarding`, where there is no
+          authenticated principal, so `POST /pending-actions` has nobody to check
+          a permission slug against and no requester to attribute the action to.
+          Removing a row also throws away what she typed, so it stays confirmed
+          rather than becoming one click. Mounted only where removal is offered:
+          the dialog is query-client backed, and a read-only grid has no business
+          requiring one. */}
       {canRemove ? (
         <ConfirmDeleteDialog
           open={!!removing}

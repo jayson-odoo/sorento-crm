@@ -28,12 +28,14 @@ import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
-import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
+import {
+  useDeferredRowAction,
+  useRowPending,
+} from '@/hooks/useDeferredRowAction';
 import { EM_DASH } from '../../lib/format';
 import { useCategoryOptions } from '../../hooks/useScmOptions';
 import {
   useCreateTopic,
-  useDeleteTopic,
   useMarketTopics,
   useUpdateTopic,
 } from '../hooks/useMarket';
@@ -48,13 +50,19 @@ export function MarketTopicsGrid() {
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<MarketResearchTopic | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<MarketResearchTopic | null>(null);
+  // Delete asks nothing (D7): the row dims and a toast counts down with Cancel.
+  const deletion = useDeferredRowAction({
+    actionKey: 'market_topic.delete',
+    entityType: 'market_topic',
+    successMessage: 'Research topic deleted',
+    invalidateKeys: [['scm', 'market', 'topics']],
+  });
+  const rowPending = useRowPending<MarketResearchTopic>('market_topic');
 
   const { data, isLoading, isError, error } = useMarketTopics();
   const { data: categoryOptions } = useCategoryOptions();
   const createTopic = useCreateTopic();
   const updateTopic = useUpdateTopic();
-  const deleteTopic = useDeleteTopic();
 
   const rows = useMemo<MarketResearchTopic[]>(() => data ?? [], [data]);
 
@@ -149,7 +157,9 @@ export function MarketTopicsGrid() {
               size="sm"
               aria-label="Delete topic"
               title="Delete topic"
-              onClick={() => setDeleteTarget(row.original)}
+              onClick={() =>
+                deletion.run({ id: row.original.id, subject: row.original.label })
+              }
             >
               <Trash2 className="size-4 text-destructive" />
             </Button>
@@ -160,7 +170,7 @@ export function MarketTopicsGrid() {
         meta: { headerTitle: 'Actions', cellClassName: 'text-right' },
       },
     ],
-    [categoryOptions],
+    [categoryOptions, deletion],
   );
 
   const table = useReactTable({
@@ -215,6 +225,7 @@ export function MarketTopicsGrid() {
         recordCount={recordCount}
         isLoading={isLoading}
         tableLayout={{ width: 'fixed', columnsResizable: true }}
+        rowPending={rowPending}
         emptyMessage="No research topics configured yet."
       >
         <Card>
@@ -275,22 +286,6 @@ export function MarketTopicsGrid() {
         isSubmitting={createTopic.isPending || updateTopic.isPending}
       />
 
-      <ConfirmDeleteDialog
-        open={!!deleteTarget}
-        onOpenChange={(o) => !o && setDeleteTarget(null)}
-        title="Confirm delete"
-        description={
-          <>
-            This action cannot be undone. The research topic{' '}
-            <strong>{deleteTarget?.label}</strong> will be permanently removed.
-          </>
-        }
-        successMessage="Research topic deleted"
-        onDelete={async () => {
-          if (deleteTarget) await deleteTopic.mutateAsync(deleteTarget.id);
-        }}
-        onSuccess={() => setDeleteTarget(null)}
-      />
     </div>
   );
 }

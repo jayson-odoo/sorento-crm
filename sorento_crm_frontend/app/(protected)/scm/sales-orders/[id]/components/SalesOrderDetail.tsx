@@ -346,7 +346,7 @@ export function SalesOrderDetail({ id }: { id: string }) {
   // The set the list row's "..." renders too (D15). Delete used to be a red icon
   // in the list and nothing at all here, so a record could only be removed by
   // finding it again in the list.
-  const { actions, dialogs } = useSalesOrderActions(data, {
+  const { actions, pending: deletionPending } = useSalesOrderActions(data, {
     onDeleted: () => router.push(backHref),
   });
   const searchParams = useSearchParams();
@@ -1177,7 +1177,7 @@ export function SalesOrderDetail({ id }: { id: string }) {
                   ariaLabel: 'sales order',
                 }}
                 actions={actions}
-                dialogs={dialogs}
+                pendingAction={deletionPending}
                 gearLabel="Sales order options"
                 primary={
                   <>

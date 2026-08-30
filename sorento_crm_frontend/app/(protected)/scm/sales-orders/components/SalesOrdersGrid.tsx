@@ -45,6 +45,7 @@ import { DateRangePicker } from '@/components/ui/date-range-picker';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { RowActionsMenu } from '@/components/common/RowActionsMenu';
 import { useSalesOrderActions } from '../actions';
+import { useRowPending } from '@/hooks/useDeferredRowAction';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { formatMyrExact } from '@/app/(protected)/project-sales/_shared/lib/money';
@@ -230,18 +231,15 @@ export interface SalesOrdersGridProps {
  * component because the action set is a hook.
  */
 function SalesOrderRowActions({ order }: { order: SalesOrder }) {
-  const { actions, dialogs } = useSalesOrderActions(order);
-  return (
-    <>
-      <RowActionsMenu ariaLabel="sales order" actions={actions} />
-      {dialogs}
-    </>
-  );
+  const { actions } = useSalesOrderActions(order, { surface: 'toast' });
+  return <RowActionsMenu ariaLabel="sales order" actions={actions} />;
 }
 
 export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrdersGridProps = {}) {
   // One agent's orders, inside that agent's record. What it turns off is listed on the prop.
   const pinnedToAgent = !!salesAgentId;
+  // A row whose delete is counting down stays visible and dims (S6-07).
+  const rowPending = useRowPending<SalesOrder>('scm_sales_order');
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 25 });
   const [sorting, setSorting] = useState<SortingState>([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -811,6 +809,7 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
         // The whole row opens the order. The SO-number link stays a real anchor so
         // middle-click and copy-link still work, and stops its own click propagating.
         rowHref={(row) => detailHref(row)}
+        rowPending={rowPending}
         tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
         listingKey={listingKey}
       >
@@ -1090,8 +1089,10 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
       )}
 
 
-      {/* Back to never-planned, for a walk to be redone. Confirmed like a delete, because it
-          is one: the inquiries, links, allocations, transfers and decisions go for good. */}
+      {/* KEPT as a dialog where S6b turned single-record deletes into grace windows
+          (D7). Two reasons, either of them enough: it acts on a SELECTION of orders,
+          and one countdown cannot speak for a set; and it collects an answer
+          ("also rewind the book"), which a countdown has nowhere to put. */}
       <ConfirmDeleteDialog
         open={resetOpen}
         onOpenChange={(o) => {

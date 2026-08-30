@@ -85,13 +85,13 @@ export function useUpdateWarehouse() {
   });
 }
 
-// There is deliberately no `useDeleteWarehouse`. Single delete goes through the shared
-// `ConfirmDeleteDialog`, which wraps the `onDelete` callback in its OWN mutation and owns the
-// toast plus the query invalidation. A hook that also toasted and invalidated meant every delete
-// reported itself twice, in two positions, and a 409 ("Warehouse has linked stock") said the same
-// thing to the user twice. Pass the bare `deleteWarehouse` service call to the dialog instead.
-// Bulk delete keeps its hook because `WarehouseBulkDeleteDialog` is a plain `Dialog` that owns no
-// mutation of its own, so there is nothing for this one to double up with.
+// There is deliberately no `useDeleteWarehouse`. Single delete is a deferred record
+// action since S6b: the record page parks `warehouse.delete` and the countdown, the
+// toast and the invalidation all belong to `useDeferredAction`. A hook that toasted
+// as well would report every outcome twice, in two positions, and a 409 ("Warehouse
+// has linked stock") would say the same thing to the user twice.
+// Bulk delete keeps its hook because `WarehouseBulkDeleteDialog` is a plain `Dialog`
+// that owns no mutation of its own, so there is nothing for this one to double up with.
 
 export function useBulkDeleteWarehouses() {
   const queryClient = useQueryClient();

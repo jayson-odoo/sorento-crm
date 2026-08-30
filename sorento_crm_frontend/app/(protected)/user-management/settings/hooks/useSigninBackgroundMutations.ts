@@ -7,8 +7,9 @@ import { uploadSigninBackground } from '../services/signinBackgroundService';
 /**
  * Upload the sign-in background.
  *
- * Removal is not here: it is destructive, so it goes through `ConfirmDeleteDialog`, which owns
- * its own mutation, toast and invalidation.
+ * Removal is not here: it is a deferred record action since S6b
+ * (`signin_background.remove`), so `useDeferredAction` owns the countdown, the
+ * toast and the invalidation.
  *
  * Invalidating `system-settings` is what makes the preview true - the settings layout refetches
  * the blob and the card renders the URL the server actually stored. The sign-in page is a

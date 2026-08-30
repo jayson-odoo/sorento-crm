@@ -1769,28 +1769,19 @@ async def post_sla_tracking_test_overrides(
 @router.delete("/{tracking_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_sla_tracking(
     tracking_id: UUID,
-    request: Request,
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
-    """Delete an SLA tracking record."""
+    """Delete an SLA tracking record.
+
+    The integration log is the SERVICE's, not this route's: since S6b the same delete
+    is also reached by the deferred `sla_tracking.delete` record action, which commits
+    from a sweep or a poll with no request in sight, and a log written here would have
+    stopped being written for every deletion started from the UI.
+    """
     tracking_id_str = str(tracking_id)
-    log_service = IntegrationLogService(db)
     try:
-        service = ConversationSLATrackingService(db)
-        service.delete_tracking(tracking_id_str)
-        log_service.create_integration_log(
-            IntegrationLogCreate(
-                integration_channel="sla_management",
-                business_table="conversation_sla_tracking",
-                business_id=tracking_id_str,
-                external_reference=tracking_id_str,
-                direction="inbound",
-                endpoint=str(request.url),
-                http_method="DELETE",
-                status="success",
-            ),
-        )
+        ConversationSLATrackingService(db).delete_tracking(tracking_id_str)
         return None
     except HTTPException:
         raise
@@ -1803,22 +1794,6 @@ async def delete_sla_tracking(
         # The global handler in app/main.py still serialises it to the caller.
         raise
     except Exception as e:
-        try:
-            log_service.create_integration_log(
-                IntegrationLogCreate(
-                    integration_channel="sla_management",
-                    business_table="conversation_sla_tracking",
-                    business_id=tracking_id_str,
-                    external_reference=tracking_id_str,
-                    direction="inbound",
-                    endpoint=str(request.url),
-                    http_method="DELETE",
-                    status="failed",
-                    error_message=str(e),
-                ),
-            )
-        except Exception:
-            pass
         raise handle_internal_error(str(e))
 
 
