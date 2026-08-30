@@ -33,7 +33,12 @@ export function priceTagActions(
 
   // Claiming comes before designing: an unclaimed request has no owner, and
   // the design belongs to whoever takes it.
-  if ((current === 'new' || current === 'draft') && !assignedToId) {
+  //
+  // There is no `draft` STATUS. A request the salesperson has not submitted
+  // carries status `new` and a `portal_draft_at` timestamp, and the CRM queue
+  // does not list it at all, so branching on a status the backend never writes
+  // only described a state that cannot occur.
+  if (current === 'new' && !assignedToId) {
     actions.push({ action: 'claim', label: 'Claim' });
   } else if (current === 'new' || current === 'designing' || current === 'changes_requested') {
     actions.push({ action: 'design', label: 'Design tags' });

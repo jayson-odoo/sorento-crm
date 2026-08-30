@@ -90,7 +90,6 @@ const ACTION_ICON: Record<PriceTagAction, typeof UserPlus> = {
 function proofSummary(status: string): string {
   switch (status) {
     case 'new':
-    case 'draft':
       return 'Nothing has been designed yet. Claim the request and design its tags.';
     case 'designing':
       return 'The tags are being designed. Mark the proof ready to send it to the salesperson.';
