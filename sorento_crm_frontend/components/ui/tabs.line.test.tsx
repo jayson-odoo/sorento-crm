@@ -51,7 +51,7 @@ describe('Tabs (S1-04)', () => {
 
     const list = screen.getByTestId('list');
     expect(list).toHaveClass('border-b');
-    expect(list).not.toHaveClass('bg-accent');
+    expect(list).not.toHaveClass('bg-muted');
 
     // ...and its triggers are underlines, not pills.
     expect(screen.getByRole('tab', { name: 'Overview' })).toHaveClass(
@@ -63,7 +63,7 @@ describe('Tabs (S1-04)', () => {
     render(<Harness variant="default" />);
 
     const list = screen.getByTestId('list');
-    expect(list).toHaveClass('bg-accent');
+    expect(list).toHaveClass('bg-muted');
     expect(screen.getByRole('tab', { name: 'Overview' })).not.toHaveClass(
       'border-b-2',
     );
