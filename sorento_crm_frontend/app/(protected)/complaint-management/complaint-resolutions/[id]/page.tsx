@@ -1,6 +1,7 @@
 import { Metadata } from 'next';
 import { Container } from '@/components/common/container';
 import { PageHeader } from '@/components/common/PageHeader';
+import BackToList from '@/components/common/BackToList';
 
 import ComplaintResolutionDetail from './ComplaintResolutionDetail';
 
@@ -17,7 +18,10 @@ export default async function ComplaintResolutionDetailPage({
   const { id } = await params;
   return (
     <Container>
-      <PageHeader title="Resolution" />
+      <PageHeader
+        title="Resolution"
+        actions={<BackToList listPath="/complaint-management/complaint-resolutions" label="Back to resolutions" />}
+      />
       <div className="mt-6">
         <ComplaintResolutionDetail id={id} />
       </div>
