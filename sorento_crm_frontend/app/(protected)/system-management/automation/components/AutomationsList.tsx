@@ -42,7 +42,6 @@ function ToggleCell({ row }: { row: { original: Automation } }) {
     <Switch
       checked={row.original.enabled}
       onCheckedChange={(c) => mut.mutate(c)}
-      disabled={mut.isPending}
       aria-label="Toggle enabled"
     />
   );

@@ -83,7 +83,9 @@ export default function ContactAccessAgentsList() {
 
   const { setOne: setOutboundOne, setBulk: setOutboundBulk } =
     useRespondContactOutboundMutations();
-  const outboundBusy = setOutboundOne.isPending || setOutboundBulk.isPending;
+  // Only the BULK write blocks the switches. The per-row one is optimistic
+  // (S7-01), so it has already moved the switch and can be flipped straight back.
+  const outboundBusy = setOutboundBulk.isPending;
 
   const pageContacts = useMemo(() => distinctContacts(rows), [rows]);
   const outboundCounts = useMemo(
