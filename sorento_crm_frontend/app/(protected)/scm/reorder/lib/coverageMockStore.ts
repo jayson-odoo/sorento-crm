@@ -47,9 +47,6 @@ export const MOCK_PLAN_TILE_COUNTS = {
   po_worklist: 11,
 };
 
-/** How long the mock takes to "fetch", so the loading skeleton is actually visible. */
-const MOCK_LATENCY_MS = 450;
-
 export type CoverageScenario =
   | 'shortfall'
   | 'use_pool'
@@ -446,18 +443,11 @@ export const COVERAGE_FIXTURES = {
   empty: () => emptyFixture('SRTAC0904', 'Accessory pack 0904'),
 };
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
-}
-
-/** The mocked GET. Resolves after a short delay so the skeleton state is real. */
+/** The mocked GET. */
 export async function mockCoverageTimeline(
   sku: string,
   productName: string | null,
 ): Promise<CoverageTimeline> {
-  await sleep(MOCK_LATENCY_MS);
   switch (scenarioForSku(sku)) {
     case 'use_pool':
       return poolFixture();
@@ -479,6 +469,5 @@ export async function mockCoverageTimeline(
 export async function mockAcceptTransfer(
   proposalRef: string,
 ): Promise<CoverageTransferAcceptResult> {
-  await sleep(MOCK_LATENCY_MS);
   return { proposal_ref: proposalRef, accepted: true, transfer_ref: 'TRF-2026-0087' };
 }

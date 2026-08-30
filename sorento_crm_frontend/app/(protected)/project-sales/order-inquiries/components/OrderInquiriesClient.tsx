@@ -20,13 +20,11 @@ import {
   Link2,
   List,
   PackageSearch,
-  Search,
   Undo2,
   Unlink,
   Upload,
   Wand2,
-  X,
-} from 'lucide-react';
+  } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   Alert,
@@ -117,6 +115,8 @@ import { OrderInquiryScheduleMatrix } from './OrderInquiryScheduleMatrix';
 import { OrderInquiryStrip } from './OrderInquiryStrip';
 import { useOrderInquiryWorklistColumns } from './orderInquiryWorklistColumns';
 import { PageHeader } from '@/components/common/PageHeader';
+import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 
 /**
  * WHETHER anything in either book covers the row, and out of which one (AC-D15). The
@@ -255,14 +255,14 @@ export function OrderInquiriesClient() {
   // Sourced from `?query=` on mount (captain: the demand drill's click-through -
   // `orderInquiryWorklistHref` - lands here with an SO number already in the URL), and
   // kept URL-synced the same way as `view`/`rows`/`granularity` below, so a link to a
-  // filtered worklist is shareable. `debounced` starts at the same value as `search` so
-  // the deep link filters on first render rather than after a 300ms flash of "every row".
-  const [search, setSearch] = React.useState(
-    () => searchParams.get('query') ?? '',
-  );
-  const [debounced, setDebounced] = React.useState(
-    () => searchParams.get('query') ?? '',
-  );
+  // filtered worklist is shareable. `useDebouncedSearch` seeds both halves from the same
+  // value so the deep link filters on first render rather than after a flash of "every row".
+  const {
+    value: search,
+    setValue: setSearch,
+    debouncedValue: debounced,
+    isSettling: debouncedSettling,
+  } = useDebouncedSearch(searchParams.get('query') ?? '');
   const [month, setMonth] = React.useState('');
   const [supplierFilter, setSupplierFilter] = React.useState('');
   const [projectFilter, setProjectFilter] = React.useState('');
@@ -415,11 +415,6 @@ export function OrderInquiriesClient() {
   React.useEffect(() => {
     setOpenCell(null);
   }, [matrixAxis, matrixGranularity]);
-
-  React.useEffect(() => {
-    const timer = window.setTimeout(() => setDebounced(search.trim()), 300);
-    return () => window.clearTimeout(timer);
-  }, [search]);
 
   // Narrowing changes which rows exist, so page 3 of the old set is a page of nothing in
   // the new one.
@@ -1009,30 +1004,14 @@ export function OrderInquiriesClient() {
               <DataGridListToolbar
                 table={table}
                 searchSlot={
-                  <div className="relative w-full max-w-xs">
-                    <Search
-                      className="pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
-                      aria-hidden
-                    />
-                    <Input
-                      value={search}
-                      onChange={(event) => setSearch(event.target.value)}
-                      placeholder="Search S/O, item, product, customer or CS name…"
-                      className="ps-9"
-                      aria-label="Search order inquiry rows"
-                    />
-                    {search && (
-                      <Button
-                        mode="icon"
-                        variant="dim"
-                        className="absolute end-1.5 top-1/2 h-6 w-6 -translate-y-1/2"
-                        onClick={() => setSearch('')}
-                        aria-label="Clear search"
-                      >
-                        <X />
-                      </Button>
-                    )}
-                  </div>
+                  <ListSearchInput
+                    value={search}
+                    onChange={setSearch}
+                    isSettling={debouncedSettling}
+                    placeholder="Search S/O, item, product, customer or CS name…"
+                    aria-label="Search order inquiry rows"
+                    className="w-full max-w-xs"
+                  />
                 }
                 filters={{
                   kind: 'custom',

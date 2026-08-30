@@ -11,7 +11,7 @@ import {
   getPaginationRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { Ban, CheckCheck, Download, Info, RotateCcw, Search, X } from 'lucide-react';
+import { Ban, CheckCheck, Download, Info, RotateCcw } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -22,12 +22,13 @@ import { DataGridListToolbar, type ToolbarAction } from '@/components/ui/data-gr
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { formatDateInMalaysia } from '@/lib/helpers';
+import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 import {
   useOrderInquiryMutations,
   useOrderInquiryRows,
@@ -68,8 +69,12 @@ const STATE_OPTIONS = [
  * one, because a default there would send stock from a place nobody chose.
  */
 export function OrderInquiryClient({ projectId }: { projectId: string }) {
-  const [search, setSearch] = React.useState('');
-  const [debounced, setDebounced] = React.useState('');
+  const {
+    value: search,
+    setValue: setSearch,
+    debouncedValue: debounced,
+    isSettling: debouncedSettling,
+  } = useDebouncedSearch();
   const [verbFilter, setVerbFilter] = React.useState('');
   const [stateFilter, setStateFilter] = React.useState('');
   const [rowSelection, setRowSelection] = React.useState<RowSelectionState>({});
@@ -84,11 +89,6 @@ export function OrderInquiryClient({ projectId }: { projectId: string }) {
 
   const project = useProject(projectId);
   const { mark } = useOrderInquiryMutations(projectId);
-
-  React.useEffect(() => {
-    const timer = window.setTimeout(() => setDebounced(search.trim()), 300);
-    return () => window.clearTimeout(timer);
-  }, [search]);
 
   // Narrowing the set changes which rows exist, so page 3 of the old set is a page of
   // nothing in the new one. The selection goes with it: acting on a row that scrolled
@@ -496,30 +496,14 @@ export function OrderInquiryClient({ projectId }: { projectId: string }) {
             <DataGridListToolbar
               table={table}
               searchSlot={
-                <div className="relative w-full max-w-xs">
-                  <Search
-                    className="pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
-                    aria-hidden
-                  />
-                  <Input
-                    value={search}
-                    onChange={(event) => setSearch(event.target.value)}
-                    placeholder="Search item code, SPO or S/O…"
-                    className="ps-9"
-                    aria-label="Search order inquiry rows"
-                  />
-                  {search && (
-                    <Button
-                      mode="icon"
-                      variant="dim"
-                      className="absolute end-1.5 top-1/2 h-6 w-6 -translate-y-1/2"
-                      onClick={() => setSearch('')}
-                      aria-label="Clear search"
-                    >
-                      <X />
-                    </Button>
-                  )}
-                </div>
+                <ListSearchInput
+                  value={search}
+                  onChange={setSearch}
+                  isSettling={debouncedSettling}
+                  placeholder="Search item code, SPO or S/O…"
+                  aria-label="Search order inquiry rows"
+                  className="w-full max-w-xs"
+                />
               }
               filters={{
                 kind: 'custom',

@@ -133,7 +133,6 @@ export async function setBindingDefaultValue(
   bindingId: string,
   default_value: string | null,
 ): Promise<{ id: string; default_value: string | null }> {
-  await new Promise((resolve) => setTimeout(resolve, 200));
   return { id: bindingId, default_value };
 }
 

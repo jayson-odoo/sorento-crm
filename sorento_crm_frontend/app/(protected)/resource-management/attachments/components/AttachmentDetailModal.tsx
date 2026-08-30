@@ -39,7 +39,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { formatDate } from '@/lib/helpers';
 import {
-  useDeleteAttachment,
   useDownloadAttachment,
   useResubmitAttachmentWebhook,
   useRestoreAttachment,
@@ -68,6 +67,7 @@ import { getPromotions } from '@/app/(protected)/marketing-management/promotions
 import { getPackingLists } from '@/app/(protected)/procurement-management/packing-lists/services/packingListService';
 import { linkAttachmentToPackingList, deleteAttachmentLink, unlinkPackingListFromAttachment } from '../services/attachmentService';
 import { useContactAccessTypes } from '@/app/(protected)/user-management/contact-access-types/hooks/useContactAccessTypes';
+import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { AccessLevelsMultiSelect } from './AccessLevelsMultiSelect';
 
 const ENTITY_ROUTES = {
@@ -480,13 +480,8 @@ function LinkProductForm({
   onCancel: () => void;
   isPending: boolean;
 }) {
-  const [search, setSearch] = useState('');
-  const [debounced, setDebounced] = useState('');
+  const { setValue: setSearch, debouncedValue: debounced } = useDebouncedSearch();
   const [pickedLabel, setPickedLabel] = useState<string | null>(null);
-  useEffect(() => {
-    const t = setTimeout(() => setDebounced(search.trim()), 250);
-    return () => clearTimeout(t);
-  }, [search]);
   useEffect(() => {
     if (!selectedId) setPickedLabel(null);
   }, [selectedId]);
@@ -556,13 +551,8 @@ function LinkPromotionForm({
   onCancel: () => void;
   isPending: boolean;
 }) {
-  const [search, setSearch] = useState('');
-  const [debounced, setDebounced] = useState('');
+  const { setValue: setSearch, debouncedValue: debounced } = useDebouncedSearch();
   const [pickedLabel, setPickedLabel] = useState<string | null>(null);
-  useEffect(() => {
-    const t = setTimeout(() => setDebounced(search.trim()), 250);
-    return () => clearTimeout(t);
-  }, [search]);
   useEffect(() => {
     if (!selectedId) setPickedLabel(null);
   }, [selectedId]);
@@ -629,13 +619,8 @@ function LinkFormForm({
   onCancel: () => void;
   isPending: boolean;
 }) {
-  const [search, setSearch] = useState('');
-  const [debounced, setDebounced] = useState('');
+  const { setValue: setSearch, debouncedValue: debounced } = useDebouncedSearch();
   const [pickedLabel, setPickedLabel] = useState<string | null>(null);
-  useEffect(() => {
-    const t = setTimeout(() => setDebounced(search.trim()), 250);
-    return () => clearTimeout(t);
-  }, [search]);
   useEffect(() => {
     if (!selectedId) setPickedLabel(null);
   }, [selectedId]);
@@ -702,13 +687,8 @@ function LinkPackingListForm({
   onCancel: () => void;
   isPending: boolean;
 }) {
-  const [search, setSearch] = useState('');
-  const [debounced, setDebounced] = useState('');
+  const { setValue: setSearch, debouncedValue: debounced } = useDebouncedSearch();
   const [pickedLabel, setPickedLabel] = useState<string | null>(null);
-  useEffect(() => {
-    const t = setTimeout(() => setDebounced(search.trim()), 250);
-    return () => clearTimeout(t);
-  }, [search]);
   useEffect(() => {
     if (!selectedId) setPickedLabel(null);
   }, [selectedId]);

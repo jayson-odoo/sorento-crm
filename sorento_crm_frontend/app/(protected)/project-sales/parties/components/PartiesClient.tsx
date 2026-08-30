@@ -11,7 +11,7 @@ import {
   getSortedRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { Pencil, Plus, Search, Trash2, X } from 'lucide-react';
+import { Pencil, Plus, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -20,7 +20,6 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -31,6 +30,8 @@ import type { ProjectParty } from '../../_shared/types/project.types';
 import { PartyFormDialog } from './PartyFormDialog';
 import { PARTY_TYPE_OPTIONS, TYPE_LABEL } from './partyTypes';
 import { PageHeader } from '@/components/common/PageHeader';
+import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 
 /**
  * The organisation master, as the same list every other screen in the product uses.
@@ -51,8 +52,12 @@ import { PageHeader } from '@/components/common/PageHeader';
  */
 export function PartiesClient() {
   const router = useRouter();
-  const [search, setSearch] = React.useState('');
-  const [debounced, setDebounced] = React.useState('');
+  const {
+    value: search,
+    setValue: setSearch,
+    debouncedValue: debounced,
+    isSettling: debouncedSettling,
+  } = useDebouncedSearch();
   const [typeFilter, setTypeFilter] = React.useState('');
   const [editing, setEditing] = React.useState<ProjectParty | null>(null);
   const [creating, setCreating] = React.useState(false);
@@ -64,11 +69,6 @@ export function PartiesClient() {
   const [sorting, setSorting] = React.useState<SortingState>([{ id: 'name', desc: false }]);
 
   const { remove } = usePartyMutations();
-
-  React.useEffect(() => {
-    const timer = window.setTimeout(() => setDebounced(search.trim()), 300);
-    return () => window.clearTimeout(timer);
-  }, [search]);
 
   // Narrowing the set changes which rows exist, so page 3 of the old set is a page of
   // nothing in the new one.
@@ -298,30 +298,14 @@ export function PartiesClient() {
             <DataGridListToolbar
               table={table}
               searchSlot={
-                <div className="relative w-full max-w-xs">
-                  <Search
-                    className="pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
-                    aria-hidden
-                  />
-                  <Input
-                    value={search}
-                    onChange={(event) => setSearch(event.target.value)}
-                    placeholder="Search by name…"
-                    className="ps-9"
-                    aria-label="Search parties"
-                  />
-                  {search && (
-                    <Button
-                      mode="icon"
-                      variant="dim"
-                      className="absolute end-1.5 top-1/2 h-6 w-6 -translate-y-1/2"
-                      onClick={() => setSearch('')}
-                      aria-label="Clear search"
-                    >
-                      <X />
-                    </Button>
-                  )}
-                </div>
+                <ListSearchInput
+                  value={search}
+                  onChange={setSearch}
+                  isSettling={debouncedSettling}
+                  placeholder="Search by name…"
+                  aria-label="Search parties"
+                  className="w-full max-w-xs"
+                />
               }
               filters={{
                 kind: 'custom',

@@ -11,8 +11,7 @@ import {
   ChevronsUpDown,
   Info,
   PackageOpen,
-  Search,
-} from 'lucide-react';
+  } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -23,10 +22,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
+import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { EM_DASH, fmtDate, fmtDecimal, fmtDoc, fmtInt, fmtMoney, fmtSigned } from '../lib/format';
 import { useDemandExplain, useScmProducts } from '../hooks/useScmDashboard';
 import type { ScmFilters } from '../services/scmDashboardService';
@@ -321,8 +321,13 @@ export function ProductListDialog({
   target,
   onViewInList,
 }: ProductListDialogProps) {
-  const [search, setSearch] = useState('');
-  const [debounced, setDebounced] = useState('');
+  const {
+    value: search,
+    setValue: setSearch,
+    debouncedValue: debounced,
+    isSettling: debouncedSettling,
+    reset: resetSearch,
+  } = useDebouncedSearch();
   const [sort, setSort] = useState<SortState | null>(null);
   const [page, setPage] = useState(1);
 
@@ -333,17 +338,10 @@ export function ProductListDialog({
   // Reset all popup query state whenever the drill scope changes / reopens.
   const scopeKey = `${target?.status ?? ''}|${target?.warehouse ?? ''}|${open}`;
   useEffect(() => {
-    setSearch('');
-    setDebounced('');
+    resetSearch();
     setSort(null);
     setPage(1);
-  }, [scopeKey]);
-
-  // Debounce the search input (server-side query).
-  useEffect(() => {
-    const t = setTimeout(() => setDebounced(search.trim()), 300);
-    return () => clearTimeout(t);
-  }, [search]);
+  }, [scopeKey, resetSearch]);
 
   // Search / sort changes reset to the first page.
   useEffect(() => {
@@ -391,16 +389,13 @@ export function ProductListDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="relative">
-          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search product code or name…"
-            className="pl-9"
-            aria-label="Search products"
-          />
-        </div>
+        <ListSearchInput
+          value={search}
+          onChange={setSearch}
+          isSettling={debouncedSettling}
+          placeholder="Search product code or name…"
+          aria-label="Search products"
+        />
 
         <DialogBody className="max-h-[55dvh] overflow-auto">
           {isLoading ? (
