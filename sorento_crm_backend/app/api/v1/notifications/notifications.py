@@ -100,6 +100,8 @@ _SLA_NOTIFY_FIELDS = (
     "notify_whatsapp_on_deadline_extended",
     "notify_email_on_handling",
     "notify_whatsapp_on_handling",
+    # Mentioned in an internal note. Email only - no WhatsApp twin for this event.
+    "notify_email_on_mention",
 )
 
 
@@ -115,6 +117,7 @@ class _ChannelPrefsUpdate(BaseModel):
     notify_whatsapp_on_deadline_extended: Optional[bool] = None
     notify_email_on_handling: Optional[bool] = None
     notify_whatsapp_on_handling: Optional[bool] = None
+    notify_email_on_mention: Optional[bool] = None
     # Which contacts' inbound messages push to this user's phone. A Literal, so
     # anything outside the four is a 422 before the write (UAC AC-M25).
     notify_push_message_scope: Optional[MessagePushScope] = None

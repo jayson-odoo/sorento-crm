@@ -33,6 +33,7 @@ const CategorySchema = z.object({
   category_name: z.string().min(1, 'Category name is required').max(150),
   description: z.string().max(500).optional().nullable(),
   is_active: z.boolean(),
+  is_searchable: z.boolean(),
   display_order: z.number().int().min(0),
 });
 
@@ -56,6 +57,7 @@ export default function CategoryForm({ open, onOpenChange, categoryId, copyFromC
       category_name: '',
       description: '',
       is_active: true,
+      is_searchable: true,
       display_order: 0,
     },
   });
@@ -68,6 +70,7 @@ export default function CategoryForm({ open, onOpenChange, categoryId, copyFromC
           category_name: category.category_name,
           description: category.description || '',
           is_active: category.is_active,
+          is_searchable: category.is_searchable ?? true,
           display_order: category.display_order || 0,
         });
       } else if (copyFromCategory) {
@@ -76,6 +79,7 @@ export default function CategoryForm({ open, onOpenChange, categoryId, copyFromC
           category_name: `${copyFromCategory.category_name} (copy)`,
           description: copyFromCategory.description || '',
           is_active: copyFromCategory.is_active,
+          is_searchable: copyFromCategory.is_searchable ?? true,
           display_order: copyFromCategory.display_order ?? 0,
         });
       } else {
@@ -84,6 +88,7 @@ export default function CategoryForm({ open, onOpenChange, categoryId, copyFromC
           category_name: '',
           description: '',
           is_active: true,
+          is_searchable: true,
           display_order: 0,
         });
       }
@@ -97,6 +102,7 @@ export default function CategoryForm({ open, onOpenChange, categoryId, copyFromC
         category_name: data.category_name,
         description: data.description ?? undefined,
         is_active: data.is_active,
+        is_searchable: data.is_searchable,
         display_order: data.display_order,
       };
       
@@ -192,6 +198,24 @@ export default function CategoryForm({ open, onOpenChange, categoryId, copyFromC
                 <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
                   <div className="space-y-0.5">
                     <FormLabel className="text-base">Active</FormLabel>
+                  </div>
+                  <FormControl>
+                    <Switch
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                    />
+                  </FormControl>
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="is_searchable"
+              render={({ field }) => (
+                <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
+                  <div className="space-y-0.5">
+                    <FormLabel className="text-base">Chat searchable</FormLabel>
                   </div>
                   <FormControl>
                     <Switch
