@@ -12,7 +12,8 @@ D45-D47 (section 10) BUILT 2026-08-30 from the captain's test of the PORTAL form
 2026-08-30 from the captain's test of the CRM detail and design pages; D53 (section 9) BUILT
 2026-08-30, preview per block on a multi-product template; D54-D59 (section 13) BUILT
 2026-08-30, colour picker plus merge fields; D60 (section 9) BUILT 2026-08-30, arrange
-works inside a group.
+works inside a group; D61 (section 14) BUILT 2026-08-30, the form deploys granted to
+nobody and admins switch it on per access type.
 **UAC:** `documentation/plans/dealer-kit/price-tag-request-acceptance-criteria.md`
 **Depends on:** `feat/product-sets` branch merged to main.
 **Branch:** TBD
@@ -862,3 +863,49 @@ picker's value. `InsertFieldDialog.test.tsx`: a click inserts at the cursor, and
 shows the resolved value against a stubbed binding. pytest: `product_tag_data` carries `specs`
 built from the registry, the print payload's resolved line carries them too, and both are asserted
 ON THE WIRE where a route answers, because `response_model` drops what it does not declare.
+
+---
+
+## 14. Round 9, 30 Aug: it deploys with nobody seeing it, and admins switch it on
+
+**Status:** BUILT 2026-08-30. The captain's call before production: on the live database every
+contact already holds one of the four legacy portal forms, and Price Tag Request must reach NOBODY
+on the day it deploys. Turning it on later has to be an admin action in the CRM, not a migration
+somebody writes and a DBA runs.
+
+### What was wrong
+
+| # | Symptom | Cause found in the code |
+|---|---------|--------------------------|
+| 1 | Deploying grants the form to a whole class of contacts nobody reviewed | `ptag_0001`'s first UPDATE writes `["price_tag_request", "stock_inquiry"]` onto every `contact_access_types` row whose code contains "dealer". On production that is every dealer at once, decided by a `LIKE` pattern in a migration rather than by a person. |
+| 2 | There is no way to grant it, or take it back, without SQL | `portal_form_types` has no admin surface at all. The Contact Access Types screen edits code, name, description, keywords, sort order and active; `ContactAccessTypeBase` / `ContactAccessTypeUpdate` carry `keywords` and not `portal_form_types`, so even a hand-written PUT would be dropped by the schema before it reached the row. |
+| 3 | A grant already written by an earlier run of the migration stays written | The branch has been applied to development databases already, so editing `ptag_0001` alone leaves those rows granted. Nothing walks them back. |
+
+### Decisions
+
+| ID | Decision |
+|----|----------|
+| D61a | **The migration grants nothing.** `ptag_0001`'s first UPDATE writes `["stock_inquiry"]` onto dealer-type rows, so the column arrives with the portal behaving exactly as it did before the branch. The second UPDATE is untouched: it seeds the four legacy kinds onto every other type that still had `[]`, which is what preserves today's behaviour for everyone else. `ptag_0003_strip_price_tag_grant` then removes `"price_tag_request"` from every `contact_access_types.portal_form_types` array with the jsonb `-` operator, so a database that already ran the old `ptag_0001` lands in the same state as a fresh one. It is idempotent by construction: after it runs, its own WHERE matches nothing. Its downgrade is a deliberate no-op, because a grant is an admin decision and a downgrade must not invent one. |
+| D61b | **Granting is an admin action on the access type.** The Contact Access Types screen gains a "Portal forms" field: a `SearchableMultiSelect` over the five known kinds - the four legacy ones plus Price Tag Request - labelled exactly as the portal labels them, editable in the dialog that already edits the rest of the row and shown in the list as chips. No new page and no new screen: an access type is already the unit the portal resolves visibility by, so the switch belongs on the row it belongs to. `portal_form_types` joins the read, create and update schemas and is validated against the known kinds, an unknown kind answering 422. The label map moves to `lib/portal-form-kinds.ts` and `portal-client.ts` re-exports it, so the admin screen and the portal cannot label the same kind differently. |
+| D61c | **Fail-closed is unchanged and that is the point.** `resolve_visible_form_types` still unions `portal_form_types` across the contact's access types and then applies per-contact overrides; the landing (D45) and every portal price-tag route already read it. With no access type carrying the kind, the union is empty for everybody, and the deploy is silent without a single line of gating code being added. |
+| D61d | **Named, not built: gating the four legacy kinds on the landing.** The landing lists the legacy kinds unconditionally today and only the gated kinds (D45) are filtered by `visible_form_types`. The 0001 second UPDATE seeded the legacy four onto every non-dealer type precisely so that switch is safe to throw later. Trigger: the captain asks for one of the legacy forms to be hidden from a class of contacts. Until then, adding the filter would change nothing except the number of ways the landing can be wrong. |
+
+### What is deliberately NOT built
+
+- No per-contact grant UI. `contact_portal_form_overrides` exists and the resolver honours it, but
+  nobody has asked to grant one person a form their access type does not carry. The access type is
+  the unit the request was made in.
+- No data migration that re-grants. D61a says a grant is an admin decision; a downgrade or a later
+  migration that guesses one is the failure mode being removed, not a convenience.
+- No new permission. Editing an access type is already gated where the rest of that row is edited.
+- No landing-side gate for the legacy four. D61d names the trigger.
+
+### Tests
+
+pytest: the access type route accepts `portal_form_types` and answers with it ON THE WIRE, because
+`response_model` drops what it does not declare; an unknown kind is refused 422; the strip SQL run
+twice against the same row leaves the same array, and leaves the other kinds alone;
+`resolve_visible_form_types` for a contact whose only access type carries no `price_tag_request`
+answers without it. vitest: the edit dialog opens with the row's kinds selected, the multi-select
+offers all five with the portal's labels, and Save submits the chosen codes; the list column draws
+one chip per kind and a dash for none.
