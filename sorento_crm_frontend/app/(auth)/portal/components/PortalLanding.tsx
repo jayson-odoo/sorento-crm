@@ -298,16 +298,37 @@ export function PortalLanding({ slug }: { slug?: string }) {
         const wantsPriceTags = Boolean(
           me.visible_form_types?.includes('price_tag_request'),
         );
-        const [lists, priceTags] = await Promise.all([
-          Promise.all(TYPES.map((t) => fetchSubmissions(t, q))),
+        // allSettled, not all: the legs are independent lists and one of them
+        // answering 403 or 500 used to reject the whole load, so the landing
+        // showed its error screen and the four kinds that answered perfectly
+        // well were unreachable. A leg that fails is that kind empty.
+        const legs = await Promise.allSettled([
+          ...TYPES.map((t) => fetchSubmissions(t, q)),
           wantsPriceTags ? listRequestsAsSummaries(q) : Promise.resolve([]),
         ]);
+
+        // An expired token is not one kind failing - every leg would fail and
+        // the answer is to re-verify - so it is rethrown to the handler below.
+        const dead = legs.find(
+          (leg) =>
+            leg.status === 'rejected' &&
+            leg.reason instanceof PortalUnauthorizedError,
+        );
+        if (dead && dead.status === 'rejected') throw dead.reason;
+
+        const rowsOf = (index: number): PortalSubmissionSummary[] => {
+          const leg = legs[index];
+          if (leg.status === 'fulfilled') return leg.value;
+          console.warn('Portal landing: one list failed to load', leg.reason);
+          return [];
+        };
+
         setSubmissions({
-          stock_inquiry: lists[0],
-          complaint: lists[1],
-          purchase_request: lists[2],
-          sponsorship_form: lists[3],
-          price_tag_request: priceTags,
+          stock_inquiry: rowsOf(0),
+          complaint: rowsOf(1),
+          purchase_request: rowsOf(2),
+          sponsorship_form: rowsOf(3),
+          price_tag_request: rowsOf(4),
         });
         setError(null);
         // Token validated - clear the freshness stamp so subsequent transient

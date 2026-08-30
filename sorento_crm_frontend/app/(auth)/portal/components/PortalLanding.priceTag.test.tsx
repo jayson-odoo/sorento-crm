@@ -146,6 +146,35 @@ describe('PortalLanding - Price Tag Request in the type dropdown', () => {
     expect(screen.queryByText('PT-202608-0001')).toBeNull();
   });
 
+  it('one failing kind is empty, and the rest of the landing still loads', async () => {
+    // Every leg used to be awaited in one Promise.all, so a 403 or a 500 on any
+    // one of them rejected the whole load and the landing showed its error
+    // screen: the four kinds that answered perfectly well were unreachable.
+    mockContact(['stock_inquiry', 'price_tag_request']);
+    (listRequestsAsSummaries as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error('Request failed with 500'),
+    );
+
+    render(<PortalLanding slug="darren" />);
+
+    const trigger = await screen.findByRole('combobox');
+    trigger.click();
+    expect(await screen.findByText('Stock Inquiry')).toBeInTheDocument();
+    expect(screen.queryByText('Failed to load portal.')).toBeNull();
+  });
+
+  it('a failing legacy kind does not take the gated one down with it', async () => {
+    mockContact(['stock_inquiry', 'price_tag_request']);
+    (fetchSubmissions as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error('Request failed with 500'),
+    );
+    searchParams = new URLSearchParams('type=price_tag_request');
+
+    render(<PortalLanding slug="darren" />);
+
+    expect(await screen.findByText('PT-202608-0001')).toBeInTheDocument();
+  });
+
   it('no longer renders the separate Price Tag Requests link button', async () => {
     mockContact(['price_tag_request']);
     render(<PortalLanding slug="darren" />);
