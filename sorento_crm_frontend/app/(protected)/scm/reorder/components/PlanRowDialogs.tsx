@@ -383,8 +383,6 @@ function OnHandTable({ line }: { line: PlanLine }) {
                         <StockDocumentsPanel
                           productId={productId}
                           warehouseId={loc.warehouse_id}
-                          itemCode={line.sku}
-                          locationCode={loc.warehouse_code ?? EM_DASH}
                         />
                       </td>
                     </tr>

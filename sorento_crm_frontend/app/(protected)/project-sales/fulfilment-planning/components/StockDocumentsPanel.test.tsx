@@ -15,7 +15,7 @@
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
@@ -75,7 +75,7 @@ function captainsPosition(overrides: Partial<StockDetail> = {}): StockDetail {
   };
 }
 
-function renderPanel() {
+function renderPanel(group?: string) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, gcTime: 0 } },
   });
@@ -83,9 +83,8 @@ function renderPanel() {
     <QueryClientProvider client={client}>
       <StockDocumentsPanel
         productId="prod-1"
-        warehouseId="wh-1"
-        itemCode="B2155-NL-BLUE"
-        locationCode="BRW-BB"
+        warehouseId={group ? null : 'wh-1'}
+        group={group}
         lineIds={['line-a']}
       />
     </QueryClientProvider>,
@@ -103,21 +102,24 @@ describe('StockDocumentsPanel', () => {
     renderPanel();
 
     await waitFor(() =>
-      expect(getStockDetail).toHaveBeenCalledWith('prod-1', 'wh-1', ['line-a']),
+      expect(getStockDetail).toHaveBeenCalledWith('prod-1', 'wh-1', ['line-a'], undefined),
     );
   });
 
-  it('does not head the panel with the arithmetic: the row it expands from already says it', async () => {
-    // Item 7 / AC-A4. "TPE-9204 . BRW  On hand 241 - SO 3334 + SPO 0 = Available -3093" sat
-    // directly under the location row that carries all four of those figures, and the
-    // captain's verdict was "redundant. Remove."
+  it('heads the panel with nothing at all: the row it expands from already says it', async () => {
+    // Item 7 / AC-A4 took the arithmetic line; the captain took the rest on 30 August 2026 -
+    // "B2155-NL-BLUE · BRW-BB" and the word "Documents" stood between the location row and
+    // the columns that explain it, saying what that row already says. The column headers now
+    // start directly under it.
     getStockDetail.mockResolvedValue(captainsPosition());
 
     renderPanel();
 
-    await screen.findByText('Documents');
+    await screen.findByRole('table');
     expect(screen.queryByTestId('stock-detail-arithmetic')).not.toBeInTheDocument();
     expect(screen.queryByText(/On hand 478 - SO 47009/)).not.toBeInTheDocument();
+    expect(screen.queryByText('Documents')).not.toBeInTheDocument();
+    expect(screen.queryByText('B2155-NL-BLUE · BRW-BB')).not.toBeInTheDocument();
   });
 
   it('names an overdue arrival as overdue, and still lists its quantity', async () => {
@@ -283,5 +285,237 @@ describe('StockDocumentsPanel', () => {
     renderPanel();
 
     expect(screen.getByTestId('stock-documents-loading')).toBeInTheDocument();
+  });
+});
+
+/**
+ * The GROUP reading (captain, 30 August 2026).
+ *
+ * The board proposed "use own location - 60 from BRW-IB" beside an Available of -24,186, and
+ * the two could not be reconciled on screen: the ladder's first step draws the whole ownership
+ * group's pile at the line's own date, and Available is the bin's whole undated book. So the
+ * subtotal row opens a drill over the SET, walked in the order the engine reads the dates,
+ * with what is left of the pile after each document.
+ */
+describe('StockDocumentsPanel: the group reading', () => {
+  /** Two bins of one group, a claim ahead of us, ours, and one behind. */
+  function groupPosition(): StockDetail {
+    return {
+      product_id: 'prod-1',
+      item_code: 'B2155-NL-BLUE',
+      warehouse_id: null,
+      location: null,
+      group: 'IB',
+      bins: [
+        { warehouse_id: 'wh-brw-ib', location: 'BRW-IB', qty_on_hand: '100' },
+        { warehouse_id: 'wh-mwh-ib', location: 'MWH-IB', qty_on_hand: '20' },
+        { warehouse_id: 'wh-dc1-ib', location: 'DC1-IB', qty_on_hand: '0' },
+      ],
+      qty_on_hand: '120',
+      so_qty: '150',
+      spo_qty: '30',
+      available_qty: '0',
+      qty_reserved: '0',
+      qty_held_by_decisions: '0',
+      qty_free: '120',
+      sales_orders: [
+        {
+          sales_order_id: 'so-late',
+          so_number: 'SO999999',
+          customer_name: 'LATE CUSTOMER',
+          location: 'BRW-IB',
+          doc_date: '2026-02-01',
+          delivery_date: '2026-12-01',
+          so_qty: '90',
+          line_id: 'line-z',
+          is_this_line: false,
+        },
+        {
+          sales_order_id: 'so-a',
+          so_number: 'SO381895',
+          customer_name: 'OIB CONSTRUCTION SDN BHD',
+          location: 'BRW-IB',
+          doc_date: '2026-01-05',
+          delivery_date: '2026-08-24',
+          so_qty: '30',
+          line_id: 'line-a',
+          is_this_line: true,
+        },
+        {
+          sales_order_id: 'so-early',
+          so_number: 'SO111111',
+          customer_name: 'EARLY CUSTOMER',
+          location: 'MWH-IB',
+          doc_date: '2026-01-02',
+          delivery_date: '2026-08-01',
+          so_qty: '30',
+          line_id: 'line-b',
+          is_this_line: false,
+        },
+      ],
+      incoming: [
+        {
+          spo_number: 'SPO-2026/09-0001',
+          supplier_name: 'FOSHAN WORKS',
+          location: 'BRW-IB',
+          expected_date: '2026-09-15',
+          spo_qty: '30',
+        },
+      ],
+    };
+  }
+
+  function rowsOf(): string[][] {
+    return [...screen.getByRole('table').querySelectorAll('tbody tr')].map((row) =>
+      [...row.querySelectorAll('td')].map((cell) => cell.textContent ?? ''),
+    );
+  }
+
+  beforeEach(() => {
+    // jsdom has no layout, so it implements no scrolling. The button's job is to call it.
+    Element.prototype.scrollIntoView = vi.fn();
+  });
+
+  it('asks for the SET, never for a bin', async () => {
+    getStockDetail.mockResolvedValue(groupPosition());
+
+    renderPanel('IB');
+
+    await waitFor(() =>
+      expect(getStockDetail).toHaveBeenCalledWith('prod-1', null, ['line-a'], 'IB'),
+    );
+  });
+
+  it('walks the pile in the order the engine reads the dates, and states what is left', async () => {
+    getStockDetail.mockResolvedValue(groupPosition());
+
+    renderPanel('IB');
+    await screen.findByRole('table');
+
+    // On hand opens the walk (it is held now), then 1 Aug, then our own 24 Aug, then the
+    // SPO arriving 15 Sep, then the 1 Dec claim behind us. A bin holding nothing states no
+    // opening row - there is no pile to open on.
+    // Document, bin, balance after: an On hand row has no document, and the Bin column is
+    // what says which pile it opened. There is no Doc date column on this reading, so Bin
+    // is the sixth cell.
+    const documents = rowsOf().map((cells) => [cells[1], cells[5], cells[7]]);
+    expect(documents).toEqual([
+      ['-', 'BRW-IB', '100'],
+      ['-', 'MWH-IB', '120'],
+      ['SO111111', 'MWH-IB', '90'],
+      ['SO381895This line', 'BRW-IB', '60'],
+      ['SPO-2026/09-0001', 'BRW-IB', '90'],
+      ['SO999999', 'BRW-IB', '0'],
+    ]);
+  });
+
+  it('colours a balance the pile cannot meet, and leaves a positive one plain', async () => {
+    getStockDetail.mockResolvedValue({
+      ...groupPosition(),
+      sales_orders: [
+        {
+          sales_order_id: 'so-a',
+          so_number: 'SO381895',
+          customer_name: 'OIB CONSTRUCTION SDN BHD',
+          location: 'BRW-IB',
+          doc_date: '2026-01-05',
+          delivery_date: '2026-08-24',
+          so_qty: '500',
+          line_id: 'line-a',
+          is_this_line: true,
+        },
+      ],
+      incoming: [],
+    });
+
+    renderPanel('IB');
+    await screen.findByRole('table');
+
+    const opening = screen.getByTestId('stock-balance-on-hand-wh-brw-ib');
+    expect(opening.className).not.toContain('text-destructive');
+    const short = screen.getByTestId('stock-balance-so-0-so-a');
+    expect(short.textContent).toBe('-380');
+    expect(short.className).toContain('text-destructive');
+  });
+
+  it('marks our own line and jumps to it', async () => {
+    getStockDetail.mockResolvedValue(groupPosition());
+
+    renderPanel('IB');
+    const mine = await screen.findByTestId('stock-document-this-line');
+    // The board's own row emphasis, so the eye lands on it in a list of other people's
+    // documents.
+    expect(mine.closest('tr')?.textContent).toContain('SO381895');
+    expect(screen.getByText('SO381895').className).toContain('font-semibold');
+
+    fireEvent.click(screen.getByTestId('stock-documents-my-line'));
+
+    expect(mine.closest('tr')?.scrollIntoView).toHaveBeenCalled();
+  });
+
+  it('offers no jump when the asker has no row in this set', async () => {
+    getStockDetail.mockResolvedValue({
+      ...groupPosition(),
+      sales_orders: groupPosition().sales_orders.map((order) => ({
+        ...order,
+        is_this_line: false,
+      })),
+    });
+
+    renderPanel('IB');
+    await screen.findByRole('table');
+
+    expect(screen.queryByTestId('stock-documents-my-line')).not.toBeInTheDocument();
+  });
+
+  it('subtracts a hold taken by a line booked outside the set (R40)', async () => {
+    // Cross-group stock moves only as a PINNED hold, and such a hold is in no sales-order row
+    // of this group: without it the walk would count a pile nobody can draw on. 25 of the 35
+    // confirmed holds on the 30 August dev copy are cross-group.
+    getStockDetail.mockResolvedValue({
+      ...groupPosition(),
+      sales_orders: [],
+      incoming: [],
+      holds: [
+        {
+          so_number: 'SO404352',
+          location: 'BRW-IB',
+          required_date: '2026-06-29',
+          qty: '6',
+        },
+      ],
+    });
+
+    renderPanel('IB');
+    await screen.findByRole('table');
+
+    const documents = rowsOf().map((cells) => [cells[0], cells[1], cells[cells.length - 1]]);
+    expect(documents).toEqual([
+      // The hold is dated before either bin's stock is opened on, and it still comes after
+      // them: stock is held NOW, and the pile has to exist before anything is taken from it.
+      ['On hand', '-', '100'],
+      ['On hand', '-', '120'],
+      ['Hold', 'SO404352', '114'],
+    ]);
+  });
+
+  it('says which bin each document sits at, which the per-bin reading never has to', async () => {
+    getStockDetail.mockResolvedValue(groupPosition());
+
+    renderPanel('IB');
+    const table = await screen.findByRole('table');
+
+    expect(within(table).getByText('Bin')).toBeInTheDocument();
+    expect(within(table).getAllByText('MWH-IB').length).toBeGreaterThan(0);
+  });
+
+  it('carries no balance and no bin on the per-bin reading', async () => {
+    getStockDetail.mockResolvedValue(captainsPosition());
+
+    renderPanel();
+    const table = await screen.findByRole('table');
+
+    expect(within(table).queryByText('Balance after')).not.toBeInTheDocument();
+    expect(within(table).queryByText('Bin')).not.toBeInTheDocument();
   });
 });

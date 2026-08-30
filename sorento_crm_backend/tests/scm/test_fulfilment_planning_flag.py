@@ -184,7 +184,8 @@ def test_a_flagged_off_bin_is_absent_from_every_stock_demand_and_incoming_reader
 
         take = service.group_take_candidates_for(fact)
         donors = service.borrow_candidates_for(fact, need=Decimal("40"))
-        cross = service.cross_group_borrow_candidates_for(fact, residual=Decimal("40"))
+        # v7.1: another group's FREE stock is step 1's second half, not a borrow rung.
+        cross = service.use_candidates_for(fact)[1]
         # The request-scoped SPO read, which is the one every reader shares. `_spo_rows`
         # itself takes its span from its caller, so what is pinned here is that the span the
         # ladder hands it never contains a flagged-off bin.
@@ -363,7 +364,8 @@ def test_the_public_stock_seams_still_state_what_a_flagged_off_bin_holds():
         facts = service._facts_for(order, service.lines_of(str(order.id)))
         fact = next(iter(facts.values()))
         donors = service.borrow_candidates_for(fact, need=Decimal("40"))
-        cross = service.cross_group_borrow_candidates_for(fact, residual=Decimal("40"))
+        # v7.1: another group's FREE stock is step 1's second half, not a borrow rung.
+        cross = service.use_candidates_for(fact)[1]
         hidden_code = hidden.warehouse_code
 
     on_hand, reserved = levels[key]

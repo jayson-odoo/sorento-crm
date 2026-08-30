@@ -56,24 +56,38 @@
         "status": "covered",
         "uncovered": 0,
         "bucket": "2026-09",
-        "assigned": [["on_hand:BRW-BB", 60]]
+        "assigned": [
+          [
+            "on_hand:BRW-BB",
+            60
+          ]
+        ],
+        "short_at_date": 0
       },
       {
         "key": "T",
         "status": "short",
         "uncovered": 100,
         "bucket": "tba",
-        "assigned": []
+        "assigned": [],
+        "short_at_date": 100
       },
       {
         "key": "U",
         "status": "short",
         "uncovered": 40,
         "bucket": "undated",
-        "assigned": []
+        "assigned": [],
+        "short_at_date": 40
       }
     ],
-    "months": [{ "key": "2026-09", "balance": 40, "tone": "green" }],
+    "months": [
+      {
+        "key": "2026-09",
+        "balance": 40,
+        "tone": "green"
+      }
+    ],
     "tba": -100,
     "undated": -40,
     "uncounted": []

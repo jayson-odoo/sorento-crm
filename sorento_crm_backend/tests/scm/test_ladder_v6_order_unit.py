@@ -208,10 +208,10 @@ def test_the_unit_is_covered_whole_when_the_ladder_reaches_the_whole_of_it():
         lines = _sheet(db, order)
 
     assert _stated_sheet(lines[31]) == [
-        ("borrow", "10", donor.warehouse_code, "cross_group_borrow")
+        ("reserve", "10", donor.warehouse_code, "group_take")
     ]
     assert _stated_sheet(lines[32]) == [
-        ("borrow", "20", donor.warehouse_code, "cross_group_borrow")
+        ("reserve", "20", donor.warehouse_code, "group_take")
     ]
 
 
@@ -293,7 +293,7 @@ def test_two_delivery_dates_are_two_units_and_the_v5_answer_stands():
         lines = _sheet(db, order)
 
     assert _stated_sheet(lines[31]) == [
-        ("borrow", "10", donor.warehouse_code, "cross_group_borrow")
+        ("reserve", "10", donor.warehouse_code, "group_take")
     ]
     assert _stated_sheet(lines[32]) == [("buy", "20", None, "buy")]
     assert [lines[31]["unit_line_count"], lines[32]["unit_line_count"]] == [1, 1]
@@ -327,7 +327,7 @@ def test_two_fulfilment_locations_are_two_units():
 
     assert [lines[31]["unit_line_count"], lines[32]["unit_line_count"]] == [1, 1]
     assert _stated_sheet(lines[31]) == [
-        ("borrow", "10", donor.warehouse_code, "cross_group_borrow")
+        ("reserve", "10", donor.warehouse_code, "group_take")
     ]
     assert _stated_sheet(lines[32]) == [("buy", "20", None, "buy")]
 
@@ -336,15 +336,22 @@ def test_two_fulfilment_locations_are_two_units():
 
 
 def test_a_component_straddling_two_lines_keeps_its_kind_source_rung_and_reason():
-    """AC-U5. The unit of 30 is covered by 5 at its own location and 25 from the pool, so the
-    pool's component falls across the boundary between the lines: 5 to the first, 20 to the
-    second. Both halves say the same thing, because they ARE the same component."""
+    """AC-U5. The unit of 30 is covered by 5 at its own location and 25 at a sibling of its
+    ownership group, so the sibling's component falls across the boundary between the lines:
+    5 to the first, 20 to the second. Both halves say the same thing, because they ARE the
+    same component.
+
+    Both halves are ONE STEP since ladder v7.1: a step covers the whole unit or gives
+    nothing (R33), so the fixture that used to mix the group with the pool - two steps -
+    would now buy whole and would be testing the whole-unit rule instead of the split.
+    """
     with blank_session() as db:
         company_id, _eling, project, product = _world(db)
         _group, sites = _group_sites(db)
-        own, pool = sites["BRW"]
+        own, _pool = sites["BRW"]
+        sibling, _sibling_pool = sites["MWH"]
         _stock(db, product, own, on_hand=5)
-        _stock(db, product, pool, on_hand=25)
+        _stock(db, product, sibling, on_hand=25)
 
         _core_so, order, _mirrors = _seed_order(
             db, company_id, project, product,
@@ -357,10 +364,10 @@ def test_a_component_straddling_two_lines_keeps_its_kind_source_rung_and_reason(
 
     assert _stated_sheet(lines[31]) == [
         ("reserve", "5", own.warehouse_code, "group_take"),
-        ("reserve", "5", pool.warehouse_code, "pool"),
+        ("reserve", "5", sibling.warehouse_code, "group_take"),
     ]
     assert _stated_sheet(lines[32]) == [
-        ("reserve", "20", pool.warehouse_code, "pool")
+        ("reserve", "20", sibling.warehouse_code, "group_take")
     ]
     first_half = lines[31]["components"][1]
     second_half = lines[32]["components"][0]
@@ -519,7 +526,7 @@ def test_one_donor_is_borrowed_once_across_the_walk_and_the_later_dates_buy():
         frozen = _frozen(db, order)
 
     assert _stated_board(board[1]) == [
-        ("borrow", "10", donor.warehouse_code, "cross_group_borrow")
+        ("reserve", "10", donor.warehouse_code, "group_take")
     ]
     assert _stated_board(board[2]) == [("buy", "12", None, "buy")]
     assert _stated_board(board[3]) == [("buy", "10", None, "buy")]
@@ -694,18 +701,19 @@ def _confirm(db, company_id, actor, order, payload_lines):
 def test_a_unit_split_across_two_lines_confirms_exactly_as_proposed():
     """B1. The proposal is composed for the UNIT, so the recheck has to be too.
 
-    AC-U5's own fixture: 5 on the floor, 25 in the pool, lines 31 and 32 wanting 10 and 20.
-    The unit's offer is `max(group net + 30, 0)` = 5, so line 31 is proposed 5 from its own
-    location; the LINE's own offer is `max(-25 + 10, 0)` = 0, and a recheck that re-derived
-    it per line refused the proposal it had just made ("has nothing free for this line
-    now"). A proposal that cannot be confirmed is worth nothing.
+    AC-U5's own fixture: 5 at the line's own bin, 25 at a sibling of its ownership group,
+    lines 31 and 32 wanting 10 and 20. The unit's offer is the group's position measured
+    against the WHOLE 30; the LINE's own offer measured against 10 alone is 0, and a recheck
+    that re-derived it per line refused the proposal it had just made ("has nothing free for
+    this line now"). A proposal that cannot be confirmed is worth nothing.
     """
     with blank_session() as db:
         company_id, eling, project, product = _world(db)
         _group, sites = _group_sites(db)
-        own, pool = sites["BRW"]
+        own, _pool = sites["BRW"]
+        sibling, _sibling_pool = sites["MWH"]
         _stock(db, product, own, on_hand=5)
-        _stock(db, product, pool, on_hand=25)
+        _stock(db, product, sibling, on_hand=25)
 
         _core_so, order, _mirrors = _seed_order(
             db, company_id, project, product,
@@ -719,13 +727,13 @@ def test_a_unit_split_across_two_lines_confirms_exactly_as_proposed():
             db, company_id, eling, order,
             [_payload_line(lines[31]), _payload_line(lines[32])],
         )
-        own_code, pool_code = own.warehouse_code, pool.warehouse_code
+        own_code, sibling_code = own.warehouse_code, sibling.warehouse_code
 
     assert _stated_sheet(lines[31]) == [
         ("reserve", "5", own_code, "group_take"),
-        ("reserve", "5", pool_code, "pool"),
+        ("reserve", "5", sibling_code, "group_take"),
     ]
-    assert _stated_sheet(lines[32]) == [("reserve", "20", pool_code, "pool")]
+    assert _stated_sheet(lines[32]) == [("reserve", "20", sibling_code, "group_take")]
     assert response.status_code == 200, response.text
     assert response.json()["revision_no"] == 1
 
@@ -915,9 +923,9 @@ def test_the_proof_never_offers_a_donor_the_walk_has_already_spent():
         )
         board = _board(db, core_so, as_of=date.today())
 
-    took = _step(board[1], "cross_group_borrow")
+    took = _step(board[1], "own")
     assert took["answer"] == "yes" and took["took"] == "10"
-    spent = _step(board[2], "cross_group_borrow")
+    spent = _step(board[2], "own")
     assert spent["answer"] == "no"
     assert "within the cross-group borrow limit" not in spent["why"], (
         "the donor was spent by the first date, so question 3 has nothing to offer"

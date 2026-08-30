@@ -1107,10 +1107,7 @@ export function ContainerRequestSection({
               loading={build.isFetching || (dialog.onHistory && history.isFetching)}
             />
           ) : dialog.kind === 'on_hand' ? (
-            <OnHandTable
-              productId={dialog.row.product_id}
-              itemCode={dialog.row.driver_item_code ?? dialog.row.item_code ?? ''}
-            />
+            <OnHandTable productId={dialog.row.product_id} />
           ) : dialog.kind === 'spo' ? (
             <SpoTabs supplierId={supplierId} productId={dialog.row.product_id} />
           ) : dialog.kind === 'incoming_pl' ? (

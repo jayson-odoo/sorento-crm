@@ -25,7 +25,12 @@ SupplyKind = Literal["on_hand", "spo", "po"]
 
 
 class StockDebtMonth(BaseModel):
-    """One month of a product row. `balance` is the CUMULATIVE dated running balance."""
+    """One month of a product row, on its own (R37).
+
+    `balance` is the supply dated in the month that is still free when the assignment walk
+    is over, less what the lines due in the month were short of on their own dates. It does
+    NOT carry: a month with nothing due and nothing arriving reads 0.
+    """
 
     key: str
     balance: float
@@ -76,6 +81,9 @@ class StockDebtDemandLine(BaseModel):
     assigned_qty: float
     assigned_source: Optional[str] = None
     status: DemandStatus
+    #: What the line went short of ON ITS OWN DATE - the quantity its month books (R37).
+    #: A `late` line ends covered and still carries one.
+    short_qty: float
 
 
 class StockDebtAssignedTo(BaseModel):
@@ -92,11 +100,17 @@ class StockDebtSupplyEvent(BaseModel):
     #: PO only: the SO delivery date the line was typed against. Display only (R30).
     bought_for: Optional[DateType] = None
     qty: float
+    #: What nobody took by the end of the walk - the quantity its month credits (R37).
+    #: Zero for an overdue document, which is not supply until somebody re-dates it (R31).
+    free_qty: float
     #: Arrival passed with nothing received: listed, and counted as nothing (R31).
     overdue: bool
     assigned_to: List[StockDebtAssignedTo]
 
 
 class StockDebtCell(BaseModel):
+    """The two tables behind one cell. `sum(supply.free_qty) - sum(demand.short_qty)` is the
+    balance the cell that opened them prints (R37)."""
+
     demand: List[StockDebtDemandLine]
     supply: List[StockDebtSupplyEvent]

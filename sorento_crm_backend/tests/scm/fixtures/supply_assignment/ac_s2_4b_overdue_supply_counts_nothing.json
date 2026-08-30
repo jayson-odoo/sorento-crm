@@ -38,12 +38,24 @@
         "status": "short",
         "uncovered": 50,
         "bucket": "2026-09",
-        "assigned": []
+        "assigned": [],
+        "short_at_date": 50
       }
     ],
-    "months": [{ "key": "2026-09", "balance": -50, "tone": "red" }],
+    "months": [
+      {
+        "key": "2026-09",
+        "balance": -50,
+        "tone": "red"
+      }
+    ],
     "tba": 0,
     "undated": 0,
-    "uncounted": [{ "key": "spo:OLD", "overdue": true }]
+    "uncounted": [
+      {
+        "key": "spo:OLD",
+        "overdue": true
+      }
+    ]
   }
 }

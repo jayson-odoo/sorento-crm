@@ -259,15 +259,17 @@ BALANCE_INVARIANT_CASE = ProposalCase(
         "fulfilment_location": GROUP_OWN_LOCATION,
         "group_code": "BB",
         "is_dealer_hot_selling": False,
-        # LADDER V5 (section 1e): the ten used to arrive as `timely_spo`, which was rung 1.
-        # There is no such rung: an SPO is inside the ownership group's own net, so the
-        # group offers the ten and the pool covers the rest - together the WHOLE line, so
-        # the whole-line rule keeps both components rather than collapsing them into a
-        # single Buy.
+        # LADDER V7.1 (R33): the components of one proposal come from ONE step. So the
+        # invariant is stated over step 1's two halves - the ownership group's 10 and
+        # another project group's 60, both FREE stock and both owed to nobody - rather than
+        # over the group plus the pool, which v7.1 no longer mixes.
         "group_take_candidates": [
             {"location": GROUP_OWN_LOCATION, "qty": Decimal("10")},
         ],
-        "group_offer": Decimal("10"),
+        "group_offer": Decimal("70"),
+        "other_group_candidates": [
+            {"location": "DC1-NTC", "qty": Decimal("60")},
+        ],
         "pools": [
             {"location": POOL_LOCATION, "free": Decimal("60"), "available": Decimal("60")}
         ],
@@ -279,14 +281,16 @@ BALANCE_INVARIANT_CASE = ProposalCase(
         Component(
             kind=RESERVE,
             qty=Decimal("10"),
-            reason="BRW-BB gives 10 of the 10 the BB group can cover this line with",
+            reason="BRW-BB gives 10 of the 70 the BB group can cover this line with",
             source_location=GROUP_OWN_LOCATION,
         ),
         Component(
             kind=RESERVE,
             qty=Decimal("60"),
-            reason="Pool BRW lends 60 of the 60 the site pools net between them",
-            source_location=POOL_LOCATION,
+            reason=(
+                "DC1-NTC has 60 free outside the BB group, and free stock is owed to nobody"
+            ),
+            source_location="DC1-NTC",
         ),
     ),
 )
@@ -294,8 +298,8 @@ BALANCE_INVARIANT_CASE = ProposalCase(
 #: The exact strings AC-B14 prints. Pinned separately so a reworded reason fails the test
 #: that owns the criterion rather than four unrelated ones.
 BALANCE_INVARIANT_STATED = (
-    "Reserve 10: BRW-BB gives 10 of the 10 the BB group can cover this line with",
-    "Reserve 60: Pool BRW lends 60 of the 60 the site pools net between them",
+    "Reserve 10: BRW-BB gives 10 of the 70 the BB group can cover this line with",
+    "Reserve 60: DC1-NTC has 60 free outside the BB group, and free stock is owed to nobody",
 )
 
 
@@ -678,9 +682,10 @@ POOL_BEFORE_ANOTHER_GROUP_CASE = ProposalCase(
             {"location": POOL_LOCATION, "free": Decimal("268"), "available": Decimal("268")}
         ],
         "pools_net": Decimal("268"),
-        # Within the cap and genuinely available - and still not drawn on, because the
-        # question above it was answered Yes.
-        "cross_group_borrow_candidates": [
+        # LADDER V7.1 (R1, R5) REVERSES this case: another project group's FREE stock is
+        # step 1's second half, and the pool is the LAST stock step. The pool holds 268 and
+        # is not reached, because the 100 at DC1-NTC is owed to nobody and answers first.
+        "other_group_candidates": [
             {"location": "DC1-NTC", "qty": Decimal("100"), "group_code": "NTC"},
         ],
         "is_discontinued": False,
@@ -689,8 +694,10 @@ POOL_BEFORE_ANOTHER_GROUP_CASE = ProposalCase(
         Component(
             kind=RESERVE,
             qty=Decimal("24"),
-            reason="Pool BRW lends 24 of the 268 the site pools net between them",
-            source_location=POOL_LOCATION,
+            reason=(
+                "DC1-NTC has 24 free outside the IB group, and free stock is owed to nobody"
+            ),
+            source_location="DC1-NTC",
         ),
     ),
 )
