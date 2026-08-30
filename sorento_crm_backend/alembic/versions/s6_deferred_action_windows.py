@@ -34,14 +34,32 @@ COLUMNS = (
 )
 
 
-def upgrade() -> None:
-    for name, default in COLUMNS:
-        op.add_column(
-            TABLE,
-            sa.Column(name, sa.Integer(), nullable=False, server_default=default),
+def _existing() -> set[str]:
+    bind = op.get_bind()
+    return {
+        row[0]
+        for row in bind.execute(
+            sa.text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = :t AND table_schema = current_schema()"
+            ),
+            {"t": TABLE},
         )
+    }
+
+
+def upgrade() -> None:
+    existing = _existing()
+    for name, default in COLUMNS:
+        if name not in existing:
+            op.add_column(
+                TABLE,
+                sa.Column(name, sa.Integer(), nullable=False, server_default=default),
+            )
 
 
 def downgrade() -> None:
+    existing = _existing()
     for name, _default in COLUMNS:
-        op.drop_column(TABLE, name)
+        if name in existing:
+            op.drop_column(TABLE, name)
