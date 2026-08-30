@@ -1,13 +1,6 @@
 import { Metadata } from 'next';
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
 import { Container } from '@/components/common/container';
+import { PageHeader } from '@/components/common/PageHeader';
 import RequireAccess from '@/app/components/common/RequireAccess';
 import { StockDebtClient } from './components/StockDebtClient';
 
@@ -21,21 +14,10 @@ export default function StockDebtPage() {
   return (
     <RequireAccess permission="projects.stock_debt.view">
       <Container className="space-y-6">
-        <Breadcrumb>
-          <BreadcrumbList>
-            <BreadcrumbItem>
-              <BreadcrumbLink href="/">Home</BreadcrumbLink>
-            </BreadcrumbItem>
-            <BreadcrumbSeparator />
-            <BreadcrumbItem>
-              <BreadcrumbPage>Project Sales</BreadcrumbPage>
-            </BreadcrumbItem>
-            <BreadcrumbSeparator />
-            <BreadcrumbItem>
-              <BreadcrumbPage>Stock Debt</BreadcrumbPage>
-            </BreadcrumbItem>
-          </BreadcrumbList>
-        </Breadcrumb>
+        {/* The sidebar names this page (Project Sales > Project Demand > Stock Debt),
+            so the trail derives itself from the pathname - no `crumbs` override, the
+            way its Fulfilment Planning and Plans siblings do it (S5-01, S5-02). */}
+        <PageHeader title="Stock debt" />
         <StockDebtClient />
       </Container>
     </RequireAccess>
