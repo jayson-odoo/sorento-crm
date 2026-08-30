@@ -142,6 +142,26 @@ def _team(db) -> Team:
     return row
 
 
+def _product(db) -> Product:
+    uom = UnitOfMeasure(id=_uid(), uom_code=f"ZZT{_uid()[:6]}", uom_name="Unit")
+    category = ProductCategory(
+        id=_uid(), category_code=f"{MARKER}-{_uid()[:8]}", category_name=f"{MARKER} cat"
+    )
+    db.add_all([uom, category])
+    db.flush()
+    row = Product(
+        id=_uid(),
+        product_code=f"{MARKER}-{_uid()[:8]}",
+        product_name=f"{MARKER} chair",
+        category_id=category.id,
+        base_uom_id=uom.id,
+        list_price=Decimal("100.00"),
+    )
+    db.add(row)
+    db.commit()
+    return row
+
+
 def _product_supplier(db) -> ProductSupplier:
     uom = UnitOfMeasure(id=_uid(), uom_code=f"ZZT{_uid()[:6]}", uom_name="Unit")
     category = ProductCategory(
@@ -267,8 +287,11 @@ def test_every_handler_resolves_its_service_import(key):
             raise RuntimeError("session refused")
 
     action = RECORD_ACTIONS[key]
+    #: A composite address for the one handler that takes one - it refuses half of a
+    #: `<product id>:<spec key>` before reaching any service, which is its whole job.
+    entity_ids = {"product_spec_value.clear": f"{_uid()}:width"}
     payload = {
-        "entity_id": _uid(),
+        "entity_id": entity_ids.get(key, _uid()),
         "requested_by_id": None,
         # Whatever the handlers that need a second key read; unused by the rest.
         "promotion_id": _uid(),
@@ -345,6 +368,63 @@ def test_a_code_keyed_row_commits_against_its_code(client):
         db.query(MarketSegment).filter(MarketSegment.code == segment.code).first()
         is None
     )
+
+
+def test_two_products_clear_the_same_spec_key_without_colliding(client):
+    """A specification value is one product's answer for one key, so it is parked as
+    `<product id>:<spec key>`.
+
+    Addressed by the bare key it was a GLOBALLY shared id: the engine holds one pending
+    action per record, so the second person to clear `width` - on a different product -
+    was refused with a 409 about a record they had never touched, and each of them then
+    read the other's outcome as their own."""
+    c, db, _actor, _denied = client
+    first, second = _product(db), _product(db)
+
+    parked_first = _start(
+        c,
+        "product_spec_value.clear",
+        "product_spec_value",
+        f"{first.id}:width",
+        {"mode": "revert"},
+    )
+    parked_second = _start(
+        c,
+        "product_spec_value.clear",
+        "product_spec_value",
+        f"{second.id}:width",
+        {"mode": "revert"},
+    )
+
+    assert parked_first.status_code == 202, parked_first.text
+    assert parked_second.status_code == 202, parked_second.text
+    assert parked_first.json()["id"] != parked_second.json()["id"]
+
+    parked_ids = {
+        row.source_entity_id
+        for row in db.query(SlaFormAction)
+        .filter(SlaFormAction.action_key == "product_spec_value.clear")
+        .all()
+    }
+    assert parked_ids == {f"{first.id}:width", f"{second.id}:width"}
+
+
+def test_a_spec_value_parked_without_its_product_does_not_apply(client):
+    """The composite is the address, so half of it is not one. A bare spec key would
+    otherwise reach `apply_spec_values` as a product code and clear whatever it hit."""
+    c, db, _actor, _denied = client
+
+    parked = _start(
+        c, "product_spec_value.clear", "product_spec_value", "width", {"mode": "revert"}
+    )
+    assert parked.status_code == 202, parked.text
+
+    body = _commit_now(
+        c, db, "product_spec_value", "width", parked.json()["id"]
+    ).json()
+
+    assert body["pending"] is None
+    assert body["last_outcome"]["status"] == "failed", body["last_outcome"]
 
 
 def test_a_link_row_is_detached_and_leaves_both_ends_standing(client):

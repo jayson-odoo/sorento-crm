@@ -559,12 +559,21 @@ def _delete_access_agent(db: Session, payload: dict):
 
 def _clear_product_spec_value(db: Session, payload: dict):
     from app.models.product import Product
-    from app.services.error_handler import handle_not_found
+    from app.services.error_handler import handle_not_found, handle_validation_error
     from app.services.product_spec_write import apply_spec_values
 
+    # The record is one product's value for one key, so the entity id has to name BOTH
+    # (`<product id>:<spec key>`). Parked against the bare spec key it was a globally
+    # shared id: two people clearing `width` on two different products collided on the
+    # one-pending-action-per-record index, one of them got a 409 for a record nobody
+    # else had touched, and each then read the other's outcome as their own.
+    product_id, _, spec_key = _entity_id(payload).partition(":")
+    if not product_id or not spec_key:
+        raise handle_validation_error(
+            "A specification value is addressed as '<product id>:<spec key>'."
+        )
     # `spec.values` may only be written through this one service (hard-fail rule), so
     # the handler goes through it exactly as the route does.
-    product_id = str(payload["product_id"])
     product = db.query(Product).filter(Product.id == product_id).first()
     if product is None:
         raise handle_not_found("Product", product_id)
@@ -572,7 +581,7 @@ def _clear_product_spec_value(db: Session, payload: dict):
     return apply_spec_values(
         db,
         product.product_code,
-        [{"spec_key": _entity_id(payload), "op": mode}],
+        [{"spec_key": spec_key, "op": mode}],
         actor=_actor(db, payload),
     )
 
@@ -690,8 +699,10 @@ register(
 register(
     FormAction(
         key="product_spec_value.clear",
-        # The record is the VALUE on one product, so the entity id is the spec key and
-        # the product travels in the payload beside it.
+        # The record is the VALUE on one product, so the entity id names both halves of
+        # it: `<product id>:<spec key>`. The spec key alone is shared by every product
+        # that holds it, and the engine's one-pending-action-per-record index would then
+        # treat two products as one record.
         entity_types=("product_spec_value",),
         execute=_clear_product_spec_value,
         # `revert` hands the key back to derivation and `absent` writes a tombstone.

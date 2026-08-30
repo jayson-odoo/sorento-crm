@@ -10,11 +10,17 @@ records the sweep reaches are not keyed by a uuid at all:
   (`dealer`), the same key its DELETE route takes.
 * the sign-in background is a singleton setting, so the frontend names it by a constant
   rather than by an id no reader ever sees.
+* a product's specification VALUE is one product plus one spec key, so it is addressed
+  as `<product id>:<spec key>` - the key on its own is shared by every product that
+  holds it, and the one-pending-action-per-record index would treat them as one record.
 
 Parking any of those raised `invalid input syntax for type uuid` from inside the route -
 a 500 on the click, for a button that looks like every other Delete. Widening the column
 is one change; the alternative was five bespoke id remappings, each of which had to be
 understood separately and none of which helped the sixth case.
+
+VARCHAR(128), not 64: a composite id is a 36-character uuid, a colon and a key, and 64
+leaves no room for the second half to be anything but short.
 
 Widening only. Every value already stored is a uuid string, which is valid text, so the
 cast is total and no row moves. The partial unique index (one pending action per record)
@@ -55,7 +61,7 @@ def upgrade() -> None:
     if _column_type() != "uuid":
         return
     op.execute(
-        f"ALTER TABLE {TABLE} ALTER COLUMN {COLUMN} TYPE VARCHAR(64) "
+        f"ALTER TABLE {TABLE} ALTER COLUMN {COLUMN} TYPE VARCHAR(128) "
         f"USING {COLUMN}::text"
     )
 

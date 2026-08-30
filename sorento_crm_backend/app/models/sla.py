@@ -437,8 +437,10 @@ class SlaFormAction(Base):
     # by that code, and the sign-in background is a singleton the frontend names by a
     # constant. Under the old `uuid` type each of those raised
     # `invalid input syntax for type uuid` from inside the route - a 500 on a click that
-    # looked like every other Delete.
-    source_entity_id = Column(String(64), nullable=False)
+    # looked like every other Delete. 128 rather than 64 because one of them is a
+    # COMPOSITE: a product's specification value is `<product id>:<spec key>`, since the
+    # key on its own is shared by every product that holds it.
+    source_entity_id = Column(String(128), nullable=False)
     # The resolve-event this action will emit - the guardrail reads it to find the
     # stage the action closed.
     event_name = Column(String(64), nullable=True)

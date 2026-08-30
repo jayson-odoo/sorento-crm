@@ -173,6 +173,10 @@ export function useProductSpecTable(productId: string): UseProductSpecTableResul
   // on the server and a toast counts down with Cancel. The two modes differ in
   // what they mean, not in how they are taken back, so one runner carries both
   // and the mode travels in the payload.
+  // The record is one product's value for one key, so it is addressed as
+  // `<product id>:<spec key>`. The key alone is shared by every product that holds it:
+  // two people clearing `width` on two different products would collide on the engine's
+  // one-pending-action-per-record index and read each other's outcome as their own.
   const removal = useDeferredRowAction({
     actionKey: 'product_spec_value.clear',
     entityType: 'product_spec_value',
@@ -294,16 +298,16 @@ export function useProductSpecTable(productId: string): UseProductSpecTableResul
     },
     tombstone: async (specKey) => {
       removal.run({
-        id: specKey,
+        id: `${productId}:${specKey}`,
         subject: registry.find((key) => key.spec_key === specKey)?.label ?? specKey,
-        payload: { product_id: productId, mode: 'absent' },
+        payload: { mode: 'absent' },
       });
     },
     revert: async (specKey) => {
       removal.run({
-        id: specKey,
+        id: `${productId}:${specKey}`,
         subject: registry.find((key) => key.spec_key === specKey)?.label ?? specKey,
-        payload: { product_id: productId, mode: 'revert' },
+        payload: { mode: 'revert' },
       });
     },
     addValue: async (specKey, value) => {
