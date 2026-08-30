@@ -53,6 +53,7 @@ export interface UseDeferredActionInput {
   watchFromMount?: boolean;
   /** Said once the server has applied it. */
   successMessage: string;
+  /** What the handler needs at commit time. `start()` may override it per click. */
   payload?: Record<string, unknown>;
   /** Lists to refetch once the action has committed. */
   invalidateKeys?: readonly unknown[][];
@@ -63,14 +64,20 @@ export interface UseDeferredActionInput {
    * delete the confirmation dialog used to run). Phase 2 registers the handler on
    * the server and deletes this argument at every call site.
    */
-  commit?: () => Promise<unknown>;
+  commit?: (payload: Record<string, unknown>) => Promise<unknown>;
 }
 
 export interface UseDeferredActionResult {
   pending: PendingAction | null;
   /** True from the click until the server settles the action. */
   isPending: boolean;
-  start: () => void;
+  /**
+   * Something ELSE is already counting down on this record. One record holds one
+   * pending action, so an item that would start a second has to wait its turn
+   * rather than fail on the way out.
+   */
+  isBlocked: boolean;
+  start: (payload?: Record<string, unknown>) => void;
   cancel: () => void;
   /**
    * The countdown to render where the button was. Null while nothing is parked,
@@ -111,7 +118,11 @@ export function useDeferredAction(
     refetchInterval: (query) => (query.state.data?.pending ? 500 : false),
   });
 
-  const pending = data?.pending ?? null;
+  // `current` answers for the RECORD, so a page holding two deferred actions -
+  // Delete and Mark as delivered - would otherwise have both of them counting
+  // down the other one's window, under the wrong verb.
+  const parked = data?.pending ?? null;
+  const pending = parked?.action_key === actionKey ? parked : null;
   const toastIdRef = useRef<string | number | null>(null);
   const lastPendingIdRef = useRef<string | null>(null);
   /** Only the surface that STARTED the action reports how it ended. */
@@ -128,13 +139,13 @@ export function useDeferredAction(
   });
 
   const startMutation = useMutation({
-    mutationFn: () =>
+    mutationFn: (override?: Record<string, unknown>) =>
       createPendingAction({
         actionKey,
         entityType,
         entityId: entityId as string,
-        payload,
-        commit,
+        payload: override ?? payload,
+        commit: commit && ((): Promise<unknown> => commit(override ?? payload ?? {})),
       }),
     onSuccess: (action) => {
       startedIdRef.current = action.id;
@@ -208,10 +219,13 @@ export function useDeferredAction(
   // and carries on regardless - which is the whole point of the model (S6-08).
   useEffect(() => () => clearAffordances(), [clearAffordances]);
 
-  const start = useCallback(() => {
-    if (!entityId || pending || startMutation.isPending) return;
-    startMutation.mutate();
-  }, [entityId, pending, startMutation]);
+  const start = useCallback(
+    (override?: Record<string, unknown>) => {
+      if (!entityId || parked || startMutation.isPending) return;
+      startMutation.mutate(override);
+    },
+    [entityId, parked, startMutation],
+  );
 
   const cancel = useCallback(() => {
     if (pending) cancelMutation.mutate(pending.id);
@@ -220,6 +234,7 @@ export function useDeferredAction(
   return {
     pending,
     isPending: !!pending || startMutation.isPending,
+    isBlocked: !!parked && !pending,
     start,
     cancel,
     countdown:

@@ -106,7 +106,12 @@ export const pendingActionMock = {
   async create(body: CreateBody, commit?: () => Promise<unknown>): Promise<PendingAction> {
     // Idempotent while one is pending on the same entity + action (S6-01).
     const existing = findPending(body.entity_type, body.entity_id);
-    if (existing && existing.action.action_key === body.action_key) return existing.action;
+    if (existing) {
+      if (existing.action.action_key === body.action_key) return existing.action;
+      // `current` answers one action per record, and the screen shows one
+      // countdown, so a record holds one at a time.
+      throw new Error('Another action on this record is still counting down.');
+    }
 
     const windowSeconds = windowSecondsFor(body.action_key);
     const action: PendingAction = {

@@ -25,7 +25,7 @@ export default function OrderDetail({ orderId, listSearch }: OrderDetailProps) {
   const router = useRouter();
   const { data: order, isLoading } = useOrder(orderId);
   const listQs = listSearch ? `?${listSearch}` : '';
-  const { actions, dialogs } = useOrderActions(order, {
+  const { actions, dialogs, pending } = useOrderActions(order, {
     onDeleted: () => router.push(`/order-management/orders${listQs}`),
   });
 
@@ -79,6 +79,7 @@ export default function OrderDetail({ orderId, listSearch }: OrderDetailProps) {
           }}
           actions={actions}
           dialogs={dialogs}
+          pendingAction={pending}
           gearLabel="Delivery order options"
           primary={
             <Button

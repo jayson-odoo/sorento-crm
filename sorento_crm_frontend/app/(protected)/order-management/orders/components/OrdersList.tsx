@@ -35,6 +35,7 @@ import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import OrderBulkDeleteDialog from './OrderBulkDeleteDialog';
 import { OrderRowActions } from '../actions';
+import { pendingEntityKey, usePendingEntityKeys } from '@/lib/pending-entity-store';
 import { useOrders } from '../hooks/useOrders';
 import { useOrderStatusSelectQuery } from '../../shared/hooks/use-order-status-select-query';
 import type { Order } from '../types/order.types';
@@ -120,6 +121,11 @@ export default function OrdersList() {
   // The whole row opens the record. The grid appends its own page/sort/search;
   // the filters it does not know about ride in this query string, and the pager
   // rebuilds the list's query key from both.
+  // A delivery order whose action is counting down stays on the list, dimmed,
+  // until the window lapses - the toast holds the Cancel, this says which row.
+  const pendingKeys = usePendingEntityKeys();
+  const rowPending = (row: Order) => pendingKeys.has(pendingEntityKey('order', row.id));
+
   const rowHref = (row: Order) => {
     const search = buildDetailSearch(
       {
@@ -294,6 +300,7 @@ export default function OrdersList() {
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
       rowHref={rowHref}
+      rowPending={rowPending}
       tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
       emptyAction={listPrimaryAction}
     >
