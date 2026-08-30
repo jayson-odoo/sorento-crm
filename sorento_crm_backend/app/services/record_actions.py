@@ -754,3 +754,68 @@ register(
         label="Delete onboarding request",
     )
 )
+
+
+# ----- Dealer kit -----------------------------------------------------------------------
+#
+# One slug for all five, `dealer_kit.page.edit`, because that is the single grant every
+# one of these DELETE routes is behind today.
+
+
+def _delete_dk_bundle(db: Session, payload: dict):
+    from app.services.dealer_kit import bundle_service
+
+    return bundle_service.delete_bundle(db, _entity_id(payload))
+
+
+def _delete_dk_collection(db: Session, payload: dict):
+    from app.services.dealer_kit import collection_service
+
+    return collection_service.delete_collection(db, _entity_id(payload))
+
+
+def _delete_dk_page(db: Session, payload: dict):
+    from app.services.dealer_kit import page_service
+
+    return page_service.delete_page(db, _entity_id(payload))
+
+
+def _delete_dk_flyer_reading(db: Session, payload: dict):
+    from app.services.dealer_kit import flyer_reading_service
+
+    return flyer_reading_service.delete_reading(db, _entity_id(payload))
+
+
+def _delete_dk_tile_template(db: Session, payload: dict):
+    from app.services.dealer_kit import tile_template_service
+
+    return tile_template_service.delete_template(db, _entity_id(payload))
+
+
+for _key, _entity, _fn, _label in (
+    ("dk_bundle.delete", "dk_bundle", _delete_dk_bundle, "Delete bundle"),
+    ("dk_collection.delete", "dk_collection", _delete_dk_collection, "Delete collection"),
+    ("dk_page.delete", "dk_page", _delete_dk_page, "Delete page"),
+    (
+        "dk_flyer_reading.delete",
+        "dk_flyer_reading",
+        _delete_dk_flyer_reading,
+        "Delete flyer reading",
+    ),
+    (
+        "dk_tile_design.delete",
+        "dk_tile_design",
+        _delete_dk_tile_template,
+        "Delete tile design",
+    ),
+):
+    register(
+        FormAction(
+            key=_key,
+            entity_types=(_entity,),
+            execute=_fn,
+            window=WINDOW_DESTRUCTIVE,
+            permission="dealer_kit.page.edit",
+            label=_label,
+        )
+    )
