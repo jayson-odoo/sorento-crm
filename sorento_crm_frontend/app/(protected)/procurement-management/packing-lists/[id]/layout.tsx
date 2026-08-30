@@ -143,7 +143,7 @@ function PackingListToolbar({ id }: { id: string }) {
         {editing ? (
           <div className="flex flex-wrap items-center justify-end gap-2">
             <Button onClick={() => void saveEdit()} disabled={saving}>
-              Save
+              Save packing list
             </Button>
             <Button variant="outline" onClick={cancelEdit} disabled={saving}>
               <X className="size-4" />

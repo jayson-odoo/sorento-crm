@@ -395,7 +395,7 @@ export default function TicketDetailPage({ params }: PageProps) {
                         Cancel
                       </Button>
                       <Button size="sm" onClick={saveDetails} disabled={busy || !titleDraft.trim()}>
-                        Save
+                        Save details
                       </Button>
                     </div>
                   </div>
@@ -485,7 +485,7 @@ export default function TicketDetailPage({ params }: PageProps) {
                         Cancel
                       </Button>
                       <Button variant="outline" size="sm" onClick={() => saveResponse(false)} disabled={busy || !htmlToText(responseDraft)}>
-                        Save
+                        Save response
                       </Button>
                       <Button size="sm" onClick={() => saveResponse(true)} disabled={busy || !htmlToText(responseDraft)}>
                         Update &amp; Reply
@@ -531,7 +531,7 @@ export default function TicketDetailPage({ params }: PageProps) {
                         Cancel
                       </Button>
                       <Button variant="outline" size="sm" onClick={() => saveResolution(false)} disabled={busy || formAction.ctasDisabled || !htmlToText(resolutionDraft)}>
-                        Save
+                        Save resolution
                       </Button>
                       <Button size="sm" onClick={() => saveResolution(true)} disabled={busy || formAction.ctasDisabled || !htmlToText(resolutionDraft)}>
                         Update &amp; Reply

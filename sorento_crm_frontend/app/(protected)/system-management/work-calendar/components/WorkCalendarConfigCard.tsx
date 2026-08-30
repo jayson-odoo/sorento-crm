@@ -147,7 +147,7 @@ export default function WorkCalendarConfigCard() {
 
         <div className="flex justify-end">
           <Button onClick={handleSave} disabled={updateMutation.isPending}>
-            {updateMutation.isPending ? 'Saving...' : 'Save'}
+            {updateMutation.isPending ? 'Saving...' : 'Save work calendar'}
           </Button>
         </div>
       </CardContent>

@@ -319,7 +319,7 @@ export function StockVisibilitySection({
           }
           disabled={!canSave}
         >
-          Save
+          Save stock visibility
         </Button>
         {canRemove ? (
           <Button

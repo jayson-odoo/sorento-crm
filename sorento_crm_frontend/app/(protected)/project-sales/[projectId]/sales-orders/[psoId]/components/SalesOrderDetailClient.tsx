@@ -337,7 +337,7 @@ export function SalesOrderDetailClient({
               title={edit.isDirty ? undefined : 'Nothing has changed yet'}
               onClick={requestSave}
             >
-              {isSaving ? 'Saving...' : 'Save'}
+              {isSaving ? 'Saving...' : 'Save sales order'}
             </Button>
           </div>
         ) : (

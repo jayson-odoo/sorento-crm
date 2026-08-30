@@ -1982,7 +1982,7 @@ describe('FulfilmentBoardPanel: Undo all asks first (D2)', () => {
     // The list's own rows: click one to open its decision panel, then Save the suggestion it
     // opens on, which is the approval.
     fireEvent.click(await screen.findByText('WESERP10B'));
-    fireEvent.click(await screen.findByRole('button', { name: 'Save' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Save decision' }));
   }
 
   it('opens a confirmation naming how many drafts would go, and keeps them on Cancel', async () => {

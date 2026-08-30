@@ -600,7 +600,7 @@ describe('QuotationDocumentClient edit view', () => {
 
     expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
     expect(await gearOffersEdit()).toBe(true);
-    expect(screen.queryByRole('button', { name: 'Save' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Save quotation' })).toBeNull();
     expect(screen.queryByRole('textbox', { name: 'Qty on SRT-WC-01' })).toBeNull();
   });
 
@@ -652,7 +652,7 @@ describe('QuotationDocumentClient edit view', () => {
       expect(updateQuotationLine).not.toHaveBeenCalled();
       expect(createQuotationLine).not.toHaveBeenCalled();
 
-      fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
 
       await waitFor(() => expect(replaceQuotationLines).toHaveBeenCalledTimes(1));
       const [versionId, body] = replaceQuotationLines.mock.calls[0] as [
@@ -672,7 +672,7 @@ describe('QuotationDocumentClient edit view', () => {
       expect(updateQuotationLine).not.toHaveBeenCalled();
       expect(createQuotationLine).not.toHaveBeenCalled();
       // Saved, and back to a document you can read.
-      await waitFor(() => expect(screen.queryByRole('button', { name: 'Save' })).toBeNull());
+      await waitFor(() => expect(screen.queryByRole('button', { name: 'Save quotation' })).toBeNull());
     },
     // Eleven edits through the real editor is a lot of rendering for one claim, and the claim is
     // worth the cost: a stub in the middle would prove nothing about a keystroke reaching a
@@ -692,7 +692,7 @@ describe('QuotationDocumentClient edit view', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
 
     // The server's rows, exactly as they were before Edit, and no request on the way past.
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Save' })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Save quotation' })).toBeNull());
     expect(await gearOffersEdit()).toBe(true);
     expect(screen.queryByRole('textbox', { name: 'Qty on SRT-WC-01' })).toBeNull();
     expect(screen.getAllByText('RM 9,000.00').length).toBeGreaterThan(0);
@@ -768,7 +768,7 @@ describe('QuotationDocumentClient edit view', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(await screen.findAllByText('Removed on save')).toHaveLength(2);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
 
     const dialog = await screen.findByRole('alertdialog');
     expect(within(dialog).getByText(/Saving removes 2 lines/)).toBeInTheDocument();
@@ -815,7 +815,7 @@ describe('QuotationDocumentClient edit view', () => {
 
     await waitFor(() => expect(reviseQuotation).toHaveBeenCalledWith('q1'));
     // And it lands in edit mode rather than making somebody press Edit a second time.
-    expect(await screen.findByRole('button', { name: 'Save' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Save quotation' })).toBeInTheDocument();
   });
 
   it('does not offer a revision because ANOTHER document in the project is locked', async () => {
@@ -845,7 +845,7 @@ describe('QuotationDocumentClient edit view', () => {
     await pressEdit();
 
     // Straight into edit mode: no prompt, and nothing revised.
-    expect(await screen.findByRole('button', { name: 'Save' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Save quotation' })).toBeInTheDocument();
     expect(screen.queryByText(/This version is with the customer/i)).not.toBeInTheDocument();
     expect(reviseQuotation).not.toHaveBeenCalled();
   });
@@ -925,7 +925,7 @@ describe('QuotationDocumentClient letterhead editing', () => {
     // Nothing has left the browser, exactly as for a line edit.
     expect(updateQuotationDocument).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
 
     await waitFor(() => expect(updateQuotationDocument).toHaveBeenCalledTimes(1));
     const [projectArg, documentArg, body] = updateQuotationDocument.mock.calls[0] as [
@@ -981,7 +981,7 @@ describe('QuotationDocumentClient letterhead editing', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
 
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Save' })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Save quotation' })).toBeNull());
     expect(await gearOffersEdit()).toBe(true);
     expect(screen.queryByLabelText('Your Ref')).toBeNull();
     expect(screen.getByText('NCSB/2026/117')).toBeInTheDocument();
@@ -1002,7 +1002,7 @@ describe('QuotationDocumentClient letterhead editing', () => {
     fireEvent.change(await screen.findByLabelText('Address'), { target: { value: address } });
     expect(screen.getByLabelText('Address')).toHaveValue(address);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
 
     await waitFor(() => expect(updateQuotationDocument).toHaveBeenCalledTimes(1));
     expect(updateQuotationDocument.mock.calls[0][2]).toEqual({
@@ -1292,7 +1292,7 @@ describe('QuotationDocumentClient change request', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Open a new version and edit' }));
 
     await waitFor(() => expect(reviseQuotation).toHaveBeenCalledWith('q1'));
-    expect(await screen.findByRole('button', { name: 'Save' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Save quotation' })).toBeInTheDocument();
   });
 
   it('gives a reader the words but no way to act on them', async () => {

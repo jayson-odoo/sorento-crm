@@ -618,7 +618,7 @@ export function LoadingPlanView({ planId }: { planId: string }) {
               onClick={() => (editedCount > 0 ? setCutOffDropOpen(true) : void applyCutOff())}
             >
               {changeCutOff.isPending ? <LoaderCircle className="size-4 animate-spin" /> : null}
-              Save
+              Save cut-off
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -494,7 +494,7 @@ export function DeliveryScheduleReviewClient({
                 disabled={!canEdit || readingNow || columns.length === 0}
                 onClick={() => setConfirming(true)}
               >
-                Confirm
+                Confirm schedule
               </Button>
             )}
             </>

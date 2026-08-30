@@ -429,7 +429,7 @@ describe('E4 / E8 - Save', () => {
     await waitForCard();
 
     fireEvent.change(modeSelect(), { target: { value: 'compact' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save stock visibility' }));
 
     await waitFor(() =>
       expect(service.saveStockVisibility).toHaveBeenCalledWith(CONTACT_SCOPE, {
@@ -458,7 +458,7 @@ describe('E4 / E8 - Save', () => {
     expect(chipLabels()).toEqual([]);
 
     fireEvent.change(modeSelect(), { target: { value: 'availability' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save stock visibility' }));
 
     await waitFor(() =>
       expect(service.saveStockVisibility).toHaveBeenCalledWith(CONTACT_SCOPE, {
@@ -486,7 +486,7 @@ describe('E4 / E8 - Save', () => {
     );
 
     fireEvent.change(modeSelect(), { target: { value: 'availability' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save stock visibility' }));
 
     await waitFor(() =>
       expect(service.saveStockVisibility).toHaveBeenCalledWith(CONTACT_SCOPE, {
@@ -510,7 +510,7 @@ describe('E4 / E8 - Save', () => {
     expect(screen.getByTestId('locations-picker').getAttribute('data-placeholder')).toBe(
       'No locations',
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save stock visibility' }));
 
     await waitFor(() =>
       expect(service.saveStockVisibility).toHaveBeenCalledWith(CONTACT_SCOPE, {
@@ -528,7 +528,7 @@ describe('E4 / E8 - Save', () => {
         'All locations',
       ),
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save stock visibility' }));
 
     await waitFor(() =>
       expect(service.saveStockVisibility).toHaveBeenLastCalledWith(CONTACT_SCOPE, {
@@ -549,7 +549,7 @@ describe('E4 / E8 - Save', () => {
     renderSection(CONTACT_SCOPE);
     await waitForCard();
     fireEvent.change(modeSelect(), { target: { value: 'compact' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save stock visibility' }));
 
     await waitFor(() =>
       expect(toast.error).toHaveBeenCalledWith(
@@ -610,9 +610,9 @@ describe('Save enablement', () => {
     renderSection(CONTACT_SCOPE);
     await waitForCard();
 
-    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Save stock visibility' })).toBeDisabled();
     fireEvent.change(modeSelect(), { target: { value: 'availability' } });
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled());
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save stock visibility' })).toBeEnabled());
   });
 
   it('stays enabled on an inheriting tier even when the values still match', async () => {
@@ -624,7 +624,7 @@ describe('Save enablement', () => {
     await waitForCard();
 
     // Nothing is dirty, but there is no row yet - Save IS the act of creating one.
-    expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Save stock visibility' })).toBeEnabled();
   });
 });
 
@@ -671,7 +671,7 @@ describe('Scope parity', () => {
     expect(screen.getByRole('button', { name: 'Remove policy' })).toBeInTheDocument();
 
     fireEvent.change(modeSelect(), { target: { value: 'compact' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save stock visibility' }));
     await waitFor(() =>
       expect(service.saveStockVisibility).toHaveBeenCalledWith(ACCESS_TYPE_SCOPE, {
         mode: 'compact',
@@ -697,7 +697,7 @@ describe('Scope parity', () => {
     expect(screen.queryByRole('button', { name: /^Remove/ })).not.toBeInTheDocument();
 
     fireEvent.change(modeSelect(), { target: { value: 'compact' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save stock visibility' }));
     await waitFor(() =>
       expect(service.saveStockVisibility).toHaveBeenCalledWith(DEFAULT_SCOPE, {
         mode: 'compact',
@@ -755,11 +755,11 @@ describe('E9 - Hide zero-quantity locations', () => {
     renderSection(CONTACT_SCOPE);
     await waitForCard();
     // Nothing else touched, so Save is only reachable if the toggle is dirty.
-    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Save stock visibility' })).toBeDisabled();
 
     fireEvent.click(hideZeroSwitch());
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled());
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save stock visibility' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: 'Save stock visibility' }));
 
     await waitFor(() =>
       expect(service.saveStockVisibility).toHaveBeenCalledWith(CONTACT_SCOPE, {
@@ -784,7 +784,7 @@ describe('E9 - Hide zero-quantity locations', () => {
     expect(hideZeroSwitch()).toHaveAttribute('data-state', 'checked');
 
     fireEvent.click(hideZeroSwitch());
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save stock visibility' }));
 
     await waitFor(() =>
       expect(service.saveStockVisibility).toHaveBeenCalledWith(CONTACT_SCOPE, {
@@ -806,7 +806,7 @@ describe('E9 - Hide zero-quantity locations', () => {
     renderSection(ACCESS_TYPE_SCOPE);
     await waitForCard();
     fireEvent.click(hideZeroSwitch());
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save stock visibility' }));
 
     await waitFor(() =>
       expect(service.saveStockVisibility).toHaveBeenCalledWith(ACCESS_TYPE_SCOPE, {

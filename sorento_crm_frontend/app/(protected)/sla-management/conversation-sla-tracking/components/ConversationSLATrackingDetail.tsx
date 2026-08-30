@@ -476,7 +476,7 @@ export default function ConversationSLATrackingDetail({
                 );
               }}
             >
-              Save
+              Save assignee
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -515,7 +515,7 @@ export default function ConversationSLATrackingDetail({
                 }
               }}
             >
-              Save
+              Save tier start
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -554,7 +554,7 @@ export default function ConversationSLATrackingDetail({
                 }
               }}
             >
-              Save
+              Save initiated time
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -666,7 +666,7 @@ export default function ConversationSLATrackingDetail({
                 );
               }}
             >
-              Confirm
+              Mark responded
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -744,7 +744,7 @@ export default function ConversationSLATrackingDetail({
                 );
               }}
             >
-              Confirm
+              Mark resolved
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

@@ -190,7 +190,7 @@ describe('PackingListUploadDialog - the inherited two-step flow', () => {
     fireEvent.click(testButton());
 
     expect(await screen.findByText(/no container_no column/)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Confirm' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Import packing list' })).toBeDisabled();
   });
 });
 
@@ -210,7 +210,7 @@ describe('PackingListUploadDialog - whose lines these are', () => {
       pickFile();
 
       expect(testButton()).toBeDisabled();
-      expect(screen.getByRole('button', { name: 'Confirm' })).toBeDisabled();
+      expect(screen.getByRole('button', { name: 'Import packing list' })).toBeDisabled();
       expect(testButton()).toHaveAttribute('title', 'Choose a supplier first');
       expect(applyPackingList).not.toHaveBeenCalled();
       expect(previewPackingList).not.toHaveBeenCalled();
@@ -242,7 +242,7 @@ describe('PackingListUploadDialog - Confirm, which is still synchronous here', (
     const { onImported } = openDialog();
     const file = pickFile();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Import packing list' }));
 
     await waitFor(() =>
       expect(applyPackingList).toHaveBeenCalledWith(file, {
@@ -263,8 +263,8 @@ describe('PackingListUploadDialog - Confirm, which is still synchronous here', (
     openDialog();
     pickFile();
 
-    expect(screen.getByRole('button', { name: 'Confirm' })).toBeEnabled();
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    expect(screen.getByRole('button', { name: 'Import packing list' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Import packing list' }));
 
     await waitFor(() => expect(applyPackingList).toHaveBeenCalledTimes(1));
     expect(previewPackingList).not.toHaveBeenCalled();
@@ -278,7 +278,7 @@ describe('PackingListUploadDialog - Confirm, which is still synchronous here', (
       openDialog();
       pickFile();
 
-      fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Import packing list' }));
 
       expect(await screen.findByText('supplier_id is required')).toBeInTheDocument();
     });
@@ -288,12 +288,12 @@ describe('PackingListUploadDialog - Confirm, which is still synchronous here', (
     openDialog();
     pickFile();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Import packing list' }));
 
     expect(
       await screen.findByText('Select a single company before uploading.'),
     ).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Confirm' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Import packing list' })).toBeInTheDocument();
   });
 });
 
@@ -309,7 +309,7 @@ describe('PackingListUploadDialog - the currency, asked for only when nothing el
     openDialog();
     const file = pickFile();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Import packing list' }));
 
     await waitFor(() =>
       expect(applyPackingList).toHaveBeenCalledWith(file, {
@@ -362,7 +362,7 @@ describe('PackingListUploadDialog - the currency, asked for only when nothing el
     // Confirm stays disabled until BOTH the read and the validate-only apply have
     // resolved (`canConfirm` is false while `testing`). Being called is not being
     // resolved: under CI load the click landed on a disabled button and was a no-op.
-    const confirm = screen.getByRole('button', { name: 'Confirm' });
+    const confirm = screen.getByRole('button', { name: 'Import packing list' });
     await waitFor(() => expect(confirm).toBeEnabled());
     fireEvent.click(confirm);
     await waitFor(() =>

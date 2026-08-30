@@ -1070,7 +1070,7 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
                 </Button>
                 <Button size="sm" onClick={() => void saveEdit()} disabled={saving}>
                   {saving ? <LoaderCircle className="me-2 size-4 animate-spin" /> : null}
-                  Save
+                  Save proforma invoice
                 </Button>
               </div>
             ) : (

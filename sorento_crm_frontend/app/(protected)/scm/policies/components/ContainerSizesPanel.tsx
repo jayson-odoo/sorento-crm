@@ -219,7 +219,7 @@ export function ContainerSizesPanel() {
               onClick={() => draft && save.mutate(draft)}
               disabled={!valid || save.isPending}
             >
-              Save
+              Save container size
             </Button>
           </DialogFooter>
         </DialogContent>

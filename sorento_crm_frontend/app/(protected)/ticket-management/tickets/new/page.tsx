@@ -174,7 +174,7 @@ export default function NewTicketPage() {
                 Save Draft
               </Button>
               <Button disabled={submitting} onClick={() => submit(false)}>
-                {submitting ? 'Submitting…' : 'Submit'}
+                {submitting ? 'Submitting…' : 'Submit ticket'}
               </Button>
             </div>
           </div>

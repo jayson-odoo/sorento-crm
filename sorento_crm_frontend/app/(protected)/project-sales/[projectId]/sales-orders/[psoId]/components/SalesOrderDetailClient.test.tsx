@@ -840,7 +840,7 @@ describe('SalesOrderDetailClient header', () => {
 
     const gear = await openGear();
     fireEvent.click(gear.getByRole('menuitem', { name: /Edit this sales order/ }));
-    await screen.findByRole('button', { name: 'Save' });
+    await screen.findByRole('button', { name: 'Save sales order' });
 
     expect(screen.queryByRole('button', { name: 'Next sales order' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Previous sales order' })).toBeNull();

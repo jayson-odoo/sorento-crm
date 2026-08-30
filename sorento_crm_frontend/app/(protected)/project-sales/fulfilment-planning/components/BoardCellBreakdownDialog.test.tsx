@@ -701,7 +701,7 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
       screen.getByTestId('decision-pill-so-a|1|WESERP10B|2026-08-31'),
     ).toHaveTextContent('Suggested');
     expect(
-      screen.queryByRole('button', { name: 'Save' }),
+      screen.queryByRole('button', { name: 'Save decision' }),
     ).not.toBeInTheDocument();
     expect(
       screen.queryByRole('button', { name: 'Reject' }),
@@ -823,7 +823,7 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
     const { onDecide } = renderDialog([demand()]);
 
     fireEvent.click(screen.getByText('SO403340'));
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
 
     expect(onDecide).toHaveBeenCalledWith('so-a|1|WESERP10B|2026-08-31', {
       verdict: 'approved',
@@ -857,7 +857,7 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
     fireEvent.click(screen.getByText('SO403340'));
     // Buy is a whole-line switch: on, the stock rows clear and the whole 100 is bought.
     fireEvent.click(screen.getByLabelText('Buy the whole line'));
-    const save = screen.getByRole('button', { name: 'Save' });
+    const save = screen.getByRole('button', { name: 'Save decision' });
     expect(save).toBeDisabled();
 
     fireEvent.change(screen.getByLabelText(/^Why this differs/), {
@@ -906,7 +906,7 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
 
     expect(screen.getByLabelText('Reserve at BRW-BB')).toBeEnabled();
     expect(
-      screen.getByRole('button', { name: 'Save' }),
+      screen.getByRole('button', { name: 'Save decision' }),
     ).toBeInTheDocument();
   });
 
@@ -940,7 +940,7 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
     fireEvent.change(screen.getByLabelText('Reserve at BRW-BB'), {
       target: { value: '100' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
 
     expect(onDecide).toHaveBeenCalledWith('so-a|1|WESERP10B|2026-08-31', {
       verdict: 'approved',
@@ -988,7 +988,7 @@ describe('BoardCellBreakdownDialog: a covered row opens locked, Amend only (C11)
       within(panel).getByRole('button', { name: 'Amend' }),
     ).toBeInTheDocument();
     expect(
-      within(panel).queryByRole('button', { name: 'Save' }),
+      within(panel).queryByRole('button', { name: 'Save decision' }),
     ).not.toBeInTheDocument();
     expect(
       within(panel).queryByRole('button', { name: 'Reject' }),
@@ -1001,7 +1001,7 @@ describe('BoardCellBreakdownDialog: a line with no location (AC-FP16)', () => {
     renderDialog([demand({ fulfilment_location: null })]);
 
     expect(
-      screen.queryByRole('button', { name: 'Save' }),
+      screen.queryByRole('button', { name: 'Save decision' }),
     ).not.toBeInTheDocument();
     expect(screen.getByText('Needs a location')).toBeInTheDocument();
   });
@@ -1032,7 +1032,7 @@ describe('BoardCellBreakdownDialog: the actions can never be covered', () => {
     expect(body.className).toContain('min-h-0');
     expect(body.contains(contributionTable())).toBe(true);
     expect(
-      body.contains(screen.getByRole('button', { name: 'Save' })),
+      body.contains(screen.getByRole('button', { name: 'Save decision' })),
     ).toBe(true);
   });
 
@@ -1611,7 +1611,7 @@ describe('BoardCellBreakdownDialog: bulk approve and reject', () => {
 
     fireEvent.click(screen.getByText('SO000002'));
     expect(
-      screen.getByRole('button', { name: 'Save' }),
+      screen.getByRole('button', { name: 'Save decision' }),
     ).toBeInTheDocument();
   });
 });
@@ -2268,7 +2268,7 @@ describe('BoardCellBreakdownDialog: a line a decision already covers', () => {
     fireEvent.click(screen.getByText('SO403340'));
     expect(screen.getByLabelText('Buy the whole line')).toBeEnabled();
     expect(
-      screen.getByRole('button', { name: 'Save' }),
+      screen.getByRole('button', { name: 'Save decision' }),
     ).toBeInTheDocument();
     expect(
       screen.queryByRole('button', { name: 'Amend' }),

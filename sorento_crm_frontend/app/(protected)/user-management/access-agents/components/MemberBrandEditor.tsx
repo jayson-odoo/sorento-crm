@@ -154,7 +154,7 @@ export default function MemberBrandEditor({
               Cancel
             </Button>
             <Button size="sm" onClick={save} disabled={setBrands.isPending}>
-              Save
+              Save brands
             </Button>
           </DialogFooter>
         </DialogContent>

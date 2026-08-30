@@ -106,7 +106,7 @@ export default function SearchTuning() {
                     disabled={!dirty || saving === row.policy_key}
                     onClick={() => save(row)}
                   >
-                    {saving === row.policy_key ? 'Saving…' : 'Save'}
+                    {saving === row.policy_key ? 'Saving…' : 'Save tuning'}
                   </Button>
                 </div>
               </div>

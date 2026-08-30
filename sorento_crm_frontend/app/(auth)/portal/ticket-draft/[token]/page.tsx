@@ -296,7 +296,7 @@ export default function TicketDraftPortalPage({ params }: PageProps) {
                   Cancel
                 </Button>
                 <Button size="sm" onClick={saveEdit} disabled={busy || !draftText.trim()}>
-                  Save
+                  Save description
                 </Button>
               </div>
             </div>

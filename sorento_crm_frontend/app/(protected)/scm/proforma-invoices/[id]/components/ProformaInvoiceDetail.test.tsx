@@ -570,7 +570,7 @@ describe('ProformaInvoiceDetail - editing is a draft until Save', () => {
     beginEdit();
 
     expect(screen.getByText('Nothing is written until you press Save.')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^save$/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Save proforma invoice$/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /^cancel$/i })).toBeInTheDocument();
     // Nav and the way out act on the STORED invoice, so they are not offered over a screen
     // full of unsaved changes.
@@ -610,7 +610,7 @@ describe('ProformaInvoiceDetail - editing is a draft until Save', () => {
     beginEdit();
     openTab('Lines');
     fireEvent.change(screen.getByLabelText('Quantity for ITEM-1'), { target: { value: '8' } });
-    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^Save proforma invoice$/i }));
 
     await waitFor(() => expect(writes.save).toHaveBeenCalledTimes(1));
     const payload = lastSavePayload();
@@ -634,7 +634,7 @@ describe('ProformaInvoiceDetail - editing is a draft until Save', () => {
     renderDetail();
     beginEdit();
     fireEvent.change(screen.getByLabelText('PI number'), { target: { value: 'PI-REAL-9 ' } });
-    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^Save proforma invoice$/i }));
 
     await waitFor(() => expect(writes.save).toHaveBeenCalledTimes(1));
     expect(lastSavePayload().pi_number).toBe('PI-REAL-9');
@@ -645,7 +645,7 @@ describe('ProformaInvoiceDetail - editing is a draft until Save', () => {
     renderDetail();
     beginEdit();
     fireEvent.change(screen.getByLabelText('PI number'), { target: { value: '  ' } });
-    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^Save proforma invoice$/i }));
 
     await waitFor(() => expect(writes.save).not.toHaveBeenCalled());
     expect(screen.getByLabelText('PI number')).toBeInTheDocument();
@@ -684,7 +684,7 @@ describe('ProformaInvoiceDetail - editing is a draft until Save', () => {
     openTab('Lines');
 
     fireEvent.click(screen.getByRole('button', { name: /^remove$/i }));
-    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^Save proforma invoice$/i }));
 
     await waitFor(() => expect(writes.save).toHaveBeenCalledTimes(1));
     expect(lastSavePayload().lines).toEqual([]);
@@ -701,7 +701,7 @@ describe('ProformaInvoiceDetail - editing is a draft until Save', () => {
       target: { value: 'HAND-1' },
     });
     fireEvent.change(screen.getByLabelText('Quantity for HAND-1'), { target: { value: '4' } });
-    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^Save proforma invoice$/i }));
 
     await waitFor(() => expect(writes.save).toHaveBeenCalledTimes(1));
     const lines = lastSavePayload().lines ?? [];
@@ -720,7 +720,7 @@ describe('ProformaInvoiceDetail - editing is a draft until Save', () => {
     fireEvent.change(screen.getByLabelText('Item code for line 2'), {
       target: { value: 'HAND-1' },
     });
-    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^Save proforma invoice$/i }));
 
     await waitFor(() => expect(writes.save).not.toHaveBeenCalled());
   });

@@ -66,7 +66,7 @@ describe('MemberMarketSegmentEditor', () => {
     renderWithClient(<MemberMarketSegmentEditor teamId="t1" userId="u1" />);
     openPicker();
     fireEvent.click(screen.getByRole('option', { name: 'Project' }));
-    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^Save segments$/i }));
     expect(setMutate).toHaveBeenCalledTimes(1);
     expect(setMutate.mock.calls[0][0]).toEqual(['retail', 'project']);
   });
@@ -82,7 +82,7 @@ describe('MemberMarketSegmentEditor', () => {
       fireEvent.click(screen.getByLabelText(/edit market segments/i)),
     ).not.toThrow();
     expect(screen.getByText('Market segments served')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^Save segments$/i }));
     expect(setMutate.mock.calls[0][0]).toEqual([]);
   });
 
@@ -96,7 +96,7 @@ describe('MemberMarketSegmentEditor', () => {
     // A refetch resolves to a new array while the user is mid-edit.
     useMemberMarketSegments.mockReturnValue({ data: ['retail'], isLoading: false });
     rerender(<MemberMarketSegmentEditor teamId="t1" userId="u1" />);
-    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^Save segments$/i }));
     expect(setMutate.mock.calls[0][0]).toEqual(['retail', 'project']);
   });
 
@@ -107,7 +107,7 @@ describe('MemberMarketSegmentEditor', () => {
     openPicker();
     expect(screen.getByText(/no market segments configured/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('option', { name: 'retail' }));
-    const save = screen.getByRole('button', { name: /^save$/i });
+    const save = screen.getByRole('button', { name: /^Save segments$/i });
     expect(save).not.toBeDisabled();
     fireEvent.click(save);
     expect(setMutate.mock.calls[0][0]).toEqual([]);

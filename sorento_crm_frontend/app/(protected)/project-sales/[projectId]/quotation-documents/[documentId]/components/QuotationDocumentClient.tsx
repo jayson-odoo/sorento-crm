@@ -602,7 +602,7 @@ export function QuotationDocumentClient({
                     title={edit.isDirty ? undefined : 'Nothing has changed yet'}
                     onClick={requestSave}
                   >
-                    {isSaving ? 'Saving...' : 'Save'}
+                    {isSaving ? 'Saving...' : 'Save quotation'}
                   </Button>
                 </>
               )}

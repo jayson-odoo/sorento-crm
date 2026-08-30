@@ -398,7 +398,7 @@ describe('LoadingPlanView (the record)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Change cut-off' }));
     const input = await screen.findByLabelText('Sales order cut-off');
     fireEvent.change(input, { target: { value: '2026-10-31' } });
-    fireEvent.click(screen.getAllByRole('button', { name: 'Save' })[0]);
+    fireEvent.click(screen.getAllByRole('button', { name: 'Save cut-off' })[0]);
 
     await waitFor(() =>
       expect(changeCutOff).toHaveBeenCalledWith('2026-10-31', expect.anything()),
@@ -463,7 +463,7 @@ describe('LoadingPlanView, changing the cut-off with edits on the screen', () =>
     fireEvent.click(screen.getByTestId('type-qty'));
 
     fireEvent.click(screen.getByRole('button', { name: 'Change cut-off' }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Save' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Save cut-off' }));
 
     expect(await screen.findByText('Drop your 1 typed quantity?')).toBeTruthy();
     expect(changeCutOff).not.toHaveBeenCalled();

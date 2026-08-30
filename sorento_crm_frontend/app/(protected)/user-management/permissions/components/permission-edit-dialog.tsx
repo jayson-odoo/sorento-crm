@@ -205,7 +205,7 @@ const PermissionEditDialog = ({
                 disabled={isLoading || !form.formState.isDirty}
               >
                 {isLoading && <LoaderCircleIcon className="animate-spin" />}
-                Submit
+                Save permission
               </Button>
             </DialogFooter>
           </form>
