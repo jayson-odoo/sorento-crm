@@ -25,7 +25,6 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { formatDate } from '@/lib/helpers';
 import { formatStatusLabel } from '@/lib/status-badge';
 import { getProducts } from '@/app/(protected)/master-data-management/products/services/productService';
@@ -128,7 +127,6 @@ export function PackingListLinesTab() {
   const [search, setSearch] = useState('');
   const [sortField, setSortField] = useState<SortField>('product');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
-  const [lineToRemove, setLineToRemove] = useState<DraftLine | null>(null);
 
   const invoicesByLine = sourceInvoices?.by_shipment_line ?? {};
 
@@ -294,22 +292,6 @@ export function PackingListLinesTab() {
 
   return (
     <>
-      {/* Nothing is removed on one click - the CRUD standard's rule. */}
-      <ConfirmDeleteDialog
-        open={!!lineToRemove}
-        onOpenChange={(o) => !o && setLineToRemove(null)}
-        title="Remove this line?"
-        description={
-          lineToRemove
-            ? `This removes ${lineToRemove.product_code || 'the new line'} from this packing list when you save. This action cannot be undone.`
-            : ''
-        }
-        onDelete={async () => {
-          if (lineToRemove) removeLine(lineToRemove.key);
-        }}
-        successMessage="Line removed. Save to apply it."
-      />
-
       <Card>
         {/* "Shipment Lines" plus a 224px search box does not fit the 286px of card content
             at 375px, so the header wraps rather than pushing the page into scroll. */}
@@ -494,7 +476,10 @@ export function PackingListLinesTab() {
                           variant="ghost"
                           size="sm"
                           className="h-8 gap-1 px-2 text-xs text-destructive hover:text-destructive"
-                          onClick={() => setLineToRemove(line)}
+                          // Nothing is confirmed and nothing is deferred (D7):
+                          // the line leaves the DRAFT, and Save is what sends it,
+                          // so until then there is nothing to take back.
+                          onClick={() => removeLine(line.key)}
                         >
                           <Trash2 className="size-3.5" />
                           Remove

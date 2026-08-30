@@ -15,6 +15,19 @@ import {
 import { LoaderCircleIcon } from 'lucide-react';
 import { useBulkDeleteProducts } from '../hooks/useProducts';
 
+/**
+ * KEPT as a dialog where S6b turned single-record deletes into grace windows (D7).
+ *
+ * `/pending-actions` holds ONE pending action per record, and the countdown that
+ * replaces the dialog is a countdown for one record: it names what is going ("Ergonomic
+ * Chair"), it dims that row, and Cancel withdraws that action. A selection of forty rows
+ * has none of those - forty toasts, or one toast that can only say "40 things", and a
+ * Cancel that would have to withdraw forty actions and report which of them it missed.
+ *
+ * Selecting rows and then pressing Delete selected is also already a deliberate two-step
+ * gesture, which is what the grace window exists to give a one-click action. So bulk keeps
+ * the dialog, and the count in its copy, per the CRUD standard.
+ */
 interface ProductBulkDeleteDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
