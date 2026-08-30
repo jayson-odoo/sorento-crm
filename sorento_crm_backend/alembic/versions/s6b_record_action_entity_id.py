@@ -47,7 +47,8 @@ def _column_type() -> str | None:
     row = bind.execute(
         sa.text(
             "SELECT data_type FROM information_schema.columns "
-            "WHERE table_name = :t AND column_name = :c"
+            "WHERE table_name = :t AND column_name = :c "
+            "AND table_schema = current_schema()"
         ),
         {"t": TABLE, "c": COLUMN},
     ).first()
