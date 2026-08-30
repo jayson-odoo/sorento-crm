@@ -88,7 +88,7 @@ export interface TrackPendingActionInput {
   /** Said if the commit is still fresh when it is observed. */
   successMessage: string;
   /** Lists to refetch once the action has committed. */
-  invalidateKeys: readonly unknown[][];
+  invalidateKeys: readonly (readonly unknown[])[];
 }
 
 interface TrackedAction extends Omit<TrackPendingActionInput, 'commitAt'> {
@@ -136,10 +136,36 @@ function untrackKey(key: string) {
   if (_tracked.size === 0) detachWakeListeners();
 }
 
-/** Stop tracking AND take the dimming off the row. */
+/**
+ * The countdown toast for one parked action, taken down.
+ *
+ * Owned here rather than by the surface that raised it, because the surface may be
+ * pointed at another record by the time this one settles: a reader deleting three rows
+ * in a row re-points ONE hook three times, and each of the three toasts still has to
+ * come down when its own action ends. `deferredToast` ids by the action, which is what
+ * makes that possible without holding a handle.
+ */
+function dismissToastFor(actionId: string) {
+  toast.dismiss(`pending-action-${actionId}`);
+}
+
+/** Stop tracking AND take the dimming off the row, and its countdown with it. */
 function releaseKey(key: string) {
+  const entry = _tracked.get(key);
+  if (entry) dismissToastFor(entry.id);
   untrackKey(key);
   unmarkKey(key);
+}
+
+/** The same, for a caller that knows the ACTION (a cancel) rather than the record. */
+function releaseById(actionId: string) {
+  for (const [key, entry] of _tracked) {
+    if (entry.id === actionId) {
+      releaseKey(key);
+      return;
+    }
+  }
+  dismissToastFor(actionId);
 }
 
 function armTimer(entry: TrackedAction, key: string) {
@@ -256,6 +282,8 @@ export const pendingEntityStore = {
   clear(entityType: string, entityId: string): void {
     releaseKey(pendingEntityKey(entityType, entityId));
   },
+  /** The same, said by action id - what a cancel knows. */
+  releaseById,
   subscribe(fn: Listener): () => void {
     _listeners.add(fn);
     return () => {
