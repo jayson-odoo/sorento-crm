@@ -15,7 +15,7 @@ vi.mock('@/services/pendingActionService', () => ({
   getCurrentPendingAction: vi.fn().mockResolvedValue({ pending: null, last_outcome: null }),
 }));
 
-import { render, screen, cleanup, fireEvent, waitFor, within } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import MarketSegmentsAdmin from './MarketSegmentsAdmin';

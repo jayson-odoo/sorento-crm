@@ -25,7 +25,7 @@ vi.mock('@/services/pendingActionService', () => ({
   getCurrentPendingAction: vi.fn().mockResolvedValue({ pending: null, last_outcome: null }),
 }));
 
-import { render, screen, within, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 // jsdom polyfills for ScrollArea / DataGrid.

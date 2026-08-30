@@ -19,7 +19,7 @@
  */
 import React, { Suspense } from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, act, waitFor, within } from '@testing-library/react';
+import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import WarehouseDetailPage from './page';
@@ -205,13 +205,6 @@ async function startDelete() {
     fireEvent.click(await screen.findByRole('menuitem', { name: /^delete warehouse$/i }));
   });
 }
-
-/** How many times ['warehouses'] was invalidated. Two means two mutations ran. */
-const warehousesInvalidations = (invalidate: { mock: { calls: unknown[][] } }) =>
-  invalidate.mock.calls.filter((call) => {
-    const arg = call[0] as { queryKey?: unknown[] } | undefined;
-    return JSON.stringify(arg?.queryKey) === JSON.stringify(['warehouses']);
-  }).length;
 
 const tabNames = () =>
   screen.getAllByRole('tab').map((t) => (t.textContent ?? '').trim());
