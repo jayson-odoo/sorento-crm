@@ -142,7 +142,19 @@ export function useDeferredAction(
       // ten seconds, and a second of "nothing happened" is where a second click
       // comes from.
       queryClient.setQueryData(queryKey, { pending: action, last_outcome: null });
-      pendingEntityStore.mark(entityType, action.entity_id);
+      // The store dims the row AND arms the one timer that sees the action
+      // through if this surface is gone by the time the window lapses - a delete
+      // started on a list the user then scrolls past still has to take its row
+      // out of the cache (S6 feedback A).
+      pendingEntityStore.track({
+        id: action.id,
+        entityType,
+        entityId: action.entity_id,
+        actionKey,
+        commitAt: action.commit_at,
+        successMessage,
+        invalidateKeys: invalidateKeys ?? [],
+      });
       if (surface === 'toast') {
         toastIdRef.current = deferredToast({
           pending: action,
@@ -155,14 +167,19 @@ export function useDeferredAction(
     onError: (error: Error) => toast.error(error.message),
   });
 
-  /** Take back what the action put on screen. */
-  const clearAffordances = useCallback(() => {
-    if (entityId) pendingEntityStore.clear(entityType, entityId);
+  /** Take back the countdown THIS surface put on screen. */
+  const dismissCountdown = useCallback(() => {
     if (toastIdRef.current !== null) {
       dismissDeferredToast(toastIdRef.current);
       toastIdRef.current = null;
     }
-  }, [entityId, entityType]);
+  }, []);
+
+  /** The action is over: the countdown goes, and so does the row's dimming. */
+  const clearAffordances = useCallback(() => {
+    dismissCountdown();
+    if (entityId) pendingEntityStore.clear(entityType, entityId);
+  }, [dismissCountdown, entityId, entityType]);
 
   // The window closes on the SERVER. The first the client hears of it is `pending`
   // going null on the next read, and what happened next is in `last_outcome`: a
@@ -181,22 +198,31 @@ export function useDeferredAction(
     if (!outcome || outcome.id !== previousId) return;
     if (outcome.action_key !== actionKey) return;
 
-    // Two surfaces can be watching one record - the gear and the danger zone -
-    // and a click that re-renders their parent remounts them, so "the one that
-    // started it" is not a thing this can hold on to. The toast is keyed on the
-    // action instead, which is what stops the reader seeing it twice.
     if (outcome.status === 'committed') {
-      toast.success(successMessage, { id: `pending-outcome-${outcome.id}` });
+      // A record this tab watched a delete commit on is GONE, not missing: a
+      // link to it that is still on screen has to read as "already deleted"
+      // rather than as a failure (S6 feedback C).
+      if (entityId && actionKey.endsWith('.delete')) {
+        pendingEntityStore.noteCommittedDelete(entityId);
+      }
       for (const key of invalidateKeys ?? []) {
         queryClient.invalidateQueries({ queryKey: key });
       }
+      // The page has to leave a deleted record whether or not the outcome was
+      // still worth announcing: the record is gone either way.
       onCommitted?.();
-    } else if (outcome.status === 'failed') {
-      toast.error(outcome.error_text || 'The action could not be applied.', {
-        id: `pending-outcome-${outcome.id}`,
-      });
     }
+
+    // Two surfaces can be watching one record - the gear and the danger zone -
+    // and a click that re-renders their parent remounts them, so "the one that
+    // started it" is not a thing this can hold on to. The store dedupes by
+    // outcome id instead, which is what stops the reader seeing it twice, and it
+    // drops an outcome the reader has long since forgotten: a remount can find a
+    // minutes-old `last_outcome` in the cache, and "Delivery order updated" on
+    // arrival is noise standing in front of the record.
+    pendingEntityStore.announceOutcome(outcome, successMessage);
   }, [
+    entityId,
     pending,
     data,
     actionKey,
@@ -209,9 +235,12 @@ export function useDeferredAction(
   ]);
 
   // A row that scrolls out of the grid, or a record page left mid-window, must not
-  // leave a dimmed row and a live toast behind. The action itself is the server's
-  // and carries on regardless - which is the whole point of the model (S6-08).
-  useEffect(() => () => clearAffordances(), [clearAffordances]);
+  // leave a live toast behind - this surface is gone and cannot cancel anything.
+  // The row's dimming is NOT taken back here: the action is the server's and
+  // carries on regardless (S6-08), so a user who comes back to the list mid-window
+  // must still see the row on its way out. The store's timer takes it off at
+  // commit.
+  useEffect(() => () => dismissCountdown(), [dismissCountdown]);
 
   const start = useCallback(
     (override?: Record<string, unknown>) => {

@@ -1,13 +1,12 @@
 /**
- * Column drag-and-drop, including the column a phone pins (S5 fix round 2).
+ * Column drag-and-drop, including a pinned column (S5 fix round 2).
  *
  * The bug this pins down: `getPinningStyles` was spread AFTER dnd-kit's style
  * on every cell, so a PINNED column carried `position: sticky` while it was
  * being dragged. Sticky wins over dnd-kit's `position: relative`, the transform
- * had nowhere to apply, and the column simply did not move. That is not an edge
- * case: under `sm` the grid pins the identifier column for every list, so on a
- * phone the first column a user would reach for was the one column that could
- * not be reordered.
+ * had nowhere to apply, and the column simply did not move. The phone pin that
+ * first exposed it is gone (the user chose to unpin, 2026-08-30), but a list
+ * that pins a column on purpose still has to be able to reorder it.
  *
  * jsdom has no layout, so every `getBoundingClientRect` is zeros and dnd-kit's
  * collision detection has nothing to sort. The stub below gives each cell the
@@ -57,23 +56,6 @@ const COLUMNS: ColumnDef<Row>[] = [
   { id: 'status', accessorKey: 'status', header: 'Status', size: COLUMN_WIDTH },
 ];
 
-function setMatchMedia(matches: boolean) {
-  Object.defineProperty(window, 'matchMedia', {
-    writable: true,
-    configurable: true,
-    value: (query: string) => ({
-      matches,
-      media: query,
-      onchange: null,
-      addEventListener: vi.fn(),
-      removeEventListener: vi.fn(),
-      addListener: vi.fn(),
-      removeListener: vi.fn(),
-      dispatchEvent: vi.fn(),
-    }),
-  });
-}
-
 /**
  * Lays the cells of every row out left to right at their declared width, so
  * dnd-kit's `closestCenter` has real centres to compare. Without it every rect
@@ -113,12 +95,15 @@ function stubCellGeometry() {
 
 let latest: Table<Row> | null = null;
 
-function Harness() {
+function Harness({ pinned }: { pinned?: boolean } = {}) {
   const table = useReactTable({
     data: ROWS,
     columns: COLUMNS,
     getRowId: (r) => r.id,
     getCoreRowModel: getCoreRowModel(),
+    // What a list that opts into pinning does. Nothing pins a column by itself
+    // any more, on a phone or anywhere else.
+    initialState: pinned ? { columnPinning: { left: ['name'], right: [] } } : undefined,
   });
   latest = table;
   return (
@@ -175,7 +160,6 @@ async function drop() {
 
 beforeEach(() => {
   latest = null;
-  setMatchMedia(false);
   stubCellGeometry();
 });
 
@@ -196,10 +180,7 @@ describe('Column drag-and-drop', () => {
   });
 
   it('the PINNED column drags too - sticky must not beat the drag transform', async () => {
-    // Under sm the grid pins the first non-checkbox column by itself, so this is
-    // the ordinary phone case rather than an opt-in.
-    setMatchMedia(true);
-    render(<Harness />);
+    render(<Harness pinned />);
 
     const name = headerCell('Name');
     expect(name).toHaveAttribute('data-pinned', 'left');

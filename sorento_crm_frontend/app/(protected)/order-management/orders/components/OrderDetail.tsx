@@ -10,6 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import DetailActions from '@/components/common/DetailActions';
 import { useOrder, ordersPagerQuery } from '../hooks/useOrders';
 import { useOrderActions } from '../actions';
+import { useDeletedRecordGuard } from '@/hooks/useDeletedRecordGuard';
 import { formatDate } from '@/lib/helpers';
 import OrderLinesCard from './OrderLinesCard';
 import OrderFulfilledComplaintsCard from './OrderFulfilledComplaintsCard';
@@ -29,6 +30,14 @@ export default function OrderDetail({ orderId, listSearch }: OrderDetailProps) {
     onDeleted: () => router.push(`/order-management/orders${listQs}`),
   });
 
+  // A delivery order this tab deleted a moment ago is gone on purpose, so a stale
+  // link to it returns to the list instead of reading as a fault (S6 feedback C).
+  const alreadyDeleted = useDeletedRecordGuard({
+    entityId: orderId,
+    notFound: !isLoading && !order,
+    listPath: `/order-management/orders${listQs}`,
+  });
+
   if (isLoading) {
     return (
       <div className="space-y-6">
@@ -39,6 +48,7 @@ export default function OrderDetail({ orderId, listSearch }: OrderDetailProps) {
   }
 
   if (!order) {
+    if (alreadyDeleted) return null;
     return (
       <div className="text-center py-12">
         <p className="text-muted-foreground">Delivery order not found</p>
