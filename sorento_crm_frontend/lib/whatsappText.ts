@@ -14,6 +14,8 @@
  * highlighter afterwards.
  */
 
+import { linkifySegments } from './linkifySegments';
+
 export interface WhatsAppTextSegment {
   text: string;
   bold?: boolean;
@@ -49,40 +51,18 @@ const MARK_BY_CHAR: Record<string, keyof Marks> = {
 /** Triple-backtick fence. Everything inside is literal - no marks, no links. */
 const CODE_FENCE = /```([\s\S]*?)```/;
 
-/**
- * Bare URLs, as WhatsApp linkifies them: an explicit scheme, or a `www.` host.
- *
- * Trailing sentence punctuation is deliberately excluded from the match so
- * "see https://x.test/a." links `https://x.test/a` and leaves the full stop as
- * text. Closing brackets are excluded for the same reason, which costs us a
- * link that genuinely ends in one - rare next to the sentence case.
- */
-const URL_PATTERN = /\b(?:https?:\/\/|www\.)[^\s<>]*[^\s<>.,;:!?)\]}'"]/gi;
-
 function withMark(marks: Marks, char: string): Marks {
   const key = MARK_BY_CHAR[char];
   return key ? { ...marks, [key]: true } : marks;
 }
 
-/** Split a plain run into text and link segments. */
+/** Split a plain run into text and link segments, carrying the marks on. */
 function linkify(text: string, marks: Marks): WhatsAppTextSegment[] {
-  if (!text) return [];
-  const out: WhatsAppTextSegment[] = [];
-  let cursor = 0;
-  URL_PATTERN.lastIndex = 0;
-  for (const found of text.matchAll(URL_PATTERN)) {
-    const start = found.index ?? 0;
-    const raw = found[0];
-    if (start > cursor) out.push({ text: text.slice(cursor, start), ...marks });
-    out.push({
-      text: raw,
-      href: /^https?:\/\//i.test(raw) ? raw : `https://${raw}`,
-      ...marks,
-    });
-    cursor = start + raw.length;
-  }
-  if (cursor < text.length) out.push({ text: text.slice(cursor), ...marks });
-  return out;
+  return linkifySegments(text).map((segment) =>
+    segment.href
+      ? { text: segment.text, href: segment.href, ...marks }
+      : { text: segment.text, ...marks },
+  );
 }
 
 /** Recursively resolve inline marks, then linkify whatever is left plain. */

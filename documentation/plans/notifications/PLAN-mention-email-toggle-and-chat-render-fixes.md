@@ -32,6 +32,16 @@ Status: BUILT - all three slices green 30 Aug 2026 (pytest + vitest + browser ru
 | B | Internal note header lists only names the body does not carry inline | built, tests green, browser PASS |
 | C | `notify_email_on_mention` column (migration 444), schemas, both dict builders, `_notify_mentions` gate, account matrix row, admin dialog, tests | in build |
 
+## Batch 2 (30 Aug afternoon, same lane)
+
+| Slice | What | State |
+|---|---|---|
+| D | Internal-note bodies linkify URLs (shared `lib/linkifySegments.ts`, also feeds `whatsappText`) | built, 1523 vitest pass |
+| E | `subscribeToPush` returns typed failure; toasts explain push-service-blocked (Brave guidance), permission-denied, unsupported | built |
+| F | Intervention drawer sm:max-w-2xl / lg:max-w-4xl, chat cap 45vh to 65vh | built |
+| G | n8n `sorento-consume-main`: 5 nodes concat `replyTo.message.text` bare, quoted quick_reply = "reply to: undefined" in ticket titles; fix = text/title/[type] fallback (sub-query-reformulator already has it) | AWAITING GO (live workflow) |
+| H | Mention typeahead: all active users, first 8 until typed; Kia Yee repro | investigating |
+
 ## Verification
 
 - A/B: vitest (`respondIoChatRender.test.ts`, `RespondChatList.comments.test.tsx`), pytest

@@ -40,6 +40,7 @@ import {
   getOutgoingSenderLabel,
   getRespondSenderName,
 } from '@/lib/respondIoOutgoingMessage';
+import { linkifySegments } from '@/lib/linkifySegments';
 import { parseWhatsAppText, stripWhatsAppMarkup } from '@/lib/whatsappText';
 import AttachmentPreviewModal, {
   type AttachmentPreviewItem,
@@ -185,6 +186,38 @@ function HighlightedText({ text, term }: { text: string; term: string }) {
           </mark>
         ) : (
           <span key={i}>{segment.text}</span>
+        ),
+      )}
+    </>
+  );
+}
+
+/**
+ * Note text with bare URLs clickable and the search term still marked.
+ *
+ * A message bubble gets its links from `parseWhatsAppText`; an internal note is
+ * rendered verbatim (no handset markup to parse), so the link pass is applied
+ * on its own here. A term that falls inside a URL is not marked - the link is
+ * the more useful of the two.
+ */
+function LinkedText({ text, term }: { text: string; term: string }) {
+  return (
+    <>
+      {linkifySegments(text).map((segment, i) =>
+        segment.href ? (
+          <a
+            key={i}
+            href={segment.href}
+            target="_blank"
+            rel="noopener noreferrer"
+            // Stops the click from also selecting/scrolling the bubble it sits in.
+            onClick={(event) => event.stopPropagation()}
+            className="break-all underline underline-offset-2 hover:opacity-80"
+          >
+            {segment.text}
+          </a>
+        ) : (
+          <HighlightedText key={i} text={segment.text} term={term} />
         ),
       )}
     </>
@@ -757,7 +790,7 @@ export default function RespondChatList({
   let lastDateKey = '';
 
   return (
-    <div className="relative flex flex-col">
+    <div className="relative flex min-h-0 flex-1 flex-col">
       <div className="flex items-center gap-3 rounded-t-md border border-b-0 bg-[#f0f2f5] dark:bg-[#202c33] px-3 py-2">
         <div className="flex size-9 items-center justify-center rounded-full bg-emerald-600 text-sm font-semibold text-white">
           {contactInitial}
@@ -859,7 +892,7 @@ export default function RespondChatList({
                       </div>
                     )}
                     <div className="whitespace-pre-wrap break-words leading-snug">
-                      <HighlightedText text={comment.body} term={highlightTerm} />
+                      <LinkedText text={comment.body} term={highlightTerm} />
                     </div>
                   </div>
                 </div>

@@ -89,6 +89,20 @@ describe('InternalCommentComposer', () => {
     expect(screen.queryByTestId('internal-comment-input')).not.toBeInTheDocument();
   });
 
+  it('more matches than the window shows draw a keep-typing footer', async () => {
+    (getUsersSelect as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      Array.from({ length: 12 }, (_, i) => ({
+        id: `u${i}`,
+        name: `User ${String.fromCharCode(65 + i)}`,
+        email: `u${i}@x.com`,
+      })),
+    );
+    renderComposer();
+    type('@');
+    const more = await screen.findByTestId('mention-typeahead-more');
+    expect(more).toHaveTextContent('4 more. Keep typing to narrow.');
+  });
+
   it('typing "@" opens the typeahead over the SHARED user select service', async () => {
     renderComposer();
     type('@Te');
@@ -97,14 +111,14 @@ describe('InternalCommentComposer', () => {
     await waitFor(() =>
       expect(getUsersSelect).toHaveBeenCalledWith(expect.objectContaining({ query: '@Te'.slice(1) })),
     );
-    expect(await screen.findByText('Team Lead')).toBeInTheDocument();
+    expect(await screen.findByRole('option', { name: 'Team Lead' })).toBeInTheDocument();
   });
 
   it('picking a suggestion inserts "@Display Name" into the body', async () => {
     renderComposer();
     type('please check @Te');
 
-    fireEvent.mouseDown(await screen.findByText('Team Lead'));
+    fireEvent.mouseDown(await screen.findByRole('option', { name: 'Team Lead' }));
 
     await waitFor(() =>
       expect(screen.getByTestId('internal-comment-input')).toHaveValue(
@@ -116,7 +130,7 @@ describe('InternalCommentComposer', () => {
   it('submits the body with the picked mention id', async () => {
     const { onSubmit } = renderComposer();
     type('@Te');
-    fireEvent.mouseDown(await screen.findByText('Team Lead'));
+    fireEvent.mouseDown(await screen.findByRole('option', { name: 'Team Lead' }));
     await waitFor(() =>
       expect(screen.getByTestId('internal-comment-input')).toHaveValue('@Team Lead '),
     );
@@ -131,7 +145,7 @@ describe('InternalCommentComposer', () => {
   it('deleting the mention from the body drops it from the payload', async () => {
     const { onSubmit } = renderComposer();
     type('@Te');
-    fireEvent.mouseDown(await screen.findByText('Team Lead'));
+    fireEvent.mouseDown(await screen.findByRole('option', { name: 'Team Lead' }));
     await waitFor(() =>
       expect(screen.getByTestId('internal-comment-input')).toHaveValue('@Team Lead '),
     );
@@ -194,7 +208,7 @@ describe('InternalCommentComposer', () => {
   it('Escape closes the typeahead without touching the draft', async () => {
     renderComposer();
     const input = type('@Te');
-    await screen.findByText('Team Lead');
+    await screen.findByRole('option', { name: 'Team Lead' });
 
     fireEvent.keyDown(input, { key: 'Escape' });
 

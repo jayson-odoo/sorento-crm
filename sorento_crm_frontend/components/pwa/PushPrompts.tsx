@@ -21,6 +21,7 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Container } from '@/components/common/container';
 import { getPushState, subscribeToPush } from '@/services/pushService';
+import { describePushFailure } from '@/lib/pushFailureMessage';
 
 import {
   ENABLE_DISMISSED_KEY,
@@ -136,15 +137,18 @@ export default function PushPrompts() {
   const onEnable = async () => {
     setBusy(true);
     try {
-      const ok = await subscribeToPush();
-      if (ok) {
+      const result = await subscribeToPush();
+      if (result.ok) {
         setEnv((prev) => (prev ? { ...prev, permission: 'granted', subscribed: true } : prev));
         toast.success('Notifications enabled');
       } else {
-        // Declined, or the subscription could not be stored. Either way the
-        // question has been asked; My Account is the way to change your mind.
+        // Declined, blocked, or the subscription could not be stored. Either way
+        // the question has been asked; My Account is the way to change your mind.
+        // The toast names what went wrong, so a fixable block (Brave's push
+        // service being off) is not read as "this app is broken".
         dismissEnable();
-        toast.error('Could not enable notifications');
+        const { title, description } = describePushFailure(result.reason);
+        toast.error(title, description ? { description } : undefined);
       }
     } finally {
       setBusy(false);
