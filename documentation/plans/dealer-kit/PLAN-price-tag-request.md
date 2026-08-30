@@ -6,7 +6,8 @@
 
 **Slug:** `price-tag-request` | **Domain:** dealer-kit (sub-feature)
 **Status:** S0-S5 + S3b BUILT (PR #289). S3c (section 9, D33-D41) BUILT 2026-08-29 from the
-captain's test of the S3b bed; D42-D44 BUILT 2026-08-30 from the second round of that test.
+captain's test of the S3b bed; D42-D44 BUILT 2026-08-30 from the second round of that test;
+D45-D47 (section 10) BUILT 2026-08-30 from the captain's test of the PORTAL form.
 **UAC:** `documentation/plans/dealer-kit/price-tag-request-acceptance-criteria.md`
 **Depends on:** `feat/product-sets` branch merged to main.
 **Branch:** TBD
@@ -562,3 +563,54 @@ that touches each layer exactly once, the affine propagation of a resize plus a 
 refit after a child move, marquee touch-selection in both scopes, hit resolution with and without
 isolation, z reorder keeping a block contiguous, clone id remapping, zoom keeping the point under
 the cursor, fit centring the artboard. Browser: the seven items above, each shown to work.
+
+---
+
+## 10. Portal form feedback, 30 Aug
+
+**Status:** BUILT 2026-08-30. The captain opened the portal form after S3c and produced three
+items, all on the salesperson's side of the feature: the request type was reachable only through
+a link button of its own, the debtor dropdown was empty with nothing said about why, and the
+lines section asked a dealer to decide "product or set" before it would let them pick anything.
+
+### What was wrong
+
+| # | Symptom | Cause found in the code |
+|---|---------|--------------------------|
+| 1 | Price Tag Request is a separate page behind a link button, not one of the things the landing dropdown offers | `PortalLanding` builds its dropdown from `SUBMISSION_KINDS`, and `price_tag_request` is deliberately not in that list because the generic `[type]` route guards key off it. Commit 0f0b07590 added a link button beside the dropdown rather than extending the dropdown. |
+| 2 | The debtor dropdown is empty and says nothing | The options come from `/portal/lookups/debtors-for-agent`, which returns `[]` when no `sales_agents.contact_id` points at the contact. Nothing in the database links a contact to an agent, because no admin surface was ever built to set it: the column shipped with the feature and has never been writable. |
+| 3 | Two Add buttons and a card per line, and a dealer must know product from set before picking | The lines section was built as one card per line with the line type chosen by which Add button was pressed, so the picker could only be shown after the type was known. |
+| 4 | A saved draft with a product line would be refused by Postgres | Not reported, found while reading item 3. `price_tag_request_lines.product_id` is a UUID FK to `products.id`, but the portal's `/lookups/products` returns no id at all, so `price-tag-request-service.ts` used `product_code` as the id and the form posted a code into a uuid column. The set picker was worse: `lookupProductSets` was a stub returning `[]`, so a set line could never be filled in. |
+
+### Decisions
+
+| ID | Decision |
+|----|----------|
+| D45 | **Price Tag Request is one of the landing dropdown's options, and the link button goes.** The option list is a derived `LANDING_KINDS`: the four legacy `SUBMISSION_KINDS` (ungated, unchanged) plus `price_tag_request` when `contact.visible_form_types` includes it. It carries the same label, count badge, star, search box, status filter and card pattern as the others, its rows open the existing `/portal/price_tag_request/{id}` detail page and its New button the existing new page. `price_tag_request` stays OUT of `SUBMISSION_KINDS`, because the generic `[type]` route guards use that list to decide what the shared submission pages may render; `LANDING_KINDS` is the extension point and the next gated form joins there. The list endpoint answers a different shape from the legacy kinds (`{items: [...]}` of price tag rows, not `PortalSubmissionSummary`), so the adaptation happens once in `price-tag-request-service.ts` and no legacy endpoint changes. `?type=price_tag_request` and the starred default tab accept the kind, and fall back to `stock_inquiry` for a contact whose grant does not include it rather than showing an option the server would refuse. `PriceTagRequestListItem` gains `portal_draft_at` so the Draft filter tells the truth about a request that was saved and never submitted; without it every draft would read as New (`response_model` and a response schema both drop what they do not declare). |
+| D46 | **An empty debtor dropdown says why, and an admin can fix it.** Two halves. (a) The portal form distinguishes "the lookup answered nothing" from "the lookup failed": on an empty answer it replaces the select with an inline notice naming the cause and the next step, on a failure it keeps the existing error toast, and Submit stays blocked either way because a request without a dealer is not a request. (b) `sales_agents.contact_id` becomes writable from the Sales Agents master screen: the edit modal gains a "Linked portal contact" field, a server-searched clearable `SearchableSelect` over `respond_contacts` showing name plus a masked phone and never an id. It rides the existing `PATCH /master-data/sales-agents/{id}/annotation` body, which is `extra="forbid"`, so the key is declared on `MirrorAnnotationUpdate`; `SalesAgentResponse` declares `contact_id` and a resolved `contact_name` beside it, because a response schema drops an undeclared field and the modal would open blank on a row that IS linked. No DDL: the column has no unique constraint and none is added, so two agents can point at one contact and the screen simply shows what is there. |
+| D47 | **One lines table, one Add button, one Item dropdown that offers sets and products together.** The lines section is rebuilt as a row-per-line table on the Purchase Request pattern in `SubmissionForm.tsx` (a `<table>` inside `overflow-x-auto`, an `AsyncCombobox` per picker cell, a trash button per row, one Add button under it). Columns: `#`, Item, Qty (tags), Alternatives, Accessories, and the row actions. The Item cell is ONE server-searched combobox whose results are sets and products in the same list, each option prefixed with the word `Set` or `Product`; picking one sets the row's `line_type` to `product_set` or `product` and the matching id. Alternatives is the existing multi-select and is disabled on a set row, with a title saying why, which is the capability the old Set card simply did not have. The submit payload shape is unchanged: `{line_type, product_id, product_set_id, show_promo_price, quantity, alternatives, included_accessories}` with `line_type` in `('product','product_set')`, exactly as `PriceTagRequestCreate` and the table's `ck_price_tag_request_lines_one_ref` already require. **Deviation from the brief, recorded here because the brief said this item changes no backend:** the picker needs real ids and no portal endpoint returns one, so `GET /portal/lookups/price-tag-items?q=` is added, gated by the same `_assert_visible` as the rest of the price tag routes and answering `[{kind, id, code, name}]` merged from `tag_data_service.search_products` and `search_product_sets`. Without it the Item column could only post a product CODE into a uuid FK (which is what the form does today and why no draft with a product line can have ever saved) and could never offer a set at all, since `lookupProductSets` was a stub returning `[]`. One endpoint for one dropdown, not two calls per keystroke. The server-enforced Bathroom Furniture set guard is untouched and its 422 still surfaces on submit. |
+
+### What is deliberately NOT built
+
+- No gating of the four legacy kinds. They are ungated today and D45 does not change that; the
+  landing simply stops pretending `price_tag_request` is not a submission type.
+- No unique constraint on `sales_agents.contact_id`. One contact backing one agent is the
+  intent, not a rule the data can carry yet, and a migration to enforce it would fail on any
+  existing duplicate the captain has not seen. The trigger for adding it: the first time two
+  agents pointing at one contact produces a wrong debtor list.
+- No admin surface for `contact_portal_form_overrides`. Item 2 is about the agent link; the
+  override table already has a service and nobody has asked to edit it by hand.
+- The standalone `/portal/price_tag_request` index page stays where it is. Nothing links to it
+  any more, but it is a URL a salesperson may have bookmarked, and it costs one file.
+
+### Tests
+
+pytest: the annotation route writes and clears `contact_id`, the response declares `contact_id`
+and `contact_name` (the exact-key-set assertion in `test_sales_agents_master_api.py` is what
+catches the drop), an omitted key still leaves the link alone, and the merged item lookup returns
+products and sets with their real ids and honours `q`. vitest: the landing lists Price Tag Request
+with a count for a contact whose `visible_form_types` include it and does not for one whose do not,
+a `?type=price_tag_request` deep link for that second contact falls back instead of crashing, the
+debtor notice appears on an empty lookup and not on a failed one, and the lines table posts
+`line_type: 'product_set'` for a picked set and `'product'` for a picked product with alternatives
+disabled on the set row.
