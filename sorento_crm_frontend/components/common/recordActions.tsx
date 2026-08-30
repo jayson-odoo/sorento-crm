@@ -15,10 +15,11 @@
  * field here - nothing downstream could act on it, and a second check is a second
  * place to get it wrong.
  *
- * `dialogs` is the node the definition hook needs mounted (a confirm dialog, a
- * form). Both surfaces render it, so a list row and a record page open the very
- * same dialog. When S6 lands, a destructive action swaps its dialog for a pending
- * action + countdown and neither call site changes.
+ * `dialogs` is the node the definition hook needs mounted (an impersonation
+ * prompt, a form). Both surfaces render it, so a list row and a record page open
+ * the very same one. A destructive action has no dialog to mount since S6: it
+ * parks a pending action and hands its countdown back as `pending`, which the
+ * record page passes to `DetailActions` and a list row leaves to the toast.
  */
 
 import type { ReactElement, ReactNode } from 'react';
