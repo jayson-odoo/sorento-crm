@@ -17,6 +17,18 @@
   }
 
   /* Base */
+  /*
+   * `.header` and `.wrapper` never actually run a transition (S8-03 - only `.sidebar`'s
+   * `transform` below does), but leaving `transition-property` undeclared reports the
+   * CSS-initial value, `all`, to `getComputedStyle` - which reads as "this animates
+   * everything at 0s" rather than "this doesn't animate". Naming `none` here makes that
+   * intent legible instead of accidental.
+   */
+  .demo1 .header,
+  .demo1 .wrapper {
+    transition-property: none;
+  }
+
   .demo1 .header {
     height: var(--header-height);
   }

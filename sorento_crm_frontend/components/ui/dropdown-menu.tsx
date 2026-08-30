@@ -89,6 +89,12 @@ function DropdownMenuContent({
   // Same split as PopoverContent: `Content` keeps Radix Popper's own inline
   // positioning transform untouched, and the spring animates an INNER div
   // instead of `Content` itself (S8-01, S8-02).
+  //
+  // Radix sets `--radix-dropdown-menu-content-transform-origin` (not the
+  // generic `--radix-popper-content-transform-origin`, which doesn't exist)
+  // as an inline style on `Content` itself; the inner motion.div reads it via
+  // CSS custom-property inheritance, which is also where the actual `scale`
+  // animation runs, so the origin has to live there too (S8-02).
   return (
     <AnimatePresence>
       {open && (
@@ -97,12 +103,12 @@ function DropdownMenuContent({
             forceMount
             data-slot="dropdown-menu-content"
             sideOffset={sideOffset}
-            className="z-50 origin-(--radix-popper-content-transform-origin)"
+            className="z-50"
             {...props}
           >
             <motion.div
               className={cn(
-                'space-y-0.5 min-w-[8rem] overflow-hidden rounded-md border border-border bg-popover p-2 text-popover-foreground shadow-md shadow-black/5',
+                'space-y-0.5 min-w-[8rem] overflow-hidden rounded-md border border-border bg-popover p-2 text-popover-foreground shadow-md shadow-black/5 origin-(--radix-dropdown-menu-content-transform-origin)',
                 className,
               )}
               {...surfaceVariants(prefersReducedMotion)}

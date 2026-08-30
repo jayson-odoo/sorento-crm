@@ -259,6 +259,17 @@ describe('S2-04 accessibility preference blocks', () => {
     expect(reduced).toMatch(/animation-duration:\s*150ms/);
   });
 
+  it('excludes dialog/sheet content from the 150ms CSS transition (S8-01 fix)', () => {
+    // Radix `asChild` merges DialogContent/SheetContent straight onto the `motion.div`
+    // Framer Motion animates (dialog.tsx, sheet.tsx), so this rule's own
+    // `transition-duration: 150ms` would otherwise land on that very node and smear the
+    // JS spring's one-frame opacity commit (`REDUCED_MOTION_TRANSITION`, lib/motion.ts)
+    // over 150ms instead of applying it instantly.
+    const reduced = reducedMotion();
+    const selector = /^[^{]*\{/.exec(reduced)?.[0] ?? '';
+    expect(selector).toMatch(/\[data-slot\$='-content'\]:not\(\[data-slot='dialog-content'\]\):not\(\[data-slot='sheet-content'\]\)/);
+  });
+
   it('gives every -content slot the reduced-motion rule to bite on', () => {
     // The rule keys off [data-slot$='-content'], so a primitive without the attribute
     // keeps sliding under prefers-reduced-motion.

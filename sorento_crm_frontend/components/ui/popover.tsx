@@ -43,6 +43,12 @@ function PopoverContent({
   // immediately overwrite the moment the spring ticks (both want the same CSS
   // property on the same node). The spring instead animates an INNER div, so
   // Content's own positioning transform is left alone (S8-01, S8-02).
+  //
+  // Radix sets `--radix-popover-content-transform-origin` (not the generic
+  // `--radix-popper-content-transform-origin`, which doesn't exist) as an
+  // inline style on `Content` itself; the inner motion.div reads it via CSS
+  // custom-property inheritance, which is also where the actual `scale`
+  // animation runs, so the origin has to live there too (S8-02).
   return (
     <AnimatePresence>
       {open && (
@@ -51,12 +57,12 @@ function PopoverContent({
           data-slot="popover-content"
           align={align}
           sideOffset={sideOffset}
-          className="z-50 outline-hidden origin-(--radix-popper-content-transform-origin)"
+          className="z-50 outline-hidden"
           {...props}
         >
           <motion.div
             className={cn(
-              'w-72 rounded-md border border-border bg-popover p-4 text-popover-foreground shadow-md shadow-black/5',
+              'w-72 rounded-md border border-border bg-popover p-4 text-popover-foreground shadow-md shadow-black/5 origin-(--radix-popover-content-transform-origin)',
               className,
             )}
             {...surfaceVariants(prefersReducedMotion)}
