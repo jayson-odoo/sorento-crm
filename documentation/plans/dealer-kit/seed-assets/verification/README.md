@@ -341,3 +341,47 @@ refusal landing on the row it named) is covered by
   has no delete path (that is the design, and the portal refuses it with a 409), and the
   CRM transition route rejects an `X-API-Key` principal, so nothing available here can
   remove them. Deleting them by hand in psql was ruled out by the brief.
+
+## Round 5, 30 Aug: the house chrome and the request designer (D50-D52)
+
+Lane `:3030` / `:8030`, logged in through the sign-in form, navigated from `/` by sidebar
+clicks (Dealer Kit -> Room Designer -> Price Tag Requests). Request `PT-202608-0001`.
+
+| File | What it shows |
+|------|---------------|
+| `request-1-detail-house-chrome.png` | The detail page in its new chrome: breadcrumb as the way back, `Price Tag Request - PT-202608-0001` as the heading, `Created: ... - New` beneath it, `Needed by` and `Assigned to` in the header, and on the right one primary CTA (Claim), the gear, and prev/next reading `4 / 4`. No "Back to list" button anywhere. |
+| `request-2-claimed-primary-and-gear.png` | After Claim: the status is `Designing`, the primary CTA is `Design tags`, and the gear holds `Mark proof ready` and a destructive `Void`. Nothing secondary sits beside the primary (D52). |
+| `request-3-designer-opens-on-line-1.png` | `/design` IS the template editor: the request bar (doc number, `Design | Arrange`, Save, Mark proof ready), the unchanged `CanvasToolbar`, a LINES rail above the LAYERS panel, the Inspector on the right, and line 1's tag cloned from the Furniture Set template showing the real code `CWC1009-RL` and its set members. |
+| `request-4-line-2-wc-template-real-data.png` | Line 2 selected: the WC template, the real code `SRTWC286-SH-150`, its spec text, its badges and its real price `RM 1,260`. Both rail rows now carry the designed check. The artboard resized to that template's print size. |
+| `request-5-use-template-picker.png` | "Use template..." preselected on the tag's current template, so "Reset to template" is one click; the list offers every family with its print size and puts the line's own family first. |
+| `request-6-replace-confirmation.png` | The tag carries edits, so choosing another template asks first (`Replace this tag with the template?`, destructive Replace). |
+| `request-7-template-swapped-to-art-basin.png` | After Replace: the same line, re-cloned from the Art Basin template, still drawn against the LINE (same code, same `RM 1,260`) on that template's artboard. |
+| `request-8-arrange-auto-placed.png` | The Arrange half: `1 sheet / 3 tags` for line 1 (qty 1) plus line 2 (qty 2), auto-placed on A4 3-up with the imposition panel on the right. Nobody had to drag anything. |
+| `request-9-proof-ready-view-design.png` | After Mark proof ready: the pill reads `Proof Ready`, the primary CTA becomes `View design`, and the gear is down to `Void` (D52). |
+| `request-10-stock-inquiry-reference-chrome.png` | The reference, `/procurement-management/stock-inquiries/<id>`, for the side-by-side: same heading shape, same `Created: ... - <pill>` subline, same primary-then-gear-then-chevrons order. |
+| `request-11-detail-at-375px.png` | The whole detail page at 375px: the header wraps, the CTA row stays on one line, every card stacks, the lines table scrolls rather than clipping, and each section keeps its empty state. |
+
+### Measured, not assumed
+
+- **Edits did not survive a line switch, until this run.** Nudging the `list price` layer moved
+  the inspector X from `63.3` to `68.3`; switching to line 1 and back put it at `63.3` again.
+  Cause: the editor was handed the layers the tag was CREATED with rather than the layers it
+  currently has, so the remount restored the original. Fixed, re-measured (`68.3` after the
+  switch, `68.3` after Save and a reload).
+- **Mark proof ready had never worked.** The route takes the STATUS to move to; the frontend has
+  been sending the action name `mark_proof_ready` since this feature was written, and the backend
+  answered `409 Cannot transition from 'designing' to 'mark_proof_ready'`. Both call sites now
+  send `proof_ready`, and the screenshot above is the transition landing.
+- **`assigned_to_name` comes back null even on a claimed request**, so the header reads
+  "Assigned to: Unclaimed" after a successful claim (the CRM listing's Assigned To column shows
+  the same dash). Backend-side resolution gap, not touched in this round.
+
+### Not exercised, and why
+
+- **The PDF export and `/c/print/tag-sheet`.** Export is only legal at `approved` or `ready`,
+  and a request reaches `approved` when the SALESPERSON approves the proof on the portal, which
+  the CRM deliberately does not offer. On top of that the only RQ worker running on this machine
+  belongs to the primary checkout, and this lane's backend `.env` sets no
+  `DEALER_KIT_PRINT_BASE_URL`, so a render would have been pointed at `:3000` rather than
+  `:3030`. Starting or restarting a worker was outside the brief. The document the printer reads
+  was verified instead: it round-trips through Save and a reload with the designed layers intact.

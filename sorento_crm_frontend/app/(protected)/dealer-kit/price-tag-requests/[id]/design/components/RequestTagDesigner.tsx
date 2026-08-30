@@ -21,7 +21,7 @@
  * there to look at it and to drag a copy if somebody wants to.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ChevronLeft, Check, LayoutTemplate, Loader2, Eye, Save } from 'lucide-react';
 import { toast } from 'sonner';
@@ -99,26 +99,6 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
     for (const [lineId, tag] of tagsFromDoc(initialDoc)) map[lineId] = tag;
     return map;
   });
-  /**
-   * The layers each tag was opened with, keyed by TAG id.
-   *
-   * The editor reads its document once, on mount, so this has to be a stable
-   * object per tag: rebuilding it from the live layers would re-run the
-   * editor's open-time work on every keystroke. It doubles as the "has this
-   * been edited" comparison the template swap asks.
-   */
-  const [openedDocs, setOpenedDocs] = useState<Record<string, TagTemplateDoc>>(() => {
-    const map: Record<string, TagTemplateDoc> = {};
-    for (const [, tag] of tagsFromDoc(initialDoc)) {
-      map[tag.id] = {
-        layers: tag.layers,
-        width_mm: tag.width_mm,
-        height_mm: tag.height_mm,
-      };
-    }
-    return map;
-  });
-
   const [pinned, setPinned] = useState<Record<string, PinnedPlacement>>(() =>
     pinnedFromDoc(initialDoc),
   );
@@ -174,15 +154,9 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
   // -- Tags ------------------------------------------------------------------
 
   const applyTemplate = useCallback((line: PriceTagRequestLine, template: TagTemplate) => {
-    const tag = tagForLine(line, template, newTagId());
-    setTags((prev) => ({ ...prev, [line.id]: tag }));
-    setOpenedDocs((prev) => ({
+    setTags((prev) => ({
       ...prev,
-      [tag.id]: {
-        layers: tag.layers,
-        width_mm: tag.width_mm,
-        height_mm: tag.height_mm,
-      },
+      [line.id]: tagForLine(line, template, newTagId()),
     }));
   }, []);
 
@@ -219,7 +193,29 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
   ]);
 
   const selectedTag = selectedLineId ? tags[selectedLineId] ?? null : null;
-  const selectedDoc = selectedTag ? openedDocs[selectedTag.id] ?? null : null;
+
+  /**
+   * The document the canvas opens on, rebuilt only when the TAG changes.
+   *
+   * The editor reads its document once, on mount, and keeps the layers in its
+   * own state from then on. So this has to be the tag's layers AS THEY STAND
+   * when the canvas mounts on it - a fresh object per keystroke would be
+   * ignored, and a snapshot taken when the tag was first created would throw
+   * every edit away the moment somebody looked at another line and came back.
+   * That is exactly what it did until this was measured on the lane.
+   */
+  const docRef = useRef<{ tagId: string; doc: TagTemplateDoc } | null>(null);
+  if (selectedTag && docRef.current?.tagId !== selectedTag.id) {
+    docRef.current = {
+      tagId: selectedTag.id,
+      doc: {
+        layers: selectedTag.layers,
+        width_mm: selectedTag.width_mm,
+        height_mm: selectedTag.height_mm,
+      },
+    };
+  }
+  const selectedDoc = selectedTag ? docRef.current?.doc ?? null : null;
 
   /** What the canvas draws against: the LINE, with its marketing override. */
   const boundData: TagBindingData | null = useMemo(() => {
@@ -241,15 +237,24 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
     [selectedLineId],
   );
 
-  /** Whether this line's tag has been changed since it was cloned or opened. */
+  /**
+   * Whether re-cloning this line's tag would lose work.
+   *
+   * Measured against the tag's own TEMPLATE rather than against what it was
+   * opened with, so a design that was saved a week ago still counts as work.
+   */
   const isEdited = useCallback(
     (lineId: string) => {
       const tag = tags[lineId];
-      const opened = tag ? openedDocs[tag.id] : null;
-      if (!tag || !opened) return false;
-      return JSON.stringify(tag.layers) !== JSON.stringify(opened.layers);
+      const line = request.lines.find((l) => l.id === lineId);
+      const template = templates.find((t) => t.id === tag?.template_id);
+      if (!tag || !line) return false;
+      // A template that is no longer there cannot be compared against, so ask.
+      if (!template) return true;
+      const pristine = tagForLine(line, template, tag.id).layers;
+      return JSON.stringify(tag.layers) !== JSON.stringify(pristine);
     },
-    [tags, openedDocs],
+    [tags, templates, request.lines],
   );
 
   const chooseTemplate = useCallback(
@@ -322,7 +327,8 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
     setTransitioning(true);
     try {
       await onSave(doc);
-      await transitionPriceTagRequest(request.id, 'mark_proof_ready');
+      // A STATUS, not an action name: see the note on the detail page.
+      await transitionPriceTagRequest(request.id, 'proof_ready');
       toast.success('Proof marked as ready');
       router.push(`/dealer-kit/price-tag-requests/${request.id}`);
     } catch {

@@ -757,6 +757,23 @@ canvas, the sheet tabs and `ImpositionControls` moved into `ArrangeSheetView.tsx
 Arrange half renders; `computeImpositionSlots` moved into `lib/dealer-kit/request-tags.ts` where it
 is tested.
 
+### Found while proving it, on the lane
+
+- **Mark proof ready had never worked.** `POST /{id}/transition` takes the STATUS to move to, and
+  the frontend has been sending the action name `mark_proof_ready` since the feature was written,
+  from the detail page and from the designer alike. The backend answered
+  `409 Cannot transition from 'designing' to 'mark_proof_ready'` every time, and the toast said
+  only that it failed. Both call sites now send `proof_ready`. Fixed here, proven on `:3030`.
+- **A tag's edits did not survive switching lines**, in the first cut of this round. The editor was
+  handed the layers the tag was CREATED with rather than the layers it currently has, so coming
+  back to a line remounted the canvas on the original. Caught by measuring the inspector X before
+  and after the switch, not by reading the code. The document the canvas opens on is now rebuilt
+  when the TAG changes and not before.
+- **`assigned_to_name` is null even on a claimed request**, so the header reads "Assigned to:
+  Unclaimed" straight after a successful claim, and the CRM listing's Assigned To column shows the
+  same dash. The claim writes the id; nothing resolves the name onto the response. Not caused by
+  this round and not fixed in it.
+
 ### What is deliberately NOT built
 
 - No neighbours endpoint for price tag requests. The list is one call and already client-paginated,

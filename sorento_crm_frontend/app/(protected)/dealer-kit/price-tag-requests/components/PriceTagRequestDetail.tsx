@@ -141,7 +141,10 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
   const handleMarkProofReady = useCallback(async () => {
     setActionLoading(true);
     try {
-      await transitionPriceTagRequest(requestId, 'mark_proof_ready');
+      // The route takes the STATUS to move to, not an action name. It was sent
+      // 'mark_proof_ready' since this page was written, which is not a status,
+      // so every click came back 409 INVALID_TRANSITION. Measured on the lane.
+      await transitionPriceTagRequest(requestId, 'proof_ready');
       toast.success('Proof marked as ready');
       const data = await getPriceTagRequest(requestId);
       setRequest(data);
