@@ -20,17 +20,21 @@ import path from 'node:path';
 import { describe, it, expect } from 'vitest';
 
 /**
- * Roots scanned. `app/(auth)` and the Metronic demo layouts are out: the portal
- * and the login card are outside the sidebar's world, and the demo layouts are
- * vendor shell code no page of ours renders.
+ * Roots scanned. `app/(auth)`, `app/(public)` and the Metronic demo layouts are
+ * out: the portal and the login card are outside the sidebar's world, and the
+ * demo layouts (`app/components/layouts/demo1..10`, `app/components/partials`)
+ * are vendor shell code no page of ours renders.
+ *
+ * `app/components/common` IS ours, so it is scanned: it held an `<h1>` that
+ * escaped the whole sweep by sitting in a directory nobody looked at.
  */
-const ROOTS = ['app/(protected)', 'components'];
+const ROOTS = ['app/(protected)', 'app/components/common', 'components'];
 
 /** The one file allowed to own a page title and a crumb trail. */
 const PAGE_HEADER = 'components/common/PageHeader.tsx';
 
 /**
- * The three `<h1>` that are not page titles, each for a reason a sweep must not
+ * The four `<h1>` that are not page titles, each for a reason a sweep must not
  * erase.
  */
 const H1_EXEMPT = new Set([
@@ -40,6 +44,10 @@ const H1_EXEMPT = new Set([
   'app/(protected)/dealer-kit/components/CatalogueRenderer.tsx',
   // A translation scratch page, reachable by URL only.
   'app/(protected)/i18n-test/page.tsx',
+  // The permission guard's refusal, rendered INSTEAD of a page. It is the only
+  // heading on screen and it has no trail to sit under, because the page the
+  // user asked for never rendered.
+  'app/components/common/AccessDenied.tsx',
 ]);
 
 /** Every `.ts`/`.tsx` under the scanned roots, tests excluded. */
@@ -100,11 +108,19 @@ describe('Wayfinding inventory (S5)', () => {
     // allocation with no SPO number, that allocation's delete dialog, and the
     // portal's submitted-ticket line. Each now falls back to a human field or
     // to "Untitled ...", so nothing reads "Promotion 6d5f1a2b" at a user.
+    //
+    // `_?id` rather than `\bid`, because `_` is a word character: the first
+    // version of this scan could not see `policy_id.slice(0, 8)` and let a
+    // truncated UUID sit in the SLA config list for the whole sweep.
+    //
+    // The cut has to start at a NUMBER. `directoryId.slice(PREFIX.length)`
+    // strips a namespace off an internal key and renders nothing; only a fixed
+    // offset is somebody shortening an id to show it.
     const offenders: string[] = [];
     for (const file of sourceFiles()) {
       const src = fs.readFileSync(file, 'utf8');
       for (const line of src.split('\n')) {
-        if (/\bid\.(slice|substring)\(/.test(line) && !line.includes('//')) {
+        if (/_?id\.(slice|substring)\(\s*-?\d/i.test(line) && !line.includes('//')) {
           offenders.push(`${file}: ${line.trim().slice(0, 80)}`);
         }
       }
