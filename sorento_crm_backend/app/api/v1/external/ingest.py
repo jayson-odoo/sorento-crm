@@ -37,6 +37,11 @@ from app.dependencies import get_external_api_user
 from app.database import get_db
 from app.schemas.common import MAX_PAGE_LIMIT
 from app.services.error_handler import AppException
+from app.services.document_ingest_service import (
+    DOCUMENT_ENTITIES,
+    DocumentIngestService,
+    DocumentReadService,
+)
 from app.services.master_ingest_service import (
     ENTITY_SPECS,
     MasterIngestService,
@@ -58,6 +63,10 @@ INGEST_PERMISSIONS = {
     "customers": "order_management.customers.edit",
     "products": "master_data.products.edit",
     "sales_agents": "master_data.sales_agents.edit",
+    # Documents (group A3). Pushing an order through the ESB is the same act as
+    # editing one on the SCM screen, so it is the same slug.
+    "sales_orders": "scm.sales_orders.edit",
+    "purchase_orders": "scm.purchase_orders.edit",
 }
 READ_PERMISSIONS = {
     "product_categories": "master_data.product_categories.view",
@@ -67,6 +76,8 @@ READ_PERMISSIONS = {
     "customers": "order_management.customers.view",
     "products": "master_data.products.view",
     "sales_agents": "master_data.sales_agents.view",
+    "sales_orders": "scm.sales_orders.view",
+    "purchase_orders": "scm.purchase_orders.view",
 }
 # Deleting through the ESB is its own act, so it takes its own slug on top of the
 # ingest guard the router already carries (group A4 mounts the route). Declared
@@ -81,6 +92,8 @@ DELETE_PERMISSIONS = {
     "customers": "order_management.customers.delete",
     "products": "master_data.products.delete",
     "sales_agents": "master_data.sales_agents.delete",
+    "sales_orders": "scm.sales_orders.delete",
+    "purchase_orders": "scm.purchase_orders.delete",
 }
 
 # A batch cap the ESB can design against. Exceeding it errors rather than
@@ -89,13 +102,19 @@ DELETE_PERMISSIONS = {
 MAX_BATCH = 1000
 
 
+# Masters and documents on one surface. The set is built from both registries
+# rather than written out, so an entity that exists in only one of them cannot
+# become reachable here by being spelled correctly in this file.
+SUPPORTED_ENTITIES = set(ENTITY_SPECS) | set(DOCUMENT_ENTITIES)
+
+
 def _entity(entity: str) -> str:
-    if entity not in ENTITY_SPECS:
+    if entity not in SUPPORTED_ENTITIES:
         raise AppException(
             status_code=404,
             message=(
                 f"Unsupported entity '{entity}'. "
-                f"Expected one of: {', '.join(sorted(ENTITY_SPECS))}"
+                f"Expected one of: {', '.join(sorted(SUPPORTED_ENTITIES))}"
             ),
             code="UNKNOWN_ENTITY",
         )
@@ -150,7 +169,12 @@ async def ingest_masters(
 
     company_id = resolve_company_anchor(db, payload, current_user)
 
-    service = MasterIngestService(
+    # One endpoint, two services. A document owns its lines and points at five
+    # masters, which is a different write shape from a master row - but the
+    # envelope, the batch cap, the verdicts and the dry-run rollback are the
+    # caller's contract and must not fork, so the branch is here and nowhere else.
+    ingester = DocumentIngestService if entity in DOCUMENT_ENTITIES else MasterIngestService
+    service = ingester(
         db,
         integration_id=current_user.get("integration_id"),
         company_id=company_id,
@@ -218,4 +242,5 @@ async def read_current_state(
 
     company_id = resolve_company_anchor(db, payload, current_user)
 
-    return MasterReadService(db, company_id=company_id).current_state(entity, source_refs)
+    reader = DocumentReadService if entity in DOCUMENT_ENTITIES else MasterReadService
+    return reader(db, company_id=company_id).current_state(entity, source_refs)

@@ -79,10 +79,15 @@ class TestCoverage:
         # entity present in ingest but missing from the permission map would be
         # refused at runtime, which is safe, but silently unreachable.
         from app.api.v1.external.ingest import INGEST_PERMISSIONS, READ_PERMISSIONS
+        from app.services.document_ingest_service import DOCUMENT_ENTITIES
         from app.services.master_ingest_service import ENTITY_SPECS
 
-        assert set(INGEST_PERMISSIONS) == set(ENTITY_SPECS)
-        assert set(READ_PERMISSIONS) == set(ENTITY_SPECS)
+        # Masters AND documents: one route serves both since group A3, so a map
+        # that covers only one of the registries leaves the other reachable-but-
+        # refused, which reads as a broken feature rather than a protected one.
+        served = set(ENTITY_SPECS) | set(DOCUMENT_ENTITIES)
+        assert set(INGEST_PERMISSIONS) == served
+        assert set(READ_PERMISSIONS) == served
 
     def test_ingest_and_read_use_different_slugs_per_entity(self):
         # Writing a warehouse must not be authorised by the products slug.

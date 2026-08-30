@@ -52,6 +52,11 @@ SUPPORTED_ENTITY_TYPES = {
     "suppliers",
     "customers",
     "sales_agents",
+    # Group A3: the documents. `orders` / `order_lines` below are the LEGACY
+    # order tables and are a different thing entirely - these two are
+    # public.sales_orders / public.purchase_orders, which the SCM planner reads.
+    "sales_orders",
+    "purchase_orders",
     "picking_headers",
     "picking_lines",
     "orders",
@@ -226,6 +231,14 @@ class IntegrationReferenceService:
         table = _require_supported(entity_type)
         try:
             found = self.db.execute(
+                # Unqualified on purpose, and it matters now that
+                # `sales_orders` / `purchase_orders` are here: those names exist a
+                # SECOND time in the `projects` schema, so this resolves through
+                # `search_path`. Production reaches `public` first, and the test
+                # substrate deliberately orders its scratch schemas so the core
+                # tables win (`_pg_fixture.blank_session`). Hard-coding `public.`
+                # instead would point every read at the REAL database from a
+                # scratch-schema test and clear live mappings as orphans.
                 text(f"SELECT 1 FROM {table} WHERE id = :entity_id LIMIT 1"),
                 {"entity_id": str(entity_id)},
             ).first()
