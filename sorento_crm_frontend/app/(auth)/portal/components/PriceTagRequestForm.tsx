@@ -44,6 +44,7 @@ import {
   type SearchableSelectOption,
 } from '@/components/common/SearchableSelect';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { FileDropzone } from '@/components/common/FileDropzone';
 import {
   priceTagStatusLabel,
   priceTagStatusPillClass,
@@ -935,54 +936,25 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           <CardTitle className="text-base">Purchase Order</CardTitle>
         </CardHeader>
         <CardContent className="px-4 pb-4">
-          <div className="border-2 border-dashed rounded-lg p-4 text-center">
-            <input
-              type="file"
-              multiple
-              accept=".pdf,.jpg,.jpeg,.png"
-              className="hidden"
-              id="po-upload"
-              onChange={(e) => {
-                const files = Array.from(e.target.files ?? []);
-                setPendingFiles((prev) => [...prev, ...files]);
-                e.target.value = '';
-              }}
-            />
-            <label
-              htmlFor="po-upload"
-              className="cursor-pointer flex flex-col items-center gap-2 text-muted-foreground hover:text-foreground transition-colors"
-            >
-              <FileText className="size-8" />
-              <span className="text-sm">
-                Drop PO files here or click to browse
-              </span>
-              <span className="text-xs">PDF, JPG, PNG</span>
-            </label>
-          </div>
-          {pendingFiles.length > 0 && (
-            <div className="mt-3 space-y-1">
-              {pendingFiles.map((file, i) => (
-                <div
-                  key={`${file.name}-${i}`}
-                  className="flex items-center justify-between text-sm px-2 py-1 bg-muted rounded"
-                >
-                  <span className="truncate" title={file.name}>
-                    {file.name}
-                  </span>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-6 w-6 p-0"
-                    onClick={() =>
-                      setPendingFiles((prev) => prev.filter((_, idx) => idx !== i))
-                    }
-                  >
-                    <Trash2 className="size-3.5" />
-                  </Button>
-                </div>
-              ))}
-            </div>
-          )}
+          {/* The shared drop surface, not a hand-rolled dashed box: the old one
+              said "Drop PO files here" and had no drag handlers at all, so a
+              dropped file opened in the browser tab instead. */}
+          <FileDropzone
+            id="po-upload"
+            multiple
+            accept=".pdf,.jpg,.jpeg,.png"
+            files={pendingFiles}
+            onFilesChange={setPendingFiles}
+            onReject={(file, reason) =>
+              toast.error(
+                reason === 'type'
+                  ? `${file.name} is not a PDF, JPG or PNG.`
+                  : `${file.name} could not be attached.`,
+              )
+            }
+            title="Drop PO files here, or click to browse"
+            aria-label="Attach purchase order files"
+          />
           {(request?.attachments?.length ?? 0) > 0 && (
             <div className="mt-3 space-y-1">
               <p className="text-xs text-muted-foreground font-medium">
