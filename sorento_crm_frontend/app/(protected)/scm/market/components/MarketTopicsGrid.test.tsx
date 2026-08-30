@@ -4,6 +4,27 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+/* The grace window is the server's; what this file proves is that the row parks one. */
+const createPendingAction = vi.fn().mockResolvedValue({
+  id: 'pa-1',
+  action_key: 'market_topic.delete',
+  entity_type: 'market_topic',
+  entity_id: 't-copper',
+  commit_at: '2026-08-30T10:00:10',
+  window_seconds: 10,
+});
+vi.mock('sonner', () => ({
+  // `dismiss` is load-bearing: the countdown's toast is dismissed when the row
+  // unmounts, and a stub without it throws out of an effect no assertion catches.
+  toast: { success: vi.fn(), error: vi.fn(), custom: vi.fn(), dismiss: vi.fn() },
+}));
+
+vi.mock('@/services/pendingActionService', () => ({
+  createPendingAction: (...args: unknown[]) => createPendingAction(...args),
+  cancelPendingAction: vi.fn(),
+  getCurrentPendingAction: vi.fn().mockResolvedValue({ pending: null, last_outcome: null }),
+}));
+
 import { render, screen, within, fireEvent } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
@@ -125,22 +146,22 @@ describe('MarketTopicsGrid', () => {
     expect(screen.queryByText('Copper price index')).not.toBeInTheDocument();
   });
 
-  it('opens the hard-delete confirmation with the standard copy + topic name', async () => {
-    mockList({ data: [COPPER, STEEL] });
-    renderGrid();
-    fireEvent.click(screen.getAllByRole('button', { name: /Delete topic/i })[0]);
-    const dialog = await screen.findByRole('dialog');
-    expect(within(dialog).getByText('Confirm delete')).toBeInTheDocument();
-    expect(within(dialog).getByText(/This action cannot be undone/i)).toBeInTheDocument();
-    expect(within(dialog).getByText('Copper price index')).toBeInTheDocument();
-  });
-
-  it('calls the delete mutation with the row id on confirm', async () => {
+  it('parks the delete on the row that was pressed, with no dialog in the way (S6-10)', async () => {
     mockList({ data: [COPPER] });
     renderGrid();
     fireEvent.click(screen.getByRole('button', { name: /Delete topic/i }));
-    const dialog = await screen.findByRole('dialog');
-    fireEvent.click(within(dialog).getByRole('button', { name: /^Delete$/i }));
-    await vi.waitFor(() => expect(deleteMutate).toHaveBeenCalledWith('t-copper'));
+
+    // D7: the press IS the action, and Cancel in the countdown is the way back.
+    await vi.waitFor(() =>
+      expect(createPendingAction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          actionKey: 'market_topic.delete',
+          entityType: 'market_topic',
+          entityId: 't-copper',
+        }),
+      ),
+    );
+    expect(deleteMutate).not.toHaveBeenCalled();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 });

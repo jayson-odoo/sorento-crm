@@ -88,8 +88,10 @@ const h = vi.hoisted(() => ({
 
 /**
  * Toasts are counted, not rendered. Delete used to run through TWO mutations - the page's
- * own `useDeleteWarehouse` and the one `ConfirmDeleteDialog` wraps `onDelete` in - so a
- * single failure raised the same message twice, in two positions.
+ * own `useDeleteWarehouse` and the one the confirmation dialog wrapped `onDelete` in - so
+ * a single failure raised the same message twice, in two positions. Since S6b there is one
+ * path and it is `useDeferredAction`, which owns the countdown, the toast and the
+ * invalidation on its own.
  */
 vi.mock('sonner', () => {
   const record = (kind: string) => () => {
@@ -108,6 +110,21 @@ vi.mock('sonner', () => {
   });
   return { toast, Toaster: () => null };
 });
+
+/* The grace window is the server's; what this file proves is that the gear parks one. */
+const createPendingAction = vi.fn().mockResolvedValue({
+  id: 'pa-1',
+  action_key: 'warehouse.delete',
+  entity_type: 'warehouse',
+  entity_id: CURRENT_ID,
+  commit_at: '2026-08-30T10:00:10',
+  window_seconds: 10,
+});
+vi.mock('@/services/pendingActionService', () => ({
+  createPendingAction: (...args: unknown[]) => createPendingAction(...args),
+  cancelPendingAction: vi.fn(),
+  getCurrentPendingAction: vi.fn().mockResolvedValue({ pending: null, last_outcome: null }),
+}));
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: h.push, back: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
@@ -178,15 +195,14 @@ async function renderDetail(id: string = CURRENT_ID) {
 }
 
 /** Open the confirmation dialog from the header's gear, then confirm inside it. */
-async function confirmDelete() {
+/** Press Delete. There is no second step: the press IS the action (D7). */
+async function startDelete() {
   // Delete lives in the gear now, red and last (D6), not as a standing button.
   const gear = screen.getByRole('button', { name: /warehouse options/i });
   gear.focus();
   fireEvent.keyDown(gear, { key: 'ArrowDown', code: 'ArrowDown' });
-  fireEvent.click(await screen.findByRole('menuitem', { name: /^delete warehouse$/i }));
-  const dialog = await screen.findByRole('dialog');
   await act(async () => {
-    fireEvent.click(within(dialog).getByRole('button', { name: /^delete$/i }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: /^delete warehouse$/i }));
   });
 }
 
@@ -418,37 +434,32 @@ describe('Warehouse detail - prose', () => {
   });
 });
 
-describe('Warehouse detail - delete reports once', () => {
+describe('Warehouse detail - delete parks a pending action (S6-10)', () => {
   /**
    * `ConfirmDeleteDialog` owns the toast and the invalidation, so the page must hand it a
    * bare service call. Routing through `useDeleteWarehouse` as well makes both mutations
    * fire: the user sees one message twice, in two positions.
    */
-  it('deletes through the service and toasts once', async () => {
-    const { invalidate } = await renderDetail();
+  it('parks the delete on the server and opens no dialog', async () => {
+    await renderDetail();
 
-    await confirmDelete();
+    await startDelete();
 
-    await waitFor(() => expect(h.toasts).toContain('custom'));
-    expect(h.deleteWarehouse).toHaveBeenCalledWith(CURRENT_ID);
-    expect(h.toasts).toEqual(['custom']);
-    expect(h.push).toHaveBeenCalledWith('/inventory-management/warehouses');
-    // Still invalidated, exactly once: queryKeysToInvalidate must stay on the dialog.
-    expect(warehousesInvalidations(invalidate)).toBe(1);
-  });
-
-  it('reports a rejected delete once, not twice', async () => {
-    h.deleteWarehouse.mockRejectedValue(
-      new Error('Warehouse has linked stock, zones, allocations, or picking lines.'),
+    // The browser no longer calls DELETE at all: the server applies it when the
+    // window lapses, which is what makes closing the tab safe (S6-08).
+    await waitFor(() =>
+      expect(createPendingAction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          actionKey: 'warehouse.delete',
+          entityType: 'warehouse',
+          entityId: CURRENT_ID,
+        }),
+      ),
     );
-    const { invalidate } = await renderDetail();
-
-    await confirmDelete();
-
-    await waitFor(() => expect(h.toasts).toContain('custom'));
-    expect(h.toasts).toEqual(['custom']);
+    expect(h.deleteWarehouse).not.toHaveBeenCalled();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    // Nothing has happened yet, so nothing has been said and nowhere has been left.
     expect(h.push).not.toHaveBeenCalledWith('/inventory-management/warehouses');
-    expect(warehousesInvalidations(invalidate)).toBe(0);
   });
 });
 

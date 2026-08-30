@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { useDeferredAction } from '@/hooks/useDeferredAction';
 import {
@@ -106,7 +106,17 @@ export function useDeferredRowAction(
     setTarget({ ...next, nonce: nonceRef.current });
   }, []);
 
-  return { run, targetId: target?.id ?? null, isPending: action.isPending };
+  const targetId = target?.id ?? null;
+  const { isPending } = action;
+
+  // Memoised, and load-bearing. Every migrated list reads `run` from inside its
+  // `columns` useMemo, so this object is one of that memo's dependencies: a fresh
+  // literal per render would rebuild `columns` on every render, and a TanStack table
+  // handed new columns every render never settles - the grid renders nothing at all.
+  return useMemo(
+    () => ({ run, targetId, isPending }),
+    [run, targetId, isPending],
+  );
 }
 
 /**

@@ -14,6 +14,21 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+/* The grace window is the server's; what this file proves is that the control parks one. */
+const createPendingAction = vi.fn().mockResolvedValue({
+  id: 'pa-1',
+  action_key: 'proforma_invoice.delete',
+  entity_type: 'proforma_invoice',
+  entity_id: 'pi-1',
+  commit_at: '2026-08-30T10:00:10',
+  window_seconds: 10,
+});
+vi.mock('@/services/pendingActionService', () => ({
+  createPendingAction: (...args: unknown[]) => createPendingAction(...args),
+  cancelPendingAction: vi.fn(),
+  getCurrentPendingAction: vi.fn().mockResolvedValue({ pending: null, last_outcome: null }),
+}));
+
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ProformaInvoiceDetail as ProformaInvoiceDetailData } from '../../../services/proformaInvoiceService';
@@ -377,22 +392,27 @@ describe('ProformaInvoiceDetail - the record header', () => {
 });
 
 describe('ProformaInvoiceDetail - deleting the invoice', () => {
-  it('asks first, and routes back to the list once it is done', async () => {
+  it('parks the delete and stays put until the server applies it (S6-10)', async () => {
     state.data = detail();
     renderDetail();
 
     openActions();
     fireEvent.click(screen.getByRole('menuitem', { name: /delete invoice/i }));
 
-    expect(screen.getByText(/deletes proforma invoice PI-2026-001/)).toBeInTheDocument();
-    expect(writes.deleteInvoice).not.toHaveBeenCalled();
-
-    fireEvent.click(
-      within(screen.getByRole('dialog')).getByRole('button', { name: /^delete$/i }),
+    // D7: the menu item IS the action. The page must NOT leave on the click - a
+    // record page that returned to the list would be lying for ten seconds, and
+    // Cancel would have nowhere to put the reader back.
+    await waitFor(() =>
+      expect(createPendingAction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          actionKey: 'proforma_invoice.delete',
+          entityType: 'proforma_invoice',
+          entityId: 'pi-1',
+        }),
+      ),
     );
-
-    await waitFor(() => expect(writes.deleteInvoice).toHaveBeenCalledWith('pi-1'));
-    await waitFor(() => expect(push).toHaveBeenCalledWith('/scm/proforma-invoices'));
+    expect(writes.deleteInvoice).not.toHaveBeenCalled();
+    expect(push).not.toHaveBeenCalledWith('/scm/proforma-invoices');
   });
 
   it('refuses on an invoice already in a packing list, and says why', () => {
@@ -905,7 +925,7 @@ describe('F11 - answering a supplier code by hand', () => {
     expect(screen.queryByRole('button', { name: /^change$/i })).not.toBeInTheDocument();
   });
 
-  it('asks before forgetting a recorded match, and quotes both codes', () => {
+  it('parks the forget on the RULING, never on the line (S6-10)', async () => {
     state.data = detail({
       lines: [
         {
@@ -923,33 +943,19 @@ describe('F11 - answering a supplier code by hand', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /^forget$/i }));
 
-    expect(
-      screen.getByText(
-        /Forget that SRTWC8357-RL-300 means SRTWC8357-300-RL\? Next upload will match it again by the ladder\./,
+    // D7: the press IS the action, and the entity is the ALIAS row - forgetting is
+    // a ruling being withdrawn, not a line being edited.
+    await waitFor(() =>
+      expect(createPendingAction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          actionKey: 'supplier_code_alias.forget',
+          entityType: 'supplier_code_alias',
+          entityId: 'alias-1',
+        }),
       ),
-    ).toBeInTheDocument();
-    expect(writes.forgetMatch).not.toHaveBeenCalled();
-  });
-
-  it('forgets the recorded match on confirm, named by the ruling and never by the line', async () => {
-    state.data = detail({
-      lines: [
-        {
-          ...detail().lines[0],
-          match_source: 'auto',
-          matched_by: 'token_set',
-          match_id: 'alias-1',
-        },
-      ],
-    });
-    renderDetail();
-    openTab('Lines');
-
-    fireEvent.click(screen.getByRole('button', { name: /^forget$/i }));
-    fireEvent.click(
-      within(screen.getByRole('dialog')).getByRole('button', { name: /^forget$/i }),
     );
-
-    await waitFor(() => expect(writes.forgetMatch).toHaveBeenCalledWith('alias-1'));
+    expect(writes.forgetMatch).not.toHaveBeenCalled();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
+
 });

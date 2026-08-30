@@ -7,6 +7,27 @@
  * actually in review.
  */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+/* The grace window is the server's; what this file proves is that the control parks one. */
+const createPendingAction = vi.fn().mockResolvedValue({
+  id: 'pa-1',
+  action_key: 'onboarding_request.delete',
+  entity_type: 'onboarding_request',
+  entity_id: 'req-1',
+  commit_at: '2026-08-30T10:00:10',
+  window_seconds: 10,
+});
+vi.mock('sonner', () => ({
+  // `dismiss` is load-bearing: the countdown's toast is dismissed when the record
+  // unmounts, and a stub without it throws out of an effect no assertion catches.
+  toast: { success: vi.fn(), error: vi.fn(), custom: vi.fn(), dismiss: vi.fn() },
+}));
+
+vi.mock('@/services/pendingActionService', () => ({
+  createPendingAction: (...args: unknown[]) => createPendingAction(...args),
+  cancelPendingAction: vi.fn(),
+  getCurrentPendingAction: vi.fn().mockResolvedValue({ pending: null, last_outcome: null }),
+}));
+
 import { act, render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -504,14 +525,24 @@ describe('OnboardingRequestDetail', () => {
     expect(copyToClipboard).toHaveBeenCalledWith('https://crm.example.com/onboarding/TOKEN');
   });
 
-  it('confirms before deleting, in the standard words', async () => {
+  it('parks the delete rather than opening a dialog (S6-10)', async () => {
     getOnboardingRequest.mockResolvedValue(detail());
     renderDetail();
     const menu = await openGearMenu();
     fireEvent.click(within(menu).getByRole('menuitem', { name: 'Delete' }));
-    expect(await screen.findByText('Confirm delete')).toBeInTheDocument();
-    expect(screen.getByText(/This action cannot be undone/)).toBeInTheDocument();
+
+    // D7: the menu item IS the action, and Cancel in the countdown is the way back.
+    // Its people go with the request when the server applies it, not on the click.
+    await waitFor(() =>
+      expect(createPendingAction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          actionKey: 'onboarding_request.delete',
+          entityType: 'onboarding_request',
+        }),
+      ),
+    );
     expect(deleteOnboardingRequest).not.toHaveBeenCalled();
+    expect(screen.queryByText('Confirm delete')).not.toBeInTheDocument();
   });
 
   it('carries the reviewer back to the queue', async () => {
