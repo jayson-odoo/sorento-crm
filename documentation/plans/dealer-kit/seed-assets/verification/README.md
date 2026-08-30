@@ -582,3 +582,38 @@ declared`: wrap each snippet in an IIFE.
 `Admin Jayson Personal is viewing this portal as you` banner, because the same browser
 holds the staff login from the CRM half of the run. The contact resolved is still
 `Ziv Beh` (the heading, and the counts, are hers), which is what the dropdown proves.
+
+
+## Round 11, 30 Aug: the review fixes on the lane (section 15)
+
+agent-browser sessions `ptag-review` (staff, `Jayson Personal`) and `ptag-portal`
+(the impersonation token for `Ziv Beh`), FE `:3030` + BE `:8030`, navigated from
+`/` through the sidebar. The database is a production copy, so the two drafts
+this run created were deleted through the portal's own Delete Draft at the end:
+`price_tag_requests` is back to the four rows it held, `PT-202608-0002` left
+claimed as asked. Doc numbers 0005 to 0007 are spent, which is what a document
+number does.
+
+| File | What it shows |
+| --- | --- |
+| `review-1-crm-list-salesperson-and-lines.png` | The CRM queue with the Salesperson column reading `Ziv Beh` and the Lines column reading 2, 1, 2, 2. Both drew blank before: `PriceTagRequestListItem` never declared `contact_name` or `line_count`, so `response_model` dropped them (finding 5). The footer reads `1 - 4 of 4` from the server's own count, not the length of an array (finding 13). |
+| `review-2-claim-before-unclaimed.png` | `PT-202608-0002` before the claim: status `New`, header subline `Assigned to: Unclaimed`, one primary CTA reading `Claim`. |
+| `review-3-claim-names-the-claimer.png` | The same page straight after Claim: status `Designing`, `Assigned to: Jayson Personal`, and the CTA has become `Design tags`. The claim writes `assigned_to_id` and the response carries the resolved name; before this it wrote `created_by`, which nothing read back, so the subline said `Unclaimed` for the rest of the request's life (finding 5, AC-M.30). |
+| `review-4-draft-after-delete-gets-a-free-number.png` | The portal list after the exact failure sequence: save `PT-202608-0005`, save `PT-202608-0006`, delete `0005`, save again. The fourth save answered `PT-202608-0007` and the page carries both drafts. On the old COUNT-of-surviving-rows sequence that last save asked for `0006`, which the live row already held, and Save Draft answered 500 on `price_tag_requests_doc_number_key` (finding 1, AC-M.28). |
+| `review-5-portal-po-shared-dropzone.png` | The new request form's Purchase Order section rendering the shared `FileDropzone`: `Drop PO files here, or click to browse` above `.pdf, .jpg, .jpeg, .png`. The hand-rolled box it replaces had no drag handlers at all, so a dropped file was opened by the browser and the half-filled form was lost (finding 15). |
+| `review-6-crm-queue-excludes-drafts.png` | The CRM queue while two portal DRAFTS existed (`0006`, `0007`): it lists `0004, 0003, 0002, 0001` and neither draft. Marketing can no longer claim a form the salesperson is still typing (finding 4, AC-M.30). |
+
+Read off the same run, without a screenshot of its own:
+
+- The portal landing rendered its dropdown with `Price Tag Request 4` beside the
+  four legacy kinds, so the `allSettled` rewrite of the five list legs did not
+  cost the landing anything (finding 11).
+- `GET /api/v1/public/portal/submissions/price_tag_request` with the contact's
+  token answers rows carrying `assigned_to_id`, which is the field the wire used
+  to drop.
+- Delete Draft asked `Delete this draft?` in a dialog before it removed anything,
+  which is the standard's confirmation and not a `confirm()`.
+
+The trap from the earlier portal run still bites: a CLI `click` low in the portal
+page is a silent no-op behind the fixed impersonation banner, so Save Draft,
+Delete Draft and the confirm were issued as DOM `click()` through `eval`.
