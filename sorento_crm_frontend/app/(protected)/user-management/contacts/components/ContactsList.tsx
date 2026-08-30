@@ -337,6 +337,15 @@ export default function ContactsList() {
       { onSuccess: clearSelection },
     );
 
+  // The one offer this listing makes, in both places it belongs: the
+  // toolbar, and the empty state's next step (S5-06).
+  const listPrimaryAction = (
+    <Button onClick={() => setCreateDialogOpen(true)}>
+      <Plus className="size-4 mr-2" />
+      Create Contact
+    </Button>
+  );
+
   return (
     <DataGrid
       table={table}
@@ -344,6 +353,7 @@ export default function ContactsList() {
       recordCount={data?.pagination?.total || 0}
       isLoading={isLoading}
       rowHref={rowHref}
+      emptyAction={listPrimaryAction}
     >
       <Card>
         <CardHeader className="block">
@@ -379,12 +389,7 @@ export default function ContactsList() {
             exportConfig={{ filename: 'contacts_export.xlsx' }}
             onRefresh={() => void refetch()}
             isRefreshing={isFetching && !isLoading}
-            primaryAction={
-              <Button onClick={() => setCreateDialogOpen(true)}>
-                <Plus className="size-4 mr-2" />
-                Create Contact
-              </Button>
-            }
+            primaryAction={listPrimaryAction}
             bulkActions={[
               {
                 key: 'outbound-enable',

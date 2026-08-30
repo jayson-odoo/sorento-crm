@@ -96,6 +96,21 @@ export default function BrandsList() {
 
   const statusActive = statusFilter !== 'all';
 
+  // The one offer this listing makes, in both places it belongs: the
+  // toolbar, and the empty state's next step (S5-06).
+  const listPrimaryAction = (
+    <Button
+      onClick={() => {
+        setCopyFromBrand(null);
+        setEditingBrandId(undefined);
+        setFormOpen(true);
+      }}
+    >
+      <Plus className="size-4" />
+      Create Brand
+    </Button>
+  );
+
   return (
     <>
       {/* A brand is edited in a lightbox, so the row opens that rather than a page
@@ -107,6 +122,7 @@ export default function BrandsList() {
         isLoading={isLoading}
         onRowClick={handleEdit}
         tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
+        emptyAction={listPrimaryAction}
       >
         <Card>
           <CardHeader className="block">
@@ -164,18 +180,7 @@ export default function BrandsList() {
                 ),
               }}
               exportConfig={{ filename: 'brands_export.xlsx' }}
-              primaryAction={
-                <Button
-                  onClick={() => {
-                    setCopyFromBrand(null);
-                    setEditingBrandId(undefined);
-                    setFormOpen(true);
-                  }}
-                >
-                  <Plus className="size-4" />
-                  Create Brand
-                </Button>
-              }
+              primaryAction={listPrimaryAction}
             />
           </CardHeader>
           <CardTable>

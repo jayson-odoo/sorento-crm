@@ -145,11 +145,21 @@ export default function WarehousesList() {
     columnResizeMode: 'onChange',
   });
 
+  // The one offer this listing makes, in both places it belongs: the
+  // toolbar, and the empty state's next step (S5-06).
+  const listPrimaryAction = (
+    <Button onClick={() => router.push('/inventory-management/warehouses/new')}>
+      <Plus />
+      Create Warehouse
+    </Button>
+  );
+
   return (
     <DataGrid table={table} recordCount={data?.pagination.total || 0} isLoading={isLoading}
       rowHref={rowHref}
       tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
       standardToolbar={false}
+      emptyAction={listPrimaryAction}
     >
       <Card>
         <CardHeader className="block">
@@ -179,12 +189,7 @@ export default function WarehousesList() {
             exportConfig={{ filename: 'warehouses_export.xlsx' }}
             onRefresh={() => void refetch()}
             isRefreshing={isFetching && !isLoading}
-            primaryAction={
-              <Button onClick={() => router.push('/inventory-management/warehouses/new')}>
-                <Plus />
-                Create Warehouse
-              </Button>
-            }
+            primaryAction={listPrimaryAction}
             secondaryActions={[
               {
                 key: 'import',

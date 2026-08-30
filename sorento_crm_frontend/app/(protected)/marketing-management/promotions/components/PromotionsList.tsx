@@ -358,6 +358,15 @@ export default function PromotionsList() {
     compilePdf.mutate(ids, { onSuccess: () => setRowSelection({}) });
   };
 
+  // The one offer this listing makes, in both places it belongs: the
+  // toolbar, and the empty state's next step (S5-06).
+  const listPrimaryAction = (
+    <Button onClick={() => router.push('/marketing-management/promotions/new')}>
+      <Plus />
+      Create Promotion
+    </Button>
+  );
+
   return (
     <DataGrid
       table={table}
@@ -366,6 +375,7 @@ export default function PromotionsList() {
       isLoading={isLoading}
       rowHref={rowHref}
       standardToolbar={false}
+      emptyAction={listPrimaryAction}
     >
       <Card>
         <CardHeader className="block">
@@ -513,12 +523,7 @@ export default function PromotionsList() {
             }
             onRefresh={() => void refetch()}
             isRefreshing={isFetching && !isLoading}
-            primaryAction={
-              <Button onClick={() => router.push('/marketing-management/promotions/new')}>
-                <Plus />
-                Create Promotion
-              </Button>
-            }
+            primaryAction={listPrimaryAction}
             bulkActions={[
               {
                 key: 'compile-pdf',

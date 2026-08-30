@@ -110,6 +110,20 @@ export default function CompaniesList() {
     );
   }
 
+  // The one offer this listing makes, in both places it belongs: the
+  // toolbar, and the empty state's next step (S5-06).
+  const listPrimaryAction = (
+    <Button
+      onClick={() => {
+        setEditingCompanyId(undefined);
+        setFormOpen(true);
+      }}
+    >
+      <Plus className="size-4" />
+      Create Company
+    </Button>
+  );
+
   return (
     <>
       <DataGrid
@@ -117,6 +131,7 @@ export default function CompaniesList() {
         recordCount={filteredCompanies.length}
         isLoading={isLoading}
         tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
+        emptyAction={listPrimaryAction}
       >
         <Card>
           <CardHeader className="block">
@@ -174,17 +189,7 @@ export default function CompaniesList() {
                 ),
               }}
               exportConfig={{ filename: 'companies_export.xlsx' }}
-              primaryAction={
-                <Button
-                  onClick={() => {
-                    setEditingCompanyId(undefined);
-                    setFormOpen(true);
-                  }}
-                >
-                  <Plus className="size-4" />
-                  Create Company
-                </Button>
-              }
+              primaryAction={listPrimaryAction}
             />
           </CardHeader>
           <CardTable>

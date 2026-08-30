@@ -715,8 +715,12 @@ function DataGridTableEmpty() {
         than hugging the border.
       */}
       <td colSpan={totalColumns} className="p-0 text-muted-foreground">
-        <div className="sticky start-0 w-fit px-4 py-6 text-start">
-          {props.emptyMessage || 'No data available'}
+        <div
+          data-slot="data-grid-empty"
+          className="sticky start-0 flex w-fit flex-col items-start gap-3 px-4 py-6 text-start"
+        >
+          <span>{props.emptyMessage || 'No data available'}</span>
+          {props.emptyAction}
         </div>
       </td>
     </tr>

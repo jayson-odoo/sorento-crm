@@ -223,6 +223,15 @@ export default function FormsList() {
     enableColumnResizing: true,
   });
 
+  // The one offer this listing makes, in both places it belongs: the
+  // toolbar, and the empty state's next step (S5-06).
+  const listPrimaryAction = (
+    <Button onClick={() => router.push('/forms-management/forms/new')}>
+      <Plus />
+      Create Form
+    </Button>
+  );
+
   return (
     <DataGrid
       table={table}
@@ -231,6 +240,7 @@ export default function FormsList() {
       rowHref={rowHref}
       standardToolbar={false}
       tableLayout={{ columnsVisibility: true, columnsResizable: true }}
+      emptyAction={listPrimaryAction}
     >
       <Card>
         <CardHeader className="block">
@@ -290,12 +300,7 @@ export default function FormsList() {
             exportConfig={{ filename: 'forms_export.xlsx' }}
             onRefresh={() => void refetch()}
             isRefreshing={isFetching && !isLoading}
-            primaryAction={
-              <Button onClick={() => router.push('/forms-management/forms/new')}>
-                <Plus />
-                Create Form
-              </Button>
-            }
+            primaryAction={listPrimaryAction}
             bulkActions={[
               {
                 key: 'delete',

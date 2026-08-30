@@ -180,6 +180,20 @@ export default function ComplaintRootCausesList() {
     enableRowSelection: true,
   });
 
+  // The one offer this listing makes, in both places it belongs: the
+  // toolbar, and the empty state's next step (S5-06).
+  const listPrimaryAction = (
+    <Button
+      onClick={() => {
+        setEditingId(undefined);
+        setFormOpen(true);
+      }}
+    >
+      <Plus className="size-4" />
+      Add Root Cause
+    </Button>
+  );
+
   return (
     <>
       <DataGrid
@@ -190,6 +204,7 @@ export default function ComplaintRootCausesList() {
           router.push(`/complaint-management/complaint-root-causes/${row.id}`)
         }
         tableLayout={{ width: 'fixed', columnsResizable: true }}
+        emptyAction={listPrimaryAction}
       >
         <Card>
           <CardHeader className="block">
@@ -207,17 +222,7 @@ export default function ComplaintRootCausesList() {
                 </div>
               }
               exportConfig={{ filename: 'complaint_root_causes_export.xlsx' }}
-              primaryAction={
-                <Button
-                  onClick={() => {
-                    setEditingId(undefined);
-                    setFormOpen(true);
-                  }}
-                >
-                  <Plus className="size-4" />
-                  Add Root Cause
-                </Button>
-              }
+              primaryAction={listPrimaryAction}
             />
           </CardHeader>
           <CardTable>

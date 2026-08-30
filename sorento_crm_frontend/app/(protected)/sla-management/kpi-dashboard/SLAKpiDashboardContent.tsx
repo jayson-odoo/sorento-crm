@@ -423,7 +423,18 @@ function TasksCard({ scope, filter, onClear, window }: { scope: KpiScope; filter
 // Body of the KPI dashboard WITHOUT the outer <Container>, so it can be embedded
 // both on its own route (/sla-management/kpi-dashboard) and on the home dashboard
 // (app/(protected)/page.tsx) under "My pending tasks".
-export function SLAKpiDashboardContent({ defaultWindowDays }: { defaultWindowDays?: number } = {}) {
+export function SLAKpiDashboardContent({
+  defaultWindowDays,
+  embedded = false,
+}: {
+  defaultWindowDays?: number;
+  /**
+   * The home dashboard renders this INSIDE its own page, which already has a
+   * title and a trail. Embedded, the block names itself with a section heading
+   * instead of a second page header (S5-01).
+   */
+  embedded?: boolean;
+} = {}) {
   const [scope, setScope] = useState<KpiScope>('all');
   const [filter, setFilter] = useState<TaskFilter>({ view: 'all', state: 'all' });
   const canView = useHasPermission('sla.kpi.view');
@@ -461,30 +472,44 @@ export function SLAKpiDashboardContent({ defaultWindowDays }: { defaultWindowDay
     );
   }
 
+  const scopePicker = (
+    <SearchableSelect
+      value={scope}
+      onChange={(v) => { setScope(v as KpiScope); clearFilter(); }}
+      options={[
+        { value: 'all', label: 'All SLA' },
+        { value: 'form', label: 'Form SLA' },
+        { value: 'conversation', label: 'Conversation SLA' },
+      ]}
+      triggerClassName="w-48"
+    />
+  );
+
   return (
     <div className="space-y-6">
-        <PageHeader
-          title={
-            <span className="inline-flex flex-wrap items-center gap-2">
-              SLA KPI Dashboard
+        {embedded ? (
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <h2 className="min-w-0 break-words text-xl font-semibold">SLA KPI Dashboard</h2>
               {defaultWindowDays ? (
                 <Badge variant="secondary" className="font-normal">Last {defaultWindowDays} days</Badge>
               ) : null}
-            </span>
-          }
-          actions={
-            <SearchableSelect
-              value={scope}
-              onChange={(v) => { setScope(v as KpiScope); clearFilter(); }}
-              options={[
-                { value: 'all', label: 'All SLA' },
-                { value: 'form', label: 'Form SLA' },
-                { value: 'conversation', label: 'Conversation SLA' },
-              ]}
-              triggerClassName="w-48"
-            />
-          }
-        />
+            </div>
+            {scopePicker}
+          </div>
+        ) : (
+          <PageHeader
+            title={
+              <span className="inline-flex flex-wrap items-center gap-2">
+                SLA KPI Dashboard
+                {defaultWindowDays ? (
+                  <Badge variant="secondary" className="font-normal">Last {defaultWindowDays} days</Badge>
+                ) : null}
+              </span>
+            }
+            actions={scopePicker}
+          />
+        )}
 
         {/* Stage breakdown - MECE partition of the total (sums to Opened) */}
         {summaryQ.isLoading ? (

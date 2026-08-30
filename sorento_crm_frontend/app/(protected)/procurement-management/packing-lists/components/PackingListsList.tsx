@@ -349,6 +349,19 @@ export default function PackingListsList() {
     manualFiltering: true,
   });
 
+  // The one offer this listing makes, in both places it belongs: the
+  // toolbar, and the empty state's next step (S5-06).
+  const listPrimaryAction = (
+    <Button
+      onClick={() =>
+        router.push('/procurement-management/packing-lists/new')
+      }
+    >
+      <Plus />
+      Create Packing List
+    </Button>
+  );
+
   return (
     <DataGrid
       table={table}
@@ -357,6 +370,7 @@ export default function PackingListsList() {
       rowHref={rowHref}
       standardToolbar={false}
       tableLayout={{ width: 'fixed', columnsVisibility: true, columnsResizable: true }}
+      emptyAction={listPrimaryAction}
     >
       <Card>
         <CardHeader className="block">
@@ -384,16 +398,7 @@ export default function PackingListsList() {
               </div>
             }
             exportConfig={{ filename: 'packing_lists_export.xlsx' }}
-            primaryAction={
-              <Button
-                onClick={() =>
-                  router.push('/procurement-management/packing-lists/new')
-                }
-              >
-                <Plus />
-                Create Packing List
-              </Button>
-            }
+            primaryAction={listPrimaryAction}
             secondaryActions={[
               // Two or more secondary actions collapse into the toolbar's "Actions"
               // dropdown, which is where the delivery order import lives. Refresh

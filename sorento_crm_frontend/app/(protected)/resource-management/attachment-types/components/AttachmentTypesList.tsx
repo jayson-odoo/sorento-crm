@@ -143,12 +143,27 @@ export default function AttachmentTypesList() {
     enableRowSelection: true,
   });
 
+  // The one offer this listing makes, in both places it belongs: the
+  // toolbar, and the empty state's next step (S5-06).
+  const listPrimaryAction = (
+    <Button
+      onClick={() => {
+        setSelectedTypeId(null);
+        setIsFormDialogOpen(true);
+      }}
+    >
+      <Plus />
+      Create Attachment Type
+    </Button>
+  );
+
   return (
     <DataGrid
       table={table}
       tableLayout={{ columnsVisibility: true }}
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
+      emptyAction={listPrimaryAction}
     >
       <Card>
         <CardHeader className="block">
@@ -178,17 +193,7 @@ export default function AttachmentTypesList() {
             exportConfig={{ filename: 'attachment_types_export.xlsx' }}
             onRefresh={() => void refetch()}
             isRefreshing={isFetching && !isLoading}
-            primaryAction={
-              <Button
-                onClick={() => {
-                  setSelectedTypeId(null);
-                  setIsFormDialogOpen(true);
-                }}
-              >
-                <Plus />
-                Create Attachment Type
-              </Button>
-            }
+            primaryAction={listPrimaryAction}
           />
         </CardHeader>
         <CardTable>

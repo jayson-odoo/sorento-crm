@@ -308,6 +308,7 @@ export function LoadingPlanView({ planId }: { planId: string }) {
     <div className="space-y-4">
       <PageHeader
         title={plan.supplier_name ?? EM_DASH}
+        titleClassName="max-w-full truncate"
         actions={
           <Button
             variant="outline"

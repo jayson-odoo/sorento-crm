@@ -9,11 +9,6 @@ export interface ToolbarProps {
   children?: ReactNode;
 }
 
-export interface ToolbarTitleProps {
-  children: ReactNode;
-  className?: string;
-}
-
 export interface ToolbarHeadingProps {
   className?: string;
   children: ReactNode;
@@ -41,14 +36,6 @@ export const ToolbarHeading = ({
     >
       {children}
     </div>
-  );
-};
-
-export const ToolbarTitle = ({ className, children }: ToolbarTitleProps) => {
-  return (
-    <h1 className={cn('font-semibold text-foreground text-lg', className)}>
-      {children}
-    </h1>
   );
 };
 

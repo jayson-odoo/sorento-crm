@@ -251,6 +251,15 @@ export default function MarketSegmentsAdmin() {
     columnResizeMode: 'onChange',
   });
 
+  // The one offer this listing makes, in both places it belongs: the
+  // toolbar, and the empty state's next step (S5-06).
+  const listPrimaryAction = (
+    <Button onClick={openCreate}>
+      <Plus className="size-4 mr-2" />
+      Add segment
+    </Button>
+  );
+
   return (
     <div className="space-y-6">
       {isError ? (
@@ -266,18 +275,14 @@ export default function MarketSegmentsAdmin() {
           isLoading={isLoading}
           emptyMessage="No market segments yet. Add one to get started."
           tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
+          emptyAction={listPrimaryAction}
         >
           <Card>
             <CardHeader className="block">
               <DataGridListToolbar
                 table={table}
                 exportConfig={{ filename: 'market_segments_export.xlsx' }}
-                primaryAction={
-                  <Button onClick={openCreate}>
-                    <Plus className="size-4 mr-2" />
-                    Add segment
-                  </Button>
-                }
+                primaryAction={listPrimaryAction}
               />
             </CardHeader>
             <CardContent>

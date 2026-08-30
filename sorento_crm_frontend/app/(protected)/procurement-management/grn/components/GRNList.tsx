@@ -189,6 +189,15 @@ export default function GRNList() {
     manualFiltering: true,
   });
 
+  // The one offer this listing makes, in both places it belongs: the
+  // toolbar, and the empty state's next step (S5-06).
+  const listPrimaryAction = (
+    <Button onClick={() => router.push('/procurement-management/grn/new')}>
+      <Plus />
+      Create GRN
+    </Button>
+  );
+
   return (
     <DataGrid
       table={table}
@@ -197,6 +206,7 @@ export default function GRNList() {
       rowHref={rowHref}
       tableLayout={{ columnsVisibility: true }}
       standardToolbar={false}
+      emptyAction={listPrimaryAction}
     >
       <Card>
         <CardHeader className="block">
@@ -255,12 +265,7 @@ export default function GRNList() {
               ),
             }}
             exportConfig={{ filename: 'grn_export.xlsx' }}
-            primaryAction={
-              <Button onClick={() => router.push('/procurement-management/grn/new')}>
-                <Plus />
-                Create GRN
-              </Button>
-            }
+            primaryAction={listPrimaryAction}
             secondaryActions={[
               {
                 key: 'upload-grn',

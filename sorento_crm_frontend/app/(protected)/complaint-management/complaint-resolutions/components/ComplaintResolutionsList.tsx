@@ -178,6 +178,20 @@ export default function ComplaintResolutionsList() {
     enableRowSelection: true,
   });
 
+  // The one offer this listing makes, in both places it belongs: the
+  // toolbar, and the empty state's next step (S5-06).
+  const listPrimaryAction = (
+    <Button
+      onClick={() => {
+        setEditingId(undefined);
+        setFormOpen(true);
+      }}
+    >
+      <Plus className="size-4" />
+      Add Resolution
+    </Button>
+  );
+
   return (
     <>
       <DataGrid
@@ -188,6 +202,7 @@ export default function ComplaintResolutionsList() {
           router.push(`/complaint-management/complaint-resolutions/${row.id}`)
         }
         tableLayout={{ width: 'fixed', columnsResizable: true }}
+        emptyAction={listPrimaryAction}
       >
         <Card>
           <CardHeader className="block">
@@ -205,17 +220,7 @@ export default function ComplaintResolutionsList() {
                 </div>
               }
               exportConfig={{ filename: 'complaint_resolutions_export.xlsx' }}
-              primaryAction={
-                <Button
-                  onClick={() => {
-                    setEditingId(undefined);
-                    setFormOpen(true);
-                  }}
-                >
-                  <Plus className="size-4" />
-                  Add Resolution
-                </Button>
-              }
+              primaryAction={listPrimaryAction}
             />
           </CardHeader>
           <CardTable>

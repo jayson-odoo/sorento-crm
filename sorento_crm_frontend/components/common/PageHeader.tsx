@@ -18,6 +18,7 @@ import {
 } from '@/components/common/toolbar';
 import { MENU_SIDEBAR } from '@/config/menu.config';
 import { useMenu } from '@/hooks/use-menu';
+import { cn } from '@/lib/utils';
 
 export interface PageHeaderCrumb {
   /** The label, which must read exactly as the sidebar reads (S5-02). */
@@ -42,6 +43,12 @@ export interface PageHeaderProps {
   crumbs?: PageHeaderCrumb[];
   /** The toolbar's right-hand side: Back on a detail page, Add on a list. */
   actions?: ReactNode;
+  /**
+   * Only where the title needs a wrapping rule of its own: a ticket number that
+   * must not break mid-string, a supplier name that must truncate rather than
+   * push the toolbar wide.
+   */
+  titleClassName?: string;
   /** A description or meta line, under the trail. */
   children?: ReactNode;
 }
@@ -106,6 +113,7 @@ export function PageHeader({
   eyebrow,
   crumbs,
   actions,
+  titleClassName,
   children,
 }: PageHeaderProps) {
   const pathname = usePathname() ?? '/';
@@ -126,7 +134,12 @@ export function PageHeader({
             {eyebrow}
           </span>
         )}
-        <h1 className="min-w-0 break-words text-xl font-semibold text-foreground">
+        <h1
+          className={cn(
+            'min-w-0 break-words text-xl font-semibold text-foreground',
+            titleClassName,
+          )}
+        >
           {title}
         </h1>
         <Breadcrumb>

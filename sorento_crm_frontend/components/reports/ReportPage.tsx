@@ -1,6 +1,6 @@
 'use client';
 
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   type ColumnDef,
   type PaginationState,
@@ -11,14 +11,6 @@ import {
   useReactTable,
 } from '@tanstack/react-table';
 import { ChartColumn, Check, Download, Settings2, TableProperties } from 'lucide-react';
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTable } from '@/components/ui/card';
@@ -30,7 +22,7 @@ import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Container } from '@/components/common/container';
-import { Toolbar, ToolbarActions, ToolbarHeading, ToolbarTitle } from '@/components/common/toolbar';
+import { PageHeader } from '@/components/common/PageHeader';
 import { formatDateSafe, formatMoney2dp } from '@/lib/helpers';
 import { useReportExport, useReportMeta, useReportRun, useReportViews } from '@/hooks/useReports';
 import {
@@ -441,31 +433,11 @@ export function ReportPage({
 
   const heading = (
     <Container>
-      <Toolbar>
-        <ToolbarHeading>
-          <ToolbarTitle>{meta?.title ?? 'Report'}</ToolbarTitle>
-          <Breadcrumb>
-            <BreadcrumbList>
-              <BreadcrumbItem>
-                <BreadcrumbLink href="/">Home</BreadcrumbLink>
-              </BreadcrumbItem>
-              {breadcrumb.map((crumb) => (
-                <Fragment key={crumb.label}>
-                  <BreadcrumbSeparator />
-                  <BreadcrumbItem>
-                    {crumb.href ? (
-                      <BreadcrumbLink href={crumb.href}>{crumb.label}</BreadcrumbLink>
-                    ) : (
-                      <BreadcrumbPage>{crumb.label}</BreadcrumbPage>
-                    )}
-                  </BreadcrumbItem>
-                </Fragment>
-              ))}
-            </BreadcrumbList>
-          </Breadcrumb>
-        </ToolbarHeading>
-        <ToolbarActions>
-          {meta && state && currentConfig && (
+      <PageHeader
+        title={meta?.title ?? 'Report'}
+        crumbs={breadcrumb.map((crumb) => ({ title: crumb.label, path: crumb.href }))}
+        actions={
+          meta && state && currentConfig ? (
             <>
               <ReportViewsMenu
                 reportKey={reportKey}
@@ -489,9 +461,9 @@ export function ReportPage({
                 Export to Excel
               </Button>
             </>
-          )}
-        </ToolbarActions>
-      </Toolbar>
+          ) : null
+        }
+      />
     </Container>
   );
 

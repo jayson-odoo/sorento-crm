@@ -11,7 +11,6 @@ vi.mock('@/components/common/toolbar', () => ({
   Toolbar: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   ToolbarActions: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   ToolbarHeading: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  ToolbarTitle: ({ children }: { children: React.ReactNode }) => <h1>{children}</h1>,
 }));
 vi.mock('@/components/ideas/IdeationEmbed', () => ({
   IdeationEmbed: ({ ideaId, title }: { ideaId?: string; title: string }) => (

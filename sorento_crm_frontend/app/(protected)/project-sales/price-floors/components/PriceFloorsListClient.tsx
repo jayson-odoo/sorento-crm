@@ -135,6 +135,15 @@ export function PriceFloorsListClient() {
     defaultColumn: { minSize: 60, maxSize: 800, size: 150 },
   });
 
+  // The one offer this listing makes, in both places it belongs: the
+  // toolbar, and the empty state's next step (S5-06).
+  const listPrimaryAction = (
+    <Button onClick={() => router.push('/project-sales/price-floors/new')}>
+      <Plus />
+      Add floor
+    </Button>
+  );
+
   return (
     <DataGrid
       table={table}
@@ -145,6 +154,7 @@ export function PriceFloorsListClient() {
       }
       tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
       tableClassNames={{ edgeCell: 'px-5' }}
+      emptyAction={listPrimaryAction}
     >
       <Card>
         <CardHeader className="block">
@@ -174,12 +184,7 @@ export function PriceFloorsListClient() {
             exportConfig={{ filename: 'price_floors_export.xlsx' }}
             onRefresh={() => void floors.refetch()}
             isRefreshing={floors.isFetching}
-            primaryAction={
-              <Button onClick={() => router.push('/project-sales/price-floors/new')}>
-                <Plus />
-                Add floor
-              </Button>
-            }
+            primaryAction={listPrimaryAction}
           />
         </CardHeader>
         <CardTable>

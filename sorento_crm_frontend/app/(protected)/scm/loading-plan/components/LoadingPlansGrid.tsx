@@ -303,6 +303,15 @@ export function LoadingPlansGrid() {
     enableColumnResizing: true,
   });
 
+  // The one offer this listing makes, in both places it belongs: the
+  // toolbar, and the empty state's next step (S5-06).
+  const listPrimaryAction = (
+    <Button onClick={() => setUploadOpen(true)} data-testid="open-plan-container">
+      <Upload className="size-4" />
+      Upload
+    </Button>
+  );
+
   return (
     <>
       <DataGrid
@@ -317,17 +326,13 @@ export function LoadingPlansGrid() {
         onRowClick={(row) => router.push(`/scm/loading-plan/${row.id}`)}
         tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
         listingKey="scm.dashboard.view::loading-plans"
+        emptyAction={listPrimaryAction}
       >
         <Card>
           <CardHeader className="block">
             <DataGridListToolbar
               table={table}
-              primaryAction={
-                <Button onClick={() => setUploadOpen(true)} data-testid="open-plan-container">
-                  <Upload className="size-4" />
-                  Upload
-                </Button>
-              }
+              primaryAction={listPrimaryAction}
               filters={{
                 kind: 'custom',
                 active: status !== 'active',

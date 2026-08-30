@@ -212,6 +212,21 @@ export default function ProductSetsList() {
     enableColumnResizing: true,
   });
 
+  // The one offer this listing makes, in both places it belongs: the
+  // toolbar, and the empty state's next step (S5-06).
+  const listPrimaryAction = (
+    <div className="flex flex-wrap items-center gap-2">
+      <Button variant="outline" asChild>
+        <Link href="/master-data-management/product-sets/proposals">
+          <Sparkles className="size-4" /> Propose
+        </Link>
+      </Button>
+      <Button onClick={() => setCreating(true)}>
+        <Plus className="size-4" /> Add set
+      </Button>
+    </div>
+  );
+
   return (
     <div className="space-y-3">
       {isError ? (
@@ -251,6 +266,7 @@ export default function ProductSetsList() {
           listingKey="master_data.product_sets.view"
           tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
           emptyMessage="No product sets match that search."
+          emptyAction={listPrimaryAction}
         >
           <Card>
             <CardHeader className="block">
@@ -281,18 +297,7 @@ export default function ProductSetsList() {
                 exportConfig={false}
                 onRefresh={() => void refetch()}
                 isRefreshing={isFetching && !isLoading}
-                primaryAction={
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Button variant="outline" asChild>
-                      <Link href="/master-data-management/product-sets/proposals">
-                        <Sparkles className="size-4" /> Propose
-                      </Link>
-                    </Button>
-                    <Button onClick={() => setCreating(true)}>
-                      <Plus className="size-4" /> Add set
-                    </Button>
-                  </div>
-                }
+                primaryAction={listPrimaryAction}
               />
             </CardHeader>
             <CardTable>

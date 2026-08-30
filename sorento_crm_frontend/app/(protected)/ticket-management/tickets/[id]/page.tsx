@@ -266,6 +266,7 @@ export default function TicketDetailPage({ params }: PageProps) {
       <Container>
         <PageHeader
           title={ticket.ticket_number ?? 'Ticket'}
+          titleClassName="whitespace-nowrap"
           actions={
             <>
               <Button variant="outline" onClick={() => router.push('/ticket-management/tickets')}>

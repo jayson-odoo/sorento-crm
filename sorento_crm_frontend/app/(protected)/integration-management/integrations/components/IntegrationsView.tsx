@@ -196,6 +196,14 @@ export function IntegrationsView() {
     );
   }
 
+  // The one offer this listing makes, in both places it belongs: the
+  // toolbar, and the empty state's next step (S5-06).
+  const listPrimaryAction = (
+    <Button onClick={() => setFormOpen(true)}>
+      <Plus className="size-4" /> Connect integration
+    </Button>
+  );
+
   return (
     <div className="space-y-4 p-4 md:p-6">
       <PageHeader title="Integrations">
@@ -213,6 +221,7 @@ export function IntegrationsView() {
         onRowClick={(row) =>
           router.push(`/integration-management/integrations/${row.id}`)
         }
+        emptyAction={listPrimaryAction}
       >
         <Card>
           <DataGridListToolbar
@@ -228,11 +237,7 @@ export function IntegrationsView() {
                 />
               </div>
             }
-            primaryAction={
-              <Button onClick={() => setFormOpen(true)}>
-                <Plus className="size-4" /> Connect integration
-              </Button>
-            }
+            primaryAction={listPrimaryAction}
             exportConfig={false}
           />
           <CardTable>

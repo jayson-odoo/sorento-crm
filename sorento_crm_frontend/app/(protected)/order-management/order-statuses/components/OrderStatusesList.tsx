@@ -125,6 +125,15 @@ export default function OrderStatusesList() {
     manualFiltering: true,
   });
 
+  // The one offer this listing makes, in both places it belongs: the
+  // toolbar, and the empty state's next step (S5-06).
+  const listPrimaryAction = (
+    <Button onClick={() => router.push('/order-management/order-statuses/new')}>
+      <Plus />
+      Create Delivery Order Status
+    </Button>
+  );
+
   return (
     <DataGrid
       table={table}
@@ -132,6 +141,7 @@ export default function OrderStatusesList() {
       isLoading={isLoading}
       onRowClick={handleRowClick}
       tableLayout={{ columnsVisibility: true }}
+      emptyAction={listPrimaryAction}
     >
       <Card>
         <CardHeader className="block">
@@ -191,12 +201,7 @@ export default function OrderStatusesList() {
             exportConfig={{ filename: 'delivery_order_statuses_export.xlsx' }}
             onRefresh={() => void refetch()}
             isRefreshing={isFetching && !isLoading}
-            primaryAction={
-              <Button onClick={() => router.push('/order-management/order-statuses/new')}>
-                <Plus />
-                Create Delivery Order Status
-              </Button>
-            }
+            primaryAction={listPrimaryAction}
           />
         </CardHeader>
         <CardTable>

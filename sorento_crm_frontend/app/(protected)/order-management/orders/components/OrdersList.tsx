@@ -280,6 +280,15 @@ export default function OrdersList() {
     enableColumnResizing: true,
   });
 
+  // The one offer this listing makes, in both places it belongs: the
+  // toolbar, and the empty state's next step (S5-06).
+  const listPrimaryAction = (
+    <Button onClick={() => router.push('/order-management/orders/new')}>
+      <Plus />
+      Create Delivery Order
+    </Button>
+  );
+
   return (
     <DataGrid
       table={table}
@@ -287,6 +296,7 @@ export default function OrdersList() {
       isLoading={isLoading}
       rowHref={rowHref}
       tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
+      emptyAction={listPrimaryAction}
     >
       <Card>
         <CardHeader className="block">
@@ -339,12 +349,7 @@ export default function OrdersList() {
                 has_order_lines: linesFilter === 'all' ? undefined : linesFilter,
               }),
             }}
-            primaryAction={
-              <Button onClick={() => router.push('/order-management/orders/new')}>
-                <Plus />
-                Create Delivery Order
-              </Button>
-            }
+            primaryAction={listPrimaryAction}
             secondaryActions={[
               {
                 key: 'refresh',

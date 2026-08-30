@@ -132,6 +132,15 @@ export default function SLAPoliciesList() {
     manualFiltering: true,
   });
 
+  // The one offer this listing makes, in both places it belongs: the
+  // toolbar, and the empty state's next step (S5-06).
+  const listPrimaryAction = (
+    <Button onClick={() => router.push('/sla-management/sla-policies/new')}>
+      <Plus />
+      Create SLA Policy
+    </Button>
+  );
+
   return (
     <DataGrid
       table={table}
@@ -140,6 +149,7 @@ export default function SLAPoliciesList() {
       onRowClick={handleRowClick}
       standardToolbar={false}
       tableLayout={{ columnsVisibility: true }}
+      emptyAction={listPrimaryAction}
     >
       <Card>
         <CardHeader className="block">
@@ -199,12 +209,7 @@ export default function SLAPoliciesList() {
             exportConfig={{ filename: 'sla_policies_export.xlsx' }}
             onRefresh={() => void refetch()}
             isRefreshing={isFetching && !isLoading}
-            primaryAction={
-              <Button onClick={() => router.push('/sla-management/sla-policies/new')}>
-                <Plus />
-                Create SLA Policy
-              </Button>
-            }
+            primaryAction={listPrimaryAction}
           />
         </CardHeader>
         <CardTable>

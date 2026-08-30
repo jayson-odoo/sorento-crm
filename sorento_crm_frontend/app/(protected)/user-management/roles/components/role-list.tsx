@@ -291,6 +291,21 @@ const RoleList = () => {
     setPagination((p) => ({ ...p, pageIndex: 0 }));
   };
 
+  // The one offer this listing makes, in both places it belongs: the
+  // toolbar, and the empty state's next step (S5-06).
+  const listPrimaryAction = (
+    <Button
+      disabled={isLoading}
+      onClick={() => {
+        setEditRole(null);
+        setEditDialogOpen(true);
+      }}
+    >
+      <Plus />
+      Add Role
+    </Button>
+  );
+
   return (
     <>
       <DataGrid
@@ -306,6 +321,7 @@ const RoleList = () => {
         tableClassNames={{
           edgeCell: 'px-5',
         }}
+        emptyAction={listPrimaryAction}
       >
         <Card>
           <CardHeader className="block">
@@ -333,18 +349,7 @@ const RoleList = () => {
                 </div>
               }
               exportConfig={{ filename: 'roles_export.xlsx' }}
-              primaryAction={
-                <Button
-                  disabled={isLoading}
-                  onClick={() => {
-                    setEditRole(null);
-                    setEditDialogOpen(true);
-                  }}
-                >
-                  <Plus />
-                  Add Role
-                </Button>
-              }
+              primaryAction={listPrimaryAction}
             />
           </CardHeader>
           <CardTable>

@@ -123,7 +123,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   return (
     <AccountProvider user={user}>
       <Container>
-        <PageHeader title={user.name || user.email}>
+        <PageHeader title={user.name || user.email} titleClassName="truncate">
           <div className="flex items-center gap-2">
             <Avatar key={user.avatar ?? 'no-avatar'} className="size-6 shrink-0">
               {user.avatar ? (

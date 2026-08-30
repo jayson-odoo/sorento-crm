@@ -340,6 +340,10 @@ describe('RespondContactsOutboundList - the kill switch', () => {
     });
     renderWithClient(<RespondContactsOutboundList />);
 
-    expect(screen.getByRole('button', { name: /Disable all/i })).toBeDisabled();
+    // Two, on an empty listing: the toolbar's and the empty state's own copy of
+    // it (S5-06). Both are the same disabled button.
+    for (const button of screen.getAllByRole('button', { name: /Disable all/i })) {
+      expect(button).toBeDisabled();
+    }
   });
 });

@@ -145,6 +145,15 @@ export default function AccessAgentsList() {
     manualFiltering: true,
   });
 
+  // The one offer this listing makes, in both places it belongs: the
+  // toolbar, and the empty state's next step (S5-06).
+  const listPrimaryAction = (
+    <Button onClick={() => setFormModalOpen(true)}>
+      <Plus />
+      Create Access Agent
+    </Button>
+  );
+
   return (
     <DataGrid
       table={table}
@@ -152,6 +161,7 @@ export default function AccessAgentsList() {
       isLoading={isLoading}
       rowHref={rowHref}
       tableLayout={{ columnsVisibility: true }}
+      emptyAction={listPrimaryAction}
     >
       <Card>
         <CardHeader className="block">
@@ -187,12 +197,7 @@ export default function AccessAgentsList() {
             exportConfig={{ filename: 'access_agents_export.xlsx' }}
             onRefresh={() => void refetch()}
             isRefreshing={isFetching && !isLoading}
-            primaryAction={
-              <Button onClick={() => setFormModalOpen(true)}>
-                <Plus />
-                Create Access Agent
-              </Button>
-            }
+            primaryAction={listPrimaryAction}
           />
         </CardHeader>
         <CardTable>

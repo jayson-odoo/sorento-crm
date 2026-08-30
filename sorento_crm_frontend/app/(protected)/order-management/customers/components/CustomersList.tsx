@@ -158,6 +158,15 @@ export default function CustomersList() {
     manualFiltering: true,
   });
 
+  // The one offer this listing makes, in both places it belongs: the
+  // toolbar, and the empty state's next step (S5-06).
+  const listPrimaryAction = (
+    <Button onClick={() => router.push('/order-management/customers/new')}>
+      <Plus />
+      Create Customer
+    </Button>
+  );
+
   return (
     <DataGrid
       table={table}
@@ -165,6 +174,7 @@ export default function CustomersList() {
       isLoading={isLoading}
       rowHref={rowHref}
       tableLayout={{ columnsVisibility: true }}
+      emptyAction={listPrimaryAction}
     >
       <Card>
         <CardHeader className="block">
@@ -242,12 +252,7 @@ export default function CustomersList() {
                 onClick: () => setImportDialogOpen(true),
               },
             ]}
-            primaryAction={
-              <Button onClick={() => router.push('/order-management/customers/new')}>
-                <Plus />
-                Create Customer
-              </Button>
-            }
+            primaryAction={listPrimaryAction}
           />
         </CardHeader>
         <CustomerImportDialog

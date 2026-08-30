@@ -464,6 +464,20 @@ const UserList = () => {
     manualFiltering: true,
   });
 
+  // The one offer this listing makes, in both places it belongs: the toolbar,
+  // and the empty state's next step (S5-06).
+  const addUserButton = (
+    <Button
+      disabled={isLoading && true}
+      onClick={() => {
+        setInviteDialogOpen(true);
+      }}
+    >
+      <Plus />
+      Add user
+    </Button>
+  );
+
   const DataGridToolbar = () => {
     const [inputValue, setInputValue] = useState(searchQuery);
     type UserFilterField = 'role' | 'status' | 'trashed';
@@ -689,17 +703,7 @@ const UserList = () => {
           }}
           exportConfig={{ filename: 'users_export.xlsx' }}
           bulkActions={bulkActions}
-          primaryAction={
-            <Button
-              disabled={isLoading && true}
-              onClick={() => {
-                setInviteDialogOpen(true);
-              }}
-            >
-              <Plus />
-              Add user
-            </Button>
-          }
+          primaryAction={addUserButton}
         />
       </CardHeader>
     );
@@ -709,6 +713,7 @@ const UserList = () => {
     <>
       <DataGrid
         table={table}
+        emptyAction={addUserButton}
         recordCount={data?.pagination.total || 0}
         isLoading={isLoading}
         rowHref={rowHref}

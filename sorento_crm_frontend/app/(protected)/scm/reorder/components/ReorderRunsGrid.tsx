@@ -277,6 +277,15 @@ export function ReorderRunsGrid({ autoOpenRun = false }: { autoOpenRun?: boolean
     getCoreRowModel: getCoreRowModel(),
   });
 
+  // The one offer this listing makes, in both places it belongs: the
+  // toolbar, and the empty state's next step (S5-06).
+  const listPrimaryAction = (
+    <Button onClick={() => setModalOpen(true)}>
+      <PlayCircle className="size-4" />
+      Start Plan
+    </Button>
+  );
+
   return (
     <>
       <DataGrid
@@ -288,18 +297,14 @@ export function ReorderRunsGrid({ autoOpenRun = false }: { autoOpenRun?: boolean
         onRowClick={(row) => router.push(`/scm/reorder/${row.run_id}`)}
         tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
         listingKey="scm.reorder.run"
+        emptyAction={listPrimaryAction}
       >
         <Card>
           <CardHeader className="block">
             <DataGridListToolbar
               table={table}
               secondaryActions={secondaryActions}
-              primaryAction={
-                <Button onClick={() => setModalOpen(true)}>
-                  <PlayCircle className="size-4" />
-                  Start Plan
-                </Button>
-              }
+              primaryAction={listPrimaryAction}
               searchSlot={
                 <div className="relative">
                   <Search className="absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />

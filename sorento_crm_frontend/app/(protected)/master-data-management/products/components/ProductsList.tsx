@@ -705,6 +705,18 @@ const ProductsList = () => {
     product_status: selectedStatus && selectedStatus !== 'all' ? selectedStatus : undefined,
   });
 
+  // The one offer this listing makes, in both places it belongs: the
+  // toolbar, and the empty state's next step (S5-06).
+  const listPrimaryAction = (
+    <Button
+      disabled={isLoading}
+      onClick={() => router.push('/master-data-management/products/new')}
+    >
+      <Plus className="size-4" />
+      Create Product
+    </Button>
+  );
+
   return (
     <DataGrid
       table={table}
@@ -720,6 +732,7 @@ const ProductsList = () => {
       tableClassNames={{
         edgeCell: 'px-5',
       }}
+      emptyAction={listPrimaryAction}
     >
       <Card>
         <CardHeader className="block">
@@ -828,15 +841,7 @@ const ProductsList = () => {
               filename: 'products_export.xlsx',
               getPayload: getExportPayload,
             }}
-            primaryAction={
-              <Button
-                disabled={isLoading}
-                onClick={() => router.push('/master-data-management/products/new')}
-              >
-                <Plus className="size-4" />
-                Create Product
-              </Button>
-            }
+            primaryAction={listPrimaryAction}
             secondaryActions={[
               {
                 key: 'advanced-filter',

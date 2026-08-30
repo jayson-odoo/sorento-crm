@@ -182,6 +182,19 @@ export default function EmailTemplatesList() {
     pageCount: Math.max(1, Math.ceil(total / pagination.pageSize)),
   });
 
+  // The one offer this listing makes, in both places it belongs: the
+  // toolbar, and the empty state's next step (S5-06).
+  const listPrimaryAction = (
+    <Button
+      onClick={() => {
+        setEditing(null);
+        setShowForm(true);
+      }}
+    >
+      <Plus className="mr-1 size-4" /> Add template
+    </Button>
+  );
+
   return (
     <DataGrid
       table={table}
@@ -189,6 +202,7 @@ export default function EmailTemplatesList() {
       isLoading={isLoading}
       onRowClick={(t) => t?.id && router.push(`/system-management/email-templates/${t.id}`)}
       tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
+      emptyAction={listPrimaryAction}
     >
       <Card>
         <CardHeader className="block">
@@ -221,16 +235,7 @@ export default function EmailTemplatesList() {
             exportConfig={{ filename: 'email_templates_export.xlsx' }}
             onRefresh={() => void refetch()}
             isRefreshing={isFetching && !isLoading}
-            primaryAction={
-              <Button
-                onClick={() => {
-                  setEditing(null);
-                  setShowForm(true);
-                }}
-              >
-                <Plus className="mr-1 size-4" /> Add template
-              </Button>
-            }
+            primaryAction={listPrimaryAction}
           />
         </CardHeader>
         <CardTable>

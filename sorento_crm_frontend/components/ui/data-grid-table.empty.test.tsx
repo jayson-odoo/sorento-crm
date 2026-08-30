@@ -39,7 +39,13 @@ const COLUMNS: ColumnDef<Row>[] = [
   { accessorKey: 'note', header: 'Note', size: 900 },
 ];
 
-function Harness({ emptyMessage }: { emptyMessage?: string }) {
+function Harness({
+  emptyMessage,
+  emptyAction,
+}: {
+  emptyMessage?: string;
+  emptyAction?: React.ReactNode;
+}) {
   const table = useReactTable({
     data: [] as Row[],
     columns: COLUMNS,
@@ -52,6 +58,7 @@ function Harness({ emptyMessage }: { emptyMessage?: string }) {
       recordCount={0}
       isLoading={false}
       emptyMessage={emptyMessage}
+      emptyAction={emptyAction}
       tableLayout={{ width: 'fixed', columnsResizable: true }}
     >
       <DataGridTable />
@@ -70,18 +77,44 @@ describe('DataGridTable empty state', () => {
     expect(screen.getByText('No stock inquiries match this filter')).toBeInTheDocument();
   });
 
+  it('S5-06: an empty listing offers the next step, beside its message', () => {
+    render(
+      <Harness
+        emptyMessage="No users yet"
+        emptyAction={<button type="button">Add user</button>}
+      />,
+    );
+
+    const action = screen.getByRole('button', { name: 'Add user' });
+    expect(action).toBeInTheDocument();
+    // Inside the same sticky container as the message, so the offer travels with
+    // it on a grid wider than its scroll container.
+    const message = screen.getByText('No users yet');
+    expect(message.closest('[data-slot="data-grid-empty"]')).toContainElement(action);
+  });
+
+  it('S5-06: a listing with no next step renders the message alone', () => {
+    render(<Harness />);
+    const empty = screen
+      .getByText('No data available')
+      .closest('[data-slot="data-grid-empty"]');
+    expect(empty?.querySelectorAll('button')).toHaveLength(0);
+  });
+
   it('keeps the message reachable on a grid wider than its scroll container', () => {
     render(<Harness />);
-    const message = screen.getByText('No data available');
+    const empty = screen
+      .getByText('No data available')
+      .closest('[data-slot="data-grid-empty"]') as HTMLElement;
 
     // Sticky to the start edge, so horizontal scroll never carries it away.
-    expect(message).toHaveClass('sticky');
-    expect(message).toHaveClass('start-0');
-    expect(message).toHaveClass('text-start');
+    expect(empty).toHaveClass('sticky');
+    expect(empty).toHaveClass('start-0');
+    expect(empty).toHaveClass('text-start');
 
     // ...and it must NOT be centred across the full (all-column) cell width, which
     // is what pushed it off-screen.
-    const cell = message.closest('td');
+    const cell = empty.closest('td');
     expect(cell).not.toBeNull();
     expect(cell).toHaveAttribute('colspan', String(COLUMNS.length));
     expect(cell).not.toHaveClass('text-center');

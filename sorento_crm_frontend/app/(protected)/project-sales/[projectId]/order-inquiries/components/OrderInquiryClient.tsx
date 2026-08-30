@@ -417,6 +417,15 @@ export function OrderInquiryClient({ projectId }: { projectId: string }) {
 
   const filtersActiveCount = (verbFilter ? 1 : 0) + (stateFilter ? 1 : 0);
 
+  // The one offer this listing makes, in both places it belongs: the
+  // toolbar, and the empty state's next step (S5-06).
+  const listPrimaryAction = (
+    <Button type="button" onClick={() => void handleExport()} disabled={exporting}>
+      <Download className="size-4" aria-hidden />
+      {exporting ? 'Preparing…' : 'Export Excel'}
+    </Button>
+  );
+
   return (
     <div className="space-y-5">
       <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -481,6 +490,7 @@ export function OrderInquiryClient({ projectId }: { projectId: string }) {
             )}
           </div>
         }
+        emptyAction={listPrimaryAction}
       >
         <Card>
           <CardHeader className="block">
@@ -559,12 +569,7 @@ export function OrderInquiryClient({ projectId }: { projectId: string }) {
               // selection-scoped one is replaced rather than offered beside it.
               exportConfig={false}
               bulkActions={bulkActions}
-              primaryAction={
-                <Button type="button" onClick={() => void handleExport()} disabled={exporting}>
-                  <Download className="size-4" aria-hidden />
-                  {exporting ? 'Preparing…' : 'Export Excel'}
-                </Button>
-              }
+              primaryAction={listPrimaryAction}
               onRefresh={() => {
                 void inquiry.refetch();
                 void summary.refetch();

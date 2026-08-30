@@ -255,6 +255,12 @@ export function OnboardingRequestList() {
     enableColumnResizing: true,
   });
 
+  // The one offer this listing makes, in both places it belongs: the
+  // toolbar, and the empty state's next step (S5-06).
+  const listPrimaryAction = (
+    <NewOnboardingRequestDialog />
+  );
+
   return (
     <DataGrid
       table={table}
@@ -284,6 +290,7 @@ export function OnboardingRequestList() {
         return `/user-management/onboarding-requests/${id}${qs ? `?${qs}` : ''}`;
       }}
       tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
+      emptyAction={listPrimaryAction}
     >
       <Card>
         <CardHeader className="block">
@@ -352,7 +359,7 @@ export function OnboardingRequestList() {
             exportConfig={{ filename: 'onboarding_requests_export.xlsx' }}
             onRefresh={() => void refetch()}
             isRefreshing={isFetching && !isLoading}
-            primaryAction={<NewOnboardingRequestDialog />}
+            primaryAction={listPrimaryAction}
           />
         </CardHeader>
         <CardTable>

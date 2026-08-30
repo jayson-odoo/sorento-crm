@@ -188,6 +188,15 @@ export default function CampaignsList() {
     manualFiltering: true,
   });
 
+  // The one offer this listing makes, in both places it belongs: the
+  // toolbar, and the empty state's next step (S5-06).
+  const listPrimaryAction = (
+    <Button onClick={() => router.push('/marketing-management/campaigns/new')}>
+      <Plus />
+      Create Campaign
+    </Button>
+  );
+
   return (
     <DataGrid
       table={table}
@@ -196,6 +205,7 @@ export default function CampaignsList() {
       rowHref={rowHref}
       standardToolbar={false}
       tableLayout={{ columnsVisibility: true }}
+      emptyAction={listPrimaryAction}
     >
       <Card>
         <CardHeader className="block">
@@ -254,12 +264,7 @@ export default function CampaignsList() {
             exportConfig={{ filename: 'campaigns_export.xlsx' }}
             onRefresh={() => void refetch()}
             isRefreshing={isFetching && !isLoading}
-            primaryAction={
-              <Button onClick={() => router.push('/marketing-management/campaigns/new')}>
-                <Plus />
-                Create Campaign
-              </Button>
-            }
+            primaryAction={listPrimaryAction}
           />
         </CardHeader>
         <CardTable>
