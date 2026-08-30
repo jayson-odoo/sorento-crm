@@ -456,25 +456,9 @@ export async function bulkUpdateProducts(
   return response.json();
 }
 
-/**
- * Bulk delete products
- */
-export async function bulkDeleteProducts(ids: string[]): Promise<void> {
-  const response = await apiFetch('/api/v1/master-data/products/bulk', {
-    method: 'DELETE',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ ids }),
-  });
-
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({
-      message: 'Failed to delete products',
-    }));
-    throw new Error(error.message || 'Failed to delete products');
-  }
-}
+// No bulk-delete client: the list parks one `product.delete` per selected row through
+// `/pending-actions` (D7), so this route has no frontend caller. The route itself still
+// stands for the API and n8n.
 
 export interface ValidateImportResult {
   valid: boolean;

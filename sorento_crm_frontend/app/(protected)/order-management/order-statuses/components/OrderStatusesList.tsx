@@ -24,7 +24,6 @@ import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useOrderStatuses } from '../hooks/useOrderStatuses';
@@ -89,7 +88,7 @@ export default function OrderStatusesList() {
         accessorKey: 'is_final_status',
         header: ({ column }) => <DataGridColumnHeader title="Final Status" column={column} />,
         cell: ({ row }) => (
-          <Badge variant={row.original.is_final_status ? 'success' : 'secondary'} appearance="ghost">
+          <Badge variant={row.original.is_final_status ? 'success' : 'secondary'}>
             {row.original.is_final_status ? 'Yes' : 'No'}
           </Badge>
         ),
@@ -125,6 +124,15 @@ export default function OrderStatusesList() {
     manualFiltering: true,
   });
 
+  // The one offer this listing makes, in both places it belongs: the
+  // toolbar, and the empty state's next step (S5-06).
+  const listPrimaryAction = (
+    <Button onClick={() => router.push('/order-management/order-statuses/new')}>
+      <Plus />
+      Create Delivery Order Status
+    </Button>
+  );
+
   return (
     <DataGrid
       table={table}
@@ -132,6 +140,7 @@ export default function OrderStatusesList() {
       isLoading={isLoading}
       onRowClick={handleRowClick}
       tableLayout={{ columnsVisibility: true }}
+      emptyAction={listPrimaryAction}
     >
       <Card>
         <CardHeader className="block">
@@ -191,19 +200,11 @@ export default function OrderStatusesList() {
             exportConfig={{ filename: 'delivery_order_statuses_export.xlsx' }}
             onRefresh={() => void refetch()}
             isRefreshing={isFetching && !isLoading}
-            primaryAction={
-              <Button onClick={() => router.push('/order-management/order-statuses/new')}>
-                <Plus />
-                Create Delivery Order Status
-              </Button>
-            }
+            primaryAction={listPrimaryAction}
           />
         </CardHeader>
         <CardTable>
-          <ScrollArea>
-            <DataGridTable />
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
+          <DataGridTable />
         </CardTable>
         <CardFooter>
           <DataGridPagination />

@@ -23,7 +23,6 @@ import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useStockBalance } from '../hooks/useStock';
@@ -36,7 +35,6 @@ import { exportStockBalance, bulkImportStock, validateStockImport } from '../ser
 import { replaceLatestStockList, getCurrentStockListAttachment } from '@/app/(protected)/resource-management/attachments/services/attachmentService';
 import { useImportJobDrawer } from '@/components/upload-activity';
 import StockBulkDeleteDialog from './StockBulkDeleteDialog';
-import { getStatusBadgeVariant } from '@/lib/status-badge';
 import { useQueryClient, useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { generateExcelFile, type ColumnOption } from '@/lib/excel-utils';
@@ -176,7 +174,7 @@ export default function StockBalanceGrid() {
         cell: ({ row }) => {
           const status = row.original.status || 'normal';
           return (
-            <Badge variant={getStatusBadgeVariant(status)} appearance="ghost">
+            <Badge status={status}>
               {(status || '').charAt(0).toUpperCase() + (status || '').slice(1)}
             </Badge>
           );
@@ -395,10 +393,7 @@ export default function StockBalanceGrid() {
           />
         </CardHeader>
         <CardTable>
-          <ScrollArea>
-            <DataGridTable />
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
+          <DataGridTable />
         </CardTable>
         <CardFooter>
           <DataGridPagination />

@@ -557,7 +557,7 @@ def test_a_line_beyond_the_lead_time_window_takes_nothing_at_all_incoming_includ
             ],
             pools_net=Decimal("400"),
             group_take_candidates=[{"location": "MWH-BB", "qty": Decimal("400")}],
-            cross_group_borrow_candidates=[{"location": "BRW-HP", "qty": Decimal("400")}],
+            other_group_candidates=[{"location": "BRW-HP", "qty": Decimal("400")}],
         )
     )
 
@@ -697,11 +697,14 @@ def test_the_group_rung_draws_its_locations_in_the_order_the_caller_gave_them():
 
 def test_the_group_is_drawn_before_the_pool():
     """AC-L2, and the whole point of v3's reordering: "if group location don't have then
-    consider the pool". 100 owed against 40 at the line's own location, 30 at a sibling and
-    1000 in the pool draws 40 + 30 from the group and only the last 30 from the pool.
+    consider the pool". 100 owed against 40 at the line's own location and 30 at a sibling:
+    the group offers 70, which is not the whole unit, and ladder v7.1 covers a unit from ONE
+    step or buys it whole (R33). So the POOL answers, whole, and the group's 70 is left
+    where it is - never 40 + 30 + 30, which is two stories about one delivery.
 
-    Under v2 the pool went first and swallowed the lot, so a group that held the stock sat
-    untouched while the shared pile paid for the line.
+    Under v2 the pool went first even when the group could have covered the line alone; that
+    is still wrong, and `test_the_group_alone_covers_the_line_before_the_pool_is_asked`
+    below is the case that pins it.
     """
     from app.services.scm.front_planning_engine import propose_line
 
@@ -723,9 +726,35 @@ def test_the_group_is_drawn_before_the_pool():
     )
 
     assert [(c.rung, c.source_location, c.qty) for c in proposed] == [
+        ("pool", "BRW", Decimal("100")),
+    ]
+
+
+def test_the_group_alone_covers_the_line_before_the_pool_is_asked():
+    """The other half of the same ruling: where the GROUP can cover the whole unit, it does,
+    and the pool is not reached however much sits in it."""
+    from app.services.scm.front_planning_engine import propose_line
+
+    proposed = _components(
+        propose_line(
+            open_qty=Decimal("70"),
+            required_date=REQUIRED_DATE,
+            fulfilment_location="BRW-BB",
+            group_code=GROUP_CODE,
+            group_take_candidates=[
+                {"location": "BRW-BB", "qty": Decimal("40")},
+                {"location": "DC1-BB", "qty": Decimal("30")},
+            ],
+            pools=[
+                {"location": "BRW", "free": Decimal("1000"), "available": Decimal("1000")}
+            ],
+            pools_net=Decimal("1000"),
+        )
+    )
+
+    assert [(c.rung, c.source_location, c.qty) for c in proposed] == [
         ("group_take", "BRW-BB", Decimal("40")),
         ("group_take", "DC1-BB", Decimal("30")),
-        ("pool", "BRW", Decimal("30")),
     ]
 
 
@@ -758,10 +787,12 @@ def test_the_pool_rung_still_runs_when_the_group_holds_nothing():
 def test_cross_group_borrow_completes_the_line_within_the_cap():
     """Section 1b rung 4: "if pool also don't have then consider borrowing from other
     location's available quantity" - this pins that the engine draws whatever candidate list
-    it is handed, after the group and the pool.
+    it is handed.
 
-    The name is historical: the small-quantity cap the rung used to be gated by is gone
-    (v7.1, R5, migration 443), so there is no limit left for the sentence to name.
+    LADDER V7.1 (R5) moved it: another PROJECT group's FREE stock is step 1's own second
+    half now, walked with the ownership group and before either borrow step, because free
+    stock is owed to nobody and taking it raises no order-back. So the kind is `reserve` and
+    the rung is `group_take`; `cross_group_borrow` survives only on frozen snapshots.
     """
     from app.services.scm.front_planning_engine import propose_line
 
@@ -771,14 +802,14 @@ def test_cross_group_borrow_completes_the_line_within_the_cap():
             required_date=REQUIRED_DATE,
             fulfilment_location="BRW-BB",
             group_code=GROUP_CODE,
-            cross_group_borrow_candidates=[{"location": "BRW-HP", "qty": Decimal("20")}],
+            other_group_candidates=[{"location": "BRW-HP", "qty": Decimal("20")}],
         )
     )
 
     assert len(proposed) == 1
     component = proposed[0]
-    assert component.kind == "borrow"
-    assert component.rung == "cross_group_borrow"
+    assert component.kind == "reserve"
+    assert component.rung == "group_take"
     assert component.source_location == "BRW-HP"
     assert component.qty == Decimal("20")
     assert "BRW-HP" in component.reason
@@ -815,10 +846,11 @@ def test_borrowing_from_another_sales_order_is_never_proposed_automatically():
 
 def test_whole_line_rule_covers_the_whole_line_across_every_rung_in_order():
     """Section 1e's last rule: "cover Q entirely in rung order" - a case that needs the
-    group, the pool AND a cross-group borrow together to reach the whole of Q.
+    step 1's TWO HALVES together to reach the whole of Q.
 
-    THREE rungs now, not four. Ladder v5 retired incoming, and the 10 it used to contribute
-    is inside the group's own offer where AutoCount already counted it."""
+    Under v7.1 they may only combine INSIDE a step (R33): the ownership group's 40 and
+    another project group's 60 are one question - free stock, owed to nobody - so they cover
+    the unit between them, and the pool sitting beside them with 20 is not asked."""
     from app.services.scm.front_planning_engine import propose_line
 
     proposed = _components(
@@ -832,13 +864,14 @@ def test_whole_line_rule_covers_the_whole_line_across_every_rung_in_order():
                 {"location": "BRW", "free": Decimal("20"), "available": Decimal("20")}
             ],
             pools_net=Decimal("20"),
-            cross_group_borrow_candidates=[
-                {"location": "BRW-HP", "qty": Decimal("40")},
+            other_group_candidates=[
+                {"location": "BRW-HP", "qty": Decimal("60")},
             ],
         )
     )
 
-    assert [c.rung for c in proposed] == ["group_take", "pool", "cross_group_borrow"]
+    assert [c.rung for c in proposed] == ["group_take", "group_take"]
+    assert [c.source_location for c in proposed] == ["MWH-BB", "BRW-HP"]
     assert sum((c.qty for c in proposed), Decimal("0")) == Decimal("100")
     assert not any(c.kind == "buy" for c in proposed)
 

@@ -40,17 +40,11 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
-import {
-  Toolbar,
-  ToolbarActions,
-  ToolbarHeading,
-  ToolbarTitle,
-} from '@/components/common/toolbar';
 import DetailActions from '@/components/common/DetailActions';
 import AttachmentPreviewModal, {
   type AttachmentPreviewItem,
 } from '@/components/common/AttachmentPreviewModal';
-import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
+import { useDeferredAction } from '@/hooks/useDeferredAction';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { ConfirmActionDialog } from '../../components/ConfirmActionDialog';
 import { EM_DASH, fmtDate } from '../../lib/format';
@@ -67,7 +61,6 @@ import {
 } from '../../hooks/useFulfilment';
 import { useRematchSupplierCodes } from '../../hooks/useSupplierCodeAliases';
 import {
-  deleteLoadingPlan,
   type CodedError,
   type ContainerRequestRow,
   type ContainerRequestSendOptions,
@@ -78,6 +71,7 @@ import { ContainerRequestSection } from './ContainerRequestSection';
 import { SendRequestDialog } from './SendRequestDialog';
 import { requestLinesFrom } from './containerRequestSummary';
 import { copyPublicLink } from './copyPublicLink';
+import { PageHeader } from '@/components/common/PageHeader';
 
 /**
  * One loading plan, as a record (R5).
@@ -125,7 +119,6 @@ export function LoadingPlanView({ planId }: { planId: string }) {
   // the "Send saves first" rule need to know about.
   const [edits, setEdits] = useState<Record<string, number>>({});
   const [cancelOpen, setCancelOpen] = useState(false);
-  const [deleteOpen, setDeleteOpen] = useState(false);
   const [sendOpen, setSendOpen] = useState(false);
   const [cutOffOpen, setCutOffOpen] = useState(false);
   const [cutOffDraft, setCutOffDraft] = useState('');
@@ -229,6 +222,21 @@ export function LoadingPlanView({ planId }: { planId: string }) {
 
   const goBack = () => router.push('/scm/loading-plan');
 
+  // Delete asks nothing (D7): the countdown counts down in the toast and Cancel is
+  // the way back. A plan whose notice already went out is refused by the server,
+  // which is the same rule the menu item's disabled state states up front.
+  const deletion = useDeferredAction({
+    actionKey: 'loading_plan.delete',
+    entityType: 'loading_plan',
+    entityId: planId,
+    verb: 'Deleting',
+    subject: plan?.supplier_name ?? 'this plan',
+    surface: 'toast',
+    successMessage: 'Plan deleted',
+    invalidateKeys: [['scm-loading-plans']],
+    onCommitted: goBack,
+  });
+
   /**
    * The new cut-off, with the typed quantities dropped first.
    *
@@ -311,27 +319,10 @@ export function LoadingPlanView({ planId }: { planId: string }) {
 
   return (
     <div className="space-y-4">
-      <Toolbar>
-        <ToolbarHeading className="min-w-0">
-          {/* `w-full`, not just `min-w-0`: ToolbarHeading is a WRAPPING column flex container,
-              so its lines are sized to their content and a long supplier name would push the
-              header past the viewport at 375px instead of ellipsing. */}
-          <div
-            className="flex w-full min-w-0 flex-wrap items-center gap-2"
-            title={plan.supplier_name ?? ''}
-          >
-            <ToolbarTitle className="min-w-0 max-w-full truncate">
-              {plan.supplier_name ?? EM_DASH}
-            </ToolbarTitle>
-            <Badge variant={STATUS_VARIANT[plan.status]} appearance="light" size="sm">
-              {STATUS_LABEL[plan.status]}
-            </Badge>
-          </div>
-          <p className="w-full text-xs text-muted-foreground" data-testid="plan-subtitle">
-            {subtitle}
-          </p>
-        </ToolbarHeading>
-        <ToolbarActions>
+      <PageHeader
+        title={plan.supplier_name ?? EM_DASH}
+        titleClassName="max-w-full truncate"
+        actions={
           <Button
             variant="outline"
             onClick={() => (unsaved ? setLeaveOpen(true) : goBack())}
@@ -340,8 +331,24 @@ export function LoadingPlanView({ planId }: { planId: string }) {
             <ArrowLeft className="size-4" />
             Back to loading plans
           </Button>
-        </ToolbarActions>
-      </Toolbar>
+        }
+      >
+        {/* `w-full`, not just `min-w-0`: ToolbarHeading is a WRAPPING column flex container,
+            so its lines are sized to their content and a long supplier name would push the
+            header past the viewport at 375px instead of ellipsing. */}
+        <div
+          className="flex w-full min-w-0 flex-wrap items-center gap-2"
+          title={plan.supplier_name ?? ''}
+        >
+            
+          <Badge variant={STATUS_VARIANT[plan.status]} appearance="light" size="sm">
+            {STATUS_LABEL[plan.status]}
+          </Badge>
+        </div>
+        <p className="w-full text-xs text-muted-foreground" data-testid="plan-subtitle">
+          {subtitle}
+        </p>
+      </PageHeader>
 
       {/* The plan's own actions: pager, gear, primary (D6). They sit under the
           toolbar rather than on it, and wrap at 375. */}
@@ -435,7 +442,7 @@ export function LoadingPlanView({ planId }: { planId: string }) {
                   variant="destructive"
                   disabled={!!plan.sent_at}
                   title={plan.sent_at ? 'Sent plans are cancelled, not deleted' : undefined}
-                  onSelect={() => setDeleteOpen(true)}
+                  onSelect={() => deletion.start()}
                 >
                   <Trash2 className="size-4" />
                   Delete plan
@@ -561,22 +568,6 @@ export function LoadingPlanView({ planId }: { planId: string }) {
         }
       />
 
-      <ConfirmDeleteDialog
-        open={deleteOpen}
-        onOpenChange={setDeleteOpen}
-        title="Delete this plan?"
-        description={
-          <>
-            {plan.supplier_name ?? 'This plan'}, started{' '}
-            {formatDateTimeInMalaysia(plan.started_at)}. The plan and the quantities typed on it
-            are removed. This cannot be undone.
-          </>
-        }
-        successMessage="Plan deleted"
-        onDelete={() => deleteLoadingPlan(planId)}
-        onSuccess={goBack}
-      />
-
       <ConfirmActionDialog
         open={leaveOpen}
         onOpenChange={setLeaveOpen}
@@ -624,7 +615,7 @@ export function LoadingPlanView({ planId }: { planId: string }) {
               onClick={() => (editedCount > 0 ? setCutOffDropOpen(true) : void applyCutOff())}
             >
               {changeCutOff.isPending ? <LoaderCircle className="size-4 animate-spin" /> : null}
-              Save
+              Save cut-off
             </Button>
           </DialogFooter>
         </DialogContent>

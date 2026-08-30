@@ -37,6 +37,21 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: async () => {}, isLoading: false }),
 }));
 
+/* The grace window is the server's; what this file proves is that the row parks one. */
+const createPendingAction = vi.fn().mockResolvedValue({
+  id: 'pa-1',
+  action_key: 'message_snippet.delete',
+  entity_type: 'message_snippet',
+  entity_id: 's1',
+  commit_at: '2026-08-30T10:00:10',
+  window_seconds: 10,
+});
+vi.mock('@/services/pendingActionService', () => ({
+  createPendingAction: (...args: unknown[]) => createPendingAction(...args),
+  cancelPendingAction: vi.fn(),
+  getCurrentPendingAction: vi.fn().mockResolvedValue({ pending: null, last_outcome: null }),
+}));
+
 const hooks = vi.hoisted(() => ({
   useMessageSnippets: vi.fn(),
   useCreateMessageSnippet: vi.fn(),
@@ -213,26 +228,24 @@ describe('MessageSnippetsList', () => {
     );
   });
 
-  it('confirms before deleting, with the standard copy', async () => {
+  it('parks the delete on the row that was pressed, with no dialog in the way (S6-10)', async () => {
     renderList();
 
     fireEvent.click(await screen.findByRole('button', { name: 'Delete Stock check' }));
 
-    expect(await screen.findByText('Confirm delete')).toBeInTheDocument();
-    expect(screen.getByText(/This action cannot be undone/)).toBeInTheDocument();
-    expect(deleteAsync).not.toHaveBeenCalled();
-  });
-
-  it('deletes only after the confirmation is accepted', async () => {
-    renderList();
-
-    fireEvent.click(await screen.findByRole('button', { name: 'Delete Stock check' }));
-    const dialog = await screen.findByRole('dialog');
-    fireEvent.click(
-      within(dialog).getByRole('button', { name: /^delete$/i }),
+    // D7: the press IS the action, and Cancel in the countdown is the way back.
+    // The browser never calls the DELETE - the server does, when the window lapses.
+    await waitFor(() =>
+      expect(createPendingAction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          actionKey: 'message_snippet.delete',
+          entityType: 'message_snippet',
+          entityId: 's1',
+        }),
+      ),
     );
-
-    await waitFor(() => expect(deleteAsync).toHaveBeenCalledWith('s1'));
+    expect(deleteAsync).not.toHaveBeenCalled();
+    expect(screen.queryByText('Confirm delete')).not.toBeInTheDocument();
   });
 });
 

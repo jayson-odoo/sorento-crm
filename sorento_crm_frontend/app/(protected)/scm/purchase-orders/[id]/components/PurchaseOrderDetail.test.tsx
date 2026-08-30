@@ -533,14 +533,14 @@ describe('PurchaseOrderDetail - correcting the order in place', () => {
   it('opens the session straight away on ?edit=1', () => {
     searchParams = new URLSearchParams('edit=1');
     renderDetail();
-    expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save purchase order' })).toBeInTheDocument();
   });
 
   it('writes the header alone when no line moved', async () => {
     renderDetail();
     fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
     fireEvent.change(screen.getByLabelText('Order date'), { target: { value: '2026-05-04' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save purchase order' }));
 
     await waitFor(() => expect(updatePurchaseOrderMutateAsync).toHaveBeenCalled());
     const payload = updatePurchaseOrderMutateAsync.mock.calls[0][0];
@@ -558,7 +558,7 @@ describe('PurchaseOrderDetail - correcting the order in place', () => {
     fireEvent.change(screen.getByLabelText('Unit price on CW-BASIN-450'), {
       target: { value: '88.5' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save purchase order' }));
 
     await waitFor(() => expect(updatePurchaseOrderMutateAsync).toHaveBeenCalled());
     const [line] = updatePurchaseOrderMutateAsync.mock.calls[0][0].data.lines;
@@ -597,7 +597,7 @@ describe('PurchaseOrderDetail - correcting the order in place', () => {
     fireEvent.change(screen.getByLabelText('Qty ordered on CW-BASIN-450'), {
       target: { value: '0' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save purchase order' }));
 
     expect(
       screen.getByText('Every line needs a product and a quantity above zero.'),

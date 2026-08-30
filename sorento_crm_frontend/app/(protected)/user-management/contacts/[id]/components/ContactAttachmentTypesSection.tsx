@@ -193,7 +193,7 @@ export default function ContactAttachmentTypesSection({ contactId }: { contactId
               Cancel
             </Button>
             <Button onClick={onSave} disabled={save.isPending}>
-              Save
+              Save attachment types
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -218,7 +218,7 @@ export default function ContactAttachmentTypesSection({ contactId }: { contactId
               disabled={save.isPending}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
-              Confirm
+              Remove attachment types
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

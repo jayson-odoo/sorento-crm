@@ -142,7 +142,7 @@ describe('PlanAssistant - auto-routed confirm-gated market bump (M8-F6 / M8-E5)'
     expect(onApplyProposalLine).not.toHaveBeenCalled();
 
     // confirming the line fires the override with the bumped qty
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm suggestion' }));
     expect(onApplyProposalLine).toHaveBeenCalledWith(
       expect.objectContaining({ row_id: 'rec-1', new_qty: 140, reason: 'seasonal uplift' }),
     );

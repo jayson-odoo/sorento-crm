@@ -8,7 +8,6 @@ import {
   createOrder,
   updateOrder,
   deleteOrder,
-  bulkDeleteOrders,
   createOrderLine,
   updateOrderLine,
   deleteOrderLine,
@@ -162,17 +161,8 @@ export function useDeleteOrder() {
   });
 }
 
-export function useBulkDeleteOrders() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (ids: string[]) => bulkDeleteOrders(ids),
-    onSuccess: (result) => {
-      queryClient.invalidateQueries({ queryKey: ['orders'] });
-      toast.success(result?.message ?? `${result?.deleted_count ?? 0} delivery order(s) deleted`);
-    },
-    onError: (error: Error) => toast.error(error.message || 'Failed to bulk delete delivery orders'),
-  });
-}
+// Bulk delete has no mutation hook: the list parks one `order.delete` per selected row
+// behind one countdown (`useDeferredBulkAction`, D7).
 
 export function useCreateOrderLine() {
   const queryClient = useQueryClient();

@@ -13,12 +13,11 @@
  * action - what cannot be run is not offered.
  */
 
-import { useState } from 'react';
 import { Copy, KeyRound, Link2Off, Trash2 } from 'lucide-react';
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard';
 import { toast } from 'sonner';
 
-import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
+import { useDeferredAction } from '@/hooks/useDeferredAction';
 import type { RecordAction, RecordActionSet } from '@/components/common/recordActions';
 import type { OnboardingRequestStatus } from '@/components/common/onboarding/types';
 import { useOnboardingRequestMutations } from './hooks/useOnboardingRequests';
@@ -38,19 +37,37 @@ export interface OnboardingActionTarget {
 export interface UseOnboardingRequestActionsOptions {
   /** Where to go once the request is gone (the record page returns to the list). */
   onDeleted?: () => void;
+  /**
+   * The record page shows the countdown in place of its primary button; a list
+   * row has nowhere to put one, so it travels to a toast (S6-06, S6-07).
+   */
+  surface?: 'inline' | 'toast';
 }
 
 export function useOnboardingRequestActions(
   request: OnboardingActionTarget | null | undefined,
-  { onDeleted }: UseOnboardingRequestActionsOptions = {},
+  { onDeleted, surface = 'inline' }: UseOnboardingRequestActionsOptions = {},
 ): RecordActionSet {
-  const { revoke, regenerate, remove } = useOnboardingRequestMutations(request?.id ?? '');
+  const { revoke, regenerate } = useOnboardingRequestMutations(request?.id ?? '');
   const { copyToClipboard } = useCopyToClipboard({
     onCopy: () => toast.success('Link copied'),
   });
-  const [deleteOpen, setDeleteOpen] = useState(false);
+  // Delete asks nothing (D7): the countdown takes the record's primary slot, or
+  // the toast on a list row, and its people go with the request either way.
+  const deletion = useDeferredAction({
+    actionKey: 'onboarding_request.delete',
+    entityType: 'onboarding_request',
+    entityId: request?.id,
+    verb: 'Deleting',
+    subject: request?.title ?? '',
+    surface,
+    watchFromMount: surface === 'inline',
+    successMessage: 'Onboarding request deleted',
+    invalidateKeys: [['onboarding-requests']],
+    onCommitted: onDeleted,
+  });
 
-  if (!request) return { actions: [] };
+  if (!request) return { actions: [], dialogs: null, pending: null };
 
   const linkLive = !request.revoked_at;
   const canAdministerLink = ['draft', 'sent'].includes(request.status);
@@ -86,31 +103,10 @@ export function useOnboardingRequestActions(
       label: 'Delete',
       icon: Trash2,
       kind: 'destructive',
-      run: () => setDeleteOpen(true),
+      disabled: deletion.isPending,
+      run: deletion.start,
     },
   );
 
-  const people = request.people_count ?? 0;
-
-  const dialogs = (
-    <ConfirmDeleteDialog
-      open={deleteOpen}
-      onOpenChange={setDeleteOpen}
-      description={
-        <>
-          Delete <strong>{request.title}</strong>
-          {people > 0 ? ` and its ${people} ${people === 1 ? 'person' : 'people'}` : ''}? This
-          action cannot be undone.
-        </>
-      }
-      onDelete={async () => {
-        await remove.mutateAsync();
-      }}
-      queryKeysToInvalidate={[['onboarding-requests']]}
-      successMessage="Onboarding request deleted"
-      onSuccess={onDeleted}
-    />
-  );
-
-  return { actions, dialogs };
+  return { actions, dialogs: null, pending: deletion.countdown };
 }

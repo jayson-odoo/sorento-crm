@@ -31,7 +31,6 @@ import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { formatDateInMalaysia } from '@/lib/helpers';
@@ -66,13 +65,8 @@ function day(value: string | null): string {
  * component because the action set is a hook.
  */
 function OnboardingRowActions({ request }: { request: OnboardingRequestSummary }) {
-  const { actions, dialogs } = useOnboardingRequestActions(request);
-  return (
-    <>
-      <RowActionsMenu ariaLabel="onboarding request" actions={actions} />
-      {dialogs}
-    </>
-  );
+  const { actions } = useOnboardingRequestActions(request, { surface: 'toast' });
+  return <RowActionsMenu ariaLabel="onboarding request" actions={actions} />;
 }
 
 export function OnboardingRequestList() {
@@ -255,6 +249,12 @@ export function OnboardingRequestList() {
     enableColumnResizing: true,
   });
 
+  // The one offer this listing makes, in both places it belongs: the
+  // toolbar, and the empty state's next step (S5-06).
+  const listPrimaryAction = (
+    <NewOnboardingRequestDialog />
+  );
+
   return (
     <DataGrid
       table={table}
@@ -284,6 +284,7 @@ export function OnboardingRequestList() {
         return `/user-management/onboarding-requests/${id}${qs ? `?${qs}` : ''}`;
       }}
       tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
+      emptyAction={listPrimaryAction}
     >
       <Card>
         <CardHeader className="block">
@@ -352,14 +353,11 @@ export function OnboardingRequestList() {
             exportConfig={{ filename: 'onboarding_requests_export.xlsx' }}
             onRefresh={() => void refetch()}
             isRefreshing={isFetching && !isLoading}
-            primaryAction={<NewOnboardingRequestDialog />}
+            primaryAction={listPrimaryAction}
           />
         </CardHeader>
         <CardTable>
-          <ScrollArea>
-            <DataGridTable />
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
+          <DataGridTable />
         </CardTable>
         <CardFooter>
           <DataGridPagination />

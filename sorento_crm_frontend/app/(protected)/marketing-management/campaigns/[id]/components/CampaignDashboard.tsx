@@ -1,14 +1,18 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, Edit } from 'lucide-react';
+import { ArrowLeft, Edit, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useCampaign } from '../../hooks/useCampaigns';
+import { campaignsPagerQuery, useCampaign } from '../../hooks/useCampaigns';
+import { useDeferredAction } from '@/hooks/useDeferredAction';
+import BackToList, { useBackToListHref } from '@/components/common/BackToList';
+import DetailActions from '@/components/common/DetailActions';
 import { formatDate } from '@/lib/helpers';
 import BudgetTracker from './BudgetTracker';
+import { PageHeader } from '@/components/common/PageHeader';
 
 interface CampaignDashboardProps {
   campaignId: string;
@@ -16,7 +20,24 @@ interface CampaignDashboardProps {
 
 export default function CampaignDashboard({ campaignId }: CampaignDashboardProps) {
   const router = useRouter();
+  // The list wrote its page, sort, search and status into this URL when the row
+  // was clicked; Back hands the same string back rather than a fresh page 1.
+  const backHref = useBackToListHref('/marketing-management/campaigns');
   const { data: campaign, isLoading } = useCampaign(campaignId);
+  // Delete asks nothing (D7): the countdown takes the primary button's place
+  // and Cancel is the way back.
+  const deletion = useDeferredAction({
+    actionKey: 'campaign.delete',
+    entityType: 'campaign',
+    entityId: campaignId,
+    verb: 'Deleting',
+    subject: campaign ? campaign.campaign_name : '',
+    surface: 'inline',
+    watchFromMount: true,
+    successMessage: 'Campaign deleted',
+    invalidateKeys: [['campaigns']],
+    onCommitted: () => router.push(backHref),
+  });
 
   if (isLoading) {
     return (
@@ -31,7 +52,7 @@ export default function CampaignDashboard({ campaignId }: CampaignDashboardProps
     return (
       <div className="text-center py-12">
         <p className="text-muted-foreground">Campaign not found</p>
-        <Button variant="outline" onClick={() => router.push('/marketing-management/campaigns')} className="mt-4">
+        <Button variant="outline" onClick={() => router.push(backHref)} className="mt-4">
           <ArrowLeft className="size-4" />
           Back to Campaigns
         </Button>
@@ -41,20 +62,51 @@ export default function CampaignDashboard({ campaignId }: CampaignDashboardProps
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <Button variant="ghost" size="sm" onClick={() => router.push('/marketing-management/campaigns')}>
-            <ArrowLeft className="size-4" />
-          </Button>
-          <h1 className="text-2xl font-bold">{campaign.campaign_name}</h1>
-          <Badge variant="secondary" appearance="ghost">
+      {/* Toolbar row: title and breadcrumb left, ONE Back right (D6, S3-01).
+          The lone back-arrow button that used to sit beside the title said
+          nothing about where it went and carried none of the list's state. */}
+      <PageHeader
+        title="Campaign"
+        actions={
+          <BackToList listPath="/marketing-management/campaigns" label="Back to campaigns" />
+        }
+      />
+
+      {/* Record header: identity left, then pager, gear, primary. Wraps under
+          the identity at 375. */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-w-0 flex-wrap items-center gap-3">
+          <h2 className="text-2xl font-bold break-words">{campaign.campaign_name}</h2>
+          <Badge status={campaign.status}>
             {campaign.status.charAt(0).toUpperCase() + campaign.status.slice(1)}
           </Badge>
         </div>
-        <Button variant="outline" onClick={() => router.push(`/marketing-management/campaigns/${campaignId}/edit`)}>
-          <Edit className="size-4" />
-          Edit
-        </Button>
+        <DetailActions
+          pager={{
+            ...campaignsPagerQuery,
+            detailPath: '/marketing-management/campaigns',
+            currentId: campaignId,
+            ariaLabel: 'campaign',
+          }}
+          actions={[
+            {
+              key: 'campaign.delete',
+              label: 'Delete campaign',
+              icon: Trash2,
+              kind: 'destructive' as const,
+              disabled: deletion.isPending,
+              run: deletion.start,
+            },
+          ]}
+          gearLabel="Campaign options"
+          pendingAction={deletion.countdown}
+          primary={
+            <Button onClick={() => router.push(`/marketing-management/campaigns/${campaignId}/edit`)}>
+              <Edit className="size-4" />
+              Edit
+            </Button>
+          }
+        />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -103,7 +155,7 @@ export default function CampaignDashboard({ campaignId }: CampaignDashboardProps
           <CardContent className="space-y-4">
             <div>
               <p className="text-sm text-muted-foreground">Status</p>
-              <Badge variant="secondary" appearance="ghost">
+              <Badge variant="secondary">
                 {campaign.status.charAt(0).toUpperCase() + campaign.status.slice(1)}
               </Badge>
             </div>

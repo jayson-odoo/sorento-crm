@@ -373,12 +373,12 @@ export default function StockInquiryDetail({
       {/* Header */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="space-y-1 min-w-0">
-          <h1 className="text-2xl font-bold break-words">
+          <h2 className="text-2xl font-bold break-words">
             Stock Inquiry -{' '}
             {withRevisionSuffix(inquiry.inquiry_number, revisionNo) ||
               inquiry.product_code ||
               'Details'}
-          </h1>
+          </h2>
           <p className="text-sm text-muted-foreground">
             Created:{' '}
             {inquiry.created_at

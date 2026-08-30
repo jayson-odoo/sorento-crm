@@ -18,19 +18,12 @@ import {
   X,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Container } from '@/components/common/container';
+import { PageHeader } from '@/components/common/PageHeader';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -38,12 +31,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import {
-  Toolbar,
-  ToolbarActions,
-  ToolbarHeading,
-  ToolbarTitle,
-} from '@/components/common/toolbar';
 import { formatDate } from '@/lib/helpers';
 import { downloadPackingListExport } from '@/app/(protected)/scm/services/fulfilmentService';
 import DetailActions from '@/components/common/DetailActions';
@@ -136,43 +123,23 @@ function PackingListToolbar({ id }: { id: string }) {
 
   return (
     <>
-      <Toolbar>
-        <ToolbarHeading>
-          <ToolbarTitle className="break-words">
-            {isLoading ? <Skeleton className="h-6 w-48" /> : title}
-          </ToolbarTitle>
-          {/* Read-only metadata belongs in the header, never inside a tab body: it has no
-              edit counterpart, and putting it in a tab would make view and edit differ. */}
-          <p className="text-sm text-muted-foreground break-words">{subtitle}</p>
-          <Breadcrumb>
-            <BreadcrumbList>
-              <BreadcrumbItem>
-                <BreadcrumbLink href="/">Home</BreadcrumbLink>
-              </BreadcrumbItem>
-              <BreadcrumbSeparator />
-              <BreadcrumbItem>
-                <BreadcrumbLink href="/procurement-management">Procurement</BreadcrumbLink>
-              </BreadcrumbItem>
-              <BreadcrumbSeparator />
-              <BreadcrumbItem>
-                <BreadcrumbLink href="/procurement-management/packing-lists">
-                  Packing Lists
-                </BreadcrumbLink>
-              </BreadcrumbItem>
-              <BreadcrumbSeparator />
-              <BreadcrumbItem>
-                <BreadcrumbPage>{title}</BreadcrumbPage>
-              </BreadcrumbItem>
-            </BreadcrumbList>
-          </Breadcrumb>
-        </ToolbarHeading>
-        <ToolbarActions>
+      <PageHeader
+        title={isLoading ? <Skeleton className="h-6 w-48" /> : title}
+        // The skeleton is a node, so the trail is told the container number
+        // separately: otherwise it ends on "Packing Lists" while the record
+        // loads and that crumb stops being a link.
+        crumbTitle={title}
+        actions={
           <BackToList
             listPath="/procurement-management/packing-lists"
             label="Back to packing lists"
           />
-        </ToolbarActions>
-      </Toolbar>
+        }
+      >
+        {/* Read-only metadata belongs in the header, never inside a tab body: it has no
+            edit counterpart, and putting it in a tab would make view and edit differ. */}
+        <p className="text-sm text-muted-foreground break-words">{subtitle}</p>
+      </PageHeader>
 
       {/* The record's own actions: pager, gear, primary (D6). They sit under the
           toolbar rather than on it, and wrap under the title at 375. */}
@@ -180,7 +147,7 @@ function PackingListToolbar({ id }: { id: string }) {
         {editing ? (
           <div className="flex flex-wrap items-center justify-end gap-2">
             <Button onClick={() => void saveEdit()} disabled={saving}>
-              Save
+              Save packing list
             </Button>
             <Button variant="outline" onClick={cancelEdit} disabled={saving}>
               <X className="size-4" />

@@ -42,7 +42,7 @@ export function Inventory() {
 
   const renderItem = (item: IInventoryItem, index: number) => (
     <div key={index} className="flex items-center">
-      <Badge appearance="ghost" variant={item.badgeColor}>
+      <Badge variant={item.badgeColor}>
         <BadgeDot className="size-2" />
       </Badge>
       <span className="text-sm font-normal text-foreground">{item.label}</span>

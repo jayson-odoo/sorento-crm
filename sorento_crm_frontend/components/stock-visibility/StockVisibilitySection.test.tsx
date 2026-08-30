@@ -8,8 +8,8 @@
  *   E3 "Dealer pool" fills the `segment=dealer` warehouses
  *   E4 Save PUTs, invalidates and toasts; the error path toasts the
  *      `extractApiError` message the service threw
- *   E5 Remove goes through ConfirmDeleteDialog (never `confirm()`), DELETEs, and
- *      the card falls back to the inherited policy
+ *   E5 Remove asks nothing (D7, S6-10): it parks `stock_visibility_policy.remove`
+ *      on the server for its window and the countdown replaces the button
  *   E8 empty Locations reads "All locations" and saves `warehouse_ids: null`
  *   E9 "Hide zero-quantity locations" renders from the effective policy, toggles,
  *      and rides the same wholesale Save
@@ -154,6 +154,21 @@ const service = vi.hoisted(() => ({
   deleteStockVisibility: vi.fn(),
   searchStockVisibilityWarehouses: vi.fn(),
   getDealerPoolWarehouses: vi.fn(),
+}));
+
+/* The grace window is the server's; what this file proves is that the button parks one. */
+const createPendingAction = vi.fn().mockResolvedValue({
+  id: 'pa-1',
+  action_key: 'stock_visibility_policy.remove',
+  entity_type: 'stock_visibility_policy',
+  entity_id: 'c-1',
+  commit_at: '2026-08-30T10:00:05',
+  window_seconds: 5,
+});
+vi.mock('@/services/pendingActionService', () => ({
+  createPendingAction: (...args: unknown[]) => createPendingAction(...args),
+  cancelPendingAction: vi.fn(),
+  getCurrentPendingAction: vi.fn().mockResolvedValue({ pending: null, last_outcome: null }),
 }));
 
 vi.mock('@/services/stockVisibilityService', async (importOriginal) => {
@@ -429,7 +444,7 @@ describe('E4 / E8 - Save', () => {
     await waitForCard();
 
     fireEvent.change(modeSelect(), { target: { value: 'compact' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save stock visibility' }));
 
     await waitFor(() =>
       expect(service.saveStockVisibility).toHaveBeenCalledWith(CONTACT_SCOPE, {
@@ -458,7 +473,7 @@ describe('E4 / E8 - Save', () => {
     expect(chipLabels()).toEqual([]);
 
     fireEvent.change(modeSelect(), { target: { value: 'availability' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save stock visibility' }));
 
     await waitFor(() =>
       expect(service.saveStockVisibility).toHaveBeenCalledWith(CONTACT_SCOPE, {
@@ -486,7 +501,7 @@ describe('E4 / E8 - Save', () => {
     );
 
     fireEvent.change(modeSelect(), { target: { value: 'availability' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save stock visibility' }));
 
     await waitFor(() =>
       expect(service.saveStockVisibility).toHaveBeenCalledWith(CONTACT_SCOPE, {
@@ -510,7 +525,7 @@ describe('E4 / E8 - Save', () => {
     expect(screen.getByTestId('locations-picker').getAttribute('data-placeholder')).toBe(
       'No locations',
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save stock visibility' }));
 
     await waitFor(() =>
       expect(service.saveStockVisibility).toHaveBeenCalledWith(CONTACT_SCOPE, {
@@ -528,7 +543,7 @@ describe('E4 / E8 - Save', () => {
         'All locations',
       ),
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save stock visibility' }));
 
     await waitFor(() =>
       expect(service.saveStockVisibility).toHaveBeenLastCalledWith(CONTACT_SCOPE, {
@@ -549,7 +564,7 @@ describe('E4 / E8 - Save', () => {
     renderSection(CONTACT_SCOPE);
     await waitForCard();
     fireEvent.change(modeSelect(), { target: { value: 'compact' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save stock visibility' }));
 
     await waitFor(() =>
       expect(toast.error).toHaveBeenCalledWith(
@@ -559,15 +574,11 @@ describe('E4 / E8 - Save', () => {
   });
 });
 
-describe('E5 - Remove override', () => {
-  it('confirms in a dialog, deletes, and falls back to the inherited policy', async () => {
+describe('E5 - Remove override (S6-10)', () => {
+  it('parks the removal on the server, with no dialog and no browser prompt', async () => {
     const confirmSpy = vi.spyOn(window, 'confirm');
     const own = policy('compact', [BRW], 'contact');
     respondWith(() => ({ effective: own, override: own }));
-    service.deleteStockVisibility.mockResolvedValue({
-      effective: policy('availability', [BRW, MWH, DC1], 'access_type', 'Dealer'),
-      override: null,
-    });
 
     renderSection(CONTACT_SCOPE);
     await waitForCard();
@@ -575,31 +586,26 @@ describe('E5 - Remove override', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Remove override' }));
 
-    // The dialog, not the browser prompt.
+    // D7: the first press IS the action. The way back is the countdown's Cancel,
+    // and the server applies it when the window lapses - which is why the DELETE
+    // the old dialog fired no longer happens in the browser at all.
     await waitFor(() =>
-      expect(
-        screen.getByText(
-          'This contact will fall back to the policy from its access type, or the default.',
-        ),
-      ).toBeInTheDocument(),
+      expect(createPendingAction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          actionKey: 'stock_visibility_policy.remove',
+          entityType: 'stock_visibility_policy',
+          entityId: CONTACT_SCOPE.contactId,
+          payload: { scope_kind: 'contact' },
+        }),
+      ),
     );
     expect(service.deleteStockVisibility).not.toHaveBeenCalled();
     expect(confirmSpy).not.toHaveBeenCalled();
-
-    // The refetch the invalidation fires must not put the deleted override back.
-    respondWith(() => ({
-      effective: policy('availability', [BRW, MWH, DC1], 'access_type', 'Dealer'),
-      override: null,
-    }));
-    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
-
-    await waitFor(() =>
-      expect(service.deleteStockVisibility).toHaveBeenCalledWith(CONTACT_SCOPE),
-    );
-    await waitFor(() => expect(screen.getByText('Access type: Dealer')).toBeInTheDocument());
-    await waitFor(() => expect(modeSelect().value).toBe('availability'));
-    expect(screen.queryByRole('button', { name: 'Remove override' })).not.toBeInTheDocument();
-    expect(confirmSpy).not.toHaveBeenCalled();
+    expect(
+      screen.queryByText(
+        'This contact will fall back to the policy from its access type, or the default.',
+      ),
+    ).not.toBeInTheDocument();
   });
 });
 
@@ -610,9 +616,9 @@ describe('Save enablement', () => {
     renderSection(CONTACT_SCOPE);
     await waitForCard();
 
-    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Save stock visibility' })).toBeDisabled();
     fireEvent.change(modeSelect(), { target: { value: 'availability' } });
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled());
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save stock visibility' })).toBeEnabled());
   });
 
   it('stays enabled on an inheriting tier even when the values still match', async () => {
@@ -624,7 +630,7 @@ describe('Save enablement', () => {
     await waitForCard();
 
     // Nothing is dirty, but there is no row yet - Save IS the act of creating one.
-    expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Save stock visibility' })).toBeEnabled();
   });
 });
 
@@ -671,7 +677,7 @@ describe('Scope parity', () => {
     expect(screen.getByRole('button', { name: 'Remove policy' })).toBeInTheDocument();
 
     fireEvent.change(modeSelect(), { target: { value: 'compact' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save stock visibility' }));
     await waitFor(() =>
       expect(service.saveStockVisibility).toHaveBeenCalledWith(ACCESS_TYPE_SCOPE, {
         mode: 'compact',
@@ -697,7 +703,7 @@ describe('Scope parity', () => {
     expect(screen.queryByRole('button', { name: /^Remove/ })).not.toBeInTheDocument();
 
     fireEvent.change(modeSelect(), { target: { value: 'compact' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save stock visibility' }));
     await waitFor(() =>
       expect(service.saveStockVisibility).toHaveBeenCalledWith(DEFAULT_SCOPE, {
         mode: 'compact',
@@ -755,11 +761,11 @@ describe('E9 - Hide zero-quantity locations', () => {
     renderSection(CONTACT_SCOPE);
     await waitForCard();
     // Nothing else touched, so Save is only reachable if the toggle is dirty.
-    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Save stock visibility' })).toBeDisabled();
 
     fireEvent.click(hideZeroSwitch());
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled());
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save stock visibility' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: 'Save stock visibility' }));
 
     await waitFor(() =>
       expect(service.saveStockVisibility).toHaveBeenCalledWith(CONTACT_SCOPE, {
@@ -784,7 +790,7 @@ describe('E9 - Hide zero-quantity locations', () => {
     expect(hideZeroSwitch()).toHaveAttribute('data-state', 'checked');
 
     fireEvent.click(hideZeroSwitch());
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save stock visibility' }));
 
     await waitFor(() =>
       expect(service.saveStockVisibility).toHaveBeenCalledWith(CONTACT_SCOPE, {
@@ -806,7 +812,7 @@ describe('E9 - Hide zero-quantity locations', () => {
     renderSection(ACCESS_TYPE_SCOPE);
     await waitForCard();
     fireEvent.click(hideZeroSwitch());
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save stock visibility' }));
 
     await waitFor(() =>
       expect(service.saveStockVisibility).toHaveBeenCalledWith(ACCESS_TYPE_SCOPE, {

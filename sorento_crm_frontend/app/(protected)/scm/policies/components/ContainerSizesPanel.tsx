@@ -20,10 +20,9 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Skeleton } from '@/components/ui/skeleton';
-import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
+import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
 import {
   createContainerSize,
-  deleteContainerSize,
   getContainerSizes,
   updateContainerSize,
   type ContainerSize,
@@ -59,7 +58,14 @@ export function ContainerSizesPanel() {
   const qc = useQueryClient();
   const sizes = useQuery({ queryKey: KEY, queryFn: getContainerSizes });
   const [draft, setDraft] = useState<Draft | null>(null);
-  const [deleting, setDeleting] = useState<ContainerSize | null>(null);
+  // Delete asks nothing (D7): a toast counts down with Cancel.
+  const deletion = useDeferredRowAction({
+    actionKey: 'container_size.delete',
+    entityType: 'container_size',
+    verb: 'Deleting',
+    successMessage: 'Container size deleted.',
+    invalidateKeys: [[...KEY]],
+  });
 
   const onSettled = (list: ContainerSize[]) => {
     qc.setQueryData(KEY, list);
@@ -150,7 +156,7 @@ export function ContainerSizesPanel() {
                   mode="icon"
                   size="sm"
                   aria-label={`Delete ${size.code}`}
-                  onClick={() => setDeleting(size)}
+                  onClick={() => deletion.run({ id: size.id, subject: size.code })}
                 >
                   <Trash2 className="size-4" />
                 </Button>
@@ -219,24 +225,12 @@ export function ContainerSizesPanel() {
               onClick={() => draft && save.mutate(draft)}
               disabled={!valid || save.isPending}
             >
-              Save
+              Save container size
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      <ConfirmDeleteDialog
-        open={!!deleting}
-        onOpenChange={(open) => (open ? setDeleting(deleting) : setDeleting(null))}
-        title="Confirm delete"
-        description={`Delete the ${deleting?.code ?? ''} container size? This action cannot be undone. Plans already built keep their own volume.`}
-        onDelete={async () => {
-          if (deleting) await deleteContainerSize(deleting.id);
-        }}
-        queryKeysToInvalidate={[[...KEY]]}
-        successMessage="Container size deleted."
-        onSuccess={() => setDeleting(null)}
-      />
     </div>
   );
 }

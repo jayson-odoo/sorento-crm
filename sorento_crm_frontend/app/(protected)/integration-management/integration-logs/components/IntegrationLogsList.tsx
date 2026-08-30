@@ -23,7 +23,6 @@ import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useIntegrationLogs, useRetryIntegrationLog } from '../hooks/useIntegrationLogs';
@@ -31,7 +30,6 @@ import type { IntegrationLog } from '../types/integrationLog.types';
 import { formatDistanceToNow } from 'date-fns';
 import { toast } from 'sonner';
 import { formatDateTimeInMalaysia, parseDateTimeAsUTC } from '@/lib/helpers';
-import { getStatusBadgeVariant } from '@/lib/status-badge';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 
@@ -115,7 +113,7 @@ export default function IntegrationLogsList() {
         accessorKey: 'integration_channel',
         header: ({ column }) => <DataGridColumnHeader title="Channel" column={column} />,
         cell: ({ row }) => (
-          <Badge variant="secondary" appearance="ghost">
+          <Badge variant="secondary">
             {row.original.integration_channel}
           </Badge>
         ),
@@ -145,8 +143,7 @@ export default function IntegrationLogsList() {
           const status = (row.original.status || 'pending') as string;
           return (
             <Badge
-              variant={getStatusBadgeVariant(status)}
-              appearance="ghost"
+              status={status}
               className="capitalize"
             >
               {status.charAt(0).toUpperCase() + status.slice(1)}
@@ -463,10 +460,7 @@ export default function IntegrationLogsList() {
           />
         </CardHeader>
         <CardTable>
-          <ScrollArea>
-            <DataGridTable />
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
+          <DataGridTable />
         </CardTable>
         <CardFooter>
           <DataGridPagination />

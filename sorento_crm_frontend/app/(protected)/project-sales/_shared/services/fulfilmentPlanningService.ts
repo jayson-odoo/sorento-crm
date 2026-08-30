@@ -291,6 +291,62 @@ export async function confirmSupply(
  * Committing a selection is therefore N independent atomic confirmations, not one
  * transaction. A refusal reports per order and the orders that committed stay committed
  * (13.6).
+ *
+ * ── LADDER v7.1: THE OPTIONS CONTRACT (S3, R36, AC-S3-14) ───────────────────────────────
+ *
+ * Additive to the payload above. Every contribution the ladder WALKED (so: not unplannable,
+ * not covered by a frozen decision) carries, alongside its `trail`:
+ *
+ *     options: [{
+ *       step:           'use' | 'order_borrow' | 'supply_borrow' | 'pool' | 'buy',
+ *       label:          string,           // the step in a planner's words, the SERVER's sentence
+ *       whole:          boolean,          // does it cover the WHOLE planning unit (R10, R33)
+ *       fulfil_date:    'YYYY-MM-DD'|null,// when the unit would be fulfilled if it were taken
+ *       days_late:      number|null,      // days after the line's required date; 0 = on time
+ *       debt_so_number: string|null,      // whose order pays for it, by DOCUMENT NUMBER
+ *       debt_month:     'YYYY-MM'|null,   // the month that debt lands in on the Stock Debt view
+ *       chosen:         boolean           // the option the engine proposed
+ *     }]
+ *
+ * FIVE ENTRIES, ALWAYS, IN STEP ORDER - `use`, `order_borrow`, `supply_borrow`, `pool`, `buy` -
+ * and every one of them answered, for the same reason the trail sends five rows: a step the
+ * server omitted reads as a step nobody walked. The client renders them in the order they
+ * arrive and never sorts them.
+ *
+ * `fulfil_date` is today for on hand (plus two days when a transfer between bins is needed),
+ * the SPO's arrival, the PO's `issue + lead` (R29: a PO line's `expected_date` is what it was
+ * BOUGHT FOR, never an arrival), and `as_of + lead` for Buy. It is null exactly when the step
+ * gives nothing, and `days_late` is null with it: "nothing was offered" and "offered, on time"
+ * are different answers and the table shows them differently.
+ *
+ * `days_late` is never negative. Landing before the required date is on time, not "minus six
+ * days late", and the screen renders 0 as blank.
+ *
+ * `debt_so_number` / `debt_month` are set on the two borrow steps only. `use` draws the FREE
+ * pile and `buy` orders new stock, so neither owes anybody and both send null rather than an
+ * empty string.
+ *
+ * At most ONE option carries `chosen: true` - the first whole one in step order, which is the
+ * composition `sources` states. None carries it when nothing covers the unit.
+ *
+ * The trail's five questions arrive in the same order and are worded (AC-S3-11):
+ * `Can we use our locations?`, `Can we borrow on hand from a later order?`, `Can we borrow
+ * incoming from a later order?`, `Can we take from the pool?`, `Buy`. The on-hand borrow's
+ * `why` names what is borrowed, from whom, when they are due and where the debt lands:
+ * `Borrow 30 on hand at MWH-IB from SO414285 line 4 (JEREMY, due 12 Nov 2026); its debt lands
+ * in Nov 2026`.
+ *
+ * `BoardBorrowCandidate` (the manual `BorrowAddDialog`'s list) reads the SAME donors as step 2
+ * and in the same order, which the server sets and the dialog never re-sorts:
+ * `(same_agent desc, required_date desc, same_group desc, same_warehouse desc)` (R4, R19) -
+ * her own agent first, then the latest-dated order (it can wait longest), then the same
+ * ownership group, then the asker's own warehouse (fewest transfers). Phase 2 wires that
+ * ordering; the dialog needs no change for it.
+ *
+ * PHASE 2 (S3), and the mock is GONE. `propose_line` returns the five options for real and
+ * this function reads them straight off the payload; `lib/ladderOptionsMock.ts` and the
+ * `NEXT_PUBLIC_LADDER_OPTIONS_MOCK` flag it hung off are deleted, so the flag being set on a
+ * running dev server does nothing at all.
  */
 export async function getPlanningBoard(
   soNumbers: string[],
@@ -327,17 +383,26 @@ export async function getPlanningBoard(
 
 /**
  * What a location row of the cell's stock table is made of (AutoCount's "Stock Status with
- * Detail"), expanded under that row.
+ * Detail"), expanded under that row - or what a whole ownership GROUP is made of, under its
+ * subtotal row.
  *
  * Addressed by IDS, never by item code: two products on the live book share the code
  * `B2155-NL-BLUE`, so a lookup by code would answer confidently about the wrong one.
  */
 export async function getStockDetail(
   productId: string,
-  warehouseId: string,
+  warehouseId: string | null,
   lineIds: string[] = [],
+  /**
+   * A whole SET instead of one bin: the ownership-group suffix (`IB`), or `pools` for the
+   * five site pools. Step 1 of the ladder draws the group's pile - a `BRW-IB` line is fed by
+   * `MWH-IB` stock - so a running balance is only true when it is read over the group.
+   */
+  group?: string | null,
 ): Promise<StockDetail> {
-  const search = new URLSearchParams({ product_id: productId, warehouse_id: warehouseId });
+  const search = new URLSearchParams({ product_id: productId });
+  if (group) search.set('group', group);
+  else if (warehouseId) search.set('warehouse_id', warehouseId);
   // The lines the drawer is planning. Their rows come back marked `is_this_line`; an absent
   // parameter reads the list on nobody's behalf.
   if (lineIds.length > 0) search.set('line_ids', lineIds.join(','));

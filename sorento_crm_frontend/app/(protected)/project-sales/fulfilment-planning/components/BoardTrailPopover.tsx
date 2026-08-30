@@ -15,8 +15,10 @@ import type {
   BoardTrailPool,
   BoardTrailStep,
 } from '../../_shared/types/fulfilmentPlanning.types';
+import { BoardLadderOptionsTable } from './BoardLadderOptionsTable';
 import { ClassificationProofPopover } from './ClassificationProofPopover';
 import { PileQueueDialog } from './PileQueueDialog';
+import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 
 /**
  * How this line's proposal was arrived at: the four questions, and Buy.
@@ -194,6 +196,22 @@ export function BoardTrailPopover({
                     ))}
                   </tbody>
                 </table>
+              )}
+              {/* AND WHAT ELSE COULD HAVE BEEN DONE (R36, AC-S3-14). Beneath the questions,
+                  because it is the answer to the one they raise: five rungs were checked, and
+                  this is when each of them would have landed the unit. Rendered only when the
+                  server states options - a snapshot frozen before they existed has none, and
+                  an empty table would read as "no option covers this line". */}
+              {(contribution.options?.length ?? 0) > 0 && (
+                <div className="border-t">
+                  <p className="px-3 pb-1 pt-2 text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Options
+                  </p>
+                  <BoardLadderOptionsTable
+                    options={contribution.options ?? []}
+                    contributionKey={contribution.key}
+                  />
+                </div>
               )}
             </div>
           </PopoverContent>
@@ -388,38 +406,41 @@ function PoolPile({
     },
   ];
   return (
-    <table
-      data-testid={`trail-pool-${contributionKey}`}
-      className="mt-0.5 text-2xs tabular-nums"
-    >
-      <thead>
-        <tr className="text-muted-foreground">
-          {cells.map((cell) => (
-            <th
-              key={cell.label}
-              scope="col"
-              title={cell.title}
-              className="pe-3 text-end font-medium uppercase tracking-wide"
-            >
-              {cell.label}
-            </th>
-          ))}
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          {cells.map((cell) => (
-            <td
-              key={cell.label}
-              data-testid={`trail-pool-${contributionKey}-${cell.label.toLowerCase().replace(/\s+/g, '-')}`}
-              className="pe-3 text-end"
-            >
-              {cell.value}
-            </td>
-          ))}
-        </tr>
-      </tbody>
-    </table>
+    <ScrollArea>
+      <table
+        data-testid={`trail-pool-${contributionKey}`}
+        className="mt-0.5 text-2xs tabular-nums"
+      >
+        <thead>
+          <tr className="text-muted-foreground">
+            {cells.map((cell) => (
+              <th
+                key={cell.label}
+                scope="col"
+                title={cell.title}
+                className="pe-3 text-end font-medium uppercase tracking-wide"
+              >
+                {cell.label}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            {cells.map((cell) => (
+              <td
+                key={cell.label}
+                data-testid={`trail-pool-${contributionKey}-${cell.label.toLowerCase().replace(/\s+/g, '-')}`}
+                className="pe-3 text-end"
+              >
+                {cell.value}
+              </td>
+            ))}
+          </tr>
+        </tbody>
+      </table>
+      <ScrollBar orientation="horizontal" />
+    </ScrollArea>
   );
 }
 

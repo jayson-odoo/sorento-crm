@@ -243,7 +243,7 @@ export function SalesAgentDetail({ id }: { id: string }) {
                   {annotate.isPending ? (
                     <LoaderCircleIcon className="me-2 size-4 animate-spin" />
                   ) : null}
-                  Save
+                  Save note
                 </Button>
               </div>
             ) : (

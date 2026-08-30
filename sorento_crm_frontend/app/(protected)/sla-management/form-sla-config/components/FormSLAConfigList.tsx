@@ -104,7 +104,6 @@ export default function FormSLAConfigList() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Form SLA Configuration</h1>
           <p className="text-sm text-muted-foreground">
             Per-form SLA stage rules. Each row defines which form transition starts a
             tracker, marks it responded, and marks it resolved. Chain stages via the
@@ -150,8 +149,16 @@ export default function FormSLAConfigList() {
                   {rows.map((c) => (
                     <TableRow key={c.id}>
                       <TableCell className="font-medium">{c.stage_code}</TableCell>
-                      <TableCell title={c.policy_id}>
-                        {c.policy_name || c.policy_code || c.policy_id.slice(0, 8)}
+                      {/* A policy row with neither a name nor a code says so.
+                          The first eight characters of its UUID told the reader
+                          nothing they could act on, and no UUID renders in the
+                          UI. */}
+                      <TableCell>
+                        {c.policy_name || c.policy_code || (
+                          <span className="text-muted-foreground">
+                            (unnamed policy)
+                          </span>
+                        )}
                       </TableCell>
                       <TableCell>{c.agent_code}</TableCell>
                       <TableCell>{c.team_set_code || '-'}</TableCell>

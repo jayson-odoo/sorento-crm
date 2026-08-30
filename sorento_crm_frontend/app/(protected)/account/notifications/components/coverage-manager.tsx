@@ -403,12 +403,12 @@ export function CoverageManager({ canManageTeam }: { canManageTeam: boolean }) {
                           <span>{editRedirect ? 'Auto-assign' : 'Notify only'}</span>
                         </span>
                       ) : r.redirect ? (
-                        <Badge variant="primary" appearance="ghost">Auto-assign</Badge>
+                        <Badge variant="primary">Auto-assign</Badge>
                       ) : (
-                        <Badge variant="secondary" appearance="ghost">Notify only</Badge>
+                        <Badge variant="secondary">Notify only</Badge>
                       )}
                       {r.assignedByName && !editing && (
-                        <Badge variant="warning" appearance="ghost">Assigned by {r.assignedByName}</Badge>
+                        <Badge variant="warning">Assigned by {r.assignedByName}</Badge>
                       )}
                       {editing ? (
                         <span className="flex items-center gap-2">

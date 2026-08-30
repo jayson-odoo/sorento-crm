@@ -120,9 +120,10 @@ describe('StockTransferDetail - header', () => {
   it('carries the transfer number, the state and the verbs the state allows', async () => {
     renderDetail();
 
-    // Twice, deliberately: the record header and the breadcrumb's leaf. The leaf is the
-    // NUMBER rather than the id, because no UUID reaches a screen.
-    expect(await screen.findAllByText('TR-000001')).toHaveLength(2);
+    // Three times, deliberately: the page title, the breadcrumb's leaf (which the
+    // title supplies, S5-02) and the record card. Each is the NUMBER rather than
+    // the id, because no UUID reaches a screen.
+    expect(await screen.findAllByText('TR-000001')).toHaveLength(3);
     expect(
       within(screen.getByRole('navigation', { name: 'breadcrumb' })).getByText('TR-000001'),
     ).toBeInTheDocument();

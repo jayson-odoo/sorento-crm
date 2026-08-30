@@ -190,7 +190,7 @@ export function DivergenceReviewClient({
     return (
       <div className="space-y-6">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <h1 className="min-w-0 text-xl font-semibold break-words">AutoCount comparison</h1>
+          <h2 className="min-w-0 text-xl font-semibold break-words">AutoCount comparison</h2>
           <Button asChild variant="outline">
             <Link href={`/project-sales/${projectId}/sales-orders/${psoId}`}>
               Back to the sales order
@@ -218,10 +218,10 @@ export function DivergenceReviewClient({
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
-          <h1 className="text-xl font-semibold break-words">
+          <h2 className="text-xl font-semibold break-words">
             AutoCount comparison
             {data.autocount_doc_no ? ` - ${data.autocount_doc_no}` : ''}
-          </h1>
+          </h2>
           <p className="text-sm text-muted-foreground break-words">
             {data.project_title} · {data.provisional_ref}
           </p>

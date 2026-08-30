@@ -457,9 +457,9 @@ export function QuotationDocumentClient({
               {standing.label}
             </Badge>
           </div>
-          <h1 className="mt-1 break-words text-xl font-semibold">
+          <h2 className="mt-1 break-words text-xl font-semibold">
             {shown.subject_title ?? '-'}
-          </h1>
+          </h2>
           <p className="break-words text-sm text-muted-foreground">
             {shown.recipient_name_snapshot ?? '-'}
           </p>
@@ -602,7 +602,7 @@ export function QuotationDocumentClient({
                     title={edit.isDirty ? undefined : 'Nothing has changed yet'}
                     onClick={requestSave}
                   >
-                    {isSaving ? 'Saving...' : 'Save'}
+                    {isSaving ? 'Saving...' : 'Save quotation'}
                   </Button>
                 </>
               )}

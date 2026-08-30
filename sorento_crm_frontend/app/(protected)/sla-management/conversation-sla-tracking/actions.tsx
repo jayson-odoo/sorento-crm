@@ -15,15 +15,11 @@
  * where the data is.
  */
 
-import { useState } from 'react';
 import { ExternalLink, Trash2, UserRound } from 'lucide-react';
 
-import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import type { RecordAction, RecordActionSet } from '@/components/common/recordActions';
-import {
-  useDeleteConversationSLATracking,
-  useSyncAssigneeFromRespond,
-} from './hooks/useConversationSLATracking';
+import { useDeferredAction } from '@/hooks/useDeferredAction';
+import { useSyncAssigneeFromRespond } from './hooks/useConversationSLATracking';
 
 /** What both surfaces can hand over: a list row carries exactly this much. */
 const RESPOND_IO_INBOX_BASE_URL = 'https://app.respond.io/space/364817/inbox';
@@ -37,17 +33,38 @@ export interface ConversationSlaActionTarget {
 export interface UseConversationSlaActionsOptions {
   /** Where to go once the tracking is gone (the record page returns to the list). */
   onDeleted?: () => void;
+  /**
+   * The record page shows the countdown in place of its primary button; a list
+   * row has nowhere to put one, so it travels to a toast (S6-06, S6-07).
+   */
+  surface?: 'inline' | 'toast';
 }
 
 export function useConversationSlaActions(
   tracking: ConversationSlaActionTarget | null | undefined,
-  { onDeleted }: UseConversationSlaActionsOptions = {},
+  { onDeleted, surface = 'inline' }: UseConversationSlaActionsOptions = {},
 ): RecordActionSet {
   const syncAssignee = useSyncAssigneeFromRespond();
-  const remove = useDeleteConversationSLATracking();
-  const [deleteOpen, setDeleteOpen] = useState(false);
 
-  if (!tracking) return { actions: [] };
+  // Delete asks nothing (D7). It parks the deletion for ten seconds; the record
+  // page shows the countdown where its primary button stood, a list row leaves
+  // it to the toast, and Cancel is the way back either way.
+  const deletion = useDeferredAction({
+    actionKey: 'sla_tracking.delete',
+    entityType: 'sla_tracking',
+    entityId: tracking?.id,
+    verb: 'Deleting',
+    subject: 'this tracking record',
+    surface,
+    watchFromMount: surface === 'inline',
+    successMessage: 'Tracking deleted',
+    // The dashboard counts these records, so it is stale the moment one goes. The
+    // immediate mutation refetched both.
+    invalidateKeys: [['conversation-sla-tracking'], ['sla-tracking-dashboard-metrics']],
+    onCommitted: onDeleted,
+  });
+
+  if (!tracking) return { actions: [], dialogs: null, pending: null };
 
   const respondIoId = tracking.respond_io_id ?? tracking.contact?.respond_io_id ?? null;
   const inboxUrl = respondIoId ? `${RESPOND_IO_INBOX_BASE_URL}/${respondIoId}` : null;
@@ -76,23 +93,9 @@ export function useConversationSlaActions(
     label: 'Delete tracking',
     icon: Trash2,
     kind: 'destructive',
-    disabled: remove.isPending,
-    run: () => setDeleteOpen(true),
+    disabled: deletion.isPending,
+    run: deletion.start,
   });
 
-  const dialogs = (
-    <ConfirmDeleteDialog
-      open={deleteOpen}
-      onOpenChange={setDeleteOpen}
-      title="Delete conversation SLA tracking"
-      description="This deletes the tracking record and its event log. This action cannot be undone."
-      successMessage="Tracking deleted"
-      onDelete={async () => {
-        await remove.mutateAsync(tracking.id);
-      }}
-      onSuccess={onDeleted}
-    />
-  );
-
-  return { actions, dialogs };
+  return { actions, dialogs: null, pending: deletion.countdown };
 }

@@ -114,7 +114,7 @@ export function EditLeadInformantDialog({
               Cancel
             </Button>
             <Button type="submit" disabled={pending}>
-              Save
+              Save informant
             </Button>
           </DialogFooter>
         </form>

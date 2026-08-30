@@ -6,7 +6,28 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+/* The grace window is the server's; what this file proves is that the row parks one. */
+const createPendingAction = vi.fn().mockResolvedValue({
+  id: 'pa-1',
+  action_key: 'reorder_policy.delete',
+  entity_type: 'reorder_policy',
+  entity_id: 'p-1',
+  commit_at: '2026-08-30T10:00:10',
+  window_seconds: 10,
+});
+vi.mock('sonner', () => ({
+  // `dismiss` is load-bearing: the countdown's toast is dismissed when the row
+  // unmounts, and a stub without it throws out of an effect no assertion catches.
+  toast: { success: vi.fn(), error: vi.fn(), custom: vi.fn(), dismiss: vi.fn() },
+}));
+
+vi.mock('@/services/pendingActionService', () => ({
+  createPendingAction: (...args: unknown[]) => createPendingAction(...args),
+  cancelPendingAction: vi.fn(),
+  getCurrentPendingAction: vi.fn().mockResolvedValue({ pending: null, last_outcome: null }),
+}));
+
+import { render, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 // jsdom polyfills for ScrollArea / DataGrid.
@@ -176,14 +197,21 @@ describe('ReorderPolicyGrid', () => {
     expect(screen.getAllByRole('button', { name: /Edit policy/i })).toHaveLength(2);
   });
 
-  it('opening delete shows the AlertDialog confirm copy (AC-DEL-1)', async () => {
-    const { fireEvent } = await import('@testing-library/react');
+  it('parks the delete rather than opening a dialog (AC-DEL-1, S6-10)', async () => {
+    const { fireEvent, waitFor } = await import('@testing-library/react');
     mockList({ data: { data: [GLOBAL, CLASS], total: 2 } });
     renderGrid();
     fireEvent.click(screen.getByRole('button', { name: /Delete policy/i }));
-    const dialog = await screen.findByRole('dialog');
-    expect(within(dialog).getByText('Confirm delete')).toBeInTheDocument();
-    expect(within(dialog).getByText(/This action cannot be undone/i)).toBeInTheDocument();
-    expect(within(dialog).getByRole('button', { name: /^Delete$/i })).toBeInTheDocument();
+
+    // D7: the press IS the action, and Cancel in the countdown is the way back.
+    await waitFor(() =>
+      expect(createPendingAction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          actionKey: 'reorder_policy.delete',
+          entityType: 'reorder_policy',
+        }),
+      ),
+    );
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 });

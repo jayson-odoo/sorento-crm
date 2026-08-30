@@ -5,23 +5,14 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { MoveLeft, ChevronLeft, ChevronRight, Download } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
 import { Button } from '@/components/ui/button';
 import { Container } from '@/components/common/container';
-import { Toolbar, ToolbarActions, ToolbarHeading, ToolbarTitle } from '@/components/common/toolbar';
+import { PageHeader } from '@/components/common/PageHeader';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Progress } from '@/components/ui/progress';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
-import { getStatusBadgeVariant } from '@/lib/status-badge';
 import {
   getImportJob,
   getImportJobs,
@@ -116,33 +107,16 @@ export default function ImportJobDetailPage({ params }: ImportJobDetailPageProps
     return (
       <>
         <Container>
-          <Toolbar>
-            <ToolbarHeading>
-              <ToolbarTitle>Import Job</ToolbarTitle>
-              <Breadcrumb>
-                <BreadcrumbList>
-                  <BreadcrumbItem>
-                    <BreadcrumbLink href="/">Home</BreadcrumbLink>
-                  </BreadcrumbItem>
-                  <BreadcrumbSeparator />
-                  <BreadcrumbItem>
-                    <BreadcrumbPage>System Management</BreadcrumbPage>
-                  </BreadcrumbItem>
-                  <BreadcrumbSeparator />
-                  <BreadcrumbItem>
-                    <BreadcrumbLink href="/system-management/import-jobs">Import Jobs</BreadcrumbLink>
-                  </BreadcrumbItem>
-                </BreadcrumbList>
-              </Breadcrumb>
-            </ToolbarHeading>
-            <ToolbarActions>
+          <PageHeader
+            title="Import Job"
+            actions={
               <Button asChild variant="outline">
                 <Link href="/system-management/import-jobs">
                   <MoveLeft /> Back to Import Jobs
                 </Link>
               </Button>
-            </ToolbarActions>
-          </Toolbar>
+            }
+          />
         </Container>
         <Container>
           <div className="space-y-6">
@@ -158,33 +132,16 @@ export default function ImportJobDetailPage({ params }: ImportJobDetailPageProps
     return (
       <>
         <Container>
-          <Toolbar>
-            <ToolbarHeading>
-              <ToolbarTitle>Import Job</ToolbarTitle>
-              <Breadcrumb>
-                <BreadcrumbList>
-                  <BreadcrumbItem>
-                    <BreadcrumbLink href="/">Home</BreadcrumbLink>
-                  </BreadcrumbItem>
-                  <BreadcrumbSeparator />
-                  <BreadcrumbItem>
-                    <BreadcrumbPage>System Management</BreadcrumbPage>
-                  </BreadcrumbItem>
-                  <BreadcrumbSeparator />
-                  <BreadcrumbItem>
-                    <BreadcrumbLink href="/system-management/import-jobs">Import Jobs</BreadcrumbLink>
-                  </BreadcrumbItem>
-                </BreadcrumbList>
-              </Breadcrumb>
-            </ToolbarHeading>
-            <ToolbarActions>
+          <PageHeader
+            title="Import Job"
+            actions={
               <Button asChild variant="outline">
                 <Link href="/system-management/import-jobs">
                   <MoveLeft /> Back to Import Jobs
                 </Link>
               </Button>
-            </ToolbarActions>
-          </Toolbar>
+            }
+          />
         </Container>
         <Container>
           <div className="text-center py-12">
@@ -213,88 +170,73 @@ export default function ImportJobDetailPage({ params }: ImportJobDetailPageProps
   return (
     <>
       <Container>
-        <Toolbar>
-          <ToolbarHeading>
-            <ToolbarTitle>Import Job Details</ToolbarTitle>
-            <Breadcrumb>
-              <BreadcrumbList>
-                <BreadcrumbItem>
-                  <BreadcrumbLink href="/">Home</BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbPage>System Management</BreadcrumbPage>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbLink href="/system-management/import-jobs">Import Jobs</BreadcrumbLink>
-                </BreadcrumbItem>
-              </BreadcrumbList>
-            </Breadcrumb>
-          </ToolbarHeading>
-          <ToolbarActions>
-            {showPagination && (
-              <div className="flex items-center gap-1 mr-2">
-                <Button
-                  variant="outline"
-                  size="icon"
-                  className="h-8 w-8"
-                  disabled={!hasPrev}
-                  asChild={!!prevId}
-                >
-                  {prevId ? (
-                    <Link href={`/system-management/import-jobs/${prevId}?page=${(pageIndex ?? 0) + 1}&pageSize=${pageSize}`}>
-                      <ChevronLeft className="size-4" />
-                    </Link>
-                  ) : (
-                    <span><ChevronLeft className="size-4" /></span>
-                  )}
-                </Button>
-                <span className="text-sm text-muted-foreground tabular-nums px-1 min-w-[4rem] text-center">
-                  {currentIndex + 1} / {totalOnPage}
-                </span>
-                <Button
-                  variant="outline"
-                  size="icon"
-                  className="h-8 w-8"
-                  disabled={!hasNext}
-                  asChild={!!nextId}
-                >
-                  {nextId ? (
-                    <Link href={`/system-management/import-jobs/${nextId}?page=${(pageIndex ?? 0) + 1}&pageSize=${pageSize}`}>
-                      <ChevronRight className="size-4" />
-                    </Link>
-                  ) : (
-                    <span><ChevronRight className="size-4" /></span>
-                  )}
-                </Button>
-              </div>
-            )}
-            <Button asChild variant="outline">
-              <Link href={pageIndex !== null ? `/system-management/import-jobs?page=${pageIndex + 1}&pageSize=${pageSize}` : '/system-management/import-jobs'}>
-                <MoveLeft /> Back to Import Jobs
-              </Link>
-            </Button>
-            {canCancel && (
-              <Button
-                variant="outline"
-                disabled={cancelJobMutation.isPending}
-                onClick={() => {
-                  cancelJobMutation.mutate(id, {
-                    onSuccess: (data) => {
-                      toast.success(data.message || 'Job cancelled');
-                    },
-                    onError: (error) => {
-                      toast.error(error instanceof Error ? error.message : 'Failed to cancel job');
-                    },
-                  });
-                }}
-              >
-                {cancelJobMutation.isPending ? 'Cancelling...' : 'Cancel Job'}
+        <PageHeader
+          title="Import Job Details"
+          actions={
+            <>
+              {showPagination && (
+                <div className="flex items-center gap-1 mr-2">
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="h-8 w-8"
+                    disabled={!hasPrev}
+                    asChild={!!prevId}
+                  >
+                    {prevId ? (
+                      <Link href={`/system-management/import-jobs/${prevId}?page=${(pageIndex ?? 0) + 1}&pageSize=${pageSize}`}>
+                        <ChevronLeft className="size-4" />
+                      </Link>
+                    ) : (
+                      <span><ChevronLeft className="size-4" /></span>
+                    )}
+                  </Button>
+                  <span className="text-sm text-muted-foreground tabular-nums px-1 min-w-[4rem] text-center">
+                    {currentIndex + 1} / {totalOnPage}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="h-8 w-8"
+                    disabled={!hasNext}
+                    asChild={!!nextId}
+                  >
+                    {nextId ? (
+                      <Link href={`/system-management/import-jobs/${nextId}?page=${(pageIndex ?? 0) + 1}&pageSize=${pageSize}`}>
+                        <ChevronRight className="size-4" />
+                      </Link>
+                    ) : (
+                      <span><ChevronRight className="size-4" /></span>
+                    )}
+                  </Button>
+                </div>
+              )}
+              <Button asChild variant="outline">
+                <Link href={pageIndex !== null ? `/system-management/import-jobs?page=${pageIndex + 1}&pageSize=${pageSize}` : '/system-management/import-jobs'}>
+                  <MoveLeft /> Back to Import Jobs
+                </Link>
               </Button>
-            )}
-          </ToolbarActions>
-        </Toolbar>
+              {canCancel && (
+                <Button
+                  variant="outline"
+                  disabled={cancelJobMutation.isPending}
+                  onClick={() => {
+                    cancelJobMutation.mutate(id, {
+                      onSuccess: (data) => {
+                        toast.success(data.message || 'Job cancelled');
+                      },
+                      onError: (error) => {
+                        toast.error(error instanceof Error ? error.message : 'Failed to cancel job');
+                      },
+                    });
+                  }}
+                >
+                  {cancelJobMutation.isPending ? 'Cancelling...' : 'Cancel Job'}
+                </Button>
+              )}
+            </>
+          }
+        />
       </Container>
 
       <Container>
@@ -304,7 +246,7 @@ export default function ImportJobDetailPage({ params }: ImportJobDetailPageProps
             <CardHeader>
               <div className="flex items-center justify-between">
                 <CardTitle>Job Summary</CardTitle>
-                <Badge variant={getStatusBadgeVariant(statusData?.status || job.status)}>
+                <Badge status={statusData?.status || job.status}>
                   {(statusData?.status || job.status || '').toUpperCase()}
                 </Badge>
               </div>
@@ -318,7 +260,7 @@ export default function ImportJobDetailPage({ params }: ImportJobDetailPageProps
                 <div>
                   <p className="text-muted-foreground">Status</p>
                   <p className="font-medium">
-                    <Badge variant={getStatusBadgeVariant(statusData?.status || job.status)}>
+                    <Badge status={statusData?.status || job.status}>
                       {(statusData?.status || job.status || '').toUpperCase()}
                     </Badge>
                   </p>

@@ -12,7 +12,6 @@ import { Pencil, Plus, Star, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTable } from '@/components/ui/card';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import {
   Dialog,
   DialogContent,
@@ -407,6 +406,15 @@ export default function RespondWorkspacesAdmin() {
     enableColumnResizing: true,
   });
 
+  // The one offer this listing makes, in both places it belongs: the
+  // toolbar, and the empty state's next step (S5-06).
+  const listPrimaryAction = (
+    <Button onClick={openCreate}>
+      <Plus className="size-4 mr-2" />
+      Add workspace
+    </Button>
+  );
+
   return (
     <div className="space-y-6">
       <Card>
@@ -416,24 +424,17 @@ export default function RespondWorkspacesAdmin() {
           isLoading={isLoading}
           emptyMessage="No Respond.io workspaces configured. Add one to start syncing contacts."
           tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
+          emptyAction={listPrimaryAction}
         >
           <CardHeader className="block">
             <DataGridListToolbar
               table={table}
               exportConfig={{ filename: 'respond_workspaces_export.xlsx' }}
-              primaryAction={
-                <Button onClick={openCreate}>
-                  <Plus className="size-4 mr-2" />
-                  Add workspace
-                </Button>
-              }
+              primaryAction={listPrimaryAction}
             />
           </CardHeader>
           <CardTable>
-            <ScrollArea>
-              <DataGridTable />
-              <ScrollBar orientation="horizontal" />
-            </ScrollArea>
+            <DataGridTable />
           </CardTable>
         </DataGrid>
       </Card>

@@ -12,14 +12,16 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardHeader, CardTable } from '@/components/ui/card';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { useBrands } from '../hooks/useBrands';
 import { buildBrandColumns } from './BrandTable';
 import BrandFormDialog from './BrandFormDialog';
-import BrandDeleteDialog from './BrandDeleteDialog';
+import {
+  useDeferredRowAction,
+  useRowPending,
+} from '@/hooks/useDeferredRowAction';
 import type { Brand } from '../types/brand.types';
 
 export default function BrandsList() {
@@ -29,8 +31,17 @@ export default function BrandsList() {
   const [formOpen, setFormOpen] = useState(false);
   const [editingBrandId, setEditingBrandId] = useState<string | undefined>(undefined);
   const [copyFromBrand, setCopyFromBrand] = useState<Brand | null>(null);
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  const [brandToDelete, setBrandToDelete] = useState<Brand | null>(null);
+  // Delete asks nothing (D7): the row dims and a toast counts down with Cancel.
+  const deletion = useDeferredRowAction({
+    actionKey: 'brand.delete',
+    entityType: 'brand',
+    successMessage: 'Brand deleted',
+    // The select feeds every form that picks a brand, so it is refetched beside the
+    // list - the immediate mutation always did both, and a deferred delete that
+    // forgot one leaves a deleted brand pickable until the next hard refresh.
+    invalidateKeys: [['brands'], ['brand-select']],
+  });
+  const rowPending = useRowPending<Brand>('brand');
 
   const { data, isLoading } = useBrands({
     pageIndex: 0,
@@ -38,12 +49,6 @@ export default function BrandsList() {
     sorting: [{ id: 'brand_name', desc: false }],
     searchQuery: '',
   });
-  const handleEdit = (brand: Brand) => {
-    setCopyFromBrand(null);
-    setEditingBrandId(brand.id);
-    setFormOpen(true);
-  };
-
   const handleDuplicate = (brand: Brand) => {
     setEditingBrandId(undefined);
     setCopyFromBrand(brand);
@@ -51,8 +56,7 @@ export default function BrandsList() {
   };
 
   const handleDelete = (brand: Brand) => {
-    setBrandToDelete(brand);
-    setDeleteDialogOpen(true);
+    deletion.run({ id: brand.id, subject: `${brand.brand_name} (${brand.brand_code})` });
   };
 
   const handleFormClose = (open: boolean) => {
@@ -80,7 +84,7 @@ export default function BrandsList() {
   }, [data, searchQuery, statusFilter]);
 
   const columns = useMemo(
-    () => buildBrandColumns({ onEdit: handleEdit, onDuplicate: handleDuplicate, onDelete: handleDelete }),
+    () => buildBrandColumns({ onDuplicate: handleDuplicate, onDelete: handleDelete }),
     [],
   );
 
@@ -96,13 +100,34 @@ export default function BrandsList() {
 
   const statusActive = statusFilter !== 'all';
 
+  // The one offer this listing makes, in both places it belongs: the
+  // toolbar, and the empty state's next step (S5-06).
+  const listPrimaryAction = (
+    <Button
+      onClick={() => {
+        setCopyFromBrand(null);
+        setEditingBrandId(undefined);
+        setFormOpen(true);
+      }}
+    >
+      <Plus className="size-4" />
+      Create Brand
+    </Button>
+  );
+
   return (
     <>
+      {/* The row opens the brand's record, where view and edit are the same
+          layout (ADR product standards). Add stays a lightbox - a brand is five
+          fields and does not need a page of its own to be created. */}
       <DataGrid
         table={table}
         recordCount={filteredBrands.length}
         isLoading={isLoading}
+        rowHref={(row) => `/master-data-management/brands/${row.id}`}
+        rowPending={rowPending}
         tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
+        emptyAction={listPrimaryAction}
       >
         <Card>
           <CardHeader className="block">
@@ -160,25 +185,11 @@ export default function BrandsList() {
                 ),
               }}
               exportConfig={{ filename: 'brands_export.xlsx' }}
-              primaryAction={
-                <Button
-                  onClick={() => {
-                    setCopyFromBrand(null);
-                    setEditingBrandId(undefined);
-                    setFormOpen(true);
-                  }}
-                >
-                  <Plus className="size-4" />
-                  Create Brand
-                </Button>
-              }
+              primaryAction={listPrimaryAction}
             />
           </CardHeader>
           <CardTable>
-            <ScrollArea>
-              <DataGridTable />
-              <ScrollBar orientation="horizontal" />
-            </ScrollArea>
+            <DataGridTable />
           </CardTable>
         </Card>
       </DataGrid>
@@ -189,17 +200,6 @@ export default function BrandsList() {
         brandId={editingBrandId}
         copyFromBrand={copyFromBrand}
       />
-
-      {brandToDelete && (
-        <BrandDeleteDialog
-          open={deleteDialogOpen}
-          closeDialog={() => {
-            setDeleteDialogOpen(false);
-            setBrandToDelete(null);
-          }}
-          brand={brandToDelete}
-        />
-      )}
     </>
   );
 }

@@ -39,7 +39,6 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { StockTransfersPanel } from '@/app/(protected)/inventory-management/stock-transfers/components/StockTransfersPanel';
@@ -347,7 +346,7 @@ export function SalesOrderDetail({ id }: { id: string }) {
   // The set the list row's "..." renders too (D15). Delete used to be a red icon
   // in the list and nothing at all here, so a record could only be removed by
   // finding it again in the list.
-  const { actions, dialogs } = useSalesOrderActions(data, {
+  const { actions, pending: deletionPending } = useSalesOrderActions(data, {
     onDeleted: () => router.push(backHref),
   });
   const searchParams = useSearchParams();
@@ -1166,7 +1165,7 @@ export function SalesOrderDetail({ id }: { id: string }) {
                   {updateMut.isPending ? (
                     <LoaderCircleIcon className="me-2 size-4 animate-spin" />
                   ) : null}
-                  Save
+                  Save sales order
                 </Button>
               </div>
             ) : (
@@ -1178,7 +1177,7 @@ export function SalesOrderDetail({ id }: { id: string }) {
                   ariaLabel: 'sales order',
                 }}
                 actions={actions}
-                dialogs={dialogs}
+                pendingAction={deletionPending}
                 gearLabel="Sales order options"
                 primary={
                   <>
@@ -1576,10 +1575,7 @@ export function SalesOrderDetail({ id }: { id: string }) {
                 </CardToolbar>
               </CardHeader>
               <CardTable>
-                <ScrollArea>
-                  <DataGridTable />
-                  <ScrollBar orientation="horizontal" />
-                </ScrollArea>
+                <DataGridTable />
               </CardTable>
               {/* The same footer every list in the product carries - "1 - 25 of 213" and the
                   page sizes. A 200-line contract had neither, so the only way to know how

@@ -121,7 +121,7 @@ export default function AccessAgentDetail({ accessAgentId }: AccessAgentDetailPr
   } = useAgentTeams(accessAgentId);
   const { data: teamsList = [] } = useTeams();
   const { activeCompany } = useCompany();
-  const { actions, dialogs } = useAccessAgentActions(accessAgent, {
+  const { actions, pending } = useAccessAgentActions(accessAgent, {
     onDeleted: () => router.push(backHref),
   });
   const [editModalOpen, setEditModalOpen] = useState(false);
@@ -189,8 +189,8 @@ export default function AccessAgentDetail({ accessAgentId }: AccessAgentDetailPr
       <div className="flex items-center justify-between">
         <div className="space-y-1">
           <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold">{accessAgent.name}</h1>
-            <Badge variant={accessAgent.is_active ? 'success' : 'secondary'} appearance="ghost">
+            <h2 className="text-2xl font-bold">{accessAgent.name}</h2>
+            <Badge variant={accessAgent.is_active ? 'success' : 'secondary'}>
               <BadgeDot />
               {accessAgent.is_active ? 'Active' : 'Inactive'}
             </Badge>
@@ -207,7 +207,7 @@ export default function AccessAgentDetail({ accessAgentId }: AccessAgentDetailPr
             ariaLabel: 'access agent',
           }}
           actions={actions}
-          dialogs={dialogs}
+          pendingAction={pending}
           gearLabel="Access agent options"
           primary={
             <Button onClick={() => setEditModalOpen(true)}>
@@ -235,7 +235,7 @@ export default function AccessAgentDetail({ accessAgentId }: AccessAgentDetailPr
             </div>
             <div>
               <p className="text-sm text-muted-foreground">Status</p>
-              <Badge variant={accessAgent.is_active ? 'success' : 'secondary'} appearance="ghost">
+              <Badge variant={accessAgent.is_active ? 'success' : 'secondary'}>
                 <BadgeDot />
                 {accessAgent.is_active ? 'Active' : 'Inactive'}
               </Badge>
@@ -359,7 +359,6 @@ export default function AccessAgentDetail({ accessAgentId }: AccessAgentDetailPr
                                         ? 'secondary'
                                         : 'primary'
                                     }
-                                    appearance="ghost"
                                     className="text-xs font-normal"
                                   >
                                     {(a as AgentTeamAssignment).notify_on_extension === false

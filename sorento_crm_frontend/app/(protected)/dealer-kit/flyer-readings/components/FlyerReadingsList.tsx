@@ -21,14 +21,15 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
-import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
+import {
+  useDeferredRowAction,
+  useRowPending,
+} from '@/hooks/useDeferredRowAction';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 
 import type { FlyerReadingStatus, FlyerReadingSummary } from '../../services/flyerReadingService';
-import { deleteFlyerReading } from '../../services/flyerReadingService';
 import { FLYER_READINGS_QUERY_KEY, useFlyerReadingsQuery } from '../hooks/useFlyerReadings';
 import { UploadFlyerDialog } from './UploadFlyerDialog';
 
@@ -62,7 +63,14 @@ export function FlyerReadingsList() {
   const router = useRouter();
   const [search, setSearch] = useState('');
   const [uploadOpen, setUploadOpen] = useState(false);
-  const [deleting, setDeleting] = useState<FlyerReadingSummary | null>(null);
+  // Delete asks nothing (D7): the row dims and a toast counts down with Cancel.
+  const deletion = useDeferredRowAction({
+    actionKey: 'dk_flyer_reading.delete',
+    entityType: 'dk_flyer_reading',
+    successMessage: 'Flyer reading deleted',
+    invalidateKeys: [[FLYER_READINGS_QUERY_KEY]],
+  });
+  const rowPending = useRowPending<FlyerReadingSummary>('dk_flyer_reading');
   const [sorting, setSorting] = useState<SortingState>([]);
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 10 });
 
@@ -157,9 +165,9 @@ export function FlyerReadingsList() {
               aria-label={`Delete ${row.original.filename}`}
               onClick={(event) => {
                 // The row opens the review screen, so the action must not
-                // navigate on its way to the confirmation.
+                // navigate on its way to parking the delete.
                 event.stopPropagation();
-                setDeleting(row.original);
+                deletion.run({ id: row.original.id, subject: row.original.filename });
               }}
             >
               <Trash2 className="size-4 text-destructive" />
@@ -172,7 +180,7 @@ export function FlyerReadingsList() {
         meta: { headerTitle: 'Actions', skeleton: <Skeleton className="h-4 w-6" /> },
       },
     ],
-    [],
+    [deletion],
   );
 
   const table = useReactTable({
@@ -209,6 +217,7 @@ export function FlyerReadingsList() {
       onRowClick={(row: FlyerReadingSummary) =>
         router.push(`/dealer-kit/flyer-readings/${row.id}`)
       }
+      rowPending={rowPending}
       standardToolbar={false}
       // Explicit and stable, prefixed with the permission that guards the
       // screen. The default would key saved column widths on the pathname,
@@ -259,10 +268,7 @@ export function FlyerReadingsList() {
         <CardTable>
           {/* Wider than a phone, so it scrolls in its own container rather than
               dragging the page body sideways. */}
-          <ScrollArea>
-            <DataGridTable />
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
+          <DataGridTable />
         </CardTable>
 
         <CardFooter>
@@ -272,22 +278,6 @@ export function FlyerReadingsList() {
 
       <UploadFlyerDialog open={uploadOpen} onOpenChange={setUploadOpen} />
 
-      <ConfirmDeleteDialog
-        open={!!deleting}
-        onOpenChange={(open) => !open && setDeleting(null)}
-        title="Confirm delete"
-        description={
-          <>
-            Delete the reading of <strong>{deleting?.filename}</strong>? Any brochure it already
-            seeded is left exactly as it is. This action cannot be undone.
-          </>
-        }
-        successMessage="Flyer reading deleted"
-        queryKeysToInvalidate={[[FLYER_READINGS_QUERY_KEY]]}
-        onDelete={async () => {
-          if (deleting) await deleteFlyerReading(deleting.id);
-        }}
-      />
     </DataGrid>
   );
 }

@@ -9,7 +9,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { getProductSuppliersByProductId, createProductSupplier, updateProductSupplier, deleteProductSupplier } from '../../../procurement-management/product-suppliers/services/productSupplierService';
+import { getProductSuppliersByProductId, createProductSupplier, updateProductSupplier } from '../../../procurement-management/product-suppliers/services/productSupplierService';
+import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
 import { useSupplierSelectQuery } from '../../../procurement-management/suppliers/hooks/useSupplierSelectQuery';
 import { getCurrencyRates } from '../../../scm/services/currencyRateService';
 import { toast } from 'sonner';
@@ -103,16 +104,15 @@ export default function ProductSuppliersSection({
     onSettled: () => setSavingId(null),
   });
 
-  // Delete mutation. No success toast here: the confirmation dialog raises its own, and two
-  // toasts for one action reads as two things having happened.
-  const deleteMutation = useMutation({
-    mutationFn: (id: string) => deleteProductSupplier(id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['product-suppliers', productId] });
-    },
-    onError: (error: Error) => {
-      toast.error(error.message || 'Failed to remove supplier');
-    },
+  // Removing a supplier asks nothing (D7). The row's Remove parks the detach on the
+  // server for the reversible window and a toast carries the countdown, so the way back
+  // is Cancel rather than a dialog to read first.
+  const removal = useDeferredRowAction({
+    actionKey: 'product_supplier.unlink',
+    entityType: 'product_supplier',
+    verb: 'Removing',
+    successMessage: 'Supplier removed',
+    invalidateKeys: [['product-suppliers', productId]],
   });
 
   const handleAddSupplier = () => {
@@ -236,9 +236,14 @@ export default function ProductSuppliersSection({
                   setSavingId(ps.id);
                   updateMutation.mutate({ id: ps.id, draft });
                 }}
-                onRemove={() => deleteMutation.mutateAsync(ps.id).then(() => undefined)}
+                onRemove={() =>
+                  removal.run({
+                    id: ps.id,
+                    subject: ps.supplier?.supplier_name || 'this supplier',
+                  })
+                }
                 isSaving={updateMutation.isPending && savingId === ps.id}
-                isDeleting={deleteMutation.isPending}
+                isDeleting={removal.targetId === ps.id && removal.isPending}
               />
             ))}
           </div>

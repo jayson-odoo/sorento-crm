@@ -11,7 +11,6 @@ an id (route-shadowing gotcha).
 """
 from __future__ import annotations
 
-from datetime import date
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, Response
@@ -31,7 +30,6 @@ from app.schemas.scm_policy import (
     SupplierScoringPolicy,
     SupplierScoringWrite,
 )
-from app.services.error_handler import AppException
 from app.services.scm import policy_service as svc
 from app.services.scm import priority as priority_svc
 
@@ -100,42 +98,9 @@ def put_fulfilment_priority(
 ):
     """Writes a NEW policy revision and activates it - never mutates an old row (see
     `priority.create_revision`), so switching back is "activate the previous revision",
-    not "undo an edit"."""
-    current = priority_svc.active_policy(db)
-    # The TBA freshness rule, and it applies to a CHANGE only (fixed 30 Aug, review of S2).
-    # A date in the past turns every open order into a placeholder - every line dated on or
-    # after it stops taking supply - so moving the line back is refused. But once a
-    # configured date has quietly passed, an UNCHANGED resubmission of it is not that move,
-    # and refusing it locked the whole panel: no weight, no coverage date and no class
-    # weight could be saved again until somebody also picked a new TBA date. The schema
-    # cannot make this call - it needs the active revision - so it is made here.
-    if (
-        body.tba_date_from is not None
-        and body.tba_date_from < date.today()
-        and (current is None or current.tba_date_from != body.tba_date_from)
-    ):
-        raise AppException(
-            status_code=422,
-            message="TBA date from must be today or later.",
-            code="tba_date_from_in_the_past",
-        )
-    revision = priority_svc.create_revision(
-        db,
-        name=current.name if current is not None else priority_svc.FAIR_POLICY_NAME,
-        factors=body.factors,
-        demand_class_weights=body.demand_class_weights,
-        reorder_coverage_until=body.reorder_coverage_until,
-        # An omitted `tba_date_from` keeps the date the active revision already carries -
-        # the same "the body did not say, so nothing changes" the name and notes above get.
-        # The column is NOT NULL, so `create_revision` supplies the default only when there
-        # is no active revision to copy from.
-        tba_date_from=(
-            body.tba_date_from
-            if body.tba_date_from is not None
-            else (current.tba_date_from if current is not None else None)
-        ),
-        notes=current.notes if current is not None else None,
-    )
+    not "undo an edit". The rules, the TBA freshness one included, live in
+    `priority.save_fulfilment_priority`; this handler is HTTP and Pydantic only."""
+    revision = priority_svc.save_fulfilment_priority(db, body)
     db.commit()
     return priority_svc.fulfilment_priority_as_dict(revision)
 

@@ -703,23 +703,23 @@ describe('DeliveryScheduleReviewClient', () => {
     renderReview();
     await screen.findByTestId('schedule-matrix');
 
-    fireEvent.click(screen.getByRole('button', { name: /^Confirm$/ }));
+    fireEvent.click(screen.getByRole('button', { name: /^Confirm schedule$/ }));
 
     const dialog = within(await screen.findByRole('dialog'));
     expect(dialog.getByText('2 columns do not add up yet.')).toBeInTheDocument();
     // Named in the dialog, with the numbers, so the decision is informed.
     expect(dialog.getByText('SRTFV1001')).toBeInTheDocument();
-    expect(dialog.getByRole('button', { name: /^Confirm$/ })).toBeDisabled();
+    expect(dialog.getByRole('button', { name: /^Confirm schedule$/ })).toBeDisabled();
 
     fireEvent.click(dialog.getByRole('checkbox'));
-    expect(dialog.getByRole('button', { name: /^Confirm$/ })).toBeDisabled();
+    expect(dialog.getByRole('button', { name: /^Confirm schedule$/ })).toBeDisabled();
 
     fireEvent.change(dialog.getByLabelText(/Reason/i), {
       target: { value: 'Customer confirmed the valve quantity by email.' },
     });
-    expect(dialog.getByRole('button', { name: /^Confirm$/ })).toBeEnabled();
+    expect(dialog.getByRole('button', { name: /^Confirm schedule$/ })).toBeEnabled();
 
-    fireEvent.click(dialog.getByRole('button', { name: /^Confirm$/ }));
+    fireEvent.click(dialog.getByRole('button', { name: /^Confirm schedule$/ }));
     await waitFor(() =>
       expect(confirmDeliveryScheduleVersion).toHaveBeenCalledWith('v2', {
         acknowledge_unreconciled: true,
@@ -752,12 +752,12 @@ describe('DeliveryScheduleReviewClient', () => {
     renderReview();
     await screen.findByTestId('schedule-matrix');
 
-    fireEvent.click(screen.getByRole('button', { name: /^Confirm$/ }));
+    fireEvent.click(screen.getByRole('button', { name: /^Confirm schedule$/ }));
     const dialog = within(await screen.findByRole('dialog'));
     expect(dialog.getByText(/Every column agrees with the PO/i)).toBeInTheDocument();
     expect(dialog.queryByRole('checkbox')).toBeNull();
 
-    fireEvent.click(dialog.getByRole('button', { name: /^Confirm$/ }));
+    fireEvent.click(dialog.getByRole('button', { name: /^Confirm schedule$/ }));
     await waitFor(() =>
       expect(confirmDeliveryScheduleVersion).toHaveBeenCalledWith('v2', {}),
     );
@@ -770,7 +770,7 @@ describe('DeliveryScheduleReviewClient', () => {
     renderReview();
 
     expect(await screen.findByText(/Confirmed .* by Eling Tan/)).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /^Confirm$/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Confirm schedule$/ })).toBeNull();
     expect(matrix().getByLabelText('Phase 3, SRTFV1001')).toBeDisabled();
   });
 
@@ -822,7 +822,7 @@ describe('DeliveryScheduleReviewClient header', () => {
     renderReview();
     await screen.findByTestId('schedule-matrix');
 
-    expect(screen.getByRole('button', { name: 'Confirm' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Confirm schedule' })).toBeInTheDocument();
     // The pager is chevrons, not a third and fourth thing to read.
     expect(screen.getByRole('button', { name: 'Previous schedule' })).toBeInTheDocument();
   });
@@ -933,9 +933,9 @@ describe('DeliveryScheduleReviewClient revision diff and amendment banner', () =
     renderReview();
     await screen.findByTestId('schedule-matrix');
 
-    fireEvent.click(screen.getByRole('button', { name: /^Confirm$/ }));
+    fireEvent.click(screen.getByRole('button', { name: /^Confirm schedule$/ }));
     const dialog = within(await screen.findByRole('dialog'));
-    fireEvent.click(dialog.getByRole('button', { name: /^Confirm$/ }));
+    fireEvent.click(dialog.getByRole('button', { name: /^Confirm schedule$/ }));
 
     await waitFor(() => expect(confirmDeliveryScheduleVersion).toHaveBeenCalled());
 

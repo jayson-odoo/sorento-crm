@@ -142,7 +142,7 @@ describe('BoardLineDecisionPanel: the two verbs (C9)', () => {
   it('Save on the untouched suggestion approves it, with no reason and no flag', () => {
     const { onDecide } = renderPanel();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
 
     expect(onDecide).toHaveBeenCalledWith({
       verdict: 'approved',
@@ -163,7 +163,7 @@ describe('BoardLineDecisionPanel: the two verbs (C9)', () => {
       target: { value: 'The site asked for less from BRW-AM.' },
     });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
 
     expect(onDecide).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -214,7 +214,7 @@ describe('BoardLineDecisionPanel: the balance hint and Save gating (C7)', () => 
       '4 short',
     );
     expect(
-      screen.getByRole('button', { name: 'Save' }),
+      screen.getByRole('button', { name: 'Save decision' }),
     ).toBeDisabled();
   });
 
@@ -243,7 +243,7 @@ describe('BoardLineDecisionPanel: the balance hint and Save gating (C7)', () => 
     expect(
       screen.queryByTestId(`line-decision-hint-${KEY}`),
     ).not.toBeInTheDocument();
-    const save = screen.getByRole('button', { name: 'Save' });
+    const save = screen.getByRole('button', { name: 'Save decision' });
     expect(save).toBeDisabled();
 
     fireEvent.change(screen.getByLabelText(/^Why this differs/), {
@@ -258,7 +258,7 @@ describe('BoardLineDecisionPanel: the balance hint and Save gating (C7)', () => 
     // The composition on open IS the suggestion, so the press is an approval: there is
     // nothing to justify, and Save is enabled with nothing typed at all.
     expect(
-      screen.getByRole('button', { name: 'Save' }),
+      screen.getByRole('button', { name: 'Save decision' }),
     ).toBeEnabled();
   });
 });
@@ -278,7 +278,7 @@ describe('BoardLineDecisionPanel: the suspected-system-issue flag (C10)', () => 
     const { onDecide } = renderPanel();
 
     fireEvent.click(checkbox());
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
 
     expect(onDecide).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -301,7 +301,7 @@ describe('BoardLineDecisionPanel: the suspected-system-issue flag (C10)', () => 
     fireEvent.change(screen.getByLabelText(/^Why this differs/), {
       target: { value: 'The availability beside this line looks wrong.' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
 
     expect(onDecide).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -348,7 +348,7 @@ describe('BoardLineDecisionPanel: the suspected-system-issue flag (C10)', () => 
     fireEvent.click(screen.getByRole('button', { name: 'Amend' }));
     expect(checkbox()).toBeChecked();
     fireEvent.click(checkbox());
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
 
     // The BOOLEAN, not an absent key: `lineFor` posts `false`, so the pill must read `false`
     // rather than falling through to the frozen `true` and contradicting the body.
@@ -476,7 +476,7 @@ describe('BoardLineDecisionPanel: an unplannable line states why, and offers no 
       screen.getByTestId(`line-decision-blocked-${KEY}`),
     ).toHaveTextContent('states no fulfilment location');
     expect(
-      screen.queryByRole('button', { name: 'Save' }),
+      screen.queryByRole('button', { name: 'Save decision' }),
     ).not.toBeInTheDocument();
     expect(
       screen.queryByRole('button', { name: 'Reject' }),
@@ -508,7 +508,7 @@ describe('BoardLineDecisionPanel: a covered row opens locked with Amend (C11)', 
 
     expect(screen.getByRole('button', { name: 'Amend' })).toBeInTheDocument();
     expect(
-      screen.queryByRole('button', { name: 'Save' }),
+      screen.queryByRole('button', { name: 'Save decision' }),
     ).not.toBeInTheDocument();
     expect(
       screen.queryByRole('button', { name: 'Reject' }),
@@ -523,7 +523,7 @@ describe('BoardLineDecisionPanel: a covered row opens locked with Amend (C11)', 
 
     expect(screen.getByLabelText('Reserve at BRW-AM')).toBeEnabled();
     expect(
-      screen.getByRole('button', { name: 'Save' }),
+      screen.getByRole('button', { name: 'Save decision' }),
     ).toBeInTheDocument();
     expect(
       screen.queryByRole('button', { name: 'Amend' }),
@@ -572,7 +572,7 @@ describe('BoardLineDecisionPanel: a covered row opens locked with Amend (C11)', 
     fireEvent.change(screen.getByLabelText('Reserve at BRW'), {
       target: { value: '15' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
 
     expect(onDecide).toHaveBeenCalledWith({
       verdict: 'approved',
@@ -620,7 +620,7 @@ describe('BoardLineDecisionPanel: a covered row opens locked with Amend (C11)', 
 
     // Re-saving what was already decided needs no reason - it overrides nothing - but it is
     // still not the engine's composition, so the verdict is Amended.
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
 
     expect(onDecide).toHaveBeenCalledWith(
       expect.objectContaining({

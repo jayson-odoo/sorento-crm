@@ -4,7 +4,6 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
   dismissSupplierCode,
-  forgetSupplierCodeMatch,
   listSupplierCodeAliases,
   listUnmatchedSupplierCodes,
   matchSupplierCode,
@@ -116,15 +115,7 @@ export function useRematchSupplierCodes() {
   });
 }
 
-/** No success toast: the caller's own ConfirmDeleteDialog reports the outcome. */
-export function useForgetSupplierCodeMatch() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: forgetSupplierCodeMatch,
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: KEY });
-      void qc.invalidateQueries({ queryKey: ['scm', 'proforma-invoices'] });
-      void qc.invalidateQueries({ queryKey: ['scm', 'fulfilment'] });
-    },
-  });
-}
+// Forgetting a match has no mutation hook: both screens that offer it park
+// `supplier_code_alias.forget` through `useDeferredRowAction` instead (D7), so the
+// server applies it when the window lapses and the same three lists are refetched
+// from the action's own invalidateKeys.

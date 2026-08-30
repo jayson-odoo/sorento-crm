@@ -26,7 +26,6 @@ import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 
 import { Skeleton } from '@/components/ui/skeleton';
 import { Progress } from '@/components/ui/progress';
@@ -40,6 +39,7 @@ import { slaHandler } from '../lib/slaHandler';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 import { RowActionsMenu } from '@/components/common/RowActionsMenu';
 import { useConversationSlaActions } from '../actions';
+import { useRowPending } from '@/hooks/useDeferredRowAction';
 
 /**
  * The row's "..." (D15): the same set the record's gear renders, minus the verbs
@@ -51,18 +51,15 @@ function ConversationRowActions({
 }: {
   tracking: { id: string; respond_io_id?: string | null; contact?: { respond_io_id?: string | null } | null };
 }) {
-  const { actions, dialogs } = useConversationSlaActions(tracking);
-  return (
-    <>
-      <RowActionsMenu ariaLabel="conversation" actions={actions} />
-      {dialogs}
-    </>
-  );
+  const { actions } = useConversationSlaActions(tracking, { surface: 'toast' });
+  return <RowActionsMenu ariaLabel="conversation" actions={actions} />;
 }
 
 export default function ConversationSLATrackingList() {
   const router = useRouter();
   const queryClient = useQueryClient();
+  // A row whose delete is counting down stays visible and dims (S6-07).
+  const rowPending = useRowPending<{ id: string }>('sla_tracking');
   // AC-M2 history deep links: the drawer's "View history" (one contact) and the
   // worklist's "Recently resolved" (what I resolved) land here pre-filtered. The
   // filters are applied by the SAME server-side list query as every other filter
@@ -455,7 +452,7 @@ export default function ConversationSLATrackingList() {
         cell: ({ row }) => {
           if (row.original.is_resolved) {
             return (
-              <Badge variant="success" appearance="ghost">
+              <Badge variant="success">
                 <CheckCircle className="size-3 mr-1" />
                 Resolved
               </Badge>
@@ -463,14 +460,14 @@ export default function ConversationSLATrackingList() {
           }
           if (row.original.escalated_at) {
             return (
-              <Badge variant="warning" appearance="ghost">
+              <Badge variant="warning">
                 <AlertCircle className="size-3 mr-1" />
                 Escalated
               </Badge>
             );
           }
           return (
-            <Badge variant="info" appearance="ghost">
+            <Badge variant="info">
               <Clock className="size-3 mr-1" />
               Pending
             </Badge>
@@ -546,6 +543,7 @@ export default function ConversationSLATrackingList() {
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
       rowHref={rowHref}
+      rowPending={rowPending}
     >
       <Card>
         <CardHeader className="block">
@@ -631,10 +629,7 @@ export default function ConversationSLATrackingList() {
           )}
         </CardHeader>
         <CardTable>
-          <ScrollArea>
-            <DataGridTable />
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
+          <DataGridTable />
         </CardTable>
         <CardFooter>
           <DataGridPagination />

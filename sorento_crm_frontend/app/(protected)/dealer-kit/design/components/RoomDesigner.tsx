@@ -1379,12 +1379,12 @@ function SelectionRow({
       </span>
       <span className="flex shrink-0 gap-1">
         {!line.isAvailable && (
-          <Badge variant="destructive" appearance="ghost" className="text-xs">
+          <Badge variant="destructive" className="text-xs">
             {line.unavailableReason === 'discontinued' ? 'Discontinued' : 'Unavailable'}
           </Badge>
         )}
         {clashing && (
-          <Badge variant="warning" appearance="ghost" className="text-xs">
+          <Badge variant="warning" className="text-xs">
             Overlapping
           </Badge>
         )}

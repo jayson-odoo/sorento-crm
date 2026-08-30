@@ -336,7 +336,7 @@ export default function SmtpSettingsPage() {
                 {saveMutation.isPending && (
                   <LoaderCircleIcon className="animate-spin mr-2 h-4 w-4" />
                 )}
-                Save
+                Save SMTP settings
               </Button>
             </div>
           </form>

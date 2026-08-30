@@ -26,6 +26,7 @@ from __future__ import annotations
 from datetime import date, timedelta
 from decimal import Decimal
 
+from app.services.project_supply_service import LADDER_VERSION
 from app.services.scm import priority
 
 from ._pg_fixture import blank_session
@@ -85,16 +86,16 @@ def test_the_proof_is_five_rows_the_four_questions_and_buy():
         contribution = _contribution(db, order, product)
 
         assert [step["question"] for step in contribution["trail"]] == [
-            "Can we use our location?",
+            "Can we use our locations?",
+            "Can we borrow on hand from a later order?",
+            "Can we borrow incoming from a later order?",
             "Can we take from the pool?",
-            "Can we borrow from another location?",
-            "Can we borrow from the same agent's other order in this group?",
-            "Buy the rest?",
+            "Buy",
         ]
         # The rung names stay INTERNAL keys. Nothing renders them, and nothing here reads
         # "Incoming" - an SPO is inside question 1's own net (AC-V2).
         assert [step["kind"] for step in contribution["trail"]] == [
-            "own", "pool", "cross_group_borrow", "group_borrow", "buy",
+            "own", "order_borrow", "supply_borrow", "pool", "buy",
         ]
         for step in contribution["trail"]:
             assert step["answer"] in ("yes", "no")
@@ -140,12 +141,16 @@ def test_the_pool_is_asked_before_another_location_and_answers_the_whole_line():
 
         contribution = _contribution(db, order, product)
 
+        # LADDER V7.1 (R1, R5): the pool is the LAST stock step, and another project
+        # group's FREE pile is step 1's second half. So the 100 at the `-NTC` site answers
+        # first and the 268 in the pool is left where it is - which is the reversal AC-V7
+        # used to pin the other way round.
         assert [(s["kind"], s["qty"], s["location"]) for s in contribution["sources"]] == [
-            ("reserve", "24", pool.warehouse_code),
+            ("reserve", "24", donor.warehouse_code),
         ]
-        assert _step(contribution, "pool")["answer"] == "yes"
-        assert _step(contribution, "pool")["took"] == "24"
-        assert _step(contribution, "cross_group_borrow")["answer"] == "no"
+        assert _step(contribution, "own")["answer"] == "yes"
+        assert _step(contribution, "own")["took"] == "24"
+        assert _step(contribution, "pool")["answer"] == "no"
         assert _step(contribution, "buy")["answer"] == "no"
 
 
@@ -209,24 +214,25 @@ def test_question_four_is_never_proposed_and_names_the_donors_it_did_not_take():
             if c["so_number"] == ours.so_number
         )
 
-        step = _step(contribution, "group_borrow")
+        # LADDER V7.1 (R1): borrowing a later order's on hand is a STEP now. Nothing is on
+        # a floor in this fixture, so it answers No - and it names the window date, which is
+        # the fact that tells a planner which orders would have qualified (AC-S3-4).
+        step = _step(contribution, "order_borrow")
         assert step["answer"] == "no"
-        assert step["took"] == "0", "a borrow needs a donor and a reason from a person"
-        assert "person's pick in Amend" in step["why"] or (
-            "person's pick" in step["why"]
-        )
+        assert step["took"] == "0"
+        assert "no later order" in step["why"].lower(), step["why"]
 
 
 # --------------------------------------------------------------------------- AC-V4
 
 
 def test_question_three_offers_the_donor_now_that_the_cap_is_gone():
-    """v7.1 R5, migration 443: the small-quantity cross-group cap is dropped, so a donor
-    group with the whole line in its net answers YES where it used to be refused.
+    """v7.1 R5: any ownership group may donate, and its FREE stock is step 1's second half.
 
     The captain's own case, inverted: 60 needed, 500 at a `-NTC` site whose group owes
-    nothing. Under v5 the limit of 10 refused it; under v7.1 there is no limit and the
-    whole line is borrowed."""
+    nothing. Under v5 the small-quantity limit refused it and a Borrow was the only shape it
+    could have had; under v7.1 free stock is owed to nobody, so it is a Reserve at question
+    1 and it raises no order-back."""
     with blank_session() as db:
         product = _product(db, f"ZZT-{_uid()[:6]}")
         own = _warehouse(db, f"ZZTG{_uid()[:5]}-BB"[:20])
@@ -239,12 +245,13 @@ def test_question_three_offers_the_donor_now_that_the_cap_is_gone():
 
         contribution = _contribution(db, order, product)
 
-        step = _step(contribution, "cross_group_borrow")
+        step = _step(contribution, "own")
         assert step["answer"] == "yes"
         assert step["took"] == "60"
         assert donor.warehouse_code in step["why"]
         # And no sentence claims a limit that no longer exists.
         assert "cross-group borrow limit" not in step["why"]
+        assert [s["kind"] for s in contribution["sources"]] == ["reserve"]
 
 
 def test_the_suggestion_note_is_silent_about_a_donor_whose_own_group_nets_nothing():
@@ -272,18 +279,24 @@ def test_the_suggestion_note_is_silent_about_a_donor_whose_own_group_nets_nothin
         _stock(db, product, donor, on_hand=500)
         _stock(db, product, elsewhere, on_hand=0)
         # The NTC group's own book: 500 on the floor at one site against 600 owed at
-        # another, so the group nets -100 and lends nothing however much sits at `donor`.
+        # another, DUE EARLIER than this line. Under v7.1 the free pile is served
+        # first-come by required date (R24), so the NTC group's own order takes the whole
+        # 500 before this line's date is reached and there is nothing left to lend - which
+        # is the same refusal ladder v4's group net used to make, made by the date instead.
         theirs = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
-        _line(db, theirs, product, qty="600", required_date=WHEN, warehouse=elsewhere)
+        _line(
+            db, theirs, product, qty="600",
+            required_date=WHEN - timedelta(days=10), warehouse=elsewhere,
+        )
         _policy(db)
         order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
         _line(db, order, product, qty="60", required_date=WHEN, warehouse=own)
 
         contribution = _contribution(db, order, product)
 
-        step = _step(contribution, "cross_group_borrow")
+        step = _step(contribution, "own")
         assert step["answer"] == "no"
-        assert "NTC nets -100" in step["why"], step["why"]
+        assert "nothing" in step["why"].lower(), step["why"]
         # The donor is still SEEN - it is on the row's own candidate list, and the cap is
         # nowhere near binding on it - and that is exactly why the note used to name it.
         assert donor.warehouse_code in [
@@ -349,4 +362,6 @@ def test_an_undecided_line_shows_the_live_suggestion_stamped_with_todays_ladder(
 
         assert contribution["covered"] is False
         assert contribution["proposed"]["components"] == contribution["sources"]
-        assert {c["ladder"] for c in contribution["proposed"]["components"]} == {"v5"}
+        assert {c["ladder"] for c in contribution["proposed"]["components"]} == {
+            LADDER_VERSION
+        }

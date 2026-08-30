@@ -46,7 +46,6 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import { useHasPermission } from '@/hooks/usePermissions';
@@ -683,10 +682,7 @@ export function ProformaInvoicesView() {
             />
           </CardHeader>
           <CardTable>
-            <ScrollArea>
-              <DataGridTable />
-              <ScrollBar orientation="horizontal" />
-            </ScrollArea>
+            <DataGridTable />
           </CardTable>
           <CardFooter>
             {/* The list GET caps `limit` at 100 (`Query(25, ge=1, le=100)`), so the

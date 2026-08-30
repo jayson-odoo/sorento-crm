@@ -1,6 +1,7 @@
 'use client';
 
 import { fmtInt } from '../../lib/format';
+import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 
 /**
  * What a decision is made of, as a table.
@@ -43,32 +44,35 @@ export function CoverBreakdownTable({
   return (
     <div className="space-y-1.5">
       {title ? <p className="text-xs font-medium">{title}</p> : null}
-      <table className="w-full text-xs">
-        <tbody>
-          {sources.map((s) => (
-            <tr key={s.warehouse_code}>
-              <td className="py-0.5 pe-3 text-muted-foreground">{s.warehouse_code}</td>
-              <td className="py-0.5 text-end tabular-nums">{fmtInt(s.qty)}</td>
+      <ScrollArea>
+        <table className="w-auto min-w-full text-xs">
+          <tbody>
+            {sources.map((s) => (
+              <tr key={s.warehouse_code}>
+                <td className="py-0.5 pe-3 text-muted-foreground">{s.warehouse_code}</td>
+                <td className="py-0.5 text-end tabular-nums">{fmtInt(s.qty)}</td>
+              </tr>
+            ))}
+            {poQty > 0 ? (
+              <tr>
+                <td className="py-0.5 pe-3 text-muted-foreground">PO</td>
+                <td className="py-0.5 text-end tabular-nums">{fmtInt(poQty)}</td>
+              </tr>
+            ) : null}
+            {buyQty > 0 ? (
+              <tr>
+                <td className="py-0.5 pe-3 text-muted-foreground">{buyLabel}</td>
+                <td className="py-0.5 text-end tabular-nums">{fmtInt(buyQty)}</td>
+              </tr>
+            ) : null}
+            <tr className="border-t font-medium">
+              <td className="pt-1 pe-3">Total</td>
+              <td className="pt-1 text-end tabular-nums">{fmtInt(total)}</td>
             </tr>
-          ))}
-          {poQty > 0 ? (
-            <tr>
-              <td className="py-0.5 pe-3 text-muted-foreground">PO</td>
-              <td className="py-0.5 text-end tabular-nums">{fmtInt(poQty)}</td>
-            </tr>
-          ) : null}
-          {buyQty > 0 ? (
-            <tr>
-              <td className="py-0.5 pe-3 text-muted-foreground">{buyLabel}</td>
-              <td className="py-0.5 text-end tabular-nums">{fmtInt(buyQty)}</td>
-            </tr>
-          ) : null}
-          <tr className="border-t font-medium">
-            <td className="pt-1 pe-3">Total</td>
-            <td className="pt-1 text-end tabular-nums">{fmtInt(total)}</td>
-          </tr>
-        </tbody>
-      </table>
+          </tbody>
+        </table>
+        <ScrollBar orientation="horizontal" />
+      </ScrollArea>
     </div>
   );
 }

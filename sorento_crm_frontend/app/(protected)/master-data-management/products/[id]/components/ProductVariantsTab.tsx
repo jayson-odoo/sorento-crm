@@ -137,7 +137,7 @@ export default function ProductVariantsTab({
           <div className="mb-2 flex flex-wrap items-center gap-2">
             <h3 className="font-semibold">Variant of</h3>
             {variantLinkManual && (
-              <Badge variant="warning" appearance="ghost">
+              <Badge variant="warning">
                 Manual
               </Badge>
             )}
@@ -178,7 +178,7 @@ export default function ProductVariantsTab({
               className="flex items-center gap-2 rounded-md border px-3 py-2 hover:bg-muted transition-colors"
             >
               <CornerLeftUp className="size-4 text-muted-foreground shrink-0" />
-              <Badge variant="secondary" appearance="ghost">
+              <Badge variant="secondary">
                 Base
               </Badge>
               <div className="min-w-0 flex-1">

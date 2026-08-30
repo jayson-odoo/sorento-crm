@@ -1,14 +1,7 @@
 import { Metadata } from 'next';
 import { Truck } from 'lucide-react';
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
 import { Container } from '@/components/common/container';
+import { PageHeader } from '@/components/common/PageHeader';
 import BackToList from '@/components/common/BackToList';
 import ComplaintDetail from '../components/ComplaintDetail';
 import ComplaintFulfilmentOrdersSection from '../components/ComplaintFulfilmentOrdersSection';
@@ -27,29 +20,15 @@ export default function ComplaintDetailPage({
 }) {
   return (
     <Container>
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <Breadcrumb>
-          <BreadcrumbList>
-            <BreadcrumbItem>
-              <BreadcrumbLink href="/">Home</BreadcrumbLink>
-            </BreadcrumbItem>
-            <BreadcrumbSeparator />
-            <BreadcrumbItem>
-              <BreadcrumbLink href="/complaint-management/complaints">
-                Complaints
-              </BreadcrumbLink>
-            </BreadcrumbItem>
-            <BreadcrumbSeparator />
-            <BreadcrumbItem>
-              <BreadcrumbPage>Details</BreadcrumbPage>
-            </BreadcrumbItem>
-          </BreadcrumbList>
-        </Breadcrumb>
-        <BackToList
-          listPath="/complaint-management/complaints"
-          label="Back to complaints"
-        />
-      </div>
+      <PageHeader
+        title="Complaint"
+        actions={
+          <BackToList
+            listPath="/complaint-management/complaints"
+            label="Back to complaints"
+          />
+        }
+      />
       <div className="mt-6">
         <ComplaintDetailWrapper params={params} />
       </div>

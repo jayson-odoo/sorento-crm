@@ -5,6 +5,7 @@ import { Info } from 'lucide-react';
 import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/components/ui/popover';
 import { factorLabel } from '../../_shared/lib/fulfilmentBoard';
 import type { BoardContribution } from '../../_shared/types/fulfilmentPlanning.types';
+import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 
 /**
  * How this row's rank was arrived at (the captain: "how is the rank calculated? can have an
@@ -98,50 +99,53 @@ export function BoardRankPopover({
             {note && (
               <p className="border-b px-3 py-2 text-xs text-muted-foreground">{note}</p>
             )}
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="border-b text-2xs uppercase tracking-wide text-muted-foreground">
-                  <th className="px-3 py-1.5 text-start font-medium">Factor</th>
-                  <th className="px-2 py-1.5 text-start font-medium">Fact</th>
-                  <th className="px-2 py-1.5 text-end font-medium">Score</th>
-                  <th className="px-2 py-1.5 text-end font-medium">Weight</th>
-                  <th className="px-3 py-1.5 text-end font-medium">Weighted</th>
-                </tr>
-              </thead>
-              <tbody>
-                {factors.map((factor) => {
-                  const scored = factor.present && factor.value !== null;
-                  return (
-                    <tr
-                      key={factor.key}
-                      data-testid={`rank-factor-${factor.key}`}
-                      className={`border-b last:border-b-0 ${
-                        scored ? '' : 'text-muted-foreground'
-                      }`}
-                    >
-                      <td className="px-3 py-1.5">{factorLabel(factor.key)}</td>
-                      <td className="px-2 py-1.5">{factor.raw ?? '-'}</td>
-                      <td className="px-2 py-1.5 text-end tabular-nums">
-                        {scored ? (factor.value as number).toFixed(2) : 'not recorded'}
-                      </td>
-                      <td className="px-2 py-1.5 text-end tabular-nums">{num(factor.weight)}</td>
-                      <td className="px-3 py-1.5 text-end tabular-nums">
-                        {scored ? (factor.weight * (factor.value as number)).toFixed(2) : '-'}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-              <tfoot>
-                <tr className="border-t font-medium">
-                  <td className="px-3 py-1.5" colSpan={3}>
-                    Total
-                  </td>
-                  <td className="px-2 py-1.5 text-end tabular-nums">{num(weightSum)}</td>
-                  <td className="px-3 py-1.5 text-end tabular-nums">{weightedSum.toFixed(2)}</td>
-                </tr>
-              </tfoot>
-            </table>
+            <ScrollArea>
+              <table className="w-auto min-w-full text-xs">
+                <thead>
+                  <tr className="border-b text-2xs uppercase tracking-wide text-muted-foreground">
+                    <th className="px-3 py-1.5 text-start font-medium">Factor</th>
+                    <th className="px-2 py-1.5 text-start font-medium">Fact</th>
+                    <th className="px-2 py-1.5 text-end font-medium">Score</th>
+                    <th className="px-2 py-1.5 text-end font-medium">Weight</th>
+                    <th className="px-3 py-1.5 text-end font-medium">Weighted</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {factors.map((factor) => {
+                    const scored = factor.present && factor.value !== null;
+                    return (
+                      <tr
+                        key={factor.key}
+                        data-testid={`rank-factor-${factor.key}`}
+                        className={`border-b last:border-b-0 ${
+                          scored ? '' : 'text-muted-foreground'
+                        }`}
+                      >
+                        <td className="px-3 py-1.5">{factorLabel(factor.key)}</td>
+                        <td className="px-2 py-1.5">{factor.raw ?? '-'}</td>
+                        <td className="px-2 py-1.5 text-end tabular-nums">
+                          {scored ? (factor.value as number).toFixed(2) : 'not recorded'}
+                        </td>
+                        <td className="px-2 py-1.5 text-end tabular-nums">{num(factor.weight)}</td>
+                        <td className="px-3 py-1.5 text-end tabular-nums">
+                          {scored ? (factor.weight * (factor.value as number)).toFixed(2) : '-'}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                <tfoot>
+                  <tr className="border-t font-medium">
+                    <td className="px-3 py-1.5" colSpan={3}>
+                      Total
+                    </td>
+                    <td className="px-2 py-1.5 text-end tabular-nums">{num(weightSum)}</td>
+                    <td className="px-3 py-1.5 text-end tabular-nums">{weightedSum.toFixed(2)}</td>
+                  </tr>
+                </tfoot>
+              </table>
+              <ScrollBar orientation="horizontal" />
+            </ScrollArea>
             <div className="border-t px-3 py-2">
               <div className="flex items-baseline justify-between gap-3 text-xs font-medium">
                 <span>Rank</span>

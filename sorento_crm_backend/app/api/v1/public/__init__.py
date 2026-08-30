@@ -3,6 +3,7 @@ from fastapi import APIRouter
 from app.api.v1.public import (
     ai_extract,
     approval,
+    branding,
     catalogue,
     geo,
     onboarding,
@@ -51,5 +52,8 @@ router.include_router(catalogue.router, prefix="/c", tags=["public-catalogue"])
 router.include_router(
     supplier_request.router, prefix="/supplier-request", tags=["public-supplier-request"]
 )
+# The sign-in page's background, asked for before anyone has a session:
+# /api/v1/public/branding
+router.include_router(branding.router, prefix="/branding", tags=["public-branding"])
 # Render payload for the PDF worker: /api/v1/public/print/{download_id}?token=
 router.include_router(print_route.router, prefix="/print", tags=["public-print"])

@@ -25,7 +25,6 @@ import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { getCertificateProductOptions } from '../services/certificateService';
@@ -190,10 +189,7 @@ export default function CertificateCoveredProducts({
       >
         <Card>
           <CardTable>
-            <ScrollArea>
-              <DataGridTable />
-              <ScrollBar orientation="horizontal" />
-            </ScrollArea>
+            <DataGridTable />
           </CardTable>
           {/* A certificate can cover 90 products. Without a pager the grid
               silently shows the first page and hides the rest. */}

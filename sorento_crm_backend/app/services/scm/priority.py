@@ -341,6 +341,55 @@ def create_revision(
     return revision
 
 
+def save_fulfilment_priority(db: Session, body) -> PriorityPolicy:
+    """The whole of what a `PUT /policies/fulfilment-priority` means, in the service layer.
+
+    The router used to hold this: it read the active revision, applied the TBA freshness
+    rule against it and called `create_revision`. That is business logic in an HTTP handler,
+    which the layering rule forbids (a router does HTTP and Pydantic and nothing else), and
+    it also put the one rule that needs BOTH the submitted value and the active one in the
+    only place neither the sheet nor a test can reach without a TestClient.
+
+    **The TBA rule is about MOVING THE LINE BACK, not about the value** (AC-S1-2 as
+    corrected 30 Aug). A date in the past turns every open order into a placeholder - every
+    line dated on or after it stops taking supply - so a CHANGE to a past date is refused.
+    An UNCHANGED resubmission of a date that has quietly passed is not that move, and
+    refusing it locked the whole panel: the screen sends the record back whole, so no
+    weight, no coverage date and no class weight could be saved again until somebody also
+    picked a new TBA date.
+
+    Flushes but does not commit, exactly as `create_revision` does - the caller commits.
+    """
+    current = active_policy(db)
+    if (
+        body.tba_date_from is not None
+        and body.tba_date_from < date.today()
+        and (current is None or current.tba_date_from != body.tba_date_from)
+    ):
+        raise AppException(
+            status_code=422,
+            message="TBA date from must be today or later.",
+            code="tba_date_from_in_the_past",
+        )
+    return create_revision(
+        db,
+        name=current.name if current is not None else FAIR_POLICY_NAME,
+        factors=body.factors,
+        demand_class_weights=body.demand_class_weights,
+        reorder_coverage_until=body.reorder_coverage_until,
+        # An omitted `tba_date_from` keeps the date the active revision already carries -
+        # the same "the body did not say, so nothing changes" the name and notes get. The
+        # column is NOT NULL, so `create_revision` supplies the default only when there is
+        # no active revision to copy from.
+        tba_date_from=(
+            body.tba_date_from
+            if body.tba_date_from is not None
+            else (current.tba_date_from if current is not None else None)
+        ),
+        notes=current.notes if current is not None else None,
+    )
+
+
 def demand_class_by_po(db: Session, po_numbers: set[str]) -> dict[str, str]:
     """The demand class of the sales orders each purchase order is feeding.
 

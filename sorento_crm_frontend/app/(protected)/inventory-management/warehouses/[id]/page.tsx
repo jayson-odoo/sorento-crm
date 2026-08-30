@@ -1,17 +1,9 @@
 'use client';
 
-import { use, useState } from 'react';
+import { use } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { MoveLeft, Edit, Trash2 } from 'lucide-react';
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
+import { CalendarRange, Edit, Info, MoveLeft, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useBackToListHref } from '@/components/common/BackToList';
 import { Badge } from '@/components/ui/badge';
@@ -19,17 +11,11 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Container } from '@/components/common/container';
+import { PageHeader } from '@/components/common/PageHeader';
 import DetailActions from '@/components/common/DetailActions';
+import { useDeferredAction } from '@/hooks/useDeferredAction';
 import { warehousesPagerQuery } from '../hooks/useWarehouses';
-import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
-import {
-  Toolbar,
-  ToolbarActions,
-  ToolbarHeading,
-  ToolbarTitle,
-} from '@/components/common/toolbar';
 import { useWarehouse } from '../hooks/useWarehouses';
-import { deleteWarehouse } from '../services/warehouseService';
 import { formatDate } from '@/lib/helpers';
 
 /**
@@ -59,35 +45,16 @@ function Field({
 function WarehouseToolbar() {
   return (
     <Container>
-      <Toolbar>
-        <ToolbarHeading>
-          <ToolbarTitle>Warehouse</ToolbarTitle>
-          <Breadcrumb>
-            <BreadcrumbList>
-              <BreadcrumbItem>
-                <BreadcrumbLink href="/">Home</BreadcrumbLink>
-              </BreadcrumbItem>
-              <BreadcrumbSeparator />
-              <BreadcrumbItem>
-                <BreadcrumbPage>Inventory Management</BreadcrumbPage>
-              </BreadcrumbItem>
-              <BreadcrumbSeparator />
-              <BreadcrumbItem>
-                <BreadcrumbLink href="/inventory-management/warehouses">
-                  Warehouses
-                </BreadcrumbLink>
-              </BreadcrumbItem>
-            </BreadcrumbList>
-          </Breadcrumb>
-        </ToolbarHeading>
-        <ToolbarActions>
+      <PageHeader
+        title="Warehouse"
+        actions={
           <Button asChild variant="outline">
             <Link href="/inventory-management/warehouses">
               <MoveLeft /> Back to warehouses
             </Link>
           </Button>
-        </ToolbarActions>
-      </Toolbar>
+        }
+      />
     </Container>
   );
 }
@@ -101,7 +68,23 @@ export default function WarehouseDetailPage({
   const router = useRouter();
   const backHref = useBackToListHref('/inventory-management/warehouses');
   const { data: warehouse, isLoading } = useWarehouse(id);
-  const [deleteOpen, setDeleteOpen] = useState(false);
+
+  // Delete asks nothing (D7): the countdown takes the primary button's place
+  // and Cancel is the way back.
+  const deletion = useDeferredAction({
+    actionKey: 'warehouse.delete',
+    entityType: 'warehouse',
+    entityId: id,
+    verb: 'Deleting',
+    subject: warehouse
+      ? `${warehouse.warehouse_name ?? ''} (${warehouse.warehouse_code})`.trim()
+      : '',
+    surface: 'inline',
+    watchFromMount: true,
+    successMessage: 'Warehouse deleted',
+    invalidateKeys: [['warehouses']],
+    onCommitted: () => router.push(backHref),
+  });
 
   // Same list, same order, as the listing shows, so prev/next steps through it in order.
 
@@ -155,10 +138,10 @@ export default function WarehouseDetailPage({
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0 space-y-1">
               <div className="flex flex-wrap items-center gap-3">
-                <h1 className="text-2xl font-bold break-words">
+                <h2 className="text-2xl font-bold break-words">
                   {warehouse.warehouse_name || warehouse.warehouse_code}
-                </h1>
-                <Badge variant={warehouse.is_active ? 'success' : 'secondary'} appearance="ghost">
+                </h2>
+                <Badge variant={warehouse.is_active ? 'success' : 'secondary'}>
                   {warehouse.is_active ? 'Active' : 'Inactive'}
                 </Badge>
               </div>
@@ -186,10 +169,12 @@ export default function WarehouseDetailPage({
                   label: 'Delete warehouse',
                   icon: Trash2,
                   kind: 'destructive' as const,
-                  run: () => setDeleteOpen(true),
+                  disabled: deletion.isPending,
+                  run: deletion.start,
                 },
               ]}
               gearLabel="Warehouse options"
+              pendingAction={deletion.countdown}
               primary={
                 <Button
                   onClick={() => router.push(`/inventory-management/warehouses/${id}/edit`)}
@@ -205,9 +190,15 @@ export default function WarehouseDetailPage({
               field that spans both columns there must span both here, or it lands in a
               different row and column between the two views. */}
           <Tabs defaultValue="basic">
-            <TabsList variant="default">
-              <TabsTrigger value="basic">Basic Information</TabsTrigger>
-              <TabsTrigger value="planning">Planning</TabsTrigger>
+            <TabsList>
+              <TabsTrigger value="basic">
+                <Info />
+                <span>Basic Information</span>
+              </TabsTrigger>
+              <TabsTrigger value="planning">
+                <CalendarRange />
+                <span>Planning</span>
+              </TabsTrigger>
             </TabsList>
 
             <TabsContent value="basic" className="mt-6">
@@ -221,7 +212,7 @@ export default function WarehouseDetailPage({
                     {warehouse.location || '-'}
                   </Field>
                   <Field label="Active Status" className="md:col-span-2">
-                    <Badge variant={warehouse.is_active ? 'success' : 'secondary'} appearance="ghost">
+                    <Badge variant={warehouse.is_active ? 'success' : 'secondary'}>
                       {warehouse.is_active ? 'Active' : 'Inactive'}
                     </Badge>
                   </Field>
@@ -235,16 +226,12 @@ export default function WarehouseDetailPage({
                   <Field label="Available for planning" className="md:col-span-2">
                     <Badge
                       variant={warehouse.counts_as_available === false ? 'secondary' : 'success'}
-                      appearance="ghost"
                     >
                       {warehouse.counts_as_available === false ? 'Excluded' : 'Counted'}
                     </Badge>
                   </Field>
                   <Field label="Fulfilment planning" className="md:col-span-2">
-                    <Badge
-                      variant={warehouse.fulfilment_planning ? 'success' : 'secondary'}
-                      appearance="ghost"
-                    >
+                    <Badge variant={warehouse.fulfilment_planning ? 'success' : 'secondary'}>
                       {warehouse.fulfilment_planning ? 'On' : 'Off'}
                     </Badge>
                   </Field>
@@ -261,21 +248,6 @@ export default function WarehouseDetailPage({
         </div>
       </Container>
 
-      <ConfirmDeleteDialog
-        open={deleteOpen}
-        onOpenChange={setDeleteOpen}
-        description={`Delete warehouse ${warehouse.warehouse_code}? This action cannot be undone.`}
-        successMessage="Warehouse deleted"
-        // The dialog wraps this in its own mutation, which owns the toast and the
-        // invalidation. Going through useDeleteWarehouse as well would report every
-        // outcome twice, in two positions (see ticket-management/tickets/[id] for the
-        // same shape).
-        onDelete={async () => {
-          await deleteWarehouse(id);
-        }}
-        onSuccess={() => router.push(backHref)}
-        queryKeysToInvalidate={[['warehouses']]}
-      />
     </>
   );
 }

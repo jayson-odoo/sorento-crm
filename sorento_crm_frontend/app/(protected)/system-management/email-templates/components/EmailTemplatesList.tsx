@@ -21,11 +21,12 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
-import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
+import {
+  useDeferredRowAction,
+  useRowPending,
+} from '@/hooks/useDeferredRowAction';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import {
-  useDeleteEmailTemplate,
   useEmailTemplates,
 } from '../hooks/useEmailTemplates';
 import type { EmailTemplate } from '../types/emailTemplate.types';
@@ -37,7 +38,6 @@ export default function EmailTemplatesList() {
   const [query, setQuery] = useState('');
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<EmailTemplate | null>(null);
-  const [deleting, setDeleting] = useState<EmailTemplate | null>(null);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
   const params = useMemo(
@@ -52,7 +52,14 @@ export default function EmailTemplatesList() {
   const { data, isLoading, isFetching, refetch } = useEmailTemplates(params);
   const rows = data?.data ?? [];
   const total = data?.pagination?.total ?? 0;
-  const deleteMut = useDeleteEmailTemplate();
+  // Delete asks nothing (D7): the row dims and a toast counts down with Cancel.
+  const deletion = useDeferredRowAction({
+    actionKey: 'email_template.delete',
+    entityType: 'email_template',
+    successMessage: 'Email template deleted',
+    invalidateKeys: [['email-templates']],
+  });
+  const rowPending = useRowPending<EmailTemplate>('email_template');
 
   const columns = useMemo<ColumnDef<EmailTemplate>[]>(
     () => [
@@ -61,7 +68,7 @@ export default function EmailTemplatesList() {
         accessorKey: 'code',
         header: ({ column }) => <DataGridColumnHeader title="Code" column={column} />,
         cell: ({ row }) => (
-          <Badge variant="secondary" appearance="ghost">
+          <Badge variant="secondary">
             {row.original.code}
           </Badge>
         ),
@@ -139,7 +146,7 @@ export default function EmailTemplatesList() {
               className="h-8 w-8 p-0 text-destructive"
               onClick={(e) => {
                 e.stopPropagation();
-                setDeleting(row.original);
+                deletion.run({ id: row.original.id, subject: row.original.name });
               }}
               aria-label="Delete"
             >
@@ -162,7 +169,7 @@ export default function EmailTemplatesList() {
         size: 140,
       },
     ],
-    [router],
+    [router, deletion],
   );
 
   const table = useReactTable({
@@ -182,6 +189,19 @@ export default function EmailTemplatesList() {
     pageCount: Math.max(1, Math.ceil(total / pagination.pageSize)),
   });
 
+  // The one offer this listing makes, in both places it belongs: the
+  // toolbar, and the empty state's next step (S5-06).
+  const listPrimaryAction = (
+    <Button
+      onClick={() => {
+        setEditing(null);
+        setShowForm(true);
+      }}
+    >
+      <Plus className="mr-1 size-4" /> Add template
+    </Button>
+  );
+
   return (
     <DataGrid
       table={table}
@@ -189,6 +209,8 @@ export default function EmailTemplatesList() {
       isLoading={isLoading}
       onRowClick={(t) => t?.id && router.push(`/system-management/email-templates/${t.id}`)}
       tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
+      rowPending={rowPending}
+      emptyAction={listPrimaryAction}
     >
       <Card>
         <CardHeader className="block">
@@ -221,23 +243,11 @@ export default function EmailTemplatesList() {
             exportConfig={{ filename: 'email_templates_export.xlsx' }}
             onRefresh={() => void refetch()}
             isRefreshing={isFetching && !isLoading}
-            primaryAction={
-              <Button
-                onClick={() => {
-                  setEditing(null);
-                  setShowForm(true);
-                }}
-              >
-                <Plus className="mr-1 size-4" /> Add template
-              </Button>
-            }
+            primaryAction={listPrimaryAction}
           />
         </CardHeader>
         <CardTable>
-          <ScrollArea className="w-full">
-            <DataGridTable />
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
+          <DataGridTable />
         </CardTable>
         <CardFooter className="flex justify-between border-t px-4 py-3">
           <DataGridPagination />
@@ -251,22 +261,6 @@ export default function EmailTemplatesList() {
           if (!o) setEditing(null);
         }}
         template={editing}
-      />
-
-      <ConfirmDeleteDialog
-        open={!!deleting}
-        onOpenChange={(o) => !o && setDeleting(null)}
-        title="Confirm delete"
-        description={
-          <>
-            Delete email template <strong>{deleting?.name}</strong>? This action cannot be undone.
-          </>
-        }
-        successMessage="Email template deleted"
-        queryKeysToInvalidate={[['email-templates']]}
-        onDelete={async () => {
-          if (deleting) await deleteMut.mutateAsync(deleting.id);
-        }}
       />
     </DataGrid>
   );

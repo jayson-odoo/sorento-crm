@@ -19,6 +19,7 @@ import {
   type TrajectoryCustomer,
   type TrajectoryEntry,
 } from '../lib/trajectory';
+import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 
 const ApexChart = dynamic(() => import('react-apexcharts').then((mod) => mod.default), {
   ssr: false,
@@ -89,33 +90,36 @@ function CustomerOrderLines({
   }
   return (
     <div className="py-1">
-      <table className="w-full text-2xs">
-        <tbody>
-          {data.lines.map((l, i) => (
-            <tr key={`${l.so_number}-${i}`}>
-              <td className="max-w-32 truncate py-0.5" title={l.so_number}>
-                {l.so_number}
-              </td>
-              {/* Where the order asked for it. Same pill as the demand popover uses, and
-                  the same honest wording when the order named no location at all. */}
-              <td className="py-0.5">
-                <Badge
-                  variant={l.warehouse_code ? 'secondary' : 'warning'}
-                  size="sm"
-                  className="font-normal"
-                >
-                  {l.warehouse_code ?? 'No location'}
-                </Badge>
-              </td>
-              <td className="py-0.5 text-right tabular-nums">{fmtDate(l.order_date)}</td>
-              <td className="py-0.5 text-right tabular-nums">{fmtInt(l.qty)}</td>
-              <td className="py-0.5 text-right tabular-nums">
-                {fmtSupplierCost(l.unit_price, null)}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <ScrollArea>
+        <table className="w-auto min-w-full text-2xs">
+          <tbody>
+            {data.lines.map((l, i) => (
+              <tr key={`${l.so_number}-${i}`}>
+                <td className="max-w-32 truncate py-0.5" title={l.so_number}>
+                  {l.so_number}
+                </td>
+                {/* Where the order asked for it. Same pill as the demand popover uses, and
+                    the same honest wording when the order named no location at all. */}
+                <td className="py-0.5">
+                  <Badge
+                    variant={l.warehouse_code ? 'secondary' : 'warning'}
+                    size="sm"
+                    className="font-normal"
+                  >
+                    {l.warehouse_code ?? 'No location'}
+                  </Badge>
+                </td>
+                <td className="py-0.5 text-right tabular-nums">{fmtDate(l.order_date)}</td>
+                <td className="py-0.5 text-right tabular-nums">{fmtInt(l.qty)}</td>
+                <td className="py-0.5 text-right tabular-nums">
+                  {fmtSupplierCost(l.unit_price, null)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <ScrollBar orientation="horizontal" />
+      </ScrollArea>
       {data.total > data.shown ? (
         <p className="pt-0.5 text-2xs text-muted-foreground">
           {fmtInt(data.total - data.shown)} more
@@ -302,26 +306,29 @@ export function PlanTrendPopover({
           <div className="mt-2">
             <p className="font-medium text-foreground">Who bought it</p>
             {trend.customers.length ? (
-              <table className="mt-0.5 w-full text-muted-foreground">
-                <thead>
-                  <tr className="text-2xs uppercase text-muted-foreground/70">
-                    <th className="pb-0.5 text-left font-normal">Customer</th>
-                    <th className="pb-0.5 text-right font-normal">Qty</th>
-                    <th className="pb-0.5 text-right font-normal">Last order</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {trend.customers.map((c) => (
-                    <CustomerRow
-                      key={`${c.customer_key ?? ''}:${c.customer_name}`}
-                      customer={c}
-                      runId={runId}
-                      productId={productId}
-                      segment={segment}
-                    />
-                  ))}
-                </tbody>
-              </table>
+              <ScrollArea>
+                <table className="mt-0.5 w-auto min-w-full text-muted-foreground">
+                  <thead>
+                    <tr className="text-2xs uppercase text-muted-foreground/70">
+                      <th className="pb-0.5 text-left font-normal">Customer</th>
+                      <th className="pb-0.5 text-right font-normal">Qty</th>
+                      <th className="pb-0.5 text-right font-normal">Last order</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {trend.customers.map((c) => (
+                      <CustomerRow
+                        key={`${c.customer_key ?? ''}:${c.customer_name}`}
+                        customer={c}
+                        runId={runId}
+                        productId={productId}
+                        segment={segment}
+                      />
+                    ))}
+                  </tbody>
+                </table>
+                <ScrollBar orientation="horizontal" />
+              </ScrollArea>
             ) : (
               <p className="text-muted-foreground">No orders in the window.</p>
             )}

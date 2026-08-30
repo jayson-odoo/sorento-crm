@@ -4,8 +4,10 @@ import * as React from 'react';
 import Link from 'next/link';
 import { ColumnDef } from '@tanstack/react-table';
 import { PackageSearch } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { Skeleton } from '@/components/ui/skeleton';
+import { cn } from '@/lib/utils';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { PanelDataGrid } from '../../_shared/components/PanelDataGrid';
 import { useStockDetail } from '../../_shared/hooks/useFulfilmentPlanning';
@@ -15,48 +17,63 @@ import { fromMinor, toMinor } from '../../_shared/lib/supplyComposition';
  * What the numbers on one location row are made of - AutoCount's "Stock Status with Detail".
  *
  * The captain reads this position in AutoCount and then comes here, so the shape is theirs: the
- * arithmetic as a header line, the documents that produce it beneath, and a total that adds back
- * up to the header. A detail view whose total disagrees with its own header is the one thing
- * that would make somebody stop trusting the board.
+ * documents that produce the position, and a total that adds back up to it. A detail view whose
+ * total disagrees with the row above it is the one thing that would make somebody stop trusting
+ * the board.
  *
  * It is a PANEL rather than a dialog because the captain asked for "expandable details instead
- * of clicking in": it renders inside the location row it belongs to, so the position and its
- * documents are on screen together and closing it is the same press that opened it. It scrolls
- * in a region of its own - the live book tops out at 501 documents for one product at one
- * location, and a panel that grows without limit would push the rest of the dialog out of reach.
+ * of clicking in": it renders inside the row it belongs to, so the position and its documents
+ * are on screen together and closing it is the same press that opened it. It scrolls in a region
+ * of its own - the live book tops out at 501 documents for one product at one location, and a
+ * panel that grows without limit would push the rest of the dialog out of reach.
  *
  * Addressed by IDS. Two products on the live book share the item code `B2155-NL-BLUE`, so a
  * lookup by code would answer confidently about the wrong one.
  *
+ * NO HEADING BLOCK (captain, 30 August 2026). "B2155-NL-BLUE · BRW-IB" and the word "Documents"
+ * sat between the location row and the columns that explain it, saying what the row already
+ * says. The column headers now start directly under the row.
+ *
  * NO RANK COLUMN AND NO STATE COLUMN (R5, 27 August 2026). The rank was the captain's own
  * earlier ask and it is answered by the queue screen, which exists to explain a ranking; here
  * it competed with the question this list is for, which is what else is claiming this stock and
- * when it is wanted. The rows arrive in DELIVERY DATE order from the server, and the line the
- * drawer was opened for carries a tag so the planner can find it.
+ * when it is wanted.
+ *
+ * TWO READINGS, ONE COMPONENT.
+ *
+ * - Under a BIN row: that bin's documents, plain, in delivery-date order. No balance, because
+ *   a per-bin running balance would answer a question the engine never asks.
+ * - Under a GROUP SUBTOTAL row (`group`): every bin of the ownership group merged, in the order
+ *   the engine reads the dates, supply adding and demand subtracting, with the pile after each
+ *   row. Step 1 of the ladder draws the GROUP's pile - a `BRW-IB` line is fed by `MWH-IB` stock
+ *   - so the group is the only level at which "what was left when my line came round" is true.
+ *   The asker's own line is marked and `My line` jumps to it.
  */
 export function StockDocumentsPanel({
   productId,
   warehouseId,
-  itemCode,
-  locationCode,
+  group,
   lineIds = [],
 }: {
   productId: string;
-  warehouseId: string;
-  itemCode: string;
-  locationCode: string;
+  /** One bin. Omitted for a group read, where the set is the answer. */
+  warehouseId?: string | null;
+  /** The whole SET: the ownership-group suffix (`IB`), or `pools` for the site pools. */
+  group?: string | null;
   /**
-   * The cell's own contributing lines. Their rows are tagged "this line", so the planner can
+   * The cell's own contributing lines. Their rows are tagged "This line", so the planner can
    * see where their own claim sits among the documents ahead of and behind it.
    */
   lineIds?: string[];
 }) {
-  const detail = useStockDetail(productId, warehouseId, lineIds);
+  const detail = useStockDetail(productId, warehouseId ?? null, lineIds, group);
+  const isGroup = Boolean(group);
+  const panelRef = React.useRef<HTMLDivElement | null>(null);
 
   const rows = React.useMemo<StockDetailRow[]>(() => {
     const data = detail.data;
     if (!data) return [];
-    return [
+    const documents: StockDetailRow[] = [
       // Keyed by POSITION as well as by id: one sales order can stand behind this location on
       // several of its own lines, so `sales_order_id` alone is not unique and React logged a
       // duplicate-key error for every repeat (measured live at BRW-BB, which returns the same
@@ -69,10 +86,14 @@ export function StockDocumentsPanel({
         party: order.customer_name ?? null,
         agent_code: order.agent_code ?? null,
         project_label: order.project_label ?? null,
+        location: order.location ?? null,
         doc_date: order.doc_date ?? null,
         due_date: order.delivery_date ?? null,
         overdue_days: null,
         qty: order.so_qty,
+        // A sales order takes stock away from the pile.
+        delta: -toMinor(order.so_qty),
+        balance: null,
         line_id: order.line_id ?? null,
         is_this_line: Boolean(order.is_this_line),
       })),
@@ -84,23 +105,89 @@ export function StockDocumentsPanel({
         party: leg.supplier_name ?? null,
         agent_code: null,
         project_label: null,
+        location: leg.location ?? null,
         doc_date: null,
         due_date: leg.expected_date ?? null,
         overdue_days: leg.overdue_days ?? null,
         qty: leg.spo_qty,
+        delta: toMinor(leg.spo_qty),
+        balance: null,
         line_id: null,
         is_this_line: false,
       })),
     ];
-  }, [detail.data]);
+    if (!isGroup) return documents;
 
-  const columns = React.useMemo<ColumnDef<StockDetailRow>[]>(
-    () => [
+    // A confirmed hold taken by a line booked OUTSIDE this set (R40, 30 August 2026).
+    // Cross-group stock moves only as a pinned hold, and such a hold is in no sales-order
+    // row of this group - so a walk without it counts a pile nobody can draw on.
+    documents.push(
+      ...(data.holds ?? []).map((hold, index) => ({
+        key: `hold-${index}-${hold.so_number ?? 'unnamed'}`,
+        doc_type: 'Hold' as const,
+        doc_no: hold.so_number ?? '-',
+        sales_order_id: null,
+        party: null,
+        agent_code: null,
+        project_label: null,
+        location: hold.location ?? null,
+        doc_date: null,
+        due_date: hold.required_date ?? null,
+        overdue_days: null,
+        qty: hold.qty,
+        delta: -toMinor(hold.qty),
+        balance: null,
+        line_id: null,
+        is_this_line: false,
+      })),
+    );
+
+    // The pile each bin starts from, first and in bin order: the walk has to open on stock
+    // somebody can actually pick, or the first balance would be a number out of nowhere.
+    const opening: StockDetailRow[] = (data.bins ?? [])
+      .filter((bin) => toMinor(bin.qty_on_hand) !== 0)
+      .map((bin) => ({
+        key: `on-hand-${bin.warehouse_id}`,
+        doc_type: 'On hand' as const,
+        // No document, and the Bin column already names the location: printing the code
+        // here as well would be the same fact twice on one row.
+        doc_no: '-',
+        sales_order_id: null,
+        party: null,
+        agent_code: null,
+        project_label: null,
+        location: bin.location,
+        doc_date: null,
+        due_date: null,
+        overdue_days: null,
+        qty: bin.qty_on_hand,
+        delta: toMinor(bin.qty_on_hand),
+        balance: null,
+        line_id: null,
+        is_this_line: false,
+      }));
+
+    documents.sort(compareByEngineDate);
+    let running = 0;
+    return [...opening, ...documents].map((row) => {
+      running += row.delta;
+      return { ...row, balance: fromMinor(running) };
+    });
+  }, [detail.data, isGroup]);
+
+  const hasMyLine = rows.some((row) => row.is_this_line);
+
+  const columns = React.useMemo<ColumnDef<StockDetailRow>[]>(() => {
+    const list: ColumnDef<StockDetailRow>[] = [
       {
         id: 'doc_type',
         accessorFn: (row) => row.doc_type,
         header: ({ column }) => <DataGridColumnHeader title="Type" column={column} />,
-        cell: ({ row }) => <span className="text-sm font-medium">{row.original.doc_type}</span>,
+        cell: ({ row }) => (
+          <span className={cn('text-sm font-medium', emphasis(row.original))}>
+            {row.original.doc_type}
+          </span>
+        ),
         // Labels the totals row under the first column, the way a spreadsheet labels its sum.
         footer: () => <span className="text-muted-foreground">Total</span>,
         size: 90,
@@ -116,18 +203,25 @@ export function StockDocumentsPanel({
             {row.original.sales_order_id ? (
               <Link
                 href={`/scm/sales-orders/${row.original.sales_order_id}`}
-                className="truncate text-sm font-medium text-primary hover:underline"
+                className={cn(
+                  'truncate text-sm font-medium text-primary hover:underline',
+                  emphasis(row.original),
+                )}
                 title={row.original.doc_no}
               >
                 {row.original.doc_no}
               </Link>
             ) : (
-              <span className="truncate text-sm font-medium" title={row.original.doc_no}>
+              <span
+                className={cn('truncate text-sm font-medium', emphasis(row.original))}
+                title={row.original.doc_no}
+              >
                 {row.original.doc_no}
               </span>
             )}
             {/* The line the drawer was opened for. Without it a planner reading twenty
-                documents cannot see which claim is theirs. */}
+                documents cannot see which claim is theirs - and it is what `My line`
+                scrolls to. */}
             {row.original.is_this_line ? (
               <span
                 data-testid="stock-document-this-line"
@@ -149,8 +243,14 @@ export function StockDocumentsPanel({
           <DataGridColumnHeader title="Customer / supplier" column={column} />
         ),
         cell: ({ row }) => (
-          <span className="block truncate text-sm" title={row.original.party ?? ''}>
-            {row.original.party || 'Not recorded'}
+          <span
+            className={cn('block truncate text-sm', emphasis(row.original))}
+            title={row.original.party ?? ''}
+          >
+            {row.original.party ||
+              (row.original.doc_type === 'S/O' || row.original.doc_type === 'SPO'
+                ? 'Not recorded'
+                : '-')}
           </span>
         ),
         size: 200,
@@ -164,7 +264,9 @@ export function StockDocumentsPanel({
         accessorFn: (row) => row.agent_code ?? '',
         header: ({ column }) => <DataGridColumnHeader title="Agent" column={column} />,
         cell: ({ row }) => (
-          <span className="block truncate text-sm tabular-nums">
+          <span
+            className={cn('block truncate text-sm tabular-nums', emphasis(row.original))}
+          >
             {row.original.agent_code ?? '-'}
           </span>
         ),
@@ -172,82 +274,153 @@ export function StockDocumentsPanel({
         minSize: 80,
         meta: { headerTitle: 'Agent' },
       },
-      {
+    ];
+
+    // NOT on the group reading: the walk is ordered by the date the stock is WANTED or
+    // LANDS, and the day a document was typed plays no part in it. Leaving it in pushed
+    // `Balance after` off the right edge of the dialog at 1280, which is the one column the
+    // group reading exists for.
+    if (!isGroup) {
+      list.push({
         id: 'doc_date',
         accessorFn: (row) => row.doc_date ?? '',
         header: ({ column }) => <DataGridColumnHeader title="Doc date" column={column} />,
         cell: ({ row }) => (
-          <span className="block truncate text-sm tabular-nums">
+          <span
+            className={cn('block truncate text-sm tabular-nums', emphasis(row.original))}
+          >
             {row.original.doc_date ? formatDateInMalaysia(row.original.doc_date) : 'Not stated'}
           </span>
         ),
         size: 120,
         minSize: 100,
         meta: { headerTitle: 'Doc date' },
-      },
-      {
-        id: 'due_date',
-        accessorFn: (row) => row.due_date ?? '',
-        header: ({ column }) => (
-          <DataGridColumnHeader title="Delivery / expected" column={column} />
-        ),
+      });
+    }
+
+    list.push({
+      id: 'due_date',
+      accessorFn: (row) => row.due_date ?? '',
+      header: ({ column }) => (
+        <DataGridColumnHeader title="Delivery / expected" column={column} />
+      ),
+      cell: ({ row }) => (
+        <span className={cn('block truncate text-sm tabular-nums', emphasis(row.original))}>
+          {row.original.due_date
+            ? formatDateInMalaysia(row.original.due_date)
+            : row.original.doc_type === 'On hand'
+              ? 'Held now'
+              : 'Not stated'}
+          {row.original.overdue_days ? (
+            <span className="text-amber-600 ms-1">
+              (overdue {row.original.overdue_days}{' '}
+              {row.original.overdue_days === 1 ? 'day' : 'days'})
+            </span>
+          ) : null}
+        </span>
+      ),
+      size: 150,
+      minSize: 120,
+      meta: { headerTitle: 'Delivery / expected' },
+    });
+
+    if (isGroup) {
+      // WHERE in the group each document sits. The whole point of the group reading is that
+      // the pile is shared across the bins, so the bin has to stay visible per row.
+      list.push({
+        id: 'location',
+        accessorFn: (row) => row.location ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Bin" column={column} />,
         cell: ({ row }) => (
-          <span className="block truncate text-sm tabular-nums">
-            {row.original.due_date ? formatDateInMalaysia(row.original.due_date) : 'Not stated'}
-            {row.original.overdue_days ? (
-              <span className="text-amber-600 ms-1">
-                (overdue {row.original.overdue_days}{' '}
-                {row.original.overdue_days === 1 ? 'day' : 'days'})
-              </span>
-            ) : null}
+          <span
+            className={cn('block truncate text-sm', emphasis(row.original))}
+            title={row.original.location ?? ''}
+          >
+            {row.original.location ?? '-'}
           </span>
         ),
-        size: 150,
-        minSize: 120,
-        meta: { headerTitle: 'Delivery / expected' },
-      },
-      {
-        id: 'qty',
-        accessorFn: (row) => Number(row.qty || 0),
-        header: ({ column }) => <DataGridColumnHeader title="Quantity" column={column} />,
-        cell: ({ row }) => (
-          <span className="block truncate text-sm tabular-nums">{row.original.qty}</span>
-        ),
-        // Per TYPE, because an S/O subtracts where an SPO adds: one blended total would be a
-        // number that matches nothing in the header above it.
-        footer: () => (
-          <span className="tabular-nums">
-            {fromMinor(
-              rows
-                .filter((row) => row.doc_type === 'S/O')
-                .reduce((total, row) => total + toMinor(row.qty), 0),
-            )}
-          </span>
-        ),
-        size: 120,
+        size: 110,
         minSize: 90,
-        meta: { headerTitle: 'Quantity' },
-      },
-    ],
-    [rows],
-  );
+        meta: { headerTitle: 'Bin' },
+      });
+    }
+
+    list.push({
+      id: 'qty',
+      accessorFn: (row) => Number(row.qty || 0),
+      header: ({ column }) => <DataGridColumnHeader title="Quantity" column={column} />,
+      cell: ({ row }) => (
+        <span
+          className={cn('block truncate text-sm tabular-nums', emphasis(row.original))}
+        >
+          {row.original.qty}
+        </span>
+      ),
+      // Per TYPE, because an S/O subtracts where an SPO adds: one blended total would be a
+      // number that matches nothing in the header above it.
+      footer: () => (
+        <span className="tabular-nums">
+          {fromMinor(
+            rows
+              .filter((row) => row.doc_type === 'S/O')
+              .reduce((total, row) => total + toMinor(row.qty), 0),
+          )}
+        </span>
+      ),
+      size: 120,
+      minSize: 90,
+      meta: { headerTitle: 'Quantity' },
+    });
+
+    if (isGroup) {
+      list.push({
+        id: 'balance',
+        accessorFn: (row) => Number(row.balance || 0),
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Balance after" column={column} />
+        ),
+        cell: ({ row }) => (
+          <span
+            data-testid={`stock-balance-${row.original.key}`}
+            className={cn(
+              'block truncate text-sm tabular-nums',
+              emphasis(row.original),
+              isNegative(row.original.balance) && 'text-destructive',
+            )}
+          >
+            {row.original.balance}
+          </span>
+        ),
+        // Where the group ends up once every row has been read. It is the subtotal's own
+        // Available less two things the subtotal does not carry, both of them rows in this
+        // list: THIS cell's own demand (the subtotal adds it back, because a line does not
+        // compete with itself) and any hold taken from outside the group.
+        footer: () => {
+          const closing = rows.length > 0 ? rows[rows.length - 1].balance : null;
+          return (
+            <span className={cn('tabular-nums', isNegative(closing) && 'text-destructive')}>
+              {closing ?? '-'}
+            </span>
+          );
+        },
+        size: 130,
+        minSize: 110,
+        meta: { headerTitle: 'Balance after' },
+      });
+    }
+
+    return list;
+  }, [isGroup, rows]);
 
   return (
     <div
+      ref={panelRef}
       data-testid="stock-documents-panel"
       // Deliberately shorter than the stock table's own 50vh container, so the documents are
       // what scrolls rather than the position above them: measured at an 800px window, a taller
       // panel left the contributing lines a two-row sliver.
       className="max-h-[35vh] space-y-2 overflow-y-auto bg-muted/30 p-3"
     >
-      <div className="min-w-0 break-words text-sm font-medium">
-        {`${itemCode} · ${locationCode}`}
-      </div>
-
-      {/* NO ARITHMETIC HEADER. "On hand 241 - SO 3334 + SPO 0 = Available -3093" restated the
-          location row this panel expands from, which already carries all four figures, and the
-          captain's verdict on it was "redundant. Remove." (PLAN section 0 item 7, AC-A4). */}
-
       {detail.isError ? (
         <p className="py-6 text-center text-sm text-destructive">
           {detail.error instanceof Error
@@ -267,12 +440,38 @@ export function StockDocumentsPanel({
         </div>
       ) : (
         <PanelDataGrid<StockDetailRow>
-          title="Documents"
           columns={columns}
           rows={rows}
           getRowId={(row) => row.key}
-          listingKey="projects.projects.view::project-stock-detail"
-          sortable
+          listingKey={
+            isGroup
+              ? 'projects.projects.view::project-stock-detail-group'
+              : 'projects.projects.view::project-stock-detail'
+          }
+          // The group reading is a RUNNING balance, so its order is the arithmetic: re-sorting
+          // it by customer would leave a column of numbers that add up to nothing.
+          sortable={!isGroup}
+          toolbar={
+            isGroup && hasMyLine ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                data-testid="stock-documents-my-line"
+                onClick={() => {
+                  const anchor = panelRef.current?.querySelector(
+                    '[data-testid="stock-document-this-line"]',
+                  );
+                  const row = anchor?.closest('tr');
+                  if (row && typeof row.scrollIntoView === 'function') {
+                    row.scrollIntoView({ block: 'center' });
+                  }
+                }}
+              >
+                My line
+              </Button>
+            ) : undefined
+          }
           emptyTitle="Nothing is claiming this stock"
           // The live book tops out at 501 rows for one product and location, which is one page:
           // paging it would hide the total that makes the header checkable.
@@ -283,19 +482,51 @@ export function StockDocumentsPanel({
   );
 }
 
+/**
+ * The order the ENGINE reads these documents in: on hand first (it is held now), then by the
+ * date it is wanted or lands on, supply before demand on a tie - the ordering
+ * `supply_assignment` walks, so a container cleared in the morning covers a despatch due the
+ * same day. A document with no date lists last: "not stated" is not "wanted immediately".
+ */
+function compareByEngineDate(left: StockDetailRow, right: StockDetailRow): number {
+  const leftDate = left.due_date ?? '';
+  const rightDate = right.due_date ?? '';
+  if (!leftDate !== !rightDate) return leftDate ? -1 : 1;
+  if (leftDate !== rightDate) return leftDate < rightDate ? -1 : 1;
+  const leftSupply = left.delta >= 0 ? 0 : 1;
+  const rightSupply = right.delta >= 0 ? 0 : 1;
+  if (leftSupply !== rightSupply) return leftSupply - rightSupply;
+  return left.doc_no.localeCompare(right.doc_no);
+}
+
+/** The board's own row emphasis for the line the drawer was opened for. */
+function emphasis(row: StockDetailRow): string {
+  return row.is_this_line ? 'font-semibold text-primary' : '';
+}
+
+function isNegative(value: string | null): boolean {
+  return value !== null && Number(value) < 0;
+}
+
 interface StockDetailRow {
   key: string;
-  doc_type: 'S/O' | 'SPO';
+  doc_type: 'S/O' | 'SPO' | 'On hand' | 'Hold';
   doc_no: string;
   sales_order_id: string | null;
   party: string | null;
   agent_code: string | null;
   project_label: string | null;
+  /** The bin this row sits at. Columned only on the group reading. */
+  location: string | null;
   doc_date: string | null;
   due_date: string | null;
   /** Days late, on a purchase document whose promised arrival has passed. */
   overdue_days: number | null;
   qty: string;
+  /** Signed minor units: supply adds to the pile, demand takes from it. */
+  delta: number;
+  /** The pile after this row, on the group reading. Null on the per-bin one. */
+  balance: string | null;
   line_id: string | null;
   /** One of the lines this drawer is planning (R5). */
   is_this_line: boolean;

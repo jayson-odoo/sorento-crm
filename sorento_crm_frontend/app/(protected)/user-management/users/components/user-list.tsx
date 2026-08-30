@@ -27,7 +27,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { formatDateSafe, formatDateTimeInMalaysia, getInitials } from '@/lib/helpers';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { Badge, BadgeDot } from '@/components/ui/badge';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
@@ -38,12 +38,12 @@ import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { User, UserStatus } from '@/app/models/user';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import { UserRowActions } from '../actions';
+import { pendingEntityKey, usePendingEntityKeys } from '@/lib/pending-entity-store';
 import {
   fetchUsersListPage,
   usersListFilters,
@@ -51,7 +51,6 @@ import {
 } from '../lib/listQuery';
 import { useRoleSelectQuery } from '../../roles/hooks/use-role-select-query';
 import { getUserStatusProps, UserStatusProps } from '../constants/status';
-import { getStatusBadgeVariant } from '@/lib/status-badge';
 import UserInviteDialog from './user-add-dialog';
 import { toast } from 'sonner';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
@@ -149,6 +148,11 @@ const UserList = () => {
     const search = buildDetailSearch(listParams, listParams.filters);
     return `/user-management/users/${row.id}${search ? `?${search}` : ''}`;
   };
+
+  // A user whose trashing is counting down stays on the list, dimmed, until the
+  // window lapses - the toast holds the Cancel, this says which row it is for.
+  const pendingKeys = usePendingEntityKeys();
+  const rowPending = (row: User) => pendingKeys.has(pendingEntityKey('user', row.id));
 
   const selectedRowIds = useMemo(() => Object.keys(rowSelection), [rowSelection]);
 
@@ -313,14 +317,13 @@ const UserList = () => {
             row.original.status as UserStatus,
           );
           const isTrashed = row.original.isTrashed;
-          const variant = getStatusBadgeVariant(row.original.status);
 
           return (
             <div className="inline-flex gap-2.5">
-              <Badge variant={variant} appearance="ghost">
-                <BadgeDot />
-                {statusProps.label}
-              </Badge>
+              {/* The pill resolves its own colour and draws its own dot from the
+                  raw status (D2); pairing the two by hand is how two lists came
+                  to disagree about a colour. */}
+              <Badge status={row.original.status}>{statusProps.label}</Badge>
               {isTrashed && (
                 <Badge variant="destructive" appearance="light">
                   Trashed
@@ -465,6 +468,20 @@ const UserList = () => {
     manualSorting: true,
     manualFiltering: true,
   });
+
+  // The one offer this listing makes, in both places it belongs: the toolbar,
+  // and the empty state's next step (S5-06).
+  const addUserButton = (
+    <Button
+      disabled={isLoading && true}
+      onClick={() => {
+        setInviteDialogOpen(true);
+      }}
+    >
+      <Plus />
+      Add user
+    </Button>
+  );
 
   const DataGridToolbar = () => {
     const [inputValue, setInputValue] = useState(searchQuery);
@@ -691,17 +708,7 @@ const UserList = () => {
           }}
           exportConfig={{ filename: 'users_export.xlsx' }}
           bulkActions={bulkActions}
-          primaryAction={
-            <Button
-              disabled={isLoading && true}
-              onClick={() => {
-                setInviteDialogOpen(true);
-              }}
-            >
-              <Plus />
-              Add user
-            </Button>
-          }
+          primaryAction={addUserButton}
         />
       </CardHeader>
     );
@@ -711,9 +718,11 @@ const UserList = () => {
     <>
       <DataGrid
         table={table}
+        emptyAction={addUserButton}
         recordCount={data?.pagination.total || 0}
         isLoading={isLoading}
         rowHref={rowHref}
+        rowPending={rowPending}
         standardToolbar={false}
         tableLayout={{
           columnsResizable: true,
@@ -728,10 +737,7 @@ const UserList = () => {
         <Card>
           <DataGridToolbar />
           <CardTable>
-            <ScrollArea>
-              <DataGridTable />
-              <ScrollBar orientation="horizontal" />
-            </ScrollArea>
+            <DataGridTable />
           </CardTable>
           <CardFooter>
             <DataGridPagination />

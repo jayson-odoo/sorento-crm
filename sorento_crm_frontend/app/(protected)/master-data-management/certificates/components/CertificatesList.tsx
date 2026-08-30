@@ -24,7 +24,6 @@ import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
@@ -33,7 +32,11 @@ import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 // stable regardless of the viewer's machine timezone.
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { useBulkDeleteCertificates,
-  useDeleteCertificate, useCertificates } from '../hooks/useCertificates';
+  useCertificates } from '../hooks/useCertificates';
+import {
+  useDeferredRowAction,
+  useRowPending,
+} from '@/hooks/useDeferredRowAction';
 import {
   EXPIRING_WITHIN_OPTIONS,
   NEEDS_REVIEW_OPTIONS,
@@ -93,11 +96,19 @@ export default function CertificatesList() {
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [formOpen, setFormOpen] = useState(false);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
-  // The row's own Delete, the same action the record's gear offers (D15).
-  const [deleting, setDeleting] = useState<Certificate | null>(null);
-
   const bulkDeleteMutation = useBulkDeleteCertificates();
-  const deleteMutation = useDeleteCertificate();
+
+  // Delete asks nothing (D7): the row dims and a toast counts down with Cancel.
+  // Bulk delete keeps its dialog - selecting rows and pressing Delete selected is
+  // already a deliberate two-step gesture, and one countdown cannot speak for a
+  // set (see S6-10 notes in the plan).
+  const deletion = useDeferredRowAction({
+    actionKey: 'certificate.delete',
+    entityType: 'certificate',
+    successMessage: 'Certificate deleted',
+    invalidateKeys: [['certificates']],
+  });
+  const rowPending = useRowPending<Certificate>('certificate');
 
   useEffect(() => {
     setPagination((prev) => ({ ...prev, pageIndex: 0 }));
@@ -270,7 +281,11 @@ export default function CertificatesList() {
                 label: 'Delete certificate',
                 icon: Trash2,
                 kind: 'destructive',
-                run: () => setDeleting(row.original),
+                run: () =>
+                  deletion.run({
+                    id: row.original.id,
+                    subject: `${row.original.scheme} ${row.original.certificate_number}`,
+                  }),
               },
             ]}
           />
@@ -280,7 +295,7 @@ export default function CertificatesList() {
         enableResizing: false,
       },
     ],
-    [],
+    [deletion],
   );
 
   const table = useReactTable({
@@ -305,11 +320,21 @@ export default function CertificatesList() {
 
   const selectedCount = selectedRowIds(table).length;
 
+  // The one offer this listing makes, in both places it belongs: the
+  // toolbar, and the empty state's next step (S5-06).
+  const listPrimaryAction = (
+    <Button onClick={() => setFormOpen(true)}>
+      <Plus />
+      Add Certificate
+    </Button>
+  );
+
   return (
     <DataGrid
       table={table}
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
+      rowPending={rowPending}
       rowHref={(row: Certificate) => {
         const search = buildDetailSearch(
           {
@@ -334,6 +359,7 @@ export default function CertificatesList() {
       // as a permission slug, and a pathname is not one.
       listingKey="master_data.certificates.view"
       tableLayout={{ width: 'fixed', columnsVisibility: true, columnsResizable: true }}
+      emptyAction={listPrimaryAction}
     >
       <Card>
         <CardHeader className="block">
@@ -429,12 +455,7 @@ export default function CertificatesList() {
             exportConfig={{ filename: 'certificates_export.xlsx' }}
             onRefresh={() => void refetch()}
             isRefreshing={isFetching && !isLoading}
-            primaryAction={
-              <Button onClick={() => setFormOpen(true)}>
-                <Plus />
-                Add Certificate
-              </Button>
-            }
+            primaryAction={listPrimaryAction}
             bulkActions={[
               {
                 key: 'delete',
@@ -447,10 +468,7 @@ export default function CertificatesList() {
           />
         </CardHeader>
         <CardTable>
-          <ScrollArea>
-            <DataGridTable />
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
+          <DataGridTable />
         </CardTable>
         <CardFooter>
           <DataGridPagination />
@@ -459,26 +477,6 @@ export default function CertificatesList() {
 
       {/* Mounted only while open so the form state resets between openings. */}
       {formOpen && <CertificateFormDialog open={formOpen} onOpenChange={setFormOpen} />}
-
-      <ConfirmDeleteDialog
-        open={deleting !== null}
-        onOpenChange={(open) => {
-          if (!open) setDeleting(null);
-        }}
-        title="Confirm delete"
-        description={
-          <>
-            Delete {deleting?.certificate_number}, its revisions and its covered product
-            links. The uploaded files are kept. This action cannot be undone.
-          </>
-        }
-        successMessage="Certificate deleted"
-        onDelete={async () => {
-          if (deleting) await deleteMutation.mutateAsync(deleting.id);
-        }}
-        onSuccess={() => setDeleting(null)}
-        queryKeysToInvalidate={[['certificates']]}
-      />
 
       <ConfirmDeleteDialog
         open={bulkDeleteOpen}

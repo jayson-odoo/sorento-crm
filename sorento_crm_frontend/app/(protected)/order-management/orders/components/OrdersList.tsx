@@ -32,16 +32,15 @@ import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
-import OrderBulkDeleteDialog from './OrderBulkDeleteDialog';
 import { OrderRowActions } from '../actions';
+import { useDeferredBulkAction } from '@/hooks/useDeferredBulkAction';
+import { pendingEntityKey, usePendingEntityKeys } from '@/lib/pending-entity-store';
 import { useOrders } from '../hooks/useOrders';
 import { useOrderStatusSelectQuery } from '../../shared/hooks/use-order-status-select-query';
 import type { Order } from '../types/order.types';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { formatDate } from '@/lib/helpers';
-import { getStatusBadgeVariant } from '@/lib/status-badge';
 import { TemplateUploadDialog } from '@/components/template/TemplateUploadDialog';
 import { bulkImportOrders, importOrderTracking, validateOrderTracking, validateDeliveryOrderDetail } from '../services/orderService';
 import { OrderTrackingUploadDialog } from './OrderTrackingUploadDialog';
@@ -69,7 +68,6 @@ export default function OrdersList() {
   const [orderLinesImportOpen, setOrderLinesImportOpen] = useState(false);
   const [advancedFilter, setAdvancedFilter] = useState<ListQueryFilterGroup | null>(null);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
-  const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [linesFilter, setLinesFilter] = useState<'all' | 'yes' | 'no'>('all');
 
@@ -122,6 +120,22 @@ export default function OrdersList() {
   // The whole row opens the record. The grid appends its own page/sort/search;
   // the filters it does not know about ride in this query string, and the pager
   // rebuilds the list's query key from both.
+  // A delivery order whose action is counting down stays on the list, dimmed,
+  // until the window lapses - the toast holds the Cancel, this says which row.
+  const pendingKeys = usePendingEntityKeys();
+  const rowPending = (row: Order) => pendingKeys.has(pendingEntityKey('order', row.id));
+
+  // Delete selected asks nothing either (D7): one action per selected row, ONE
+  // countdown over them, one Cancel that withdraws the lot, and every selected row
+  // dimmed by the same `rowPending` a single delete uses.
+  const bulkDeletion = useDeferredBulkAction({
+    actionKey: 'order.delete',
+    entityType: 'order',
+    describe: (count) => `${count} delivery order${count === 1 ? '' : 's'}`,
+    invalidateKeys: [['orders']],
+    onStarted: () => setRowSelection({}),
+  });
+
   const rowHref = (row: Order) => {
     const search = buildDetailSearch(
       {
@@ -236,7 +250,7 @@ export default function OrdersList() {
         cell: ({ row }) => {
           const status = row.original.order_status;
           return status ? (
-            <Badge variant={getStatusBadgeVariant(status.status_name)}>
+            <Badge status={status.status_name}>
               {status.status_name}
             </Badge>
           ) : (
@@ -281,13 +295,24 @@ export default function OrdersList() {
     enableColumnResizing: true,
   });
 
+  // The one offer this listing makes, in both places it belongs: the
+  // toolbar, and the empty state's next step (S5-06).
+  const listPrimaryAction = (
+    <Button onClick={() => router.push('/order-management/orders/new')}>
+      <Plus />
+      Create Delivery Order
+    </Button>
+  );
+
   return (
     <DataGrid
       table={table}
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
       rowHref={rowHref}
+      rowPending={rowPending}
       tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
+      emptyAction={listPrimaryAction}
     >
       <Card>
         <CardHeader className="block">
@@ -340,12 +365,7 @@ export default function OrdersList() {
                 has_order_lines: linesFilter === 'all' ? undefined : linesFilter,
               }),
             }}
-            primaryAction={
-              <Button onClick={() => router.push('/order-management/orders/new')}>
-                <Plus />
-                Create Delivery Order
-              </Button>
-            }
+            primaryAction={listPrimaryAction}
             secondaryActions={[
               {
                 key: 'refresh',
@@ -373,7 +393,8 @@ export default function OrdersList() {
                 label: 'Delete',
                 icon: Trash2,
                 destructive: true,
-                onClick: () => setBulkDeleteDialogOpen(true),
+                onClick: () =>
+                  bulkDeletion.run(selectedRowIds(table).map((id) => ({ id }))),
               },
             ]}
           />
@@ -445,10 +466,7 @@ export default function OrdersList() {
           </div>
         ) : null}
         <CardTable>
-          <ScrollArea>
-            <DataGridTable />
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
+          <DataGridTable />
         </CardTable>
         <CardFooter>
           <DataGridPagination />
@@ -474,12 +492,6 @@ export default function OrdersList() {
           queryClient.invalidateQueries({ queryKey: ['orders'] });
           queryClient.invalidateQueries({ queryKey: ['import-jobs'] });
         }}
-      />
-      <OrderBulkDeleteDialog
-        open={bulkDeleteDialogOpen}
-        onOpenChange={setBulkDeleteDialogOpen}
-        orderIds={selectedRowIds(table)}
-        onSuccess={() => setRowSelection({})}
       />
     </DataGrid>
   );

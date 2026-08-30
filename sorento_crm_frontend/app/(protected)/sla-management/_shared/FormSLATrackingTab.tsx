@@ -28,7 +28,6 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Progress } from '@/components/ui/progress';
 import {
@@ -406,7 +405,7 @@ export default function FormSLATrackingTab({
           const o = row.original;
           if (o.is_resolved) {
             return (
-              <Badge variant="success" appearance="ghost">
+              <Badge variant="success">
                 <CheckCircle className="mr-1 size-3" />
                 Resolved
               </Badge>
@@ -414,14 +413,14 @@ export default function FormSLATrackingTab({
           }
           if (o.escalated_at) {
             return (
-              <Badge variant="warning" appearance="ghost">
+              <Badge variant="warning">
                 <AlertCircle className="mr-1 size-3" />
                 Escalated
               </Badge>
             );
           }
           return (
-            <Badge variant="info" appearance="ghost">
+            <Badge variant="info">
               <Clock className="mr-1 size-3" />
               Pending
             </Badge>
@@ -522,10 +521,7 @@ export default function FormSLATrackingTab({
           </div>
         </CardHeader>
         <CardTable>
-          <ScrollArea>
-            <DataGridTable />
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
+          <DataGridTable />
         </CardTable>
         <CardFooter>
           <DataGridPagination />

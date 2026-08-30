@@ -1,7 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { Edit } from 'lucide-react';
+import { Banknote, Edit, Info, Truck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -10,8 +10,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import DetailActions from '@/components/common/DetailActions';
 import { useOrder, ordersPagerQuery } from '../hooks/useOrders';
 import { useOrderActions } from '../actions';
+import { useDeletedRecordGuard } from '@/hooks/useDeletedRecordGuard';
 import { formatDate } from '@/lib/helpers';
-import { getStatusBadgeVariant } from '@/lib/status-badge';
 import OrderLinesCard from './OrderLinesCard';
 import OrderFulfilledComplaintsCard from './OrderFulfilledComplaintsCard';
 
@@ -26,8 +26,16 @@ export default function OrderDetail({ orderId, listSearch }: OrderDetailProps) {
   const router = useRouter();
   const { data: order, isLoading } = useOrder(orderId);
   const listQs = listSearch ? `?${listSearch}` : '';
-  const { actions, dialogs } = useOrderActions(order, {
+  const { actions, dialogs, pending } = useOrderActions(order, {
     onDeleted: () => router.push(`/order-management/orders${listQs}`),
+  });
+
+  // A delivery order this tab deleted a moment ago is gone on purpose, so a stale
+  // link to it returns to the list instead of reading as a fault (S6 feedback C).
+  const alreadyDeleted = useDeletedRecordGuard({
+    entityId: orderId,
+    notFound: !isLoading && !order,
+    listPath: `/order-management/orders${listQs}`,
   });
 
   if (isLoading) {
@@ -40,6 +48,7 @@ export default function OrderDetail({ orderId, listSearch }: OrderDetailProps) {
   }
 
   if (!order) {
+    if (alreadyDeleted) return null;
     return (
       <div className="text-center py-12">
         <p className="text-muted-foreground">Delivery order not found</p>
@@ -60,9 +69,9 @@ export default function OrderDetail({ orderId, listSearch }: OrderDetailProps) {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="space-y-1 min-w-0">
           <div className="flex flex-wrap items-center gap-3">
-            <h1 className="text-2xl font-bold break-words min-w-0">{order.order_number}</h1>
+            <h2 className="text-2xl font-bold break-words min-w-0">{order.order_number}</h2>
             {order.order_status && (
-              <Badge variant={getStatusBadgeVariant(order.order_status.status_name)}>
+              <Badge status={order.order_status.status_name}>
                 {order.order_status.status_name}
               </Badge>
             )}
@@ -80,6 +89,7 @@ export default function OrderDetail({ orderId, listSearch }: OrderDetailProps) {
           }}
           actions={actions}
           dialogs={dialogs}
+          pendingAction={pending}
           gearLabel="Delivery order options"
           primary={
             <Button
@@ -95,10 +105,21 @@ export default function OrderDetail({ orderId, listSearch }: OrderDetailProps) {
       </div>
 
       <Tabs defaultValue="information" className="w-full">
-        <TabsList variant="line" className="mb-4 w-full justify-start overflow-x-auto">
-          <TabsTrigger value="information">Delivery order information</TabsTrigger>
-          <TabsTrigger value="financial">Financial summary</TabsTrigger>
-          <TabsTrigger value="delivery">Delivery &amp; tracking</TabsTrigger>
+        {/* `overflow-x-auto` is the list's own since S1; the icons are what make
+            a scrolled strip readable when a label is half off the edge. */}
+        <TabsList className="mb-4">
+          <TabsTrigger value="information">
+            <Info />
+            <span>Delivery order information</span>
+          </TabsTrigger>
+          <TabsTrigger value="financial">
+            <Banknote />
+            <span>Financial summary</span>
+          </TabsTrigger>
+          <TabsTrigger value="delivery">
+            <Truck />
+            <span>Delivery &amp; tracking</span>
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="information" className="mt-0 space-y-6 focus-visible:outline-none">
@@ -144,7 +165,7 @@ export default function OrderDetail({ orderId, listSearch }: OrderDetailProps) {
                   <p className="text-sm text-muted-foreground">Delivery Order Status</p>
                   <p className="font-medium">
                     {order.order_status ? (
-                      <Badge variant={getStatusBadgeVariant(order.order_status.status_name)}>{order.order_status.status_name}</Badge>
+                      <Badge status={order.order_status.status_name}>{order.order_status.status_name}</Badge>
                     ) : (
                       '-'
                     )}

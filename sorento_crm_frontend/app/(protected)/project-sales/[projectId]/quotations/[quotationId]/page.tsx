@@ -1,13 +1,7 @@
 import { Metadata } from 'next';
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
 import { Container } from '@/components/common/container';
+import { PageHeader } from '@/components/common/PageHeader';
+import { projectCrumbs } from '@/app/(protected)/project-sales/_shared/lib/crumbs';
 import RequireAccess from '@/app/components/common/RequireAccess';
 import BackToList from '@/components/common/BackToList';
 import { QuotationDetailClient } from './components/QuotationDetailClient';
@@ -38,27 +32,10 @@ export default async function ProjectQuotationPage({
             string the list handed over, so it returns to the tab and page the
             reader left. */}
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <Breadcrumb>
-            <BreadcrumbList>
-            <BreadcrumbItem>
-              <BreadcrumbLink href="/">Home</BreadcrumbLink>
-            </BreadcrumbItem>
-            <BreadcrumbSeparator />
-            <BreadcrumbItem>
-              <BreadcrumbLink href="/project-sales/pipeline">Project Sales</BreadcrumbLink>
-            </BreadcrumbItem>
-            <BreadcrumbSeparator />
-            <BreadcrumbItem>
-              <BreadcrumbLink href={`/project-sales/${projectId}?tab=quotations`}>
-                Quotations
-              </BreadcrumbLink>
-            </BreadcrumbItem>
-            <BreadcrumbSeparator />
-            <BreadcrumbItem>
-              <BreadcrumbPage>Scope</BreadcrumbPage>
-            </BreadcrumbItem>
-            </BreadcrumbList>
-          </Breadcrumb>
+          <PageHeader
+            title="Quotation"
+            crumbs={projectCrumbs(projectId, { title: 'Quotation' })}
+          />
           <BackToList
             listPath={`/project-sales/${projectId}?tab=quotations`}
             label="Back to quotations"

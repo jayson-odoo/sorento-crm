@@ -1,15 +1,8 @@
 import { Metadata } from 'next';
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
 import { Container } from '@/components/common/container';
 import RequireAccess from '@/app/components/common/RequireAccess';
 import { QuotationDocumentClient } from './components/QuotationDocumentClient';
-import { QuotationDocumentCrumb } from './components/QuotationDocumentCrumb';
+import { QuotationDocumentPageHeader } from './components/QuotationDocumentPageHeader';
 
 export const metadata: Metadata = {
   title: 'Quotation document',
@@ -40,27 +33,7 @@ export default async function ProjectQuotationDocumentLayout({
   return (
     <RequireAccess permission="projects.projects.view">
       <Container className="space-y-6 pb-64">
-        <Breadcrumb>
-          <BreadcrumbList>
-            <BreadcrumbItem>
-              <BreadcrumbLink href="/">Home</BreadcrumbLink>
-            </BreadcrumbItem>
-            <BreadcrumbSeparator />
-            <BreadcrumbItem>
-              <BreadcrumbLink href="/project-sales/pipeline">Project Sales</BreadcrumbLink>
-            </BreadcrumbItem>
-            <BreadcrumbSeparator />
-            <BreadcrumbItem>
-              <BreadcrumbLink href={`/project-sales/${projectId}?tab=quotations`}>
-                Quotations
-              </BreadcrumbLink>
-            </BreadcrumbItem>
-            <BreadcrumbSeparator />
-            <BreadcrumbItem>
-              <QuotationDocumentCrumb projectId={projectId} documentId={documentId} />
-            </BreadcrumbItem>
-          </BreadcrumbList>
-        </Breadcrumb>
+        <QuotationDocumentPageHeader projectId={projectId} documentId={documentId} />
         <QuotationDocumentClient projectId={projectId} documentId={documentId}>
           {children}
         </QuotationDocumentClient>

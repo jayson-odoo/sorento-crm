@@ -23,7 +23,6 @@ import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useGRNs } from '../hooks/useGRN';
@@ -189,6 +188,15 @@ export default function GRNList() {
     manualFiltering: true,
   });
 
+  // The one offer this listing makes, in both places it belongs: the
+  // toolbar, and the empty state's next step (S5-06).
+  const listPrimaryAction = (
+    <Button onClick={() => router.push('/procurement-management/grn/new')}>
+      <Plus />
+      Create GRN
+    </Button>
+  );
+
   return (
     <DataGrid
       table={table}
@@ -197,6 +205,7 @@ export default function GRNList() {
       rowHref={rowHref}
       tableLayout={{ columnsVisibility: true }}
       standardToolbar={false}
+      emptyAction={listPrimaryAction}
     >
       <Card>
         <CardHeader className="block">
@@ -255,12 +264,7 @@ export default function GRNList() {
               ),
             }}
             exportConfig={{ filename: 'grn_export.xlsx' }}
-            primaryAction={
-              <Button onClick={() => router.push('/procurement-management/grn/new')}>
-                <Plus />
-                Create GRN
-              </Button>
-            }
+            primaryAction={listPrimaryAction}
             secondaryActions={[
               {
                 key: 'upload-grn',
@@ -320,10 +324,7 @@ export default function GRNList() {
           />
         )}
         <CardTable>
-          <ScrollArea>
-            <DataGridTable />
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
+          <DataGridTable />
         </CardTable>
         <CardFooter>
           <DataGridPagination />

@@ -711,12 +711,24 @@ def test_every_registered_runner_passes_kwargs_the_real_method_accepts():
 
 
 def test_every_registered_action_declares_a_known_form_type():
+    """A FORM action's entity type has to be one the SLA engine knows.
+
+    Only a form action: since S6b the same registry also holds RECORD actions - a
+    product, a brand, a delivery order - and none of those is a form submission, so
+    `FORM_SLA_TYPES` has nothing to say about them. A record action is the one that
+    declares a `permission` (it is parked through the generic /pending-actions route,
+    which has no slug of its own), which is the same split
+    `tests/test_record_actions_s6b.py` makes.
+    """
     import app.services.form_actions  # noqa: F401
+    import app.services.record_actions  # noqa: F401
     from app.services.form_action_registry import REGISTRY
     from app.services.form_sla_service import FORM_SLA_TYPES
 
     for key, action in REGISTRY.items():
         assert action.entity_types, f"{key} declares no entity types"
+        if action.permission:
+            continue
         for entity_type in action.entity_types:
             assert entity_type in FORM_SLA_TYPES, f"{key} declares unknown type {entity_type}"
 
@@ -1090,7 +1102,12 @@ def test_immediate_failure_records_a_failed_row_not_a_pending_one(db, monkeypatc
         .all()
     )
     assert [r.status for r in rows] == ["failed"]
-    assert "exploded" in rows[0].error_text
+    # A sentence, not the exception: `error_text` is shown to the user, and an
+    # exception that escaped a handler is a defect whose message may carry SQL.
+    assert rows[0].error_text == (
+        "This purchase request could not be updated. Nothing was changed."
+    )
+    assert "exploded" not in rows[0].error_text
 
 
 def test_failed_undo_releases_the_claim_so_a_retry_can_succeed(db, monkeypatch):

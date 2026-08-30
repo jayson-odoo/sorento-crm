@@ -550,13 +550,32 @@ describe('useStockDetail', () => {
     });
 
     await waitFor(() =>
-      expect(getStockDetail).toHaveBeenCalledWith('prod-1', 'wh-1', ['line-a']),
+      expect(getStockDetail).toHaveBeenCalledWith('prod-1', 'wh-1', ['line-a'], undefined),
     );
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     // The asking lines are part of the key: a different asker is a different answer.
     expect(client.getQueryData([STOCK_DETAIL_KEY, 'prod-1', 'wh-1', 'line-a'])).toEqual({
       product_id: 'prod-1',
       warehouse_id: 'wh-1',
+    });
+  });
+
+  it('reads a whole ownership GROUP under a key of its own', async () => {
+    // The group is the pile the ladder's first step draws, and it is a different answer from
+    // any one of its bins - so it may not share a cache entry with one.
+    getStockDetail.mockResolvedValue({ product_id: 'prod-1', group: 'IB' });
+
+    const { result } = renderHook(() => useStockDetail('prod-1', null, ['line-a'], 'IB'), {
+      wrapper: wrapper(),
+    });
+
+    await waitFor(() =>
+      expect(getStockDetail).toHaveBeenCalledWith('prod-1', null, ['line-a'], 'IB'),
+    );
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(client.getQueryData([STOCK_DETAIL_KEY, 'prod-1', 'IB', 'line-a'])).toEqual({
+      product_id: 'prod-1',
+      group: 'IB',
     });
   });
 });

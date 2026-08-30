@@ -40,10 +40,22 @@
         "status": "short",
         "uncovered": 50,
         "bucket": "2026-09",
-        "assigned": [["on_hand:BRW-BB", 30]]
+        "assigned": [
+          [
+            "on_hand:BRW-BB",
+            30
+          ]
+        ],
+        "short_at_date": 50
       }
     ],
-    "months": [{ "key": "2026-09", "balance": -50, "tone": "red" }],
+    "months": [
+      {
+        "key": "2026-09",
+        "balance": -50,
+        "tone": "red"
+      }
+    ],
     "tba": 0,
     "undated": 0,
     "uncounted": []

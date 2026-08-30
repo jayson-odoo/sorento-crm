@@ -28,7 +28,7 @@ import { conversationSlaPagerQuery } from '../hooks/useConversationSLATracking';
 import { escalateConversationSLATracking, type ConversationSLATestOverridesBody } from '../services/conversationSLATrackingService';
 import { formatDateTime, formatDuration, formatDurationWithSeconds, parseDateTimeAsUTC } from '@/lib/helpers';
 import EventLogTable from './EventLogTable';
-import { CheckCircle, Clock, AlertCircle, RefreshCw, ChevronDown, ChevronRight, Info, ExternalLink, CalendarClock, UserCog, MessageSquare, TrendingUp } from 'lucide-react';
+import { CheckCircle, Clock, AlertCircle, RefreshCw, ChevronDown, ChevronRight, History, Info, ExternalLink, CalendarClock, UserCog, MessageSquare, TrendingUp } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import {
   Popover,
@@ -101,9 +101,9 @@ export default function ConversationSLATrackingDetail({
   // Delete lands where Back lands: the list page, sort, search and filters the
   // reader left, which the row click wrote into this URL.
   const backListHref = useBackToListHref(backHref);
-  // Everything a list row can do too, declared once (D15). Delete brings its own
-  // confirmation dialog, mounted with the actions below.
-  const { actions: sharedActions, dialogs: sharedDialogs } = useConversationSlaActions(
+  // Everything a list row can do too, declared once (D15). Delete asks nothing
+  // and hands its countdown back for the primary slot instead (D7).
+  const { actions: sharedActions, pending: sharedPending } = useConversationSlaActions(
     tracking,
     { onDeleted: () => router.push(backListHref) },
   );
@@ -310,24 +310,24 @@ export default function ConversationSLATrackingDetail({
       <div className="flex items-center justify-between">
         <div className="space-y-1">
           <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold">
+            <h2 className="text-2xl font-bold">
               Contact: {tracking.contact_phone || tracking.contact?.phone_number || '-'}
               {tracking.contact_name || tracking.contact?.name 
                 ? ` (${tracking.contact_name || tracking.contact?.name})` 
                 : ''}
-            </h1>
+            </h2>
             {tracking.is_resolved ? (
-              <Badge variant="success" appearance="ghost">
+              <Badge variant="success">
                 <CheckCircle className="size-3 mr-1" />
                 Resolved
               </Badge>
             ) : tracking.escalated_at ? (
-              <Badge variant="warning" appearance="ghost">
+              <Badge variant="warning">
                 <AlertCircle className="size-3 mr-1" />
                 Escalated
               </Badge>
             ) : (
-              <Badge variant="info" appearance="ghost">
+              <Badge variant="info">
                 <Clock className="size-3 mr-1" />
                 Pending
               </Badge>
@@ -354,7 +354,7 @@ export default function ConversationSLATrackingDetail({
                 }
               : undefined
           }
-          dialogs={sharedDialogs}
+          pendingAction={sharedPending}
           gear={
             /* Through the shared menu, not a raw DropdownMenu: `DetailActions`
                renders a `gear` node verbatim, so a raw one keeps whatever order
@@ -476,7 +476,7 @@ export default function ConversationSLATrackingDetail({
                 );
               }}
             >
-              Save
+              Save assignee
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -515,7 +515,7 @@ export default function ConversationSLATrackingDetail({
                 }
               }}
             >
-              Save
+              Save tier start
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -554,7 +554,7 @@ export default function ConversationSLATrackingDetail({
                 }
               }}
             >
-              Save
+              Save initiated time
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -666,7 +666,7 @@ export default function ConversationSLATrackingDetail({
                 );
               }}
             >
-              Confirm
+              Mark responded
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -744,7 +744,7 @@ export default function ConversationSLATrackingDetail({
                 );
               }}
             >
-              Confirm
+              Mark resolved
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -752,9 +752,15 @@ export default function ConversationSLATrackingDetail({
 
 
       <Tabs defaultValue="overview" className="w-full">
-        <TabsList variant="default">
-          <TabsTrigger value="overview">Overview</TabsTrigger>
-          <TabsTrigger value="event-log">Event Log</TabsTrigger>
+        <TabsList className="mb-4">
+          <TabsTrigger value="overview">
+            <Info />
+            <span>Overview</span>
+          </TabsTrigger>
+          <TabsTrigger value="event-log">
+            <History />
+            <span>Event Log</span>
+          </TabsTrigger>
         </TabsList>
 
         {/* Tab 1: Overview */}
@@ -945,9 +951,9 @@ export default function ConversationSLATrackingDetail({
                       <p className="text-sm text-muted-foreground">Is Responded</p>
                       <p className="font-medium">
                         {tracking.is_responded ? (
-                          <Badge variant="success" appearance="ghost">Yes</Badge>
+                          <Badge variant="success">Yes</Badge>
                         ) : (
-                          <Badge variant="secondary" appearance="ghost">No</Badge>
+                          <Badge variant="secondary">No</Badge>
                         )}
                       </p>
                     </div>
@@ -1008,9 +1014,9 @@ export default function ConversationSLATrackingDetail({
                       <p className="text-sm text-muted-foreground">Is Resolved</p>
                       <p className="font-medium">
                         {tracking.is_resolved ? (
-                          <Badge variant="success" appearance="ghost">Yes</Badge>
+                          <Badge variant="success">Yes</Badge>
                         ) : (
-                          <Badge variant="secondary" appearance="ghost">No</Badge>
+                          <Badge variant="secondary">No</Badge>
                         )}
                       </p>
                     </div>

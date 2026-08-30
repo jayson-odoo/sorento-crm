@@ -45,7 +45,6 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { StoreAdminCreateShippingLabelSheet } from '@/app/(protected)/store-admin/components/create-shipping-label-sheet/sheet';
 import { StoreAdminTrackShippingSheet } from '@/app/(protected)/store-admin/components/track-shipping-sheet';
@@ -817,10 +816,7 @@ export function AllPlanning() {
           </>
         </CardHeader>
         <CardTable>
-          <ScrollArea>
-            <DataGridTable />
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
+          <DataGridTable />
         </CardTable>
         <CardFooter>
           <DataGridPagination />

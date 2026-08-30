@@ -8,7 +8,6 @@ import { Card, CardHeader, CardTable, CardTitle, CardToolbar } from '@/component
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import type { AutocountChangeListRow } from '../../_shared/types/projectSalesOrder.types';
@@ -203,10 +202,7 @@ export function AmendmentAutocountChangeList({
               </p>
             </div>
           ) : (
-            <ScrollArea>
-              <DataGridTable />
-              <ScrollBar orientation="horizontal" />
-            </ScrollArea>
+            <DataGridTable />
           )}
         </CardTable>
       </Card>

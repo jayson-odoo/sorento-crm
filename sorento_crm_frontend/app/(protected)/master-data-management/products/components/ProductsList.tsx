@@ -35,7 +35,6 @@ import { buildSelectColumn, selectedRowIds } from '@/components/ui/data-grid-sel
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useProductFilters } from '../hooks/useProductFilters';
@@ -43,7 +42,6 @@ import { useProductCategorySelectQuery } from '../../shared/hooks/use-product-ca
 import { useBrandSelectQuery } from '../../shared/hooks/use-brand-select-query';
 import { CHAT_SEARCH_LABEL, chatSearchState, type ProductListItem } from '../types/product.types';
 import { bulkImportProducts, validateProductsImport } from '../services/productService';
-import ProductBulkDeleteDialog from './ProductBulkDeleteDialog';
 import ProductBulkChatSearchDialog from './ProductBulkChatSearchDialog';
 import { TemplateUploadDialog } from '@/components/template/TemplateUploadDialog';
 import { useImportJobDrawer } from '@/components/upload-activity';
@@ -55,6 +53,8 @@ import {
   encodeAdvancedFilter,
 } from '@/lib/listNavQuery';
 import { ProductRowActions } from '../actions';
+import { useDeferredBulkAction } from '@/hooks/useDeferredBulkAction';
+import { pendingEntityKey, usePendingEntityKeys } from '@/lib/pending-entity-store';
 import {
   fetchProductsPage,
   productsListQueryKey,
@@ -140,7 +140,6 @@ const ProductsList = () => {
   }, [searchParams, router, pathname]);
 
 
-  const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
   const [bulkChatSearchDialogOpen, setBulkChatSearchDialogOpen] = useState(false);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
@@ -299,6 +298,23 @@ const ProductsList = () => {
   // The whole row opens the record; the filters the grid does not know about
   // ride in this query string, and the pager rebuilds the list's key from both.
   const rowHref = (row: ProductListItem) => buildProductDetailUrl(row.id);
+
+  // A product whose deletion is counting down stays on the list, dimmed, until the
+  // window lapses - the toast holds the Cancel, and this says which row it is for.
+  const pendingKeys = usePendingEntityKeys();
+  const rowPending = (row: ProductListItem) =>
+    pendingKeys.has(pendingEntityKey('product', row.id));
+
+  // Delete selected asks nothing either (D7): one action per selected row, ONE
+  // countdown over them, one Cancel that withdraws the lot. Every selected row dims
+  // through the same `rowPending` a single delete uses.
+  const bulkDeletion = useDeferredBulkAction({
+    actionKey: 'product.delete',
+    entityType: 'product',
+    describe: (count) => `${count} product${count === 1 ? '' : 's'}`,
+    invalidateKeys: [['products']],
+    onStarted: () => setRowSelection({}),
+  });
 
   const columns = useMemo<ColumnDef<ProductListItem>[]>(
     () => [
@@ -705,12 +721,25 @@ const ProductsList = () => {
     product_status: selectedStatus && selectedStatus !== 'all' ? selectedStatus : undefined,
   });
 
+  // The one offer this listing makes, in both places it belongs: the
+  // toolbar, and the empty state's next step (S5-06).
+  const listPrimaryAction = (
+    <Button
+      disabled={isLoading}
+      onClick={() => router.push('/master-data-management/products/new')}
+    >
+      <Plus className="size-4" />
+      Create Product
+    </Button>
+  );
+
   return (
     <DataGrid
       table={table}
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
       rowHref={rowHref}
+      rowPending={rowPending}
       tableLayout={{
         columnsResizable: true,
         columnsPinnable: true,
@@ -720,6 +749,7 @@ const ProductsList = () => {
       tableClassNames={{
         edgeCell: 'px-5',
       }}
+      emptyAction={listPrimaryAction}
     >
       <Card>
         <CardHeader className="block">
@@ -828,15 +858,7 @@ const ProductsList = () => {
               filename: 'products_export.xlsx',
               getPayload: getExportPayload,
             }}
-            primaryAction={
-              <Button
-                disabled={isLoading}
-                onClick={() => router.push('/master-data-management/products/new')}
-              >
-                <Plus className="size-4" />
-                Create Product
-              </Button>
-            }
+            primaryAction={listPrimaryAction}
             secondaryActions={[
               {
                 key: 'advanced-filter',
@@ -871,7 +893,8 @@ const ProductsList = () => {
                 label: 'Delete',
                 icon: Trash2,
                 destructive: true,
-                onClick: () => setBulkDeleteDialogOpen(true),
+                onClick: () =>
+                  bulkDeletion.run(selectedRowIds(table).map((id) => ({ id }))),
               },
             ]}
           />
@@ -882,10 +905,7 @@ const ProductsList = () => {
           </div>
         ) : null}
         <CardTable>
-          <ScrollArea>
-            <DataGridTable />
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
+          <DataGridTable />
         </CardTable>
         <CardFooter>
           <DataGridPagination />
@@ -919,15 +939,6 @@ const ProductsList = () => {
         onOpenChange={setAdvancedFilterDialogOpen}
         initialFilter={advancedFilter}
         onApply={setAdvancedFilter}
-      />
-      <ProductBulkDeleteDialog
-        open={bulkDeleteDialogOpen}
-        onOpenChange={setBulkDeleteDialogOpen}
-        productIds={selectedRowIds(table)}
-        onSuccess={() => {
-          setRowSelection({});
-          queryClient.invalidateQueries({ queryKey: ['products'] });
-        }}
       />
       <ProductBulkChatSearchDialog
         open={bulkChatSearchDialogOpen}

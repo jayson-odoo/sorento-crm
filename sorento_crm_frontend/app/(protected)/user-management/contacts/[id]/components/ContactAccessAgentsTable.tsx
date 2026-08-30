@@ -15,7 +15,6 @@ import { CardContent } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiFetch } from '@/lib/api';
@@ -125,7 +124,7 @@ export default function ContactAccessAgentsTable({ contactId }: ContactAccessAge
         accessorKey: 'is_allowed',
         header: ({ column }) => <DataGridColumnHeader title="Allowed" column={column} />,
         cell: ({ row }) => (
-          <Badge variant={row.original.is_allowed ? 'success' : 'secondary'} appearance="ghost">
+          <Badge variant={row.original.is_allowed ? 'success' : 'secondary'}>
             {row.original.is_allowed ? 'Yes' : 'No'}
           </Badge>
         ),
@@ -225,11 +224,15 @@ export default function ContactAccessAgentsTable({ contactId }: ContactAccessAge
         {isLoading ? (
           <div className="text-center py-8 text-muted-foreground">Loading access agents...</div>
         ) : (
-          <DataGrid table={table} recordCount={data?.pagination.total || 0} isLoading={isLoading}>
-            <ScrollArea>
-              <DataGridTable />
-              <ScrollBar orientation="horizontal" />
-            </ScrollArea>
+          // A grant is edited in a lightbox and has no page of its own, so the
+          // row opens that lightbox (D3, second clause).
+          <DataGrid
+            table={table}
+            recordCount={data?.pagination.total || 0}
+            isLoading={isLoading}
+            onRowClick={handleEdit}
+          >
+            <DataGridTable />
           </DataGrid>
         )}
       </CardContent>

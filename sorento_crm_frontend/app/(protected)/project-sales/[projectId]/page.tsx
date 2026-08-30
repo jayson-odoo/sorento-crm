@@ -1,13 +1,7 @@
 import { Metadata } from 'next';
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
 import { Container } from '@/components/common/container';
+import { PageHeader } from '@/components/common/PageHeader';
+import { projectCrumbs } from '@/app/(protected)/project-sales/_shared/lib/crumbs';
 import RequireAccess from '@/app/components/common/RequireAccess';
 import BackToList from '@/components/common/BackToList';
 import { ProjectDetailClient } from './components/ProjectDetailClient';
@@ -28,26 +22,13 @@ export default async function ProjectDetailPage({
       <Container className="space-y-6">
         {/* Crumbs left, one Back right (D6, S3-01). The Back carries the pipeline's
             query string, so it returns to the page the reader left. */}
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <Breadcrumb>
-            <BreadcrumbList>
-              <BreadcrumbItem>
-                <BreadcrumbLink href="/">Home</BreadcrumbLink>
-              </BreadcrumbItem>
-              <BreadcrumbSeparator />
-              <BreadcrumbItem>
-                <BreadcrumbLink href="/project-sales/pipeline">
-                  Project Sales
-                </BreadcrumbLink>
-              </BreadcrumbItem>
-              <BreadcrumbSeparator />
-              <BreadcrumbItem>
-                <BreadcrumbPage>Project</BreadcrumbPage>
-              </BreadcrumbItem>
-            </BreadcrumbList>
-          </Breadcrumb>
-          <BackToList listPath="/project-sales/pipeline" label="Back to pipeline" />
-        </div>
+        <PageHeader
+          title="Project"
+          crumbs={projectCrumbs(projectId)}
+          actions={
+            <BackToList listPath="/project-sales/pipeline" label="Back to pipeline" />
+          }
+        />
         <ProjectDetailClient projectId={projectId} />
       </Container>
     </RequireAccess>

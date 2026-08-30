@@ -21,7 +21,6 @@ import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useAttachmentTypes } from '../hooks/useAttachmentTypes';
 import type { AttachmentType } from '../types/attachmentType.types';
@@ -143,12 +142,27 @@ export default function AttachmentTypesList() {
     enableRowSelection: true,
   });
 
+  // The one offer this listing makes, in both places it belongs: the
+  // toolbar, and the empty state's next step (S5-06).
+  const listPrimaryAction = (
+    <Button
+      onClick={() => {
+        setSelectedTypeId(null);
+        setIsFormDialogOpen(true);
+      }}
+    >
+      <Plus />
+      Create Attachment Type
+    </Button>
+  );
+
   return (
     <DataGrid
       table={table}
       tableLayout={{ columnsVisibility: true }}
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
+      emptyAction={listPrimaryAction}
     >
       <Card>
         <CardHeader className="block">
@@ -178,24 +192,11 @@ export default function AttachmentTypesList() {
             exportConfig={{ filename: 'attachment_types_export.xlsx' }}
             onRefresh={() => void refetch()}
             isRefreshing={isFetching && !isLoading}
-            primaryAction={
-              <Button
-                onClick={() => {
-                  setSelectedTypeId(null);
-                  setIsFormDialogOpen(true);
-                }}
-              >
-                <Plus />
-                Create Attachment Type
-              </Button>
-            }
+            primaryAction={listPrimaryAction}
           />
         </CardHeader>
         <CardTable>
-          <ScrollArea>
-            <DataGridTable />
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
+          <DataGridTable />
         </CardTable>
         <CardFooter>
           <DataGridPagination />

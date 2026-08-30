@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import {
   ColumnDef,
@@ -29,7 +29,6 @@ import {
   PopoverTrigger,
 } from '@/components/ui/popover';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useTenantModules } from '@/hooks/useTenantModules';
@@ -115,7 +114,16 @@ export default function PromotionsList() {
     advancedFilter: advancedFilter ?? undefined,
   });
 
+  // Skip the first run. A filter CHANGE should send the reader back to page 1,
+  // but on mount this effect fires anyway and stamps pageIndex 0 over the page
+  // `useListStateFromUrl` just restored, so Back from page 3 landed on page 1
+  // and the whole round trip was silently undone.
+  const filtersMounted = useRef(false);
   useEffect(() => {
+    if (!filtersMounted.current) {
+      filtersMounted.current = true;
+      return;
+    }
     setPagination((p) => ({ ...p, pageIndex: 0 }));
   }, [advancedFilter, filterStatus, filterAccessLevel, filterAttachmentState, expiryNotifyBatchId]);
 
@@ -245,7 +253,7 @@ export default function PromotionsList() {
         accessorKey: 'is_active',
         header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
         cell: ({ row }) => (
-          <Badge variant={row.original.is_active ? 'success' : 'secondary'} appearance="ghost">
+          <Badge variant={row.original.is_active ? 'success' : 'secondary'}>
             <BadgeDot />
             {row.original.is_active ? 'Active' : 'Inactive'}
           </Badge>
@@ -349,6 +357,15 @@ export default function PromotionsList() {
     compilePdf.mutate(ids, { onSuccess: () => setRowSelection({}) });
   };
 
+  // The one offer this listing makes, in both places it belongs: the
+  // toolbar, and the empty state's next step (S5-06).
+  const listPrimaryAction = (
+    <Button onClick={() => router.push('/marketing-management/promotions/new')}>
+      <Plus />
+      Create Promotion
+    </Button>
+  );
+
   return (
     <DataGrid
       table={table}
@@ -357,6 +374,7 @@ export default function PromotionsList() {
       isLoading={isLoading}
       rowHref={rowHref}
       standardToolbar={false}
+      emptyAction={listPrimaryAction}
     >
       <Card>
         <CardHeader className="block">
@@ -504,12 +522,7 @@ export default function PromotionsList() {
             }
             onRefresh={() => void refetch()}
             isRefreshing={isFetching && !isLoading}
-            primaryAction={
-              <Button onClick={() => router.push('/marketing-management/promotions/new')}>
-                <Plus />
-                Create Promotion
-              </Button>
-            }
+            primaryAction={listPrimaryAction}
             bulkActions={[
               {
                 key: 'compile-pdf',
@@ -545,10 +558,7 @@ export default function PromotionsList() {
           />
         </CardHeader>
         <CardTable>
-          <ScrollArea>
-            <DataGridTable />
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
+          <DataGridTable />
         </CardTable>
         <CardFooter>
           <DataGridPagination />

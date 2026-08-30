@@ -41,6 +41,14 @@ const NUMBER_COL = 'w-[88px] min-w-[88px] max-w-[88px]';
  * meeting THIS line would leave it with (`available_after_need`), which is also what the
  * "After borrow" column shows until a quantity is typed over it.
  *
+ * LADDER v7.1 (S3, AC-S3-11) changes what that order IS, and changes NOTHING here. Phase 2
+ * makes this list the same donors ladder step 2 (`order_borrow`) walks, in the same order -
+ * `(same_agent desc, required_date desc, same_group desc, same_warehouse desc)` (R4, R19): her
+ * own agent first, then the order that can wait longest, then the same ownership group, then
+ * the asker's own warehouse, because that is the fewest transfers. It is a SERVER ordering,
+ * which is the whole reason this dialog needs no code for it. The contract is stated once, in
+ * `services/fulfilmentPlanningService.ts`.
+ *
  * A SAME-AGENT donor takes one more thing (AC-L6, section 1c): the agent whose other order
  * is being drawn on is offered at ANY rank precisely because she can authorise it, so the
  * dialog asks who did. Free text, required only on that donor, and folded into the reason

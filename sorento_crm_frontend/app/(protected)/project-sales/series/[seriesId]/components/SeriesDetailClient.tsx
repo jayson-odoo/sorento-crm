@@ -4,18 +4,11 @@ import * as React from 'react';
 import { useRouter } from 'next/navigation';
 import { Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Container } from '@/components/common/container';
+import { PageHeader } from '@/components/common/PageHeader';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import RecordNavigation from '@/components/common/RecordNavigation';
 import { Input } from '@/components/ui/input';
@@ -24,12 +17,6 @@ import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
-import {
-  Toolbar,
-  ToolbarActions,
-  ToolbarHeading,
-  ToolbarTitle,
-} from '@/components/common/toolbar';
 import { useBrandSelectQuery } from '@/app/(protected)/master-data-management/shared/hooks/use-brand-select-query';
 import { useProductCategorySelectQuery } from '@/app/(protected)/master-data-management/shared/hooks/use-product-category-select-query';
 import { useProjectSeries, useSeriesMutations } from '../../../_shared/hooks/useProjects';
@@ -151,29 +138,12 @@ export function SeriesDetailClient({ seriesId }: { seriesId: string }) {
 
   return (
     <Container>
-      <Toolbar>
-        <ToolbarHeading>
-          <ToolbarTitle>{isNew ? 'New series' : row?.name || 'Series'}</ToolbarTitle>
-          <Breadcrumb>
-            <BreadcrumbList>
-              <BreadcrumbItem>
-                <BreadcrumbLink href="/">Home</BreadcrumbLink>
-              </BreadcrumbItem>
-              <BreadcrumbSeparator />
-              <BreadcrumbItem>
-                <BreadcrumbPage>Project Sales</BreadcrumbPage>
-              </BreadcrumbItem>
-              <BreadcrumbSeparator />
-              <BreadcrumbItem>
-                <BreadcrumbLink href="/project-sales/series">Series</BreadcrumbLink>
-              </BreadcrumbItem>
-            </BreadcrumbList>
-          </Breadcrumb>
-        </ToolbarHeading>
-        <ToolbarActions>
+      <PageHeader
+        title={isNew ? 'New series' : row?.name || 'Series'}
+        actions={
           <BackToList listPath="/project-sales/series" label="Back to series" />
-        </ToolbarActions>
-      </Toolbar>
+        }
+      />
 
       {/* The record's own actions: pager, gear, primary (D6). Step through the series
           without going back to the list, the way the users detail does; the whole

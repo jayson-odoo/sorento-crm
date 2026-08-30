@@ -20,7 +20,6 @@ import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 
 /**
@@ -65,8 +64,16 @@ export function PanelDataGrid<TRow extends object>({
   onExpandedChange,
   pageSize = 10,
 }: {
-  /** A plain heading, or a heading with an embedded link (e.g. the record's own number). */
-  title: React.ReactNode;
+  /**
+   * A plain heading, or a heading with an embedded link (e.g. the record's own number).
+   *
+   * OPTIONAL, for a grid already titled by what it opened from: the stock drill expands
+   * under a location row that names the product and the bin, and repeating that above the
+   * columns pushed the headers a line and a half away from the row they explain (captain,
+   * 30 August 2026). With no title, no toolbar and no search the card header is not
+   * rendered at all, so the column headers sit directly under that row.
+   */
+  title?: React.ReactNode;
   /** Filters, view switches and the Add button. Sits in the card header beside the title. */
   toolbar?: React.ReactNode;
   columns: ColumnDef<TRow>[];
@@ -186,27 +193,33 @@ export function PanelDataGrid<TRow extends object>({
       renderGroupHeader={renderGroupHeader as never}
     >
       <Card>
-        {/* flex-col until sm so a title and a toolbar never overlap at phone width. */}
-        <CardHeader className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <CardTitle className="min-w-0 break-words text-sm">{title}</CardTitle>
-          <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
-            {searchOf && (
-              <Input
-                type="search"
-                value={search}
-                onChange={(event) => {
-                  setSearch(event.target.value);
-                  // Back to page one: filtering while on page three shows an empty table.
-                  setPagination((current) => ({ ...current, pageIndex: 0 }));
-                }}
-                placeholder={searchPlaceholder ?? 'Search…'}
-                aria-label={searchPlaceholder ?? `Search ${title}`}
-                className="h-8 w-full sm:w-56"
-              />
-            )}
-            {toolbar}
-          </div>
-        </CardHeader>
+        {/* flex-col until sm so a title and a toolbar never overlap at phone width. Not
+            rendered at all when there is nothing to put in it, so a grid titled by the row
+            it expanded from starts at its own column headers. */}
+        {(title || toolbar || searchOf) && (
+          <CardHeader className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
+            {title ? (
+              <CardTitle className="min-w-0 break-words text-sm">{title}</CardTitle>
+            ) : null}
+            <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
+              {searchOf && (
+                <Input
+                  type="search"
+                  value={search}
+                  onChange={(event) => {
+                    setSearch(event.target.value);
+                    // Back to page one: filtering while on page three shows an empty table.
+                    setPagination((current) => ({ ...current, pageIndex: 0 }));
+                  }}
+                  placeholder={searchPlaceholder ?? 'Search…'}
+                  aria-label={searchPlaceholder ?? 'Search'}
+                  className="h-8 w-full sm:w-56"
+                />
+              )}
+              {toolbar}
+            </div>
+          </CardHeader>
+        )}
 
         <CardTable>
           {error ? (
@@ -234,10 +247,7 @@ export function PanelDataGrid<TRow extends object>({
               {emptyAction && <div className="mt-4 flex justify-center">{emptyAction}</div>}
             </div>
           ) : (
-            <ScrollArea>
-              <DataGridTable />
-              <ScrollBar orientation="horizontal" />
-            </ScrollArea>
+            <DataGridTable />
           )}
         </CardTable>
 

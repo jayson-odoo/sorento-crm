@@ -38,6 +38,7 @@ import {
   aiExtractFromFiles,
 } from '../lib/portal-client';
 import { canPreviewLocally, portalFetchBytes } from '../lib/portal-preview';
+import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 
 interface FieldDef {
   name: string;
@@ -438,44 +439,47 @@ export function AIExtractDialog({
                 </p>
               ) : (
                 <div className="rounded-md border border-border">
-                  <table className="w-full text-sm">
-                    <tbody>
-                      {remainingFieldEntries.map((f) => (
-                        <tr
-                          key={f.name}
-                          className="border-b border-border last:border-b-0"
-                          data-testid={`ai-extract-field-${f.name}`}
-                        >
-                          <td className="px-3 py-2 align-top text-muted-foreground w-44">
-                            {fieldsByName[f.name]?.label ?? f.label}
-                          </td>
-                          <td className="px-3 py-2 align-top">
-                            <span className="break-words">
-                              {Array.isArray(f.value) ? f.value.join(', ') : f.value}
-                            </span>
-                          </td>
-                          <td className="px-3 py-2 text-right align-top w-12">
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              aria-label={`Drop ${f.label}`}
-                              data-testid={`ai-extract-drop-${f.name}`}
-                              onClick={() =>
-                                setDiscarded((prev) => {
-                                  const next = new Set(prev);
-                                  next.add(f.name);
-                                  return next;
-                                })
-                              }
-                            >
-                              <X className="h-4 w-4" />
-                            </Button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                  <ScrollArea>
+                    <table className="w-auto min-w-full text-sm">
+                      <tbody>
+                        {remainingFieldEntries.map((f) => (
+                          <tr
+                            key={f.name}
+                            className="border-b border-border last:border-b-0"
+                            data-testid={`ai-extract-field-${f.name}`}
+                          >
+                            <td className="px-3 py-2 align-top text-muted-foreground w-44">
+                              {fieldsByName[f.name]?.label ?? f.label}
+                            </td>
+                            <td className="px-3 py-2 align-top">
+                              <span className="break-words">
+                                {Array.isArray(f.value) ? f.value.join(', ') : f.value}
+                              </span>
+                            </td>
+                            <td className="px-3 py-2 text-right align-top w-12">
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                aria-label={`Drop ${f.label}`}
+                                data-testid={`ai-extract-drop-${f.name}`}
+                                onClick={() =>
+                                  setDiscarded((prev) => {
+                                    const next = new Set(prev);
+                                    next.add(f.name);
+                                    return next;
+                                  })
+                                }
+                              >
+                                <X className="h-4 w-4" />
+                              </Button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    <ScrollBar orientation="horizontal" />
+                  </ScrollArea>
                 </div>
               )}
 
@@ -484,43 +488,46 @@ export function AIExtractDialog({
                   <div className="px-3 py-2 text-xs uppercase tracking-wide text-muted-foreground border-b border-border">
                     Line items ({result.products.length}) - will be applied to the items list
                   </div>
-                  <table
-                    className="w-full text-sm"
-                    data-testid="ai-extract-products-table"
-                  >
-                    <thead className="text-xs text-muted-foreground">
-                      <tr className="border-b border-border">
-                        <th className="px-3 py-1.5 text-left font-normal">Product code</th>
-                        <th className="px-3 py-1.5 text-right font-normal">Qty</th>
-                        {kind !== 'complaint' && (
-                          <>
-                            <th className="px-3 py-1.5 text-right font-normal">Unit price</th>
-                            <th className="px-3 py-1.5 text-right font-normal">Total</th>
-                            <th className="px-3 py-1.5 text-left font-normal">Notes</th>
-                          </>
-                        )}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {result.products.map((p, i) => (
-                        <tr
-                          key={i}
-                          className="border-b border-border last:border-b-0"
-                          data-testid={`ai-extract-product-row-${i}`}
-                        >
-                          <td className="px-3 py-2 align-top break-words">{p.product_code ?? '-'}</td>
-                          <td className="px-3 py-2 align-top text-right">{p.quantity ?? '-'}</td>
+                  <ScrollArea>
+                    <table
+                      className="w-full text-sm"
+                      data-testid="ai-extract-products-table"
+                    >
+                      <thead className="text-xs text-muted-foreground">
+                        <tr className="border-b border-border">
+                          <th className="px-3 py-1.5 text-left font-normal">Product code</th>
+                          <th className="px-3 py-1.5 text-right font-normal">Qty</th>
                           {kind !== 'complaint' && (
                             <>
-                              <td className="px-3 py-2 align-top text-right">{p.unit_price ?? '-'}</td>
-                              <td className="px-3 py-2 align-top text-right">{p.total ?? '-'}</td>
-                              <td className="px-3 py-2 align-top break-words">{p.notes ?? ''}</td>
+                              <th className="px-3 py-1.5 text-right font-normal">Unit price</th>
+                              <th className="px-3 py-1.5 text-right font-normal">Total</th>
+                              <th className="px-3 py-1.5 text-left font-normal">Notes</th>
                             </>
                           )}
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody>
+                        {result.products.map((p, i) => (
+                          <tr
+                            key={i}
+                            className="border-b border-border last:border-b-0"
+                            data-testid={`ai-extract-product-row-${i}`}
+                          >
+                            <td className="px-3 py-2 align-top break-words">{p.product_code ?? '-'}</td>
+                            <td className="px-3 py-2 align-top text-right">{p.quantity ?? '-'}</td>
+                            {kind !== 'complaint' && (
+                              <>
+                                <td className="px-3 py-2 align-top text-right">{p.unit_price ?? '-'}</td>
+                                <td className="px-3 py-2 align-top text-right">{p.total ?? '-'}</td>
+                                <td className="px-3 py-2 align-top break-words">{p.notes ?? ''}</td>
+                              </>
+                            )}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    <ScrollBar orientation="horizontal" />
+                  </ScrollArea>
                 </div>
               )}
 

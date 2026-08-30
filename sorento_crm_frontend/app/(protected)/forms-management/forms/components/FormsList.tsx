@@ -26,7 +26,6 @@ import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useForms } from '../hooks/useForms';
@@ -128,7 +127,7 @@ export default function FormsList() {
         accessorKey: 'form_type',
         header: ({ column }) => <DataGridColumnHeader title="Type" column={column} />,
         cell: ({ row }) => (
-          <Badge variant="outline" appearance="ghost" className="font-normal">
+          <Badge variant="outline" className="font-normal">
             <LookupBoundLabel
               table="forms"
               column="form_type"
@@ -174,7 +173,7 @@ export default function FormsList() {
         accessorKey: 'is_active',
         header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
         cell: ({ row }) => (
-          <Badge variant={row.original.is_active ? 'success' : 'secondary'} appearance="ghost">
+          <Badge variant={row.original.is_active ? 'success' : 'secondary'}>
             {row.original.is_active ? 'Active' : 'Inactive'}
           </Badge>
         ),
@@ -223,6 +222,15 @@ export default function FormsList() {
     enableColumnResizing: true,
   });
 
+  // The one offer this listing makes, in both places it belongs: the
+  // toolbar, and the empty state's next step (S5-06).
+  const listPrimaryAction = (
+    <Button onClick={() => router.push('/forms-management/forms/new')}>
+      <Plus />
+      Create Form
+    </Button>
+  );
+
   return (
     <DataGrid
       table={table}
@@ -231,6 +239,7 @@ export default function FormsList() {
       rowHref={rowHref}
       standardToolbar={false}
       tableLayout={{ columnsVisibility: true, columnsResizable: true }}
+      emptyAction={listPrimaryAction}
     >
       <Card>
         <CardHeader className="block">
@@ -290,12 +299,7 @@ export default function FormsList() {
             exportConfig={{ filename: 'forms_export.xlsx' }}
             onRefresh={() => void refetch()}
             isRefreshing={isFetching && !isLoading}
-            primaryAction={
-              <Button onClick={() => router.push('/forms-management/forms/new')}>
-                <Plus />
-                Create Form
-              </Button>
-            }
+            primaryAction={listPrimaryAction}
             bulkActions={[
               {
                 key: 'delete',
@@ -308,10 +312,7 @@ export default function FormsList() {
           />
         </CardHeader>
         <CardTable>
-          <ScrollArea>
-            <DataGridTable />
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
+          <DataGridTable />
         </CardTable>
         <CardFooter>
           <DataGridPagination />

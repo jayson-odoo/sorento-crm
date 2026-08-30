@@ -28,12 +28,11 @@ import { buildSelectColumn, selectedRowIds } from '@/components/ui/data-grid-sel
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { usePackingLists } from '../hooks/usePackingLists';
 import type { PackingList } from '../types/packingList.types';
 import { formatDate, formatDateTimeInMalaysia } from '@/lib/helpers';
-import { formatStatusLabel, getStatusBadgeVariant } from '@/lib/status-badge';
+import { formatStatusLabel } from '@/lib/status-badge';
 import PackingListDeleteDialog from './packing-list-delete-dialog';
 import PackingListBulkDeleteDialog from './PackingListBulkDeleteDialog';
 import ContainerStatusImportDialog from './ContainerStatusImportDialog';
@@ -260,7 +259,7 @@ export default function PackingListsList() {
         cell: ({ row }) => {
           const status = row.original.shipment_status;
           return (
-            <Badge variant={getStatusBadgeVariant(status)}>
+            <Badge status={status}>
               {formatStatusLabel(status)}
             </Badge>
           );
@@ -349,6 +348,19 @@ export default function PackingListsList() {
     manualFiltering: true,
   });
 
+  // The one offer this listing makes, in both places it belongs: the
+  // toolbar, and the empty state's next step (S5-06).
+  const listPrimaryAction = (
+    <Button
+      onClick={() =>
+        router.push('/procurement-management/packing-lists/new')
+      }
+    >
+      <Plus />
+      Create Packing List
+    </Button>
+  );
+
   return (
     <DataGrid
       table={table}
@@ -357,6 +369,7 @@ export default function PackingListsList() {
       rowHref={rowHref}
       standardToolbar={false}
       tableLayout={{ width: 'fixed', columnsVisibility: true, columnsResizable: true }}
+      emptyAction={listPrimaryAction}
     >
       <Card>
         <CardHeader className="block">
@@ -384,16 +397,7 @@ export default function PackingListsList() {
               </div>
             }
             exportConfig={{ filename: 'packing_lists_export.xlsx' }}
-            primaryAction={
-              <Button
-                onClick={() =>
-                  router.push('/procurement-management/packing-lists/new')
-                }
-              >
-                <Plus />
-                Create Packing List
-              </Button>
-            }
+            primaryAction={listPrimaryAction}
             secondaryActions={[
               // Two or more secondary actions collapse into the toolbar's "Actions"
               // dropdown, which is where the delivery order import lives. Refresh
@@ -436,10 +440,7 @@ export default function PackingListsList() {
           />
         </CardHeader>
         <CardTable>
-          <ScrollArea>
-            <DataGridTable />
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
+          <DataGridTable />
         </CardTable>
         <CardFooter>
           <DataGridPagination />

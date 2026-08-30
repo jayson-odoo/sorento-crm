@@ -4,11 +4,10 @@ import { Plus, Trash2 } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
-import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
+import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
 import { useBindings, useOptions, useSetBindingDefaultValue } from '../hooks/useLookupSets';
-import { removeBinding } from '../services/lookupSetService';
 import BindingAddDialog from './BindingAddDialog';
-import type { LookupBinding } from '../types/lookup.types';
+import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 
 const NO_DEFAULT = '__no_default__';
 
@@ -17,7 +16,18 @@ export default function BindingsSection({ setId }: { setId: string }) {
   const { data: options } = useOptions(setId);
   const setDefault = useSetBindingDefaultValue(setId);
   const [addOpen, setAddOpen] = useState(false);
-  const [deleting, setDeleting] = useState<LookupBinding | null>(null);
+  // Unbinding asks nothing (D7): a toast counts down for the reversible window
+  // and Cancel is the way back. The column's own data is untouched either way.
+  const unbind = useDeferredRowAction({
+    actionKey: 'lookup_binding.unlink',
+    entityType: 'lookup_binding',
+    verb: 'Removing',
+    successMessage: 'Binding removed',
+    invalidateKeys: [
+      ['lookup-sets', setId, 'bindings'],
+      ['lookup-eligibility'],
+    ],
+  });
 
   // "No default" + the set's active options. On a new form the FE pre-selects
   // the chosen option; existing values on edit are never overridden.
@@ -44,58 +54,60 @@ export default function BindingsSection({ setId }: { setId: string }) {
               Not yet bound to any field. Click &quot;Add binding&quot; to choose where this dropdown appears.
             </div>
           ) : (
-            <table className="table-fixed w-full text-sm">
-              <thead>
-                <tr className="text-left border-b">
-                  <th className="px-3 py-2">Table</th>
-                  <th className="px-3 py-2">Column</th>
-                  <th className="px-3 py-2 w-56">Default (new forms)</th>
-                  <th className="px-3 py-2 w-24 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {bindings!.map((b) => (
-                  <tr key={b.id} className="border-b">
-                    <td className="px-3 py-2">{b.table_label ?? b.table_name}</td>
-                    <td className="px-3 py-2">{b.column_label ?? b.column_name}</td>
-                    <td className="px-3 py-2">
-                      <SearchableSelect
-                        value={b.default_value ?? NO_DEFAULT}
-                        onChange={(next) =>
-                          setDefault.mutate({
-                            bindingId: b.id,
-                            default_value: next && next !== NO_DEFAULT ? next : null,
-                          })
-                        }
-                        options={selectOptions}
-                        placeholder="No default"
-                        emptyMessage="No options in this set yet."
-                        disabled={setDefault.isPending}
-                      />
-                    </td>
-                    <td className="px-3 py-2 text-right">
-                      <Button size="icon" variant="ghost" onClick={() => setDeleting(b)}>
-                        <Trash2 className="size-4" />
-                      </Button>
-                    </td>
+            <ScrollArea>
+              <table className="table-fixed w-full text-sm">
+                <thead>
+                  <tr className="text-left border-b">
+                    <th className="px-3 py-2">Table</th>
+                    <th className="px-3 py-2">Column</th>
+                    <th className="px-3 py-2 w-56">Default (new forms)</th>
+                    <th className="px-3 py-2 w-24 text-right">Actions</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {bindings!.map((b) => (
+                    <tr key={b.id} className="border-b">
+                      <td className="px-3 py-2">{b.table_label ?? b.table_name}</td>
+                      <td className="px-3 py-2">{b.column_label ?? b.column_name}</td>
+                      <td className="px-3 py-2">
+                        <SearchableSelect
+                          value={b.default_value ?? NO_DEFAULT}
+                          onChange={(next) =>
+                            setDefault.mutate({
+                              bindingId: b.id,
+                              default_value: next && next !== NO_DEFAULT ? next : null,
+                            })
+                          }
+                          options={selectOptions}
+                          placeholder="No default"
+                          emptyMessage="No options in this set yet."
+                          disabled={setDefault.isPending}
+                        />
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          aria-label={`Remove binding ${b.table_label ?? b.table_name}`}
+                          onClick={() =>
+                            unbind.run({
+                              id: b.id,
+                              subject: `${b.table_label ?? b.table_name} to ${b.column_label ?? b.column_name}`,
+                            })
+                          }
+                        >
+                          <Trash2 className="size-4" />
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <ScrollBar orientation="horizontal" />
+            </ScrollArea>
           )}
       </CardContent>
       <BindingAddDialog open={addOpen} onOpenChange={setAddOpen} setId={setId} />
-      {deleting && (
-        <ConfirmDeleteDialog
-          open={!!deleting}
-          onOpenChange={(o) => { if (!o) setDeleting(null); }}
-          title="Remove binding?"
-          description={`This will unbind ${deleting.table_label ?? deleting.table_name} → ${deleting.column_label ?? deleting.column_name}. Existing data is unaffected.`}
-          onDelete={() => removeBinding(setId, deleting.id)}
-          queryKeysToInvalidate={[['lookup-sets', setId, 'bindings'], ['lookup-eligibility']]}
-          onSuccess={() => setDeleting(null)}
-        />
-      )}
     </Card>
   );
 }

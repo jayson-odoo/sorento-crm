@@ -49,7 +49,6 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Switch } from '@/components/ui/switch';
 import {
   Tooltip,
@@ -386,7 +385,7 @@ const IPAddresses = () => {
         ),
         cell: ({ row }) => (
           <div className="text-center">
-            <Badge appearance="ghost">
+            <Badge>
               <BadgeDot className={row.original.status} />
             </Badge>
           </div>
@@ -650,10 +649,7 @@ const IPAddresses = () => {
           <Toolbar />
         </CardHeader>
         <CardTable>
-          <ScrollArea>
-            <DataGridTable />
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
+          <DataGridTable />
         </CardTable>
         <CardFooter>
           <DataGridPagination />

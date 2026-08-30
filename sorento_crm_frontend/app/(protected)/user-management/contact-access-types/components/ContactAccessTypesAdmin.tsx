@@ -331,6 +331,15 @@ export default function ContactAccessTypesAdmin() {
     getCoreRowModel: getCoreRowModel(),
   });
 
+  // The one offer this listing makes, in both places it belongs: the
+  // toolbar, and the empty state's next step (S5-06).
+  const listPrimaryAction = (
+    <Button onClick={openCreateType}>
+      <Plus className="size-4 mr-2" />
+      Add type
+    </Button>
+  );
+
   return (
     <div className="space-y-6">
       <DataGrid
@@ -339,18 +348,14 @@ export default function ContactAccessTypesAdmin() {
         isLoading={typesLoading}
         emptyMessage="No access types. Add one to get started."
         tableLayout={{ width: 'fixed', columnsVisibility: true }}
+        emptyAction={listPrimaryAction}
       >
         <Card>
           <CardHeader className="block">
             <DataGridListToolbar
               table={typeTable}
               exportConfig={{ filename: 'contact_access_types_export.xlsx' }}
-              primaryAction={
-                <Button onClick={openCreateType}>
-                  <Plus className="size-4 mr-2" />
-                  Add type
-                </Button>
-              }
+              primaryAction={listPrimaryAction}
             />
           </CardHeader>
           <CardContent>

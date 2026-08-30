@@ -19,14 +19,6 @@ import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { CheckCircle2, Loader2, Send } from 'lucide-react';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardHeading, CardTitle } from '@/components/ui/card';
 import {
@@ -40,14 +32,9 @@ import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import { Container } from '@/components/common/container';
+import { PageHeader } from '@/components/common/PageHeader';
 import DetailActions from '@/components/common/DetailActions';
 import { useOnboardingRequestActions } from '../../actions';
-import {
-  Toolbar,
-  ToolbarActions,
-  ToolbarHeading,
-  ToolbarTitle,
-} from '@/components/common/toolbar';
 import { PeopleGrid } from '@/components/common/onboarding/PeopleGrid';
 import {
   ONBOARDING_STATUS_LABELS,
@@ -94,27 +81,7 @@ function DetailShell({ children }: { children: React.ReactNode }) {
   return (
     <>
       <Container>
-        <Toolbar>
-          <ToolbarHeading>
-            <ToolbarTitle>Onboarding Request</ToolbarTitle>
-            <Breadcrumb>
-              <BreadcrumbList>
-                <BreadcrumbItem>
-                  <BreadcrumbLink href="/">Home</BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbPage>User Management</BreadcrumbPage>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbLink href={BASE_PATH}>Onboarding Requests</BreadcrumbLink>
-                </BreadcrumbItem>
-              </BreadcrumbList>
-            </Breadcrumb>
-          </ToolbarHeading>
-          {children}
-        </Toolbar>
+        <PageHeader title="Onboarding Request" actions={children} />
       </Container>
     </>
   );
@@ -134,8 +101,9 @@ export function OnboardingRequestDetail({ requestId }: { requestId: string }) {
   const requestQuery = useOnboardingRequest(requestId);
   const request = requestQuery.data;
 
-  // The set the list row renders too (D15). Delete brings its own confirmation.
-  const { actions, dialogs: actionDialogs } = useOnboardingRequestActions(
+  // The set the list row renders too (D15). Delete asks nothing and hands its
+  // countdown back for the primary slot instead (D7).
+  const { actions, pending: actionPending } = useOnboardingRequestActions(
     request
       ? {
           id: request.id,
@@ -174,9 +142,7 @@ export function OnboardingRequestDetail({ requestId }: { requestId: string }) {
     return (
       <>
         <DetailShell>
-          <ToolbarActions>
-            <BackToQueue />
-          </ToolbarActions>
+          <BackToQueue />
         </DetailShell>
         <Container>
           <div className="flex flex-col gap-4">
@@ -193,9 +159,7 @@ export function OnboardingRequestDetail({ requestId }: { requestId: string }) {
     return (
       <>
         <DetailShell>
-          <ToolbarActions>
-            <BackToQueue />
-          </ToolbarActions>
+          <BackToQueue />
         </DetailShell>
         <Container>
           <Alert variant="destructive">
@@ -213,9 +177,7 @@ export function OnboardingRequestDetail({ requestId }: { requestId: string }) {
   return (
     <>
       <DetailShell>
-        <ToolbarActions>
-          <BackToQueue />
-        </ToolbarActions>
+        <BackToQueue />
       </DetailShell>
 
       <Container>
@@ -248,6 +210,7 @@ export function OnboardingRequestDetail({ requestId }: { requestId: string }) {
                 }}
                 actions={actions}
                 gearLabel="Request actions"
+                pendingAction={actionPending}
                 primary={
                   <>
                   {canStartReview ? (
@@ -427,8 +390,6 @@ export function OnboardingRequestDetail({ requestId }: { requestId: string }) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
-      {actionDialogs}
     </>
   );
 }

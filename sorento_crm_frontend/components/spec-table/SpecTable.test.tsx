@@ -497,24 +497,25 @@ describe('removing, by name', () => {
     expect(screen.getByText('Reset')).toBeInTheDocument();
   });
 
-  it('removes behind a confirmation carrying "cannot be undone"', async () => {
+  // D7/S6-10: the menu item IS the action. The caller parks it on the server and
+  // the countdown in the toast is the way back, so this table opens no dialog and
+  // the two intents are told apart by WHICH callback fired, not by dialog copy.
+  it('removes on the first press, with no dialog in the way', async () => {
     const { callbacks } = renderTable();
     openMenu(screen.getByLabelText('More actions for Material'));
     fireEvent.click(screen.getByText('Remove'));
 
-    expect(screen.getByText('Confirm delete')).toBeInTheDocument();
-    expect(screen.getByText(/This action cannot be undone/)).toBeInTheDocument();
-    // The removal is durable: the copy says the value will not come back on its own.
-    expect(screen.getByText(/will not be filled in again/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: /^delete$/i }));
     await waitFor(() => expect(callbacks.onTombstone).toHaveBeenCalledWith('material'));
+    expect(callbacks.onRevert).not.toHaveBeenCalled();
+    expect(screen.queryByText('Confirm delete')).not.toBeInTheDocument();
   });
 
-  it('reverts behind its own confirmation', async () => {
+  it('resets on the first press, and is the other callback', async () => {
     const { callbacks } = renderTable();
     openMenu(screen.getByLabelText('More actions for Material'));
     fireEvent.click(screen.getByText('Reset'));
-    fireEvent.click(screen.getByRole('button', { name: /^delete$/i }));
+
     await waitFor(() => expect(callbacks.onRevert).toHaveBeenCalledWith('material'));
+    expect(callbacks.onTombstone).not.toHaveBeenCalled();
   });
 });
