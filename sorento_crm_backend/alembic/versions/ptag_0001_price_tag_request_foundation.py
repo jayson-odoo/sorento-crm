@@ -76,14 +76,20 @@ def upgrade() -> None:
         ),
     )
 
-    # Seed portal_form_types based on access type code patterns.
-    # Dealer-type codes get price_tag_request + stock_inquiry.
-    # Everything else preserves existing portal behaviour.
+    # Seed portal_form_types so the portal behaves exactly as it did before this
+    # branch: every access type keeps the forms its contacts already had.
+    #
+    # price_tag_request is granted to NOBODY here (D61a). A migration handing a
+    # new form to every dealer on the production database, picked out by a LIKE
+    # pattern, is a decision no person made. Granting it is an admin action on
+    # the access type row instead - see the Portal forms field on the Contact
+    # Access Types screen, and ptag_0003, which walks back the grant this
+    # statement used to write.
     conn = op.get_bind()
     conn.execute(
         sa.text("""
             UPDATE contact_access_types
-            SET portal_form_types = '["price_tag_request", "stock_inquiry"]'::jsonb
+            SET portal_form_types = '["stock_inquiry"]'::jsonb
             WHERE lower(code) LIKE '%dealer%'
         """)
     )
