@@ -2796,24 +2796,51 @@ describe('BoardCellBreakdownDialog: the Decision card', () => {
  * 375px (ADR-PRODUCT-STANDARDS: "usable and non-clipped at 375px AND 1280px").
  *
  * jsdom does no real layout, so what this pins is structural, not a measured pixel width:
- * the table lives inside `PanelDataGrid`'s own `ScrollArea` (`overflow-hidden` on the Radix
- * root, which is what makes its internal viewport scroll rather than the dialog clipping the
- * table), and nothing on the way to it carries a fixed pixel width that would force the
- * dialog itself wider than the viewport at 375px.
+ * the table lives inside the GRID'S OWN horizontal scrollport (`data-grid-scroller`,
+ * `overflow-x-auto`), it is the only scrollport on that axis, and nothing on the way up
+ * from it carries a fixed pixel width that would force the dialog itself wider than the
+ * viewport at 375px.
+ *
+ * It used to be `PanelDataGrid`'s Radix `ScrollArea`, and that wrapper was the bug. A
+ * second horizontal scrollport around the grid's own puts a `display: table` viewport
+ * between them; that viewport shrink-fits, so `data-grid-scroller` measured
+ * `scrollWidth === clientWidth` and never overflowed, while still swallowing the wheel
+ * gesture through `overscroll-x-contain`. 165 lists could not be scrolled sideways at all.
+ * The wrapper is gone; `components/ui/data-grid-scroller.inventory.test.ts` keeps it gone
+ * across the tree, and this asserts the shape the dialog ends up with.
  */
 describe('BoardCellBreakdownDialog: the table scrolls inside its own container at 375px', () => {
-  it('wraps the table in a ScrollArea, not a fixed-width box', () => {
+  it("puts the table in the grid's own scroller, with no second scrollport and no fixed-width box", () => {
     renderDialog([demand({ qty: '71' })], { 'BRW-BB': '71' });
 
-    const scrollArea = document.querySelector('[data-slot="scroll-area"]');
-    expect(scrollArea).not.toBeNull();
-    expect(scrollArea).toHaveClass('overflow-hidden');
+    const scroller = document.querySelector('[data-slot="data-grid-scroller"]');
+    expect(scroller).not.toBeNull();
+    expect(scroller).toHaveClass('overflow-x-auto');
+    // `min-w-0` is what lets the scroller be narrower than the table it holds: `CardTable`
+    // is a grid and `Card` a flex column, and an item of either defaults to
+    // `min-width: auto`, i.e. its min-content - which is the table's own min-width.
+    expect(scroller).toHaveClass('min-w-0');
 
-    // No fixed pixel width anywhere between the scroll area and the dialog's own root: a
-    // `w-[960px]` (Tailwind's own fixed-width syntax) or an inline `style.width` in px would
-    // force the dialog to overflow a 375px viewport rather than scrolling its table.
-    let node: Element | null = scrollArea;
+    // The table is inside that scroller, with no Radix viewport in between.
+    const table = document.querySelector('[data-slot="data-grid-table"]') as HTMLElement | null;
+    expect(table).not.toBeNull();
+    expect(scroller!.contains(table!)).toBe(true);
+    for (let node = table!.parentElement; node && node !== scroller; node = node.parentElement) {
+      expect(node.hasAttribute('data-radix-scroll-area-viewport')).toBe(false);
+    }
+
+    // Walking up from the scroller to the dialog's own root, two things must hold.
+    //
+    // No second horizontal scrollport ABOVE it - that is the wrapper this screen used to
+    // have, and it is what stopped the grid scrolling at all.
+    //
+    // And no fixed pixel width: a `w-[960px]` (Tailwind's own fixed-width syntax) or an
+    // inline `style.width` in px would force the dialog to overflow a 375px viewport rather
+    // than scrolling its table.
+    let node: Element | null = scroller;
     while (node) {
+      expect(node.getAttribute('data-slot')).not.toBe('scroll-area');
+      expect(node.hasAttribute('data-radix-scroll-area-viewport')).toBe(false);
       expect(node.className).not.toMatch(/\bw-\[\d+px\]/);
       const inlineWidth = (node as HTMLElement).style?.width ?? '';
       expect(inlineWidth).not.toMatch(/^\d+px$/);
