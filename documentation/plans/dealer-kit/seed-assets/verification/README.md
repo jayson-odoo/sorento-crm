@@ -386,3 +386,30 @@ clicks (Dealer Kit -> Room Designer -> Price Tag Requests). Request `PT-202608-0
   `DEALER_KIT_PRINT_BASE_URL`, so a render would have been pointed at `:3000` rather than
   `:3030`. Starting or restarting a worker was outside the brief. The document the printer reads
   was verified instead: it round-trips through Save and a reload with the designed layers intact.
+
+## Round 6, 30 Aug: preview is per block (D53)
+
+Lane `:3030` / `:8030`, logged in through the sign-in form, navigated from `/` by sidebar clicks
+(Dealer Kit -> Room Designer -> Tag Templates), then the row `Kitchen Sink - Combo`. That template
+is the case D41 could not serve: five groups, of which four are about a product (the main sink,
+`Group (8)`, and three unbound alternatives, `Group (5)` each) and one is the accessories strip,
+which carries an `included_accessories` slot but is written `binding: null`.
+
+| File | What it shows |
+|------|---------------|
+| `interaction-13-preview-lightbox-four-blocks.png` | "Preview with..." on a multi-block template opens `Preview with products` with exactly FOUR rows: `Group (8) - block 1 - Product code` and `Group (5) - block 2 / 3 / 4 - Product code`. The three identical alternatives are told apart by their ordinal, no row is named by an id, and the accessories strip is absent (D53, AC-M.22). |
+| `interaction-14-two-blocks-two-products.png` | Block 1 set to `CBF3612` and block 2 to `ACC-SRT1001`, then Apply. Each block resolves against its OWN product: the main block shows `CBF3612`, `380 x 330 x 400 mm`, `LP: RM 799` and `RM 799` with the product's photos, the first alternative shows `ACC-SRT1001`, `Sorento With fixing screw` and `RM 20`, and blocks 3 and 4 keep `PRODUCT CODE` / `Product name` / `Price TBC`. The chip reads `Previewing 2 of 4 blocks` (D53, AC-M.22). |
+| `interaction-15-inspector-previews-one-block.png` | The middle alternative selected from the Layers panel (inspector X 78.5 / Y 21, which is `alternative-b` in the seed) and previewed from the Inspector's own `Preview this block with...`. That block alone changed to `ACC-SRT2001` / `RM 150`, the Inspector's PREVIEW section now names it with a clear beside it, block 4 still reads `PRODUCT CODE` / `Price TBC`, and the chip counts `Previewing 3 of 4 blocks` (D53, AC-M.22). |
+| `interaction-16-chip-reopens-with-choices.png` | Clicking the chip reopens the same lightbox with the choices already in force shown in their rows (`CBF3612 - CBF3612`, `ACC-SRT1001 - ACC-SRT1001`), and `Clear all` beside Cancel and Apply (D53, AC-M.22). |
+| `interaction-17b-saved-while-previewing.png` | Save pressed while block 1 is previewing `CBF3612`: `PUT /api/v1/dealer-kit/tag-templates/39650995-...` returned 200 and the page toasted `Template saved` (D53, AC-M.22). |
+| `interaction-17-save-then-reload-still-unbound.png` | The same template after a full page reload: every block is back to `PRODUCT CODE` / `Product name` / `Price TBC` / `No image`, there is no chip, and the Layers panel still names the blocks `Group (n)`. The row in the database is unchanged too: all five group bindings are still `{}` (or `null` for the strip), no layer has a `text_override` and no image layer has a `source`. `updated_at` never moved off the seed's `2026-08-25 05:02:36`, because the document that was PUT was byte-identical to the one that was open (D53, AC-M.22). |
+| `interaction-18b-single-block-picker.png` / `interaction-18-single-block-unchanged.png` | `Kitchen Sink - Ala Carte`, which has ONE previewable block, is exactly as round 2 proved it: the single `Preview this template with` picker rather than the lightbox, and the chip `Previewing: CBF3612 - CBF3612` over a tag resolved end to end (photo, code, dimensions, spec, `LP: RM 799`, `RM 799`). Its X on the chip cleared the preview and the placeholders came back (D53, AC-M.22). |
+
+Both seeded templates were left as they were: `Kitchen Sink - Combo` still 50 layers with every
+binding `{}` or `null`, `Kitchen Sink - Ala Carte` still 14 layers and never saved in this round.
+
+**Known noise, not introduced here.** Radix logs `Missing 'Description' or
+'aria-describedby={undefined}' for {DialogContent}` for every dialog on this page.
+`ProductPickDialog` and `AssetPickerDialog` have always done so; the new
+`PreviewBlocksDialog` follows the same house pattern and adds one more instance of the same
+warning rather than a new kind of it.
