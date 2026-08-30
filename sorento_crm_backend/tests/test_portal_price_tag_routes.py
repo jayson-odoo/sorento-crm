@@ -231,6 +231,33 @@ class TestTheRouteThatServesTheRequest:
         assert body["lines"][0]["product_id"] == second
         assert body["lines"][0]["quantity"] == 4
 
+    def test_lines_keep_the_order_they_were_posted_in(self, client):
+        """The row a refusal names (`line:<index>`) must be the row on screen.
+
+        The form posts the table in order and sends no `sort_order`; a schema
+        default of 0 gave every line the same one and the order came back at
+        Postgres's discretion.
+        """
+        c, db, _ = client
+        first = _seed_product(db)
+        second = _seed_product(db)
+        third = _seed_product(db)
+        created = c.post(
+            _BASE,
+            json={
+                "lines": [
+                    {"line_type": "product", "product_id": first},
+                    {"line_type": "product", "product_id": second},
+                    {"line_type": "product", "product_id": third},
+                ]
+            },
+        ).json()
+
+        body = c.get(f"{_BASE}/{created['id']}").json()
+
+        assert [l["product_id"] for l in body["lines"]] == [first, second, third]
+        assert [l["sort_order"] for l in body["lines"]] == [0, 1, 2]
+
     def test_a_draft_can_be_deleted(self, client):
         c, db, _ = client
         product_id = _seed_product(db)

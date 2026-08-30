@@ -674,6 +674,22 @@ Two further findings from reading the same path:
 | D48c | **A draft is a real record: it saves, it lists, it reopens, and it can be deleted.** After a draft save the form routes to the portal landing filtered to the kind, where the row reads Draft (`portal_draft_at`). Reopening it loads the partial state - a null debtor is an empty select, a null date an empty date input - and the form is editable because it is a draft, which is `portal_draft_at`, not `status === 'draft'` (a draft's status is `new`; the old check was against a status that never exists and would have shown a read-only page). Save on an already-saved draft UPDATES it instead of creating a second one, lines included. Delete draft is offered on the draft's own form behind an `AlertDialog`, exactly as `SubmissionForm` offers it for the legacy kinds, and hard-deletes the request with its lines. |
 | D49 | **The price tag router is mounted before the generic portal router, and the two routes it was missing are added.** Mount order is the whole fix for the shadowing: `portal_price_tag.router` declares only literal `price_tag_request` and `price-tag-*` paths, so putting it first captures exactly the requests meant for it and leaves every legacy path with the generic handler. `price_tag_request` stays in `SUPPORTED_TYPES` (the attachment helpers and the visibility service read that list) - the ordering, not the list, is what decides who serves the request. Added beside it: `GET /submissions/price_tag_request/{id}`, answering the same body the CRM detail route does (lines resolved to code, name and both prices through `tag_data_service`, so the portal and the print payload cannot disagree), and `DELETE /submissions/price_tag_request/{id}` for a draft only. The line resolution helper moves from the CRM route module into `PriceTagRequestService` so both routes call the one implementation. |
 
+### Found while proving it, on the lane
+
+- **Every line came back with `sort_order` 0.** `PriceTagRequestLineCreate.sort_order` defaulted to
+  `0` and the portal sends no sort order at all, so `line_data.get("sort_order", idx)` never reached
+  its fallback and the relationship's `order_by(sort_order)` returned the lines in whatever order
+  Postgres liked. The row a refusal names has to be the row on screen, so the field is now
+  `Optional[int] = None` and the position fills it. Fixed here, tested.
+- **The set guard cannot see a product outside the caller's company scope, and passes in silence.**
+  On the lane, `CBF66406` is a Bathroom Furniture product belonging to company MOCHA while the portal
+  contact's scope is Sorento, so `db.query(Product)` returns nothing and the line submits ala carte;
+  the same request refuses correctly for `SRTBF11721`, which is Sorento's. Not caused by this round
+  and not fixed in it: the guard has never actually run in production (the route it lives on was
+  shadowed), and the fix is a decision about which company a portal price tag request and its
+  catalogue belong to, which is the captain's to make. The same scope explains the blank `code` and
+  `name` on a Mocha line in the detail body.
+
 ### What is deliberately NOT built
 
 - No structured (JSON) error body. `AppException.detail` is a string in this codebase and one

@@ -21,7 +21,11 @@ class PriceTagRequestLineCreate(BaseModel):
     quantity: int = Field(default=1, ge=1)
     alternatives: list[dict] = Field(default_factory=list)
     included_accessories: Optional[str] = None
-    sort_order: int = 0
+    # None, not 0: the portal posts the table in order and sends no sort_order,
+    # and a default of 0 gave EVERY line the same one, so the relationship's
+    # `order_by(sort_order)` returned them in whatever order Postgres liked. The
+    # row a refusal names (`line:<index>`) has to be the row the salesperson sees.
+    sort_order: Optional[int] = None
 
 
 class PriceTagRequestLineUpdate(BaseModel):

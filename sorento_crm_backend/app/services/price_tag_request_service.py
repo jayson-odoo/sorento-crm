@@ -131,7 +131,9 @@ class PriceTagRequestService:
 
     @staticmethod
     def _add_lines(db: Session, request: PriceTagRequest, lines: list[dict]) -> None:
+        """Append lines in the order given, which is the order the form shows."""
         for idx, line_data in enumerate(lines):
+            sort_order = line_data.get("sort_order")
             db.add(
                 PriceTagRequestLine(
                     request_id=request.id,
@@ -142,7 +144,7 @@ class PriceTagRequestService:
                     quantity=line_data.get("quantity", 1),
                     alternatives=line_data.get("alternatives", []),
                     included_accessories=line_data.get("included_accessories"),
-                    sort_order=line_data.get("sort_order", idx),
+                    sort_order=idx if sort_order is None else sort_order,
                 )
             )
 
