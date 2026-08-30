@@ -190,9 +190,23 @@ together. One card listing every column the entity has is banned.
   both configurable in System Settings > General - even if the tab has been closed, and Escape
   does not cancel it. Never `confirm()`. `ConfirmDeleteDialog` and a destructive `AlertDialog` are
   retired for this - a new importer of either is a defect, not a style choice.
-- **The one exception is a bulk action on a multi-row selection** (e.g. "Delete selected (12)"):
-  a grace-window countdown names and dims ONE record, and a selection has no single record for it
-  to name, so a bulk delete keeps a confirmation dialog whose copy includes the count.
+- **The deliberate carve-outs, each with the reason it cannot move to the deferred model today:**
+  - **A bulk action on a multi-row selection** (e.g. "Delete selected (12)"): a grace-window
+    countdown names and dims ONE record, and a selection has no single record for it to name, so
+    a bulk delete keeps a confirmation dialog whose copy includes the count.
+  - **Token-scoped surfaces** - `components/common/onboarding/PeopleGrid.tsx` and the portal
+    ticket-draft confirm in `app/(auth)/portal/components/SubmissionForm.tsx` - run outside the
+    authenticated session the deferred-action route (`POST /pending-actions`) requires, so there
+    is no session for the server to defer the commit against.
+  - **`components/reports/ReportViewsMenu.tsx`**: the destructive action there is a request-time
+    grant check, not a stored record with an id the pending-actions registry can hold a row for.
+  - **The 22 `project-sales` files** still on `ConfirmDeleteDialog` or a destructive `AlertDialog`:
+    `project-sales` authorises per RECORD (`assert_can_edit_project`) rather than by a static
+    permission slug, and `FormAction` cannot express that check at commit time yet - see S6-10 in
+    the Apple Alignment UAC for the trigger that moves them.
+
+  A new importer of `ConfirmDeleteDialog` or a destructive `AlertDialog` outside this named list is
+  a defect, not a style choice.
 - **No soft delete under the name "delete":** Do not use `is_deleted`, `deleted_at`, or similar for the primary delete action.
 
 ### Archive Policy
@@ -288,4 +302,4 @@ Backend API
 ## References
 - Plan: `product-ux-standards` (Cursor plan)
 - Backend error contract: `documentation/BACKEND-API-CONTRACT.md` (to be created)
-- Frontend scaffolds: `components/common/` (ListPageToolbar, FormDialogScaffold, ConfirmDeleteDialog)
+- Frontend scaffolds: `components/common/` (ListPageToolbar, FormDialogScaffold)

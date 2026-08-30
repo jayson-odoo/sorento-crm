@@ -193,6 +193,7 @@ export default function ContactsList() {
               }}
               disabled={bulkSyncMutation.isPending || syncContactMutation.isPending}
               title="Sync from Respond.io"
+                    aria-label="Sync from Respond.io"
             >
               <RefreshCw
                 className={`size-4 ${

@@ -141,12 +141,24 @@ const eslintConfig = [
   },
   {
     // Apple Alignment S9-01: text-[Npx] is an error everywhere except the vendor
-    // Metronic demo shell (`layouts/demo*`) and the unused starter-kit `partials/`
-    // tree (S5-01 already exempted the same paths from the PageHeader sweep for the
-    // same reason - no page of ours renders them).
+    // Metronic demo shell (`layouts/demo2` through `demo10`) and the unused
+    // starter-kit `partials/` tree (S5-01 already exempted the same paths from
+    // the PageHeader sweep for the same reason - no page of ours renders them).
+    // `demo1` is NOT in this ignore: it is `Demo1Layout`, the one
+    // `app/(protected)/layout.tsx` actually mounts (see the a11y guardrail
+    // inventory's own note on this), so its offending files go in the dated
+    // debt list below instead of being exempted outright.
     files: ['**/*.{ts,tsx}'],
     ignores: [
-      'app/components/layouts/demo*/**',
+      'app/components/layouts/demo2/**',
+      'app/components/layouts/demo3/**',
+      'app/components/layouts/demo4/**',
+      'app/components/layouts/demo5/**',
+      'app/components/layouts/demo6/**',
+      'app/components/layouts/demo7/**',
+      'app/components/layouts/demo8/**',
+      'app/components/layouts/demo9/**',
+      'app/components/layouts/demo10/**',
       'app/components/partials/**',
       // Test fixtures that deliberately contain the banned string as an example
       // of what the rule catches (S9-01's own "the rule fires" proof).
@@ -237,6 +249,13 @@ const eslintConfig = [
       'app/(protected)/user-management/teams/components/team-member-popover.tsx',
       'app/(public)/c/*/supplier-request/*/page.tsx',
       'app/components/common/AIAssistantBubble.tsx',
+      // demo1 is `Demo1Layout` (the mounted shell, not exempted above like
+      // demo2-10), so these four go through the same measured-debt door as
+      // everything else in this list rather than an ignore.
+      'app/components/layouts/demo1/components/header.tsx',
+      'app/components/layouts/demo1/components/mega-menu-mobile.tsx',
+      'app/components/layouts/demo1/components/quick-access-block.tsx',
+      'app/components/layouts/demo1/components/sidebar-menu.tsx',
       'components/common/ActivitiesNotesPanel/EntityActivitiesLayout.tsx',
       'components/common/ActivitiesNotesPanel/index.tsx',
       'components/common/RespondChatList.tsx',

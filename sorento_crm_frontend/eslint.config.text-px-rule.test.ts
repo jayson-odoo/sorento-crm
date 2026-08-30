@@ -71,9 +71,13 @@ describe('S9-01 - text-[Npx] guardrail is scoped correctly in eslint.config.mjs'
       (c as { rules?: Record<string, unknown> }).rules?.['local/no-px-text-class'] === 'error',
   ) as { ignores?: string[] } | undefined;
 
-  it('the error-level config object exists and exempts the demo layout and partials trees', () => {
+  it('the error-level config object exists and exempts the demo2-10 layouts and partials trees', () => {
     expect(enabling).toBeTruthy();
-    expect(enabling?.ignores).toContain('app/components/layouts/demo*/**');
+    // demo1 is the mounted shell (`Demo1Layout`), not exempted here - its
+    // offending files go through the pre-existing-debt list instead (S9-01).
+    expect(enabling?.ignores).not.toContain('app/components/layouts/demo1/**');
+    expect(enabling?.ignores).toContain('app/components/layouts/demo2/**');
+    expect(enabling?.ignores).toContain('app/components/layouts/demo10/**');
     expect(enabling?.ignores).toContain('app/components/partials/**');
   });
 

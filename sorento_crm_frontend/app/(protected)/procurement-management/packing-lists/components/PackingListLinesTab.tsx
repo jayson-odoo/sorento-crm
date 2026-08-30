@@ -312,7 +312,7 @@ export function PackingListLinesTab() {
                 size="sm"
                 className="h-8 w-8"
                 onClick={() => setSearch('')}
-                aria-label="Close"
+                aria-label="Clear search"
               >
                 <X className="size-4" />
               </Button>

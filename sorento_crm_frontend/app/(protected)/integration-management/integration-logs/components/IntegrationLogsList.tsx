@@ -210,7 +210,7 @@ export default function IntegrationLogsList() {
                   });
                 }}
                 disabled={retryMutation.isPending}
-                aria-label="Refresh"
+                aria-label="Retry"
               >
                 <RefreshCw className="size-4" />
               </Button>

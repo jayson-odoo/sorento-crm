@@ -675,7 +675,7 @@ const UserList = () => {
                           ]}
                         />
                       )}
-                      <Button type="button" mode="icon" variant="ghost" onClick={() => removeCondition(cond.id)} aria-label="Delete user">
+                      <Button type="button" mode="icon" variant="ghost" onClick={() => removeCondition(cond.id)} aria-label="Remove filter condition">
                         <Trash2 className="size-4" />
                       </Button>
                     </div>

@@ -419,7 +419,7 @@ export default function SPOAllocationsList() {
                       onClick={expandAll}
                       disabled={groupedData.length === 0}
                       title="Expand all"
-                      aria-label="Expand row"
+                      aria-label="Expand all groups"
                     >
                       <ChevronsUpDown className="size-4" />
                     </Button>
@@ -430,7 +430,7 @@ export default function SPOAllocationsList() {
                       onClick={collapseAll}
                       disabled={expandedGroups.size === 0}
                       title="Collapse all"
-                      aria-label="Collapse row"
+                      aria-label="Collapse all groups"
                     >
                       <ChevronsDownUp className="size-4" />
                     </Button>

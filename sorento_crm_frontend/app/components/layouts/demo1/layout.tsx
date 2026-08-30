@@ -56,7 +56,7 @@ export function Demo1Layout({ children }: { children: ReactNode }) {
     <ModuleRouteGuard>
       <a
         href="#main"
-        className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:start-2 focus:z-(--z-modal) focus:rounded-md focus:bg-background focus:px-4 focus:py-2 focus:text-sm focus:font-medium focus:text-foreground focus:shadow-lg focus:outline-none focus:ring-2 focus:ring-ring"
+        className="sr-only focus:not-sr-only focus:fixed focus:top-[calc(var(--impersonation-banner-height,0px)+0.5rem)] focus:start-2 focus:z-(--z-modal) focus:rounded-md focus:bg-background focus:px-4 focus:py-2 focus:text-sm focus:font-medium focus:text-foreground focus:shadow-lg focus:outline-none focus:ring-2 focus:ring-ring"
       >
         Skip to main content
       </a>
@@ -69,7 +69,7 @@ export function Demo1Layout({ children }: { children: ReactNode }) {
       <div className="wrapper flex grow flex-col min-w-0">
         <Header />
 
-        <main id="main" className="grow pt-5 min-w-0">
+        <main id="main" tabIndex={-1} className="grow pt-5 min-w-0">
           {children}
         </main>
 

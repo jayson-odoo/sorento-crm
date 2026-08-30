@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { Check, Copy, TriangleAlert } from 'lucide-react';
+import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -40,10 +41,18 @@ export function IssuedKeyDialog({
   if (!issued) return null;
 
   const copy = async () => {
-    await navigator.clipboard.writeText(issued.key);
-    setCopied(true);
-    setAcknowledged(true);
-    setTimeout(() => setCopied(false), 2000);
+    try {
+      await navigator.clipboard.writeText(issued.key);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Clipboard write can fail (permission denied, insecure context, etc).
+      // The key is still visible and selectable in the dialog, so let the
+      // user copy it by hand instead of trapping them behind the guard.
+      toast.error('Could not copy automatically. Select the key and copy it manually.');
+    } finally {
+      setAcknowledged(true);
+    }
   };
 
   const close = () => {

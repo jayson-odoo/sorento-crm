@@ -32,7 +32,10 @@ Before merging, verify compliance with [ADR-PRODUCT-STANDARDS.md](./ADR-PRODUCT-
 - [ ] DataGrid rows use `rowHref` (or `onRowClick` for a lightbox-edited record); log and
       sub-tables carry no pointer cursor and no row action
 - [ ] No confirm dialogs on a destructive or detach action - the grace-window/deferred-action
-      model (D7) is used instead; see "Delete / Archive" above
+      model (D7) is used instead; see "Delete / Archive" above. The only exceptions are the
+      carve-outs `ADR-PRODUCT-STANDARDS.md` section 2 names (bulk selection, `PeopleGrid`, the
+      portal ticket-draft confirm, `ReportViewsMenu`, the 22 `project-sales` files awaiting the
+      `FormAction` auth-callback follow-up) - a confirm dialog anywhere else is a defect
 - [ ] The page renders exactly one `PageHeader` (no hand-rolled `<h1>`, no `ToolbarTitle`)
 - [ ] Tab strips use `variant="line"` (the default) unless they are a two/three-option
       segmented switch, which pins `variant="default"` explicitly

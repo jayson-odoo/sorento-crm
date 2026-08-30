@@ -140,7 +140,7 @@ export default function SmartLinkageList() {
                   });
                 }}
                 disabled={retryMutation.isPending}
-                aria-label="Refresh"
+                aria-label="Retry"
               >
                 <RefreshCw className="size-4" />
               </Button>

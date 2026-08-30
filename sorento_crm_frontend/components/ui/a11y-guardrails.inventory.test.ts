@@ -189,6 +189,12 @@ describe('Icon-button labels (S9-02)', () => {
         // asChild delegates the rendered element (and its aria-label) to its
         // single child - Radix Slot merges the Button's own props onto it.
         if (tag.includes('asChild') && children.includes('aria-label')) continue;
+        // A numbered pager button (`data-grid-pagination.tsx`) renders its own
+        // page number as visible text, so the number itself is the accessible
+        // name - an `aria-label` would duplicate it under a different string
+        // (VoiceOver reads "Page 4", `getByRole('button', { name: '4' })`
+        // cannot find it). `aria-current="page"` marks the active one instead.
+        if (tag.includes('aria-current')) continue;
         offenders.push(`${file}: ${tag.slice(0, 120).replace(/\s+/g, ' ')}`);
       }
     }
@@ -246,10 +252,9 @@ describe('Focus rings on the S9-02 outline-none sweep (S9-02)', () => {
     { file: 'components/common/conversation/ConversationSearchBar.tsx', needle: 'focus-visible:ring-2 focus-visible:ring-ring' },
     { file: 'components/common/AttachmentPreviewModal.tsx', needle: 'focus-visible:ring-2 focus-visible:ring-ring' },
     { file: 'components/ui/rich-text-editor.tsx', needle: 'focus-within:ring-2 focus-within:ring-ring' },
-    { file: 'components/ui/data-grid-pagination.tsx', needle: 'aria-label={`Page ${i + 1}`}' },
   ];
 
-  it('each fixed site still carries its ring (or, for the pager, its label)', () => {
+  it('each fixed site still carries its ring', () => {
     for (const { file, needle } of RING_FIXED) {
       const src = fs.readFileSync(file, 'utf8');
       expect(src, file).toContain(needle);

@@ -80,7 +80,7 @@ opinion. Running a step in the wrong seat is a process violation.
    issue that contradicts the UAC loses. Defer-items go to `documentation/backlogs/backlog.md`.
 2. **Component-library discipline** - reuse first; a new variant = add a prop/mode to the shared
    component, never a parallel one-off. (`extractApiError`, `buildDataGridParams`,
-   `userSelectService`, `ConfirmDeleteDialog`, `DataGrid`, mutation-hook factories.)
+   `userSelectService`, `DataGrid`, mutation-hook factories.)
 3. **Phase 1 - Frontend-first (mock).** UI → hook → service → **mock**. Tune every state
    (loading / empty / error / partial / success) with no backend running. Verify in a real
    browser (agent-browser headless, sidebar-click nav). Document the expected API contract. NO tests yet
@@ -235,6 +235,13 @@ the same axis as the module decision - not a separate schema axis.
 Raw SQL / DB query in a router · a React component calling axios/fetch directly · duplicated
 `extractApiError`/`buildDataGridParams`/user-select · a delete or destructive/detach action wired
 to a confirmation dialog instead of the deferred-action grace window (D7), or to native `confirm()`
+- **except the deliberate carve-outs `ADR-PRODUCT-STANDARDS.md` section 2 names**: a bulk action
+on a multi-row selection (no single record for the countdown to name); token-scoped surfaces
+(`PeopleGrid`, the portal ticket-draft confirm) that run outside the authenticated session the
+deferred-action route needs; `ReportViewsMenu` (a request-time grant, not a stored record); and
+the 22 `project-sales` files still on `ConfirmDeleteDialog`/a destructive `AlertDialog`, kept until
+`FormAction` can carry a record-level authorisation callback (see S6-10 in the Apple Alignment UAC
+for the trigger) - a new importer of either outside that named list is still a defect
 · a soft-delete named "delete" · a hidden empty section on a detail page · a hand-rolled
 `<table className="table-fixed">` (use shared `DataGrid`) · a "done" slice still serving a mock ·
 a new column/engine with no backfill for existing rows · a new permission with no existing-role

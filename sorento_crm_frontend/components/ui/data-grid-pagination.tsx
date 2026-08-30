@@ -83,7 +83,6 @@ function DataGridPagination(props: DataGridPaginationProps) {
           size="sm"
           mode="icon"
           variant="ghost"
-          aria-label={`Page ${i + 1}`}
           aria-current={pageIndex === i ? 'page' : undefined}
           className={cn(btnBaseClasses, 'text-muted-foreground', {
             'bg-accent text-accent-foreground': pageIndex === i,

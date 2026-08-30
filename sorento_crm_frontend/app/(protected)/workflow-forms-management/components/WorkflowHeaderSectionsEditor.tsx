@@ -151,7 +151,7 @@ function KanbanSectionsBody({
                           size="icon"
                           variant="ghost"
                           onClick={() => onRemoveField(sectionId, f.id)}
-                          aria-label="Delete section"
+                          aria-label="Delete field"
                         >
                           <Trash2 className="size-4 text-destructive" />
                         </Button>
