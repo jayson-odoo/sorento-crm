@@ -1,4 +1,4 @@
-import { CSSProperties, useId } from 'react';
+import { CSSProperties, useId, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { useDataGrid } from '@/components/ui/data-grid';
 import {
@@ -17,7 +17,9 @@ import {
 } from '@/components/ui/data-grid-table';
 import {
   closestCenter,
+  defaultDropAnimation,
   DndContext,
+  DragOverlay,
   KeyboardSensor,
   MouseSensor,
   TouchSensor,
@@ -25,6 +27,7 @@ import {
   useSensor,
   useSensors,
   type DragEndEvent,
+  type DragStartEvent,
 } from '@dnd-kit/core';
 import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
@@ -78,15 +81,35 @@ function DataGridTableDndRows<TData>({
 }) {
   const { table, isLoading, props } = useDataGrid();
   const pagination = table.getState().pagination;
+  const [activeRow, setActiveRow] = useState<Row<TData> | null>(null);
 
-  const sensors = useSensors(useSensor(MouseSensor, {}), useSensor(TouchSensor, {}), useSensor(KeyboardSensor, {}));
+  // Same activation constraint as the column reorderer (data-grid-table-dnd.tsx,
+  // S8-06): without one, the handle started a drag on the very first pixel of
+  // movement, so a click that merely twitched a little read as a reorder.
+  const sensors = useSensors(
+    useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 150, tolerance: 5 } }),
+    useSensor(KeyboardSensor, {}),
+  );
+
+  const handleDragStart = (event: DragStartEvent) => {
+    const row = table.getRowModel().rows.find((r) => r.id === event.active.id);
+    setActiveRow(row ?? null);
+  };
+
+  const handleDragEndInternal = (event: DragEndEvent) => {
+    setActiveRow(null);
+    handleDragEnd(event);
+  };
 
   return (
     <DndContext
       id={useId()}
       collisionDetection={closestCenter}
       modifiers={[restrictToVerticalAxis]}
-      onDragEnd={handleDragEnd}
+      onDragStart={handleDragStart}
+      onDragEnd={handleDragEndInternal}
+      onDragCancel={() => setActiveRow(null)}
       sensors={sensors}
     >
       <div className="relative">
@@ -139,6 +162,30 @@ function DataGridTableDndRows<TData>({
           </DataGridTableBody>
         </DataGridTableBase>
       </div>
+      {/* The row that follows the pointer while dragging, and the settle
+          animation back into the list on drop (S8-06) - `useSortable`'s own
+          FLIP already re-arranges the OTHER rows smoothly; this is what makes
+          the dragged one itself land rather than just disappear. */}
+      <DragOverlay dropAnimation={defaultDropAnimation}>
+        {activeRow ? (
+          // `overflow-x-auto`: the overlay has none of the real grid's width
+          // constraint, so a row with more columns than fit under the pointer
+          // scrolls sideways instead of being clipped.
+          <div className="overflow-x-auto rounded-md border border-border bg-background shadow-lg">
+            <table className="w-full caption-bottom text-sm">
+              <tbody>
+                <DataGridTableBodyRow row={activeRow}>
+                  {activeRow.getVisibleCells().map((cell: Cell<TData, unknown>, colIndex) => (
+                    <DataGridTableBodyRowCell cell={cell} key={colIndex}>
+                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                    </DataGridTableBodyRowCell>
+                  ))}
+                </DataGridTableBodyRow>
+              </tbody>
+            </table>
+          </div>
+        ) : null}
+      </DragOverlay>
     </DndContext>
   );
 }
