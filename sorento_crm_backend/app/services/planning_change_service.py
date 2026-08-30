@@ -1537,6 +1537,15 @@ def _confirm_payload(project_line_id: str, frozen_entry: dict) -> dict:
             "donor_project_id": c.get("donor_project_id"),
             "qty": _dec(c.get("qty")),
             "reason": c.get("cs_reason") or "",
+            # LADDER v7.1 STEP 3 (S4): the DOCUMENT this borrow comes off, carried verbatim.
+            # A keep or a reduce re-posts the frozen composition, and without these three a
+            # step-3 borrow was re-confirmed as an ordinary free-stock borrow: its placement
+            # link came down, the quantity was re-checked against on-hand capacity at a bin
+            # holding a container that has not landed, and the phantom hold that survived
+            # held nothing at all.
+            "supply_key": c.get("supply_key"),
+            "supply_document": c.get("supply_document"),
+            "arrival_date": c.get("arrival_date"),
         }
         for c in components
         if c.get("kind") == BORROW and c.get("source_warehouse_id")
@@ -1626,6 +1635,9 @@ def _to_confirm_line(payload: dict):
                 donor_project_id=c.get("donor_project_id"),
                 qty=c["qty"],
                 reason=c.get("reason") or "",
+                supply_key=c.get("supply_key"),
+                supply_document=c.get("supply_document"),
+                arrival_date=c.get("arrival_date"),
             )
             for c in payload["borrow"]
         ],

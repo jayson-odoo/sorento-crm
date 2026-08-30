@@ -164,6 +164,7 @@ from app.services.scm.supply_assignment import (
     STATUS_PINNED as SA_STATUS_PINNED,
     effective_date as sa_effective_date,
     free_piles_at,
+    parse_supply_key,
 )
 
 logger = logging.getLogger(__name__)
@@ -753,6 +754,14 @@ class _FrozenComponent:
     same_agent: bool = False
     order_back_qty: Optional[str] = None
     donor_required_date: Optional[date] = None
+    #: Ladder v7.1 step 3 (S4): WHICH document this component comes off. Carried for the
+    #: same reason the donor fields are - `_borrow_shortfalls` reads it to know that this is
+    #: a DOCUMENT and not stock at a bin, and without it a carried FREE take fell through to
+    #: the location-pile rule and raised an order-back against the group whose bin the
+    #: container is merely bound for.
+    supply_key: Optional[str] = None
+    supply_document: Optional[str] = None
+    arrival_date: Optional[date] = None
 
 
 @dataclass
@@ -782,6 +791,9 @@ class _CarriedLine:
                 same_agent=bool(component.get("same_agent")),
                 order_back_qty=component.get("order_back_qty"),
                 donor_required_date=_parse_date(component.get("donor_required_date")),
+                supply_key=component.get("supply_key"),
+                supply_document=component.get("supply_document"),
+                arrival_date=_parse_date(component.get("arrival_date")),
             )
             for component in (self.snapshot.get("components") or [])
             if component.get("kind") == kind
@@ -1398,10 +1410,12 @@ class ProjectSupplyService:
         # product id -> WAREHOUSE CODE -> what another project group's free pile still has
         # on the table in this walk (R40, step 1's offer half). See `use_candidates_for`.
         other_group_left: Dict[str, Dict[str, Decimal]] = {}
-        # product id -> EVENT KEY -> what one incoming document still has on the table in
-        # this walk (step 3, `supply_borrow_candidates_for`). Keyed by the DOCUMENT and not
-        # by a bin or a donor: R33 gives the whole unit to one document, so the document is
-        # the thing two units of a board compete for.
+        # product id -> EVENT KEY -> how much of one incoming document this walk has already
+        # DRAWN (step 3, `supply_borrow_candidates_for`). Keyed by the DOCUMENT and not by a
+        # bin or a donor: R33 gives the whole unit to one document, so the document is the
+        # thing two units of a board compete for. What is DRAWN rather than what is LEFT,
+        # because what is left of a document is personal to the asker - one held by the
+        # asker's own order is worth nothing to it and everything to the next order along.
         supply_left: Dict[str, Dict[str, Decimal]] = {}
         for unit_key in walk:
             arrived = units[unit_key]
@@ -1503,13 +1517,13 @@ class ProjectSupplyService:
                         other_group.get(code, _ZERO) - component.qty, _ZERO
                     )
             if supply is not None:
-                # Drawn down by what was COMPOSED, never by what was merely offered: the
+                # Counted up by what was COMPOSED, never by what was merely offered: the
                 # step offers a whole document and takes only what the unit needed.
                 for component in components:
                     key_of = getattr(component, "supply_key", None)
                     if not key_of:
                         continue
-                    supply[key_of] = max(supply.get(key_of, _ZERO) - component.qty, _ZERO)
+                    supply[key_of] = supply.get(key_of, _ZERO) + component.qty
 
             if len(members) == 1:
                 out[members[0][0]] = (
@@ -2314,6 +2328,40 @@ class ProjectSupplyService:
         other = rows(others, own_first=False, ledger=other_left)
         return own, other, sum((_dec(c["qty"]) for c in own), _ZERO)
 
+    def _eligible_donor(
+        self,
+        row: Any,
+        *,
+        my_so: Optional[str],
+        window: date,
+        tba_from: date,
+        pool: bool = False,
+    ) -> bool:
+        """"A LATER ORDER THAT CAN WAIT", in ONE place for steps 2 and 3 (R3, R12).
+
+        Both steps ask the same question of the same `DemandLine` - step 2 of an order
+        holding stock, step 3 of an order holding a promise - so "a later order" must not
+        come to mean one thing when the cover is on a floor and another when it is on a
+        ship. It was written out twice; this is the one copy.
+
+        Covered or pinned (there is nothing to lend otherwise), dated, short of the TBA
+        line, at or beyond `as_of + lead + 14` (inside the window purchasing cannot buy in
+        time for the DONOR either, and past-due fails the same test), never the asker's own
+        sales order, and never a line this very board is deciding.
+        """
+        line = row.line
+        if bool(line.is_pool) != bool(pool):
+            return False
+        if row.status not in (SA_STATUS_COVERED, SA_STATUS_PINNED):
+            return False
+        if line.required_date is None or line.required_date >= tba_from:
+            return False
+        if line.required_date < window:
+            return False
+        if my_so and (line.so_number or "") == my_so:
+            return False
+        return str(line.key) not in self._current_selection_core_ids
+
     def order_borrow_candidates_for(
         self,
         fact: _LineFacts,
@@ -2372,19 +2420,9 @@ class ProjectSupplyService:
         out: List[Dict[str, Any]] = []
         for row in result.lines:
             line = row.line
-            if bool(line.is_pool) != bool(pool):
-                continue
-            if row.status not in (SA_STATUS_COVERED, SA_STATUS_PINNED):
-                continue
-            if line.required_date is None or line.required_date >= tba_from:
-                continue
-            if line.required_date < window:
-                # Inside the window: purchasing cannot buy in time for this donor either,
-                # so it is not somebody who can wait. Past-due is caught by the same test.
-                continue
-            if my_so and (line.so_number or "") == my_so:
-                continue
-            if str(line.key) in self._current_selection_core_ids:
+            if not self._eligible_donor(
+                row, my_so=my_so, window=window, tba_from=tba_from, pool=pool
+            ):
                 continue
             left = None if borrow_left is None else borrow_left.get(str(line.key))
             by_location: Dict[str, Decimal] = {}
@@ -2430,6 +2468,7 @@ class ProjectSupplyService:
         *,
         as_of: Optional[date] = None,
         supply_left: Optional[MutableMapping[str, Decimal]] = None,
+        need: Optional[Decimal] = None,
     ) -> List[Dict[str, Any]]:
         """Step 3 (R27, R30, R32, R33, R35): the ONE document that covers the whole unit.
 
@@ -2453,16 +2492,31 @@ class ProjectSupplyService:
         of it (`_po_rows`). Nearest arrival first inside each family, then R19's donor order
         so two documents landing the same day are broken the way every other donor list is.
 
-        **What is available off one document** is what nobody has been promised - `free` in
-        the assignment - plus what an ELIGIBLE later order holds of it: the same window and
-        the same donor rules step 2 applies (`order_borrow_candidates_for`), because a donor
-        that cannot itself wait is no donor whether it is holding stock or a promise. Free
-        rows come first inside the document: taking them owes nobody anything.
+        **What is available off one document** is three things added together: what nobody
+        has been promised (`free` in the assignment), what the walk has ALREADY GIVEN THIS
+        ASKER on it, and what an ELIGIBLE later order holds of it - the same window and the
+        same donor rules step 2 applies (`_eligible_donor`), because a donor that cannot
+        itself wait is no donor whether it is holding stock or a promise.
 
-        `supply_left` is the walk's ledger, keyed by event (`compose_lines`). Without it
-        every unit of a board reads the same document whole and `confirm` refuses all but
-        the first - the defect four delivery dates of SO381895 hit on the donor rung on
-        28 August 2026.
+        The middle term is the one this step was missing (SO414244, 30 Aug 2026): the
+        assignment had already put 56 of a 75-line on a purchase order landing inside the
+        window, so 19 read free, the whole unit did not fit and a line ONE document covers
+        was bought instead. It is not a borrow and it names no donor - taking what the walk
+        has already given you owes nobody anything - so it counts beside `free`, and the two
+        make one row.
+
+        `supply_left` is the walk's ledger, keyed by event (`compose_lines`). It counts what
+        has been DRAWN, not what is left, because "what is left" is personal: a document
+        held by a line of the asker's OWN order is worth nothing to that asker and the whole
+        of it to the next order along, so seeding the ledger with the first asker's answer
+        capped everybody after it (the step-2 donor ledger keeps the same shape for the same
+        reason). Without a ledger at all, every unit of a board reads the same document whole
+        and `confirm` refuses all but the first - the defect four delivery dates of SO381895
+        hit on the donor rung on 28 August 2026.
+
+        `need` overrides the fact's own open quantity, for the board's trail: the walk asked
+        about the whole planning UNIT (R10) and the trail is built per ROW, so re-reading it
+        with the row's smaller quantity would offer a document the walk itself refused.
         """
         if not fact.product_id:
             return []
@@ -2472,7 +2526,7 @@ class ProjectSupplyService:
         )
         if result is None:
             return []
-        need = max(_dec(fact.open_qty), _ZERO)
+        need = max(_dec(fact.open_qty if need is None else need), _ZERO)
         if need <= _ZERO:
             return []
         lead = self._lead_time_days(fact.product_id)
@@ -2493,31 +2547,29 @@ class ProjectSupplyService:
             None,
         )
         my_agent = mine.line.agent_code if mine is not None else None
+        my_line_keys = {str(key) for key in self._unit_line_ids(fact)}
 
-        def eligible_donor(line: Any) -> bool:
-            """Step 2's donor rules, unchanged (R3, R12): only an order that can WAIT lends.
-
-            Read off the same `DemandLine` step 2 reads, so "a later order" cannot come to
-            mean one thing when it is holding stock and another when it is holding a
-            promise.
-            """
-            if line.is_pool:
-                return False
-            if line.required_date is None or line.required_date >= tba_from:
-                return False
-            if line.required_date < window:
-                return False
-            if my_so and (line.so_number or "") == my_so:
-                return False
-            return str(line.key) not in self._current_selection_core_ids
-
-        # What each event still has on the table: free first, then each eligible donor's
-        # hold of it, in R19's order. Keyed by event, because ONE document is the unit here.
+        # What each event still has on the table: what nobody has spoken for (free plus this
+        # asker's own share) first, then each eligible donor's hold of it in R19's order.
+        # Keyed by event, because ONE document is the unit here.
+        mine_by_event: Dict[str, Decimal] = {}
         rows_by_event: Dict[str, List[Dict[str, Any]]] = {}
         for row in result.lines:
-            if not eligible_donor(row.line):
+            if str(row.line.key) in my_line_keys:
+                # THE ASKER'S OWN SHARE. `_eligible_donor` refuses it - an order does not
+                # borrow from itself - and that is right about borrowing and wrong about
+                # availability, which is what this step measures.
+                for item in row.assigned:
+                    event = item.event
+                    if event.kind not in (SA_KIND_SPO, SA_KIND_PO) or event.is_pool:
+                        continue
+                    mine_by_event[str(event.key)] = mine_by_event.get(
+                        str(event.key), _ZERO
+                    ) + max(_dec(item.qty), _ZERO)
                 continue
-            if row.status not in (SA_STATUS_COVERED, SA_STATUS_PINNED):
+            if not self._eligible_donor(
+                row, my_so=my_so, window=window, tba_from=tba_from
+            ):
                 continue
             donor_group = sales_agent_service.group_of_warehouse_code(row.line.warehouse)
             for item in row.assigned:
@@ -2548,6 +2600,13 @@ class ProjectSupplyService:
         for event in result.supply:
             if event.kind not in (SA_KIND_SPO, SA_KIND_PO) or event.is_pool:
                 continue
+            if not event.warehouse:
+                # NOT A DOCUMENT THIS STEP MAY NAME. `assign()` honours a pinned hold whose
+                # supply is outside the read span by standing an event up FROM THE HOLD
+                # (AC-S2-1b) - no bin, and dated `as_of` because the span it was given holds
+                # no arrival to place it on. Read as a real document that would make it one
+                # landing TODAY, which is a promise about a date nobody knows.
+                continue
             arrival = event.at
             if arrival is None:
                 continue
@@ -2556,11 +2615,12 @@ class ProjectSupplyService:
                 # No better than buying, so there is nothing to prefer it for (R32).
                 continue
             free = max(_dec(result.free.get(str(event.key), 0)), _ZERO)
+            unclaimed = free + max(_dec(mine_by_event.get(str(event.key), 0)), _ZERO)
             held = rows_by_event.get(str(event.key), [])
-            budget = free + sum((entry["qty"] for entry in held), _ZERO)
+            budget = unclaimed + sum((entry["qty"] for entry in held), _ZERO)
             if supply_left is not None:
-                budget = min(
-                    budget, max(_dec(supply_left.setdefault(str(event.key), budget)), _ZERO)
+                budget = max(
+                    budget - max(_dec(supply_left.get(str(event.key), 0)), _ZERO), _ZERO
                 )
             if budget < need:
                 # A document that cannot cover the unit on its own is not an option at all
@@ -2574,10 +2634,10 @@ class ProjectSupplyService:
                 "supply_document": event.ref,
                 "arrival_date": arrival,
             }
-            if free > _ZERO:
-                # Free first: it owes nobody, so it is the part of the document that costs
-                # the least to take.
-                rows.append({**shared, "qty": free})
+            if unclaimed > _ZERO:
+                # Unclaimed first: it owes nobody - it is free, or it was already this
+                # asker's - so it is the part of the document that costs the least to take.
+                rows.append({**shared, "qty": unclaimed})
             for entry in sorted(held, key=self._donor_order):
                 rows.append({**shared, **entry})
             documents.append(
@@ -3431,6 +3491,10 @@ class ProjectSupplyService:
         decision.state = DECISION_SUPERSEDED
         decision.superseded_at = datetime.utcnow()
         decision.superseded_reason = reason
+        # ...except a step-3 PLACEMENT, which is a hold on somebody else's document rather
+        # than a record of what was decided (S4). It goes with the revision, for the reason
+        # every other hold does.
+        self._release_supply_borrow_holds(order, decision, reason=reason)
         self.db.flush()
         return True
 
@@ -3514,8 +3578,34 @@ class ProjectSupplyService:
         decision.state = DECISION_CHALLENGED
         decision.superseded_at = datetime.utcnow()
         decision.superseded_reason = reason
+        self._release_supply_borrow_holds(order, decision, reason=reason)
         self.db.flush()
         return reason
+
+    def _release_supply_borrow_holds(
+        self, order: ProjectSalesOrder, decision: SOSupplyDecision, *, reason: str
+    ) -> None:
+        """This revision's step-3 placements, given back with the revision itself (S4).
+
+        A revision that is superseded or challenged promises nothing any more, and a
+        placement is a promise about a document: left standing it goes on pinning it to a
+        decision the board is already re-proposing. The rest of the revision behaves the
+        same way - its holds stop counting the moment it stops being active - and this is
+        the one part of it that lives outside `so_line_allocations`.
+        """
+        from app.services.project_order_inquiry_service import (
+            ProjectOrderInquiryService,
+        )
+
+        ProjectOrderInquiryService(self.db).retire_supply_borrow_rows(
+            str(order.id),
+            reason=reason,
+            line_ids=[
+                str(snapshot.get("project_line_id") or "")
+                for snapshot in (decision.line_snapshots or [])
+                if snapshot.get("project_line_id")
+            ],
+        )
 
     # ---------------------------------------------------------------- the commit
 
@@ -4595,7 +4685,7 @@ class ProjectSupplyService:
         zero, because "it has nothing left" and "it is not there" send a planner to two
         different places.
         """
-        kind, _sep, target = supply_key.partition(":")
+        kind, target = parse_supply_key(supply_key)
         if not target:
             return None
         if kind == SA_KIND_SPO:
@@ -4653,7 +4743,7 @@ class ProjectSupplyService:
         these links applies - so a withdrawn placement does not go on reserving a document
         nobody is waiting on.
         """
-        kind, _sep, target = supply_key.partition(":")
+        kind, target = parse_supply_key(supply_key)
         if not target:
             return []
         column = (
@@ -5041,6 +5131,15 @@ class ProjectSupplyService:
             ProjectOrderInquiryService,
         )
 
+        # BEFORE THE HANDOFF, and that ordering is the whole of it (fixed 30 Aug, S4
+        # review). An earlier revision's step-3 row on a line this confirmation is deciding
+        # names a document this revision may no longer be taking, so it goes - but the
+        # handoff READS those rows: a Buy marked "Order back" owns the ORDER_BACK verb on
+        # its own line, and it settled the step-3 row in place, kept its link and therefore
+        # raised nothing new. Cancelled afterwards, the quantity ended up with no live
+        # purchasing instruction at all. Retired first, the handoff sees the true state and
+        # raises the whole need.
+        self._retire_supply_borrows(order, decision, checked)
         handoff = ProjectOrderInquiryService(self.db).refresh_for_decision(
             order,
             decision,
@@ -5112,6 +5211,39 @@ class ProjectSupplyService:
             "auto_place_products": auto_place_products,
         }
 
+    def _retire_supply_borrows(
+        self,
+        order: ProjectSalesOrder,
+        decision: SOSupplyDecision,
+        checked: Sequence[Tuple[ProjectSalesOrderLine, Any, _LineFacts]],
+    ) -> None:
+        """Take down the step-3 placements of the lines THIS confirmation is re-deciding.
+
+        A placement is a hold on a document, made for one revision's instruction. The
+        moment a later revision decides that line again, the old hold is a claim on behalf
+        of an instruction that no longer exists - so it comes down, links, claims and all,
+        whether the new revision takes the same document, a different one, or none.
+
+        Run BEFORE `refresh_for_decision`, never after: see the call site.
+
+        A CARRIED line is not in `checked` and is not touched, which is right - nobody
+        asked to change it, and its placement is still holding the document its own
+        revision named.
+        """
+        from app.services.project_order_inquiry_service import (
+            ProjectOrderInquiryService,
+        )
+
+        line_ids = [str(line.id) for line, _entry, _fact in checked]
+        if not line_ids:
+            return
+        ProjectOrderInquiryService(self.db).retire_supply_borrow_rows(
+            str(order.id),
+            reason=f"Superseded by revision {decision.revision_no}",
+            line_ids=line_ids,
+            except_decision_id=str(decision.id),
+        )
+
     def _place_supply_borrows(
         self,
         order: ProjectSalesOrder,
@@ -5145,11 +5277,9 @@ class ProjectSupplyService:
         that document and the donor short in its own month, with no second ledger to keep in
         step.
 
-        A row raised by an EARLIER revision of this order for the same line is CANCELLED
-        first, links and all: it named a document this revision is no longer taking, and a
-        placement left standing would hold a document for an instruction that no longer
-        exists. That is `_retire_uncovered_rows`' own rule, applied to the rows this method
-        owns.
+        A row raised by an EARLIER revision of this order for the same line is cancelled by
+        `_retire_supply_borrows`, BEFORE the handoff rather than here - see that method for
+        why the order is the whole of it.
         """
         from app.services.project_order_inquiry_service import (
             ProjectOrderInquiryService,
@@ -5161,38 +5291,9 @@ class ProjectSupplyService:
             for item in (entry.borrow or [])
             if getattr(item, "supply_key", None) and _dec(item.qty) > _ZERO
         ]
-        line_ids = {str(line.id) for line, _item in wanted} | {
-            str(line.id) for line, _entry, _fact in checked
-        }
-        service = ProjectOrderInquiryService(self.db)
-        # Every previous revision's step-3 row on a line this confirmation decided. Read by
-        # `covered_by`, which is what tells one of these apart from a donor hole raised on
-        # the same line (see `_raise_borrow_shortfalls`).
-        stale = (
-            self.db.query(OrderInquiryRow)
-            .filter(
-                OrderInquiryRow.order_inquiry_id == inquiry.id,
-                OrderInquiryRow.verb == IV_ORDER_BACK,
-                OrderInquiryRow.covered_by.isnot(None),
-                OrderInquiryRow.state != INQUIRY_CANCELLED,
-                OrderInquiryRow.so_line_id.in_(sorted(line_ids)),
-            )
-            .all()
-            if line_ids
-            else []
-        )
-        if stale:
-            (
-                self.db.query(OrderInquiryLink)
-                .filter(OrderInquiryLink.row_id.in_([row.id for row in stale]))
-                .delete(synchronize_session=False)
-            )
-            for row in stale:
-                row.state = INQUIRY_CANCELLED
-                row.note = f"Superseded by revision {decision.revision_no}"
-            self.db.flush()
         if not wanted:
             return
+        service = ProjectOrderInquiryService(self.db)
 
         for line, item in wanted:
             qty = _dec(item.qty)
@@ -5320,6 +5421,17 @@ class ProjectSupplyService:
             for snapshot in (decision.line_snapshots or [])
             if str(snapshot.get("project_line_id") or "") != str(project_line_id)
         ]
+        # The dropped line's own step-3 placement goes with it (S4): it is being un-decided,
+        # so its hold on a document is a claim nobody stands behind any more.
+        from app.services.project_order_inquiry_service import (
+            ProjectOrderInquiryService,
+        )
+
+        ProjectOrderInquiryService(self.db).retire_supply_borrow_rows(
+            str(decision.project_sales_order_id),
+            reason=reason,
+            line_ids=[str(project_line_id)],
+        )
         now = datetime.utcnow()
         decision.state = DECISION_SUPERSEDED
         decision.superseded_at = now
@@ -5416,6 +5528,17 @@ class ProjectSupplyService:
         wanted = {str(line_id) for line_id in line_ids} & covered
         if not wanted:
             return False
+        # The step-3 placements of the lines being taken out, first (S4). `confirm` retires
+        # only the rows of the lines it NAMES, and this call names none - so without this
+        # the document went on being pinned to a line nobody is deciding any more. The
+        # whole-revision branch below does the same through `supersede_for_material_change`.
+        from app.services.project_order_inquiry_service import (
+            ProjectOrderInquiryService,
+        )
+
+        ProjectOrderInquiryService(self.db).retire_supply_borrow_rows(
+            str(order.id), reason=reason, line_ids=sorted(wanted)
+        )
         if covered - wanted:
             self.confirm(
                 order,
@@ -5582,6 +5705,31 @@ class ProjectSupplyService:
                 donor_core_line_id = getattr(item, "donor_core_line_id", None)
                 if qty <= _ZERO or not donor_core_line_id:
                     continue
+                supply_key = getattr(item, "supply_key", None)
+                if supply_key:
+                    # STEP 3, AND THE DONOR'S OWN ROW SAYS IT FIRST (S4, fixed 30 Aug).
+                    # A donor holding a document through a PLACEMENT of its own gets that
+                    # placement taken down by this same Confirm (`release_supply_borrow`),
+                    # which puts its own row straight back to `raised` for the quantity -
+                    # at the donor's date, on the donor's line, which is a sharper record
+                    # than anything raised over here. Raising this one as well told
+                    # purchasing to buy 100 for a donor that is short 50.
+                    #
+                    # The remainder is still ours: a donor holding the document through a
+                    # confirmed DECISION and no link re-raises nothing by itself, and that
+                    # is the case this row exists for.
+                    from app.services.project_order_inquiry_service import (
+                        ProjectOrderInquiryService,
+                    )
+
+                    qty -= min(
+                        qty,
+                        ProjectOrderInquiryService(self.db).supply_borrow_held_qty(
+                            str(supply_key), str(donor_core_line_id)
+                        ),
+                    )
+                    if qty <= _ZERO:
+                        continue
                 donor_so_number = getattr(item, "donor_so_number", None) or "an unnamed sales order"
                 donor_line_no = getattr(item, "donor_line_no", None)
                 donor_agent_code = getattr(item, "donor_agent_code", None)
@@ -5802,11 +5950,7 @@ class ProjectSupplyService:
                         # what this component says, and a location is none of them.
                         supply_borrow_reason(
                             qty,
-                            kind=(
-                                SA_KIND_PO
-                                if str(supply_key).startswith(f"{SA_KIND_PO}:")
-                                else SA_KIND_SPO
-                            ),
+                            kind=parse_supply_key(supply_key)[0] or SA_KIND_SPO,
                             document=getattr(item, "supply_document", None),
                             arrival_date=arrival,
                             donor_so_number=getattr(item, "donor_so_number", None),

@@ -1532,7 +1532,11 @@ class FulfilmentBoardService:
             "warehouse_id": component.get("source_warehouse_id"),
             "reason": (reason[:1].upper() + reason[1:] + ".") if reason else "",
             "spo_number": None,
-            "arrival_date": None,
+            # Step 3 (S4): the document, named and dated. A `timely_spo` source states its
+            # arrival too, and every other kind has none - so this is read off the component
+            # rather than blanked, or a confirmed step-3 line came back documentless and
+            # re-posted `supply_key: null`.
+            "arrival_date": _parse_iso_date(component.get("arrival_date")),
             "rung": component.get("rung"),
             #: The ladder the SNAPSHOT was written under, carried through rather than
             #: restamped: this is history, and re-stamping it with today's version would
@@ -1544,6 +1548,8 @@ class FulfilmentBoardService:
             "same_agent": bool(component.get("same_agent", False)),
             "donor_core_line_id": component.get("donor_core_line_id"),
             "donor_required_date": _parse_iso_date(component.get("donor_required_date")),
+            "supply_key": component.get("supply_key"),
+            "supply_document": component.get("supply_document"),
         }
 
     def _line_decision(
@@ -1623,6 +1629,14 @@ class FulfilmentBoardService:
                     "donor_core_line_id": c.get("donor_core_line_id"),
                     "donor_required_date": _parse_iso_date(c.get("donor_required_date")),
                     "order_back_qty": c.get("order_back_qty"),
+                    # LADDER v7.1 STEP 3 (S4): which document, how it is named and when it
+                    # lands. Dropped here, amending a confirmed step-3 line re-posted it as
+                    # a free-stock borrow - the placement link came down and the Confirm
+                    # re-checked the quantity against on-hand capacity at a bin holding a
+                    # container that has not landed.
+                    "supply_key": c.get("supply_key"),
+                    "supply_document": c.get("supply_document"),
+                    "arrival_date": _parse_iso_date(c.get("arrival_date")),
                 }
                 for c in components
                 if c.get("kind") == BORROW
@@ -2299,7 +2313,10 @@ class FulfilmentBoardService:
                         component.get("reason"),
                     ),
                     "spo_number": None,
-                    "arrival_date": None,
+                    # Step 3 (S4): the DOCUMENT this borrow comes off. `arrival_date` is
+                    # the component's own - a step-3 source has one and every other borrow
+                    # does not, so the None above is the fallback and not the rule.
+                    "arrival_date": component.get("arrival_date"),
                     "rung": component.get("rung"),
                     "donor_so_number": component.get("donor_so_number"),
                     "donor_line_no": component.get("donor_line_no"),
@@ -2307,6 +2324,8 @@ class FulfilmentBoardService:
                     "same_agent": bool(component.get("same_agent", False)),
                     "donor_core_line_id": component.get("donor_core_line_id"),
                     "donor_required_date": component.get("donor_required_date"),
+                    "supply_key": component.get("supply_key"),
+                    "supply_document": component.get("supply_document"),
                 }
                 for component in decision.get("borrow") or []
             ),
@@ -2632,11 +2651,15 @@ class FulfilmentBoardService:
         # the step chose - and `supply_open` is the walk's own ledger as this unit found it,
         # passed for the reason `borrow_open` is: the proof has to be the answer the engine
         # actually got, not a fresh read of a document an earlier unit has already spent.
+        #
+        # THE UNIT'S need, not the row's: "whole unit or nothing" is measured against what
+        # the walk asked about (R10), and this trail is built per row. Asked with the row's
+        # own smaller quantity, the proof offered a document the walk had refused.
         supply_borrow_candidates = (
             []
             if outside_window
             else self.supply.supply_borrow_candidates_for(
-                fact, as_of=as_of, supply_left=supply_open
+                fact, as_of=as_of, supply_left=supply_open, need=row.unit_qty
             )
         )
         add(

@@ -449,6 +449,72 @@ describe('draftFromLine', () => {
     expect(lineBlockers(result)).toEqual([]);
   });
 
+  it('opens an engine-proposed borrow on the ENGINE’s own sentence, so nothing blocks it', () => {
+    // The drawer refused SO406804 line 19 until somebody retyped the sentence the engine had
+    // already written: an engine proposal carries no `cs_reason` (nobody has typed anything),
+    // and a borrow with no reason cannot be confirmed (AC-B09). The board has always seeded
+    // the engine's sentence here, and the two surfaces compose on this same draft.
+    const result = draftFromLine(
+      line({
+        open_qty: '4',
+        components: [
+          {
+            kind: 'borrow',
+            qty: '4',
+            reason:
+              'Take 4 on order (PO 202606-S0006 line 5, arriving about 2 Sep 2026)',
+            source_location: 'BRW-IB',
+            source_warehouse_id: WAREHOUSE_BRW,
+            rung: 'supply_borrow',
+            cs_reason: null,
+            supply_key: 'po:f09bdfcf-7fb7-489c-a8d0-7ce2380c0f05',
+            supply_document: 'PO 202606-S0006 line 5',
+            arrival_date: '2026-09-02',
+          },
+        ],
+      }),
+    );
+
+    expect(result.borrow[0]).toMatchObject({
+      qty: '4',
+      reason: 'Take 4 on order (PO 202606-S0006 line 5, arriving about 2 Sep 2026)',
+      supply_key: 'po:f09bdfcf-7fb7-489c-a8d0-7ce2380c0f05',
+      supply_document: 'PO 202606-S0006 line 5',
+      arrival_date: '2026-09-02',
+    });
+    expect(lineBlockers(result)).toEqual([]);
+  });
+
+  it('carries the donor’s own delivery date, which is the order-back’s urgency', () => {
+    const result = draftFromLine(
+      line({
+        open_qty: '50',
+        components: [
+          {
+            kind: 'borrow',
+            qty: '50',
+            reason:
+              'Borrow 50 arriving 15 Sep 2026 (SPO 202607-S0105) from SO414285 line 4 ' +
+              '(JEREMY, due 12 Nov 2026); its debt lands in Nov 2026',
+            source_location: 'BRW-IB',
+            source_warehouse_id: WAREHOUSE_BRW,
+            rung: 'supply_borrow',
+            donor_so_number: 'SO414285',
+            donor_line_no: 4,
+            donor_agent_code: 'JEREMY',
+            donor_required_date: '2026-11-12',
+            supply_key: 'spo:9f2c1a44-1111-4c11-8c11-111111111111',
+            supply_document: 'SPO 202607-S0105',
+            arrival_date: '2026-09-15',
+          },
+        ],
+      }),
+    );
+
+    expect(result.borrow[0].donor_required_date).toBe('2026-11-12');
+    expect(confirmLineFromDraft(result).borrow[0].donor_required_date).toBe('2026-11-12');
+  });
+
   it('reads a borrow with no donor project as one from another location', () => {
     const result = draftFromLine(
       line({

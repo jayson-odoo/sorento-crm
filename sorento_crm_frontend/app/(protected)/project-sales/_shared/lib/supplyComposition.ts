@@ -125,7 +125,18 @@ export function draftFromLine(line: SupplyLine): DraftLine {
         donor_project_ref: component.donor_project_ref,
         donor_project_id: component.donor_project_id,
         qty: component.qty,
-        reason: component.cs_reason ?? '',
+        /**
+         * THE ENGINE'S OWN SENTENCE, until a person writes their own over it.
+         *
+         * A borrow needs a reason before the order can be confirmed (AC-B09,
+         * `lineBlockers`), and an engine-proposed borrow arrives with `cs_reason` null -
+         * nobody has typed anything yet. Seeding empty therefore disabled Confirm Project SO
+         * on a line nobody disagreed with, until the planner retyped the sentence the engine
+         * had already written. The board has always seeded `source.reason` here
+         * (`boardAmend.draftFromSources`), and the two surfaces compose on this same draft:
+         * one of them refusing what the other accepts is the bug this closes.
+         */
+        reason: component.cs_reason ?? component.reason ?? '',
         donor_impact: {
           free_before: '0',
           free_after_full_borrow: '0',
@@ -139,6 +150,10 @@ export function draftFromLine(line: SupplyLine): DraftLine {
         donor_line_no: component.donor_line_no,
         donor_agent_code: component.donor_agent_code,
         same_agent: component.same_agent,
+        // The donor's own delivery date: the order-back's urgency, and the month the debt
+        // lands in. Dropped here it was lost from the posted borrow the moment an engine
+        // proposal went through this draft - the board carries it for the same reason.
+        donor_required_date: component.donor_required_date ?? null,
         // LADDER v7.1 STEP 3 (S4): the DOCUMENT this borrow comes off, carried verbatim so a
         // proposal approved as it stands still moves the placement the engine named. Dropped
         // here, the Confirm would re-check the quantity against free stock at a bin holding a

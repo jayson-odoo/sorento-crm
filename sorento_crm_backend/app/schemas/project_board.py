@@ -388,6 +388,16 @@ class BoardDecisionBorrow(BaseModel):
     donor_required_date: Optional[date] = None
     #: The order-back this component raised: equal to what was taken.
     order_back_qty: Optional[str] = None
+    #: LADDER v7.1 STEP 3 (`supply_borrow`, S4): the incoming document this quantity comes
+    #: off. `supply_key` is the ADDRESS the Confirm moves the placement link onto
+    #: (`spo:<allocation id>` / `po:<purchase order line id>`) and is never rendered;
+    #: `supply_document` is how a person names it, written by the server. Declared HERE and
+    #: not only on the wire dict, because `response_model` drops what it does not declare -
+    #: a confirmed step-3 line came back documentless and re-posted `supply_key: null`.
+    supply_key: Optional[str] = None
+    supply_document: Optional[str] = None
+    #: The day it lands: an SPO's arrival, a PO line's `issue_date + lead time` (R29).
+    arrival_date: Optional[date] = None
 
 
 class BoardLineDecision(BaseModel):

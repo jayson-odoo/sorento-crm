@@ -22,6 +22,7 @@ import {
   type DraftBorrow,
   type DraftLine,
 } from '../../_shared/lib/supplyComposition';
+import { BoardLadderOptionsTable, debtMonthLabel } from './BoardLadderOptionsTable';
 import { BorrowAddDialog } from './BorrowAddDialog';
 import { ClassificationProofPopover } from './ClassificationProofPopover';
 
@@ -162,6 +163,24 @@ export function SupplyLineCard({
         </div>
       )}
 
+      {/* WHAT THE LADDER OFFERED, above the composition it proposes (R36, AC-S3-14).
+          The same table the board's decision panel and the trail popover render, from the
+          same five answers - `/supply` carries them per line exactly as the board payload
+          carries them per contribution. It reads BEFORE the components, because it is what
+          the planner reads before deciding whether to amend them. Display only: taking a
+          different option is done in the inputs below. */}
+      {(line.options?.length ?? 0) > 0 && (
+        <div className="border-b border-border px-3 py-2.5">
+          <div className="mb-1 text-2xs uppercase tracking-wide text-muted-foreground">
+            Options
+          </div>
+          <BoardLadderOptionsTable
+            options={line.options ?? []}
+            contributionKey={line.project_line_id}
+          />
+        </div>
+      )}
+
       {/* Components, in the order the engine proposes them (plan 3.2). */}
       <div className="divide-y divide-border">
         <Row label="Incoming by the delivery date">
@@ -261,9 +280,13 @@ export function SupplyLineCard({
                         <Trash2 />
                       </Button>
                     </div>
-                    <p className="text-sm text-muted-foreground break-words">
-                      {`${row.donor_impact.free_before} free before, ${row.donor_impact.free_after_full_borrow} after taking all of it, ${row.donor_impact.committed_qty} committed.`}
-                    </p>
+                    {row.supply_document ? (
+                      <BorrowDocumentFacts row={row} uom={uom} />
+                    ) : (
+                      <p className="text-sm text-muted-foreground break-words">
+                        {`${row.donor_impact.free_before} free before, ${row.donor_impact.free_after_full_borrow} after taking all of it, ${row.donor_impact.committed_qty} committed.`}
+                      </p>
+                    )}
                     <div className="space-y-1">
                       <label
                         className="block text-2xs uppercase tracking-wide text-muted-foreground"
@@ -503,7 +526,10 @@ function FrozenComponents({
             ) : null}
           </div>
           <Reason>{component.reason}</Reason>
-          {component.cs_reason ? (
+          {/* What a PERSON said, beside what the rule said - and never the rule's own
+              sentence twice: a borrow confirmed as the engine proposed it freezes that
+              sentence as the reason given for it. */}
+          {component.cs_reason && component.cs_reason !== component.reason ? (
             <p className="text-sm break-words">{component.cs_reason}</p>
           ) : null}
         </div>
@@ -512,11 +538,60 @@ function FrozenComponents({
   );
 }
 
+/**
+ * A BORROW OFF AN INCOMING DOCUMENT, stated as the document it is (ladder v7.1 step 3, S4).
+ *
+ * The donor-impact triple underneath every other borrow row is a fact about STOCK AT A BIN -
+ * what is free there now, what is left after taking it, what is already committed - and a
+ * container still at sea is on no shelf, so the row read `0 free before, 0 after taking all
+ * of it, 0 committed` and said nothing true about what was being taken. These are the same
+ * facts the engine's own sentence carries: which document, when it lands, how much of it,
+ * and whose order pays for it.
+ *
+ * FREE, not borrowed, when no donor is named: nobody was waiting on that share, so there is
+ * no order to name and no debt month to state - exactly what makes the engine's sentence
+ * read "Take" rather than "Borrow".
+ */
+function BorrowDocumentFacts({ row, uom }: { row: DraftBorrow; uom: string }) {
+  const arrival = row.arrival_date ? formatDateInMalaysia(row.arrival_date) : null;
+  return (
+    <div
+      data-testid={`borrow-document-${row.key}`}
+      className="space-y-0.5 text-sm text-muted-foreground"
+    >
+      <p className="break-words">
+        {`${row.supply_document}, ${row.qty}${uom}${arrival ? `, arriving ${arrival}` : ''}`}
+      </p>
+      <p className="break-words">{borrowDocumentDonorText(row)}</p>
+    </div>
+  );
+}
+
+/** Whose order pays for it, and in which month - or that nobody is waiting on it. */
+function borrowDocumentDonorText(row: DraftBorrow): string {
+  if (!row.donor_so_number) return 'Free: nobody is waiting on this document.';
+  const line = row.donor_line_no != null ? ` line ${row.donor_line_no}` : '';
+  const agent = row.donor_agent_code ? ` (${row.donor_agent_code})` : '';
+  const due = row.donor_required_date
+    ? `, due ${formatDateInMalaysia(row.donor_required_date)}`
+    : '';
+  const debt = row.donor_required_date
+    ? `; its debt lands in ${debtMonthLabel(row.donor_required_date.slice(0, 7))}`
+    : '';
+  return `From ${row.donor_so_number}${line}${agent}${due}${debt}.`;
+}
+
 function SpoList({ refs }: { refs: SupplySpoRef[] }) {
   return (
     <ul className="space-y-0.5">
-      {refs.map((entry) => (
-        <li key={`${entry.spo_number}-${entry.arrival_date ?? ''}`} className="text-sm">
+      {/* Keyed by POSITION as well as by document and date: one shipping order can hold two
+          legs of the same item arriving the same day, and React was dropping one of them
+          ("Encountered two children with the same key, SPO-2026/08-0061-2026-08-01"). */}
+      {refs.map((entry, index) => (
+        <li
+          key={`${entry.spo_number}-${entry.arrival_date ?? ''}-${index}`}
+          className="text-sm"
+        >
           <span className="tabular-nums">{entry.spo_number}</span>
           <span className="text-muted-foreground">
             {` · ${entry.qty}${entry.arrival_date ? ` · ${formatDateInMalaysia(entry.arrival_date)}` : ''}`}

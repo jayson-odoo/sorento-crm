@@ -140,7 +140,11 @@ def test_reconfirming_the_same_line_against_a_different_document_cancels_the_sta
     assert cancelled_rows[0].covered_by == f"SPO {doc_a.spo_number}", (
         "the FIRST revision's row, not the second's, is the one cancelled"
     )
-    assert (cancelled_rows[0].note or "").startswith("Superseded by revision")
+    # "Unlinked from SPO A; Superseded by revision 2": the retirement goes through
+    # `_remove_links` since the S4 fix pass, so the row's own history says which document
+    # it was holding as well as what replaced it.
+    assert "Superseded by revision" in (cancelled_rows[0].note or "")
+    assert "Unlinked from" in (cancelled_rows[0].note or "")
     # The document itself: doc_a holds NO link any more (came down with the stale row),
     # doc_b holds exactly one, for the full 40 - never two rows fighting over one document.
     assert [str(l.spo_allocation_id) for l in links] == [doc_b_id], (

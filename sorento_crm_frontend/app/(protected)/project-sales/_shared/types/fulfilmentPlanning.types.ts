@@ -291,6 +291,12 @@ export interface SupplyComponent {
   /** Addressing only, never rendered: re-identifies the donor's own line at confirm. */
   donor_core_line_id?: string | null;
   /**
+   * The donor's own delivery date: the order-back's urgency, and the month its debt lands
+   * in on the Stock Debt view. The server has always sent it on a borrow component; it is
+   * declared here because the sheet's borrow row now states whose order pays for it.
+   */
+  donor_required_date?: string | null;
+  /**
    * LADDER v7.1 STEP 3 (`supply_borrow`, S4): the incoming document this quantity comes off.
    *
    * `supply_key` addresses it (`spo:<allocation id>` / `po:<purchase order line id>`) and is
@@ -434,6 +440,16 @@ export interface SupplyLine {
   pool_cap?: string | null;
   pool_reorder_level?: string | null;
   components: SupplyComponent[];
+  /**
+   * THE FIVE STEPS OF LADDER v7.1 FOR THIS LINE, taken or not (R36, AC-S3-14).
+   *
+   * The same six answers about the same walk the board's contribution carries, so the ONE
+   * table renders on either surface (`BoardLadderOptionsTable`) - the server's schemas are
+   * siblings for the same reason (`SupplyLadderOption` / `BoardLadderOption`). Undeclared
+   * here the sheet dropped a populated array on the floor and the drawer showed no options
+   * at all, which reads as a line the engine never walked.
+   */
+  options?: BoardLadderOption[];
   timely_spo: SupplySpoRef[];
   advisory_spo: SupplySpoRef[];
   borrow_candidates: BorrowCandidate[];

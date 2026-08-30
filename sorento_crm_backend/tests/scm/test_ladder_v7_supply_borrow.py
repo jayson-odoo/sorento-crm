@@ -40,6 +40,8 @@ from datetime import date, timedelta
 from decimal import Decimal
 
 from app.models.project_so import (
+    INQUIRY_CANCELLED,
+    INQUIRY_RAISED,
     IV_ORDER_BACK,
     SO_STATUS_PUBLISHED,
     OrderInquiryLink,
@@ -650,10 +652,18 @@ def test_confirming_a_supply_borrow_moves_the_placement_to_the_asker():
     """AC-S4-3 (PLAN 3.3, R8): the whole transaction, in one Confirm.
 
     The asker gets an ORDER_BACK-verb row carrying a LINK on the document; the donor's own
-    link on the same placement is taken down for that quantity; the donor gets its own
-    ORDER_BACK row at ITS date. And because `assign()` reads links as pinned supply, the
-    next read of the same book has the asker `covered` off that SPO and the donor `short` -
-    with nothing further to write, which is the point of doing it through the links.
+    link on the same placement is taken down for that quantity; the donor is short at ITS
+    date. And because `assign()` reads links as pinned supply, the next read of the same
+    book has the asker `covered` off that SPO and the donor `short` - with nothing further
+    to write, which is the point of doing it through the links.
+
+    WHERE THE DONOR'S HOLE IS RAISED, corrected in the S4 fix pass (30 Aug). This donor
+    holds the document through a PLACEMENT of its own, so taking that placement down puts
+    the donor's own row back to `raised` for the quantity, on the donor's own line, at the
+    donor's own date - and a second ORDER_BACK on the ASKER's line for the same 50 was the
+    same shortfall told to purchasing twice. `_borrow_shortfalls` nets it, and the row it
+    still raises is the one for a donor whose hold is a confirmed DECISION and no link,
+    which re-raises nothing by itself.
     """
     with blank_session() as db:
         company_id, eling, project, product = _world(db)
@@ -665,7 +675,7 @@ def test_confirming_a_supply_borrow_moves_the_placement_to_the_asker():
 
         arrives = date.today() + timedelta(days=ASKER_DAY - 5)
         allocation = _spo(db, product, donor_bin, qty=50, arrives=arrives)
-        donor_so, donor_core, _donor_mirror, donor_link = _donor_holding(
+        _donor_so, donor_core, _donor_mirror, _donor_link = _donor_holding(
             db, company_id, project, product, donor_bin, qty=50, days=DONOR_DAY,
             actor=eling, allocation=allocation,
             so_number=f"ZZTSO-DONOR{_uid()[:4]}",
@@ -677,10 +687,17 @@ def test_confirming_a_supply_borrow_moves_the_placement_to_the_asker():
         )
         _confirm_as_proposed(db, order, eling)
 
-        rows = (
-            db.query(OrderInquiryRow)
+        rows = [
+            row
+            for row in db.query(OrderInquiryRow)
             .filter(OrderInquiryRow.so_line_id == line.id)
             .all()
+            if row.state != INQUIRY_CANCELLED
+        ]
+        donor_row_after = (
+            db.query(OrderInquiryRow)
+            .filter(OrderInquiryRow.so_line_id == _donor_mirror.id)
+            .one()
         )
         links = db.query(OrderInquiryLink).all()
         service = ProjectSupplyService(db)
@@ -689,7 +706,6 @@ def test_confirming_a_supply_borrow_moves_the_placement_to_the_asker():
         donor_row = next(r for r in after.lines if r.line.key == str(donor_core.id))
         allocation_id = str(allocation.id)
         donor_due = date.today() + timedelta(days=DONOR_DAY)
-        donor_number = donor_so.so_number
 
     # ONE link, on the placement, for the borrowed quantity.
     assert [(str(link.spo_allocation_id), str(link.qty)) for link in links] == [
@@ -700,16 +716,14 @@ def test_confirming_a_supply_borrow_moves_the_placement_to_the_asker():
     assert linked_row.covered_by is not None, (
         "the asker's row names what covers it, which is what tells it apart from a hole"
     )
-    # ...and the donor's own hole, at the donor's date, at the donor's bin.
-    hole = next(
-        row
-        for row in rows
-        if row.verb == IV_ORDER_BACK and str(row.id) != str(linked_row.id)
+    # ...and NOT a second one beside it: the donor's own row is the hole (see the docstring).
+    assert [row.id for row in rows] == [linked_row.id], [
+        (row.verb, row.state, str(row.qty), row.covered_by) for row in rows
+    ]
+    assert (donor_row_after.state, donor_row_after.qty) == (
+        INQUIRY_RAISED, Decimal("50.0000")
     )
-    assert (hole.qty, hole.delivery_date, hole.stock_location) == (
-        Decimal("50.0000"), donor_due, donor_bin.warehouse_code,
-    )
-    assert donor_number in (hole.note or "")
+    assert donor_row_after.delivery_date is None or donor_row_after.delivery_date == donor_due
 
     # The pin the link IS, read back by the one assignment both surfaces share.
     assert asker_row.status == "pinned" and asker_row.uncovered == 0.0

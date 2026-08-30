@@ -33,6 +33,7 @@ import type {
   ConfirmReserveComponent,
 } from '../types/fulfilmentPlanning.types';
 import {
+  borrowPassThrough,
   confirmLineFrom,
   decisionFromAmendDraft,
   suggestionDraftFrom,
@@ -439,19 +440,11 @@ function borrowComponents(contribution: BoardContribution): ConfirmBorrowCompone
       donor_project_id: null,
       qty: source.qty,
       reason: source.reason,
-      donor_core_line_id: source.donor_core_line_id ?? null,
-      donor_so_number: source.donor_so_number ?? null,
-      donor_line_no: source.donor_line_no ?? null,
-      donor_agent_code: source.donor_agent_code ?? null,
-      same_agent: source.same_agent ?? false,
-      donor_required_date: source.donor_required_date ?? null,
-      // LADDER v7.1 STEP 3 (S4): the DOCUMENT this borrow comes off, carried verbatim so a
-      // proposal approved as it stands still moves the placement the engine named. Dropped
-      // here, the Confirm would re-check the quantity against free stock at a bin holding a
-      // container that has not landed, and refuse the engine's own answer.
-      supply_key: source.supply_key ?? null,
-      supply_document: source.supply_document ?? null,
-      arrival_date: source.arrival_date ?? null,
+      // The donor and the document, through the one spread every mapper in this chain uses
+      // (`borrowPassThrough`): approved as it stands, the borrow still moves the placement
+      // the engine named rather than being re-checked against free stock at a bin holding a
+      // container that has not landed.
+      ...borrowPassThrough(source),
     }));
 }
 

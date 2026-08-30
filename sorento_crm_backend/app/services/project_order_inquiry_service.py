@@ -103,6 +103,11 @@ from app.models.projects import (
 )
 from app.services.error_handler import AppException
 from app.services.scm import order_link_service, priority, spo_supply
+from app.services.scm.supply_assignment import (
+    KIND_PO as SA_KIND_PO,
+    KIND_SPO as SA_KIND_SPO,
+    parse_supply_key,
+)
 from app.services.scm.group_netting import (
     GroupNetting,
     group_of_warehouse_code,
@@ -3403,15 +3408,15 @@ class ProjectOrderInquiryService:
         deficit is the ordinary case for the very unit this step is borrowing for. The
         engine has already decided; this is the write.
         """
-        kind, _sep, target = str(supply_key).partition(":")
+        kind, target = parse_supply_key(supply_key)
         if not target:
             return
         self.place_on_po_allocations(
             str(row.id),
             [
                 {
-                    "spo_allocation_id": target if kind == "spo" else None,
-                    "po_line_id": target if kind == "po" else None,
+                    "spo_allocation_id": target if kind == SA_KIND_SPO else None,
+                    "po_line_id": target if kind == SA_KIND_PO else None,
                     "qty": qty,
                 }
             ],
@@ -3432,21 +3437,75 @@ class ProjectOrderInquiryService:
         LATEST FIRST, and reduced rather than always deleted: a donor holding a document
         through two placements gives up the newest one first, and a placement bigger than
         what is being borrowed keeps its remainder. A link of zero is not a smaller
-        placement, it is a row that should not exist, so it is deleted (the table's own
-        CHECK says the same).
+        placement, it is a row that should not exist, so it is deleted - through
+        `_remove_links` like every other unlink in this service, because the audit CLAIM
+        the link wrote goes with it. Deleted by hand it stayed behind, naming a document
+        the donor no longer holds.
         """
         left = _dec(qty)
         if left <= _ZERO:
             return _ZERO
-        kind, _sep, target = str(supply_key).partition(":")
+        rows = self._supply_borrow_links(supply_key, core_line_id=core_line_id)
+        released = _ZERO
+        touched: List[OrderInquiryRow] = []
+        going: Dict[str, Tuple[OrderInquiryRow, List[OrderInquiryLink]]] = {}
+        for link, row in rows:
+            if left <= _ZERO:
+                break
+            take = min(left, _dec(link.qty))
+            if take <= _ZERO:
+                continue
+            if take >= _dec(link.qty):
+                going.setdefault(str(row.id), (row, []))[1].append(link)
+            else:
+                link.qty = _dec(link.qty) - take
+            left -= take
+            released += take
+            touched.append(row)
+        for row, links in going.values():
+            self._remove_links(row, links)
+        if released > _ZERO:
+            self.db.flush()
+            self._invalidate_link_cache()
+            self._refresh_link_state(touched)
+            self.db.flush()
+        return released
+
+    def supply_borrow_held_qty(self, supply_key: str, core_line_id: str) -> Decimal:
+        """How much of one document a line holds through LIVE placements of its own.
+
+        The quantity `release_supply_borrow` is about to hand back, read before it does -
+        which is what tells the confirmation whether the donor's own row is about to
+        re-raise the shortfall by itself (`_borrow_shortfalls`). Same query, so the answer
+        and the action cannot disagree.
+        """
+        return sum(
+            (
+                _dec(link.qty)
+                for link, _row in self._supply_borrow_links(
+                    supply_key, core_line_id=core_line_id
+                )
+            ),
+            _ZERO,
+        )
+
+    def _supply_borrow_links(
+        self, supply_key: str, *, core_line_id: str
+    ) -> List[Tuple[OrderInquiryLink, OrderInquiryRow]]:
+        """One line's LIVE placements on one document, newest first, with their rows.
+
+        `supply_key` is parsed HERE and nowhere else on this side (`spo:<allocation id>` /
+        `po:<purchase order line id>`, the assignment's own address).
+        """
+        kind, target = parse_supply_key(supply_key)
         if not target:
-            return _ZERO
+            return []
         column = (
             OrderInquiryLink.spo_allocation_id
-            if kind == "spo"
+            if kind == SA_KIND_SPO
             else OrderInquiryLink.po_line_id
         )
-        rows = (
+        return (
             self.db.query(OrderInquiryLink, OrderInquiryRow)
             .join(OrderInquiryRow, OrderInquiryRow.id == OrderInquiryLink.row_id)
             .join(
@@ -3461,27 +3520,64 @@ class ProjectOrderInquiryService:
             .order_by(OrderInquiryLink.linked_at.desc())
             .all()
         )
-        released = _ZERO
-        touched: List[OrderInquiryRow] = []
-        for link, row in rows:
-            if left <= _ZERO:
-                break
-            take = min(left, _dec(link.qty))
-            if take <= _ZERO:
-                continue
-            if take >= _dec(link.qty):
-                self.db.delete(link)
-            else:
-                link.qty = _dec(link.qty) - take
-            left -= take
-            released += take
-            touched.append(row)
-        if released > _ZERO:
+
+    def retire_supply_borrow_rows(
+        self,
+        project_sales_order_id: str,
+        *,
+        reason: str,
+        line_ids: Optional[Sequence[str]] = None,
+        except_decision_id: Optional[str] = None,
+    ) -> int:
+        """Cancel this order's step-3 placement rows, links and all (PLAN 3.3).
+
+        A step-3 row belongs to the DECISION that raised it: it is not an instruction to buy
+        anything, it is the record that a line's quantity is coming off a named document, and
+        the placement link hanging off it is what holds that document. So when the line
+        leaves the revision - undecided through `uncover_lines`, superseded by a material
+        change, challenged by drift, or re-decided by a later revision of the same order -
+        the row goes and the document is free for whoever needs it next. Left standing, it
+        pinned the document forever to an instruction that no longer exists.
+
+        Told apart from every other `ORDER_BACK` row by `covered_by`, which is what that
+        column has always meant here: a step-3 row NAMES what covers it, and a donor hole
+        names nothing because nothing covers it yet (`_raise_borrow_shortfalls`).
+
+        `line_ids` scopes it to the lines that moved; `except_decision_id` spares the rows
+        the confirmation now running has just written. The links come down through
+        `_remove_links`, so their claims go with them.
+        """
+        inquiry = self._existing(project_sales_order_id, None)
+        if inquiry is None:
+            return 0
+        query = self.db.query(OrderInquiryRow).filter(
+            OrderInquiryRow.order_inquiry_id == inquiry.id,
+            OrderInquiryRow.verb == IV_ORDER_BACK,
+            OrderInquiryRow.covered_by.isnot(None),
+            OrderInquiryRow.state != INQUIRY_CANCELLED,
+        )
+        if line_ids is not None:
+            wanted = sorted({str(line_id) for line_id in line_ids})
+            if not wanted:
+                return 0
+            query = query.filter(OrderInquiryRow.so_line_id.in_(wanted))
+        if except_decision_id is not None:
+            query = query.filter(
+                or_(
+                    OrderInquiryRow.supply_decision_id.is_(None),
+                    OrderInquiryRow.supply_decision_id != except_decision_id,
+                )
+            )
+        rows = query.all()
+        for row in rows:
+            links = self._links_of(row.id)
+            if links:
+                self._remove_links(row, links)
+            row.state = INQUIRY_CANCELLED
+            row.note = f"{row.note}; {reason}" if row.note else reason
+        if rows:
             self.db.flush()
-            self._invalidate_link_cache()
-            self._refresh_link_state(touched)
-            self.db.flush()
-        return released
+        return len(rows)
 
     def place_on_po(
         self, row_id: str, po_line_id: str, *, actor_user_id: str
