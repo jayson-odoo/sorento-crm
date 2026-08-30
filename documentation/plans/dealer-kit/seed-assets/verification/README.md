@@ -433,18 +433,32 @@ frontend); a click in the catalogue inserts at the caret; Done writes the conten
 `text_override` on a slot-bound layer, after which the Layers panel row reads `name {}` with the
 title `Draws from product data through merge fields`.
 
-**Not proven in this run.** Previewing the block with a real product, so that the preview line and
-the canvas show resolved values, and the round trip through Save / reload. The `:3030` dev server
-died part-way through the product picker (the search returned `No results found.` and every
-subsequent `fetch` from the page failed, with nothing listening on the port), and the standing
-rule for this lane is not to start or restart a server. The request designer half of the check is
-outstanding for the same reason.
+The rest of the round was finished on a second run, after the lane came back. The template was
+rebuilt (the first run's group had never been saved) and the layer's content was rewritten to
+tokens `CBF3612` actually carries, because the product has no `material` value and a token that
+correctly renders empty proves the rule but shows nothing.
 
-**Left behind.** The throwaway template `ZZT merge fields`
-(`9184baf7-b805-4c7b-8f2a-07e25620feb1`) could not be deleted through the list, because the UI
-went down before the cleanup step and the API key principal is refused
-`dealer_kit.tag_templates.manage`. It holds one group of two text layers and nothing else. Delete
-it from Tag Templates when the lane is back up.
+| File | What it shows |
+| --- | --- |
+| `interaction-2x-insert-field-live-preview.png` | The Insert field dialog while the block is previewing `CBF3612`. The content reads `{{spec.brand}} {{spec.class}} - {{product.dimensions}} - {{spec.piece_count}} pcs` and the Preview line under the catalogue reads `CABANA Bathroom Furniture - 380 x 330 x 400 mm - 6 pcs`, resolved live against the previewed product. The Inspector behind it shows Relink and Insert field side by side (D59, AC-M.24). |
+| `interaction-2x-canvas-resolves-with-preview.png` | The same tag on the canvas after Done: the code layer draws `CBF3612` and the token layer draws `CABANA Bathroom Furniture - 380 x 330 x 400 mm - 6 pcs`, while the Inspector still holds the raw tokens and reads `Draws from product data`. The chip reads `Previewing: CBF3612 - CBF3612` (D55, D57, AC-M.24). |
+| `interaction-2x-stop-previewing-tokens-return.png` | Stop previewing. The chip is gone, the code layer is back to its placeholder and the token layer draws `{{spec.brand}} {{spec.class}} - {{product.dimensions}} - {{spec.piece_count}} pcs` again, so the designer sees which fields will fill it (D55, AC-M.24). |
+| `interaction-2x-tokens-survive-reload.png` | The template after Save (toast `Template saved`) and a full page reload: `Group (2)` with its `code` and `name` children, the `{}` marker on the row, and the same tokens in the layer's `text_override`. Merge fields are part of the saved document (AC-M.24). |
+| `interaction-2x-designer-line1-set.png` | `PT-202608-0001` line 1 (`CWC1009-RL`, a SET line) after Use template -> ZZT merge fields. The tag resolves against the LINE: the code layer draws `CWC1009-RL`. Every `{{spec.*}}` and `{{product.dimensions}}` renders empty, which is D58 exactly: a set has no spec row of its own, and the empty render is the rule working rather than failing. |
+| `interaction-2x-designer-line2-product.png` | Line 2 (`SRTWC286-SH-150`, a PRODUCT line) through the same template, which is the meaningful half: `SORENTO Water Closet - 150 x - x - mm -  pcs`. `{{spec.brand}}` and `{{spec.class}}` came from the registry join, the dimensions print `-` for the two measurements the master data does not record, and `{{spec.piece_count}}` is empty because this product does not carry it (D51, D58, AC-M.24). |
+| `interaction-2x-template-delete-confirm.png` | The throwaway template being deleted through the list: `Delete tag template - Are you sure you want to delete "ZZT merge fields"? This action cannot be undone.` Confirmed, toast `Template deleted`, and it is absent after a reload. |
+
+**Both lines of `PT-202608-0001` were put back and saved.** Line 1 to `Bathroom Furniture Set` and
+line 2 to `Art Basin`, which is what each picker showed when it was first opened; the designer
+then saved with the toast `Tag sheet saved`, and line 1's Layers panel reads `Set (5)` again. No
+seeded template was opened or edited at any point in either run.
+
+**A trap worth writing down.** Two clicks in this editor report success without firing, and both
+look like application bugs when they land: `find role button click --name "Done"` closes the
+Insert field dialog as an outside click, so Radix cancels and the content is discarded, and
+`click "button.bg-primary"` on the editor's Save left the document unsaved. Dispatching a
+`MouseEvent('click')` on the button found by its exact text is what worked for both, and for
+every toolbar button.
 
 **Known noise, not introduced here.** Radix's missing-`Description` warning fires for
 `InsertFieldDialog` exactly as it does for every other dialog on this page.
