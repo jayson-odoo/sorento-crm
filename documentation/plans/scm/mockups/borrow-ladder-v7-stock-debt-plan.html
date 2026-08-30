@@ -1,0 +1,217 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Borrow ladder v7 + Stock Debt plan</title>
+<style>
+:root{--bg:#fafaf9;--fg:#1c1917;--mut:#6b7280;--line:#e7e5e4;--card:#fff;--rose:#e11d48;--sky:#0284c7;--em:#059669;--amb:#d97706;--vio:#7c3aed;--pri:#2563eb}
+*,*::before,*::after{box-sizing:border-box}
+body{font:14px/1.5 -apple-system,Inter,system-ui,sans-serif;background:var(--bg);color:var(--fg);margin:0;padding:32px;max-width:1180px}
+h1{font-size:22px;margin:0 0 4px}h2{font-size:16px;margin:34px 0 8px;border-bottom:1px solid var(--line);padding-bottom:4px}h3{font-size:14px;margin:18px 0 6px}
+.sub{color:var(--mut);margin-bottom:22px}
+table{border-collapse:collapse;width:100%;background:var(--card);font-size:13px}th,td{border:1px solid var(--line);padding:6px 8px;text-align:left;vertical-align:top}th{background:#f5f5f4}
+td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin:10px 0;min-width:0}
+.card b.t{display:block;margin-bottom:4px}
+.ruled{background:#ecfdf5;border-color:#a7f3d0}
+.warn{background:#fffbeb;border-color:#fcd34d}
+.badge{display:inline-block;font-size:11px;padding:1px 7px;border-radius:999px;border:1px solid var(--line);background:#f5f5f4;color:var(--mut);white-space:nowrap}
+.badge.g{background:#ecfdf5;border-color:#a7f3d0;color:var(--em)}
+.badge.b{background:#eff6ff;border-color:#bfdbfe;color:var(--pri)}
+.badge.a{background:#fffbeb;border-color:#fcd34d;color:var(--amb)}
+.badge.r{background:#fff1f2;border-color:#fecdd3;color:var(--rose)}
+.badge.v{background:#f5f3ff;border-color:#ddd6fe;color:var(--vio)}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:12px}
+.grid2>*{min-width:0}
+code{font:12px ui-monospace,SFMono-Regular,Menlo,monospace;background:#f5f5f4;padding:1px 4px;border-radius:3px}
+.mermaid{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px;margin:10px 0;overflow-x:auto}
+.mock{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:0;margin:10px 0;overflow-x:auto}
+.mock .bar{display:flex;gap:8px;align-items:center;padding:8px 12px;border-bottom:1px solid var(--line);background:#f5f5f4;font-size:12px}
+.mock .bar .in{border:1px solid var(--line);background:#fff;border-radius:6px;padding:3px 8px;color:var(--mut)}
+.mock .bar .tg{margin-left:auto}
+.dg{font-size:12px;min-width:900px}
+.dg th{position:sticky;top:0}
+.dg td.c{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.dg td.red{background:#fff1f2;color:#be123c;font-weight:600}
+.dg td.amb{background:#fffbeb;color:#b45309;font-weight:600}
+.dg td.grn{background:#ecfdf5;color:#047857}
+.dg td.tba{background:#f5f5f4;color:var(--mut)}
+.dg td.p{white-space:nowrap;max-width:220px;overflow:hidden;text-overflow:ellipsis;position:sticky;left:0;background:#fff}
+.pop{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin:10px 0;max-width:560px;font-size:13px;box-shadow:0 4px 14px rgba(0,0,0,.06)}
+.pop .q{font-weight:600;margin-top:6px}
+.pop .q:first-child{margin-top:0}
+.pop .a{color:var(--mut);margin-left:14px}
+.pop .a.took{color:var(--fg)}
+.pop .a.took::before{content:"\2713 ";color:var(--em)}
+.pop .a.no::before{content:"\2717 ";color:var(--rose)}
+.q-wrap{background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:12px 14px;margin:10px 0}
+.q-wrap label{display:block;margin:4px 0}
+.q-wrap button{margin-top:8px;background:var(--pri);color:#fff;border:0;border-radius:6px;padding:6px 12px;cursor:pointer}
+ol.steps{padding-left:20px}ol.steps li{margin:4px 0}
+.kv{display:grid;grid-template-columns:max-content 1fr;gap:2px 12px;font-size:13px}
+.kv>*{min-width:0}
+small.m{color:var(--mut)}
+</style></head><body>
+<h1>Borrow ladder v7 + Stock Debt</h1>
+<div class="sub">Plan review, 29 Aug 2026. Files: <code>documentation/plans/scm/PLAN-scm-borrow-ladder-v7-stock-debt.md</code> and <code>scm-borrow-ladder-v7-stock-debt-acceptance-criteria.md</code>. Everything under "Today" was read in the code and measured on the dev DB this session.</div>
+
+<h2>1. The ask vs today</h2>
+<table>
+<tr><th style="width:34%">You said</th><th>Code today</th><th style="width:22%">Ruling</th></tr>
+<tr><td>Own location → borrow (location = order, one basis) → pool</td><td>Own <b>group</b> → <b>pool</b> → cross-group free stock → Buy. Borrow from another order is manual only (25 Aug). Pool-before-borrow pinned by <code>test_ladder_v5.py:149</code></td><td><span class="badge g">R1</span> pool last, order-borrow automatic</td></tr>
+<tr><td>Delivery date IS a factor: an earlier-dated line takes the group's stock first; Available ≤ 0 at my date = no</td><td>Rung 1 is date-blind: <code>group_offer = max(group_net + own, 0)</code>, the same number for every line of the group whatever its date</td><td><span class="badge g">R2 R24</span> own = whole group (BB across sites); the pile is date-aware (Q-A)</td></tr>
+<tr><td>Borrow a LATER order, not 2030</td><td>No rung reads a donor date; no 2030 / TBA / NULL filter anywhere</td><td><span class="badge g">R3 R4 R12</span> donor must have supply; same agent → latest date; window = today + lead + 14</td></tr>
+<tr><td>Borrow creates a stock debt at the donor's month</td><td>Exists: ORDER_BACK inquiry row at donor date (<code>_borrow_shortfalls:4178</code>), read by the reorder run as committed demand at the donor warehouse (<code>demand.py:481</code>)</td><td><span class="badge g">R6</span> debt = every uncovered demand, not only order-backs</td></tr>
+<tr><td>Month × product view, aim for zero or surplus</td><td>Nothing. Board buckets are display only. <code>coverage_timeline.group_by_month</code> exists with no caller</td><td><span class="badge g">R7 R15 R16</span> running balance, own menu, colours only</td></tr>
+<tr><td>On hand, incoming (SPO) or on order (PO) fills a debt; the order it was for gets a debt</td><td>Incoming is a bucket inside the net. Line placement exists only as <code>order_inquiry_links</code> (Link SPO)</td><td><span class="badge g">R8 R11 R13</span> reuse links; supply = on hand + SPO + PO; before pool</td></tr>
+<tr><td>Only BB / IB / IR / NTC / AM count</td><td><code>warehouses.segment</code> = project for 55 active bins; groups are the code suffix</td><td><span class="badge g">R17</span> per-warehouse boolean, seeded for 23 bins</td></tr>
+</table>
+
+<h3>Measured on the dev DB (prod copy)</h3>
+<div class="grid2">
+<div class="card"><b class="t">Demand</b>1,246 open lines / 363k units dated 2030-01 · 160 undated · ~600 past-due lines (2022-2025) · SO381895: 76 lines, 1,348 open, due 10 Aug - 10 Sep 2026</div>
+<div class="card"><b class="t">Supply</b>SPO open 725 lines, all arriving Aug 2026 or earlier (721 without container, 14 undated) · PO lines with no SPO 2,864 / 773k units, expected Jul-Oct 2026 mostly, 6 undated · on hand per bin via <code>_stock_context</code></div>
+</div>
+
+<h2>2. Ladder v7</h2>
+<pre class="mermaid">
+flowchart TD
+  G["Gate: beyond reorder coverage date: Buy whole unit"] --> U
+  U["1. USE free supply, no debt<br/>own group first, then the other project groups<br/>free = not assigned to any earlier line, here by my date"] -->|whole| UD["Reserve, rung group_take"]
+  U -->|not whole| B
+  B["2. BORROW ON HAND held by a later order<br/>donors across every project group, ranked:<br/>same agent, then latest date, then same group, then nearest bin<br/>window: donor due on or after today + lead + 14; never past-due, TBA, undated<br/>decided lines donate too"] -->|whole| BD["Borrow on hand, rung order_borrow<br/>donor gets ORDER_BACK at its date, transfer if off-location"]
+  B -->|not whole| I
+  I["3. BORROW SUPPLY held by a later order, ONE document whole<br/>3a SPO (incoming), nearest arrival first; 3b PO (on order), est. issue + lead<br/>eligible when it arrives by my date OR before a fresh buy would (today + lead)<br/>same donor ranking as 2"] -->|whole| ID["Borrow supply, rung incoming_borrow<br/>placement link moves to the asker, donor gets ORDER_BACK"]
+  I -->|not whole| P
+  P["4. POOL, same three steps on the pool's own book<br/>free pile, then later pool orders' on hand, then their supply<br/>hot-selling gate kept; a pool order that lends gets ORDER_BACK at its date"] -->|whole| PD["Reserve or borrow, rung pool"]
+  P -->|not whole| BUY["5. Buy whole unit"]
+  BUY --> N["Never half and half: one step covers the whole unit, or the walk moves on"]
+</pre>
+<div class="grid2">
+<div class="card"><b class="t">Retired</b><code>cross_group_borrow_max_qty / _pct</code> columns, their reads, the two panel inputs, <code>_cross_group_borrow_candidates</code>. <code>RUNG_CROSS_GROUP_BORROW</code> kept only to read frozen snapshots (as <code>RUNG_INCOMING</code> is).</div>
+<div class="card"><b class="t">Unchanged</b>Whole-unit rule (v6), gate, Confirm, transfers, ORDER_BACK writing, reorder run. <code>BorrowAddDialog</code> reads the same donor list in the same order.</div>
+<div class="card warn"><b class="t">Changed in review round 3</b>The pool is no longer a plain net draw: it runs the same free-then-borrow steps on its own (dealer / retail) book, and a pool order that lends receives an ORDER_BACK, so a pool draw can now write a debt (AC-L13 "a pool draw raises nothing" retires). A supply document is taken when it beats a fresh buy, not only when it lands by the due date. One step, one timing, whole unit: SPO half + PO half is not a proposal.</div>
+</div>
+
+<h3>What the planner reads in the trail</h3>
+<div class="pop">
+<div class="q">Can we use our locations?</div><div class="a no">BB has 0 free by 25 Aug 2026 (on hand 1,240, earlier lines 1,300)</div>
+<div class="q">Can we borrow on hand from a later order?</div><div class="a took">Borrow 30 on hand at MWH-IB from SO414285 line 4 (JEREMY, due 12 Nov 2026); its debt lands in Nov 2026</div>
+<div class="q">Can we borrow incoming from a later order?</div><div class="a">not asked, covered above. Would read: Borrow 50 arriving 15 Sep 2026 (SPO 202607-S0105) from SO414285 line 4, or Borrow 20 on order (PO 202607-P0031 line 3, arriving about 20 Oct 2026) from ...</div>
+<div class="q">Can we take from the pool?</div><div class="a">not asked, covered above</div>
+<div class="q">Buy</div><div class="a">not needed</div>
+</div>
+
+<h3>Every option with the date it fulfils (R36, from your round-6 note)</h3>
+<div class="pop" style="max-width:760px">
+<div style="font-weight:600;margin-bottom:6px">SO375875 line 1 · JAY · SRTWB242 · 32 at BRW-BB · due 26 Oct 2026</div>
+<table style="font-size:12px">
+<thead><tr><th></th><th>Option</th><th>Fulfilled by</th><th>vs due</th><th>Debt created</th></tr></thead>
+<tbody>
+<tr><td><span class="badge">1</span></td><td>Use own group on hand</td><td>16 of 32 only</td><td>-</td><td>not whole</td></tr>
+<tr><td><span class="badge">2</span></td><td>Borrow on hand from a later order</td><td>no eligible donor</td><td>-</td><td>-</td></tr>
+<tr><td><span class="badge g">3b ✓</span></td><td>Take on order: PO 202608-S0041 (100 free)</td><td><b>16 Nov 2026</b> (est. issue + 90 d)</td><td><span class="badge a">21 days late</span></td><td>none</td></tr>
+<tr><td><span class="badge">4</span></td><td>Pool BRW</td><td>holds none</td><td>-</td><td>-</td></tr>
+<tr><td><span class="badge">5</span></td><td>Buy 32 now</td><td>27 Nov 2026 (today + 90 d)</td><td><span class="badge r">32 days late</span></td><td>none</td></tr>
+</tbody></table>
+<small class="m">The proposal is the first whole option (✓). Amend still lets the planner pick another row. On hand = today plus 2 days when a transfer is needed; SPO = arrival; PO = issue + lead; buy = today + lead.</small>
+</div>
+<h2>3. One assignment, read by the ladder and the view</h2>
+<div class="card"><b class="t"><code>app/services/scm/supply_assignment.py</code> (pure, golden-tested, beside <code>coverage_timeline.py</code>)</b>
+<div class="kv">
+<span>Supply events</span><span>on hand at today · SPO at arrival (<code>eta_delay &gt; estimated_arrival &gt; expected</code>) · PO line at <code>issue_date + lead time</code> (a PO line's <code>expected_date</code> is the SO delivery date it was bought for, not an arrival, see Q-D), net of the SPO already placed on it</span>
+<span>Demand lines</span><span>open SO lines at flagged bins with agent, group, required date; a confirmed hold is <b>pinned</b> first, any date</span>
+<span>Walk</span><span>per ownership group, chronological: supply adds to the pile, a line at its date draws oldest-first. Cannot draw = <span class="badge r">short</span>; drawn later = <span class="badge a">late</span>; drawn by its date = <span class="badge g">covered</span></span>
+<span>TBA / undated</span><span>date ≥ policy <code>tba_date_from</code> (default 2029-01-01) or NULL: draw nothing, shown in their own columns</span>
+<span>Output</span><span>per line: assignments + status; per month: cumulative balance + tone; the board's rung 1 pile and rung 2/3 donor lists are read from the same result (R21)</span>
+</div></div>
+
+<h2>4. Stock Debt (Project Demand → Stock Debt)</h2>
+<div class="mock">
+<div class="bar"><span class="in">Search product</span><span class="in">Group: BB ▾</span><span class="tg"><input type="checkbox" checked> Only products in debt</span></div>
+<table class="dg">
+<thead><tr><th>Product</th><th class="n">Aug 26</th><th class="n">Sep 26</th><th class="n">Oct 26</th><th class="n">Nov 26</th><th class="n">Dec 26</th><th class="n">Jan 27</th><th class="n">Feb 27</th><th class="n">2030-01</th><th class="n">No date</th></tr></thead>
+<tbody>
+<tr><td class="p" title="SRTWT7445-LV · Sorento tap 7445 LV">SRTWT7445-LV · Sorento tap 7445 LV</td><td class="c red">-40</td><td class="c red">-120</td><td class="c amb">-90</td><td class="c grn">+110</td><td class="c grn">+110</td><td class="c amb">-30</td><td class="c amb">-30</td><td class="c tba">-260</td><td class="c tba">-12</td></tr>
+<tr><td class="p" title="SRTWB7518 · Basin 7518">SRTWB7518 · Basin 7518</td><td class="c grn">+24</td><td class="c red">-15</td><td class="c grn">+9</td><td class="c grn">+9</td><td class="c grn">+9</td><td class="c grn">+9</td><td class="c grn">+9</td><td class="c tba">0</td><td class="c tba">0</td></tr>
+<tr><td class="p" title="M310-CR-PJ">M310-CR-PJ</td><td class="c grn">0</td><td class="c grn">0</td><td class="c amb">-8</td><td class="c amb">-8</td><td class="c amb">-8</td><td class="c amb">-8</td><td class="c amb">-8</td><td class="c tba">-40</td><td class="c tba">0</td></tr>
+</tbody></table>
+</div>
+<div class="grid2">
+<div class="card"><b class="t">Tone</b><span class="badge r">red</span> month starts before today + lead time (cannot buy in time) · <span class="badge a">amber</span> negative, later · <span class="badge g">green</span> zero or surplus · grey = TBA / No date, informational</div>
+<div class="card"><b class="t">Cell = lightbox with two tables (R28)</b>Click any cell. Demand rows carry <b>Plan</b>; the view never decides (R23).</div>
+<div class="mock" style="max-width:980px">
+<div class="bar"><b>SRTWB242 · Oct 2026</b><span class="badge r">balance -16</span><span class="badge">BB group</span><span class="tg" style="color:var(--mut)">✕</span></div>
+<div style="padding:10px 12px"><b style="font-size:12px">Demand due Oct 2026</b>
+<table class="dg" style="min-width:0;margin-top:4px">
+<thead><tr><th>SO</th><th>Agent</th><th>Bin</th><th>Due</th><th class="n">Open</th><th class="n">Assigned</th><th>From</th><th>Status</th><th></th></tr></thead>
+<tbody>
+<tr><td>SO390918 L3</td><td>JENNIFER</td><td>BRW-BB</td><td>15 Oct 2026</td><td class="c">12</td><td class="c">12</td><td>on hand DC1-BB</td><td><span class="badge g">covered</span></td><td><a href="#" style="color:var(--pri)">Plan</a></td></tr>
+<tr><td>SO375875 L1</td><td>JAY</td><td>BRW-BB</td><td>26 Oct 2026</td><td class="c">32</td><td class="c">16</td><td>on hand DC1-BB</td><td><span class="badge r">short 16</span></td><td><a href="#" style="color:var(--pri)">Plan</a></td></tr>
+</tbody></table>
+<b style="font-size:12px;display:block;margin-top:12px">Supply in Oct 2026</b>
+<table class="dg" style="min-width:0;margin-top:4px">
+<thead><tr><th>Kind</th><th>Document</th><th>Bin</th><th>Arrival</th><th class="n">Qty</th><th>Assigned to</th><th>Note</th></tr></thead>
+<tbody>
+<tr><td>PO</td><td>202605-S0072 L5</td><td>BRW-BB</td><td>est. 16 Aug 2026</td><td class="c">12</td><td>none</td><td><span class="badge a">overdue, not counted</span> bought for 15 Oct 2026</td></tr>
+<tr><td colspan="7" style="color:var(--mut)">Nothing else arrives in Oct. Next: PO 202608-S0041, 100, est. 16 Nov 2026.</td></tr>
+</tbody></table>
+</div></div>
+</div>
+<table>
+<tr><th>Piece</th><th>Where</th></tr>
+<tr><td>Routes</td><td><code>GET /project-sales/stock-debt</code> (page by product, <code>query</code>, <code>group</code>, <code>only_debt</code>) · <code>GET /project-sales/stock-debt/{product_id}/cell?month=</code> returning <code>{demand: [...], supply: [...]}</code></td></tr>
+<tr><td>Permission</td><td><code>projects.stock_debt.view</code>, grant sweep from <code>projects.projects.view</code> (pattern of <code>419_stock_transfers.py</code>)</td></tr>
+<tr><td>FE</td><td><code>app/(protected)/project-sales/stock-debt/</code>: page, <code>StockDebtClient</code> (DataGrid fixed layout, sticky product column, months from payload), <code>StockDebtCellDialog</code>, hook + service with the contract on top; menu entry after Fulfilment Planning (<code>menu.config.tsx:242</code>, <code>:1829</code>)</td></tr>
+</table>
+
+<h2>5. Flag and policy</h2>
+<div class="grid2">
+<div class="card"><b class="t">Migration 443</b><code>warehouses.fulfilment_planning</code> boolean, seeded true where active and code ends <code>-BB -IB -IR -NTC -AM</code> (23 bins) · <code>scm.priority_policy.tba_date_from</code> date default 2029-01-01 · drop the two cap columns · permission row + sweep · bootstrap_env mirrors the seed (CI DB is bootstrap, lesson from #363)</div>
+<div class="card"><b class="t">Screens</b>Inventory → Warehouses: column + switch in the edit modal (existing PUT) · Supply Chain → Policies → Fulfilment Priority: <code>TBA date from</code> replaces the two cap inputs · every reader honours one shared predicate (AC-S1-5); an off bin's line shows <code>Outside fulfilment planning</code> on the board</div>
+</div>
+
+<h2>6. Slices</h2>
+<table>
+<tr><th>#</th><th>Content</th><th>Migration</th><th class="n">Days</th></tr>
+<tr><td>S1</td><td>Flag + TBA field + shared predicate; Warehouses column/switch; panel input; readers honour the flag</td><td>443</td><td class="n">2</td></tr>
+<tr><td>S2</td><td><code>supply_assignment.py</code> + <code>_po_rows</code> + stock-debt service/routes + page + drill + menu + permission</td><td>-</td><td class="n">5</td></tr>
+<tr><td>S3</td><td>Ladder v7: rung order, <code>order_borrow</code> + ledger, decided-donor supersede on Confirm, trail + dialog wording, v4/v5/v6 test rewrites, SO381895 evidence</td><td>-</td><td class="n">5</td></tr>
+<tr><td>S4</td><td><code>incoming_borrow</code> rung + link moves on Confirm + wording</td><td>-</td><td class="n">3</td></tr>
+</table>
+<small class="m">S1 first (everything reads the flag), S2 before S3 (the ladder consumes a tested <code>assign()</code>). Each slice: Phase 1 FE mock → Phase 2 BE test-first → Phase 3 review → PR. One coder per worktree.</small>
+
+<h2>7. Not built, on purpose</h2>
+<ul>
+<li>No debt table: debt is computed from the book; ORDER_BACK rows, links and allocations already persist the decided parts. Trigger for a table: the list is still slow on the prod copy after one-read-per-input.</li>
+<li>No alert or job when a date nears (R16). No per-group table (R17). No change to the reorder run. No new Playwright spec.</li>
+</ul>
+
+<h2>8. Every scenario in the flowchart, on SRTWB242 (real rows, dev DB 29 Aug)</h2>
+<div class="grid2">
+<div class="card"><b class="t">Supply (flagged bins)</b>On hand: BRW-BB 4 · DC1-BB 154 · MWH-BB 41 (BB 199) · MWH-IR 5. Not counted: REJ100% 3 (bin off), BRW-SYNT SPO 50 (bin off).<br/>SPO-2026/08-0063: 10 to BRW-IR, arrival 11 Aug 2026 (overdue, still open).<br/>PO 202605-S0072 (issued 18 May): 64 · 5 · 30 · 27 · 12 · 2 = 140, est. arrival 16 Aug 2026 (overdue). Its line dates 14 Aug, 19 Aug, 15 Sep, 30 Sep, 15 Oct are exactly the SO due dates below: bought-for dates, as you said.<br/>PO 202608-S0041 (issued 18 Aug): 100, est. arrival 16 Nov 2026.<br/>Lead 90 d (DEFAULT supplier) → window = 11 Dec 2026; red = months before 27 Nov 2026.</div>
+<div class="card"><b class="t">Demand (flagged bins, in date order)</b>SO406651 CINDY LEE BRW-BB 15 Jul 144 <span class="badge">past-due</span> · SO398579 ACT BRW-IR 1 Jun 10 <span class="badge">past-due</span> · SO411490 JEREMY BRW-BB 15 Sep 27 · SO370840 ACT BRW-IR 21 Sep 5 · SO408737 ACT BRW-IR 30 Sep 2 · SO390918 JENNIFER BRW-BB 15 Oct 12 · SO375875 JAY BRW-BB 26 Oct 32 · SO390918 JENNIFER BRW-BB 24 Dec 12 · SO396241 JEREMY BRW-BB 4 Jan 27 17 · SO401624 TERA BRW-BB 7 Jun 27 501 · SO408289 CINDY LEE BRW-BB 15 Jun 27 206 · SO407114 CINDY LEE BRW-BB 10 Aug 27 387 · SO410256 JOHNSON BRW-BB 1 Jan 2030 100 <span class="badge">TBA</span>.<br/>Outside: 14 units at plain BRW (a pool, dealer lines) and 5 OI-sourced lines with no bin (414 units; unlocated, today's gap too).</div>
+</div>
+<div class="card ruled"><b class="t">"Free by my date" is NOT the plain Available.</b> Plain Available for SRTWB242 in BB = 199 on hand − 1,355 open (every dated line incl. 2027) = −1,156, so nothing could ever use own stock. Date-aware: at JEREMY's 15 Sep only the lines due BEFORE him count (CINDY 144), so free = 199 − 144 = 55 and he uses own stock. TERA's 501 due Jun 2027 and JOHNSON's 2030 line never drag an earlier line negative (R24). Borrow starts only when free by my date cannot cover the whole unit.</div>
+<div class="card warn"><b class="t">Under FIFO by date, an earlier line never borrows from an UNPINNED later line of its own group: it simply takes the pile first and the later line goes short (its debt appears in its month, no ORDER_BACK). Borrow is what happens when the supply is PINNED (confirmed decision or placement link) or sits in ANOTHER group.</b> The trail of the line that went short names who took the pile (the existing "who is ahead of me" dialog).</div>
+<div style="overflow-x:auto;border:1px solid var(--line);border-radius:8px"><table style="min-width:2600px;font-size:12px;white-space:nowrap"><thead><tr><th>#</th><th>Scenario</th><th>Asker SO</th><th>Agent</th><th>Bin</th><th>Due</th><th class=n>Qty</th><th class=n>Free pile at due</th><th class=n>Step 1 gives</th><th>Whole?</th><th>Donor SO</th><th>Donor agent</th><th>Donor due</th><th>Donor's assigned supply</th><th>Kind of that supply</th><th>Donor eligible (due ≥ 11 Dec 26, not past-due/TBA)</th><th>Supply doc taken (SPO first; PO only when no single SPO covers the unit)</th><th>Doc kind</th><th>Arrival</th><th>Beats a buy (27 Nov 26) or by due?</th><th>Result step</th><th class=n>Result qty</th><th>Debt to</th><th>Debt month</th><th class=n>Debt qty</th><th>AC</th></tr></thead><tbody><tr><td>1</td><td>Use own group</td><td>SO411490</td><td>JEREMY</td><td>BRW-BB</td><td>15 Sep 26</td><td class=n>27</td><td class=n>55</td><td class=n>27</td><td>yes</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>1 use</td><td class=n>27</td><td>-</td><td>-</td><td class=n>0</td><td>S3-1</td></tr><tr><td>2</td><td>Own group short, earlier line took it (R24)</td><td>SO375875</td><td>JAY</td><td>BRW-BB</td><td>26 Oct 26</td><td class=n>32</td><td class=n>16</td><td class=n>16</td><td>no</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>not whole, next step</td><td class=n>-</td><td>-</td><td>-</td><td class=n>-</td><td>S2-1 S3-6</td></tr><tr><td>3</td><td>Borrow on hand: no donor past the window</td><td>SO375875</td><td>JAY</td><td>BRW-BB</td><td>26 Oct 26</td><td class=n>32</td><td class=n>16</td><td class=n>16</td><td>no</td><td>none</td><td>-</td><td>-</td><td>0</td><td>-</td><td>no holder due ≥ 11 Dec</td><td>-</td><td>-</td><td>-</td><td>-</td><td>not whole, next step</td><td class=n>-</td><td>-</td><td>-</td><td class=n>-</td><td>S3-4</td></tr><tr><td>4</td><td>Take supply that beats a fresh buy (R32): 16 on hand is NOT whole, so it is left alone; no SPO exists (SPO-0063 is overdue and for IR), so 3b PO; whole 32 from ONE PO</td><td>SO375875</td><td>JAY</td><td>BRW-BB</td><td>26 Oct 26</td><td class=n>32</td><td class=n>16</td><td class=n>0 (16 &lt; 32: untouched, stays free for the next line)</td><td>no</td><td>none (PO unassigned, JAY is first in line)</td><td>-</td><td>-</td><td>100 free</td><td>PO on order</td><td>-</td><td>PO 202608-S0041 (3a: no SPO covers)</td><td>PO</td><td>16 Nov 26 (issue + 90)</td><td>beats buy: 16 Nov &lt; 27 Nov</td><td>3b take on order, whole 32 from one PO, nothing from on hand</td><td>32</td><td>none (JAY late by 3 weeks)</td><td>Oct 26</td><td>16 (view: balance)</td><td>S4-1 R32 R33</td></tr><tr><td>5</td><td>Queue-cutter: new near line takes first</td><td>new SO</td><td>TERA</td><td>BRW-BB</td><td>10 Sep 26</td><td class=n>20</td><td class=n>55</td><td class=n>20</td><td>yes</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>1 use</td><td class=n>20</td><td>SO390918 (goes short)</td><td>Oct 26</td><td class=n>4 (Oct −36)</td><td>S2-1 S3-13</td></tr><tr><td>6</td><td>Borrow on hand from a DECIDED later order (R9 R25)</td><td>SO406651</td><td>CINDY LEE</td><td>BRW-BB</td><td>15 Jul 26 (past-due)</td><td class=n>144</td><td class=n>49</td><td class=n>49</td><td>no</td><td>SO401624</td><td>TERA</td><td>7 Jun 27</td><td>150 on hand at DC1-BB</td><td>confirmed decision</td><td>yes</td><td>-</td><td>-</td><td>-</td><td>-</td><td>2 borrow on hand</td><td class=n>95</td><td>SO401624</td><td>Jun 27</td><td class=n>95</td><td>S3-2 S3-5</td></tr><tr><td>7</td><td>Same agent beats later date (R4 R19)</td><td>SO406651</td><td>CINDY LEE</td><td>BRW-BB</td><td>15 Jul 26</td><td class=n>144</td><td class=n>49</td><td class=n>49</td><td>no</td><td>SO407114 (over SO401624)</td><td>CINDY LEE (same)</td><td>10 Aug 27</td><td>100 on hand at MWH-BB</td><td>confirmed decision</td><td>yes</td><td>-</td><td>-</td><td>-</td><td>-</td><td>2 borrow on hand</td><td class=n>95</td><td>SO407114</td><td>Aug 27</td><td class=n>95</td><td>S3-2 S3-3</td></tr><tr><td>8</td><td>Donor too near the window</td><td>new SO</td><td>TERA</td><td>BRW-BB</td><td>10 Sep 26</td><td class=n>20</td><td class=n>0 (assume)</td><td class=n>0</td><td>no</td><td>SO375875</td><td>JAY</td><td>26 Oct 26</td><td>16 on hand</td><td>FIFO</td><td>no: 26 Oct < 11 Dec</td><td>-</td><td>-</td><td>-</td><td>-</td><td>not whole, next step</td><td class=n>-</td><td>-</td><td>-</td><td class=n>-</td><td>S3-4</td></tr><tr><td>9</td><td>Past-due line never donates</td><td>any</td><td>-</td><td>-</td><td>-</td><td class=n>-</td><td class=n>-</td><td class=n>-</td><td>-</td><td>SO406651</td><td>CINDY LEE</td><td>15 Jul 26</td><td>144 on hand</td><td>FIFO</td><td>no: past-due</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td class=n>-</td><td>-</td><td>-</td><td class=n>-</td><td>S3-4</td></tr><tr><td>10</td><td>TBA line: no supply, no donor</td><td>SO410256</td><td>JOHNSON</td><td>BRW-BB</td><td>1 Jan 2030</td><td class=n>100</td><td class=n>0 (draws nothing)</td><td class=n>0</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>no: TBA</td><td>-</td><td>-</td><td>-</td><td>-</td><td>none (TBA column)</td><td class=n>-</td><td>SO410256</td><td>2030-01</td><td class=n>100</td><td>S2-3 S3-4</td></tr><tr><td>11a</td><td>Borrow SPO, donor too near</td><td>SO370840</td><td>ACT</td><td>BRW-IR</td><td>21 Sep 26</td><td class=n>5</td><td class=n>0</td><td class=n>0</td><td>no</td><td>SO408737</td><td>ACT</td><td>30 Sep 26</td><td>10 on SPO-0063</td><td>link row</td><td>no: 30 Sep < 11 Dec</td><td>-</td><td>-</td><td>-</td><td>-</td><td>not whole, next step</td><td class=n>-</td><td>-</td><td>-</td><td class=n>-</td><td>S4-1</td></tr><tr><td>11b</td><td>Borrow SPO from an eligible pinned order</td><td>SO370840</td><td>ACT</td><td>BRW-IR</td><td>21 Sep 26</td><td class=n>5</td><td class=n>0</td><td class=n>0</td><td>no</td><td>SO396241</td><td>JEREMY</td><td>4 Jan 27</td><td>10 on SPO-0063</td><td>link row</td><td>yes</td><td>SPO-2026/08-0063 (re-dated)</td><td>SPO</td><td>20 Sep 26</td><td>by due</td><td>3a borrow SPO, whole</td><td class=n>5</td><td>SO396241</td><td>Jan 27</td><td class=n>5</td><td>S4-1 S4-3</td></tr><tr><td>12</td><td>Borrow PO after every SPO</td><td>SO390918</td><td>JENNIFER</td><td>BRW-BB</td><td>24 Dec 26</td><td class=n>12</td><td class=n>0 (assume)</td><td class=n>0</td><td>no</td><td>SO396241</td><td>JEREMY</td><td>4 Jan 27</td><td>100 on PO S0041</td><td>link row</td><td>yes</td><td>PO 202608-S0041</td><td>PO</td><td>16 Nov 26</td><td>by due</td><td>3b borrow PO, whole</td><td class=n>12</td><td>SO396241</td><td>Jan 27</td><td class=n>12</td><td>S4-1 S4-2</td></tr><tr><td>12b</td><td>Half SPO + half PO: not a proposal (R33)</td><td>SO390918</td><td>JENNIFER</td><td>BRW-BB</td><td>24 Dec 26</td><td class=n>12</td><td class=n>0</td><td class=n>0</td><td>no</td><td>SO396241</td><td>JEREMY</td><td>4 Jan 27</td><td>5 on SPO + 7 on PO</td><td>link rows</td><td>yes</td><td>neither (no single doc covers 12)</td><td>-</td><td>-</td><td>-</td><td>not whole, next step</td><td class=n>-</td><td>-</td><td>-</td><td class=n>-</td><td>R33</td></tr><tr><td>13</td><td>Cross-group borrow, no cap (R5)</td><td>SO370840</td><td>ACT</td><td>BRW-IR</td><td>21 Sep 26</td><td class=n>5</td><td class=n>0</td><td class=n>0</td><td>no</td><td>SO401624</td><td>TERA</td><td>7 Jun 27</td><td>150 on hand at DC1-BB</td><td>confirmed decision</td><td>yes</td><td>-</td><td>-</td><td>-</td><td>-</td><td>2 borrow on hand + transfer DC1-BB → BRW-IR</td><td class=n>5</td><td>SO401624</td><td>Jun 27</td><td class=n>5</td><td>S3-3 S3-8</td></tr><tr><td>14</td><td>Two units, one donor: each unit whole, ledger drawn twice</td><td>SO370840, then SO408737</td><td>ACT</td><td>BRW-IR</td><td>21 Sep / 30 Sep 26</td><td class=n>5, then 2</td><td class=n>0</td><td class=n>0</td><td>no</td><td>SO401624</td><td>TERA</td><td>7 Jun 27</td><td>150 → 145 → 143</td><td>confirmed decision</td><td>yes</td><td>-</td><td>-</td><td>-</td><td>-</td><td>2 borrow on hand, whole per unit</td><td class=n>5, then 2</td><td>SO401624</td><td>Jun 27</td><td class=n>7</td><td>S3-9</td></tr><tr><td>15a</td><td>Pool free pile covers (same algorithm, R34)</td><td>short asker</td><td>-</td><td>BRW-BB</td><td>Nov 26</td><td class=n>40</td><td class=n>0</td><td class=n>0</td><td>no</td><td>-</td><td>-</td><td>-</td><td>pool free pile 60 at Nov</td><td>pool on hand</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>4 pool use, whole</td><td class=n>40</td><td>none</td><td>-</td><td class=n>0</td><td>S3-7</td></tr><tr><td>15b</td><td>Pool later order lends (R34)</td><td>short asker</td><td>-</td><td>BRW-BB</td><td>Nov 26</td><td class=n>40</td><td class=n>0</td><td class=n>0</td><td>no</td><td>SO4xxxxx (dealer, at BRW)</td><td>dealer</td><td>Feb 27</td><td>40 on hand at BRW</td><td>FIFO</td><td>yes</td><td>-</td><td>-</td><td>-</td><td>-</td><td>4 pool borrow, whole</td><td class=n>40</td><td>the pool order</td><td>Feb 27</td><td class=n>40</td><td>S3-7 R34</td></tr><tr><td>16</td><td>Gate: due beyond coverage date</td><td>SO401624</td><td>TERA</td><td>BRW-BB</td><td>7 Jun 27</td><td class=n>501</td><td class=n>not walked</td><td class=n>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>buy (gate)</td><td class=n>501</td><td>SO401624</td><td>Jun 27</td><td class=n>501</td><td>v5 gate</td></tr><tr><td>17</td><td>Flagged-off bin</td><td>SYNT line</td><td>-</td><td>BRW-SYNT</td><td>-</td><td class=n>-</td><td class=n>outside</td><td class=n>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>SPO-2026/08-0069 to BRW-SYNT</td><td>SPO</td><td>6 Aug 26</td><td>-</td><td>outside fulfilment planning</td><td class=n>-</td><td>-</td><td>-</td><td class=n>-</td><td>S1-5 S1-6</td></tr><tr><td>18</td><td>Overdue incoming, not counted (R31)</td><td>-</td><td>-</td><td>-</td><td>-</td><td class=n>-</td><td class=n>-</td><td class=n>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>SPO-0063 (10) + PO S0072 (140)</td><td>SPO + PO</td><td>11 Aug / 16 Aug 26 (passed)</td><td>-</td><td>not counted until re-dated</td><td class=n>0</td><td>-</td><td>-</td><td class=n>-</td><td>R31</td></tr><tr><td>19</td><td>PO bought-for date is display only (R30)</td><td>SO411490</td><td>JEREMY</td><td>BRW-BB</td><td>15 Sep 26</td><td class=n>27</td><td class=n>-</td><td class=n>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>PO 202605-S0072 L4 bought for 15 Sep</td><td>PO</td><td>16 Aug 26 (passed)</td><td>-</td><td>FIFO, lightbox shows "bought for"</td><td class=n>-</td><td>-</td><td>-</td><td class=n>-</td><td>S2-4</td></tr></tbody></table></div>
+<small class="m">"not whole, next step" = this step cannot cover the whole unit, so nothing is taken from it and the next step is tried. Pile figures follow FIFO by date over the 199 on hand of the BB group, past-due lines first (SO406651 144 lands in Aug). "assume" marks a supposed state used to reach the rung. Window = 29 Aug + 90 + 14 = 11 Dec 2026.</small>
+<h3>Stock Debt row this gives today (conservative overdue rule)</h3>
+<div class="mock"><table class="dg"><thead><tr><th>Product</th><th class="n">Aug 26</th><th class="n">Sep 26</th><th class="n">Oct 26</th><th class="n">Nov 26</th><th class="n">Dec 26</th><th class="n">Jan 27</th><th class="n">…</th><th class="n">Jun 27</th><th class="n">Jul 27</th><th class="n">Aug 27</th><th class="n">2030-01</th><th class="n">No date</th></tr></thead>
+<tbody><tr><td class="p">SRTWB242</td><td class="c grn">+55</td><td class="c grn">+28</td><td class="c red">-16</td><td class="c grn">+84</td><td class="c grn">+72</td><td class="c grn">+55</td><td class="c grn">+55</td><td class="c amb">-652</td><td class="c amb">-652</td><td class="c amb">-1039</td><td class="c tba">-100</td><td class="c tba">0</td></tr></tbody></table></div>
+<small class="m">BB group only; the IR group adds −12 across Aug-Sep (5 on hand vs 17 asked). Aug is +55 after the past-due 144 lands in the current month.</small>
+
+<h2>9. Decide before tickets</h2>
+
+<div class="card ruled"><b class="t">Settled in review (29 Aug)</b>
+<span class="badge g">Q-A</span> rung 1 pile is date-aware (R24) · <span class="badge g">Q-B</span> decided donor superseded in the same Confirm (R25) · <span class="badge g">Q-C</span> S3 / S4 two PRs (R26) · borrow names what it borrows (R27) · cell lightbox = demand + supply (R28) · PO expected_date = bought-for date (R29) · <span class="badge g">Q-D</span> bought-for display only; PO = on order, SPO = incoming (R30) · <span class="badge g">Q-E</span> overdue not counted until re-dated (R31) · a donor lends only supply actually assigned to it (R3) · <span class="badge g">Q-G</span> R32 supply that beats a buy, R33 one document whole, R34 pool same algorithm + order-back: all YES · <span class="badge g">Q-H</span> several on-hand donors may combine, one timing (R35) · PO is taken only when no single SPO covers the unit (3a before 3b) · R36 every option shows the date it fulfils and the days late, in the trail and the decision panel</div>
+
+<form class="q-wrap" data-lavish-question="scenarios-ok" onsubmit="event.preventDefault();const c=new FormData(event.currentTarget).get('ok');if(c)window.lavish.queuePrompt('Scenario table verdict: '+c,{tag:'choice',text:'Scenarios: '+c,element:event.currentTarget,data:{question:'scenarios-ok',answer:c}});">
+<b>Q-F. Scenario table (section 8): aligned?</b>
+<label><input type="radio" name="ok" value="aligned, cut tickets"> Aligned, cut tickets</label>
+<label><input type="radio" name="ok" value="changes needed, see my annotations"> Changes needed (see annotations)</label>
+<button type="submit">Queue answer</button>
+</form>
+
+<script type="module">
+import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11.15.0/dist/mermaid.esm.min.mjs";
+mermaid.initialize({startOnLoad:false,theme:"default",securityLevel:"strict",flowchart:{htmlLabels:true}});
+await mermaid.run({nodes:[...document.querySelectorAll(".mermaid")]});
+</script>
+</body></html>

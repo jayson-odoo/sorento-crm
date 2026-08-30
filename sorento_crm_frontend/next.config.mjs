@@ -18,8 +18,11 @@ const nextConfig = {
   typescript: {
     ignoreBuildErrors: false, // Keep this false to catch real TS errors
   },
-  // Build optimizations for faster Docker builds
-  swcMinify: true, // Use SWC minifier (faster than Terser)
+  // lucide-react is on Next's built-in optimizePackageImports list; @remixicon/react is not,
+  // so its barrel imports would otherwise pull the whole icon set into every dev compile.
+  experimental: {
+    optimizePackageImports: ['@remixicon/react'],
+  },
   compiler: {
     removeConsole: process.env.NODE_ENV === 'production' ? {
       exclude: ['error', 'warn'], // Keep errors and warnings in production
@@ -32,6 +35,9 @@ const nextConfig = {
   reactStrictMode: true,
   // Hosts (besides localhost) allowed to load /_next/* from the dev server: Tailscale name,
   // LAN IP, etc. Comma-separated; wildcards like *.ts.net allowed. Dev only, ignored by builds.
+  // Next normally 308s '/x/' to '/x'. The FastAPI trailing-slash 307 goes the other way, and
+  // the two chase each other forever through the /api/v1 rewrite below. Let '/x/' through.
+  skipTrailingSlashRedirect: true,
   allowedDevOrigins: (process.env.NEXT_DEV_ALLOWED_ORIGINS ?? '')
     .split(',')
     .map((s) => s.trim())
@@ -41,6 +47,12 @@ const nextConfig = {
     // Only apply rewrites in development mode
     if (process.env.NODE_ENV === 'development') {
       return [
+        // The rewrite param drops a trailing slash, and FastAPI 307s a list route without
+        // one, so '/x/' must be forwarded as '/x/' or the two loop.
+        {
+          source: '/api/v1/:path*/',
+          destination: `${process.env.FASTAPI_INTERNAL_URL ?? 'http://localhost:8000'}/api/v1/:path*/`,
+        },
         {
           source: '/api/v1/:path*',
           destination: `${process.env.FASTAPI_INTERNAL_URL ?? 'http://localhost:8000'}/api/v1/:path*`,

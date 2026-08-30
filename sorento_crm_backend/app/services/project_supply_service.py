@@ -52,7 +52,7 @@ import logging
 import uuid
 from collections import defaultdict
 from dataclasses import dataclass, field, replace as dataclass_replace
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from functools import cmp_to_key
 from typing import (
@@ -77,6 +77,8 @@ from app.models.order import Customer, SalesOrder, SalesOrderLine
 from app.models.procurement import (
     InboundShipment,
     ProductSupplier,
+    PurchaseOrder,
+    PurchaseOrderLine,
     SPOAllocation,
     Supplier,
 )
@@ -105,12 +107,25 @@ from app.models.scm import ItemClassification, ReorderLevel, SupplierPerformance
 from app.models.user import User
 from app.services.error_handler import AppException
 from app.services.scm import priority, spo_supply
+from app.services.scm.container_request_service import OPEN_PO_STATUSES
+#: `purchase_orders.source_system` for a CRM-minted SPO document. Imported under a
+#: name that says whose stamp it is, so `_po_rows`' exclusion reads as "not a shipping
+#: leg" rather than as an unexplained string comparison.
+from app.services.scm.spo_conversion_service import (
+    SOURCE_SYSTEM as CRM_SPO_SOURCE_SYSTEM,
+)
 from app.services.scm import sales_agent_service
 from app.services.scm.demand import demand_qty, is_open_demand
 from app.services.scm.group_netting import GroupNetting
+from app.services.scm.planning_predicate import (
+    OUTSIDE_FULFILMENT_PLANNING,
+    fulfilment_planning_predicate,
+    outside_fulfilment_planning,
+)
 from app.services.scm.front_planning_engine import (
     BORROW,
     BUY,
+    DEFAULT_LEAD_TIME_DAYS,
     RESERVE,
     RUNG_CROSS_GROUP_BORROW,
     RUNG_GROUP_BORROW,
@@ -376,6 +391,33 @@ class _SpoRow:
     overdue_days: int = 0
     #: Who it is coming from. Display only, and defaulted so every existing construction of
     #: this row keeps working; the sheet does not read it, the stock drill-down does.
+    supplier_name: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class _PoRow:
+    """One open purchase-order line, net of the SPO cut from it, at the date it would land.
+
+    The dated half of "what is on order", and the counterpart of `_SpoRow`. The two dates it
+    carries mean opposite things and the names say which is which (R29, R30):
+
+    * `arrival_date` = `purchase_orders.issue_date + the supplier's lead time`. What the
+      timeline counts.
+    * `bought_for` = the line's own `expected_date`, which on this book is the SO DELIVERY
+      DATE the buyer typed the line against - verified on SRTWB242, where PO 202605-S0072's
+      line dates are exactly the open SO due dates for the product. Display only; nothing
+      here or downstream reads it as an arrival.
+    """
+
+    po_number: str
+    #: Derived, because `purchase_order_lines` carries no line number: the position within
+    #: its document in the order the document's own relationship uses (created_at, id).
+    #: Two lines of one PO for one product otherwise read as the same row on screen.
+    po_line_no: int
+    line_id: str
+    arrival_date: Optional[date]
+    bought_for: Optional[date]
+    qty: Decimal
     supplier_name: Optional[str] = None
 
 
@@ -728,7 +770,7 @@ class ProjectSupplyService:
             Dict[Tuple[str, str], List[_SpoRow]]
         ] = None
         # Every active warehouse by id, read once: the span the nets are summed over.
-        self._active_warehouses_cache: Optional[Dict[str, Warehouse]] = None
+        self._planning_warehouses_cache: Optional[Dict[str, Warehouse]] = None
         # Warehouse and project rows this request has already read, by id. A donor list is
         # asked for once per line, and a board of hundreds of lines paid two round trips
         # per line to re-read the same handful of rows.
@@ -765,6 +807,8 @@ class ProjectSupplyService:
         self._active_policy_loaded = False
         self._active_policy_value: Optional[Any] = None
         self._decided_elsewhere_cache: Optional[Set[str]] = None
+        self._decided_anywhere_cache: Optional[Set[str]] = None
+        self._active_decision_rows: Optional[List[Tuple[Any, Any]]] = None
         # PROJECT line ids of the lines this request is reading/replacing right now
         # (`_facts_for`'s own `replaced`, `demand_facts`'s own `exclude_line_ids`) - fed to
         # `_decided_elsewhere` so a line being decided in THIS request is never read as
@@ -958,6 +1002,48 @@ class ProjectSupplyService:
             as_of or date.today(), self._lead_time_days(fact.product_id)
         )
         return fact.required_date > window_end
+
+    def lead_times(self, product_ids: Iterable[str]) -> Dict[str, Optional[int]]:
+        """`_lead_time_days` for many products in TWO queries, filling the same memo.
+
+        The single-product path memoizes, which is right for a board of 300 lines over a
+        handful of products and wrong for the Stock Debt view, where the page is a thousand
+        products and one round trip each is two thousand. Same two sources in the same order
+        (measured first, stated second) - this is the batched door onto that rule, not a
+        second copy of it, which is why `_lead_time_days` reads the memo this fills.
+        """
+        wanted = {str(pid) for pid in product_ids if pid}
+        missing = [pid for pid in wanted if pid not in self._lead_time_memo]
+        if missing:
+            measured = {
+                str(pid): days
+                for pid, days in self.db.query(
+                    SupplierPerformance.product_id,
+                    func.min(SupplierPerformance.avg_lead_time_days),
+                )
+                .filter(
+                    SupplierPerformance.product_id.in_(missing),
+                    SupplierPerformance.avg_lead_time_days.isnot(None),
+                )
+                .group_by(SupplierPerformance.product_id)
+                .all()
+            }
+            stated = {
+                str(pid): days
+                for pid, days in self.db.query(
+                    ProductSupplier.product_id,
+                    func.min(ProductSupplier.standard_lead_time_days),
+                )
+                .filter(ProductSupplier.product_id.in_(missing))
+                .group_by(ProductSupplier.product_id)
+                .all()
+            }
+            for pid in missing:
+                days = measured.get(pid)
+                if days is None:
+                    days = stated.get(pid)
+                self._lead_time_memo[pid] = None if days is None else max(int(days), 0)
+        return {pid: self._lead_time_memo[pid] for pid in wanted}
 
     def _lead_time_days(self, product_id: Optional[str]) -> Optional[int]:
         """How long buying this product actually takes, in days, or `None` for "nobody says".
@@ -1472,8 +1558,9 @@ class ProjectSupplyService:
         residual: Decimal,
         borrow_left: Optional[Mapping[str, Decimal]] = None,
     ) -> List[Dict[str, Any]]:
-        """`compose_line`'s cross-group-borrow candidate list (section 1b rung 4, already
-        cap-filtered against `residual`), public for the board's trail.
+        """`compose_line`'s cross-group-borrow candidate list (section 1b rung 4), public
+        for the board's trail. Uncapped since v7.1 (R5); `residual` only decides whether
+        the rung is asked at all.
 
         `borrow_left` is the walk's donor ledger as this line's unit found it, and the trail
         states it for the same reason it states `pool_free_left`: the proof has to be the
@@ -1496,8 +1583,8 @@ class ProjectSupplyService:
     # ------------------------------------------------ ladder v3 group context (section 1b)
 
     def _fulfilment_settings(self) -> Dict[str, Any]:
-        """`{reorder_coverage_until, cross_group_borrow_max_qty, cross_group_borrow_max_pct}`
-        for the active policy, read once per request. `.get()` with a None-safe fallback
+        """`{reorder_coverage_until, tba_date_from}` for the active policy, read once per
+        request. `.get()` with a None-safe fallback
         throughout: this reads the SAME row `app.services.scm.priority.fulfilment_settings`
         serves to the admin screen, which may still be mid-migration on another branch."""
         if self._fulfilment_settings_cache is None:
@@ -1512,15 +1599,6 @@ class ProjectSupplyService:
 
     def _reorder_coverage_until(self) -> Optional[date]:
         return self._fulfilment_settings().get("reorder_coverage_until")
-
-    def _cross_group_cap(self) -> Tuple[Optional[Decimal], Optional[Decimal]]:
-        settings = self._fulfilment_settings()
-        qty = settings.get("cross_group_borrow_max_qty")
-        pct = settings.get("cross_group_borrow_max_pct")
-        return (
-            _dec(qty) if qty is not None else None,
-            _dec(pct) if pct is not None else None,
-        )
 
     def _site_pool_warehouses(self) -> Dict[str, Warehouse]:
         """Every active warehouse that is SOME location's `pool_warehouse_id` - the pools
@@ -1630,7 +1708,7 @@ class ProjectSupplyService:
             return {}
         cache = self._group_siblings_cache.setdefault(fact.group_code, None)
         if cache is None:
-            rows = self.db.query(Warehouse).filter(Warehouse.is_active.is_(True)).all()
+            rows = list(self._planning_warehouses().values())
             cache = {
                 row.warehouse_code: row
                 for row in rows
@@ -2005,9 +2083,15 @@ class ProjectSupplyService:
         residual: Decimal,
         borrow_left: Optional[Mapping[str, Decimal]] = None,
     ) -> List[Dict[str, Any]]:
-        """Rung 5: free stock OUTSIDE this line's ownership group, offered only within the
-        small-quantity cap (section 1b rung 4). `residual` is what the ladder would still
-        need by the time it reaches this rung - the "Q" the cap is measured against.
+        """Rung 5: free stock OUTSIDE this line's ownership group. `residual` is what the
+        ladder would still need by the time it reaches this rung; nothing is offered when
+        it is already covered.
+
+        UNCAPPED since borrow ladder v7.1 (R5, migration 443). It used to be offered only
+        under `cross_group_borrow_max_qty` / `cross_group_borrow_max_pct`, on the reading
+        that another group's stock was a favour rather than supply. The captain's ruling
+        reverses that: ANY group may donate, so the cap had nothing left to cap and both
+        columns are gone. The rung itself stays until S3 replaces it with `order_borrow`.
 
         `borrow_left` is the walk's own donor ledger (`compose_lines`): warehouse id -> what
         is still borrowable there after the earlier units of this walk drew on it. Without
@@ -2021,11 +2105,13 @@ class ProjectSupplyService:
         """
         if not fact.product_id or not fact.group_code or residual <= _ZERO:
             return []
-        max_qty, max_pct = self._cross_group_cap()
         inside = self._reserve_location_ids(fact) | {
             str(w.id) for w in self._group_sibling_warehouses(fact).values()
         }
         netting = self.netting()
+        # The walk's own free-stock index, which is already narrowed to the bins a proposal
+        # may draw from (`_drawable_free_stock`, R17) - a bin outside fulfilment planning is
+        # not a donor, because its stock is in no group's net.
         free_index, _holds_index = self._by_product()
         free_here = free_index.get(fact.product_id, {})
         # LADDER V4 (section 1d): what may be borrowed from another group is that GROUP's
@@ -2088,14 +2174,6 @@ class ProjectSupplyService:
                 # nobody has classified yet.
                 offer = free
             if offer <= _ZERO:
-                continue
-            within_qty = max_qty is not None and residual <= max_qty
-            within_pct = (
-                max_pct is not None
-                and offer > _ZERO
-                and residual <= (offer * max_pct / Decimal("100"))
-            )
-            if not (within_qty or within_pct):
                 continue
             if donor_group:
                 group_left[donor_group] -= offer
@@ -2183,8 +2261,12 @@ class ProjectSupplyService:
             str(row["line_id"]) for row in rows if row.get("line_id")
         }
         self._decided_elsewhere_cache = None
+        self._decided_anywhere_cache = None
+        self._active_decision_rows = None
         self._request_product_ids = {str(pid) for pid in product_ids if pid}
-        self._free_cache = self._free_stock(product_ids, exclude_line_ids=exclude_line_ids)
+        self._free_cache = self._drawable_free_stock(
+            product_ids, exclude_line_ids=exclude_line_ids
+        )
         self._holds_cache = self._holds_by_project(
             product_ids, exclude_line_ids=exclude_line_ids
         )
@@ -3132,6 +3214,13 @@ class ProjectSupplyService:
             )
             return
 
+        # Anything else the fact judged unplannable - today only a bin flagged out of
+        # fulfilment planning (R17). The ladder proposed nothing for it, so a payload
+        # naming it is a composition the engine never offered.
+        if fact.unplannable_reason:
+            refuse(invalid, fact.unplannable_reason)
+            return
+
         timely = _dec(entry.timely_spo_qty)
         reserve_items = [_dec(item.qty) for item in entry.reserve or []]
         borrow_items = [_dec(item.qty) for item in entry.borrow or []]
@@ -3208,7 +3297,18 @@ class ProjectSupplyService:
         for item in entry.reserve or []:
             warehouse = by_id.get(str(item.warehouse_id))
             qty = _dec(item.qty)
+            # What this order's own active revision already holds here - read BEFORE the
+            # location gate, because a location can leave the allowed set after a decision
+            # was taken at it (an admin flags the bin out of fulfilment planning, R17) and a
+            # re-send of the unchanged component is not a new ask about it. Same reasoning
+            # the capacity exemption below already carries, applied one step earlier: the
+            # snapshot only exists because a previous confirm accepted that location.
+            carried = self._carried_component_qty(
+                carried_holds, str(line.id), RESERVE, str(item.warehouse_id)
+            )
             if warehouse is None:
+                if qty <= carried:
+                    continue
                 # A location that is neither this line's own nor its pool. Name what was
                 # asked for and what is allowed, by CODE - the old message named neither, so
                 # a planner reading it could not tell whether the location, the quantity or
@@ -3246,10 +3346,7 @@ class ProjectSupplyService:
             # increase is untouched, so a genuinely competing sibling hold (another line's
             # own Reserve, never excluded) still refuses it exactly as it always has
             # (`test_a_hold_the_same_order_carries_forward_is_netted_by_the_confirm_as_
-            # the_board_nets_it`).
-            carried = self._carried_component_qty(
-                carried_holds, str(line.id), RESERVE, str(item.warehouse_id)
-            )
+            # the_board_nets_it`). `carried` is read above the location gate.
             ask = qty - carried if qty > carried else _ZERO
             if ask <= _ZERO:
                 continue
@@ -5055,8 +5152,12 @@ class ProjectSupplyService:
             if line.core_sales_order_line_id and str(line.id) in self._replaced_line_ids
         }
         self._decided_elsewhere_cache = None
+        self._decided_anywhere_cache = None
+        self._active_decision_rows = None
         self._request_product_ids = {str(pid) for pid in product_ids if pid}
-        self._free_cache = self._free_stock(product_ids, exclude_line_ids=replaced)
+        self._free_cache = self._drawable_free_stock(
+            product_ids, exclude_line_ids=replaced
+        )
         self._holds_cache = self._holds_by_project(product_ids, exclude_line_ids=replaced)
         self._pile_cache = None
         self._netting_cache = None
@@ -5140,6 +5241,11 @@ class ProjectSupplyService:
             detail_for=set(),
         )
 
+        # Core lines an ACTIVE decision covers, the ones being replaced INCLUDED - read
+        # once for the whole call. See `unplannable_reason` below for why this reading and
+        # not `_decided_elsewhere_cached`'s.
+        decided_anywhere = self._decided_anywhere_cached()
+
         facts: Dict[str, _LineFacts] = {}
         for line in lines:
             core = cores.get(str(line.core_sales_order_line_id or ""))
@@ -5212,9 +5318,29 @@ class ProjectSupplyService:
                     row for row in spo.get(key, []) if row not in timely_refs
                 ],
                 unplannable_reason=(
-                    None
-                    if core is not None
-                    else "No reconciled AutoCount line. Reconcile the sales order first."
+                    "No reconciled AutoCount line. Reconcile the sales order first."
+                    if core is None
+                    # R17 / AC-S1-6: the line's own bin is ACTIVE and flagged out of
+                    # fulfilment planning, so there is no pile to walk, no group to net it
+                    # against and no donor to ask. Stated as the verdict rather than
+                    # proposed as a Buy, which is what a location the engine cannot see
+                    # would otherwise become. An INACTIVE bin is NOT this case
+                    # (`outside_fulfilment_planning`): it was already outside every read
+                    # before the flag existed and keeps the verdict it carried then.
+                    #
+                    # And a line an ACTIVE decision covers is NOT this case either. The
+                    # stock was found, promised and confirmed; turning the switch off
+                    # afterwards says what may be PROPOSED next, it does not retract what
+                    # was decided. Read through `_decided_anywhere_cached`, so a verbatim
+                    # re-send - where the line being re-confirmed is the one whose decision
+                    # must count - is accepted rather than refused with the verdict the
+                    # board itself no longer shows.
+                    else OUTSIDE_FULFILMENT_PLANNING
+                    if (
+                        outside_fulfilment_planning(warehouse)
+                        and str(core.id) not in decided_anywhere
+                    )
+                    else None
                 ),
                 group_code=sales_agent_service.group_of_warehouse_code(
                     warehouse.warehouse_code if warehouse else None
@@ -5365,6 +5491,11 @@ class ProjectSupplyService:
 
         No line is excluded, because a cross-order reader is not replacing any one line.
 
+        EVERY ACTIVE location, flagged into fulfilment planning or not (R17): this states
+        what a location HOLDS, beside the on hand and held figures its two siblings state,
+        and a bin nobody plans against still holds its stock. What a PROPOSAL may draw is
+        the narrower `_drawable_free_stock`.
+
         It carries `_free_stock`'s known limit, and the board is built to SHOW that limit
         rather than hide it (PLAN 13.5.1): only CONFIRMED holds are netted off, so two orders
         composed separately can both still be proposed the same stock. The board answers that
@@ -5382,6 +5513,12 @@ class ProjectSupplyService:
         Stage 1C) or to an ACTIVE one. A superseded revision's rows are history and hold
         nothing, and the lines being replaced (`exclude_line_ids`, project line ids) are
         excluded so their own previous revision does not compete with the one replacing it.
+
+        EVERY ACTIVE location, fulfilment-planning flag or not. This is the arithmetic
+        `stock_levels_by_location` and `held_stock_by_location` state the two other terms
+        of, and a screen printing 1,928 on hand beside 0 free reads as a defect rather than
+        as a policy. What the LADDER may draw is a narrower question, and its own
+        (`_drawable_free_stock`, R17).
         """
         ids = [pid for pid in product_ids if pid]
         if not ids:
@@ -5405,6 +5542,28 @@ class ProjectSupplyService:
             if key in free:
                 free[key] = max(free[key] - qty, _ZERO)
         return free
+
+    def _drawable_free_stock(
+        self, product_ids: Iterable[str], *, exclude_line_ids: Optional[Sequence[str]]
+    ) -> Dict[Tuple[str, str], Decimal]:
+        """`_free_stock`, narrowed to the locations a PROPOSAL may draw from (R17).
+
+        The fulfilment-planning bins plus the site pools: a bin flagged out of planning has
+        no pile, no group net and no donor, so no rung, no manual donor list and no
+        confirm-time re-read may take a unit from it. The pools are in because the pool rung
+        draws them and they are flagged off by design.
+
+        Applied HERE, on the ladder's own fact caches (`demand_facts` and `_facts_for` are
+        the only two writers of `_free_cache`), rather than inside `_free_stock` itself:
+        the public `free_stock_by_location` seam is also what the board's stock detail and
+        the location-stock screen print, and those state what a location HOLDS, which does
+        not change because nobody plans against it.
+        """
+        free = self._free_stock(product_ids, exclude_line_ids=exclude_line_ids)
+        drawable = set(self._planning_warehouses()) | set(self._site_pool_warehouses())
+        return {
+            key: qty for key, qty in free.items() if key[1] in drawable
+        }
 
     def _hold_rows(
         self, product_ids: Sequence[str], *, exclude_line_ids: Optional[Sequence[str]]
@@ -5650,7 +5809,10 @@ class ProjectSupplyService:
         """
         if self._spo_by_location_cache is None:
             self._spo_by_location_cache = self._spo_rows(
-                self._request_product_ids, set(self._active_warehouses())
+                self._request_product_ids,
+                # Same span as `_pile_facts`, and for the same reason: the group's water
+                # sits at the flagged siblings, the pool rung reads the pools' own.
+                set(self._planning_warehouses()) | set(self._site_pool_warehouses()),
             )
         return self._spo_by_location_cache
 
@@ -5732,6 +5894,145 @@ class ProjectSupplyService:
             )
         return out
 
+    def po_by_location(
+        self, product_ids: Iterable[str], warehouse_ids: Iterable[str]
+    ) -> Dict[Tuple[str, str], List[_PoRow]]:
+        """Open PO supply per `(product_id, warehouse_id)` - the public seam over `_po_rows`.
+
+        Beside `incoming_by_location` and there for the same reason: the Stock Debt view, the
+        board's cell and (S4) rung 3 all have to read ON ORDER the same way, or the screen
+        and the engine come to different views of what is still to be bought.
+        """
+        return self._po_rows(product_ids, warehouse_ids)
+
+    def _po_rows(
+        self, product_ids: Iterable[str], warehouse_ids: Iterable[str]
+    ) -> Dict[Tuple[str, str], List[_PoRow]]:
+        """Open purchase-order lines at these locations - what is STILL ON ORDER, dated.
+
+        Four decisions, each of which reverses what the column names suggest:
+
+        * **Still on order is `qty_ordered - qty_received`, and nothing else** (R11,
+          AC-S2-4). The netting the AC asks for is real, but it is already IN that
+          subtraction: both writers of `spo_allocations.po_line_id` advance the source
+          line's `qty_received` by exactly what they placed, in the same action -
+          `allocation_suggestion_service.approve` ("the quantity moves from Ordered to
+          Incoming in ONE action", its AC-G6 comment) and `spo_conversion_service.create`
+          ("the pull ADVANCES the source PO line's own accounting"). Subtracting the open
+          allocation as well deducted the same placement twice, so a line of 100 with 40
+          allocated reported 20 on order instead of 60. Measured on the 30 Aug dev copy:
+          every one of the 9 `spo_allocations` rows carrying a `po_line_id` names a
+          `crm_spo` line, and none of them has `qty_received >= allocated`.
+        * **A CRM SPO document is not an open purchase order.** `spo_conversion_service`
+          mints a `purchase_orders` header stamped `crm_spo` to carry a shipment's leg of an
+          existing PO; `incoming_by_location` contributes it at its own arrival, off the
+          `spo_allocations` row hanging on it. Reading it here as well promises the units
+          twice, and once a GRN receives part of that allocation the double stops even
+          cancelling: 50 ordered, 0 received, 20 still allocated left a phantom 30 on order
+          for a document that had half landed.
+        * **The arrival is computed, not read** (R29). `expected_date` on this book is the SO
+          delivery date the buyer typed the line against, so the date the goods would land is
+          `issue_date + the supplier's lead time`. The typed date travels as `bought_for`.
+        * **The lead time is the SUPPLIER'S** when the agreement states one for this product
+          and supplier, then the product's own fastest, then `DEFAULT_LEAD_TIME_DAYS`. The
+          fallback is read through the BATCHED `lead_times()` for the whole page before the
+          first row is walked, never through the scalar `_lead_time_days` per line: the
+          Stock Debt list asks about a thousand products at once, and one round trip each
+          cost ~1,900 extra queries per request on the dev copy.
+
+        A PO with no issue date carries `arrival_date = None` and is returned anyway. The
+        assignment refuses to count an undated document, and the drill still lists it - a
+        document nobody mentions reads as a document that is not there.
+        """
+        pids = [pid for pid in product_ids if pid]
+        wids = [wid for wid in warehouse_ids if wid]
+        if not pids or not wids:
+            return {}
+
+        # The line's position inside its own document, in the order `PurchaseOrder.lines`
+        # uses - so the number on screen is the number the document detail shows.
+        numbered = (
+            self.db.query(
+                PurchaseOrderLine.id.label("line_id"),
+                func.row_number()
+                .over(
+                    partition_by=PurchaseOrderLine.purchase_order_id,
+                    order_by=(PurchaseOrderLine.created_at, PurchaseOrderLine.id),
+                )
+                .label("line_no"),
+            )
+            .subquery()
+        )
+        rows = (
+            self.db.query(
+                PurchaseOrderLine.id,
+                PurchaseOrderLine.product_id,
+                PurchaseOrderLine.warehouse_id,
+                PurchaseOrderLine.qty_ordered,
+                PurchaseOrderLine.qty_received,
+                PurchaseOrderLine.expected_date,
+                PurchaseOrder.po_number,
+                PurchaseOrder.issue_date,
+                Supplier.supplier_name,
+                ProductSupplier.standard_lead_time_days.label("lead_days"),
+                numbered.c.line_no,
+            )
+            .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
+            .join(numbered, numbered.c.line_id == PurchaseOrderLine.id)
+            .outerjoin(Supplier, Supplier.id == PurchaseOrder.supplier_id)
+            .outerjoin(
+                ProductSupplier,
+                (ProductSupplier.product_id == PurchaseOrderLine.product_id)
+                & (ProductSupplier.supplier_id == PurchaseOrder.supplier_id),
+            )
+            .filter(
+                PurchaseOrderLine.product_id.in_(pids),
+                PurchaseOrderLine.warehouse_id.in_(wids),
+                # The same open-PO rule `scm.po_ordered_v` and the container request read
+                # (`container_request_service.OPEN_PO_SQL`), so "on order" means one thing.
+                PurchaseOrder.status.in_(OPEN_PO_STATUSES),
+                PurchaseOrderLine.line_status == "open",
+                PurchaseOrderLine.qty_ordered > PurchaseOrderLine.qty_received,
+                # The shipping leg, not an order (see the docstring). Stamped on both the
+                # header and its lines by `spo_conversion_service`; read off the HEADER,
+                # because it is the DOCUMENT that is a shipping order.
+                func.coalesce(PurchaseOrder.source_system, "") != CRM_SPO_SOURCE_SYSTEM,
+            )
+            .all()
+        )
+
+        # ONE batched read for every product on the page, before the first row is walked -
+        # so the per-line fallback below is a dict lookup rather than a round trip.
+        leads = self.lead_times({str(row.product_id) for row in rows})
+
+        out: Dict[Tuple[str, str], List[_PoRow]] = {}
+        for row in rows:
+            balance = _dec(row.qty_ordered) - _dec(row.qty_received)
+            if balance <= _ZERO:
+                continue
+            lead = row.lead_days
+            if lead is None:
+                lead = leads.get(str(row.product_id))
+            if lead is None:
+                lead = DEFAULT_LEAD_TIME_DAYS
+            arrival = (
+                row.issue_date + timedelta(days=max(int(lead), 0))
+                if row.issue_date
+                else None
+            )
+            out.setdefault((str(row.product_id), str(row.warehouse_id)), []).append(
+                _PoRow(
+                    po_number=str(row.po_number or ""),
+                    po_line_no=int(row.line_no or 1),
+                    line_id=str(row.id),
+                    arrival_date=arrival,
+                    bought_for=row.expected_date,
+                    qty=balance,
+                    supplier_name=row.supplier_name,
+                )
+            )
+        return out
+
     def _decided_elsewhere(self, exclude_line_ids: Optional[Sequence[str]]) -> set:
         """Core lines an ACTIVE decision covers, other than the ones being replaced.
 
@@ -5747,13 +6048,7 @@ class ProjectSupplyService:
         carries forward keeps its hold, so it stays out of the queue like any other order's
         covered line, and only the named lines come back in.
         """
-        rows = (
-            self.db.query(
-                SOSupplyDecision.project_sales_order_id, SOSupplyDecision.line_snapshots
-            )
-            .filter(SOSupplyDecision.state == DECISION_ACTIVE)
-            .all()
-        )
+        rows = self._active_decision_snapshots()
         replaced = {str(line_id) for line_id in (exclude_line_ids or [])}
         out: set = set()
         for _pso_id, snapshots in rows:
@@ -5764,6 +6059,38 @@ class ProjectSupplyService:
                 if core_line_id:
                     out.add(str(core_line_id))
         return out
+
+    def _active_decision_snapshots(self) -> List[Tuple[Any, Any]]:
+        """Every ACTIVE decision's `line_snapshots`, read at most once per request.
+
+        The rows behind BOTH readings of "decided": `_decided_elsewhere`, which carves out
+        the lines being replaced, and `_decided_anywhere_cached`, which does not. One query
+        rather than two, because the answer cannot change mid-request.
+        """
+        if self._active_decision_rows is None:
+            self._active_decision_rows = (
+                self.db.query(
+                    SOSupplyDecision.project_sales_order_id,
+                    SOSupplyDecision.line_snapshots,
+                )
+                .filter(SOSupplyDecision.state == DECISION_ACTIVE)
+                .all()
+            )
+        return self._active_decision_rows
+
+    def _decided_anywhere_cached(self) -> Set[str]:
+        """Core lines ANY active decision covers - the lines being replaced INCLUDED.
+
+        Deliberately not `_decided_elsewhere_cached`. That one asks "whose hold competes
+        with the line I am pricing", which is why it carves the replaced lines out. This one
+        asks "has this line been decided at all", and on a verbatim re-send the line being
+        re-confirmed is exactly the line whose decision has to count - carving it out would
+        make the answer "no" for the one case it exists to serve (R17 / AC-S1-6: the
+        outside-planning verdict belongs to undecided lines).
+        """
+        if self._decided_anywhere_cache is None:
+            self._decided_anywhere_cache = self._decided_elsewhere(None)
+        return self._decided_anywhere_cache
 
     def _decided_elsewhere_cached(self) -> Set[str]:
         """`_decided_elsewhere(self._replaced_line_ids)`, read once per request (S3).
@@ -6168,7 +6495,6 @@ class ProjectSupplyService:
         inside = self._reserve_location_ids(fact)
         group_siblings = self._group_sibling_warehouses(fact)
         inside_group = inside | {str(w.id) for w in group_siblings.values()}
-        max_qty, max_pct = self._cross_group_cap()
         out: List[Dict[str, Any]] = []
 
         free_index, holds_index = self._by_product()
@@ -6190,32 +6516,11 @@ class ProjectSupplyService:
             free = free_here[warehouse_id]
             committed = committed_at.get(warehouse_id, _ZERO)
             # Ladder v2 (section E rule 5): a free-stock donor OUTSIDE this line's
-            # ownership group is the SAME donor rung 5 draws automatically, within the
-            # small-quantity cap - stated here, on the one row, rather than offered a
-            # second time as a separate "cross-group" candidate.
+            # ownership group is the SAME donor the cross-group rung draws automatically -
+            # stated here, on the one row, rather than offered a second time as a separate
+            # "cross-group" candidate. UNCAPPED since v7.1 (R5): any group may donate, so
+            # the row carries no `over_cap` verdict any more.
             is_cross_group = bool(fact.group_code) and warehouse_id not in inside_group
-            over_cap = False
-            cap_reason = None
-            if is_cross_group:
-                within_qty = max_qty is not None and need <= max_qty
-                within_pct = (
-                    max_pct is not None
-                    and free > _ZERO
-                    and need <= (free * max_pct / Decimal("100"))
-                )
-                over_cap = need > _ZERO and not (within_qty or within_pct)
-                if over_cap:
-                    cap_bits = []
-                    if max_qty is not None:
-                        cap_bits.append(f"{qty_text(max_qty)} units")
-                    if max_pct is not None:
-                        cap_bits.append(
-                            f"{qty_text(max_pct)}% of {warehouse.warehouse_code}'s free stock"
-                        )
-                    cap_reason = (
-                        f"{qty_text(need)} exceeds the cross-group borrow limit "
-                        f"({' or '.join(cap_bits) or 'no limit set'})"
-                    )
             out.append(
                 {
                     "source": ALLOC_SOURCE_OTHER_LOCATION,
@@ -6229,8 +6534,6 @@ class ProjectSupplyService:
                         "committed_qty": qty_text(committed),
                     },
                     "rung": RUNG_CROSS_GROUP_BORROW if is_cross_group else None,
-                    "over_cap": over_cap,
-                    "cap_reason": cap_reason,
                 }
             )
 
@@ -6381,9 +6684,9 @@ class ProjectSupplyService:
         sort key, because "compare this only when both sides have it" is a statement about a
         PAIR and a key function cannot make one.
 
-        An `over_cap` row (section 1b rung 4) is still SHOWN in its earned rank position,
-        but never carries `recommended`: it cannot be taken automatically, so recommending
-        it would point CS at a donor the confirm path will refuse.
+        Every row is eligible since v7.1 (R5): the cross-group cap that used to mark a row
+        `over_cap` - shown but never recommended - is gone, so the first row of the ranked
+        list is always the recommendation.
         """
 
         def compare(left: Dict[str, Any], right: Dict[str, Any]) -> int:
@@ -6402,12 +6705,8 @@ class ProjectSupplyService:
             return 0
 
         candidates.sort(key=cmp_to_key(compare))
-        recommended_set = False
-        for candidate in candidates:
-            eligible = not candidate.get("over_cap")
-            candidate["recommended"] = eligible and not recommended_set
-            if eligible:
-                recommended_set = True
+        for index, candidate in enumerate(candidates):
+            candidate["recommended"] = index == 0
         return candidates
 
     def _pile_facts(self) -> Dict[Tuple[str, str], Dict[str, Decimal]]:
@@ -6438,43 +6737,69 @@ class ProjectSupplyService:
             self._request_product_ids
             | {product_id for product_id, _w in self._free_cache}
             | {product_id for product_id, _w, _p in self._holds_cache},
-            set(self._active_warehouses()),
+            # The planning bins AND the site pools. The pools are flagged OFF (R17) yet the
+            # pool rung still reads their triple off this cache, so the two sets are unioned
+            # here rather than the predicate being loosened - "outside fulfilment planning"
+            # is about the ownership groups, and a pool is not one.
+            set(self._planning_warehouses()) | set(self._site_pool_warehouses()),
         )
         return self._pile_cache
 
-    def _active_warehouses(self) -> Dict[str, Warehouse]:
-        """Every active warehouse by id, read once per request.
+    def _planning_warehouses(self) -> Dict[str, Warehouse]:
+        """Every warehouse fulfilment planning READS, by id, read once per request.
 
-        The span ladder v4 nets over (`group_netting`), and the same rows
-        `_group_sibling_warehouses` filters for one group's members.
+        Active AND flagged into fulfilment planning (`planning_predicate`, R17): a bin that
+        is off contributes no on hand, no incoming and no sales-order line to anything the
+        ladder or the board computes. This is the span ladder v4 nets over
+        (`group_netting`), and the same rows `_group_sibling_warehouses` filters for one
+        group's members - so narrowing it here narrows every one of them at once.
+
+        The SITE POOLS are not in it, deliberately: a pool is off (it is reached through
+        `pool_warehouse_id`, never as an ownership group) and its own set is
+        `_site_pool_warehouses`. Anything that needs both unions the two, which is what
+        `_pile_facts` does.
         """
-        if self._active_warehouses_cache is None:
-            self._active_warehouses_cache = {
+        if self._planning_warehouses_cache is None:
+            self._planning_warehouses_cache = {
                 str(row.id): row
                 for row in self.db.query(Warehouse)
-                .filter(Warehouse.is_active.is_(True))
+                .filter(fulfilment_planning_predicate())
                 .all()
             }
-        return self._active_warehouses_cache
+        return self._planning_warehouses_cache
 
     def netting(self) -> GroupNetting:
         """The ONE reader of availability for this request (section 1d).
 
         Built off `_pile_facts()`, which the request has already read - so the ladder, the
-        board's cell table, the order-inquiry link walk and the confirm-time recheck all
-        net the same three figures, and none of them can come to a different view of what
-        the IB group holds. Re-created whenever the pile cache is (`demand_facts` /
-        `_facts_for` reset both), because the un-netting carve-outs differ per call.
+        board's cell table and the confirm-time recheck all net the same three figures, and
+        none of them can come to a different view of what the IB group holds. Re-created
+        whenever the pile cache is (`demand_facts` / `_facts_for` reset both), because the
+        un-netting carve-outs differ per call.
+
+        **The order-inquiry link walk shares the ARITHMETIC, not the SPAN** (AC-S1-5b,
+        corrected 30 Aug). `project_order_inquiry_service._netting` calls the batched
+        `netting_for_products` door WITHOUT `planning_only`, so its ownership-group index
+        covers every ACTIVE bin, while this one is narrowed to the flagged ones (R17). That
+        is the boundary the AC draws: the flag narrows what a PROPOSAL may draw, never what
+        a non-planning consumer may see. Reading the two as one span was the claim this
+        docstring used to make, and it was wrong.
         """
         if self._netting_cache is None:
+            planning = self._planning_warehouses()
+            pools = self._site_pool_warehouses()
             self._netting_cache = GroupNetting(
                 triples=self._pile_facts(),
                 warehouse_codes={
                     warehouse_id: warehouse.warehouse_code
-                    for warehouse_id, warehouse in self._active_warehouses().items()
+                    for warehouse_id, warehouse in {**pools, **planning}.items()
                     if warehouse.warehouse_code
                 },
-                pool_warehouse_ids=set(self._site_pool_warehouses()),
+                # Only the flagged bins form ownership groups (R17). The pools are in the
+                # codes above so `pools_net` still has locations to net, and out of the
+                # group index so a flagged-off bin can never be a group member.
+                planning_warehouse_ids=set(planning),
+                pool_warehouse_ids=set(pools),
             )
         return self._netting_cache
 

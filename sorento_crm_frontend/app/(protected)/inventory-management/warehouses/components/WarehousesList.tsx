@@ -121,6 +121,20 @@ export default function WarehousesList() {
         size: 100,
         meta: { headerTitle: 'Status' },
       },
+      {
+        accessorKey: 'fulfilment_planning',
+        header: ({ column }) => <DataGridColumnHeader title="Fulfilment planning" column={column} />,
+        cell: ({ row }) => (
+          <Badge
+            variant={row.original.fulfilment_planning ? 'success' : 'secondary'}
+            appearance="ghost"
+          >
+            {row.original.fulfilment_planning ? 'On' : 'Off'}
+          </Badge>
+        ),
+        size: 160,
+        meta: { headerTitle: 'Fulfilment planning' },
+      },
     ],
     [],
   );

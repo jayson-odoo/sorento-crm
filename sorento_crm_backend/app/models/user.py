@@ -88,6 +88,10 @@ class User(Base):
     # always fires for non-actor recipients.
     notify_email_on_handling = Column(Boolean, default=True, nullable=False, server_default="true")
     notify_whatsapp_on_handling = Column(Boolean, default=False, nullable=False, server_default="false")
+    # Mentioned in an internal note (ticket comment). Recipient is each mentioned
+    # user minus the author. Email defaults on; there is no WhatsApp twin for this
+    # event. In-app always fires.
+    notify_email_on_mention = Column(Boolean, default=True, nullable=False, server_default="true")
     # Which contacts' inbound messages push to this user's phone (PLAN-message-push).
     # One of assigned_and_coverage | assigned_only | all_contacts | off. A column and not
     # a preference table because there is exactly ONE event today; the second event

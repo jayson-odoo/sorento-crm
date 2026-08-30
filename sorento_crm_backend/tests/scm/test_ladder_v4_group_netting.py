@@ -262,7 +262,6 @@ def test_a_cross_group_donor_is_offered_only_while_its_own_group_nets_positive()
             priority.create_revision(
                 db, name=f"zzt-v4-{_uid()[:4]}", factors={}, demand_class_weights={},
                 reorder_coverage_until=None,
-                cross_group_borrow_max_qty=50, cross_group_borrow_max_pct=0.0,
             )
             db.commit()
 
@@ -300,7 +299,6 @@ def test_confirming_a_cross_group_borrow_raises_an_order_back_at_the_donor():
         priority.create_revision(
             db, name=f"zzt-v4-ob-{_uid()[:4]}", factors={}, demand_class_weights={},
             reorder_coverage_until=None,
-            cross_group_borrow_max_qty=50, cross_group_borrow_max_pct=0.0,
         )
         db.commit()
 

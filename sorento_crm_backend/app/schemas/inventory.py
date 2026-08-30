@@ -26,9 +26,16 @@ class WarehouseBase(BaseModel):
     # segment - who this location sells to, `dealer` or `project`. The bare site code is
     # the dealer bin and its suffixed bins are project stock, which is why "last purchase
     # cost" is two different numbers depending on who is asking.
+    #
+    # fulfilment_planning - whether this bin takes part in fulfilment planning at all
+    # (borrow ladder v7.1, R17). Off means outside it ENTIRELY: no on hand, no incoming and
+    # no sales-order line of this location reaches the ladder, the board or the Stock Debt
+    # view. Defaults to false, which is the column's own default: a location nobody has
+    # decided about is not planned against.
     counts_as_available: bool = True
     pool_warehouse_id: Optional[str] = None
     segment: Optional[str] = None
+    fulfilment_planning: bool = False
 
 
 class WarehouseCreate(WarehouseBase):
@@ -44,6 +51,7 @@ class WarehouseUpdate(BaseModel):
     counts_as_available: Optional[bool] = None
     pool_warehouse_id: Optional[str] = None
     segment: Optional[str] = None
+    fulfilment_planning: Optional[bool] = None
 
 
 class WarehouseResponse(WarehouseBase):

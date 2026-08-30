@@ -50,11 +50,12 @@ from .test_project_supply_service_ladder import (
 )
 
 
-def _cap(db, name: str, *, max_qty=50, max_pct=10.0):
+def _policy(db, name: str):
+    """An active fulfilment-priority policy. Was `_cap`: the cross-group borrow limit it
+    used to set is gone with v7.1 (R5)."""
     priority.create_revision(
         db, name=name, factors={}, demand_class_weights={},
         reorder_coverage_until=None,
-        cross_group_borrow_max_qty=max_qty, cross_group_borrow_max_pct=max_pct,
     )
     db.commit()
 
@@ -157,7 +158,7 @@ def test_the_pool_is_walked_before_another_group_and_takes_the_whole_line():
         # Another ownership group at the same site, holding 100 free and within the cap.
         donor = _warehouse(db, f"ZZTDC1-NT{_uid()[:3]}")
         _stock(db, product, donor, on_hand=100)
-        _cap(db, f"zzt-v5-order-{_uid()[:6]}")
+        _policy(db, f"zzt-v5-order-{_uid()[:6]}")
 
         order, _line, _cso, _cline = _seed_line(
             db, company_id, project, product, own, qty_ordered="24",

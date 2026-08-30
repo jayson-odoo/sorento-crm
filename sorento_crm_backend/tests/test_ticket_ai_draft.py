@@ -391,3 +391,16 @@ def test_the_system_prompt_comes_from_the_registry_key():
     spec = PROMPT_KEYS[AGENT_NAME]
     assert spec.active is True
     assert spec.fallback().strip(), "the key must carry a hardcoded fallback body"
+
+
+# -------------------------------------------------------------- transcript lines
+
+
+def test_a_quick_reply_prompt_reads_its_title_not_a_placeholder():
+    from app.services.conversation_reply_draft_service import _line_for
+
+    line = _line_for(
+        {"traffic": "outgoing", "message": {"type": "quick_reply", "title": "Escalate this?"}}
+    )
+    assert line == "Us: Escalate this?"
+    assert _line_for({"traffic": "incoming", "message": {"type": "image"}}) == "Customer: [image]"

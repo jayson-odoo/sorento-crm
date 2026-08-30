@@ -41,7 +41,7 @@ from .test_fulfilment_board import (  # noqa: F401  (helpers, not fixtures)
     _user,
     _warehouse,
 )
-from .test_ladder_v5_proof import BUCKET, WHEN, _cap, _contribution, _locations
+from .test_ladder_v5_proof import BUCKET, WHEN, _contribution, _locations, _policy
 
 
 # --------------------------------------------------------------------------- #
@@ -49,20 +49,13 @@ from .test_ladder_v5_proof import BUCKET, WHEN, _cap, _contribution, _locations
 # --------------------------------------------------------------------------- #
 
 
-def test_question_three_names_the_cap_when_the_margin_is_close_not_only_when_huge():
-    """AC-V4, a second fixture deliberately close to the boundary the sentence is judged
-    on, rather than the existing pin's donor of 500 against a cap of 10 (a huge margin).
+def test_question_three_takes_the_whole_line_where_the_cap_used_to_refuse_it():
+    """The v5 case, inverted by v7.1 (R5, migration 443).
 
-    Donor net 100, cap (qty) 20, need 24: the donor could very nearly cover the whole line
-    on its own, and the cap alone stands between it and a Yes.
-
-    THE RULE IS BINARY, by the plan's own words (section 1e's table: "Yes, N" or "No ...
-    the cap (N) is below what is left" - there is no third answer). So there is no
-    quantity for "the proposal takes exactly the cap" to describe: nothing is composed at
-    all once the cap refuses the residual, and the whole line buys entire. What this test
-    pins instead is that the sentence quotes the CONFIGURED cap (20) and the exact
-    residual (24) verbatim - not the donor's own 100, not a percentage-derived figure -
-    and that the composition is one whole-line Buy, not a Borrow-then-Buy split.
+    Donor net 100, need 24. Under v5 a configured cap of 20 stood between the donor and a
+    Yes, and the sentence had to quote it. The cap is gone - any ownership group may donate
+    - so the only rule left is the binary whole-line one, and 100 covers 24 entire: the
+    answer is Yes, 24, and there is no Buy at all.
     """
     with blank_session() as db:
         product = _product(db, f"ZZT-{_uid()[:6]}")
@@ -70,23 +63,19 @@ def test_question_three_names_the_cap_when_the_margin_is_close_not_only_when_hug
         donor = _warehouse(db, f"ZZTM{_uid()[:5]}-NTC"[:20])
         _stock(db, product, own, on_hand=0)
         _stock(db, product, donor, on_hand=100)
-        _cap(db, max_qty=20, max_pct=0.0)
+        _policy(db)
         order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
         _line(db, order, product, qty="24", required_date=WHEN, warehouse=own)
 
         contribution = _contribution(db, order, product)
 
         step = _step(contribution, "cross_group_borrow")
-        assert step["answer"] == "no"
-        assert step["took"] == "0"
-        assert "cross-group borrow limit is 20" in step["why"]
-        assert "24 is still needed" in step["why"]
+        assert step["answer"] == "yes"
+        assert step["took"] == "24"
         assert donor.warehouse_code in step["why"]
+        assert "cross-group borrow limit" not in step["why"]
 
-        buy = _step(contribution, "buy")
-        assert buy["answer"] == "yes"
-        assert buy["took"] == "24"
-        assert [s["kind"] for s in contribution["sources"]] == ["buy"]
+        assert [s["kind"] for s in contribution["sources"]] == ["borrow"]
         assert contribution["sources"][0]["qty"] == "24"
 
 
@@ -366,7 +355,7 @@ def test_the_trail_is_five_rows_with_no_leaked_rung_vocabulary_and_a_note_that_a
         _stock(db, product, own, on_hand=0)
         _stock(db, product, pool, on_hand=0)
         _stock(db, product, donor, on_hand=10)
-        _cap(db, max_qty=50, max_pct=0.0)
+        _policy(db)
         order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
         _line(db, order, product, qty="24", required_date=WHEN, warehouse=own)
 
@@ -440,7 +429,7 @@ def test_a_donor_groups_sibling_holding_nothing_still_lists_with_the_exact_arith
             db, other_order, product, qty="15", required_date=date(2027, 1, 1),
             warehouse=sibling_moves,
         )
-        _cap(db, max_qty=100, max_pct=100.0)
+        _policy(db)
         order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
         _line(db, order, product, qty="10", required_date=WHEN, warehouse=own)
 

@@ -16,6 +16,15 @@ export interface Warehouse {
   pool_warehouse_code?: string | null;
   /** Who this location sells to: dealer or project. Splits cost, price and history. */
   segment?: string | null;
+  /**
+   * Whether this bin takes part in fulfilment planning at all. A bin that is off is
+   * invisible to the ladder, the board and the Stock Debt view - its stock, its incoming
+   * and its sales-order lines are all outside the plan.
+   *
+   * Normalised in the service: the backend only carries the column from migration 443, so
+   * a response without it reads as `false` rather than `undefined`.
+   */
+  fulfilment_planning: boolean;
 }
 
 export interface WarehouseFormData {
@@ -27,4 +36,5 @@ export interface WarehouseFormData {
   counts_as_available?: boolean;
   pool_warehouse_id?: string | null;
   segment?: string | null;
+  fulfilment_planning?: boolean;
 }

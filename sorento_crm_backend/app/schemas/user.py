@@ -205,6 +205,7 @@ class UserBase(BaseModel):
     notify_whatsapp_on_deadline_extended: Optional[bool] = False
     notify_email_on_handling: Optional[bool] = True
     notify_whatsapp_on_handling: Optional[bool] = False
+    notify_email_on_mention: Optional[bool] = True
     notify_push_message_scope: MessagePushScope = DEFAULT_MESSAGE_PUSH_SCOPE
 
     @field_validator("contact_number", mode="before")
@@ -247,6 +248,7 @@ class UserUpdate(BaseModel):
     notify_whatsapp_on_deadline_extended: Optional[bool] = None
     notify_email_on_handling: Optional[bool] = None
     notify_whatsapp_on_handling: Optional[bool] = None
+    notify_email_on_mention: Optional[bool] = None
     notify_push_message_scope: Optional[MessagePushScope] = None
     # Replace-all when provided (an empty list clears every scope, i.e. the user
     # hears nothing); untouched when omitted.
