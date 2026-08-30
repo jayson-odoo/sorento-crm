@@ -3,7 +3,7 @@
 **Status:** APPROVED 2026-08-30 (brief from the foundryx-shared-service session, Appendix A of
 `foundryx-shared-service/documentation/plans/sprint-4/22-autocount-db-etl.md`, ACs AC-22-25..28).
 Slices: A1 DONE (commit `feat(external): company-anchored ingest/read (A1)` on this branch; a
-commit cannot carry its own sha, so the hash is in the handoff), A2 next.
+commit cannot carry its own sha, so the hash is in the handoff), A2 DONE, A3 next.
 **Branch:** `feat/autocount-cross-repo-contract` off `origin/main` e1ba232ca.
 **Worktree:** `.claude/worktrees/autocount-contract` (backend only; no dev server needed).
 **UAC:** `autocount-cross-repo-contract-acceptance-criteria.md` alongside.
@@ -22,7 +22,7 @@ and is reported back to that session.
 | Companies | `companies.code` unique (`SRT`, `MOCHA` on dev); `companies.autocount_ref` nullable, empty today. |
 | `sales_agents` | Table exists (`app/models/sales_agent.py`), NOT `CompanyScopedMixin`: `company_id` NULL = shared row; unique index `coalesce(company_id, nil)` + `sales_agent`. Slugs `master_data.sales_agents.{view,add,edit,delete}` registered; `integration_foundryx_esb` holds view+edit, only `admin` holds delete. |
 | `public.sales_orders` / `public.purchase_orders` | `app/models/order.py:360` / `app/models/procurement.py:627`, both `CompanyScopedMixin`, headers carry `source_system`/`source_ref`/(SO) `source_doc_no`, lines carry `source_system`/`source_ref`. SO statuses in use: `open`, `partially_delivered`, `fulfilled`; PO: `draft`, `active`, `partial`, `received`, `closed`, `cancelled`. Slugs `scm.sales_orders.*` / `scm.purchase_orders.*` exist; esb holds view+edit, only admin holds delete. |
-| `IntegrationReferenceService` | `SUPPORTED_ENTITY_TYPES` allowlist already contains `sales_agents`; does NOT contain `sales_orders` / `purchase_orders` (it has legacy `orders`/`order_lines`). `resolve()` returns `str`. |
+| `IntegrationReferenceService` | `SUPPORTED_ENTITY_TYPES` allowlist did NOT contain `sales_agents` (measured in A2; section 0's original claim was wrong, and `test_integration_reference` pins the set exactly, so A2 adds it to both). Still does NOT contain `sales_orders` / `purchase_orders` (it has legacy `orders`/`order_lines`). `resolve()` returns `str`. |
 | Grant migration pattern | `alembic/versions/414_product_set_grant_sweep.py` (create-if-absent slug, sweep grant from a source slug, `ON CONFLICT DO NOTHING`, mirrored downgrade). Head: `444_notify_email_on_mention`. |
 | Stale branch | `sorento_crm-autocount` (PR #46, 300 commits behind main) carries an older SO/PO ingester keyed on `so_number = AC-{DocKey}` with wholesale line replacement and no company anchor. Reference only; nothing is cherry-picked. |
 
@@ -88,7 +88,9 @@ another company reports under `not_found`.
 - `_READ_COLUMNS["sales_agents"]` = code/description/is_active/person_label.
 - `INGEST_PERMISSIONS["sales_agents"] = "master_data.sales_agents.edit"`,
   `READ_PERMISSIONS[...] = ".view"`, `DELETE_PERMISSIONS[...] = ".delete"`.
-- Migration `445_autocount_contract_grant_sweep`: sweep `master_data.sales_agents.delete`,
+- Migration `445_autocount_grant_sweep` (shortened from `445_autocount_contract_grant_sweep`:
+  alembic's own `alembic_version.version_num` is `varchar(32)` and that id was 34 characters,
+  which `test_alembic_revision_ids` catches): sweep `master_data.sales_agents.delete`,
   `scm.sales_orders.delete`, `scm.purchase_orders.delete` onto every role holding the matching
   `.edit` slug (measured: for the six existing masters the `.edit` and `.delete` holder lists are
   identical, so this is the shape the surface already has).

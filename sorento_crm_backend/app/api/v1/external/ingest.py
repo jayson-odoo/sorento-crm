@@ -57,6 +57,7 @@ INGEST_PERMISSIONS = {
     "suppliers": "procurement.suppliers.edit",
     "customers": "order_management.customers.edit",
     "products": "master_data.products.edit",
+    "sales_agents": "master_data.sales_agents.edit",
 }
 READ_PERMISSIONS = {
     "product_categories": "master_data.product_categories.view",
@@ -65,6 +66,21 @@ READ_PERMISSIONS = {
     "suppliers": "procurement.suppliers.view",
     "customers": "order_management.customers.view",
     "products": "master_data.products.view",
+    "sales_agents": "master_data.sales_agents.view",
+}
+# Deleting through the ESB is its own act, so it takes its own slug on top of the
+# ingest guard the router already carries (group A4 mounts the route). Declared
+# here rather than there because this is the one file that says what an entity
+# name means on this surface, and three maps that can disagree about the entity
+# list is how a hole opens.
+DELETE_PERMISSIONS = {
+    "product_categories": "master_data.product_categories.delete",
+    "units_of_measure": "master_data.units_of_measure.delete",
+    "warehouses": "inventory.warehouses.delete",
+    "suppliers": "procurement.suppliers.delete",
+    "customers": "order_management.customers.delete",
+    "products": "master_data.products.delete",
+    "sales_agents": "master_data.sales_agents.delete",
 }
 
 # A batch cap the ESB can design against. Exceeding it errors rather than

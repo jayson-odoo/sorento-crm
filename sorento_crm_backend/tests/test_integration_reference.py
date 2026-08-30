@@ -129,6 +129,10 @@ class TestEntityTypeAllowlist:
             "warehouses",
             "suppliers",
             "customers",
+            # Group A2: the salesperson master joined the ingest surface, so its
+            # refs need somewhere to live. `sales_agents` is also a real table
+            # name, which the allowlist's own SQL interpolation depends on.
+            "sales_agents",
             "picking_headers",
             "picking_lines",
             "orders",

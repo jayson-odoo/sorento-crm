@@ -30,11 +30,14 @@ row holds hand-entered data -- the result carries a field-level diff of what
 would be replaced.
 
 **One company per call.** The caller names it (``company_anchor.py``) and it is
-required here, not defaulted: every table below is partitioned per company, and
-their business codes are unique only within one. Both halves of the ingest have
-to honour it or the anchor is decorative -- the INSERT stamps it, and adoption
-matches inside it, because adopting across companies would silently retarget
-another company's hand-entered row.
+required here, not defaulted: nearly every table below is partitioned per
+company, and their business codes are unique only within one. Both halves of the
+ingest have to honour it or the anchor is decorative -- the INSERT stamps it, and
+adoption matches inside it, because adopting across companies would silently
+retarget another company's hand-entered row. The exception is ``sales_agents``
+(``SHARED_TABLES``), whose row deliberately carries no company at all: the same
+agents sell for both, and splitting them would give one person two demand
+classes. The anchor still bounds the call, it simply has nothing to stamp.
 
 Ingest emits **no lifecycle events** (AC-AC-18). A record arriving *from*
 AutoCount must never trigger a write back to it. Nothing here calls an emitter,
@@ -56,6 +59,7 @@ from sqlalchemy.orm import Session
 from app.schemas.canonical_masters import (
     CanonicalCustomer,
     CanonicalProductCategory,
+    CanonicalSalesAgent,
     CanonicalUnitOfMeasure,
     CanonicalProduct,
     CanonicalSupplier,
@@ -65,6 +69,10 @@ from app.services.integration_reference_service import (
     IntegrationReferenceService,
     ReferenceConflict,
 )
+# The agent code's one normalisation, imported rather than restated: the master
+# screen, the outstanding-SO import and this ingest all have to agree on what
+# `sean i` is, or the captain's demand class lands on one of three rows.
+from app.services.scm.sales_agent_service import normalize_code as _normalize_agent_code
 
 logger = logging.getLogger(__name__)
 
@@ -160,6 +168,10 @@ class EntitySpec:
     code_column: str
     # canonical payload -> column values. May raise MissingReference.
     to_columns: Callable[[BaseModel, Session, str], dict[str, Any]]
+    # Whether adoption matches ``upper(btrim())`` on BOTH sides instead of the
+    # stored string. True only where the column has one canonical spelling that
+    # the rows do not all carry yet -- see ``_lookup_id``.
+    normalized_code: bool = False
 
 
 # Tables where a row serves every company (``company_id`` NULL). Listed rather
@@ -239,7 +251,13 @@ def _customer_columns(payload: Any, db: Session, company_id: str) -> dict[str, A
 
 
 def _lookup_id(
-    db: Session, table: str, column: str, value: str, company_id: str
+    db: Session,
+    table: str,
+    column: str,
+    value: str,
+    company_id: str,
+    *,
+    normalized: bool = False,
 ) -> Optional[str]:
     """A row matched by business code, WITHIN the anchored company.
 
@@ -247,13 +265,26 @@ def _lookup_id(
     unique per company only (migration 305) and thousands of codes exist in both,
     so the row returned was whichever the scan reached first. A shared table has
     no company of its own, so its rows match on NULL as well.
+
+    ``normalized`` compares ``upper(btrim())`` on both sides, which the agent
+    master needs and the other five must not have. The agent code has one
+    canonical spelling, but the rows do not all carry it: the AutoCount mirror
+    wrote whatever AutoCount said, so a push spelled `sean i` that matched the
+    stored string exactly would fail to find `SEAN I`, create a second agent and
+    split one person's demand class - the duplicate the master exists to prevent.
+    Turning this on everywhere would instead make `abc-1` adopt `ABC-1`, and for
+    a product code those are two products.
     """
     if _is_company_scoped(table):
-        where = f"{column} = :v AND company_id = :cid"
+        scope = "company_id = :cid"
     else:
-        where = f"{column} = :v AND (company_id IS NULL OR company_id = :cid)"
+        scope = "(company_id IS NULL OR company_id = :cid)"
+    if normalized:
+        match = f"upper(btrim({column})) = upper(btrim(:v))"
+    else:
+        match = f"{column} = :v"
     row = db.execute(
-        text(f"SELECT id FROM {table} WHERE {where} LIMIT 1"),
+        text(f"SELECT id FROM {table} WHERE {match} AND {scope} LIMIT 1"),
         {"v": value, "cid": company_id},
     ).first()
     return str(row[0]) if row else None
@@ -288,6 +319,29 @@ def _product_columns(payload: Any, db: Session, company_id: str) -> dict[str, An
     }
 
 
+def _sales_agent_columns(payload: Any, db: Session, company_id: str) -> dict[str, Any]:
+    """The four columns AutoCount owns on an agent, and no others.
+
+    ``internal_note``, ``follow_up``, ``demand_class``, ``location_group`` and
+    ``source`` are absent on purpose. They are the captain's annotations, made on
+    the master screen; a weekly re-sync that restated them from a payload which
+    never carried them would blank his classification every Monday and make
+    fulfilment priority flap. Absent from the written set, they cannot be touched
+    by any path through this module - which is a stronger promise than "we do not
+    send them".
+
+    ``source`` stays untouched for the same reason plus one more: it records how
+    a row got here, and an agent an outstanding-SO upload created is still
+    `import` even after AutoCount confirms it exists.
+    """
+    return {
+        "sales_agent": _normalize_agent_code(payload.code),
+        "description": payload.description,
+        "is_active": payload.is_active,
+        "person_label": payload.person_label,
+    }
+
+
 ENTITY_SPECS: dict[str, EntitySpec] = {
     # Categories and UoMs first: products.category_id and base_uom_id are
     # NOT NULL, so a product whose category has not synced yet is retryable
@@ -302,6 +356,16 @@ ENTITY_SPECS: dict[str, EntitySpec] = {
     "suppliers": EntitySpec("suppliers", CanonicalSupplier, "supplier_code", _supplier_columns),
     "customers": EntitySpec("customers", CanonicalCustomer, "customer_code", _customer_columns),
     "products": EntitySpec("products", CanonicalProduct, "product_code", _product_columns),
+    # The only shared master here: the row carries no company (see SHARED_TABLES)
+    # and its code is matched normalised, because the rows already in the table
+    # carry AutoCount's spelling rather than ours.
+    "sales_agents": EntitySpec(
+        "sales_agents",
+        CanonicalSalesAgent,
+        "sales_agent",
+        _sales_agent_columns,
+        normalized_code=True,
+    ),
 }
 
 
@@ -428,7 +492,12 @@ class MasterIngestService:
         # First sync: adopt a local record with the same business code rather
         # than creating a duplicate under a new id.
         adopted = _lookup_id(
-            self.db, spec.table, spec.code_column, payload.code, self.company_id
+            self.db,
+            spec.table,
+            spec.code_column,
+            payload.code,
+            self.company_id,
+            normalized=spec.normalized_code,
         )
         if adopted is not None:
             if self.refs.origin_of(entity_type=entity_type, entity_id=adopted) is not None:

@@ -51,6 +51,7 @@ SUPPORTED_ENTITY_TYPES = {
     "warehouses",
     "suppliers",
     "customers",
+    "sales_agents",
     "picking_headers",
     "picking_lines",
     "orders",

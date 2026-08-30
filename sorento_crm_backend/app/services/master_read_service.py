@@ -75,6 +75,15 @@ _READ_COLUMNS: dict[str, dict[str, str]] = {
         "country": "country",
         "is_active": "is_active",
     },
+    # Exactly the four the ingest writes. Reading back an annotation the ESB
+    # cannot push would invite it into a diff, and the next approved sync would
+    # then write it - which is how a column nobody upstream owns gets overwritten.
+    "sales_agents": {
+        "code": "sales_agent",
+        "description": "description",
+        "is_active": "is_active",
+        "person_label": "person_label",
+    },
     "products": {
         "code": "product_code",
         "name": "product_name",
