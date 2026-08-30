@@ -388,14 +388,17 @@ describe('ProformaUploadDialog - a file the verdict blocks', () => {
     fireEvent.click(testButton());
 
     // Confirm is also disabled while the preview is still in flight, so the
-    // verdict's own reason is the signal to wait on, not the disabled state.
-    await waitFor(() =>
+    // verdict's own reason is the signal to wait on, not the disabled state. Both
+    // assertions live inside the SAME waitFor: the disabled flip and the title
+    // update land in separate re-renders, so checking one outside the wait races
+    // the other on a slow runner (seen in CI, not locally).
+    await waitFor(() => {
+      expect(confirmButton()).toBeDisabled();
       expect(confirmButton()).toHaveAttribute(
         'title',
         expect.stringContaining('no unit_price column'),
-      ),
-    );
-    expect(confirmButton()).toBeDisabled();
+      );
+    });
   });
 
   it('refuses a priced file nothing can price, naming the invoice', async () => {
