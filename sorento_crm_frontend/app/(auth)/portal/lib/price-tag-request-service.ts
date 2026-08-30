@@ -5,7 +5,11 @@
  * `/api/v1/public/portal/lookups` via `portalFetch`.
  */
 
-import { portalFetch, unwrap } from './portal-client';
+import {
+  portalFetch,
+  unwrap,
+  type PortalSubmissionSummary,
+} from './portal-client';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -43,6 +47,8 @@ export interface PriceTagRequestSummary {
   status: string;
   line_count: number;
   created_at: string;
+  /** Set while the request is a draft the salesperson has not submitted. */
+  portal_draft_at?: string | null;
 }
 
 export interface PriceTagRequestDetail extends PriceTagRequestSummary {
@@ -170,13 +176,50 @@ export function checkSetGuard(productId: string): SetGuardResult {
 // CRUD
 // ---------------------------------------------------------------------------
 
-export async function listRequests(): Promise<PriceTagRequestSummary[]> {
-  const res = await portalFetch(BASE);
+export async function listRequests(
+  q?: string,
+): Promise<PriceTagRequestSummary[]> {
+  const usp = new URLSearchParams();
+  if (q && q.trim()) usp.set('q', q.trim());
+  const qs = usp.toString();
+  const res = await portalFetch(qs ? `${BASE}?${qs}` : BASE);
   const data = await unwrap<{ items: PriceTagRequestSummary[] }>(
     res,
     'Failed to load requests',
   );
   return data.items ?? [];
+}
+
+/**
+ * The same list in the shape the portal landing's cards read (D45).
+ *
+ * The price tag endpoint answers its own row type rather than the legacy
+ * `PortalSubmissionSummary`, and adapting it HERE is what lets the landing stay
+ * ignorant of the difference without any legacy endpoint changing. `doc_number`
+ * is the card's primary line, the dealer is its customer line, and a request
+ * still carrying `portal_draft_at` is a draft, which is the only thing that
+ * tells a saved-but-unsent request from a submitted one.
+ */
+export async function listRequestsAsSummaries(
+  q?: string,
+): Promise<PortalSubmissionSummary[]> {
+  const rows = await listRequests(q);
+  return rows.map((r) => {
+    const isDraft = Boolean(r.portal_draft_at);
+    return {
+      id: r.id,
+      kind: 'price_tag_request' as const,
+      title: r.debtor_name,
+      document_number: r.doc_number,
+      reference: null,
+      status: r.status,
+      is_editable: isDraft,
+      is_draft: isDraft,
+      created_at: r.created_at,
+      customer_name: r.debtor_name,
+      needed_by_date: r.needed_by_date,
+    };
+  });
 }
 
 export async function getRequest(id: string): Promise<PriceTagRequestDetail | null> {

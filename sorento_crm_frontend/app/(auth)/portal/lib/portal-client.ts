@@ -35,6 +35,34 @@ export function isSubmissionKind(
   return (SUBMISSION_KINDS as readonly string[]).includes(value ?? '');
 }
 
+/**
+ * Form types that join the landing dropdown beside the four legacy kinds, each
+ * shown only to a contact whose `visible_form_types` grants it (D45).
+ *
+ * Deliberately NOT part of `SUBMISSION_KINDS`: that list is what the generic
+ * `[type]` route guards read to decide what the shared submission pages may
+ * render, and these forms have pages of their own. The next gated form joins
+ * THIS list, plus a label below and a fetch in the landing's loader.
+ */
+export const GATED_LANDING_KINDS = ['price_tag_request'] as const;
+
+export type PortalGatedKind = (typeof GATED_LANDING_KINDS)[number];
+
+/** Everything the landing dropdown can offer, gated or not. */
+export type PortalLandingKind = PortalSubmissionKind | PortalGatedKind;
+
+export function isGatedLandingKind(
+  value: string | null | undefined,
+): value is PortalGatedKind {
+  return (GATED_LANDING_KINDS as readonly string[]).includes(value ?? '');
+}
+
+export function isLandingKind(
+  value: string | null | undefined,
+): value is PortalLandingKind {
+  return isSubmissionKind(value) || isGatedLandingKind(value);
+}
+
 export interface PortalImpersonationInfo {
   session_id: string;
   admin_user_id: string;
@@ -67,7 +95,9 @@ export interface PortalContact {
 
 export interface PortalSubmissionSummary {
   id: string;
-  kind: PortalSubmissionKind;
+  /** Widened for D45: a gated kind is listed on the same landing, in the same
+   *  card, and is adapted into this shape by its own feature service. */
+  kind: PortalLandingKind;
   title: string;
   document_number?: string | null;
   reference: string | null;
@@ -98,6 +128,9 @@ export interface PortalSubmissionSummary {
   item_description?: string | null;
   sponsor_subject?: string | null;
   purpose?: string | null;
+  /** Price tag request: the date the tags are wanted for. The card shows it,
+   *  because a deadline is the one thing a salesperson scans this list for. */
+  needed_by_date?: string | null;
 }
 
 export type PortalAttachmentUploaderKind = 'user' | 'contact' | 'system' | null;
@@ -798,6 +831,12 @@ export const SUBMISSION_LABELS: Record<PortalSubmissionKind, string> = {
   stock_inquiry: 'Stock Inquiry',
   purchase_request: 'Purchase Request',
   sponsorship_form: 'Sponsorship Form',
+};
+
+/** Every kind the landing can list, legacy or gated (D45). */
+export const LANDING_LABELS: Record<PortalLandingKind, string> = {
+  ...SUBMISSION_LABELS,
+  price_tag_request: 'Price Tag Request',
 };
 
 // Friendly labels for backend status / approval_status values surfaced in the

@@ -1,0 +1,156 @@
+/**
+ * D45 / AC-M.14: Price Tag Request is one of the landing dropdown's options,
+ * gated on the contact's `visible_form_types`, and never a separate link button.
+ *
+ * The gating is unit-tested here rather than proved with a second contact in the
+ * browser: manufacturing one would mean writing to a shared database that is a
+ * copy of production.
+ *
+ * Mocking pattern mirrors `PortalLanding.revBadge.test.tsx`.
+ */
+import React from 'react';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, waitFor } from '@testing-library/react';
+
+import type { PortalSubmissionSummary } from '../lib/portal-client';
+
+const push = vi.fn();
+const replace = vi.fn();
+const router = { push, replace };
+let searchParams = new URLSearchParams('');
+vi.mock('next/navigation', () => ({
+  useRouter: () => router,
+  useSearchParams: () => searchParams,
+}));
+
+vi.mock('../lib/portal-client', async (importOriginal) => {
+  const original =
+    await importOriginal<typeof import('../lib/portal-client')>();
+  return {
+    ...original,
+    fetchMeWithGrace: vi.fn(),
+    fetchSubmissions: vi.fn(),
+    fetchSubmission: vi.fn(),
+    portalLogout: vi.fn(),
+    readPortalToken: vi.fn(() => 'tok-123'),
+  };
+});
+
+vi.mock('../lib/price-tag-request-service', () => ({
+  listRequestsAsSummaries: vi.fn(),
+}));
+
+import { fetchMeWithGrace, fetchSubmissions } from '../lib/portal-client';
+import { listRequestsAsSummaries } from '../lib/price-tag-request-service';
+import { PortalLanding } from './PortalLanding';
+
+const PRICE_TAG_ROW: PortalSubmissionSummary = {
+  id: 'ptr-1',
+  kind: 'price_tag_request',
+  title: 'ZZT DEALER SDN BHD',
+  document_number: 'PT-202608-0001',
+  reference: null,
+  status: 'new',
+  is_editable: false,
+  is_draft: false,
+  created_at: '2026-08-20T00:00:00Z',
+  customer_name: 'ZZT DEALER SDN BHD',
+  needed_by_date: '2026-09-04',
+};
+
+const DRAFT_ROW: PortalSubmissionSummary = {
+  ...PRICE_TAG_ROW,
+  id: 'ptr-2',
+  document_number: 'PT-202608-0002',
+  is_draft: true,
+  is_editable: true,
+};
+
+const ME = {
+  contact_id: 'contact-1',
+  space_id: 'space-1',
+  name: 'Darren Lee',
+  phone_number: '60123456789',
+  expires_at: '2026-09-01T00:00:00Z',
+  portal_slug: 'darren',
+};
+
+function mockContact(visible: string[]) {
+  (fetchMeWithGrace as ReturnType<typeof vi.fn>).mockResolvedValue({
+    ...ME,
+    visible_form_types: visible,
+  });
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  searchParams = new URLSearchParams('');
+  window.localStorage.clear();
+  (fetchSubmissions as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+  (listRequestsAsSummaries as ReturnType<typeof vi.fn>).mockResolvedValue([
+    PRICE_TAG_ROW,
+    DRAFT_ROW,
+  ]);
+});
+
+describe('PortalLanding - Price Tag Request in the type dropdown', () => {
+  it('offers the option, with a count, to a contact whose grant includes it', async () => {
+    mockContact(['stock_inquiry', 'price_tag_request']);
+    render(<PortalLanding slug="darren" />);
+
+    const trigger = await screen.findByRole('combobox');
+    await waitFor(() =>
+      expect(listRequestsAsSummaries).toHaveBeenCalledTimes(1),
+    );
+
+    trigger.click();
+    const option = await screen.findByText('Price Tag Request');
+    expect(option).toBeInTheDocument();
+    // The count badge sits beside the label inside the same option row.
+    expect(option.parentElement?.textContent).toContain('2');
+  });
+
+  it('does not offer it to a contact whose grant omits it, and asks for no list', async () => {
+    mockContact(['stock_inquiry']);
+    render(<PortalLanding slug="darren" />);
+
+    const trigger = await screen.findByRole('combobox');
+    await waitFor(() => expect(fetchSubmissions).toHaveBeenCalled());
+
+    trigger.click();
+    expect(await screen.findByText('Stock Inquiry')).toBeInTheDocument();
+    expect(screen.queryByText('Price Tag Request')).toBeNull();
+    expect(listRequestsAsSummaries).not.toHaveBeenCalled();
+  });
+
+  it('lists the requests in the same card as the other kinds when selected', async () => {
+    searchParams = new URLSearchParams('type=price_tag_request');
+    mockContact(['price_tag_request']);
+    render(<PortalLanding slug="darren" />);
+
+    expect(await screen.findByText('PT-202608-0001')).toBeInTheDocument();
+    // One dealer line per card: both rows name the same debtor.
+    expect(screen.getAllByText('ZZT DEALER SDN BHD')).toHaveLength(2);
+    // A request still holding portal_draft_at reads as Draft, not New.
+    expect(screen.getByText('Draft')).toBeInTheDocument();
+    expect(screen.getByText('New')).toBeInTheDocument();
+  });
+
+  it('falls back to stock inquiry on a ?type= deep link the contact cannot see', async () => {
+    searchParams = new URLSearchParams('type=price_tag_request');
+    mockContact(['stock_inquiry']);
+    render(<PortalLanding slug="darren" />);
+
+    // The New button names the active kind, so it is what proves the fallback.
+    expect(await screen.findByText('New Stock Inquiry')).toBeInTheDocument();
+    expect(screen.queryByText('PT-202608-0001')).toBeNull();
+  });
+
+  it('no longer renders the separate Price Tag Requests link button', async () => {
+    mockContact(['price_tag_request']);
+    render(<PortalLanding slug="darren" />);
+
+    await screen.findByRole('combobox');
+    expect(screen.queryByText('Price Tag Requests')).toBeNull();
+  });
+});

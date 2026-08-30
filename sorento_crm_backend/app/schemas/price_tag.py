@@ -117,6 +117,12 @@ class PriceTagRequestListItem(BaseModel):
     doc_number: str
     needed_by_date: date
     created_at: datetime
+    # A request that was saved and never submitted still carries status "new",
+    # so this is the only thing that tells a draft from a submitted request. The
+    # portal landing's Draft filter reads it (D45); without it every draft would
+    # list as New, and a schema drops what it does not declare just as silently
+    # as a response_model does.
+    portal_draft_at: Optional[datetime] = None
 
 
 # ---------------------------------------------------------------------------
