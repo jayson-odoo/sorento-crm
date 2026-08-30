@@ -291,3 +291,53 @@ that framed the whole of D46.
 - **The CLI `click` on elements low in the portal page** was a silent no-op behind
   the fixed impersonation banner; those clicks were issued as DOM `click()` through
   `eval` instead. Every assertion above is read from the rendered DOM.
+
+## Round 4, 30 Aug: the draft and the Submit that says what is missing (D48 / D49)
+
+Portal, impersonation token for Ziv Beh, FE `:3030` + BE `:8030`.
+
+- `portal-10-step0-repro-before-submit.png` - the captain's exact form state rebuilt
+  before pressing Submit: debtor ARDENCY CONSTRUCTION, needed by 31/08/2026, notes,
+  line 1 the CABANA set `CWC1009-RL`, line 2 the product `SRTWC286-SH-150`. Submit is
+  enabled, so the button was never the blocker.
+- `portal-11-step0-repro-field-required-toast.png` - what pressing it produced: a toast
+  reading **"Field required"** and nothing else. The backend log for the same second:
+  `POST /api/v1/public/portal/submissions/price_tag_request - Status: 422` with
+  `{"loc":["body","fields"],"msg":"Field required"}`. `body.fields` belongs to the
+  GENERIC portal submission schema: the request was served by `portal.py`'s
+  `POST /submissions/{kind}`, which is mounted first, and never reached the price tag
+  route at all. That is the whole of the captain's report.
+
+### Proven after the fix, through the API rather than the browser
+
+The lane's `next dev` on :3030 exited part-way through this run and this agent is not
+permitted to start a server, so the second half was proven against `:8030` with the same
+portal token the browser uses. Each step is a real HTTP call on the running lane:
+
+| What | Result |
+|------|--------|
+| Draft with ONE line, no debtor, no date | `201`, `debtor_name: null`, `needed_by_date: null`, `portal_draft_at` set |
+| Reopen that draft (`GET .../{id}`) | `200`, nulls intact, line resolved to `SRTWC286-SH-150`, `attachments: []`. Before this round the route did not exist and the generic one answered `400 Unsupported submission type` |
+| The portal list | one row, Draft, dealer and deadline both null |
+| Submit it | `422 SUBMIT_INCOMPLETE`, `detail: "debtor_name,needed_by_date"`, message "This request needs a dealer and a needed by date before it can be submitted." |
+| Re-save the SAME draft with a dealer, a date and two lines | `200`, still ONE row in the list, not two |
+| Submit the captain's exact state | `200`, `portal_draft_at` cleared |
+| Submit a draft whose line 2 is an ala carte Bathroom Furniture product (`SRTBF11721`) | `422 SET_GUARD_VIOLATION`, `detail: "line:1"`, naming the product |
+| Delete that draft | `204`, then `404` on the detail |
+| Delete a SUBMITTED request | `409`, by design |
+
+The inline half (red text under Debtor and Needed by, the per-row message, the
+"N things need attention" line, the errors clearing as fields are filled, a server
+refusal landing on the row it named) is covered by
+`PriceTagRequestForm.validation.test.tsx`, 8 tests, jsdom.
+
+### Not exercised, and why
+
+- **The browser half of round 4.** `:3030` was down from the middle of the run and
+  starting a dev server is outside this agent's permissions. Everything above is the
+  same code path the form calls, one layer down.
+- **Three rows are left behind.** `PT-202608-0001`, `-0002` and `-0003`, all submitted,
+  all for ARDENCY CONSTRUCTION. They were created to prove the flow; a submitted request
+  has no delete path (that is the design, and the portal refuses it with a 409), and the
+  CRM transition route rejects an `X-API-Key` principal, so nothing available here can
+  remove them. Deleting them by hand in psql was ruled out by the brief.
