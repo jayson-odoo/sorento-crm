@@ -3,11 +3,16 @@
 /**
  * CRM price tag request detail view.
  *
- * The same page as every other form detail in this app (D50): breadcrumb as the
- * way back, the document number as the heading with the status pill and the
- * record metadata beside it, ONE primary CTA followed by the gear menu and the
- * prev/next chevrons, then the request, its lines, its PO attachments and its
- * proof as cards.
+ * The same page as every other record in this app (D50), and after the Apple
+ * alignment S3 merge that means the stock-transfer shape exactly: the breadcrumb
+ * and ONE Back on the toolbar row, then a record card carrying the document
+ * number, its status pill and the read-only metadata, with `DetailActions`
+ * (page-scoped pager, gear, one primary CTA) on its right. The request, its
+ * lines, its PO attachments and its proof follow as cards.
+ *
+ * The breadcrumb's leaf is the DOC NUMBER rather than the word "Details", which
+ * is why it lives here and not in the route's server component: that one holds
+ * the id, and no id reaches a screen.
  *
  * Which action is primary and which are secondary is `priceTagActions`, so the
  * page never has to decide twice.
@@ -36,12 +41,22 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from '@/components/ui/breadcrumb';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { Skeleton } from '@/components/ui/skeleton';
+import BackToList from '@/components/common/BackToList';
+import DetailActions from '@/components/common/DetailActions';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
-import PriceTagRequestNavigation from './PriceTagRequestNavigation';
+import { priceTagRequestsPagerQuery } from '../lib/listQuery';
 import {
   priceTagStatusLabel,
   priceTagStatusPillClass,
@@ -210,27 +225,63 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
 
   const busy = actionLoading || exportLoading;
 
+  // Back carries the list query the row click wrote, so the reader returns to the
+  // page, sort, search and status filter they left (S3-01).
+  const backLink = (
+    <BackToList
+      listPath="/dealer-kit/price-tag-requests"
+      label="Back to price tag requests"
+    />
+  );
+
+  /** The leaf is the DOC NUMBER, never the id: no UUID reaches a screen. */
+  const crumbs = (leaf: string) => (
+    <Breadcrumb>
+      <BreadcrumbList>
+        <BreadcrumbItem>
+          <BreadcrumbLink href="/">Home</BreadcrumbLink>
+        </BreadcrumbItem>
+        <BreadcrumbSeparator />
+        <BreadcrumbItem>
+          <BreadcrumbLink href="/dealer-kit">Dealer Kit</BreadcrumbLink>
+        </BreadcrumbItem>
+        <BreadcrumbSeparator />
+        <BreadcrumbItem>
+          <BreadcrumbLink href="/dealer-kit/price-tag-requests">
+            Price Tag Requests
+          </BreadcrumbLink>
+        </BreadcrumbItem>
+        <BreadcrumbSeparator />
+        <BreadcrumbItem>
+          <BreadcrumbPage>{leaf}</BreadcrumbPage>
+        </BreadcrumbItem>
+      </BreadcrumbList>
+    </Breadcrumb>
+  );
+
   if (loading) {
     return (
-      <div className="space-y-6">
-        <Skeleton className="h-10 w-64" />
-        <Skeleton className="h-40 w-full" />
-        <Skeleton className="h-60 w-full" />
+      <div className="space-y-4">
+        {crumbs('Loading')}
+        <div className="flex justify-end">{backLink}</div>
+        <Skeleton className="h-32 w-full rounded-xl" />
+        <Skeleton className="h-64 w-full rounded-xl" />
       </div>
     );
   }
 
   if (!request) {
     return (
-      <div className="text-center py-12">
-        <p className="text-muted-foreground">Price tag request not found</p>
-        <Button
-          variant="outline"
-          onClick={() => router.push('/dealer-kit/price-tag-requests')}
-          className="mt-4"
-        >
-          Back to Price Tag Requests
-        </Button>
+      <div className="space-y-4">
+        {crumbs('Not found')}
+        <div className="flex justify-end">{backLink}</div>
+        <Card className="flex flex-col items-center gap-3 p-10 text-center">
+          <div className="text-sm font-semibold">Price tag request not found</div>
+          <p className="max-w-md text-sm text-muted-foreground">
+            This request doesn&apos;t exist, or it was removed after this link was
+            made. Head back to the list to pick another.
+          </p>
+        </Card>
       </div>
     );
   }
@@ -238,80 +289,95 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
   const PrimaryIcon = primary ? ACTION_ICON[primary.action] : null;
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
+    <div className="space-y-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="space-y-1 min-w-0">
-          <h1 className="text-2xl font-bold break-words">
-            Price Tag Request - {request.doc_number}
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            Created: {formatDateTimeInMalaysia(request.created_at)}
-            {request.status && (
-              <>
-                {' · '}
-                <span
-                  className={`${STATUS_PILL_BASE} ${priceTagStatusPillClass(request.status)}`}
-                >
-                  {priceTagStatusLabel(request.status)}
-                </span>
-              </>
-            )}
-          </p>
-          <p className="text-sm text-muted-foreground">
-            Needed by:{' '}
-            {request.needed_by_date
-              ? formatDate(new Date(request.needed_by_date))
-              : '-'}
-            {' · '}
-            Assigned to: {request.assigned_to_name ?? 'Unclaimed'}
-          </p>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap sm:justify-end">
-          {primary && (
-            <Button
-              variant="primary"
-              size="sm"
-              disabled={busy}
-              onClick={() => runAction(primary.action)}
-              data-testid="price-tag-primary-cta"
-            >
-              {busy ? (
-                <Loader2 className="size-4 mr-1 animate-spin" />
-              ) : (
-                PrimaryIcon && <PrimaryIcon className="size-4 mr-1" />
-              )}
-              {primary.label}
-            </Button>
-          )}
-          {secondary.length > 0 && (
-            <DetailActionsMenu ariaLabel="Price tag request actions">
-              {secondary.map((spec) => {
-                const Icon = ACTION_ICON[spec.action];
-                return (
-                  <DropdownMenuItem
-                    key={spec.action}
-                    disabled={busy}
-                    className={
-                      spec.destructive
-                        ? 'text-destructive focus:text-destructive'
-                        : undefined
-                    }
-                    onSelect={(event) => {
-                      event.preventDefault();
-                      runAction(spec.action);
-                    }}
-                  >
-                    <Icon className="size-4" />
-                    {spec.label}
-                  </DropdownMenuItem>
-                );
-              })}
-            </DetailActionsMenu>
-          )}
-          <PriceTagRequestNavigation requestId={requestId} />
-        </div>
+        {crumbs(request.doc_number)}
+        {backLink}
       </div>
+
+      {/* The record header - what the request IS, and what can be done to it. */}
+      <Card>
+        <CardHeader className="block py-4">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div className="min-w-0 space-y-1">
+              <div className="flex min-w-0 flex-wrap items-center gap-3">
+                <CardTitle className="text-lg">{request.doc_number}</CardTitle>
+                {request.status && (
+                  <span
+                    className={`${STATUS_PILL_BASE} ${priceTagStatusPillClass(request.status)}`}
+                  >
+                    {priceTagStatusLabel(request.status)}
+                  </span>
+                )}
+              </div>
+              {/* Read-only metadata lives in the header, never in a card body. */}
+              <p className="text-sm text-muted-foreground">
+                Created: {formatDateTimeInMalaysia(request.created_at)}
+                {' · '}
+                Needed by:{' '}
+                {request.needed_by_date
+                  ? formatDate(new Date(request.needed_by_date))
+                  : '-'}
+                {' · '}
+                Assigned to: {request.assigned_to_name ?? 'Unclaimed'}
+              </p>
+            </div>
+            {/* The workflow gear, not a record action set: which verbs exist depends
+                on the status and on who claimed it, which `priceTagActions` decides. */}
+            <DetailActions
+              pager={{
+                ...priceTagRequestsPagerQuery,
+                detailPath: '/dealer-kit/price-tag-requests',
+                currentId: requestId,
+                ariaLabel: 'price tag request',
+              }}
+              gearLabel="Price tag request actions"
+              gear={
+                secondary.length > 0 ? (
+                  <DetailActionsMenu ariaLabel="Price tag request actions">
+                    {secondary.map((spec) => {
+                      const Icon = ACTION_ICON[spec.action];
+                      return (
+                        <DropdownMenuItem
+                          key={spec.action}
+                          disabled={busy}
+                          variant={spec.destructive ? 'destructive' : undefined}
+                          onSelect={(event) => {
+                            event.preventDefault();
+                            runAction(spec.action);
+                          }}
+                        >
+                          <Icon className="size-4" />
+                          {spec.label}
+                        </DropdownMenuItem>
+                      );
+                    })}
+                  </DetailActionsMenu>
+                ) : null
+              }
+              primary={
+                primary ? (
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    className="gap-1.5"
+                    disabled={busy}
+                    onClick={() => runAction(primary.action)}
+                    data-testid="price-tag-primary-cta"
+                  >
+                    {busy ? (
+                      <Loader2 className="size-4 animate-spin" />
+                    ) : (
+                      PrimaryIcon && <PrimaryIcon className="size-4" />
+                    )}
+                    {primary.label}
+                  </Button>
+                ) : null
+              }
+            />
+          </div>
+        </CardHeader>
+      </Card>
 
       {/* Request */}
       <Card>

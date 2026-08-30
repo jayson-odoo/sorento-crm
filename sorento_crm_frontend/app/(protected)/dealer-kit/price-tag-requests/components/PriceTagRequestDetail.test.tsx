@@ -9,6 +9,7 @@
  */
 import React from 'react';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
@@ -70,6 +71,20 @@ import { priceTagActions } from './priceTagRequestActions';
 const mockGet = vi.mocked(getPriceTagRequest);
 const mockList = vi.mocked(listPriceTagRequests);
 
+/**
+ * The page-scoped pager reads its list page through React Query (S3-03), so the
+ * record has to be mounted inside a provider or `useListPager` throws before
+ * anything on the page renders.
+ */
+function renderDetail(requestId = 'req-1') {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={qc}>
+      <PriceTagRequestDetail requestId={requestId} />
+    </QueryClientProvider>,
+  );
+}
+
 function requestWith(
   overrides: Partial<PriceTagRequestDetailType> = {},
 ): PriceTagRequestDetailType {
@@ -97,9 +112,11 @@ function requestWith(
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // The page the pager walks: this record plus one neighbour, so the chevrons
+  // have something to be enabled about.
   mockList.mockResolvedValue({
-    data: [],
-    pagination: { total: 0, page: 1, limit: 500 },
+    data: [{ id: 'req-1' }, { id: 'req-2' }] as never,
+    pagination: { total: 2, page: 1, limit: 50 },
   });
 });
 
@@ -148,7 +165,7 @@ describe('priceTagActions', () => {
 describe('PriceTagRequestDetail', () => {
   it('shows the document number, the status pill and the record metadata in the header', async () => {
     mockGet.mockResolvedValue(requestWith());
-    render(<PriceTagRequestDetail requestId="req-1" />);
+    renderDetail();
 
     expect(
       await screen.findByRole('heading', { name: /PT-202608-0001/ }),
@@ -159,7 +176,7 @@ describe('PriceTagRequestDetail', () => {
 
   it('renders exactly one primary CTA and puts the rest in the gear', async () => {
     mockGet.mockResolvedValue(requestWith({ status: 'designing' }));
-    render(<PriceTagRequestDetail requestId="req-1" />);
+    renderDetail();
 
     const primary = await screen.findByTestId('price-tag-primary-cta');
     expect(primary.textContent).toContain('Design tags');
@@ -174,7 +191,7 @@ describe('PriceTagRequestDetail', () => {
 
   it('has no gear at all when nothing is legal', async () => {
     mockGet.mockResolvedValue(requestWith({ status: 'void' }));
-    render(<PriceTagRequestDetail requestId="req-1" />);
+    renderDetail();
 
     await screen.findByRole('heading', { name: /PT-202608-0001/ });
     expect(screen.queryByTestId('price-tag-primary-cta')).toBeNull();
@@ -183,7 +200,7 @@ describe('PriceTagRequestDetail', () => {
 
   it('the primary CTA on a designing request opens the designer', async () => {
     mockGet.mockResolvedValue(requestWith({ status: 'designing' }));
-    render(<PriceTagRequestDetail requestId="req-1" />);
+    renderDetail();
 
     fireEvent.click(await screen.findByTestId('price-tag-primary-cta'));
     expect(push).toHaveBeenCalledWith('/dealer-kit/price-tag-requests/req-1/design');
@@ -191,24 +208,29 @@ describe('PriceTagRequestDetail', () => {
 
   it('carries prev/next record navigation', async () => {
     mockGet.mockResolvedValue(requestWith());
-    render(<PriceTagRequestDetail requestId="req-1" />);
+    renderDetail();
 
     await screen.findByRole('heading', { name: /PT-202608-0001/ });
     expect(screen.getByRole('button', { name: 'Previous price tag request' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Next price tag request' })).toBeTruthy();
   });
 
-  it('has no ad-hoc back button: the breadcrumb is the way back', async () => {
+  it('carries the house Back, and no ad-hoc one beside it', async () => {
     mockGet.mockResolvedValue(requestWith());
-    render(<PriceTagRequestDetail requestId="req-1" />);
+    renderDetail();
 
     await screen.findByRole('heading', { name: /PT-202608-0001/ });
+    // The one way out, `BackToList`, which carries the list query the row click
+    // wrote. Anything else in this slot is the ad-hoc button S3 removed.
+    expect(
+      screen.getByRole('link', { name: 'Back to price tag requests' }),
+    ).toBeTruthy();
     expect(screen.queryByText('Back to list')).toBeNull();
   });
 
   it('gives every section an empty state rather than hiding it', async () => {
     mockGet.mockResolvedValue(requestWith({ notes: null, lines: [], attachments: [] }));
-    render(<PriceTagRequestDetail requestId="req-1" />);
+    renderDetail();
 
     await screen.findByRole('heading', { name: /PT-202608-0001/ });
     expect(screen.getByText('No lines in this request.')).toBeTruthy();
@@ -219,7 +241,7 @@ describe('PriceTagRequestDetail', () => {
 
   it('asks before voiding rather than voiding on the click', async () => {
     mockGet.mockResolvedValue(requestWith({ status: 'designing' }));
-    render(<PriceTagRequestDetail requestId="req-1" />);
+    renderDetail();
 
     await screen.findByTestId('gear-menu');
     const gear = within(screen.getByTestId('gear-menu'));

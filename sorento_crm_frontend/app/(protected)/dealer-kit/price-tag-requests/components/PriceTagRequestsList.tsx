@@ -8,7 +8,6 @@
  */
 
 import { useEffect, useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import {
   ColumnDef,
   PaginationState,
@@ -36,6 +35,7 @@ import {
   priceTagStatusLabel,
   priceTagStatusPillClass,
 } from '@/lib/price-tag-status';
+import { buildDetailSearch } from '@/lib/listNavQuery';
 import { formatDate, formatDateTimeInMalaysia } from '@/lib/helpers';
 import {
   listPriceTagRequests,
@@ -56,7 +56,6 @@ const STATUS_OPTIONS = [
 ];
 
 export default function PriceTagRequestsList() {
-  const router = useRouter();
   const [pagination, setPagination] = useState<PaginationState>({
     pageIndex: 0,
     pageSize: 50,
@@ -110,9 +109,21 @@ export default function PriceTagRequestsList() {
     setIsRefreshing(false);
   };
 
-  const handleRowClick = (row: PriceTagRequestSummary) => {
-    router.push(`/dealer-kit/price-tag-requests/${row.id}`);
-  };
+  // Carried into the record URL so its prev/next pager walks the SAME searched,
+  // sorted and filtered page the reader was on (S3-03). The status filter has to
+  // ride along too: the pager cannot rebuild a filter the URL never named.
+  const detailSearch = buildDetailSearch(
+    {
+      pageIndex: pagination.pageIndex,
+      pageSize: pagination.pageSize,
+      sorting,
+      searchQuery,
+    },
+    { status: statusFilter !== '__all__' ? statusFilter : undefined },
+  );
+
+  const detailHref = (row: PriceTagRequestSummary) =>
+    `/dealer-kit/price-tag-requests/${row.id}${detailSearch ? `?${detailSearch}` : ''}`;
 
   const handleClaim = async (
     e: React.MouseEvent,
@@ -316,7 +327,7 @@ export default function PriceTagRequestsList() {
       table={table}
       recordCount={data?.pagination.total ?? 0}
       isLoading={isLoading}
-      onRowClick={handleRowClick}
+      rowHref={detailHref}
       standardToolbar={false}
       tableLayout={{ width: 'fixed', columnsResizable: true }}
     >

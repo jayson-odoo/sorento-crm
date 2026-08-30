@@ -1,12 +1,4 @@
 import { Metadata } from 'next';
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
 import { Container } from '@/components/common/container';
 import PriceTagRequestDetail from '../components/PriceTagRequestDetail';
 
@@ -22,32 +14,12 @@ export default async function PriceTagRequestDetailPage({
 }) {
   const { id } = await params;
 
+  // The breadcrumb and the Back button live INSIDE the detail component, not
+  // here: the breadcrumb's leaf is the request's DOC NUMBER, and this server
+  // component holds only the id, which is a UUID and may never reach a screen.
   return (
     <Container>
-      <Breadcrumb>
-        <BreadcrumbList>
-          <BreadcrumbItem>
-            <BreadcrumbLink href="/">Home</BreadcrumbLink>
-          </BreadcrumbItem>
-          <BreadcrumbSeparator />
-          <BreadcrumbItem>
-            <BreadcrumbLink href="/dealer-kit">Dealer Kit</BreadcrumbLink>
-          </BreadcrumbItem>
-          <BreadcrumbSeparator />
-          <BreadcrumbItem>
-            <BreadcrumbLink href="/dealer-kit/price-tag-requests">
-              Price Tag Requests
-            </BreadcrumbLink>
-          </BreadcrumbItem>
-          <BreadcrumbSeparator />
-          <BreadcrumbItem>
-            <BreadcrumbPage>Details</BreadcrumbPage>
-          </BreadcrumbItem>
-        </BreadcrumbList>
-      </Breadcrumb>
-      <div className="mt-6">
-        <PriceTagRequestDetail requestId={id} />
-      </div>
+      <PriceTagRequestDetail requestId={id} />
     </Container>
   );
 }
