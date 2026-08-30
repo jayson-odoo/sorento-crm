@@ -14,9 +14,9 @@ import {
   fetchProductOrSetOptions,
   renderProductOrSetOption,
 } from '../../components/productOrSetPicker';
+import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
 import {
   useDismissSupplierCode,
-  useForgetSupplierCodeMatch,
   useMatchSupplierCode,
   useSupplierCodeAliases,
   useUnmatchedSupplierCodes,
@@ -77,7 +77,19 @@ export function UnmatchedSupplierCodesPanel({ supplierId }: { supplierId: string
   const { data: aliases = [] } = useSupplierCodeAliases(supplierId || null);
   const match = useMatchSupplierCode();
   const dismiss = useDismissSupplierCode();
-  const forget = useForgetSupplierCodeMatch();
+  // The same action the proforma detail defers, deferred the same way (D7): forgetting
+  // a ruling un-binds every row it held, so it asks nothing and counts down instead.
+  const forget = useDeferredRowAction({
+    actionKey: 'supplier_code_alias.forget',
+    entityType: 'supplier_code_alias',
+    verb: 'Forgetting',
+    successMessage: 'Match forgotten.',
+    invalidateKeys: [
+      ['scm', 'supplier-code-aliases'],
+      ['scm', 'proforma-invoices'],
+      ['scm', 'fulfilment'],
+    ],
+  });
   const [showDismissed, setShowDismissed] = React.useState(false);
   /** The code a write is in flight for, so only ITS row goes quiet. */
   const [busy, setBusy] = React.useState<string | null>(null);
@@ -330,7 +342,9 @@ export function UnmatchedSupplierCodesPanel({ supplierId }: { supplierId: string
                       variant="ghost"
                       size="sm"
                       className="h-6 shrink-0 px-2 text-xs"
-                      onClick={() => forget.mutate(alias.id)}
+                      onClick={() =>
+                        forget.run({ id: alias.id, subject: alias.supplier_code })
+                      }
                     >
                       Undo
                     </Button>
