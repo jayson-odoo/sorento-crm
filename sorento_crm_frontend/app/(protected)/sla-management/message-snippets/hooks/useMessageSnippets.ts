@@ -5,7 +5,6 @@ import { toast } from 'sonner';
 
 import {
   createMessageSnippet,
-  deleteMessageSnippet,
   getMessageSnippetOptions,
   listMessageSnippets,
   updateMessageSnippet,
@@ -60,19 +59,6 @@ export function useUpdateMessageSnippet() {
     onSuccess: () => {
       invalidateSnippets(queryClient);
       toast.success('Snippet updated');
-    },
-    onError: (error: Error) => toast.error(error.message),
-  });
-}
-
-export function useDeleteMessageSnippet() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => deleteMessageSnippet(id),
-    // The success toast belongs to ConfirmDeleteDialog (product standard), so
-    // this one only refreshes the list.
-    onSuccess: () => {
-      invalidateSnippets(queryClient);
     },
     onError: (error: Error) => toast.error(error.message),
   });

@@ -102,13 +102,6 @@ export async function updateMessageSnippet(
   return response.json();
 }
 
-export async function deleteMessageSnippet(id: string): Promise<void> {
-  const response = await apiFetch(`${BASE}/${encodeURIComponent(id)}`, { method: 'DELETE' });
-  if (!response.ok) {
-    throw new Error(await extractApiError(response, 'Failed to delete the snippet'));
-  }
-}
-
 /**
  * The composer picker's list, with every body already resolved against the
  * ticket. Resolution is server-side on purpose: one implementation, and the
