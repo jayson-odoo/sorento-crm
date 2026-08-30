@@ -18,7 +18,7 @@ import { cn } from '@/lib/utils';
  * broken filter. It keeps its place, because a card that came and went would move every
  * card beside it. That is the rule for a card standing for a QUESTION the ladder asks -
  * a zero there is an answer. Whether a card belongs in the strip at all is the caller's
- * decision, not this component's: `DecisionStrip` drops its `incoming` card at zero,
+ * decision, not this component's: `DecisionStrip` drops its `borrow_other` card at zero,
  * because that one is not a question but a leftover of an older ladder.
  */
 export function SupplyKindCard({

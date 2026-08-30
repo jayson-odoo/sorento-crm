@@ -89,19 +89,30 @@ describe('rowOf reads the rung, never the warehouse code', () => {
     // The rung strings are `front_planning_engine.py`'s own constants. A rung this table does
     // not name is a rung the board would colour as nothing at all.
     expect(rowOf({ kind: 'reserve', rung: 'pool', qty: '1' })).toBe('shared');
-    expect(rowOf({ kind: 'reserve', rung: 'group_take', qty: '1' })).toBe('own');
-    expect(rowOf({ kind: 'borrow', rung: 'group_borrow', qty: '1' })).toBe('borrow_order');
-    expect(rowOf({ kind: 'borrow', rung: 'cross_group_borrow', qty: '1' })).toBe(
-      'borrow_other',
+    expect(rowOf({ kind: 'reserve', rung: 'group_take', qty: '1' })).toBe(
+      'own',
     );
+    expect(rowOf({ kind: 'borrow', rung: 'group_borrow', qty: '1' })).toBe(
+      'borrow_order',
+    );
+    expect(
+      rowOf({ kind: 'borrow', rung: 'cross_group_borrow', qty: '1' }),
+    ).toBe('borrow_other');
     expect(rowOf({ kind: 'buy', rung: 'buy', qty: '1' })).toBe('buy');
-    expect(rowOf({ kind: 'timely_spo', rung: 'incoming', qty: '1' })).toBe('incoming');
+    expect(rowOf({ kind: 'timely_spo', rung: 'incoming', qty: '1' })).toBe(
+      'incoming',
+    );
   });
 
-  it('names ladder v7.1 own two borrow rungs, which the switch never learned', () => {
+  it('names ladder v7.1 own two borrow rungs, and keeps them apart', () => {
     // Step 2 borrows ON HAND held by a later order, step 3 the DOCUMENT it is waiting on.
     // Neither was in the switch, so both resolved to null and every step-2 borrow vanished
     // from the strip, the bar, the card and the popover behind 'Cannot be sourced'.
+    //
+    // TWO WORDS, NOT ONE (the captain, 30 Aug 2026): they were both read as
+    // `borrow_order`, so step 3 had no card of its own and the walk showed four steps where
+    // the engine asks five. What is taken differs - stock a picker can walk to against a
+    // document still at sea - and so does when the asker gets it.
     expect(
       rowOf({
         kind: 'borrow',
@@ -119,7 +130,30 @@ describe('rowOf reads the rung, never the warehouse code', () => {
         location: 'BRW-IB',
         donor_so_number: 'SO414285',
       }),
-    ).toBe('borrow_order');
+    ).toBe('borrow_incoming');
+  });
+
+  it('splits step 1 into the floor and the water, on the component kind (30 Aug 2026)', () => {
+    // ONE RUNG, TWO PROMISES. `_draw_group` composes `kind=TIMELY_SPO if water else RESERVE`
+    // and stamps `rung=group_take` on both, so reading the rung alone printed a container at
+    // sea under "Use own location" beside stock on a floor. Neither is a borrow: free stock
+    // owes nobody a thing, wherever it happens to be.
+    expect(
+      rowOf({
+        kind: 'reserve',
+        rung: 'group_take',
+        qty: '40',
+        location: 'BRW-BB',
+      }),
+    ).toBe('own');
+    expect(
+      rowOf({
+        kind: 'timely_spo',
+        rung: 'group_take',
+        qty: '25',
+        location: 'MWH-BB',
+      }),
+    ).toBe('incoming');
   });
 
   it('tells the pool free draw from the pool BORROW, which owes a debt back (R34)', () => {
@@ -147,6 +181,7 @@ describe('rowOf reads the rung, never the warehouse code', () => {
       'shared',
       'own',
       'borrow_order',
+      'borrow_incoming',
       'borrow_other',
       'incoming',
     ] as const) {
@@ -158,17 +193,33 @@ describe('rowOf reads the rung, never the warehouse code', () => {
     expect(LABELS.own).toBe('Use own location');
     expect(LABELS.borrow_order).toBe('Borrow from another order');
     expect(LABELS.borrow_other).toBe('Borrow other location');
+    // The two words of 30 Aug 2026. "Use", because the group's own incoming document is
+    // taken free and owes nobody anything; "Borrow", because a later order's document is
+    // taken from somebody and raises an order-back.
+    expect(LABELS.incoming).toBe('Use incoming');
+    expect(LABELS.borrow_incoming).toBe('Borrow incoming');
+    // All three borrows share the amber, and are told apart by their words alone.
+    expect(COLOURS.borrow_incoming.bar).toBe(COLOURS.borrow_order.bar);
   });
 
   it('reads the pool as SHARED whatever site it is at, and however the line is coded', () => {
     // AC-A1, and the regression. `BRW` and `BRW-BB` share a prefix; they are not the same pile.
-    expect(rowOf({ kind: 'reserve', rung: 'pool', qty: '71', location: 'BRW' })).toBe('shared');
-    expect(rowOf({ kind: 'reserve', rung: 'pool', qty: '4', location: 'MWH' })).toBe('shared');
+    expect(
+      rowOf({ kind: 'reserve', rung: 'pool', qty: '71', location: 'BRW' }),
+    ).toBe('shared');
+    expect(
+      rowOf({ kind: 'reserve', rung: 'pool', qty: '4', location: 'MWH' }),
+    ).toBe('shared');
   });
 
   it('reads a group take as the agent own location, whatever site the sibling is at', () => {
     expect(
-      rowOf({ kind: 'reserve', rung: 'group_take', qty: '454', location: 'DC1-BB' }),
+      rowOf({
+        kind: 'reserve',
+        rung: 'group_take',
+        qty: '454',
+        location: 'DC1-BB',
+      }),
     ).toBe('own');
   });
 
@@ -189,31 +240,49 @@ describe('rowOf reads the rung, never the warehouse code', () => {
    */
   describe('a component with no rung of its own', () => {
     it('reads a sibling of the line own group as its own location (AC-A2)', () => {
-      expect(rowOf({ kind: 'reserve', qty: '454', location: 'DC1-BB' }, 'BRW-BB')).toBe('own');
-      expect(rowOf({ kind: 'reserve', qty: '267', location: 'MWH-BB' }, 'BRW-BB')).toBe('own');
-      expect(rowOf({ kind: 'reserve', qty: '211', location: 'WH3-BB' }, 'BRW-BB')).toBe('own');
+      expect(
+        rowOf({ kind: 'reserve', qty: '454', location: 'DC1-BB' }, 'BRW-BB'),
+      ).toBe('own');
+      expect(
+        rowOf({ kind: 'reserve', qty: '267', location: 'MWH-BB' }, 'BRW-BB'),
+      ).toBe('own');
+      expect(
+        rowOf({ kind: 'reserve', qty: '211', location: 'WH3-BB' }, 'BRW-BB'),
+      ).toBe('own');
       // The line's own warehouse itself, which is the same group by definition.
-      expect(rowOf({ kind: 'reserve', qty: '10', location: 'BRW-BB' }, 'BRW-BB')).toBe('own');
+      expect(
+        rowOf({ kind: 'reserve', qty: '10', location: 'BRW-BB' }, 'BRW-BB'),
+      ).toBe('own');
     });
 
     it('reads a bare site code as the shared pool (AC-A1)', () => {
       for (const pool of ['BRW', 'MWH', 'DC1', 'WH3', 'RSW']) {
-        expect(rowOf({ kind: 'reserve', qty: '71', location: pool }, 'BRW-BB')).toBe('shared');
+        expect(
+          rowOf({ kind: 'reserve', qty: '71', location: pool }, 'BRW-BB'),
+        ).toBe('shared');
       }
     });
 
     it('reads another group warehouse as borrowing from another location', () => {
-      expect(rowOf({ kind: 'reserve', qty: '9', location: 'BRW-HP' }, 'BRW-BB')).toBe(
-        'borrow_other',
-      );
-      expect(rowOf({ kind: 'borrow', qty: '9', location: 'DC1-IB' }, 'BRW-BB')).toBe(
-        'borrow_other',
-      );
+      expect(
+        rowOf({ kind: 'reserve', qty: '9', location: 'BRW-HP' }, 'BRW-BB'),
+      ).toBe('borrow_other');
+      expect(
+        rowOf({ kind: 'borrow', qty: '9', location: 'DC1-IB' }, 'BRW-BB'),
+      ).toBe('borrow_other');
     });
 
     it('reads a borrow that names a donor order as a borrow from another order', () => {
       expect(
-        rowOf({ kind: 'borrow', rung: 'group_borrow', qty: '3', location: 'BRW-BB' }, 'BRW-BB'),
+        rowOf(
+          {
+            kind: 'borrow',
+            rung: 'group_borrow',
+            qty: '3',
+            location: 'BRW-BB',
+          },
+          'BRW-BB',
+        ),
       ).toBe('borrow_order');
     });
 
@@ -227,32 +296,46 @@ describe('rowOf reads the rung, never the warehouse code', () => {
     it('never reads an unrunged borrow as the line own location, however close the donor is', () => {
       expect(
         rowOf(
-          { kind: 'borrow', qty: '71', location: 'BRW-BB', donor_so_number: 'SO415472' },
+          {
+            kind: 'borrow',
+            qty: '71',
+            location: 'BRW-BB',
+            donor_so_number: 'SO415472',
+          },
           'BRW-BB',
         ),
       ).toBe('borrow_order');
       // A sibling of the same group at another site - the group reading called this "own" too.
       expect(
         rowOf(
-          { kind: 'borrow', qty: '30', location: 'DC1-BB', donor_so_number: 'SO404352' },
+          {
+            kind: 'borrow',
+            qty: '30',
+            location: 'DC1-BB',
+            donor_so_number: 'SO404352',
+          },
           'BRW-BB',
         ),
       ).toBe('borrow_order');
     });
 
     it('reads an unrunged borrow that names no donor order as borrowing another location', () => {
-      expect(rowOf({ kind: 'borrow', qty: '9', location: 'BRW-BB' }, 'BRW-BB')).toBe(
-        'borrow_other',
-      );
-      expect(rowOf({ kind: 'borrow', qty: '9', location: 'BRW' }, 'BRW-BB')).toBe(
-        'borrow_other',
-      );
+      expect(
+        rowOf({ kind: 'borrow', qty: '9', location: 'BRW-BB' }, 'BRW-BB'),
+      ).toBe('borrow_other');
+      expect(
+        rowOf({ kind: 'borrow', qty: '9', location: 'BRW' }, 'BRW-BB'),
+      ).toBe('borrow_other');
     });
 
     it('reads a pool when the line own location is unknown, never as its own stock', () => {
       // Nothing to compare against is not a licence to claim the agent's group holds it.
-      expect(rowOf({ kind: 'reserve', qty: '5', location: 'DC1-BB' })).toBe('borrow_other');
-      expect(rowOf({ kind: 'reserve', qty: '5', location: 'BRW' })).toBe('shared');
+      expect(rowOf({ kind: 'reserve', qty: '5', location: 'DC1-BB' })).toBe(
+        'borrow_other',
+      );
+      expect(rowOf({ kind: 'reserve', qty: '5', location: 'BRW' })).toBe(
+        'shared',
+      );
     });
 
     it('still reads Buy and incoming off their kind, which never needed a location', () => {
@@ -303,8 +386,18 @@ describe('describe', () => {
   it('reads a SupplyComponent, which spells its warehouse source_location', () => {
     expect(
       describeSupply([
-        { kind: 'reserve', rung: 'group_take', qty: '454', source_location: 'DC1-BB' },
-        { kind: 'reserve', rung: 'group_take', qty: '267', source_location: 'MWH-BB' },
+        {
+          kind: 'reserve',
+          rung: 'group_take',
+          qty: '454',
+          source_location: 'DC1-BB',
+        },
+        {
+          kind: 'reserve',
+          rung: 'group_take',
+          qty: '267',
+          source_location: 'MWH-BB',
+        },
       ]),
     ).toBe('Own 721 (DC1-BB, MWH-BB)');
   });
@@ -322,7 +415,12 @@ describe('suggestionBreakdown', () => {
         line({
           sources: [
             source({ kind: 'buy', rung: 'buy', qty: '3', location: null }),
-            source({ kind: 'reserve', rung: 'pool', qty: '13', location: 'BRW' }),
+            source({
+              kind: 'reserve',
+              rung: 'pool',
+              qty: '13',
+              location: 'BRW',
+            }),
           ],
         }),
       ]),
@@ -340,7 +438,14 @@ describe('suggestionBreakdown', () => {
     const rows = suggestionBreakdown(
       cell([
         line({
-          sources: [source({ kind: 'reserve', rung: 'pool', qty: '71', location: 'BRW' })],
+          sources: [
+            source({
+              kind: 'reserve',
+              rung: 'pool',
+              qty: '71',
+              location: 'BRW',
+            }),
+          ],
         }),
       ]),
     );
@@ -357,9 +462,24 @@ describe('suggestionBreakdown', () => {
       cell([
         line({
           sources: [
-            source({ kind: 'reserve', rung: 'group_take', qty: '454', location: 'DC1-BB' }),
-            source({ kind: 'reserve', rung: 'group_take', qty: '267', location: 'MWH-BB' }),
-            source({ kind: 'reserve', rung: 'group_take', qty: '211', location: 'WH3-BB' }),
+            source({
+              kind: 'reserve',
+              rung: 'group_take',
+              qty: '454',
+              location: 'DC1-BB',
+            }),
+            source({
+              kind: 'reserve',
+              rung: 'group_take',
+              qty: '267',
+              location: 'MWH-BB',
+            }),
+            source({
+              kind: 'reserve',
+              rung: 'group_take',
+              qty: '211',
+              location: 'WH3-BB',
+            }),
           ],
         }),
       ]),
@@ -376,8 +496,18 @@ describe('suggestionBreakdown', () => {
       cell([
         line({
           sources: [
-            source({ kind: 'borrow', rung: 'group_borrow', qty: '3', location: 'BRW-BB' }),
-            source({ kind: 'borrow', rung: 'cross_group_borrow', qty: '9', location: 'BRW-HP' }),
+            source({
+              kind: 'borrow',
+              rung: 'group_borrow',
+              qty: '3',
+              location: 'BRW-BB',
+            }),
+            source({
+              kind: 'borrow',
+              rung: 'cross_group_borrow',
+              qty: '9',
+              location: 'BRW-HP',
+            }),
           ],
         }),
       ]),
@@ -390,7 +520,13 @@ describe('suggestionBreakdown', () => {
 
   it('reads a buy as a buy, and names no location because it is held nowhere yet', () => {
     const rows = suggestionBreakdown(
-      cell([line({ sources: [source({ kind: 'buy', rung: 'buy', qty: '13', location: null })] })]),
+      cell([
+        line({
+          sources: [
+            source({ kind: 'buy', rung: 'buy', qty: '13', location: null }),
+          ],
+        }),
+      ]),
     );
 
     expect(row(rows, 'Buy').places).toEqual([]);
@@ -402,13 +538,30 @@ describe('suggestionBreakdown', () => {
       cell([
         line({
           key: 'a',
-          sources: [source({ kind: 'reserve', rung: 'pool', qty: '5', location: 'BRW' })],
+          sources: [
+            source({
+              kind: 'reserve',
+              rung: 'pool',
+              qty: '5',
+              location: 'BRW',
+            }),
+          ],
         }),
         line({
           key: 'b',
           sources: [
-            source({ kind: 'reserve', rung: 'pool', qty: '8', location: 'BRW' }),
-            source({ kind: 'reserve', rung: 'group_take', qty: '2', location: 'MWH-BB' }),
+            source({
+              kind: 'reserve',
+              rung: 'pool',
+              qty: '8',
+              location: 'BRW',
+            }),
+            source({
+              kind: 'reserve',
+              rung: 'group_take',
+              qty: '2',
+              location: 'MWH-BB',
+            }),
           ],
         }),
       ]),
@@ -418,24 +571,35 @@ describe('suggestionBreakdown', () => {
     expect(row(rows, 'Use own location').qty).toBe('2');
   });
 
-  it('carries incoming supply as its own row, last, and only when there is some', () => {
+  it('carries incoming as its own row, ahead of Buy, and only when there is some', () => {
     // Never folded into Buy: the incoming quantity is already bought and on its way, and
     // adding it to Buy would propose buying it twice.
-    expect(has(suggestionBreakdown(cell([line()])), 'Incoming supply')).toBe(false);
+    //
+    // "Use incoming", and AHEAD OF BUY rather than trailing the list (the captain, 30 Aug
+    // 2026). It reads as a step of the walk now, because under v7.1 it is one - step 1 off
+    // the group's water - and Buy is what the walk ends on.
+    expect(has(suggestionBreakdown(cell([line()])), 'Use incoming')).toBe(
+      false,
+    );
 
     const rows = suggestionBreakdown(
       cell([
         line({
           sources: [
             source({ kind: 'buy', rung: 'buy', qty: '2' }),
-            source({ kind: 'timely_spo', rung: 'incoming', qty: '7', location: 'BRW-BB' }),
+            source({
+              kind: 'timely_spo',
+              rung: 'incoming',
+              qty: '7',
+              location: 'BRW-BB',
+            }),
           ],
         }),
       ]),
     );
 
-    expect(row(rows, 'Incoming supply').qty).toBe('7');
-    expect(rows[rows.length - 1].label).toBe('Incoming supply');
+    expect(row(rows, 'Use incoming').qty).toBe('7');
+    expect(rows.map((entry) => entry.label)).toEqual(['Use incoming', 'Buy']);
   });
 
   it('carries the engine own sentence when every source on the row gives the same one', () => {
@@ -448,7 +612,8 @@ describe('suggestionBreakdown', () => {
               rung: 'buy',
               qty: '13',
               location: null,
-              reason: 'Delivery date beyond the lead time window; stock kept for nearer orders',
+              reason:
+                'Delivery date beyond the lead time window; stock kept for nearer orders',
             }),
           ],
         }),
@@ -465,11 +630,20 @@ describe('suggestionBreakdown', () => {
       cell([
         line({
           key: 'a',
-          sources: [source({ kind: 'buy', rung: 'buy', qty: '5', reason: 'one reason' })],
+          sources: [
+            source({
+              kind: 'buy',
+              rung: 'buy',
+              qty: '5',
+              reason: 'one reason',
+            }),
+          ],
         }),
         line({
           key: 'b',
-          sources: [source({ kind: 'buy', rung: 'buy', qty: '5', reason: 'another' })],
+          sources: [
+            source({ kind: 'buy', rung: 'buy', qty: '5', reason: 'another' }),
+          ],
         }),
       ]),
     );
@@ -480,7 +654,12 @@ describe('suggestionBreakdown', () => {
 
   it('says nothing can be sourced for a line whose order states no location', () => {
     const rows = suggestionBreakdown(
-      cell([line({ unplannable: true, sources: [source({ kind: 'unplannable', qty: '13' })] })]),
+      cell([
+        line({
+          unplannable: true,
+          sources: [source({ kind: 'unplannable', qty: '13' })],
+        }),
+      ]),
     );
 
     expect(rows).toEqual([]);
@@ -497,9 +676,24 @@ describe('suggestionBreakdown', () => {
  */
 describe('AC-A2: a covered line whose composition arrives with no rungs', () => {
   const unrunged = [
-    { kind: 'reserve' as const, qty: '454', location: 'DC1-BB', reason: 'Reserved at DC1-BB.' },
-    { kind: 'reserve' as const, qty: '267', location: 'MWH-BB', reason: 'Reserved at MWH-BB.' },
-    { kind: 'reserve' as const, qty: '211', location: 'WH3-BB', reason: 'Reserved at WH3-BB.' },
+    {
+      kind: 'reserve' as const,
+      qty: '454',
+      location: 'DC1-BB',
+      reason: 'Reserved at DC1-BB.',
+    },
+    {
+      kind: 'reserve' as const,
+      qty: '267',
+      location: 'MWH-BB',
+      reason: 'Reserved at MWH-BB.',
+    },
+    {
+      kind: 'reserve' as const,
+      qty: '211',
+      location: 'WH3-BB',
+      reason: 'Reserved at WH3-BB.',
+    },
   ];
 
   const covered = line({
@@ -526,7 +720,9 @@ describe('AC-A2: a covered line whose composition arrives with no rungs', () => 
     const rows = decisionBreakdown(cell([covered]), {});
 
     expect(rows.map((entry) => entry.label)).toEqual(['Use own location']);
-    expect(rowText(rows[0])).toBe('454 from DC1-BB, 267 from MWH-BB, 211 from WH3-BB');
+    expect(rowText(rows[0])).toBe(
+      '454 from DC1-BB, 267 from MWH-BB, 211 from WH3-BB',
+    );
   });
 
   it('and the Suggestion card is silent, because this revision recorded none', () => {
@@ -547,7 +743,14 @@ describe('AC-A2: a covered line whose composition arrives with no rungs', () => 
     const pooled = line({
       fulfilment_location: 'BRW-BB',
       covered: true,
-      sources: [{ kind: 'reserve', qty: '71', location: 'BRW', reason: 'Reserved at BRW.' }],
+      sources: [
+        {
+          kind: 'reserve',
+          qty: '71',
+          location: 'BRW',
+          reason: 'Reserved at BRW.',
+        },
+      ],
       decision: {
         revision_no: 1,
         timely_spo_qty: '0',
@@ -558,7 +761,9 @@ describe('AC-A2: a covered line whose composition arrives with no rungs', () => 
     });
 
     expect(decisionBreakdown(cell([pooled]), {})[0].label).toBe('Use BRW');
-    expect(contributionSupply(pooled, null).segments).toEqual([{ kind: 'shared', qty: '71' }]);
+    expect(contributionSupply(pooled, null).segments).toEqual([
+      { kind: 'shared', qty: '71' },
+    ]);
   });
 
   it('resolves per contributing line, because a cell spans lines at different groups', () => {
@@ -566,7 +771,9 @@ describe('AC-A2: a covered line whose composition arrives with no rungs', () => 
     const ib = line({
       key: 'ib',
       fulfilment_location: 'BRW-IB',
-      sources: [{ kind: 'reserve', qty: '100', location: 'DC1-BB', reason: 'r' }],
+      sources: [
+        { kind: 'reserve', qty: '100', location: 'DC1-BB', reason: 'r' },
+      ],
     });
 
     // The covered line answers on the DECISION side, the undecided one on the suggestion
@@ -576,7 +783,9 @@ describe('AC-A2: a covered line whose composition arrives with no rungs', () => 
 
     expect(decided.map((entry) => entry.label)).toEqual(['Use own location']);
     expect(decided[0].qty).toBe('932');
-    expect(suggested.map((entry) => entry.label)).toEqual(['Borrow other location']);
+    expect(suggested.map((entry) => entry.label)).toEqual([
+      'Borrow other location',
+    ]);
     expect(suggested[0].qty).toBe('100');
   });
 });
@@ -585,7 +794,13 @@ describe('what the bar is drawn from', () => {
   const buyProposal = line({
     sources: [
       source({ kind: 'buy', rung: 'buy', qty: '71', location: null }),
-      source({ kind: 'reserve', rung: 'pool', qty: '0', location: 'BRW', warehouse_id: 'wh-brw' }),
+      source({
+        kind: 'reserve',
+        rung: 'pool',
+        qty: '0',
+        location: 'BRW',
+        warehouse_id: 'wh-brw',
+      }),
     ],
   });
 
@@ -689,10 +904,15 @@ describe('what the bar is drawn from', () => {
   });
 
   it('is solid for a cell only once EVERY contributing line is settled', () => {
-    const a = line({ key: 'a', sources: [source({ kind: 'buy', rung: 'buy', qty: '10' })] });
+    const a = line({
+      key: 'a',
+      sources: [source({ kind: 'buy', rung: 'buy', qty: '10' })],
+    });
     const b = line({
       key: 'b',
-      sources: [source({ kind: 'reserve', rung: 'pool', qty: '30', location: 'BRW' })],
+      sources: [
+        source({ kind: 'reserve', rung: 'pool', qty: '30', location: 'BRW' }),
+      ],
     });
 
     const half = cellSupply(cell([a, b]), { a: { verdict: 'approved' } });
@@ -721,8 +941,18 @@ describe('movesOf', () => {
       covered: true,
       decision: {
         reserve: [
-          { warehouse_id: 'wh-dc1', location: 'DC1-BB', qty: '454', rung: 'group_take' },
-          { warehouse_id: 'wh-mwh', location: 'MWH-BB', qty: '267', rung: 'group_take' },
+          {
+            warehouse_id: 'wh-dc1',
+            location: 'DC1-BB',
+            qty: '454',
+            rung: 'group_take',
+          },
+          {
+            warehouse_id: 'wh-mwh',
+            location: 'MWH-BB',
+            qty: '267',
+            rung: 'group_take',
+          },
         ],
         borrow: [],
         buy_qty: '0',
@@ -738,15 +968,22 @@ describe('movesOf', () => {
       { from: 'DC1-BB', to: 'BRW-BB', qty: '454' },
       { from: 'MWH-BB', to: 'BRW-BB', qty: '267' },
     ]);
-    expect(movesText(moves)).toBe('454 DC1-BB -> BRW-BB · 267 MWH-BB -> BRW-BB');
+    expect(movesText(moves)).toBe(
+      '454 DC1-BB -> BRW-BB · 267 MWH-BB -> BRW-BB',
+    );
   });
 
-  it('says nothing about stock already at the line\'s own location', () => {
+  it("says nothing about stock already at the line's own location", () => {
     const moves = movesOf(
       cell([
         covered({
           reserve: [
-            { warehouse_id: 'wh-brw-bb', location: 'BRW-BB', qty: '40', rung: 'group_take' },
+            {
+              warehouse_id: 'wh-brw-bb',
+              location: 'BRW-BB',
+              qty: '40',
+              rung: 'group_take',
+            },
           ],
         } as Partial<BoardLineDecision>),
       ]),
@@ -773,7 +1010,10 @@ describe('movesOf', () => {
   });
 
   it('sums two lines drawing the same way into ONE movement to key', () => {
-    const moves = movesOf(cell([covered(), { ...covered(), key: 'so-1:20' }]), {});
+    const moves = movesOf(
+      cell([covered(), { ...covered(), key: 'so-1:20' }]),
+      {},
+    );
 
     expect(moves).toEqual([
       { from: 'DC1-BB', to: 'BRW-BB', qty: '908' },
@@ -788,13 +1028,17 @@ describe('movesOf', () => {
     const draft: Record<string, BoardDecision> = {
       [proposal.key]: {
         verdict: 'amended',
-        reserve: [{ warehouse_id: 'wh-brw', location: 'BRW', qty: '71', rung: 'pool' }],
+        reserve: [
+          { warehouse_id: 'wh-brw', location: 'BRW', qty: '71', rung: 'pool' },
+        ],
         borrow: [],
         buy_qty: '0',
       } as BoardDecision,
     };
 
-    expect(movesText(movesOf(cell([proposal]), draft))).toBe('71 BRW -> BRW-BB');
+    expect(movesText(movesOf(cell([proposal]), draft))).toBe(
+      '71 BRW -> BRW-BB',
+    );
     expect(movesText(movesOf(cell([proposal]), {}))).toBe('');
   });
 });
@@ -813,9 +1057,24 @@ describe('takenByLocation', () => {
       qty: '932',
       decision: {
         reserve: [
-          { warehouse_id: 'wh-dc1', location: 'DC1-BB', qty: '454', rung: 'group_take' },
-          { warehouse_id: 'wh-mwh', location: 'MWH-BB', qty: '267', rung: 'group_take' },
-          { warehouse_id: 'wh-wh3', location: 'WH3-BB', qty: '211', rung: 'group_take' },
+          {
+            warehouse_id: 'wh-dc1',
+            location: 'DC1-BB',
+            qty: '454',
+            rung: 'group_take',
+          },
+          {
+            warehouse_id: 'wh-mwh',
+            location: 'MWH-BB',
+            qty: '267',
+            rung: 'group_take',
+          },
+          {
+            warehouse_id: 'wh-wh3',
+            location: 'WH3-BB',
+            qty: '211',
+            rung: 'group_take',
+          },
         ],
         borrow: [],
         buy_qty: '0',
@@ -832,12 +1091,17 @@ describe('takenByLocation', () => {
       ['MWH-BB', '267'],
       ['WH3-BB', '211'],
     ]);
-    const total = [...taken.values()].reduce((sum, qty) => sum + Number(qty), 0);
+    const total = [...taken.values()].reduce(
+      (sum, qty) => sum + Number(qty),
+      0,
+    );
     expect(total).toBe(932);
   });
 
   it('draws on nothing for a Buy-only cell', () => {
-    const buy = line({ sources: [source({ kind: 'buy', rung: 'buy', qty: '71' })] });
+    const buy = line({
+      sources: [source({ kind: 'buy', rung: 'buy', qty: '71' })],
+    });
 
     expect([...takenByLocation(cell([buy]), {})]).toEqual([]);
   });
@@ -849,12 +1113,24 @@ describe('takenByLocation', () => {
     const mixed = line({
       qty: '10',
       sources: [
-        source({ kind: 'reserve', rung: 'group_take', qty: '1', location: 'BRW-SMC' }),
-        source({ kind: 'timely_spo', rung: 'group_take', qty: '9', location: 'BRW-SMC' }),
+        source({
+          kind: 'reserve',
+          rung: 'group_take',
+          qty: '1',
+          location: 'BRW-SMC',
+        }),
+        source({
+          kind: 'timely_spo',
+          rung: 'group_take',
+          qty: '9',
+          location: 'BRW-SMC',
+        }),
       ],
     });
 
-    expect([...takenByLocation(cell([mixed]), {})]).toEqual([['BRW-SMC', '10']]);
+    expect([...takenByLocation(cell([mixed]), {})]).toEqual([
+      ['BRW-SMC', '10'],
+    ]);
   });
 
   it('leaves incoming supply out: it arrives, it is not taken off a pile', () => {
@@ -862,7 +1138,12 @@ describe('takenByLocation', () => {
       cell([
         covered({
           reserve: [
-            { warehouse_id: 'wh-dc1', location: 'DC1-BB', qty: '454', rung: 'group_take' },
+            {
+              warehouse_id: 'wh-dc1',
+              location: 'DC1-BB',
+              qty: '454',
+              rung: 'group_take',
+            },
           ],
           timely_spo_qty: '478',
         } as Partial<BoardLineDecision>),
@@ -884,23 +1165,32 @@ describe('takenByLocation', () => {
   });
 
   it('follows the DRAFT, the same switch the cell bar uses', () => {
-    const proposal = line({ sources: [source({ kind: 'buy', rung: 'buy', qty: '71' })] });
+    const proposal = line({
+      sources: [source({ kind: 'buy', rung: 'buy', qty: '71' })],
+    });
     const draft: Record<string, BoardDecision> = {
       [proposal.key]: {
         verdict: 'amended',
-        reserve: [{ warehouse_id: 'wh-brw', location: 'BRW', qty: '71', rung: 'pool' }],
+        reserve: [
+          { warehouse_id: 'wh-brw', location: 'BRW', qty: '71', rung: 'pool' },
+        ],
         borrow: [],
         buy_qty: '0',
       } as BoardDecision,
     };
 
-    expect([...takenByLocation(cell([proposal]), draft)]).toEqual([['BRW', '71']]);
+    expect([...takenByLocation(cell([proposal]), draft)]).toEqual([
+      ['BRW', '71'],
+    ]);
     // Tick cleared, and the cell goes back to drawing on nothing.
     expect([...takenByLocation(cell([proposal]), {})]).toEqual([]);
   });
 
   it('sums two lines drawing on the same location', () => {
-    const taken = takenByLocation(cell([covered(), { ...covered(), key: 'so-1:20' }]), {});
+    const taken = takenByLocation(
+      cell([covered(), { ...covered(), key: 'so-1:20' }]),
+      {},
+    );
 
     expect(taken.get('DC1-BB')).toBe('908');
     expect(taken.get('MWH-BB')).toBe('534');
@@ -918,6 +1208,8 @@ describe('takenByLocation', () => {
       ],
     });
 
-    expect([...takenByLocation(cell([borrowed]), {})]).toEqual([['BRW-IB', '35']]);
+    expect([...takenByLocation(cell([borrowed]), {})]).toEqual([
+      ['BRW-IB', '35'],
+    ]);
   });
 });

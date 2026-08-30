@@ -9,20 +9,30 @@
  * line's -BB location. BRW is the SHARED pool." The prefix is a coincidence of naming; the rung
  * is the rule that actually fired, and it is the only input here.
  *
- * | Rung                 | Label                      | Colour  |
- * | -------------------- | -------------------------- | ------- |
- * | `group_take`         | Use own location           | emerald |
- * | `pool` (free draw)   | Use BRW                    | sky     |
- * | `pool` (borrow half) | Borrow from another order  | amber   |
- * | `order_borrow`       | Borrow from another order  | amber   |
- * | `supply_borrow`      | Borrow from another order  | amber   |
- * | `cross_group_borrow` | Borrow other location      | amber   |
- * | `group_borrow`       | Borrow from another order  | amber   |
- * | `buy`                | Buy                        | rose    |
- * | `incoming`           | Incoming supply            | violet  |
+ * | Rung                              | Label                      | Colour  |
+ * | --------------------------------- | -------------------------- | ------- |
+ * | `group_take` (a Reserve)          | Use own location           | emerald |
+ * | `group_take` (a `timely_spo`)     | Use incoming               | violet  |
+ * | `order_borrow`                    | Borrow from another order  | amber   |
+ * | `pool` (borrow half)              | Borrow from another order  | amber   |
+ * | `supply_borrow`                   | Borrow incoming            | amber   |
+ * | `cross_group_borrow`              | Borrow other location      | amber   |
+ * | `group_borrow`                    | Borrow from another order  | amber   |
+ * | `pool` (free draw)                | Use BRW                    | sky     |
+ * | `buy`                             | Buy                        | rose    |
+ * | `incoming`                        | Use incoming               | violet  |
  *
- * The last three are FROZEN-SNAPSHOT rungs under ladder v7.1: the engine writes none of
- * them any more, and the board still renders decisions that carry them.
+ * `cross_group_borrow`, `group_borrow` and the `incoming` RUNG are FROZEN-SNAPSHOT rungs
+ * under ladder v7.1: the engine writes none of them any more, and the board still renders
+ * decisions that carry them.
+ *
+ * STEP 1 DRAWS TWO KINDS OF STOCK AND THEY ARE NOT THE SAME PROMISE. The engine composes the
+ * group's floor stock as a Reserve and the group's share that is still on the water as a
+ * `timely_spo` (`front_planning_engine._draw_group` / `_draw_other_groups`: `kind=TIMELY_SPO
+ * if water else RESERVE`, both under `rung=group_take`), because a hold cannot be written
+ * against goods a picker cannot walk to. Reading the rung alone printed both under "Use own
+ * location", so a promise resting on a ship read exactly like one resting on a floor. The
+ * COMPONENT KIND is what tells them apart, and it is consulted for that one rung.
  *
  * The rung strings are `app/services/scm/front_planning_engine.py`'s own constants
  * (`RUNG_POOL`, `RUNG_GROUP_TAKE`, ...), spelled here exactly as the engine spells them.
@@ -34,12 +44,12 @@
  * `fallbackRung`. A BORROW that carries no rung is read as a borrow instead - the group
  * reading would call a same-group donor "Use own location", and a borrow is never that.
  *
- * INCOMING IS HISTORY under ladder v5 (`PLAN-scm-cs-planning-uat.md` section 1e): the engine
- * proposes no such component any more, because an SPO is inside the ownership group's net
- * where AutoCount already counts it. The kind stays, and stays its own rather than being
- * folded into Buy, because decisions frozen under v3 and v4 carry it and the board renders
- * those: a snapshot is evidence of what was promised, and adding it to Buy would report a
- * past promise as a purchase nobody made.
+ * INCOMING IS A LIVE STEP AGAIN under ladder v7.1. It was history under v5 (the engine
+ * proposed no such component, because an SPO sat inside the ownership group's net), and v7.1's
+ * date-aware step 1 composes the group's water as `timely_spo` once more - so the kind counts
+ * today's free incoming AND the frozen `timely_spo` of decisions taken under v3 and v4. It
+ * stays its own rather than being folded into Buy: a snapshot is evidence of what was
+ * promised, and adding it to Buy would report a past promise as a purchase nobody made.
  */
 
 import { fromMinor, toMinor } from './supplyComposition';
@@ -66,21 +76,26 @@ export type SupplyKind =
   | 'shared'
   | 'own'
   | 'borrow_order'
+  | 'borrow_incoming'
   | 'borrow_other'
   | 'incoming';
 
-/** What a person reads. The whole product says supply in these six words and no others. */
+/** What a person reads. The whole product says supply in these seven words and no others. */
 export const LABELS: Record<SupplyKind, string> = {
   buy: 'Buy',
   shared: 'Use BRW',
   own: 'Use own location',
   borrow_order: 'Borrow from another order',
+  borrow_incoming: 'Borrow incoming',
   borrow_other: 'Borrow other location',
-  incoming: 'Incoming supply',
+  // "Use", because this half of step 1 owes nobody anything: the group's own incoming
+  // document, taken free. "Incoming supply" said what it was and not what is being done
+  // with it, which is the one thing that tells it from `borrow_incoming`.
+  incoming: 'Use incoming',
 };
 
 /**
- * The same six, short enough for a grid cell and a summary line ("Shared 71 · Buy 0").
+ * The same seven, short enough for a grid cell and a summary line ("Shared 71 · Buy 0").
  *
  * A cell is 150px wide; "Borrow from another order 71" does not fit in it, and truncating the
  * label would leave two kinds reading the same. The long form is the legend's and the card's.
@@ -90,6 +105,7 @@ export const SHORT_LABELS: Record<SupplyKind, string> = {
   shared: 'BRW',
   own: 'Own',
   borrow_order: 'Borrow (order)',
+  borrow_incoming: 'Borrow (incoming)',
   borrow_other: 'Borrow (other)',
   incoming: 'Incoming',
 };
@@ -98,39 +114,53 @@ export const SHORT_LABELS: Record<SupplyKind, string> = {
  * Tailwind class tokens per kind: the paint for a bar segment or a legend swatch, and the
  * matching text colour for the word beside it.
  *
- * Both borrow kinds are amber, as the vocabulary table says. They are told apart by their
- * label, not by their shade: two borrows are the same decision made against different stock.
+ * All THREE borrow kinds are amber, as the vocabulary table says. They are told apart by their
+ * label, not by their shade: a borrow is the same decision made against different stock, and
+ * what it costs - an order-back at the donor's date - does not change with the stock.
  */
 export const COLOURS: Record<SupplyKind, { bar: string; text: string }> = {
   buy: { bar: 'bg-rose-500', text: 'text-rose-700' },
   shared: { bar: 'bg-sky-500', text: 'text-sky-700' },
   own: { bar: 'bg-emerald-500', text: 'text-emerald-700' },
   borrow_order: { bar: 'bg-amber-500', text: 'text-amber-700' },
+  borrow_incoming: { bar: 'bg-amber-500', text: 'text-amber-700' },
   borrow_other: { bar: 'bg-amber-500', text: 'text-amber-700' },
   incoming: { bar: 'bg-violet-500', text: 'text-violet-700' },
 };
 
 /**
- * The fixed reading order: LADDER V5's own (`PLAN-scm-cs-planning-uat.md` section 1e, AC-V7),
- * so the cards read in the order the engine asks its questions - our own location, the pool,
- * borrowing from another location, borrowing from another order, then Buy. It used to lead
- * with Buy, which put the answer before the questions.
+ * The fixed reading order: LADDER V7.1'S OWN WALK, left = the first consideration, right = the
+ * last resort (the captain, 30 Aug 2026). The strip, the bar and the composition cards all read
+ * it, so the screen asks the engine's questions in the order the engine asks them:
  *
- * `incoming` trails the five because it is HISTORY: nothing the engine composes today is that
- * kind, and a board with no decided pre-v5 line on it shows the card at 0 and 0, disabled. It
- * is not dropped, because a decided line frozen under an older ladder does carry the kind and
- * a strip that omitted it would quietly stop totalling part of what was promised.
+ * 1. `own` - step 1 off the group's FLOOR stock.
+ * 2. `incoming` - step 1 off the group's WATER, free and owed to nobody. The same step, split
+ *    out because a promise resting on a ship is not the same promise as one on a floor.
+ * 3. `borrow_order` - step 2, a later order's ON HAND, and the pool's borrow half (step 4b),
+ *    which is the same debt against a different pile.
+ * 4. `borrow_incoming` - step 3, the DOCUMENT a later order is waiting on. Reads 0 until S4
+ *    lands the candidates, and is rendered anyway: a step nobody can see is a step nobody
+ *    knows was asked.
+ * 5. `borrow_other` - RETIRED by v7.1 (`RUNG_CROSS_GROUP_BORROW`: "the constant survives for
+ *    reading frozen snapshots"). Nothing composed today is this kind; a decision frozen under
+ *    an older ladder is, and it sits with the borrows because that is what it is.
+ * 6. `shared` - step 4a, the site pool. LAST BEFORE BUY under v7.1: it used to sit second,
+ *    which read as the pool being reached for before anybody's own order was.
+ * 7. `buy` - the answer when every question above was answered no.
+ *
+ * It used to lead with Buy, which put the answer before the questions.
  *
  * What keeps a card or a bar comparable between two cells is that each kind is always in the
  * same place, whether it is 300 or absent.
  */
 export const ORDER: SupplyKind[] = [
   'own',
-  'shared',
-  'borrow_other',
-  'borrow_order',
-  'buy',
   'incoming',
+  'borrow_order',
+  'borrow_incoming',
+  'borrow_other',
+  'shared',
+  'buy',
 ];
 
 /**
@@ -169,7 +199,12 @@ function groupOf(code: string | null | undefined): string | null {
   const text = String(code).trim();
   const cut = text.indexOf('-');
   if (cut < 0) return null;
-  return text.slice(cut + 1).trim().toUpperCase() || null;
+  return (
+    text
+      .slice(cut + 1)
+      .trim()
+      .toUpperCase() || null
+  );
 }
 
 /**
@@ -187,7 +222,10 @@ function groupOf(code: string | null | undefined): string | null {
  * Comparing the exact code called DC1-BB somebody else's stock; comparing the site prefix called
  * BRW the line's own. The group suffix is the only comparison that reads both correctly.
  */
-function fallbackRung(location: string | null, ownLocation: string | null | undefined): string {
+function fallbackRung(
+  location: string | null,
+  ownLocation: string | null | undefined,
+): string {
   const group = groupOf(location);
   // No hyphen at all: a site pool (BRW / MWH / DC1 / WH3 / RSW), shared by every group there.
   if (!group) return 'pool';
@@ -199,9 +237,13 @@ function fallbackRung(location: string | null, ownLocation: string | null | unde
 /**
  * Which kind this piece of supply is. The rung decides; the code never does.
  *
- * `kind` is consulted only where there is no rung to consult: Buy and incoming carry their own
- * kind, and a component frozen before ladder v2 - or drafted in the Amend dialog, which sends
- * no rung at all - carries none (`SupplyComponent.rung` is optional for exactly that reason).
+ * `kind` is consulted in two places and no others. FIRST, where there is no rung to consult:
+ * Buy and incoming carry their own kind, and a component frozen before ladder v2 - or drafted
+ * in the Amend dialog, which sends no rung at all - carries none (`SupplyComponent.rung` is
+ * optional for exactly that reason). SECOND, on `group_take`, the one rung that composes two
+ * kinds: floor stock as a Reserve, water as a `timely_spo`. That is not the code deciding -
+ * the engine stamped the kind, and the two are different promises.
+ *
  * Two different fallbacks, because a reserve and a borrow are not the same question:
  *
  * * an unrunged RESERVE is read on the OWNERSHIP GROUP (`fallbackRung`): the agent's own group
@@ -213,7 +255,10 @@ function fallbackRung(location: string | null, ownLocation: string | null | unde
  *   order-back. It reads `borrow_order` when the donor sales order is named and
  *   `borrow_other` when it is not, which is exactly what those two words distinguish.
  */
-export function rowOf(part: SupplyPart, ownLocation?: string | null): SupplyKind | null {
+export function rowOf(
+  part: SupplyPart,
+  ownLocation?: string | null,
+): SupplyKind | null {
   // A line whose sales order names no location was never walked down the ladder at all, so it
   // proposes nothing rather than proposing a buy nobody decided.
   if (part.kind === 'unplannable') return null;
@@ -223,7 +268,10 @@ export function rowOf(part: SupplyPart, ownLocation?: string | null): SupplyKind
     return part.donor_so_number ? 'borrow_order' : 'borrow_other';
   }
   const rung =
-    part.rung ?? (part.kind === 'reserve' ? fallbackRung(locationOf(part), ownLocation) : null);
+    part.rung ??
+    (part.kind === 'reserve'
+      ? fallbackRung(locationOf(part), ownLocation)
+      : null);
   switch (rung) {
     case 'buy':
       return 'buy';
@@ -236,16 +284,24 @@ export function rowOf(part: SupplyPart, ownLocation?: string | null): SupplyKind
       // as one - it rendered as the free "Use BRW" label, so the debt was invisible on
       // every composition surface. The donor SO is what tells them apart, because it is
       // what the borrow half has and the free half never does.
-      return part.kind === 'borrow' && part.donor_so_number ? 'borrow_order' : 'shared';
+      return part.kind === 'borrow' && part.donor_so_number
+        ? 'borrow_order'
+        : 'shared';
     case 'group_take':
-      return 'own';
-    // Step 2 (ON HAND held by a later order) and step 3 (the DOCUMENT a later order is
-    // waiting on, S4). Both name a donor order, so both read as "Borrow from another
-    // order" - the two rungs were missing from this switch entirely, so every step-2
-    // borrow resolved to null and vanished behind "Cannot be sourced".
+      // ONE RUNG, TWO PROMISES (the captain, 30 Aug 2026). Step 1 draws the group's floor
+      // stock as a Reserve and its share still on the water as a `timely_spo`, both under
+      // this rung; reading the rung alone printed a container at sea as "Use own location".
+      // Neither half is a borrow - free stock owes nobody a thing, wherever it is.
+      return part.kind === 'timely_spo' ? 'incoming' : 'own';
+    // Step 2: ON HAND held by a LATER order. The pool's borrow half lands here too (see the
+    // `pool` case above) - the same debt, against a different pile.
     case 'order_borrow':
-    case 'supply_borrow':
       return 'borrow_order';
+    // Step 3 (S4): the DOCUMENT a later order is waiting on. Its own word, because what is
+    // being taken is not stock anybody can pick - the donor waits longer for a ship, and the
+    // asker waits for that same ship. Folding it into step 2 hid a whole rung of the walk.
+    case 'supply_borrow':
+      return 'borrow_incoming';
     case 'group_borrow':
       return 'borrow_order';
     case 'cross_group_borrow':
@@ -320,7 +376,10 @@ export function dominantText(segments: SupplySegment[]): string {
  * locations it drew on so "Shared 71" cannot be read as "shared from nowhere in particular".
  * Empty composition returns an empty string; the caller says what nothing means on its screen.
  */
-export function describe(parts: SupplyPart[], ownLocation?: string | null): string {
+export function describe(
+  parts: SupplyPart[],
+  ownLocation?: string | null,
+): string {
   const places = placesOf(parts, ownLocation);
   return segmentsOf(parts, ownLocation)
     .map((segment) => {
@@ -392,7 +451,9 @@ export interface SuggestionRow {
 /** "454 from DC1-BB, 267 from MWH-BB, 211 from WH3-BB", or the bare total when Buy. */
 export function rowText(row: SuggestionRow): string {
   if (row.places.length === 0) return row.qty;
-  return row.places.map((place) => `${place.qty} from ${place.location}`).join(', ');
+  return row.places
+    .map((place) => `${place.qty} from ${place.location}`)
+    .join(', ');
 }
 
 /**
@@ -487,8 +548,10 @@ export function movesOf(
   for (const contribution of cell.contributions) {
     const own = contribution.fulfilment_location ?? null;
     if (!own) continue;
-    for (const part of contributionDecision(contribution, draft[contribution.key] ?? null) ??
-      []) {
+    for (const part of contributionDecision(
+      contribution,
+      draft[contribution.key] ?? null,
+    ) ?? []) {
       if (part.kind !== 'reserve' && part.kind !== 'borrow') continue;
       // `locationOf`, not a second hand-rolled `location ?? source_location`: the two wire
       // shapes spell the warehouse differently and one reader for both is the whole reason
@@ -506,8 +569,12 @@ export function movesOf(
 }
 
 /** "454 DC1-BB -> BRW-BB · 267 MWH-BB -> BRW-BB", or "" when nothing has to move. */
-export function movesText(moves: { from: string; to: string; qty: string }[]): string {
-  return moves.map((move) => `${move.qty} ${move.from} -> ${move.to}`).join(' · ');
+export function movesText(
+  moves: { from: string; to: string; qty: string }[],
+): string {
+  return moves
+    .map((move) => `${move.qty} ${move.from} -> ${move.to}`)
+    .join(' · ');
 }
 
 /**
@@ -517,8 +584,12 @@ export function movesText(moves: { from: string; to: string; qty: string }[]): s
  * rebuilt, so reading it here printed every decided cell's decision as its own suggestion
  * and an amendment looked like it had changed nothing.
  */
-export function suggestionBreakdown(cell: Pick<BoardCell, 'contributions'>): SuggestionRow[] {
-  return breakdown(cell, (contribution) => contributionSuggestion(contribution));
+export function suggestionBreakdown(
+  cell: Pick<BoardCell, 'contributions'>,
+): SuggestionRow[] {
+  return breakdown(cell, (contribution) =>
+    contributionSuggestion(contribution),
+  );
 }
 
 /**
@@ -575,14 +646,16 @@ export function decisionParts(
   for (const source of contribution.sources) {
     if (!source.rung) continue;
     if (source.location) rungByLocation.set(source.location, source.rung);
-    if (source.warehouse_id) rungByWarehouse.set(source.warehouse_id, source.rung);
+    if (source.warehouse_id)
+      rungByWarehouse.set(source.warehouse_id, source.rung);
   }
   const parts: SupplyPart[] = [];
 
-  // THE WATER KEEPS THE QUESTION THAT DREW IT. A v5 confirmation records the SPO share per
-  // document location with its rung (`group_take`), so it reads under "Use own location"
-  // exactly as the suggestion beside it does. Hard-coding `incoming` here filed one line
-  // under two kinds and put an amber "these differ" dot on both cards.
+  // THE WATER KEEPS THE QUESTION THAT DREW IT, AND THE KIND IT WAS DRAWN AS. A confirmation
+  // records the SPO share per document location with its rung (`group_take`), so the decided
+  // side is read by exactly the pair the suggestion beside it was read by - and under v7.1
+  // that pair lands both on "Use incoming". Hard-coding the rung here filed one line under
+  // two kinds and put an amber "these differ" dot on both cards.
   const incomingRows = (decision as BoardLineDecision).incoming;
   if (incomingRows && incomingRows.length) {
     for (const row of incomingRows) {
@@ -600,7 +673,9 @@ export function decisionParts(
     // a covered line they are the frozen composition itself.
     const incoming = decision.timely_spo_qty;
     if (incoming !== undefined && toMinor(incoming) !== 0) {
-      const water = contribution.sources.find((source) => source.kind === 'timely_spo');
+      const water = contribution.sources.find(
+        (source) => source.kind === 'timely_spo',
+      );
       parts.push({
         kind: 'timely_spo',
         rung: water?.rung ?? 'incoming',
@@ -623,7 +698,12 @@ export function decisionParts(
       (row.warehouse_id ? rungByWarehouse.get(row.warehouse_id) : undefined) ??
       (row.location ? rungByLocation.get(row.location) : undefined) ??
       null;
-    parts.push({ kind: 'reserve', rung, qty: row.qty, location: row.location ?? null });
+    parts.push({
+      kind: 'reserve',
+      rung,
+      qty: row.qty,
+      location: row.location ?? null,
+    });
   }
 
   for (const row of (decision.borrow ?? []) as BorrowRow[]) {
@@ -678,12 +758,13 @@ export function contributionDecision(
 ): SupplyPart[] | null {
   if (drafted) {
     if (drafted.verdict === 'rejected') return null;
-    const composed = drafted.reserve || drafted.borrow || drafted.buy_qty !== undefined;
+    const composed =
+      drafted.reserve || drafted.borrow || drafted.buy_qty !== undefined;
     // An APPROVAL composes nothing of its own: it takes the proposal as it stands, so what
     // was decided is what was suggested.
     return composed
       ? decisionParts(contribution, drafted)
-      : contributionSuggestion(contribution) ?? contribution.sources;
+      : (contributionSuggestion(contribution) ?? contribution.sources);
   }
   if (contribution.covered && contribution.decision) {
     return decisionParts(contribution, contribution.decision);
@@ -707,7 +788,10 @@ export function contributionSupply(
   drafted?: BoardDecision | null,
 ): { segments: SupplySegment[]; decided: boolean } {
   const { parts, decided } = contributionParts(contribution, drafted);
-  return { segments: segmentsOf(parts, contribution.fulfilment_location), decided };
+  return {
+    segments: segmentsOf(parts, contribution.fulfilment_location),
+    decided,
+  };
 }
 
 /**
@@ -723,14 +807,20 @@ export function contributionParts(
   drafted?: BoardDecision | null,
 ): { parts: SupplyPart[]; decided: boolean } {
   if (drafted && drafted.verdict !== 'rejected') {
-    const composed = drafted.reserve || drafted.borrow || drafted.buy_qty !== undefined;
+    const composed =
+      drafted.reserve || drafted.borrow || drafted.buy_qty !== undefined;
     return {
-      parts: composed ? decisionParts(contribution, drafted) : contribution.sources,
+      parts: composed
+        ? decisionParts(contribution, drafted)
+        : contribution.sources,
       decided: true,
     };
   }
   if (!drafted && contribution.covered && contribution.decision) {
-    return { parts: decisionParts(contribution, contribution.decision), decided: true };
+    return {
+      parts: decisionParts(contribution, contribution.decision),
+      decided: true,
+    };
   }
   return { parts: contribution.sources, decided: false };
 }
@@ -766,7 +856,10 @@ export function takenByLocation(
 ): Map<string, string> {
   const minor = new Map<string, number>();
   for (const contribution of cell.contributions) {
-    const { parts } = contributionParts(contribution, draft[contribution.key] ?? null);
+    const { parts } = contributionParts(
+      contribution,
+      draft[contribution.key] ?? null,
+    );
     for (const part of parts) {
       if (part.kind === 'buy' || part.rung === 'buy') continue;
       // The RETIRED rung 1's incoming, which arrived on somebody else's document at the
@@ -779,7 +872,9 @@ export function takenByLocation(
       minor.set(at, (minor.get(at) ?? 0) + toMinor(part.qty));
     }
   }
-  return new Map([...minor].map(([location, qty]) => [location, fromMinor(qty)]));
+  return new Map(
+    [...minor].map(([location, qty]) => [location, fromMinor(qty)]),
+  );
 }
 
 /**
@@ -795,10 +890,17 @@ export function cellSupply(
   const parts: SupplyPart[] = [];
   let decided = cell.contributions.length > 0;
   for (const contribution of cell.contributions) {
-    const supply = contributionSupply(contribution, draft[contribution.key] ?? null);
+    const supply = contributionSupply(
+      contribution,
+      draft[contribution.key] ?? null,
+    );
     if (!supply.decided) decided = false;
     for (const segment of supply.segments) {
-      parts.push({ kind: segment.kind, rung: rungFor(segment.kind), qty: segment.qty });
+      parts.push({
+        kind: segment.kind,
+        rung: rungFor(segment.kind),
+        qty: segment.qty,
+      });
     }
   }
   return { segments: segmentsOf(parts), decided };
@@ -815,6 +917,8 @@ function rungFor(kind: SupplyKind): string {
       return 'group_take';
     case 'borrow_order':
       return 'group_borrow';
+    case 'borrow_incoming':
+      return 'supply_borrow';
     case 'borrow_other':
       return 'cross_group_borrow';
     case 'incoming':

@@ -133,11 +133,39 @@ function renderDialog(
 }
 
 /**
- * The CONTRIBUTING LINES table.
+ * ONE SECTION, TWO TABS. The dialog's two tables - the stock position per location
+ * (`CellStockTable`) and the contributing lines - no longer stack; each gets the whole body
+ * under a tab of its own, the way `StockDebtCellDialog` puts its Demand and Supply grids.
  *
- * The dialog now holds two tables: the stock position per location in the header (its own
- * component, `CellStockTable`), and the lines beneath it. The lines table is always the last
- * one, because the stock table sits above it and its expansions are nested inside it.
+ * It opens on STOCK, because it is opened from a CELL and never from a line: there is no line
+ * context to default the lines tab from. So a test that reads or decides a LINE presses the
+ * other tab first, which is the same press a planner makes.
+ *
+ * NOT COSMETIC: Radix unmounts the inactive panel, so without the press there is no lines
+ * grid in the tree at all. And Radix's TabsTrigger switches on MOUSE DOWN - a bare `click`
+ * leaves the old panel up, silently, which reads as the dialog having lost its table.
+ */
+function switchTab(name: RegExp) {
+  const tab = screen.getByRole('tab', { name });
+  fireEvent.mouseDown(tab);
+  fireEvent.click(tab);
+}
+
+/** The Contributing lines tab, opened. */
+function openLines() {
+  switchTab(/^Contributing lines/);
+}
+
+/** Back to the Stock tab, which is the one the dialog opens on. */
+function openStock() {
+  switchTab(/^Stock$/);
+}
+
+/**
+ * The CONTRIBUTING LINES table, inside its own tab.
+ *
+ * Still the last table in the tree, and now the only one: the stock table belongs to the
+ * other panel, which Radix has unmounted while this one is up.
  */
 function contributionTable(): HTMLElement {
   const tables = screen.getAllByRole('table');
@@ -183,6 +211,7 @@ describe('BoardCellBreakdownDialog: the cell summary, at the top', () => {
       ],
       { 'WESERP10B|BRW-BB': '70' },
     );
+    openLines();
 
     expect(footerCells()).toContain('100');
   });
@@ -344,6 +373,7 @@ describe('BoardCellBreakdownDialog: the table', () => {
    */
   it('carries the columns the captain named, in order, with no Rank, Ordered or Delivered', () => {
     renderDialog([demand()]);
+    openLines();
 
     const table = contributionTable();
     const headers = within(table)
@@ -382,6 +412,7 @@ describe('BoardCellBreakdownDialog: the table', () => {
         sales_order_id: 'so-b',
       }),
     ]);
+    openLines();
 
     const cells = footerCells();
     expect(cells.some((cell) => cell === 'Total')).toBe(true);
@@ -390,6 +421,7 @@ describe('BoardCellBreakdownDialog: the table', () => {
 
   it('carries the sales order, customer, project and location per row', () => {
     renderDialog([demand()]);
+    openLines();
 
     expect(screen.getByText(/SO403340/)).toBeInTheDocument();
     expect(
@@ -406,6 +438,7 @@ describe('BoardCellBreakdownDialog: the table', () => {
     const freeStock = { 'WESERP10B|BRW-BB': '40' };
     const key = cellOf(lines, freeStock).contributions[0].key;
     renderDialog(lines, freeStock);
+    openLines();
 
     // SECTION 2'S word for the rung, off `SHORT_LABELS` - the same word the bar, the
     // legend and the Suggestion card use for this quantity. The strip used to speak
@@ -500,7 +533,9 @@ describe('BoardCellBreakdownDialog: the table', () => {
       </QueryClientProvider>,
     );
 
-    // Nothing expanded: the first contributing line's, which is what `cell.locations` holds.
+    // THE TWO TABS CROSS HERE, and this is the only place they do: the Stock tab answers for
+    // whichever row the Contributing lines tab has open. Nothing expanded yet, so it is the
+    // first contributing line's, which is what `cell.locations` holds.
     expect(screen.getByTestId('cell-location-BRW-AM').textContent).toContain(
       '-15',
     );
@@ -509,8 +544,10 @@ describe('BoardCellBreakdownDialog: the table', () => {
     );
 
     // Open the SECOND row and the table answers for that line instead.
+    openLines();
     const rows = contributionTable().querySelectorAll('tbody tr');
     fireEvent.click(rows[1]);
+    openStock();
 
     await waitFor(() =>
       expect(screen.getByTestId('cell-location-BRW-AM').textContent).toContain(
@@ -543,6 +580,7 @@ describe('BoardCellBreakdownDialog: the table', () => {
         required_date: '2026-09-02',
       }),
     ]);
+    openLines();
 
     const rows = contributionTable().querySelectorAll('tbody tr');
     expect(rows[0].textContent).toContain('SO398322');
@@ -697,6 +735,7 @@ describe('BoardCellBreakdownDialog: the facts the server sends', () => {
 describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
   it('shows a pill, never a button, in the Decision column (C2, C3)', () => {
     renderDialog([demand()]);
+    openLines();
 
     expect(
       screen.getByTestId('decision-pill-so-a|1|WESERP10B|2026-08-31'),
@@ -714,6 +753,7 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
 
   it('expands the row in place on a click, and collapses it on a second click (C3, C6)', () => {
     renderDialog([demand()]);
+    openLines();
     const key = 'so-a|1|WESERP10B|2026-08-31';
 
     expect(
@@ -736,6 +776,7 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
       demand({ line_no: 1 }),
       demand({ line_no: 2, so_number: 'SO398322', sales_order_id: 'so-b' }),
     ]);
+    openLines();
     const first = 'so-a|1|WESERP10B|2026-08-31';
     const second = 'so-b|2|WESERP10B|2026-08-31';
 
@@ -754,6 +795,7 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
       demand({ line_no: 1 }),
       demand({ line_no: 2, so_number: 'SO398322', sales_order_id: 'so-b' }),
     ]);
+    openLines();
     const first = 'so-a|1|WESERP10B|2026-08-31';
 
     fireEvent.click(screen.getByText('SO403340'));
@@ -784,6 +826,7 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
    */
   it('asks before the dialog itself closes over an unsaved edit (C5)', () => {
     const { onClose } = renderDialog([demand()]);
+    openLines();
     const key = 'so-a|1|WESERP10B|2026-08-31';
 
     fireEvent.click(screen.getByText('SO403340'));
@@ -810,6 +853,7 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
 
   it('closes at once when no decision is half-typed', () => {
     const { onClose } = renderDialog([demand()]);
+    openLines();
 
     fireEvent.click(screen.getByText('SO403340'));
     fireEvent.click(screen.getByRole('button', { name: 'Close' }));
@@ -822,6 +866,7 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
 
   it('Save on the untouched suggestion, from the row, approves it with no reason and no flag', () => {
     const { onDecide } = renderDialog([demand()]);
+    openLines();
 
     fireEvent.click(screen.getByText('SO403340'));
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
@@ -834,6 +879,7 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
 
   it('reject, from the row, needs a reason', () => {
     const { onDecide } = renderDialog([demand()]);
+    openLines();
 
     fireEvent.click(screen.getByText('SO403340'));
     fireEvent.change(screen.getByLabelText(/^Why this differs/), {
@@ -854,6 +900,7 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
     const { onDecide } = renderDialog([demand({ qty: '100' })], {
       'WESERP10B|BRW-BB': '100',
     });
+    openLines();
 
     fireEvent.click(screen.getByText('SO403340'));
     // Buy is a whole-line switch: on, the stock rows clear and the whole 100 is bought.
@@ -888,6 +935,7 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
         'so-a|1|WESERP10B|2026-08-31': { verdict: 'approved' },
       },
     );
+    openLines();
 
     expect(
       screen.getByTestId('decision-pill-so-a|1|WESERP10B|2026-08-31'),
@@ -902,13 +950,12 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
         'so-a|1|WESERP10B|2026-08-31': { verdict: 'approved' },
       },
     );
+    openLines();
 
     fireEvent.click(screen.getByText('SO403340'));
 
     expect(screen.getByLabelText('Reserve at BRW-BB')).toBeEnabled();
-    expect(
-      screen.getByRole('button', { name: 'Save' }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument();
   });
 
   it('an amended row is returned to the suggestion by putting it back, and Save then approves (no Undo button)', () => {
@@ -926,6 +973,7 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
         },
       },
     );
+    openLines();
 
     expect(
       screen.getByTestId('decision-pill-so-a|1|WESERP10B|2026-08-31'),
@@ -976,6 +1024,7 @@ describe('BoardCellBreakdownDialog: a covered row opens locked, Amend only (C11)
 
   it('reads Confirmed on the pill, and expands with an Amend button and nothing else', () => {
     renderDialog([demand({ qty: '43', decision: frozen })]);
+    openLines();
     const key = 'so-a|1|WESERP10B|2026-08-31';
 
     expect(screen.getByTestId(`decision-pill-${key}`)).toHaveTextContent(
@@ -1000,6 +1049,7 @@ describe('BoardCellBreakdownDialog: a covered row opens locked, Amend only (C11)
 describe('BoardCellBreakdownDialog: a line with no location (AC-FP16)', () => {
   it('offers no verdict at all, and says why', () => {
     renderDialog([demand({ fulfilment_location: null })]);
+    openLines();
 
     expect(
       screen.queryByRole('button', { name: 'Save' }),
@@ -1026,15 +1076,16 @@ describe('BoardCellBreakdownDialog: a line with no location (AC-FP16)', () => {
 describe('BoardCellBreakdownDialog: the actions can never be covered', () => {
   it('keeps the scrolling region that stops a row action being covered', () => {
     renderDialog([demand()]);
+    openLines();
     fireEvent.click(screen.getByText('SO403340'));
 
     const body = screen.getByTestId('cell-dialog-body');
     expect(body.className).toContain('overflow-y-auto');
     expect(body.className).toContain('min-h-0');
     expect(body.contains(contributionTable())).toBe(true);
-    expect(
-      body.contains(screen.getByRole('button', { name: 'Save' })),
-    ).toBe(true);
+    expect(body.contains(screen.getByRole('button', { name: 'Save' }))).toBe(
+      true,
+    );
   });
 
   /**
@@ -1081,6 +1132,179 @@ describe('BoardCellBreakdownDialog: the actions can never be covered', () => {
     expect(screen.getByTestId('cell-dialog-body').className).toContain(
       'flex-1',
     );
+  });
+});
+
+/**
+ * THE SCM FAMILY'S LIGHTBOX, AND ITS TWO TABS.
+ *
+ * The shell is `scm/components/PlanRowDialog.tsx`'s, copied the way `StockDebtCellDialog`
+ * copied it: same sizing, same header, same scrolling body, so every lightbox in this family
+ * is one object to a reader.
+ *
+ * And the two tables are TABS rather than two stacked halves. Before this, the stock position
+ * lived in a header capped at 45vh and the lines grid in the body under it: each got about half
+ * the dialog, so a reader scrolled past one to reach the other and neither was ever whole.
+ */
+describe('BoardCellBreakdownDialog: the family lightbox, and its two tabs', () => {
+  /** A location the group drill can be opened on: it needs a set to net over and a product. */
+  function groupedCell(): BoardCell {
+    const cell = cellOf([demand()]);
+    return {
+      ...cell,
+      location_group: 'BB',
+      locations: [
+        {
+          ...cell.locations[0],
+          location: 'BRW-BB',
+          product_id: 'prod-1',
+          warehouse_id: 'wh-1',
+          qty_on_hand: '478',
+          net_of: 'BB',
+          net: '-8013',
+        },
+      ],
+    };
+  }
+
+  function renderGrouped() {
+    render(
+      <QueryClientProvider
+        client={
+          new QueryClient({
+            defaultOptions: { queries: { retry: false, gcTime: 0 } },
+          })
+        }
+      >
+        <BoardCellBreakdownDialog
+          cell={groupedCell()}
+          bucketLabel="31 Aug 2026"
+          draft={{}}
+          onDecide={vi.fn()}
+          onClose={vi.fn()}
+        />
+      </QueryClientProvider>,
+    );
+  }
+
+  it('wears the family shell: capped height, one header, one scrolling body', () => {
+    renderDialog([demand()]);
+
+    // `PlanRowDialog`'s own classes, to the character - the point of a copied shell is that
+    // the three lightboxes are the same object, and a divergence here is how they drift.
+    const content = screen.getByTestId('cell-dialog-content');
+    expect(content.className).toContain('max-h-[85vh]');
+    expect(content.className).toContain('sm:max-w-[95vw]');
+    expect(content.className).toContain('flex-col');
+    expect(content.className).toContain('overflow-hidden');
+
+    // The header does not scroll any more. It used to be `max-h-[45vh] overflow-y-auto`,
+    // carrying two cards and a stock table of up to eleven rows.
+    const header = content.querySelector('[data-slot="dialog-header"]');
+    expect(header?.className).toContain('shrink-0');
+    expect(header?.className).not.toContain('overflow-y-auto');
+
+    const body = screen.getByTestId('cell-dialog-body');
+    expect(body.className).toContain('overflow-y-auto');
+    expect(body.className).toContain('flex-1');
+    expect(body.className).toContain('min-h-0');
+  });
+
+  it('states the cell in the title and its context in the muted line under it', () => {
+    renderGrouped();
+
+    expect(screen.getByText('WESERP10B · 31 Aug 2026')).toBeInTheDocument();
+    // The ownership GROUP leads: it is the pile step 1 draws from, and nothing else on this
+    // screen prints its name - the stock table below only speaks up when there is none.
+    expect(screen.getByTestId('cell-dialog-context')).toHaveTextContent(
+      'BB group · 100 outstanding · 0 decided',
+    );
+  });
+
+  it('still describes the dialog when the server resolved no group', () => {
+    // Never empty: Radix describes the dialog by this line, and a cell whose group could
+    // not be resolved still has a quantity that was opened over.
+    renderDialog([demand()]);
+
+    expect(screen.getByTestId('cell-dialog-context')).toHaveTextContent(
+      '100 outstanding · 0 decided',
+    );
+    expect(screen.getByTestId('cell-dialog-context').textContent).not.toContain(
+      'group',
+    );
+  });
+
+  it('opens on Stock, and the lines grid is not in the tree until it is asked for', () => {
+    // NO LINE CONTEXT TO DEFAULT FROM: `FulfilmentBoardPanel` opens this with `onOpenCell(cell)`
+    // and nothing else, so the dialog cannot know a line was what the planner meant. Stock is
+    // therefore what it leads with.
+    renderDialog([demand()]);
+
+    expect(screen.getByRole('tab', { name: 'Stock' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+    expect(screen.getByTestId('cell-stock-table')).toBeInTheDocument();
+    expect(screen.queryByText('SO403340')).not.toBeInTheDocument();
+  });
+
+  it('names the second tab with how many lines are behind it', () => {
+    renderDialog([
+      demand({ line_no: 1 }),
+      demand({ line_no: 2, so_number: 'SO398322', sales_order_id: 'so-b' }),
+    ]);
+
+    // The count sits in the trigger, where it can be read without pressing anything.
+    expect(
+      screen.getByRole('tab', { name: 'Contributing lines (2)' }),
+    ).toBeInTheDocument();
+  });
+
+  it('reaches the lines grid on the second tab, and puts the stock table away', () => {
+    renderDialog([demand()]);
+
+    openLines();
+
+    expect(screen.getByText('SO403340')).toBeInTheDocument();
+    expect(contributionTable().querySelectorAll('tbody tr')).toHaveLength(1);
+    // ONE TABLE AT A TIME, which is the whole point: the panel that is not up is unmounted,
+    // so whichever table is being read has the entire body.
+    expect(screen.queryByTestId('cell-stock-table')).not.toBeInTheDocument();
+
+    // And back again, with the stock table where it was.
+    openStock();
+    expect(screen.getByTestId('cell-stock-table')).toBeInTheDocument();
+    expect(screen.queryByText('SO403340')).not.toBeInTheDocument();
+  });
+
+  it('opens the group drill inside the Stock tab, untouched by the move', async () => {
+    // Left in flight on purpose: the documents themselves are `StockDocumentsPanel`'s own
+    // suite. What is under test is that the drill still opens where it always did.
+    getStockDetail.mockReturnValue(new Promise(() => {}));
+    renderGrouped();
+
+    // The SET's own chevron, on the subtotal row - the pile the ladder's first step draws.
+    fireEvent.click(screen.getByTestId('stock-set-expand-BB'));
+
+    expect(
+      await screen.findByTestId('stock-set-expansion-BB'),
+    ).toBeInTheDocument();
+    // Inside the Stock panel, not loose in the dialog.
+    const panel = screen.getByRole('tabpanel', { name: 'Stock' });
+    expect(panel.contains(screen.getByTestId('stock-set-expansion-BB'))).toBe(
+      true,
+    );
+  });
+
+  it('keeps the per-location drill working on the same tab', async () => {
+    getStockDetail.mockReturnValue(new Promise(() => {}));
+    renderGrouped();
+
+    fireEvent.click(screen.getByTestId('stock-expand-BRW-BB'));
+
+    expect(
+      await screen.findByTestId('stock-expansion-BRW-BB'),
+    ).toBeInTheDocument();
   });
 });
 
@@ -1132,6 +1356,7 @@ describe('BoardCellBreakdownDialog: the real board’s sources', () => {
         arrival_date: null,
       },
     ]);
+    openLines();
 
     expect(screen.getByText(/Incoming 15/)).toBeInTheDocument();
   });
@@ -1153,6 +1378,7 @@ describe('BoardCellBreakdownDialog: the real board’s sources', () => {
         arrival_date: null,
       },
     ]);
+    openLines();
 
     expect(await sourceNoteOf(cell.contributions[0].key)).toContain(
       'SPO 202601-S0003 arrives at BRW-BB on 12 Sep 2026, before the delivery date.',
@@ -1186,6 +1412,7 @@ describe('BoardCellBreakdownDialog: the real board’s sources', () => {
         />
       </QueryClientProvider>,
     );
+    openLines();
 
     expect(await sourceNoteOf(cell.contributions[0].key)).toContain(
       'Planned with 1 other line of this order for 04/09/2026: 30 in all, covered or bought as one.',
@@ -1213,6 +1440,7 @@ describe('BoardCellBreakdownDialog: the real board’s sources', () => {
         />
       </QueryClientProvider>,
     );
+    openLines();
 
     expect(await sourceNoteOf(cell.contributions[0].key)).not.toContain(
       'Planned with',
@@ -1235,6 +1463,7 @@ describe('BoardCellBreakdownDialog: the real board’s sources', () => {
         reason: 'The residual is bought.',
       },
     ]);
+    openLines();
 
     expect(
       screen.getByText('Incoming 10 at BRW-BB · Buy 5'),
@@ -1312,6 +1541,7 @@ describe('BoardCellBreakdownDialog: what was left for this line', () => {
   it('says how many lines were ahead, what they wanted, and what was left here', async () => {
     const cell = captainsCell();
     renderCell(cell);
+    openLines();
 
     expect(await shareNoteOf(cell)).toContain(
       '6 lines ahead wanting 388 · 627 left for this line at BRW-BB',
@@ -1325,6 +1555,7 @@ describe('BoardCellBreakdownDialog: what was left for this line', () => {
       available_to_this_line: '1015',
     });
     renderCell(cell);
+    openLines();
 
     expect(await shareNoteOf(cell)).toContain(
       'First in the queue at BRW-BB · 1015 left for this line',
@@ -1338,6 +1569,7 @@ describe('BoardCellBreakdownDialog: what was left for this line', () => {
       available_to_this_line: '40',
     });
     renderCell(cell);
+    openLines();
 
     expect(await shareNoteOf(cell)).toContain(
       '1 line ahead wanting 60 · 40 left for this line at BRW-BB',
@@ -1365,6 +1597,7 @@ describe('BoardCellBreakdownDialog: what was left for this line', () => {
       ],
     });
     renderCell(cell);
+    openLines();
 
     // A bare site code is the shared pool, whatever the line's own location is.
     expect(screen.getByText(/BRW 9 at BRW/)).toBeInTheDocument();
@@ -1397,12 +1630,17 @@ describe('BoardCellBreakdownDialog: what was left for this line', () => {
     };
     renderCell(cell);
 
+    // The PILE, on the Stock tab: the whole warehouse's Available, and nothing about any one
+    // line's share of it.
     const position =
       screen.getByTestId('cell-location-BRW-BB').textContent ?? '';
     expect(position).toContain('-8013');
     expect(position).not.toContain('627');
     expect(position).not.toContain('left for this line');
 
+    // The LINE's share, on the other tab. Two numbers, two tabs, neither printed under the
+    // other's label.
+    openLines();
     const note = await shareNoteOf(cell);
     expect(note).toContain('627 left for this line');
     expect(note).not.toContain('Available');
@@ -1420,6 +1658,7 @@ describe('BoardCellBreakdownDialog: what was left for this line', () => {
       available_to_this_line: undefined,
     });
     renderCell(cell);
+    openLines();
 
     expect(await shareNoteOf(cell)).not.toContain('left for this line');
   });
@@ -1439,6 +1678,7 @@ describe('BoardCellBreakdownDialog: what was left for this line', () => {
       ],
     };
     renderCell(unplannable);
+    openLines();
 
     expect(await shareNoteOf(unplannable)).not.toContain('left for this line');
   });
@@ -1463,6 +1703,7 @@ describe('BoardCellBreakdownDialog: what was left for this line', () => {
       { 'WESERP10B|BRW-BB': '100' },
     );
     renderCell(cell);
+    openLines();
 
     expect(await sourceNoteOf(cell.contributions[0].key)).toContain(
       'First in the queue at BRW-BB · 100 left for this line',
@@ -1509,6 +1750,7 @@ describe('BoardCellBreakdownDialog: bulk approve and reject', () => {
 
   it('approves every selected row in one press, and says how many are selected', () => {
     const { onDecide } = renderDialog(threeLines());
+    openLines();
 
     selectAll();
     expect(screen.getByText('3 selected')).toBeInTheDocument();
@@ -1522,6 +1764,7 @@ describe('BoardCellBreakdownDialog: bulk approve and reject', () => {
 
   it('rejects every selected row in one press, with the same reason a single reject carries', () => {
     const { onDecide } = renderDialog(threeLines());
+    openLines();
 
     selectAll();
     fireEvent.click(screen.getByRole('button', { name: 'Reject selected' }));
@@ -1537,6 +1780,7 @@ describe('BoardCellBreakdownDialog: bulk approve and reject', () => {
 
   it('clears the selection once the bulk decision is made', () => {
     renderDialog(threeLines());
+    openLines();
 
     selectAll();
     fireEvent.click(screen.getByRole('button', { name: 'Approve selected' }));
@@ -1549,6 +1793,7 @@ describe('BoardCellBreakdownDialog: bulk approve and reject', () => {
 
   it('select-all covers exactly the rows of this cell', () => {
     const { onDecide } = renderDialog(threeLines());
+    openLines();
 
     selectAll();
     fireEvent.click(screen.getByRole('button', { name: 'Approve selected' }));
@@ -1573,6 +1818,7 @@ describe('BoardCellBreakdownDialog: bulk approve and reject', () => {
         fulfilment_location: null,
       }),
     ]);
+    openLines();
 
     selectAll();
     expect(screen.getByText('1 selected')).toBeInTheDocument();
@@ -1592,6 +1838,7 @@ describe('BoardCellBreakdownDialog: bulk approve and reject', () => {
 
   it('leaves the per-row decision alone: bulk is an addition, not a replacement', () => {
     const { onDecide } = renderDialog(threeLines());
+    openLines();
 
     fireEvent.click(
       screen.getByRole('checkbox', { name: 'Select SO000001 line 1' }),
@@ -1611,9 +1858,7 @@ describe('BoardCellBreakdownDialog: bulk approve and reject', () => {
     ).toHaveTextContent('Suggested');
 
     fireEvent.click(screen.getByText('SO000002'));
-    expect(
-      screen.getByRole('button', { name: 'Save' }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument();
   });
 });
 
@@ -1642,6 +1887,7 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
       'WESERP10B|BRW-BB': '100',
     });
     renderDialog([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '100' });
+    openLines();
     const key = cell.contributions[0].key;
 
     const button = screen.getByTestId(`trail-info-${key}`);
@@ -1672,6 +1918,7 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
       'WESERP10B|BRW-BB': '100',
     });
     renderDialog([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '100' });
+    openLines();
     const key = cell.contributions[0].key;
     openTrail(key);
 
@@ -1711,6 +1958,7 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
     ];
     const cell = cellOf(lines, { 'WESERP10B|BRW-BB': '70' });
     renderDialog(lines, { 'WESERP10B|BRW-BB': '70' });
+    openLines();
     const second = cell.contributions[1].key;
     openTrail(second);
 
@@ -1727,6 +1975,7 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
   it('answers a question a rule skipped rather than leaving it out', () => {
     const cell = cellOf([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '40' });
     renderDialog([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '40' });
+    openLines();
     const key = cell.contributions[0].key;
     openTrail(key);
 
@@ -1739,6 +1988,7 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
   it('says there is no plan at all for a line whose order states no location', () => {
     const cell = cellOf([demand({ fulfilment_location: null })]);
     renderDialog([demand({ fulfilment_location: null })]);
+    openLines();
     const key = cell.contributions[0].key;
     openTrail(key);
 
@@ -1800,6 +2050,7 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
   it('says in words why each question ended the way it did', () => {
     const cell = rankedCell(queueOfFive(), { 'WESERP10B|BRW-BB': '40' });
     renderCell(cell);
+    openLines();
     const last = cell.contributions[cell.contributions.length - 1].key;
     openTrail(last);
 
@@ -1816,6 +2067,7 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
     // told me how many lines ahead, that's fine" - the count stays, the repeated list goes.
     const cell = rankedCell(queueOfFive(), { 'WESERP10B|BRW-BB': '40' });
     renderCell(cell);
+    openLines();
     const last = cell.contributions[cell.contributions.length - 1].key;
     openTrail(last);
 
@@ -1833,6 +2085,7 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
     const cell = rankedCell(queueOfFive(), { 'WESERP10B|BRW-BB': '40' });
     const asking = cell.contributions[cell.contributions.length - 1];
     renderCell(cell);
+    openLines();
     openTrail(asking.key);
 
     const button = screen.getByTestId(`trail-queue-${asking.key}`);
@@ -1861,6 +2114,7 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
       why: 'Borrowing is never automatic: a person names the donor and the reason. Use Amend to borrow.',
     });
     renderCell(cell);
+    openLines();
     openTrail(contribution.key);
 
     const why = screen.getByTestId(
@@ -1890,6 +2144,7 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
     const freeStock = { 'WESERP10B|BRW-BB': '100' };
     const cell = cellOf(lines, freeStock);
     renderDialog(lines, freeStock);
+    openLines();
 
     expect(screen.getByText(/Own 100/)).toBeInTheDocument();
     // The word is gone from the screen (the captain, 27 Aug); the flag stays on the row.
@@ -1913,6 +2168,7 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
   it('opens the pool rung with no hot-selling verdict in words, and shows no chip for an ordinary item', () => {
     const cell = cellOf([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '40' });
     renderDialog([demand({ qty: '100' })], { 'WESERP10B|BRW-BB': '40' });
+    openLines();
     const key = cell.contributions[0].key;
     openTrail(key);
 
@@ -1937,6 +2193,7 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
       retail_classification_available: true,
     };
     renderCell(cell);
+    openLines();
     openTrail(contribution.key);
 
     const chips = screen.getByTestId(`trail-flags-${contribution.key}`);
@@ -1967,6 +2224,7 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
       retail_classification_available: true,
     };
     renderCell(cell);
+    openLines();
     openTrail(contribution.key);
 
     const chips = screen.getByTestId(`trail-flags-${contribution.key}`);
@@ -1987,6 +2245,7 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
       retail_classification_available: true,
     };
     renderCell(cell);
+    openLines();
     openTrail(contribution.key);
 
     const chips = screen.getByTestId(`trail-flags-${contribution.key}`);
@@ -2007,6 +2266,7 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
       retail_classification_available: false,
     };
     renderCell(cell);
+    openLines();
     openTrail(contribution.key);
 
     expect(
@@ -2019,6 +2279,7 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
     const key = cell.contributions[0].key;
     expect(cell.contributions[0].item_flags).toBeNull();
     renderDialog([demand({ fulfilment_location: null })]);
+    openLines();
     openTrail(key);
 
     expect(screen.queryByTestId(`trail-flags-${key}`)).not.toBeInTheDocument();
@@ -2054,6 +2315,7 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
       },
     });
     renderCell(cell);
+    openLines();
     openTrail(contribution.key);
 
     expect(stepCells(contribution.key, 'pool').slice(1, 4)).toEqual([
@@ -2088,6 +2350,7 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
   it('shows no pool sub-table when there is no shared pool', () => {
     const cell = cellOf([demand({ qty: '100' })]);
     renderDialog([demand({ qty: '100' })]);
+    openLines();
     const key = cell.contributions[0].key;
     openTrail(key);
 
@@ -2203,6 +2466,7 @@ describe('BoardCellBreakdownDialog: a line a decision already covers', () => {
 
   it('shows the frozen composition in the source strip, naming where a borrow came from', () => {
     renderDialog([covered()]);
+    openLines();
 
     expect(
       screen.getByText('Borrow (other) 10 from MWH-IB · Buy 33'),
@@ -2214,6 +2478,7 @@ describe('BoardCellBreakdownDialog: a line a decision already covers', () => {
     // is exactly why the pile's own queue does not hold it - even though the frozen composition
     // still carries its own reasons behind the icon.
     renderDialog([covered()]);
+    openLines();
 
     expect(await sourceNoteOf('so-a|1|WESERP10B|2026-08-31')).not.toContain(
       'left for this line',
@@ -2222,6 +2487,7 @@ describe('BoardCellBreakdownDialog: a line a decision already covers', () => {
 
   it('replaces the ladder with the one fact there is: when it was confirmed', () => {
     renderDialog([covered()]);
+    openLines();
 
     fireEvent.click(
       screen.getByTestId('trail-info-so-a|1|WESERP10B|2026-08-31'),
@@ -2234,6 +2500,7 @@ describe('BoardCellBreakdownDialog: a line a decision already covers', () => {
 
   it('seeds the amendment from the frozen composition, not from a fresh proposal', () => {
     renderDialog([covered()]);
+    openLines();
 
     fireEvent.click(screen.getByText('SO403340'));
     fireEvent.click(screen.getByRole('button', { name: 'Amend' }));
@@ -2261,6 +2528,7 @@ describe('BoardCellBreakdownDialog: a line a decision already covers', () => {
         },
       },
     );
+    openLines();
 
     expect(
       screen.getByTestId('decision-pill-so-a|1|WESERP10B|2026-08-31'),
@@ -2268,9 +2536,7 @@ describe('BoardCellBreakdownDialog: a line a decision already covers', () => {
 
     fireEvent.click(screen.getByText('SO403340'));
     expect(screen.getByLabelText('Buy the whole line')).toBeEnabled();
-    expect(
-      screen.getByRole('button', { name: 'Save' }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument();
     expect(
       screen.queryByRole('button', { name: 'Amend' }),
     ).not.toBeInTheDocument();
@@ -2278,6 +2544,7 @@ describe('BoardCellBreakdownDialog: a line a decision already covers', () => {
 
   it('cannot be swept into a bulk verdict, because Amend is the only verb it has', () => {
     renderDialog([covered()]);
+    openLines();
 
     const table = contributionTable();
     const boxes = within(table).getAllByRole('checkbox');
@@ -2300,6 +2567,7 @@ describe('BoardCellBreakdownDialog: a line a decision already covers', () => {
         'WESERP10B|BRW-BB': '5',
       },
     );
+    openLines();
 
     // 43 outstanding on the covered line and 21 on the undecided one. A decision is a claim on
     // stock, not a delivery, so it does not take the line out of what is still outstanding.
@@ -2321,6 +2589,7 @@ describe('BoardCellBreakdownDialog: what purchasing has already been told', () =
     renderDialog([
       demand({ order_inquiry: { inquiry_no: 'OI-000123', state: 'placed' } }),
     ]);
+    openLines();
 
     const table = contributionTable();
     const headers = within(table)
@@ -2338,6 +2607,7 @@ describe('BoardCellBreakdownDialog: what purchasing has already been told', () =
 
   it('prints a dash for a line nobody has been told anything about', () => {
     renderDialog([demand({ order_inquiry: null })]);
+    openLines();
 
     const row = contributionTable().querySelectorAll(
       'tbody tr',
@@ -2475,7 +2745,9 @@ describe('BoardCellBreakdownDialog: how the Suggestion card names its sources', 
     );
 
     const card = screen.getByTestId('cell-suggestion');
-    expect(card).toHaveTextContent(`Suggestion (before ladder ${LADDER_VERSION})`);
+    expect(card).toHaveTextContent(
+      `Suggestion (before ladder ${LADDER_VERSION})`,
+    );
     // One short label and no sentence: what a planner needs is to know they are reading
     // history, not a paragraph about ladder versions.
     expect(card).not.toHaveTextContent(/no longer/);
@@ -2805,6 +3077,7 @@ describe('BoardCellBreakdownDialog: the Decision card', () => {
 describe('BoardCellBreakdownDialog: the table scrolls inside its own container at 375px', () => {
   it('wraps the table in a ScrollArea, not a fixed-width box', () => {
     renderDialog([demand({ qty: '71' })], { 'BRW-BB': '71' });
+    openLines();
 
     const scrollArea = document.querySelector('[data-slot="scroll-area"]');
     expect(scrollArea).not.toBeNull();
@@ -2822,7 +3095,6 @@ describe('BoardCellBreakdownDialog: the table scrolls inside its own container a
     }
   });
 });
-
 
 describe('sourceAt names the DONOR for every borrow that has one', () => {
   it('names the donor order and line for a ladder v7.1 step-2 borrow', () => {

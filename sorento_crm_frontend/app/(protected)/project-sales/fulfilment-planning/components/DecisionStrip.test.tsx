@@ -1,9 +1,10 @@
 /**
  * The board's decision strip, as CARDS (`PLAN-scm-cs-planning-uat.md` section 1e, AC-V7,
  * AC-D2). `_shared/lib/decisionStrip.test.ts` already pins the arithmetic; this file pins
- * the RENDER: the fixed reading order the captain's second ruling asked for ("own location
- * -> pool -> borrow other location -> borrow other order -> Buy"), and what a card with
- * nothing on it does.
+ * the RENDER: the fixed reading order the captain's ruling of 30 Aug 2026 asked for - ladder
+ * v7.1's own walk, left = first consideration, right = last option ("own location -> use
+ * incoming -> borrow from another order -> borrow incoming -> [borrow other location] ->
+ * use BRW -> Buy") - and what a card with nothing on it does.
  */
 import React from 'react';
 import { render, screen } from '@testing-library/react';
@@ -43,18 +44,33 @@ function line(over: Partial<BoardContribution> = {}): BoardContribution {
   } as BoardContribution;
 }
 
-/** Every kind but `incoming` carries a quantity, so the strip has something to compare. */
+/** Enough kinds carry a quantity that the strip has something to compare. */
 const rich = line({
   key: 'rich',
   proposed: {
     components: [
-      source({ kind: 'reserve', rung: 'group_take', qty: '40', location: 'DC1-BB' }),
+      source({
+        kind: 'reserve',
+        rung: 'group_take',
+        qty: '40',
+        location: 'DC1-BB',
+      }),
       source({ kind: 'reserve', rung: 'pool', qty: '20', location: 'BRW' }),
-      source({ kind: 'borrow', rung: 'cross_group_borrow', qty: '15', location: 'DC1-NT' }),
+      source({
+        kind: 'borrow',
+        rung: 'cross_group_borrow',
+        qty: '15',
+        location: 'DC1-NT',
+      }),
     ],
   },
   sources: [
-    source({ kind: 'reserve', rung: 'group_take', qty: '40', location: 'DC1-BB' }),
+    source({
+      kind: 'reserve',
+      rung: 'group_take',
+      qty: '40',
+      location: 'DC1-BB',
+    }),
     source({ kind: 'reserve', rung: 'pool', qty: '20', location: 'BRW' }),
     source({ kind: 'buy', rung: 'buy', qty: '15', location: null }),
   ],
@@ -63,29 +79,56 @@ const rich = line({
 function renderStrip(contributions: BoardContribution[]) {
   const onToggle = vi.fn();
   render(
-    <DecisionStrip contributions={contributions} draft={{}} active={null} onToggle={onToggle} />,
+    <DecisionStrip
+      contributions={contributions}
+      draft={{}}
+      active={null}
+      onToggle={onToggle}
+    />,
   );
   return { onToggle };
 }
 
 describe('DecisionStrip render order', () => {
-  it('reads own, shared, borrow other location, borrow other order, then Buy', () => {
+  it('reads the v7.1 walk: own, incoming, borrow order, borrow incoming, BRW, Buy', () => {
     renderStrip([rich]);
 
     const cards = screen
       .getAllByTestId(/^decision-strip-(?!changed-)/)
       .map((node) => node.getAttribute('data-testid'));
 
-    // The five the captain named, in the order the ladder asks its questions. `incoming`
-    // is absent here because nothing on this board is that kind (section 1e's own ORDER
-    // still puts it last, whenever there IS something to total).
+    // LEFT = FIRST CONSIDERATION, RIGHT = LAST OPTION (the captain, 30 Aug 2026). The pool
+    // used to sit second, which read as reaching for shared stock before anybody's own
+    // order, and two of the walk's steps had no card at all: the group's water totalled
+    // under "Use own location", and step 3's document borrow under step 2's.
+    //
+    // `borrow_other` is here because this fixture's frozen proposal carries a
+    // `cross_group_borrow`, and it sits WITH the borrows rather than off on its own: it is
+    // a borrow, just one no ladder composes any more.
     expect(cards).toEqual([
       'decision-strip-own',
-      'decision-strip-shared',
-      'decision-strip-borrow_other',
+      'decision-strip-incoming',
       'decision-strip-borrow_order',
+      'decision-strip-borrow_incoming',
+      'decision-strip-borrow_other',
+      'decision-strip-shared',
       'decision-strip-buy',
     ]);
+  });
+
+  it('shows the two steps that used to be folded into their neighbours', () => {
+    // Both read 0 on this board and both hold their place: `borrow_incoming` reads 0 on
+    // EVERY board until S4 lands its candidates, and a step nobody can see is a step
+    // nobody knows was asked.
+    renderStrip([rich]);
+
+    expect(screen.getByTestId('decision-strip-incoming')).toHaveTextContent(
+      'Use incoming',
+    );
+    expect(
+      screen.getByTestId('decision-strip-borrow_incoming'),
+    ).toHaveTextContent('Borrow incoming');
+    expect(screen.getByTestId('decision-strip-borrow_incoming')).toBeDisabled();
   });
 
   it('presses a card and reports which kind was pressed', () => {
@@ -96,21 +139,41 @@ describe('DecisionStrip render order', () => {
     expect(onToggle).toHaveBeenCalledWith('shared');
   });
 
-  // RULED 27 August 2026: the incoming card is HIDDEN at 0 and 0, not disabled in place.
-  // The other five stand for the ladder's four questions and Buy, and a zero there is an
-  // answer worth holding a position for; `incoming` is not a question. What question 1
-  // draws off the water totals under "Use own location", so this card only ever counts
-  // decisions frozen under an older ladder - and on a board with none it is a card about
-  // nothing.
-  it('hides the incoming card entirely when it is 0 and 0', () => {
-    renderStrip([rich]);
+  // RE-RULED 30 August 2026: the card hidden at 0 and 0 is `borrow_other`, not `incoming`.
+  // Six of the seven stand for a step of the v7.1 walk and a zero there is an answer worth
+  // holding a position for. `cross_group_borrow` is not a step - v7.1 retired it, because
+  // another group's FREE stock is step 1's second half now and owes nobody anything - so
+  // this card only ever counts decisions frozen under an older ladder, and on a board with
+  // none it is a card about nothing.
+  it('hides the borrow other location card entirely when it is 0 and 0', () => {
+    // A board of ladder v7.1 work only: nothing frozen carries the retired rung.
+    renderStrip([
+      line({
+        key: 'v71-only',
+        sources: [
+          source({
+            kind: 'reserve',
+            rung: 'group_take',
+            qty: '40',
+            location: 'DC1-BB',
+          }),
+          source({ kind: 'buy', rung: 'buy', qty: '15', location: null }),
+        ],
+      }),
+    ]);
 
-    expect(screen.queryByTestId('decision-strip-incoming')).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId('decision-strip-borrow_other'),
+    ).not.toBeInTheDocument();
+    // The six steps of the walk stay, zeroes and all.
+    expect(screen.getAllByTestId(/^decision-strip-(?!changed-)/)).toHaveLength(
+      6,
+    );
   });
 
-  it('keeps a question card in place, disabled, when it reads 0 and 0', () => {
-    // `borrow_order` is question 4, which the engine never proposes - so it is always 0
-    // and it always keeps its column, or the four questions stop reading in one order.
+  it('keeps a step card in place, disabled, when it reads 0 and 0', () => {
+    // `borrow_order` is step 2, which nothing on this board took - so it reads 0 and it
+    // still keeps its column, or the steps stop reading in one order.
     renderStrip([rich]);
 
     const borrowOrder = screen.getByTestId('decision-strip-borrow_order');
@@ -118,12 +181,16 @@ describe('DecisionStrip render order', () => {
     expect(borrowOrder).toBeDisabled();
   });
 
-  it('keeps a CONFIRMED v5 water line under own, with no incoming card', () => {
-    // The water ruling: question 1 hands part of the group's offer over off the SPO, and
-    // the confirmation records that share with question 1's own rung. Both sides of the
-    // strip must therefore total it under "Use own location" - the decided side used to
-    // hard-code `incoming`, so one line read own 9 / incoming 0 on the suggested side and
-    // own 0 / incoming 9 on the decided side, with an amber dot on both cards.
+  it('reads a CONFIRMED water line as incoming on BOTH sides, with no amber dot', () => {
+    // The water ruling: step 1 hands part of the group's offer over off the SPO, and the
+    // confirmation records that share with step 1's own rung. Both sides of the strip must
+    // therefore total it under the SAME card - the decided side used to hard-code the rung,
+    // so one line read 9 on one card's suggested half and 9 on another card's decided half,
+    // with an amber dot on both.
+    //
+    // That card is "Use incoming" from 30 Aug 2026 (it was "Use own location"): the
+    // component's own kind is `timely_spo`, and a promise resting on a ship is not the same
+    // promise as one resting on a floor even though one rung drew them both.
     const confirmed = line({
       key: 'confirmed-water',
       covered: true,
@@ -158,13 +225,16 @@ describe('DecisionStrip render order', () => {
 
     renderStrip([confirmed]);
 
-    expect(screen.queryByTestId('decision-strip-incoming')).not.toBeInTheDocument();
-    const own = screen.getByTestId('decision-strip-own');
-    expect(own).toHaveTextContent('Suggested9');
-    expect(own).toHaveTextContent('Decided9');
+    const incoming = screen.getByTestId('decision-strip-incoming');
+    expect(incoming).toHaveTextContent('Suggested9');
+    expect(incoming).toHaveTextContent('Decided9');
     expect(
-      screen.queryByTestId('decision-strip-changed-own'),
+      screen.queryByTestId('decision-strip-changed-incoming'),
     ).not.toBeInTheDocument();
+    // And NOT under the floor card: the split is the whole point of the second card.
+    const own = screen.getByTestId('decision-strip-own');
+    expect(own).toHaveTextContent('Suggested0');
+    expect(own).toHaveTextContent('Decided0');
   });
 
   it('shows the incoming card again for a line decided under an older ladder', () => {
@@ -180,7 +250,14 @@ describe('DecisionStrip render order', () => {
         borrow: [],
         buy_qty: '0',
       },
-      sources: [source({ kind: 'timely_spo', rung: 'incoming', qty: '12', location: 'BRW-BB' })],
+      sources: [
+        source({
+          kind: 'timely_spo',
+          rung: 'incoming',
+          qty: '12',
+          location: 'BRW-BB',
+        }),
+      ],
     } as Partial<BoardContribution>);
 
     renderStrip([rich, frozen]);
@@ -213,7 +290,9 @@ describe('DecisionStrip: refused lines', () => {
   it('counts the refused lines', () => {
     renderStrip([rich, refused('line-a'), refused('line-b')]);
 
-    expect(screen.getByTestId('decision-strip-rejected')).toHaveTextContent('2 rejected');
+    expect(screen.getByTestId('decision-strip-rejected')).toHaveTextContent(
+      '2 rejected',
+    );
   });
 
   it('says nothing when nobody has refused anything', () => {
