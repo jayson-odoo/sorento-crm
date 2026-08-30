@@ -670,6 +670,15 @@ PERMISSION_REGISTRY.extend([
         "description": "Upload, apply and delete supplier proforma invoices.",
     },
 ])
+# The two documents the AutoCount ESB pushes (`/external/ingest|read/{entity}`), for the
+# same reason as the block above and one measurement more: these eight slugs exist on the
+# dev copy of production, put there by a migration that has since been retired, and are
+# declared NOWHERE in the app. No SCM route gates on them - the screens gate on
+# `scm.dashboard.view` / `scm.reorder.run` - so on a fresh database or on CI they simply do
+# not exist, and the document push 403s for ever while migration 445's sweep finds no
+# source row to copy. Declared here, `sync_permissions` materialises them at startup.
+PERMISSION_REGISTRY.extend(_crud("scm", "sales_orders", "SCM Sales Orders"))
+PERMISSION_REGISTRY.extend(_crud("scm", "purchase_orders", "SCM Purchase Orders"))
 
 
 # Dealer Kit - price tag requests + tag templates.

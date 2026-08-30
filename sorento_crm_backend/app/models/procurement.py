@@ -627,7 +627,10 @@ class PurchaseOrder(Base, CompanyScopedMixin):
     __tablename__ = "purchase_orders"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
-    po_number = Column(String(100), unique=True, nullable=False)
+    # Unique per COMPANY, not globally - see `SalesOrder.so_number`. Migration 305
+    # dropped `purchase_orders_po_number_key` for
+    # `uq_purchase_orders_company_po_number`.
+    po_number = Column(String(100), nullable=False)
     supplier_id = Column(UUID(as_uuid=False), ForeignKey("suppliers.id", ondelete="SET NULL"), nullable=True)
     issue_date = Column(Date, nullable=True)
     expected_date = Column(Date, nullable=True)
@@ -652,6 +655,12 @@ class PurchaseOrder(Base, CompanyScopedMixin):
     )
 
     __table_args__ = (
+        Index(
+            "uq_purchase_orders_company_po_number",
+            "company_id",
+            "po_number",
+            unique=True,
+        ),
         Index("ix_purchase_orders_supplier_id", "supplier_id"),
         Index("ix_purchase_orders_po_number", "po_number"),
         Index("ix_purchase_orders_status", "status"),

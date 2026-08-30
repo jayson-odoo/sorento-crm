@@ -14,7 +14,14 @@ These tests assert the contract at the HTTP boundary, where the ESB meets it:
   unknown entity      -> 404
   malformed body      -> 422
   batch over the cap  -> 413
+  no company anchor   -> 422
   a good batch        -> 200 with a per-record verdict
+
+Every body carries a ``companyCode`` since group A1: the six masters are
+partitioned per company, so a push that names none has no correct destination.
+The order of the guards is part of the contract and is asserted here -- a
+malformed body is still 422 ``INVALID_BODY`` and an oversized batch still 413,
+because a caller cannot fix an anchor in a request that never parsed.
 
 Plus ``?dry_run=true``: a preview that resolves every record exactly as a real
 ingest would -- adoption matching included -- and writes nothing. The assertion
@@ -37,6 +44,7 @@ from app.api.v1.external import ingest as ingest_module
 from app.api.v1.external.permissions import require_external_permission_for_path
 from app.database import get_db
 from app.dependencies import get_external_api_user
+from app.services.company_scope import DEFAULT_COMPANY_ID
 from app.services.master_ingest_service import _value_changed
 from tests._external_auth import external_permissions_granted
 from tests._pg_fixture import unique_code
@@ -124,6 +132,20 @@ def client(db):
         yield TestClient(api, raise_server_exceptions=False)
 
 
+@pytest.fixture()
+def company_code(db):
+    """The company anchor every ingest/read body now carries (group A1).
+
+    Read from the database, not spelled out. The incumbent's code is ``SRT`` on
+    this checkout's copy of production, which is data rather than contract - a
+    test that hardcoded it would fail on a database seeded any other way, and
+    would be asserting about the seed instead of about the route.
+    """
+    return db.execute(
+        text("SELECT code FROM companies WHERE id = :id"), {"id": DEFAULT_COMPANY_ID}
+    ).scalar()
+
+
 def _wh(code=None, name="Main", ref=None, **extra):
     code = code or unique_code("WH")
     return {"source_ref": ref or f"ZZT-DK-{code}", "code": code, "name": name, **extra}
@@ -143,12 +165,15 @@ def _reference_count(db, source_ref):
 
 
 class TestEntityRouting:
-    def test_unknown_entity_is_404(self, client):
-        res = client.post("/ingest/unicorns", json={"records": []})
+    def test_unknown_entity_is_404(self, client, company_code):
+        res = client.post("/ingest/unicorns", json={"companyCode": company_code, "records": []})
         assert res.status_code == 404
 
-    def test_unknown_read_entity_is_404(self, client):
-        assert client.post("/read/unicorns", json={"source_refs": []}).status_code == 404
+    def test_unknown_read_entity_is_404(self, client, company_code):
+        assert client.post(
+            "/read/unicorns",
+            json={"companyCode": company_code, "source_refs": []},
+        ).status_code == 404
 
     def test_the_handler_guard_itself_raises_a_404(self):
         """``_entity`` direct, not through the route.
@@ -175,33 +200,74 @@ class TestRequestValidation:
         res = client.post("/ingest/warehouses", json={})
         assert res.status_code == 422
 
-    def test_non_array_records_is_422(self, client):
-        assert client.post("/ingest/warehouses", json={"records": "nope"}).status_code == 422
+    def test_non_array_records_is_422(self, client, company_code):
+        assert client.post(
+            "/ingest/warehouses",
+            json={"companyCode": company_code, "records": "nope"},
+        ).status_code == 422
 
-    def test_oversized_batch_is_413(self, client):
+    def test_oversized_batch_is_413(self, client, company_code):
         # AC-AC-20: refused outright rather than silently truncated.
         batch = [_wh(code=f"ZZT-BULK-{i}") for i in range(ingest_module.MAX_BATCH + 1)]
-        res = client.post("/ingest/warehouses", json={"records": batch})
+        res = client.post(
+            "/ingest/warehouses",
+            json={"companyCode": company_code, "records": batch},
+        )
         assert res.status_code == 413
 
-    def test_a_batch_at_the_cap_is_not_refused(self, client):
+    def test_a_batch_at_the_cap_is_not_refused(self, client, company_code):
         # The boundary is inclusive; off-by-one here would reject a batch the
         # ESB was told it could send.
         batch = [_wh(code=f"ZZT-EDGE-{i}") for i in range(ingest_module.MAX_BATCH)]
-        assert client.post("/ingest/warehouses", json={"records": batch}).status_code != 413
+        assert client.post(
+            "/ingest/warehouses",
+            json={"companyCode": company_code, "records": batch},
+        ).status_code != 413
+
+    def test_an_ingest_with_no_company_anchor_is_422(self, client, db):
+        # AC-A1-1 at the route: the body parses, so the anchor guard is what
+        # refuses it, and nothing is written.
+        record = _wh()
+        res = client.post("/ingest/warehouses", json={"records": [record]})
+
+        assert res.status_code == 422
+        # These routers are mounted on a bare FastAPI here, so an AppException
+        # surfaces through Starlette's default handler as {"detail": {...}}. The
+        # real app registers its own handler and returns that inner object flat;
+        # tests/test_external_company_anchor_scope.py asserts on THAT shape.
+        assert res.json()["detail"]["code"] == "COMPANY_ANCHOR_REQUIRED"
+        assert _warehouse_count(db, record["code"]) == 0
+
+    def test_a_body_that_never_parsed_is_refused_before_the_anchor(self, client):
+        # Both guards answer 422 and only the code tells them apart. Order
+        # matters to the caller: it cannot supply an anchor for a request whose
+        # records array is missing, so the body complaint has to come first.
+        res = client.post("/ingest/warehouses", json={})
+        assert res.json()["detail"]["code"] == "INVALID_BODY"
+
+    def test_a_read_with_no_company_anchor_is_422(self, client):
+        res = client.post("/read/warehouses", json={"source_refs": ["ZZT-DK-NOPE"]})
+        assert res.status_code == 422
+        assert res.json()["detail"]["code"] == "COMPANY_ANCHOR_REQUIRED"
 
     def test_missing_source_refs_array_is_422(self, client):
         assert client.post("/read/warehouses", json={}).status_code == 422
 
-    def test_oversized_read_batch_is_413(self, client):
+    def test_oversized_read_batch_is_413(self, client, company_code):
         refs = [f"ZZT-DK-{i}" for i in range(ingest_module.MAX_BATCH + 1)]
-        assert client.post("/read/warehouses", json={"source_refs": refs}).status_code == 413
+        assert client.post(
+            "/read/warehouses",
+            json={"companyCode": company_code, "source_refs": refs},
+        ).status_code == 413
 
 
 class TestHappyPath:
-    def test_a_good_batch_is_200_with_a_per_record_verdict(self, client, db):
+    def test_a_good_batch_is_200_with_a_per_record_verdict(self, client, db, company_code):
         record = _wh(name="Depot")
-        res = client.post("/ingest/warehouses", json={"records": [record]})
+        res = client.post(
+            "/ingest/warehouses",
+            json={"companyCode": company_code, "records": [record]},
+        )
 
         assert res.status_code == 200
         body = res.json()
@@ -210,20 +276,27 @@ class TestHappyPath:
         assert body["records"][0]["outcome"] == "created"
         assert _warehouse_count(db, record["code"]) == 1
 
-    def test_an_invalid_record_is_still_200_with_a_failed_verdict(self, client):
+    def test_an_invalid_record_is_still_200_with_a_failed_verdict(self, client, company_code):
         # AC-AC-15: a batch is not a transaction. A non-2xx would leave the ESB
         # unable to tell which records landed.
         res = client.post(
-            "/ingest/warehouses", json={"records": [{"source_ref": "ZZT-DK-BAD", "code": "ZZT-BAD"}]}
+            "/ingest/warehouses",
+            json={
+                "companyCode": company_code,
+                "records": [{"source_ref": "ZZT-DK-BAD", "code": "ZZT-BAD"}],
+            },
         )
         assert res.status_code == 200
         assert res.json()["summary"]["failed"] == 1
 
-    def test_read_returns_current_state_for_a_known_reference(self, client, db):
+    def test_read_returns_current_state_for_a_known_reference(self, client, db, company_code):
         record = _wh(name="Depot")
-        client.post("/ingest/warehouses", json={"records": [record]})
+        client.post("/ingest/warehouses", json={"companyCode": company_code, "records": [record]})
 
-        res = client.post("/read/warehouses", json={"source_refs": [record["source_ref"]]})
+        res = client.post(
+            "/read/warehouses",
+            json={"companyCode": company_code, "source_refs": [record["source_ref"]]},
+        )
         assert res.status_code == 200
         body = res.json()
         assert body["records"][0]["name"] == "Depot"
@@ -238,10 +311,13 @@ class TestDryRun:
     counts are checked directly rather than trusting the response.
     """
 
-    def test_dry_run_reports_what_would_be_created_without_creating_it(self, client, db):
+    def test_dry_run_reports_what_would_be_created_without_creating_it(self, client, db, company_code):
         record = _wh(name="Would Be Created")
 
-        res = client.post("/ingest/warehouses?dry_run=true", json={"records": [record]})
+        res = client.post(
+            "/ingest/warehouses?dry_run=true",
+            json={"companyCode": company_code, "records": [record]},
+        )
 
         assert res.status_code == 200
         body = res.json()
@@ -252,7 +328,7 @@ class TestDryRun:
         assert _warehouse_count(db, record["code"]) == 0
         assert _reference_count(db, record["source_ref"]) == 0
 
-    def test_dry_run_performs_adoption_matching_and_diffs_the_existing_row(self, client, db):
+    def test_dry_run_performs_adoption_matching_and_diffs_the_existing_row(self, client, db, company_code):
         """The case the feature exists for.
 
         An unclaimed local row matched by business code would be *adopted* and
@@ -275,7 +351,10 @@ class TestDryRun:
         db.commit()
 
         record = _wh(code=code, name="From AutoCount", location="Level 9")
-        res = client.post("/ingest/warehouses?dry_run=true", json={"records": [record]})
+        res = client.post(
+            "/ingest/warehouses?dry_run=true",
+            json={"companyCode": company_code, "records": [record]},
+        )
 
         assert res.status_code == 200
         entry = res.json()["records"][0]
@@ -302,7 +381,7 @@ class TestDryRun:
         # request never reached the database at all -- a dry run that is broken
         # rather than safe would pass every assertion above. The same payload
         # without the flag must overwrite the row and claim it.
-        client.post("/ingest/warehouses", json={"records": [record]})
+        client.post("/ingest/warehouses", json={"companyCode": company_code, "records": [record]})
         assert (
             db.execute(
                 text("SELECT warehouse_name FROM warehouses WHERE warehouse_code = :c"), {"c": code}
@@ -311,7 +390,7 @@ class TestDryRun:
         )
         assert _reference_count(db, record["source_ref"]) == 1
 
-    def test_dry_run_writes_nothing_for_a_mixed_batch(self, client, db):
+    def test_dry_run_writes_nothing_for_a_mixed_batch(self, client, db, company_code):
         # Counted across the whole batch, because a partial write is exactly the
         # failure mode a per-record savepoint design could produce.
         good = _wh(code=unique_code("WH"))
@@ -323,7 +402,8 @@ class TestDryRun:
         ).scalar()
 
         res = client.post(
-            "/ingest/warehouses?dry_run=true", json={"records": [good, bad, other]}
+            "/ingest/warehouses?dry_run=true",
+            json={"companyCode": company_code, "records": [good, bad, other]},
         )
 
         assert res.status_code == 200
@@ -340,12 +420,13 @@ class TestDryRun:
             == before_refs
         )
 
-    def test_dry_run_reports_retryable_exactly_as_a_real_ingest_would(self, client):
+    def test_dry_run_reports_retryable_exactly_as_a_real_ingest_would(self, client, company_code):
         # The verdict vocabulary must be identical, or a preview cannot be used
         # to predict the sync it is previewing.
         res = client.post(
             "/ingest/suppliers?dry_run=true",
             json={
+                "companyCode": company_code,
                 "records": [
                     {
                         "source_ref": "ZZT-DK-S1",
@@ -359,37 +440,46 @@ class TestDryRun:
         assert res.status_code == 200
         assert res.json()["summary"]["retryable"] == 1
 
-    def test_a_created_record_carries_no_diff(self, client):
+    def test_a_created_record_carries_no_diff(self, client, company_code):
         # There is nothing to overwrite, so a diff would be noise -- and an
         # empty one would read as "adopted, no changes", which is a different
         # and much more important statement.
-        res = client.post("/ingest/warehouses?dry_run=true", json={"records": [_wh()]})
+        res = client.post(
+            "/ingest/warehouses?dry_run=true",
+            json={"companyCode": company_code, "records": [_wh()]},
+        )
         assert "diff" not in res.json()["records"][0]
 
-    def test_dry_run_defaults_to_false(self, client, db):
+    def test_dry_run_defaults_to_false(self, client, db, company_code):
         # Existing callers must be unaffected: no parameter means a real ingest.
         record = _wh()
-        res = client.post("/ingest/warehouses", json={"records": [record]})
+        res = client.post(
+            "/ingest/warehouses",
+            json={"companyCode": company_code, "records": [record]},
+        )
 
         assert res.json()["dry_run"] is False
         assert _warehouse_count(db, record["code"]) == 1
 
-    def test_dry_run_false_explicitly_still_writes(self, client, db):
+    def test_dry_run_false_explicitly_still_writes(self, client, db, company_code):
         record = _wh()
-        client.post("/ingest/warehouses?dry_run=false", json={"records": [record]})
+        client.post(
+            "/ingest/warehouses?dry_run=false",
+            json={"companyCode": company_code, "records": [record]},
+        )
         assert _warehouse_count(db, record["code"]) == 1
 
-    def test_a_resync_of_an_already_linked_record_also_diffs(self, client, db):
+    def test_a_resync_of_an_already_linked_record_also_diffs(self, client, db, company_code):
         # Adoption is the dangerous case, but a repeat sync overwrites live
         # values too -- and by then the record is linked, so it takes the other
         # update path. A preview blind to the commonest case would be a trap.
         record = _wh(name="First Sync")
-        client.post("/ingest/warehouses", json={"records": [record]})
+        client.post("/ingest/warehouses", json={"companyCode": company_code, "records": [record]})
         db.commit()
 
         res = client.post(
             "/ingest/warehouses?dry_run=true",
-            json={"records": [{**record, "name": "Second Sync"}]},
+            json={"companyCode": company_code, "records": [{**record, "name": "Second Sync"}]},
         )
 
         entry = res.json()["records"][0]
@@ -406,14 +496,17 @@ class TestDryRun:
             == "First Sync"
         )
 
-    def test_an_identical_repush_reports_an_empty_diff_not_a_noisy_one(self, client, db):
+    def test_an_identical_repush_reports_an_empty_diff_not_a_noisy_one(self, client, db, company_code):
         # "Matched an existing row and changes nothing" is a useful answer, and
         # it must not arrive dressed up as a list of edits.
         record = _wh(name="Unchanged")
-        client.post("/ingest/warehouses", json={"records": [record]})
+        client.post("/ingest/warehouses", json={"companyCode": company_code, "records": [record]})
         db.commit()
 
-        res = client.post("/ingest/warehouses?dry_run=true", json={"records": [record]})
+        res = client.post(
+            "/ingest/warehouses?dry_run=true",
+            json={"companyCode": company_code, "records": [record]},
+        )
         assert res.json()["records"][0]["diff"] == {}
 
 
