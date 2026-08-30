@@ -17,7 +17,6 @@ import {
   deleteProduct,
   duplicateProduct,
   bulkUpdateProducts,
-  bulkDeleteProducts,
   getPriceHistory,
   getProductPurchaseHistory,
   setVariantParent,
@@ -315,24 +314,6 @@ export function useBulkUpdateProducts() {
   });
 }
 
-/**
- * Hook for bulk deleting products
- */
-export function useBulkDeleteProducts() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: (ids: string[]) => bulkDeleteProducts(ids),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['products'] });
-      toast.success('Products deleted successfully', {
-        position: 'top-center',
-      });
-    },
-    onError: (error: Error) => {
-      toast.error(error.message || 'Failed to delete products', {
-        position: 'top-center',
-      });
-    },
-  });
-}
+// Bulk delete has no mutation hook: the list parks one `product.delete` per selected
+// row behind one countdown (`useDeferredBulkAction`, D7), so there is nothing left for a
+// mutation to do and nothing for it to toast.
