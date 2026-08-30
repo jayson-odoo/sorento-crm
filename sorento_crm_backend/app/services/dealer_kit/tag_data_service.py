@@ -366,6 +366,15 @@ def product_set_tag_data(
 
     offer_total = Decimal("0")
     any_offer = False
+    # A member the pricing engine cannot price is not worth nothing, and the sum
+    # used to add it as RM 0: a three-piece set with one unpriced member printed
+    # a set offer far below the sum of its parts, which is a discount nobody
+    # authorised, on paper, in a dealer's hands. Zero IS the unpriced case here -
+    # `products.list_price` is NOT NULL and defaults to nought, so
+    # `_a_real_price` answers None for it. When that happens the offer is
+    # abandoned entirely and the tag prints the set's list price, which is the
+    # set's own rule and is always true.
+    every_member_priced = True
     for member in members:
         if not member.contributes_to_price or member.product is None:
             continue
@@ -377,8 +386,11 @@ def product_set_tag_data(
                 unit = view.offer_price
             else:
                 unit = view.list_price
+        if unit is None:
+            every_member_priced = False
+            continue
         quantity = Decimal(str(member.quantity)) if member.quantity is not None else Decimal("1")
-        offer_total += (unit or Decimal("0")) * quantity
+        offer_total += unit * quantity
 
     return {
         "id": product_set.id,
@@ -395,8 +407,12 @@ def product_set_tag_data(
             for member in members
         ],
         "list_price": set_price.resolved,
-        "offer_price": offer_total.quantize(Decimal("0.01")) if any_offer else None,
-        "promotion_id": promotion_id if any_offer else None,
+        "offer_price": (
+            offer_total.quantize(Decimal("0.01"))
+            if any_offer and every_member_priced
+            else None
+        ),
+        "promotion_id": promotion_id if (any_offer and every_member_priced) else None,
     }
 
 

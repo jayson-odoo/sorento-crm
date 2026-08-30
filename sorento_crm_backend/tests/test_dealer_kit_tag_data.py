@@ -451,6 +451,59 @@ class TestProductSetTagData:
         assert data["offer_price"] == Decimal("900.00")
         assert data["promotion_id"] == promotion.id
 
+    def test_a_member_with_no_price_cancels_the_set_offer(self, db):
+        """An unpriceable member abandons the offer; it is not worth RM 0.
+
+        The sum counted a member the pricing engine could not price as zero, so
+        a three-piece set with one unpriced member printed a set offer far below
+        the sum of its parts - a discount nobody authorised, on paper, in a
+        dealer's hands. The list price is unaffected: that is the set's own
+        rule, and it is the honest thing to print when the offer cannot be
+        computed.
+        """
+        from app.services.dealer_kit import tag_data_service
+
+        priced = _product(db, list_price="1000.00")
+        promoted = _product(db, list_price="200.00")
+        # Zero IS the absence of a price here: `products.list_price` is NOT NULL
+        # and defaults to nought, so a product whose price was never imported
+        # looks exactly like this and `_a_real_price` answers None for it.
+        unpriced = _product(db, list_price="0.00")
+        product_set = _product_set(
+            db, [(priced, 1, True), (promoted, 1, True), (unpriced, 1, True)]
+        )
+        promotion = _promotion(db, promoted, promo_price="150.00")
+
+        data = tag_data_service.product_set_tag_data(
+            db,
+            product_set,
+            tag_data_service.staff_viewer(),
+            promotion_id=promotion.id,
+        )
+
+        assert data["offer_price"] is None
+        assert data["promotion_id"] is None
+
+    def test_an_unpriced_member_that_does_not_count_leaves_the_offer_alone(
+        self, db
+    ):
+        """Only a member that contributes to the price can cancel the offer."""
+        from app.services.dealer_kit import tag_data_service
+
+        promoted = _product(db, list_price="1000.00")
+        freebie = _product(db, list_price="0.00")
+        product_set = _product_set(db, [(promoted, 1, True), (freebie, 1, False)])
+        promotion = _promotion(db, promoted, promo_price="700.00")
+
+        data = tag_data_service.product_set_tag_data(
+            db,
+            product_set,
+            tag_data_service.staff_viewer(),
+            promotion_id=promotion.id,
+        )
+
+        assert data["offer_price"] == Decimal("700.00")
+
     def test_no_offer_on_any_member_means_no_set_offer(self, db):
         from app.services.dealer_kit import tag_data_service
 
