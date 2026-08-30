@@ -266,12 +266,6 @@ class ProductSlotLayerPropsDoc(_StrictProps):
     fieldKey: str
 
 
-class PriceFieldLayerPropsDoc(_StrictProps):
-    kind: Literal["price_field"]
-    priceType: Literal["list", "sell", "both"]
-    format: str
-
-
 class PriceBadgeLayerPropsDoc(_StrictProps):
     kind: Literal["price_badge"]
     variant: Literal["list_only", "promo"]
@@ -303,7 +297,6 @@ TagLayerPropsDoc = Annotated[
         TextLayerPropsDoc,
         ShapeLayerPropsDoc,
         ProductSlotLayerPropsDoc,
-        PriceFieldLayerPropsDoc,
         PriceBadgeLayerPropsDoc,
         BadgeLayerPropsDoc,
         GroupLayerPropsDoc,
@@ -317,7 +310,7 @@ class TagLayerDoc(BaseModel):
 
     id: str
     type: Literal[
-        "image", "text", "shape", "product_slot", "price_field", "price_badge",
+        "image", "text", "shape", "product_slot", "price_badge",
         "badge", "group",
     ]
     x_mm: float

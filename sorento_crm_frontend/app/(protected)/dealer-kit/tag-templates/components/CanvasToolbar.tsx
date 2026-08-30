@@ -31,7 +31,6 @@ import {
   Undo2,
   Ungroup,
   X,
-  DollarSign,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
@@ -53,7 +52,6 @@ interface CanvasToolbarProps {
   onAddShape: () => void;
   onAddImage: () => void;
   onAddProductSlot: () => void;
-  onAddPriceField: () => void;
   onAddPriceBadge: () => void;
   onAddBadge: () => void;
   onAddProduct: () => void;
@@ -131,7 +129,6 @@ export function CanvasToolbar({
   onAddShape,
   onAddImage,
   onAddProductSlot,
-  onAddPriceField,
   onAddPriceBadge,
   onAddBadge,
   onAddProduct,
@@ -187,11 +184,6 @@ export function CanvasToolbar({
         icon={RectangleHorizontal}
         label="Add Product Slot"
         onClick={onAddProductSlot}
-      />
-      <ToolbarButton
-        icon={DollarSign}
-        label="Add Price Field"
-        onClick={onAddPriceField}
       />
       <ToolbarButton
         icon={Banknote}

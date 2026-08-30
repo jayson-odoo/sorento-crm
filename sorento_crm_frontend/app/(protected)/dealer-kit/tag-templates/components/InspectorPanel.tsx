@@ -20,7 +20,6 @@ import type {
   ImageFit,
   ImageMaskShape,
   PriceBadgeVariant,
-  PriceDisplayType,
   ShapeType,
   SlotBinding,
   TagLayer,
@@ -107,12 +106,6 @@ const MASK_SHAPE_OPTIONS = [
 const PRICE_BADGE_VARIANT_OPTIONS = [
   { value: 'list_only', label: 'List price only' },
   { value: 'promo', label: 'Promotion (LP struck + SP)' },
-];
-
-const PRICE_TYPE_OPTIONS = [
-  { value: 'list', label: 'List Price' },
-  { value: 'sell', label: 'Sell Price' },
-  { value: 'both', label: 'Both (LP struck + SP)' },
 ];
 
 // ---------------------------------------------------------------------------
@@ -373,9 +366,6 @@ export function InspectorPanel({
               onChange={updateProps}
               onChooseImage={onChooseImage}
             />
-          )}
-          {layer.props.kind === 'price_field' && (
-            <PriceFieldInspector props={layer.props} onChange={updateProps} />
           )}
           {layer.props.kind === 'product_slot' && (
             <ProductSlotInspector props={layer.props} onChange={updateProps} />
@@ -881,46 +871,6 @@ function GroupBindingInspector({
           Use template...
         </Button>
       )}
-    </section>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Price field inspector
-// ---------------------------------------------------------------------------
-
-function PriceFieldInspector({
-  props,
-  onChange,
-}: {
-  props: Extract<TagLayerProps, { kind: 'price_field' }>;
-  onChange: (changes: Partial<TagLayerProps>) => void;
-}) {
-  return (
-    <section>
-      <h4 className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-        Price Field
-      </h4>
-      <div className="flex flex-col gap-2">
-        <div className="flex flex-col gap-1">
-          <Label className="text-xs text-muted-foreground">Price Type</Label>
-          <SearchableSelect
-            value={props.priceType}
-            onChange={(v: string) =>
-              onChange({ ...props, priceType: v as PriceDisplayType })
-            }
-            options={PRICE_TYPE_OPTIONS}
-          />
-        </div>
-        <div className="flex flex-col gap-1">
-          <Label className="text-xs text-muted-foreground">Format</Label>
-          <Input
-            className="h-7 px-2 text-xs"
-            value={props.format}
-            onChange={(e) => onChange({ ...props, format: e.target.value })}
-          />
-        </div>
-      </div>
     </section>
   );
 }

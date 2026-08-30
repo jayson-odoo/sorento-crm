@@ -82,14 +82,6 @@ interface TagSheetRendererProps extends TagSheetMedia {
 }
 
 // ---------------------------------------------------------------------------
-// Price formatting
-// ---------------------------------------------------------------------------
-
-function formatPrice(amount: number): string {
-  return `RM ${amount.toLocaleString('en-MY', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
-}
-
-// ---------------------------------------------------------------------------
 // Layer renderers (pure DOM)
 // ---------------------------------------------------------------------------
 
@@ -421,104 +413,6 @@ function renderProductSlotLayer(
   );
 }
 
-function renderPriceFieldLayer(
-  layer: TagLayer,
-  resolved: ResolvedLineData | null,
-) {
-  const props = layer.props;
-  if (props.kind !== 'price_field') return null;
-
-  const showPromo = resolved?.show_promo_price && resolved.sell_price != null;
-  const listPrice = resolved?.list_price;
-  const sellPrice = resolved?.sell_price;
-
-  return (
-    <div
-      style={{
-        position: 'absolute',
-        left: `${layer.x_mm}mm`,
-        top: `${layer.y_mm}mm`,
-        width: `${layer.width_mm}mm`,
-        height: `${layer.height_mm}mm`,
-        transform: layer.rotation_deg ? `rotate(${layer.rotation_deg}deg)` : undefined,
-        fontFamily: 'DM Sans, sans-serif',
-        display: 'flex',
-        flexDirection: 'column',
-        justifyContent: 'center',
-        overflow: 'hidden',
-      }}
-    >
-      {props.priceType === 'list' && listPrice != null && (
-        <span
-          style={{
-            fontSize: '12pt',
-            fontWeight: 700,
-            color: '#000000',
-          }}
-        >
-          {formatPrice(listPrice)}
-        </span>
-      )}
-      {props.priceType === 'sell' && sellPrice != null && showPromo && (
-        <span
-          style={{
-            fontSize: '14pt',
-            fontWeight: 700,
-            color: '#d32f2f',
-          }}
-        >
-          {formatPrice(sellPrice)} NETT
-        </span>
-      )}
-      {props.priceType === 'both' && (
-        <>
-          {showPromo && listPrice != null ? (
-            <>
-              <span
-                style={{
-                  fontSize: '10pt',
-                  color: '#666666',
-                  textDecoration: 'line-through',
-                }}
-              >
-                {formatPrice(listPrice)}
-              </span>
-              <span
-                style={{
-                  fontSize: '14pt',
-                  fontWeight: 700,
-                  color: '#d32f2f',
-                }}
-              >
-                {sellPrice != null ? `${formatPrice(sellPrice)} NETT` : ''}
-              </span>
-            </>
-          ) : listPrice != null ? (
-            <span
-              style={{
-                fontSize: '12pt',
-                fontWeight: 700,
-                color: '#000000',
-              }}
-            >
-              {formatPrice(listPrice)}
-            </span>
-          ) : (
-            <span
-              style={{
-                fontSize: '10pt',
-                color: '#999999',
-              }}
-            >
-              Price TBC
-            </span>
-          )}
-        </>
-      )}
-    </div>
-  );
-}
-
 function renderBadgeLayer(layer: TagLayer, media: TagSheetMedia) {
   const props = layer.props;
   if (props.kind !== 'badge') return null;
@@ -586,8 +480,6 @@ function TagRenderer({
           {layer.type === 'image' && renderImageLayer(layer, media, resolved)}
           {layer.type === 'product_slot' &&
             renderProductSlotLayer(layer, resolved, media)}
-          {layer.type === 'price_field' &&
-            renderPriceFieldLayer(layer, resolved)}
           {layer.type === 'price_badge' && renderPriceBadgeLayer(layer, resolved)}
           {layer.type === 'badge' && renderBadgeLayer(layer, media)}
         </div>

@@ -683,8 +683,6 @@ export function layerDisplayName(layer: TagLayer): string {
       return 'Image';
     case 'product_slot':
       return `Slot: ${layer.props.fieldKey}`;
-    case 'price_field':
-      return `Price (${layer.props.priceType})`;
     case 'price_badge':
       return layer.props.variant === 'promo' ? 'Price (promo)' : 'Price (list)';
     case 'badge':

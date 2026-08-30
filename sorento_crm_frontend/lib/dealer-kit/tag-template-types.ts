@@ -16,7 +16,6 @@ export type TagLayerType =
   | 'text'
   | 'shape'
   | 'product_slot'
-  | 'price_field'
   | 'price_badge'
   | 'badge'
   | 'group';
@@ -38,8 +37,6 @@ export type SlotBinding =
   | null;
 
 export type ShapeType = 'rect' | 'rounded_rect' | 'ellipse' | 'line';
-
-export type PriceDisplayType = 'list' | 'sell' | 'both';
 
 export type ImageFit = 'cover' | 'contain';
 
@@ -125,12 +122,6 @@ export interface ProductSlotLayerProps {
   fieldKey: string;
 }
 
-export interface PriceFieldLayerProps {
-  kind: 'price_field';
-  priceType: PriceDisplayType;
-  format: string;
-}
-
 export interface BadgeLayerProps {
   kind: 'badge';
   assetId: string;
@@ -171,7 +162,6 @@ export type TagLayerProps =
   | TextLayerProps
   | ShapeLayerProps
   | ProductSlotLayerProps
-  | PriceFieldLayerProps
   | PriceBadgeLayerProps
   | BadgeLayerProps
   | GroupLayerProps;
@@ -492,14 +482,6 @@ export function defaultProductSlotProps(): ProductSlotLayerProps {
   return {
     kind: 'product_slot',
     fieldKey: 'product_image',
-  };
-}
-
-export function defaultPriceFieldProps(): PriceFieldLayerProps {
-  return {
-    kind: 'price_field',
-    priceType: 'both',
-    format: 'RM #,##0',
   };
 }
 

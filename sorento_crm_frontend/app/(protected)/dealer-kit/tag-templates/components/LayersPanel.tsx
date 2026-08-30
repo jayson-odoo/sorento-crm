@@ -27,7 +27,6 @@ import {
   Unlock,
   Layers,
   Link2Off,
-  DollarSign,
 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import {
@@ -68,8 +67,6 @@ function layerIcon(type: TagLayerType) {
       return <Shapes className="size-3.5" />;
     case 'product_slot':
       return <RectangleHorizontal className="size-3.5" />;
-    case 'price_field':
-      return <DollarSign className="size-3.5" />;
     case 'price_badge':
       return <Banknote className="size-3.5" />;
     case 'badge':

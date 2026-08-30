@@ -39,7 +39,6 @@ import {
   defaultShapeProps,
   defaultImageProps,
   defaultProductSlotProps,
-  defaultPriceFieldProps,
   defaultPriceBadgeProps,
   defaultBadgeProps,
 } from '@/lib/dealer-kit/tag-template-types';
@@ -575,13 +574,6 @@ export function TagCanvasEditor({
     addLayer({
       ...makeBaseLayer('product_slot', 40, 30),
       props: defaultProductSlotProps(),
-    });
-  }, [addLayer, makeBaseLayer]);
-
-  const handleAddPriceField = useCallback(() => {
-    addLayer({
-      ...makeBaseLayer('price_field', 40, 15),
-      props: defaultPriceFieldProps(),
     });
   }, [addLayer, makeBaseLayer]);
 
@@ -1687,7 +1679,6 @@ export function TagCanvasEditor({
         onAddShape={handleAddShape}
         onAddImage={handleAddImage}
         onAddProductSlot={handleAddProductSlot}
-        onAddPriceField={handleAddPriceField}
         onAddPriceBadge={handleAddPriceBadge}
         onAddBadge={handleAddBadge}
         onAddProduct={() => setPicker({ kind: 'add-product' })}

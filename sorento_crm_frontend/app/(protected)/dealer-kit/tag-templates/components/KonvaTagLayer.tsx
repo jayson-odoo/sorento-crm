@@ -281,9 +281,6 @@ function LayerContent({
         </>
       );
 
-    case 'price_field':
-      return <PriceFieldContent w={w} h={h} priceType={props.priceType} scale={scale} />;
-
     case 'price_badge':
       return (
         <PriceBadgeContent
@@ -397,84 +394,6 @@ function ShapeContent({
         />
       );
   }
-}
-
-function PriceFieldContent({
-  w,
-  h,
-  priceType,
-}: {
-  w: number;
-  h: number;
-  priceType: string;
-  scale: number;
-}) {
-  const fontSize = Math.min(12, w / 8);
-
-  if (priceType === 'list') {
-    return (
-      <>
-        <Rect width={w} height={h} fill="transparent" stroke="#999" strokeWidth={0.5} dash={[2, 2]} />
-        <Text
-          width={w}
-          height={h}
-          text="RM 1,550"
-          align="center"
-          verticalAlign="middle"
-          fontSize={fontSize}
-          fill="#333"
-          fontStyle="bold"
-        />
-      </>
-    );
-  }
-
-  if (priceType === 'sell') {
-    return (
-      <>
-        <Rect width={w} height={h} fill="transparent" stroke="#999" strokeWidth={0.5} dash={[2, 2]} />
-        <Text
-          width={w}
-          height={h}
-          text="SP RM 999 NETT"
-          align="center"
-          verticalAlign="middle"
-          fontSize={fontSize}
-          fill="#b44d2e"
-          fontStyle="bold"
-        />
-      </>
-    );
-  }
-
-  // both
-  const halfH = h / 2;
-  return (
-    <>
-      <Rect width={w} height={h} fill="transparent" stroke="#999" strokeWidth={0.5} dash={[2, 2]} />
-      <Text
-        width={w}
-        height={halfH}
-        text="LP: RM 1,550"
-        align="center"
-        verticalAlign="middle"
-        fontSize={fontSize * 0.8}
-        fill="#999"
-        textDecoration="line-through"
-      />
-      <Text
-        y={halfH}
-        width={w}
-        height={halfH}
-        text="SP RM 999 NETT"
-        align="center"
-        verticalAlign="middle"
-        fontSize={fontSize}
-        fill="#b44d2e"
-        fontStyle="bold"
-      />
-    </>
-  );
 }
 
 // ---------------------------------------------------------------------------
