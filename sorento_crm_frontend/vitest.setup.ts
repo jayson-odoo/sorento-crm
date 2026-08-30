@@ -31,12 +31,20 @@ if (!globalThis.ResizeObserver) {
 // is under `sm` (to pin the identifier column) on every render. A test that never
 // mentions responsiveness would otherwise die in a passive effect. Defaults to
 // "no match", i.e. a desktop viewport; a test that cares overrides it.
+//
+// `prefers-reduced-motion` is the one exception: it defaults to MATCHING (S8-01).
+// Dialog/Sheet/Popover/DropdownMenu now open and close on a real JS spring
+// (motion/react's AnimatePresence), which - unlike the CSS `animate-in` classes
+// it replaced - genuinely ticks over wall-clock time even in jsdom. A suite that
+// never mentions motion would otherwise pay a spring's settle time on every
+// dialog it opens or closes; a test that specifically cares about the spring
+// overrides matchMedia locally (see lib/motion.test.ts).
 if (typeof window !== 'undefined' && !window.matchMedia) {
   Object.defineProperty(window, 'matchMedia', {
     writable: true,
     configurable: true,
     value: (query: string) => ({
-      matches: false,
+      matches: query.includes('prefers-reduced-motion'),
       media: query,
       onchange: null,
       addEventListener: () => {},

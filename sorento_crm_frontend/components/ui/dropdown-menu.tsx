@@ -4,9 +4,25 @@ import * as React from 'react';
 import { cn } from '@/lib/utils';
 import { Check, ChevronRight, Circle } from 'lucide-react';
 import { DropdownMenu as DropdownMenuPrimitive } from 'radix-ui';
+import { AnimatePresence, motion } from 'motion/react';
+import { surfaceTransition, surfaceVariants, useOpenState, useReducedMotion } from '@/lib/motion';
 
-function DropdownMenu({ ...props }: React.ComponentProps<typeof DropdownMenuPrimitive.Root>) {
-  return <DropdownMenuPrimitive.Root data-slot="dropdown-menu" {...props} />;
+// Mirrors the Root's open state so DropdownMenuContent can gate its own
+// <AnimatePresence> (S8-01) - see the identical DialogOpenContext in dialog.tsx.
+const DropdownMenuOpenContext = React.createContext(true);
+
+function DropdownMenu({
+  open: openProp,
+  defaultOpen = false,
+  onOpenChange,
+  ...props
+}: React.ComponentProps<typeof DropdownMenuPrimitive.Root>) {
+  const [open, setOpen] = useOpenState(openProp, defaultOpen, onOpenChange);
+  return (
+    <DropdownMenuOpenContext.Provider value={open}>
+      <DropdownMenuPrimitive.Root data-slot="dropdown-menu" open={open} onOpenChange={setOpen} {...props} />
+    </DropdownMenuOpenContext.Provider>
+  );
 }
 
 function DropdownMenuPortal({ ...props }: React.ComponentProps<typeof DropdownMenuPrimitive.Portal>) {
@@ -64,20 +80,40 @@ function DropdownMenuSubContent({
 function DropdownMenuContent({
   className,
   sideOffset = 4,
+  children,
   ...props
 }: React.ComponentProps<typeof DropdownMenuPrimitive.Content>) {
+  const open = React.useContext(DropdownMenuOpenContext);
+  const prefersReducedMotion = useReducedMotion();
+
+  // Same split as PopoverContent: `Content` keeps Radix Popper's own inline
+  // positioning transform untouched, and the spring animates an INNER div
+  // instead of `Content` itself (S8-01, S8-02).
   return (
-    <DropdownMenuPrimitive.Portal>
-      <DropdownMenuPrimitive.Content
-        data-slot="dropdown-menu-content"
-        sideOffset={sideOffset}
-        className={cn(
-          'space-y-0.5 z-50 min-w-[8rem] overflow-hidden rounded-md border border-border bg-popover p-2 text-popover-foreground shadow-md shadow-black/5 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2',
-          className,
-        )}
-        {...props}
-      />
-    </DropdownMenuPrimitive.Portal>
+    <AnimatePresence>
+      {open && (
+        <DropdownMenuPrimitive.Portal forceMount>
+          <DropdownMenuPrimitive.Content
+            forceMount
+            data-slot="dropdown-menu-content"
+            sideOffset={sideOffset}
+            className="z-50 origin-(--radix-popper-content-transform-origin)"
+            {...props}
+          >
+            <motion.div
+              className={cn(
+                'space-y-0.5 min-w-[8rem] overflow-hidden rounded-md border border-border bg-popover p-2 text-popover-foreground shadow-md shadow-black/5',
+                className,
+              )}
+              {...surfaceVariants(prefersReducedMotion)}
+              transition={surfaceTransition(prefersReducedMotion)}
+            >
+              {children}
+            </motion.div>
+          </DropdownMenuPrimitive.Content>
+        </DropdownMenuPrimitive.Portal>
+      )}
+    </AnimatePresence>
   );
 }
 

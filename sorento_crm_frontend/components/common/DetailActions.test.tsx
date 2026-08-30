@@ -56,6 +56,20 @@ function menuItemLabels(): string[] {
     .map((item) => (item.textContent || '').trim());
 }
 
+/**
+ * A menu's items and separators, in document order.
+ *
+ * NOT `Array.from(menu.children)` - the menu's own scale/opacity spring
+ * (S8-01) animates an inner div rather than the `[role="menu"]` element
+ * itself (so it never fights Radix Popper's own positioning transform on that
+ * same node, apple-alignment S8), which makes every row a grandchild now
+ * rather than a direct child. `querySelectorAll` still returns them in
+ * document order regardless of nesting depth.
+ */
+function menuRows(menu: HTMLElement): HTMLElement[] {
+  return Array.from(menu.querySelectorAll<HTMLElement>('[role="menuitem"], [role="separator"]'));
+}
+
 beforeEach(() => {
   cleanup();
   impersonate.mockReset();
@@ -104,7 +118,7 @@ describe('DetailActions', () => {
 
     // The separator sits between the last secondary item and the destructive one.
     const menu = destructive.closest('[role="menu"]') as HTMLElement;
-    const rows = Array.from(menu.children);
+    const rows = menuRows(menu);
     const separatorIndex = rows.findIndex(
       (el) => el.getAttribute('role') === 'separator',
     );
@@ -166,8 +180,8 @@ describe('DetailActionsMenu, children mode', () => {
       'Delete',
     ]);
 
-    const menu = screen.getByRole('menu');
-    const rows = Array.from(menu.children);
+    const menu = screen.getByRole('menu') as HTMLElement;
+    const rows = menuRows(menu);
     const separators = rows.filter((el) => el.getAttribute('role') === 'separator');
     expect(separators).toHaveLength(1);
     expect(rows.indexOf(separators[0])).toBe(
@@ -190,7 +204,7 @@ describe('DetailActionsMenu, children mode', () => {
     openMenu(screen.getByRole('button', { name: 'Actions' }));
 
     expect(
-      Array.from(screen.getByRole('menu').children).filter(
+      menuRows(screen.getByRole('menu') as HTMLElement).filter(
         (el) => el.getAttribute('role') === 'separator',
       ),
     ).toHaveLength(0);

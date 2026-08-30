@@ -213,10 +213,17 @@ function openMenu(name: RegExp | string) {
 const openGear = () => openMenu('More actions');
 const openStart = () => openMenu(/^Start/);
 
-/** An open Radix menu `aria-hidden`s the rest of the page, so the other trigger is
- *  unreachable until this one is dismissed. */
-function closeMenu() {
+/**
+ * An open Radix menu `aria-hidden`s the rest of the page, so the other trigger is
+ * unreachable until this one is dismissed - and, like every Radix modal layer,
+ * stays mounted (and so keeps that `aria-hidden`) for as long as its own close
+ * animation runs (S8-01's shared spring actually ticks in jsdom, unlike the old
+ * CSS transition), so a caller has to await it rather than assume Escape is
+ * synchronous.
+ */
+async function closeMenu() {
   fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+  await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument());
 }
 
 function tickFirstRow() {
@@ -571,7 +578,7 @@ describe('ProformaInvoicesView - delete lives under the gear, never in a row', (
     await waitFor(() => expect(state.bulkDeleteInvoices).toHaveBeenCalledWith(['pi-1']));
   });
 
-  it('hides Delete from a caller who cannot upload, and keeps Convert', () => {
+  it('hides Delete from a caller who cannot upload, and keeps Convert', async () => {
     hasPermission.mockImplementation((slug: string) => slug !== 'scm.proforma_invoice.upload');
     state.data = { data: [invoiceRow()], total: 1 };
     renderView();
@@ -579,7 +586,7 @@ describe('ProformaInvoicesView - delete lives under the gear, never in a row', (
     tickFirstRow();
     openGear();
     expect(screen.queryByRole('menuitem', { name: /delete 1/i })).not.toBeInTheDocument();
-    closeMenu();
+    await closeMenu();
 
     openStart();
     expect(
