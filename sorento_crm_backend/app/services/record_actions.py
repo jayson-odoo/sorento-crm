@@ -33,6 +33,16 @@ from app.services.form_action_registry import FormAction, register
 
 logger = logging.getLogger(__name__)
 
+#: A record action authorised by OWNERSHIP rather than by a role grant.
+#:
+#: `permission` is what tells `/pending-actions` this is a record action at all, and for
+#: every other one it is the slug the immediate route enforces. A notification has no
+#: such slug: the bell is in the topbar for every signed-in user, the route checks
+#: nothing, and the handler is scoped to the requester, so the only row it can reach is
+#: the reader's own. Inventing a permission for it would mean a grant sweep across every
+#: role for a rule the query already enforces.
+OWN_RECORD = "@own"
+
 
 def _entity_id(payload: dict) -> str:
     return str(payload["entity_id"])
@@ -990,5 +1000,35 @@ register(
         window=WINDOW_REVERSIBLE,
         permission="scm.reorder.run",
         label="Forget supplier-code match",
+    )
+)
+
+
+def _delete_notification(db: Session, payload: dict):
+    from app.services.error_handler import handle_not_found
+    from app.services.notification_service import NotificationService
+
+    # Scoped to the requester, exactly as DELETE /notifications/{id} is: the row this
+    # can reach is the reader's own, which is what stands in for a permission slug.
+    notification_id = _entity_id(payload)
+    requested_by_id = payload.get("requested_by_id")
+    if not requested_by_id:
+        raise handle_not_found("Notification", notification_id)
+    if not NotificationService(db).delete(notification_id, str(requested_by_id)):
+        raise handle_not_found("Notification", notification_id)
+    return {"message": "Deleted"}
+
+
+register(
+    FormAction(
+        key="notification.delete",
+        entity_types=("notification",),
+        execute=_delete_notification,
+        # Reversible: the notification is a copy of something that happened elsewhere,
+        # and the reader can Clear the whole list beside this button anyway. Five
+        # seconds is the window this needs - enough that no click is final on its own.
+        window=WINDOW_REVERSIBLE,
+        permission=OWN_RECORD,
+        label="Delete notification",
     )
 )

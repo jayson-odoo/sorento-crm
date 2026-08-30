@@ -26,6 +26,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
 import {
   listNotifications,
   getUnreadCount,
@@ -34,7 +35,6 @@ import {
   markAllRead,
   archive,
   archiveAll,
-  deleteNotification,
   deleteNotificationsBulk,
   deleteAllNotifications,
 } from '@/services/notificationService';
@@ -132,19 +132,26 @@ export function NotificationsSheet({ trigger }: { trigger: ReactNode }) {
     });
   };
 
-  // No prompt, and no countdown either (D7, S6-09). This is the reader's OWN
-  // notification, one of a list they can already Clear beside this button with no
-  // prompt at all; a dialog or a ten-second window would be the heaviest gesture in
-  // the panel guarding its lightest action.
+  // No prompt (D7), and no one-click delete either: the row parks itself for five
+  // seconds and the toast holds the Cancel, like every other list surface. Five and
+  // not ten because a notification is a copy of something that happened elsewhere -
+  // deleting one destroys no record, and Clear sits beside it asking nothing at all.
+  const deletion = useDeferredRowAction({
+    actionKey: 'notification.delete',
+    entityType: 'notification',
+    successMessage: 'Notification deleted',
+    invalidateKeys: [['notifications']],
+    onCommitted: () => {
+      void refetchUnread();
+    },
+  });
+
   const handleDeleteOne = async (id: string) => {
-    try {
-      await deleteNotification(id);
-      toast.success('Deleted');
-      setSelectedIds((prev) => prev.filter((x) => x !== id));
-      invalidate();
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to delete');
-    }
+    deletion.run({
+      id,
+      subject: items.find((item) => item.id === id)?.title ?? 'this notification',
+    });
+    setSelectedIds((prev) => prev.filter((x) => x !== id));
   };
 
   const runDeleteSelected = async () => {

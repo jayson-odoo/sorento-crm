@@ -35,6 +35,7 @@ from fastapi.testclient import TestClient
 from app.main import app  # noqa: E402
 
 from app.models.access import MarketSegment, Team
+from app.models.notification import Notification
 from app.models.product import Brand, Product, ProductCategory, UnitOfMeasure
 from app.models.product_set import ProductSet, ProductSetMember
 from app.models.procurement import ProductSupplier, Supplier
@@ -249,7 +250,22 @@ def test_every_record_action_names_a_permission_the_registry_knows(key):
     action refuses every click - and it refuses it at the click, where the reader will
     read the refusal as the feature being broken rather than as a missing grant."""
     slug = RECORD_ACTIONS[key].permission
+    if slug == record_actions.OWN_RECORD:
+        # The one grant that is not a slug: the handler is scoped to the requester, so
+        # the row it can reach is the reader's own (see `record_actions.OWN_RECORD`).
+        return
     assert slug in KNOWN_SLUGS, f"{key} requires {slug!r}, which is in no role's reach"
+
+
+#: `.delete` keys that deliberately take the SHORT window, each with its reason. An
+#: allowlist rather than a softer rule, so the next delete registered still has to take
+#: the long window or come here and say why.
+SHORT_WINDOW_DELETES = {
+    # A notification is a copy of something that happened elsewhere, and deleting one
+    # destroys no record. Its own panel offers Clear beside it with no window at all,
+    # so ten seconds here would be the heaviest gesture guarding the lightest action.
+    "notification.delete",
+}
 
 
 @pytest.mark.parametrize("key", sorted(RECORD_ACTIONS))
@@ -258,7 +274,7 @@ def test_every_record_action_declares_a_window_its_verb_agrees_with(key):
     afford: the reader gets half the time to catch a mistake that cannot be undone."""
     action = RECORD_ACTIONS[key]
     assert action.window in {WINDOW_DESTRUCTIVE, WINDOW_REVERSIBLE}, key
-    if key.endswith(".delete"):
+    if key.endswith(".delete") and key not in SHORT_WINDOW_DELETES:
         assert window_class_for(action) == WINDOW_DESTRUCTIVE, key
 
 
@@ -293,7 +309,9 @@ def test_every_handler_resolves_its_service_import(key):
     entity_ids = {"product_spec_value.clear": f"{_uid()}:width"}
     payload = {
         "entity_id": entity_ids.get(key, _uid()),
-        "requested_by_id": None,
+        # The route always puts the actor here, and a handler scoped to the requester
+        # (a notification) refuses outright without one, before it reaches a service.
+        "requested_by_id": _uid(),
         # Whatever the handlers that need a second key read; unused by the rest.
         "promotion_id": _uid(),
         "integration_id": _uid(),
@@ -315,6 +333,10 @@ def test_every_handler_resolves_its_service_import(key):
 def test_each_action_is_refused_without_its_own_slug(client, key):
     c, db, _actor, denied = client
     action = RECORD_ACTIONS[key]
+    if action.permission == record_actions.OWN_RECORD:
+        # Nothing to withdraw: the grant is ownership, enforced by the handler's own
+        # query rather than by a slug (see `record_actions.OWN_RECORD`).
+        return
     denied.add(action.permission)
 
     response = _start(c, key, action.entity_types[0], _uid())
@@ -508,6 +530,40 @@ def test_a_singleton_setting_is_parked_against_its_constant(client):
     db.refresh(settings)
     assert settings.signin_background is None
     assert settings.signin_background_storage_provider is None
+
+
+def test_a_notification_is_deleted_only_for_the_reader_who_owns_it(client):
+    """The one action whose grant is OWNERSHIP, not a slug (`record_actions.OWN_RECORD`).
+
+    The bell is in the topbar for every signed-in user and its route checks no
+    permission, so what stops one reader clearing another's inbox is that the handler is
+    scoped to the requester. Parking is allowed either way - the id is not proof of
+    anything at the click - and the commit is where the wrong owner comes to nothing."""
+    c, db, actor, _denied = client
+    mine = Notification(
+        id=_uid(), user_id=actor["id"], type="import_job_finished", title=f"{MARKER} mine"
+    )
+    theirs = Notification(
+        id=_uid(), user_id=_uid(), type="import_job_finished", title=f"{MARKER} theirs"
+    )
+    db.add_all([mine, theirs])
+    db.commit()
+
+    parked_mine = _start(c, "notification.delete", "notification", mine.id)
+    assert parked_mine.status_code == 202, parked_mine.text
+    assert parked_mine.json()["window_seconds"] == 5
+    _commit_now(c, db, "notification", mine.id, parked_mine.json()["id"])
+
+    parked_theirs = _start(c, "notification.delete", "notification", theirs.id)
+    assert parked_theirs.status_code == 202, parked_theirs.text
+    body = _commit_now(
+        c, db, "notification", theirs.id, parked_theirs.json()["id"]
+    ).json()
+
+    db.expire_all()
+    assert db.query(Notification).filter(Notification.id == mine.id).first() is None
+    assert db.query(Notification).filter(Notification.id == theirs.id).first() is not None
+    assert body["last_outcome"]["status"] == "failed", body["last_outcome"]
 
 
 def test_cancel_inside_the_window_leaves_the_record_exactly_where_it_was(client):
