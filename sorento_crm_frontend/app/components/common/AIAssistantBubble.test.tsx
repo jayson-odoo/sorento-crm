@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 /**
  * UAC AC-N5(c): the global assistant launcher is a slim edge tab pinned to the
@@ -116,12 +116,15 @@ describe('AIAssistantBubble collapse to the side', () => {
     expect(collapseButton().getAttribute('aria-expanded')).toBe('true');
   });
 
-  it('collapses again from the panel control, returning the handle', () => {
+  it('collapses again from the panel control, returning the handle', async () => {
     render(<AIAssistantBubble />);
     fireEvent.click(handle());
     fireEvent.click(collapseButton());
 
-    expect(screen.queryByTestId('ai-assistant-panel')).toBeNull();
+    // The panel now materialises/dematerialises on the shared spring (S8-05),
+    // so it stays mounted for its exit animation rather than vanishing on the
+    // same tick the control is clicked.
+    await waitFor(() => expect(screen.queryByTestId('ai-assistant-panel')).toBeNull());
     expect(handle().getAttribute('aria-expanded')).toBe('false');
   });
 
