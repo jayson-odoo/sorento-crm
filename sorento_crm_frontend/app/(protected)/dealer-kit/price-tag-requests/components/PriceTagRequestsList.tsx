@@ -20,7 +20,6 @@ import {
 } from '@tanstack/react-table';
 import { ChevronRight, Search, UserPlus, X } from 'lucide-react';
 import { toast } from 'sonner';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
@@ -156,8 +155,9 @@ export default function PriceTagRequestsList() {
         ),
         size: 200,
         cell: ({ row }) => (
-          <span className="truncate" title={row.original.debtor_name}>
-            {row.original.debtor_name}
+          // A portal draft has no dealer yet (D48a).
+          <span className="truncate" title={row.original.debtor_name ?? '-'}>
+            {row.original.debtor_name ?? '-'}
           </span>
         ),
         meta: {

@@ -5,6 +5,7 @@
  * `/api/v1/public/portal/lookups` via `portalFetch`.
  */
 
+import { extractApiError } from '@/lib/api-client';
 import {
   portalFetch,
   unwrap,
@@ -39,10 +40,12 @@ export interface PriceTagRequestSummary {
   id: string;
   doc_number: string;
   debtor_code: string | null;
-  debtor_name: string;
+  /** Null on a draft: Save Draft validates nothing (D48a). */
+  debtor_name: string | null;
   promotion_id: string | null;
   promotion_name: string | null;
-  needed_by_date: string;
+  /** Null on a draft, for the same reason as `debtor_name`. */
+  needed_by_date: string | null;
   notes: string | null;
   status: string;
   line_count: number;
@@ -55,6 +58,10 @@ export interface PriceTagRequestDetail extends PriceTagRequestSummary {
   contact_id: string;
   lines: PriceTagRequestLine[];
   attachments: PriceTagAttachment[];
+  /** Set while the request is a draft. This, not the status, is what says so:
+   *  a draft's status is `new`, the same status a submitted request keeps until
+   *  marketing claims it. */
+  portal_draft_at?: string | null;
 }
 
 export interface PriceTagAttachment {
@@ -206,6 +213,51 @@ export function checkSetGuard(productId: string): SetGuardResult {
 }
 
 // ---------------------------------------------------------------------------
+// Refusals that name a field
+// ---------------------------------------------------------------------------
+
+/**
+ * A refusal the form can put where the problem is (D48b).
+ *
+ * The server answers `{message, detail, code}` and `detail` on these routes is a
+ * comma-separated list of field keys: `debtor_name`, `needed_by_date`, `lines`,
+ * `line:<index>`. `unwrap` keeps only the message, which is why a set guard
+ * refusal used to arrive as a toast with no way back to the row it was about.
+ */
+export class PriceTagRequestError extends Error {
+  readonly code: string | null;
+  readonly fields: string[];
+
+  constructor(message: string, code: string | null, fields: string[]) {
+    super(message);
+    this.name = 'PriceTagRequestError';
+    this.code = code;
+    this.fields = fields;
+  }
+}
+
+async function unwrapNamingFields<T>(res: Response, fallback: string): Promise<T> {
+  if (res.ok) return (await res.json()) as T;
+  // The clone is what lets `extractApiError` own the message (one implementation
+  // of that, per PRINCIPLES) while this still reads the code and the field list
+  // beside it. A body can only be consumed once.
+  const spare = res.clone();
+  const message = await extractApiError(res, fallback);
+  let body: { code?: unknown; detail?: unknown } | null = null;
+  try {
+    body = (await spare.json()) as { code?: unknown; detail?: unknown };
+  } catch {
+    body = null;
+  }
+  const code = typeof body?.code === 'string' ? body.code : null;
+  const fields =
+    typeof body?.detail === 'string' && body.detail
+      ? body.detail.split(',').map((f) => f.trim()).filter(Boolean)
+      : [];
+  throw new PriceTagRequestError(message, code, fields);
+}
+
+// ---------------------------------------------------------------------------
 // CRUD
 // ---------------------------------------------------------------------------
 
@@ -242,7 +294,9 @@ export async function listRequestsAsSummaries(
     return {
       id: r.id,
       kind: 'price_tag_request' as const,
-      title: r.debtor_name,
+      // A draft may have no dealer yet, and a card with a blank first line reads
+      // as a broken row rather than an unfinished one.
+      title: r.debtor_name || r.doc_number,
       document_number: r.doc_number,
       reference: null,
       status: r.status,
@@ -263,11 +317,16 @@ export async function getRequest(id: string): Promise<PriceTagRequestDetail | nu
   return unwrap<PriceTagRequestDetail>(res, 'Failed to load request');
 }
 
+/**
+ * What Save Draft posts, which is whatever the salesperson has filled in so far
+ * (D48a). Everything is nullable because the request row is: completeness is
+ * checked on submit, where the server can name what is missing.
+ */
 export interface CreatePriceTagRequestInput {
-  debtor_code: string;
-  debtor_name: string;
+  debtor_code: string | null;
+  debtor_name: string | null;
   promotion_id: string | null;
-  needed_by_date: string;
+  needed_by_date: string | null;
   notes: string | null;
   lines: Omit<PriceTagRequestLine, 'id' | 'name' | 'code' | 'sort_order'>[];
 }
@@ -280,7 +339,7 @@ export async function createRequest(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
   });
-  return unwrap<PriceTagRequestDetail>(res, 'Failed to create request');
+  return unwrapNamingFields<PriceTagRequestDetail>(res, 'Failed to create request');
 }
 
 export async function updateRequest(
@@ -295,7 +354,7 @@ export async function updateRequest(
       body: JSON.stringify(data),
     },
   );
-  return unwrap<PriceTagRequestDetail>(res, 'Failed to update request');
+  return unwrapNamingFields<PriceTagRequestDetail>(res, 'Failed to update request');
 }
 
 export async function submitRequest(id: string): Promise<{ status: string }> {
@@ -303,7 +362,16 @@ export async function submitRequest(id: string): Promise<{ status: string }> {
     `${BASE}/${encodeURIComponent(id)}/submit`,
     { method: 'POST' },
   );
-  return unwrap<{ status: string }>(res, 'Failed to submit request');
+  return unwrapNamingFields<{ status: string }>(res, 'Failed to submit request');
+}
+
+/** Hard-delete a draft. The server refuses once it has been submitted. */
+export async function deleteRequest(id: string): Promise<void> {
+  const res = await portalFetch(`${BASE}/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
+  if (res.ok) return;
+  throw new Error(await extractApiError(res, 'Failed to delete draft'));
 }
 
 export async function approveRequest(id: string): Promise<{ status: string }> {

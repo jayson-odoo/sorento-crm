@@ -61,6 +61,8 @@ import {
   lookupTagItems,
   getRequest,
   createRequest,
+  updateRequest,
+  deleteRequest,
   submitRequest,
   approveRequest,
   requestChanges,
@@ -135,7 +137,45 @@ function lineToDraft(line: PriceTagRequestLine): DraftLine {
 }
 
 // ---------------------------------------------------------------------------
+// What Submit says when something is missing (D48b)
+//
+// One sentence per problem, written where the problem is. The wording names the
+// next action rather than the rule, because the salesperson is mid-form, not
+// reading a spec.
+// ---------------------------------------------------------------------------
+
+const MISSING_DEBTOR = 'Select the dealer these tags are for.';
+const MISSING_DEADLINE = 'Pick the date you need them by.';
+const MISSING_LINES = 'Add at least one line.';
+const EMPTY_LINE = 'Pick a set or a product for this line.';
+
+/**
+ * The field keys a refusal named, if it named any.
+ *
+ * Duck-typed rather than `instanceof PriceTagRequestError`: the error crosses a
+ * module boundary and the only thing that matters is whether it carries the
+ * list.
+ */
+function errorFields(e: unknown): string[] {
+  const fields = (e as { fields?: unknown } | null)?.fields;
+  if (!Array.isArray(fields)) return [];
+  return fields.filter((f): f is string => typeof f === 'string');
+}
+
+/** Bring the first complaint into view, after the render that drew it. */
+function scrollToFirstProblem(): void {
+  setTimeout(() => {
+    const node = document.querySelector('[data-error-anchor]');
+    node?.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+  }, 50);
+}
+
+// ---------------------------------------------------------------------------
 // Minimum deadline: today + 1 business day
+//
+// The `min` of the date input only. The field itself starts EMPTY: a deadline
+// nobody chose is not an answer, and since D48a a draft is allowed to have none.
+// Submit asks for it by name.
 // ---------------------------------------------------------------------------
 
 function nextBusinessDay(): string {
@@ -177,7 +217,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   // ---- Form state ----
   const [debtorCode, setDebtorCode] = useState('');
   const [promotionId, setPromotionId] = useState<string>('');
-  const [neededByDate, setNeededByDate] = useState(nextBusinessDay());
+  const [neededByDate, setNeededByDate] = useState('');
   const [notes, setNotes] = useState('');
   const [lines, setLines] = useState<DraftLine[]>([]);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
@@ -186,7 +226,26 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   const [changesNote, setChangesNote] = useState('');
   const [showChangesDialog, setShowChangesDialog] = useState(false);
 
-  const isEditable = isNew || request?.status === 'draft';
+  // ---- Delete draft ----
+  const [deleting, setDeleting] = useState(false);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+
+  // ---- What Submit found wrong, where it found it (D48b) ----
+  // Set by a Submit click and by a server refusal that named a field; cleared
+  // field by field as each one is answered.
+  const [fieldErrors, setFieldErrors] = useState<{
+    debtor?: string;
+    neededBy?: string;
+    lines?: string;
+  }>({});
+  const [serverMessage, setServerMessage] = useState<string | null>(null);
+
+  // A draft is `portal_draft_at`, not a status: a draft's status is `new`, the
+  // same status a submitted request keeps until marketing claims it. Checking
+  // the status for 'draft' matched nothing, so re-opening a saved draft showed
+  // the read-only page instead of the form.
+  const isDraft = Boolean(request?.portal_draft_at);
+  const isEditable = isNew || isDraft;
   const isProofReady = request?.status === 'proof_ready';
 
   // ---- Load lookups ----
@@ -223,7 +282,8 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         setRequest(data);
         setDebtorCode(data.debtor_code ?? '');
         setPromotionId(data.promotion_id ?? '');
-        setNeededByDate(data.needed_by_date);
+        // Both are nullable on a draft (D48a): an empty input, not a crash.
+        setNeededByDate(data.needed_by_date ?? '');
         setNotes(data.notes ?? '');
         setLines(data.lines.map(lineToDraft));
       })
@@ -364,47 +424,111 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     [updateLine],
   );
 
-  // ---- Validation ----
-  const hasGuardErrors = lines.some((l) => l.guard_error);
-  const hasEmptyLines = lines.some(
-    (l) =>
-      (l.line_type === 'product' && !l.product_id) ||
-      (l.line_type === 'product_set' && !l.product_set_id),
+  // ---- What there is to save, and what Submit still needs (D48) ----
+
+  /** Save Draft asks for one thing only: that there is something to save. */
+  const hasSomethingToSave =
+    !!debtorCode ||
+    !!promotionId ||
+    !!neededByDate ||
+    notes.trim().length > 0 ||
+    lines.length > 0;
+
+  const payloadLines = () =>
+    lines.map((l) => ({
+      line_type: l.line_type,
+      product_id: l.product_id,
+      product_set_id: l.product_set_id,
+      show_promo_price: l.show_promo_price,
+      quantity: l.quantity,
+      alternatives: l.alternatives,
+      included_accessories: l.included_accessories || null,
+      product_class: null,
+    }));
+
+  /** The keys the form and the server both use to place a message. A server
+   *  refusal answers with the same vocabulary (`line:<index>` for a row), so
+   *  one mapping serves both. */
+  const applyFieldErrors = useCallback(
+    (keys: string[], rowMessage: string) => {
+      const next: { debtor?: string; neededBy?: string; lines?: string } = {};
+      const rows = new Set<number>();
+      for (const key of keys) {
+        if (key === 'debtor_name' || key === 'debtor_code') {
+          next.debtor = MISSING_DEBTOR;
+        } else if (key === 'needed_by_date') {
+          next.neededBy = MISSING_DEADLINE;
+        } else if (key === 'lines') {
+          next.lines = MISSING_LINES;
+        } else if (key.startsWith('line:')) {
+          const index = Number(key.slice('line:'.length));
+          if (Number.isInteger(index)) rows.add(index);
+        }
+      }
+      setFieldErrors(next);
+      if (rows.size > 0) {
+        setLines((prev) =>
+          prev.map((l, index) => ({
+            ...l,
+            guard_error: rows.has(index) ? rowMessage : null,
+          })),
+        );
+      }
+      return Object.keys(next).length + rows.size;
+    },
+    [],
   );
 
-  const canSubmit =
-    !!debtorCode &&
-    !!neededByDate &&
-    lines.length > 0 &&
-    !hasGuardErrors &&
-    !hasEmptyLines;
+  /** Everything Submit can see wrong from here, reported at once. */
+  const collectProblems = useCallback(() => {
+    const next: { debtor?: string; neededBy?: string; lines?: string } = {};
+    if (!debtorCode) next.debtor = MISSING_DEBTOR;
+    if (!neededByDate) next.neededBy = MISSING_DEADLINE;
+    if (lines.length === 0) next.lines = MISSING_LINES;
+    const emptyRows = lines
+      .map((l, index) => (l.product_id || l.product_set_id ? -1 : index))
+      .filter((index) => index >= 0);
+    return { next, emptyRows };
+  }, [debtorCode, neededByDate, lines]);
 
-  // ---- Save draft ----
+  /** How many things the form is currently complaining about, for the one line
+   *  above the actions. */
+  const problemCount =
+    Object.keys(fieldErrors).length + lines.filter((l) => l.guard_error).length;
+
+  // Answering a field clears its message; leaving it red after it is filled in
+  // is the same failure as not showing one at all.
+  useEffect(() => {
+    setFieldErrors((prev) => {
+      if (!prev.debtor && !prev.neededBy && !prev.lines) return prev;
+      const next = { ...prev };
+      if (next.debtor && debtorCode) delete next.debtor;
+      if (next.neededBy && neededByDate) delete next.neededBy;
+      if (next.lines && lines.length > 0) delete next.lines;
+      return next;
+    });
+  }, [debtorCode, neededByDate, lines.length]);
+
+  // ---- Save draft (D48a: validates nothing) ----
   const handleSaveDraft = useCallback(async () => {
-    if (!debtorCode) {
-      toast.error('Please select a debtor');
-      return;
-    }
     setSaving(true);
     try {
       const debtor = debtors.find((d) => d.code === debtorCode);
-      await createRequest({
-        debtor_code: debtorCode,
-        debtor_name: debtor?.name ?? debtorCode,
+      const payload = {
+        debtor_code: debtorCode || null,
+        debtor_name: debtorCode ? (debtor?.name ?? debtorCode) : null,
         promotion_id: promotionId || null,
-        needed_by_date: neededByDate,
+        needed_by_date: neededByDate || null,
         notes: notes || null,
-        lines: lines.map((l) => ({
-          line_type: l.line_type,
-          product_id: l.product_id,
-          product_set_id: l.product_set_id,
-          show_promo_price: l.show_promo_price,
-          quantity: l.quantity,
-          alternatives: l.alternatives,
-          included_accessories: l.included_accessories || null,
-          product_class: null,
-        })),
-      });
+        lines: payloadLines(),
+      };
+      // An open draft is UPDATED, not created again: saving twice used to leave
+      // the salesperson with two rows and no way to tell them apart.
+      if (requestId) {
+        await updateRequest(requestId, payload);
+      } else {
+        await createRequest(payload);
+      }
       toast.success('Draft saved');
       router.push(`${portalBase(slug)}?type=price_tag_request`);
     } catch (e) {
@@ -415,12 +539,45 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     } finally {
       setSaving(false);
     }
-  }, [debtorCode, debtors, promotionId, neededByDate, notes, lines, router, slug]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requestId, debtorCode, debtors, promotionId, neededByDate, notes, lines, router, slug]);
 
-  // ---- Submit ----
+  // ---- Delete draft ----
+  const handleDeleteDraft = useCallback(async () => {
+    if (!requestId) return;
+    setDeleting(true);
+    try {
+      await deleteRequest(requestId);
+      toast.success('Draft deleted');
+      router.push(`${portalBase(slug)}?type=price_tag_request`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to delete draft');
+    } finally {
+      setDeleting(false);
+      setShowDeleteDialog(false);
+    }
+  }, [requestId, router, slug]);
+
+  // ---- Submit (D48b: the button is live, the click explains itself) ----
   const handleSubmit = useCallback(async () => {
-    if (!canSubmit) return;
+    const { next, emptyRows } = collectProblems();
+    if (Object.keys(next).length > 0 || emptyRows.length > 0) {
+      setServerMessage(null);
+      setFieldErrors(next);
+      setLines((prev) =>
+        prev.map((l, index) => ({
+          ...l,
+          guard_error: emptyRows.includes(index) ? EMPTY_LINE : null,
+        })),
+      );
+      scrollToFirstProblem();
+      return;
+    }
+
     setSubmitting(true);
+    setServerMessage(null);
+    setFieldErrors({});
+    setLines((prev) => prev.map((l) => ({ ...l, guard_error: null })));
     try {
       const debtor = debtors.find((d) => d.code === debtorCode);
       const created = await createRequest({
@@ -429,26 +586,32 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         promotion_id: promotionId || null,
         needed_by_date: neededByDate,
         notes: notes || null,
-        lines: lines.map((l) => ({
-          line_type: l.line_type,
-          product_id: l.product_id,
-          product_set_id: l.product_set_id,
-          show_promo_price: l.show_promo_price,
-          quantity: l.quantity,
-          alternatives: l.alternatives,
-          included_accessories: l.included_accessories || null,
-          product_class: null,
-        })),
+        lines: payloadLines(),
       });
       await submitRequest(created.id);
       toast.success('Request submitted');
       router.push(`${portalBase(slug)}?type=price_tag_request`);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to submit request');
+      // A refusal that named a field or a row goes THERE, once: the summary then
+      // says how many things need attention and nothing more, because the same
+      // sentence in two places reads as two problems. A refusal that named
+      // nothing we recognise has nowhere to go but the summary and the toast,
+      // which is where every other failure lands.
+      const message = e instanceof Error ? e.message : 'Failed to submit request';
+      const named = errorFields(e);
+      const placed = named.length > 0 ? applyFieldErrors(named, message) : 0;
+      if (placed > 0) {
+        setServerMessage(null);
+        scrollToFirstProblem();
+      } else {
+        setServerMessage(message);
+        toast.error(message);
+      }
     } finally {
       setSubmitting(false);
     }
-  }, [canSubmit, debtorCode, debtors, promotionId, neededByDate, notes, lines, router, slug]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [collectProblems, applyFieldErrors, debtorCode, debtors, promotionId, neededByDate, notes, lines, router, slug]);
 
   // ---- Approve proof ----
   const handleApprove = useCallback(async () => {
@@ -542,7 +705,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
 
         {/* PO cross-check Phase 1: side-by-side */}
         <POCrossCheckViewer
-          attachments={request.attachments}
+          attachments={request.attachments ?? []}
           lines={request.lines.map((l) => ({
             id: l.id,
             code: l.code,
@@ -627,7 +790,10 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       </h1>
 
       {/* Debtor */}
-      <div className="space-y-1.5">
+      <div
+        className="space-y-1.5"
+        {...(fieldErrors.debtor ? { 'data-error-anchor': 'debtor' } : {})}
+      >
         <Label htmlFor="debtor">Debtor *</Label>
         {debtorsLoaded && debtorOptions.length === 0 ? (
           <p
@@ -646,6 +812,9 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
             placeholder="Select a dealer..."
           />
         )}
+        {fieldErrors.debtor && (
+          <p className="text-xs text-destructive">{fieldErrors.debtor}</p>
+        )}
       </div>
 
       {/* Promotion */}
@@ -662,7 +831,10 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       </div>
 
       {/* Needed by date */}
-      <div className="space-y-1.5">
+      <div
+        className="space-y-1.5"
+        {...(fieldErrors.neededBy ? { 'data-error-anchor': 'needed_by' } : {})}
+      >
         <Label htmlFor="needed_by_date">Needed by *</Label>
         <Input
           id="needed_by_date"
@@ -671,6 +843,9 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           onChange={(e) => setNeededByDate(e.target.value)}
           min={nextBusinessDay()}
         />
+        {fieldErrors.neededBy && (
+          <p className="text-xs text-destructive">{fieldErrors.neededBy}</p>
+        )}
       </div>
 
       {/* Notes */}
@@ -740,6 +915,14 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
               </table>
             </div>
           )}
+          {fieldErrors.lines && (
+            <p
+              className="text-xs text-destructive"
+              data-error-anchor="lines"
+            >
+              {fieldErrors.lines}
+            </p>
+          )}
           <Button size="sm" variant="outline" onClick={addLine}>
             <Plus className="size-3.5 mr-1" /> Add line
           </Button>
@@ -800,12 +983,12 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
               ))}
             </div>
           )}
-          {request?.attachments && request.attachments.length > 0 && (
+          {(request?.attachments?.length ?? 0) > 0 && (
             <div className="mt-3 space-y-1">
               <p className="text-xs text-muted-foreground font-medium">
                 Existing attachments
               </p>
-              {request.attachments.map((att) => (
+              {(request?.attachments ?? []).map((att) => (
                 <div
                   key={att.id}
                   className="flex items-center text-sm px-2 py-1 bg-muted rounded"
@@ -821,24 +1004,72 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         </CardContent>
       </Card>
 
+      {/* One line saying how much is outstanding, above the button that found it */}
+      {(problemCount > 0 || serverMessage) && (
+        <div
+          className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+          data-testid="submit-problem-summary"
+        >
+          {problemCount > 0 && (
+            <p>
+              {problemCount} thing{problemCount === 1 ? '' : 's'} need
+              {problemCount === 1 ? 's' : ''} attention.
+            </p>
+          )}
+          {serverMessage && <p className="mt-0.5">{serverMessage}</p>}
+        </div>
+      )}
+
       {/* Actions */}
       <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+        {/* Delete sits apart from Save and Submit, and asks first. */}
+        {!isNew && isDraft && (
+          <Button
+            variant="outline"
+            className="text-destructive sm:mr-auto"
+            onClick={() => setShowDeleteDialog(true)}
+            disabled={saving || submitting || deleting}
+          >
+            <Trash2 className="size-4 mr-1" />
+            Delete Draft
+          </Button>
+        )}
         <Button
           variant="outline"
           onClick={handleSaveDraft}
-          disabled={saving || submitting || !debtorCode}
+          disabled={saving || submitting || !hasSomethingToSave}
         >
           {saving && <Loader2 className="size-4 mr-1 animate-spin" />}
           Save Draft
         </Button>
-        <Button
-          onClick={handleSubmit}
-          disabled={submitting || saving || !canSubmit}
-        >
+        {/* Enabled whenever the form is idle (D48b): a disabled button with no
+            explanation is what sent the salesperson looking for the reason. */}
+        <Button onClick={handleSubmit} disabled={submitting || saving}>
           {submitting && <Loader2 className="size-4 mr-1 animate-spin" />}
           Submit
         </Button>
       </div>
+
+      <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this draft?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This cannot be undone. The draft and its lines are removed.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeleteDraft}
+              disabled={deleting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deleting ? 'Deleting...' : 'Delete'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
@@ -1174,7 +1405,8 @@ function RequestDetailView({
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
             <div>
               <span className="text-muted-foreground">Debtor</span>
-              <p className="font-medium">{request.debtor_name}</p>
+              {/* A draft carries neither until it is finished (D48a). */}
+              <p className="font-medium">{request.debtor_name ?? '-'}</p>
             </div>
             {request.promotion_name && (
               <div>
@@ -1184,7 +1416,7 @@ function RequestDetailView({
             )}
             <div>
               <span className="text-muted-foreground">Needed by</span>
-              <p className="font-medium">{request.needed_by_date}</p>
+              <p className="font-medium">{request.needed_by_date ?? '-'}</p>
             </div>
             <div>
               <span className="text-muted-foreground">Created</span>
@@ -1254,13 +1486,13 @@ function RequestDetailView({
       </Card>
 
       {/* Attachments */}
-      {request.attachments.length > 0 && (
+      {(request.attachments?.length ?? 0) > 0 && (
         <Card>
           <CardHeader className="py-3 px-4">
             <CardTitle className="text-base">PO Attachments</CardTitle>
           </CardHeader>
           <CardContent className="px-4 pb-4 space-y-1">
-            {request.attachments.map((att) => (
+            {(request.attachments ?? []).map((att) => (
               <div
                 key={att.id}
                 className="flex items-center text-sm px-2 py-1.5 bg-muted rounded"

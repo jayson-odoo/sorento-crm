@@ -10,7 +10,6 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, FileText, Plus } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -116,17 +115,19 @@ export function PriceTagRequestList({ slug }: Props) {
                       {priceTagStatusLabel(req.status)}
                     </span>
                   </div>
+                  {/* A draft may have no dealer yet (D48a), so the line says so
+                      rather than sitting blank. */}
                   <p
                     className="text-sm text-muted-foreground mt-0.5 truncate"
-                    title={req.debtor_name}
+                    title={req.debtor_name ?? 'No dealer yet'}
                   >
-                    {req.debtor_name}
+                    {req.debtor_name ?? 'No dealer yet'}
                   </p>
                 </div>
               </div>
 
               <div className="flex flex-wrap gap-x-4 gap-y-0.5 mt-2 text-xs text-muted-foreground">
-                <span>Deadline: {req.needed_by_date}</span>
+                <span>Deadline: {req.needed_by_date ?? 'Not set'}</span>
                 <span>
                   {req.line_count} {req.line_count === 1 ? 'line' : 'lines'}
                 </span>

@@ -156,6 +156,10 @@ describe('PriceTagRequestForm - one lines table, one item dropdown (D47)', () =>
     fireEvent.change(screen.getByLabelText('Debtor'), {
       target: { value: 'ZZTD01' },
     });
+    // The deadline starts empty since D48a, and Submit asks for it by name.
+    fireEvent.change(screen.getByLabelText(/Needed by/), {
+      target: { value: '2026-09-30' },
+    });
 
     await addLine();
     await screen.findByText('ZZT Kitchen Sink');
@@ -184,6 +188,10 @@ describe('PriceTagRequestForm - one lines table, one item dropdown (D47)', () =>
     await screen.findByLabelText('Debtor');
     fireEvent.change(screen.getByLabelText('Debtor'), {
       target: { value: 'ZZTD01' },
+    });
+    // The deadline starts empty since D48a, and Submit asks for it by name.
+    fireEvent.change(screen.getByLabelText(/Needed by/), {
+      target: { value: '2026-09-30' },
     });
 
     await addLine();

@@ -46,10 +46,11 @@ export interface PriceTagRequestSummary {
   id: string;
   doc_number: string;
   debtor_code: string | null;
-  debtor_name: string;
+  /** Null while the portal request is still a draft (D48a). */
+  debtor_name: string | null;
   promotion_id: string | null;
   promotion_name: string | null;
-  needed_by_date: string;
+  needed_by_date: string | null;
   notes: string | null;
   status: string;
   line_count: number;
@@ -62,7 +63,7 @@ export interface PriceTagRequestSummary {
 export interface PriceTagRequestDetail extends PriceTagRequestSummary {
   contact_id: string;
   lines: PriceTagRequestLine[];
-  attachments: PriceTagAttachment[];
+  attachments?: PriceTagAttachment[];
 }
 
 // ---------------------------------------------------------------------------

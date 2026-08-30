@@ -202,7 +202,8 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 text-sm">
             <div>
               <span className="text-muted-foreground block">Debtor</span>
-              <p className="font-medium">{request.debtor_name}</p>
+              {/* A portal draft may carry neither (D48a). */}
+              <p className="font-medium">{request.debtor_name ?? '-'}</p>
               {request.debtor_code && (
                 <p className="text-xs text-muted-foreground">
                   {request.debtor_code}
@@ -222,7 +223,9 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
             <div>
               <span className="text-muted-foreground block">Deadline</span>
               <p className="font-medium">
-                {formatDate(new Date(request.needed_by_date))}
+                {request.needed_by_date
+                  ? formatDate(new Date(request.needed_by_date))
+                  : '-'}
               </p>
             </div>
             <div>
@@ -418,13 +421,13 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
           <CardTitle className="text-base">PO Attachments</CardTitle>
         </CardHeader>
         <CardContent className="px-4 pb-4">
-          {request.attachments.length === 0 ? (
+          {(request.attachments?.length ?? 0) === 0 ? (
             <p className="text-sm text-muted-foreground text-center py-4">
               No PO attachments uploaded.
             </p>
           ) : (
             <div className="space-y-1">
-              {request.attachments.map((att) => (
+              {(request.attachments ?? []).map((att) => (
                 <div
                   key={att.id}
                   className="flex items-center justify-between text-sm px-2 py-1.5 bg-muted rounded"
