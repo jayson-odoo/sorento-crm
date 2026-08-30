@@ -13,7 +13,6 @@ import { CardContent } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useContactAccessAgents, useDeleteContactAgentAccess } from '../hooks/useAccessAgents';
 import { formatDate } from '@/lib/helpers';
@@ -164,10 +163,7 @@ export default function ContactAccessAgentsTable({ accessAgentId }: ContactAcces
               </div>
             }
           >
-            <ScrollArea>
-              <DataGridTable />
-              <ScrollBar orientation="horizontal" />
-            </ScrollArea>
+            <DataGridTable />
           </DataGrid>
         )}
       </CardContent>

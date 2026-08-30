@@ -280,7 +280,7 @@ export function PackingListUploadDialog({
               title={!supplierId ? 'Choose a supplier first' : undefined}
             >
               {upload.applying ? <LoaderCircle className="size-4 animate-spin" /> : null}
-              Confirm
+              Import packing list
             </Button>
           ) : null}
         </DialogFooter>

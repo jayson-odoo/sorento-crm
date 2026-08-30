@@ -338,9 +338,9 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
       {/* Header */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="space-y-1 min-w-0">
-          <h1 className="text-2xl font-bold break-words">
+          <h2 className="text-2xl font-bold break-words">
             {complaint.complaint_number || 'None'}
-          </h1>
+          </h2>
           <p className="text-sm text-muted-foreground">
             Complaint Date:{' '}
             {complaint.complaint_date

@@ -112,8 +112,15 @@ function DataGridTableBase({ children }: { children: ReactNode }) {
 
   // What stops a `table-fixed w-full` grid from squeezing six columns into a
   // phone: the table is at least as wide as its columns want to be, and the
-  // scroller (data-grid-scroller, or the list's own ScrollArea) carries the
-  // overflow. Where the columns already fit, `w-full` still wins.
+  // scroller (data-grid-scroller) carries the overflow. Where the columns
+  // already fit, `w-full` still wins.
+  //
+  // The grid has to be the ONLY scrollport on that axis. A list that wrapped it
+  // in a Radix `ScrollArea` gave the table a `display: table` ancestor, which
+  // shrink-fits: `data-grid-scroller` then measured scrollWidth === clientWidth,
+  // never overflowed, and still swallowed the wheel gesture through
+  // `overscroll-x-contain` - so 161 lists could not be scrolled sideways at all.
+  // Those wrappers are gone; keep it that way.
   //
   // It has to be a DEFINITE length. `min-width: max-content` is meaningless on a
   // `table-layout: fixed` table - fixed layout ignores content by design - and
@@ -214,12 +221,15 @@ function DataGridTableHeadRowCell<TData>({
   header,
   dndRef,
   dndStyle,
+  dndDragging,
   rowSpan,
 }: {
   children: ReactNode;
   header: Header<TData, unknown>;
   dndRef?: React.Ref<HTMLTableCellElement>;
   dndStyle?: CSSProperties;
+  /** True while THIS column is the one being dragged (dnd-kit's `isDragging`). */
+  dndDragging?: boolean;
   rowSpan?: number;
 }) {
   const { props } = useDataGrid();
@@ -247,16 +257,23 @@ function DataGridTableHeadRowCell<TData>({
         ...(props.tableLayout?.width === 'fixed' && {
           width: `${header.getSize()}px`,
         }),
-        ...(dndStyle ? dndStyle : null),
-        // LAST, so it beats the drag style. Column drag-and-drop is on by
-        // default and dnd-kit sets `position: relative` + `zIndex: 0` on every
-        // cell; spread after the pinning styles it silently turned the phone's
-        // pinned identifier column back into an ordinary one that scrolled away.
-        // The drag transform and transition survive - only the stickiness wins.
+        // Pinning normally wins. Column drag-and-drop is on by default and
+        // dnd-kit sets `position: relative` + `zIndex: 0` on every cell; spread
+        // after the pinning styles it silently turned the phone's pinned
+        // identifier column back into an ordinary one that scrolled away. The
+        // drag transform and transition survive - only the stickiness wins.
         //
         // Driven by the pinned state itself: under `sm` the grid pins the
         // identifier column whether or not the list opted into pinning.
-        ...(isPinned ? getPinningStyles(column) : null),
+        //
+        // While THIS column is the one being dragged, the order flips: sticky
+        // beats dnd-kit's `position: relative`, so the transform had no effect
+        // and a pinned column could not be dragged at all. That is every column
+        // a phone user can reach, because under `sm` the grid pins the
+        // identifier column for them.
+        ...(dndDragging
+          ? { ...(isPinned ? getPinningStyles(column) : null), ...dndStyle }
+          : { ...dndStyle, ...(isPinned ? getPinningStyles(column) : null) }),
       }}
       data-pinned={isPinned || undefined}
       data-last-col={isLastLeftPinned ? 'left' : isFirstRightPinned ? 'right' : undefined}
@@ -649,11 +666,14 @@ function DataGridTableBodyRowCell<TData>({
   cell,
   dndRef,
   dndStyle,
+  dndDragging,
 }: {
   children: ReactNode;
   cell: Cell<TData, unknown>;
   dndRef?: React.Ref<HTMLTableCellElement>;
   dndStyle?: CSSProperties;
+  /** True while THIS column is the one being dragged (dnd-kit's `isDragging`). */
+  dndDragging?: boolean;
 }) {
   const { props } = useDataGrid();
 
@@ -671,9 +691,11 @@ function DataGridTableBodyRowCell<TData>({
       ref={dndRef}
       {...(props.tableLayout?.columnsDraggable && !isPinned ? { cell } : {})}
       style={{
-        ...(dndStyle ? dndStyle : null),
-        // LAST, so it beats the drag style - see the head cell.
-        ...(isPinned ? getPinningStyles(column) : null),
+        // Pinning last so it beats the drag style, except while this column is
+        // the one being dragged - see the head cell.
+        ...(dndDragging
+          ? { ...(isPinned ? getPinningStyles(column) : null), ...dndStyle }
+          : { ...dndStyle, ...(isPinned ? getPinningStyles(column) : null) }),
       }}
       data-pinned={isPinned || undefined}
       data-last-col={isLastLeftPinned ? 'left' : isFirstRightPinned ? 'right' : undefined}
@@ -715,8 +737,12 @@ function DataGridTableEmpty() {
         than hugging the border.
       */}
       <td colSpan={totalColumns} className="p-0 text-muted-foreground">
-        <div className="sticky start-0 w-fit px-4 py-6 text-start">
-          {props.emptyMessage || 'No data available'}
+        <div
+          data-slot="data-grid-empty"
+          className="sticky start-0 flex w-fit flex-col items-start gap-3 px-4 py-6 text-start"
+        >
+          <span>{props.emptyMessage || 'No data available'}</span>
+          {props.emptyAction}
         </div>
       </td>
     </tr>
@@ -836,17 +862,26 @@ export function moveColumnKeepingGroups(
  * or, where it did overflow, pushed the whole PAGE sideways. The scrollbar is
  * the only affordance a mouse user gets, so a right-edge fade marks that there
  * is more to see and disappears once the end is reached.
+ *
+ * `min-w-0` on both divs is what makes the scroller scroll at all. `CardTable`
+ * is a `grid`, `Card` is a `flex` column, and an item of either has
+ * `min-width: auto` by default, which resolves to its MIN-CONTENT width. The
+ * table asks for `min-width: 2178px`, so the item refused to be narrower than
+ * that and the track blew out with it: measured on Orders at 1280, the scroller
+ * reported clientWidth 2178 === scrollWidth 2178, i.e. "nothing to scroll",
+ * inside a 950px card. `min-width: 0` lets the item take the width it is given
+ * and the overflow lands where it belongs.
  */
 function DataGridScroller({ children }: { children: ReactNode }) {
   const { ref, isFading } = useHorizontalOverflow<HTMLDivElement>();
 
   return (
-    <div className="relative">
+    <div className="relative min-w-0">
       <div
         ref={ref}
         data-slot="data-grid-scroller"
         data-fade={isFading}
-        className="overflow-x-auto overscroll-x-contain"
+        className="min-w-0 overflow-x-auto overscroll-x-contain"
       >
         {children}
       </div>

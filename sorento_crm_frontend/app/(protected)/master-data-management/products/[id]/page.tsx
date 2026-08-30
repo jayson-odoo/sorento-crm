@@ -2,21 +2,8 @@
 
 import { use } from 'react';
 import { useSearchParams } from 'next/navigation';
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
 import { Container } from '@/components/common/container';
-import {
-  Toolbar,
-  ToolbarActions,
-  ToolbarHeading,
-  ToolbarTitle,
-} from '@/components/common/toolbar';
+import { PageHeader } from '@/components/common/PageHeader';
 import BackToList from '@/components/common/BackToList';
 import ProductDetail from './components/ProductDetail';
 
@@ -49,29 +36,9 @@ export default function ProductDetailPage({
   return (
     <>
       <Container>
-        <Toolbar>
-          <ToolbarHeading>
-            <ToolbarTitle>Product</ToolbarTitle>
-            <Breadcrumb>
-              <BreadcrumbList>
-                <BreadcrumbItem>
-                  <BreadcrumbLink href="/">Home</BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbPage>Product Management</BreadcrumbPage>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbLink href="/master-data-management/products">
-                    Products
-                  </BreadcrumbLink>
-                </BreadcrumbItem>
-              </BreadcrumbList>
-            </Breadcrumb>
-          </ToolbarHeading>
-          <ToolbarActions>
-            {worklistHref ? (
+        <PageHeader
+          title="Product"
+          actions={worklistHref ? (
               <BackToList
                 listPath={worklistHref}
                 label="Back to spec verification"
@@ -83,8 +50,7 @@ export default function ProductDetailPage({
                 label="Back to products"
               />
             )}
-          </ToolbarActions>
-        </Toolbar>
+        />
       </Container>
 
       <Container>

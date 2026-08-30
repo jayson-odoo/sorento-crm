@@ -54,7 +54,7 @@ export default function SupplierDetail({ supplierId }: SupplierDetailProps) {
       <div className="flex items-center justify-between">
         <div className="space-y-1">
           <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold">{supplier.supplier_name}</h1>
+            <h2 className="text-2xl font-bold">{supplier.supplier_name}</h2>
             <Badge variant={supplier.is_active ? 'success' : 'secondary'}>
               {supplier.is_active ? 'Active' : 'Inactive'}
             </Badge>

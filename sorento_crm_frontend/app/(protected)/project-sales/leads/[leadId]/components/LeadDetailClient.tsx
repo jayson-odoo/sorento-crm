@@ -242,7 +242,7 @@ export function LeadDetailClient({ leadId }: { leadId: string }) {
             <LeadStatusPill statusKey={lead.status_key} label={lead.status_label} />
             {!lead.can_edit && <Badge variant="secondary">Read only</Badge>}
           </div>
-          <h1 className="mt-1 text-xl font-semibold">{lead.title}</h1>
+          <h2 className="mt-1 text-xl font-semibold">{lead.title}</h2>
           <p className="text-sm text-muted-foreground">
             {[lead.developer_name, lead.location].filter(Boolean).join(' · ') || '-'}
           </p>

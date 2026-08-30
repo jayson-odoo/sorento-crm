@@ -16,7 +16,6 @@ import { Card, CardFooter, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 
 export interface ReportGridProps<T extends object> {
   columns: ColumnDef<T>[];
@@ -100,10 +99,7 @@ export function ReportGrid<T extends object>({
         <CardTable>
           {/* Wider than a phone, so it scrolls inside its own container rather
               than dragging the page sideways. */}
-          <ScrollArea>
-            <DataGridTable />
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
+          <DataGridTable />
         </CardTable>
 
         {rows.length > pageSize && (

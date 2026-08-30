@@ -21,7 +21,6 @@ import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { Input } from '@/components/ui/input';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useProjectSeries } from '../../_shared/hooks/useProjects';
 import type { ProjectSeries } from '../../_shared/types/project.types';
@@ -153,6 +152,15 @@ export function SeriesListClient() {
     defaultColumn: { minSize: 60, maxSize: 800, size: 150 },
   });
 
+  // The one offer this listing makes, in both places it belongs: the
+  // toolbar, and the empty state's next step (S5-06).
+  const listPrimaryAction = (
+    <Button onClick={() => router.push('/project-sales/series/new')}>
+      <Plus />
+      Add series
+    </Button>
+  );
+
   return (
     <DataGrid
       table={table}
@@ -161,6 +169,7 @@ export function SeriesListClient() {
       onRowClick={(row: ProjectSeries) => router.push(`/project-sales/series/${row.id}`)}
       tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
       tableClassNames={{ edgeCell: 'px-5' }}
+      emptyAction={listPrimaryAction}
     >
       <Card>
         <CardHeader className="block">
@@ -190,19 +199,11 @@ export function SeriesListClient() {
             exportConfig={{ filename: 'series_export.xlsx' }}
             onRefresh={() => void series.refetch()}
             isRefreshing={series.isFetching}
-            primaryAction={
-              <Button onClick={() => router.push('/project-sales/series/new')}>
-                <Plus />
-                Add series
-              </Button>
-            }
+            primaryAction={listPrimaryAction}
           />
         </CardHeader>
         <CardTable>
-          <ScrollArea>
-            <DataGridTable />
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
+          <DataGridTable />
         </CardTable>
         <CardFooter>
           <DataGridPagination />

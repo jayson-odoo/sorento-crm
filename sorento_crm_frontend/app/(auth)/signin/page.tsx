@@ -88,11 +88,18 @@ export default function Page() {
         className="block w-full space-y-5"
       >
         <div className="flex justify-start pb-4">
+          {/* The dark wordmark on the dark backdrop was all but invisible when the
+              user's theme is dark, which is the same swap the app header does. */}
           <Link href="/">
             <img
               src={toAbsoluteUrl('/media/app/sorento-logo.svg')}
-              className="h-[28px] max-w-none"
-              alt=""
+              className="h-[28px] max-w-none dark:hidden"
+              alt="Sorento"
+            />
+            <img
+              src={toAbsoluteUrl('/media/app/sorento-logo-dark.svg')}
+              className="h-[28px] max-w-none hidden dark:inline"
+              alt="Sorento"
             />
           </Link>
         </div>
@@ -193,7 +200,9 @@ export default function Page() {
 
         <div className="flex flex-col gap-2.5">
           <Button type="submit" disabled={isProcessing}>
-            {isProcessing ? <LoaderCircleIcon className="size-4 animate-spin" /> : null}
+            {isProcessing ? (
+              <LoaderCircleIcon className="size-4 animate-spin" />
+            ) : null}
             Continue
           </Button>
         </div>

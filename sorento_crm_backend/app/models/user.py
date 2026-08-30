@@ -264,6 +264,16 @@ class SystemSetting(Base):
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     name = Column(String, default="My Company", nullable=False)
     logo = Column(String, nullable=True)
+    # The photograph an admin puts behind the sign-in card. NULL means "none uploaded",
+    # and the frontend then draws its designed default wash - which is a finished screen,
+    # not a placeholder, so nothing here needs a seed value or a backfill.
+    #
+    # Two columns for one file, exactly like `users.avatar` / `users.avatar_storage_provider`
+    # above: the stable non-signed CDN URL is what is durable, and the provider records which
+    # backend currently holds the bytes so a read can ask THAT one for a fresh signed URL.
+    # Storing a signed URL instead would put an expiry into the database.
+    signin_background = Column(String, nullable=True)
+    signin_background_storage_provider = Column(String(16), nullable=True)
     active = Column(Boolean, default=True, nullable=False)
     address = Column(Text, nullable=True)
     website_url = Column(String, nullable=True)

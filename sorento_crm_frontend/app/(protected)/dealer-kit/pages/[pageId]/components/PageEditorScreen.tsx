@@ -183,7 +183,7 @@ export function PageEditorScreen({ pageId }: { pageId: string }) {
           <div className="flex flex-wrap items-center gap-2">
             <Button variant="outline" size="sm" onClick={handleSave} disabled={!dirty || saving}>
               <Save className="size-4" />
-              {saving ? 'Saving' : 'Save'}
+              {saving ? 'Saving' : 'Save page'}
             </Button>
             <Button
               size="sm"

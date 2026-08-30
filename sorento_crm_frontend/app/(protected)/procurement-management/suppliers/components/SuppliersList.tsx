@@ -31,7 +31,6 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   BulkUpdateDialog,
@@ -204,6 +203,15 @@ export default function SuppliersList() {
     return result;
   };
 
+  // The one offer this listing makes, in both places it belongs: the
+  // toolbar, and the empty state's next step (S5-06).
+  const listPrimaryAction = (
+    <Button onClick={() => router.push('/procurement-management/suppliers/new')}>
+      <Plus />
+      Create Supplier
+    </Button>
+  );
+
   return (
     <DataGrid
       table={table}
@@ -212,6 +220,7 @@ export default function SuppliersList() {
       rowHref={rowHref}
       standardToolbar={false}
       tableLayout={{ columnsVisibility: true }}
+      emptyAction={listPrimaryAction}
     >
       <Card>
         <CardHeader className="block">
@@ -272,12 +281,7 @@ export default function SuppliersList() {
                 quick_search: searchQuery || undefined,
               }),
             }}
-            primaryAction={
-              <Button onClick={() => router.push('/procurement-management/suppliers/new')}>
-                <Plus />
-                Create Supplier
-              </Button>
-            }
+            primaryAction={listPrimaryAction}
           />
         </CardHeader>
         {isError ? (
@@ -286,10 +290,7 @@ export default function SuppliersList() {
           </div>
         ) : null}
         <CardTable>
-          <ScrollArea>
-            <DataGridTable />
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
+          <DataGridTable />
         </CardTable>
         <CardFooter>
           <DataGridPagination />

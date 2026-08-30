@@ -5,22 +5,9 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import { Activity, UserPen } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Container } from '@/components/common/container';
-import {
-  Toolbar,
-  ToolbarActions,
-  ToolbarHeading,
-  ToolbarTitle,
-} from '@/components/common/toolbar';
+import { PageHeader } from '@/components/common/PageHeader';
 import BackToList from '@/components/common/BackToList';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { UserProvider } from './components/user-context';
@@ -153,29 +140,12 @@ export default function UserLayout({
   return (
     <UserProvider user={user} isLoading={isLoading}>
       <Container>
-        <Toolbar>
-          <ToolbarHeading>
-            <ToolbarTitle>User</ToolbarTitle>
-            <Breadcrumb>
-              <BreadcrumbList>
-                <BreadcrumbItem>
-                  <BreadcrumbLink href="/">Home</BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbPage>User Management</BreadcrumbPage>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbLink href="/user-management/users">Users</BreadcrumbLink>
-                </BreadcrumbItem>
-              </BreadcrumbList>
-            </Breadcrumb>
-          </ToolbarHeading>
-          <ToolbarActions>
+        <PageHeader
+          title="User"
+          actions={
             <BackToList listPath="/user-management/users" label="Back to users" />
-          </ToolbarActions>
-        </Toolbar>
+          }
+        />
         <UserHero user={user} isLoading={isLoading} />
         <Tabs defaultValue={activeTab} value={activeTab}>
           <TabsList variant="line" className="mb-5">

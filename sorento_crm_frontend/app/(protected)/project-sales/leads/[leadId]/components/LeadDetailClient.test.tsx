@@ -448,7 +448,7 @@ describe('LeadDetailClient Who told us tab', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
     expect(screen.queryByLabelText('Search people')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save informant' }));
 
     await waitFor(() => expect(updateLead).toHaveBeenCalled());
     const body = updateLead.mock.calls[0][1] as Record<string, unknown>;
@@ -465,7 +465,7 @@ describe('LeadDetailClient Who told us tab', () => {
     fireEvent.change(await screen.findByLabelText('Not known yet'), {
       target: { value: 'c1' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save informant' }));
 
     await waitFor(() =>
       expect(updateLead).toHaveBeenCalledWith(

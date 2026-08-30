@@ -214,7 +214,7 @@ export default function NumberingRuleEditDialog({
               </Button>
               <Button type="submit" disabled={updateMutation.isPending}>
                 {updateMutation.isPending && <LoaderCircleIcon className="mr-2 size-4 animate-spin" />}
-                Save
+                Save numbering rule
               </Button>
             </DialogFooter>
           </form>

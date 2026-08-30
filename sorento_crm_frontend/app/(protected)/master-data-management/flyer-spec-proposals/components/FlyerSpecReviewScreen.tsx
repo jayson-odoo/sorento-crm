@@ -365,12 +365,12 @@ export function FlyerSpecReviewScreen({ readingId }: { readingId: string }) {
           <div className="flex min-w-0 items-start gap-2">
             <FileText className="mt-0.5 size-5 shrink-0 text-muted-foreground" />
             <div className="min-w-0">
-              <h1
+              <h2
                 className="min-w-0 break-words text-lg font-semibold"
                 data-testid="fsp-filename"
               >
                 {data.filename}
-              </h1>
+              </h2>
               {meta && <p className="text-sm text-muted-foreground">{meta}</p>}
             </div>
           </div>

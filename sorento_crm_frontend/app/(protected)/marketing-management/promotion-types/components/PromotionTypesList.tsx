@@ -20,7 +20,6 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import PromotionTypeFormModal from './PromotionTypeFormModal';
 import { useDeletePromotionType, usePromotionTypes } from '../hooks/usePromotionTypes';
@@ -169,6 +168,20 @@ export default function PromotionTypesList() {
     columnResizeMode: 'onChange',
   });
 
+  // The one offer this listing makes, in both places it belongs: the
+  // toolbar, and the empty state's next step (S5-06).
+  const listPrimaryAction = (
+    <Button
+      onClick={() => {
+        setEditing(null);
+        setFormOpen(true);
+      }}
+    >
+      <Plus />
+      Add Promotion Type
+    </Button>
+  );
+
   return (
     <DataGrid
       table={table}
@@ -176,6 +189,7 @@ export default function PromotionTypesList() {
       isLoading={isLoading}
       tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
       emptyMessage="No promotion types yet. Add one to control what happens to a promotion after it ends."
+      emptyAction={listPrimaryAction}
     >
       <Card>
         <CardHeader className="block">
@@ -183,24 +197,11 @@ export default function PromotionTypesList() {
             table={table}
             onRefresh={() => void refetch()}
             isRefreshing={isFetching && !isLoading}
-            primaryAction={
-              <Button
-                onClick={() => {
-                  setEditing(null);
-                  setFormOpen(true);
-                }}
-              >
-                <Plus />
-                Add Promotion Type
-              </Button>
-            }
+            primaryAction={listPrimaryAction}
           />
         </CardHeader>
         <CardTable>
-          <ScrollArea>
-            <DataGridTable />
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
+          <DataGridTable />
         </CardTable>
         <CardFooter>
           <DataGridPagination />

@@ -5,30 +5,17 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { MoveLeft } from 'lucide-react';
 import { toast } from 'sonner';
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Container } from '@/components/common/container';
+import { PageHeader } from '@/components/common/PageHeader';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
-import {
-  Toolbar,
-  ToolbarActions,
-  ToolbarHeading,
-  ToolbarTitle,
-} from '@/components/common/toolbar';
 import { getProductsForLineSelect } from '@/app/(protected)/master-data-management/products/services/productService';
 import { useProductCategorySelectQuery } from '@/app/(protected)/master-data-management/shared/hooks/use-product-category-select-query';
 import { usePriceFloorMutations, usePriceFloors } from '../../../_shared/hooks/useProjects';
@@ -122,38 +109,23 @@ export function PriceFloorDetailClient({ ruleId }: { ruleId: string }) {
 
   return (
     <Container>
-      <Toolbar>
-        <ToolbarHeading>
-          <ToolbarTitle>{isNew ? 'New price floor' : 'Price floor'}</ToolbarTitle>
-          <Breadcrumb>
-            <BreadcrumbList>
-              <BreadcrumbItem>
-                <BreadcrumbLink href="/">Home</BreadcrumbLink>
-              </BreadcrumbItem>
-              <BreadcrumbSeparator />
-              <BreadcrumbItem>
-                <BreadcrumbPage>Project Sales</BreadcrumbPage>
-              </BreadcrumbItem>
-              <BreadcrumbSeparator />
-              <BreadcrumbItem>
-                <BreadcrumbLink href="/project-sales/price-floors">Price Floors</BreadcrumbLink>
-              </BreadcrumbItem>
-            </BreadcrumbList>
-          </Breadcrumb>
-        </ToolbarHeading>
-        <ToolbarActions>
-          {!isNew && row && (
-            <Button variant="outline" onClick={() => setConfirmingDelete(true)}>
-              Delete
+      <PageHeader
+        title={isNew ? 'New price floor' : 'Price floor'}
+        actions={
+          <>
+            {!isNew && row && (
+              <Button variant="outline" onClick={() => setConfirmingDelete(true)}>
+                Delete
+              </Button>
+            )}
+            <Button asChild variant="outline">
+              <Link href="/project-sales/price-floors">
+                <MoveLeft /> Back to price floors
+              </Link>
             </Button>
-          )}
-          <Button asChild variant="outline">
-            <Link href="/project-sales/price-floors">
-              <MoveLeft /> Back to price floors
-            </Link>
-          </Button>
-        </ToolbarActions>
-      </Toolbar>
+          </>
+        }
+      />
 
       <Card>
         <CardContent className="space-y-5 pt-5">

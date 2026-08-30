@@ -65,7 +65,6 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useHasPermission } from '@/hooks/usePermissions';
@@ -117,6 +116,7 @@ import { OrderInquiryMatrixCellDrilldown } from './OrderInquiryMatrixCellDrilldo
 import { OrderInquiryScheduleMatrix } from './OrderInquiryScheduleMatrix';
 import { OrderInquiryStrip } from './OrderInquiryStrip';
 import { useOrderInquiryWorklistColumns } from './orderInquiryWorklistColumns';
+import { PageHeader } from '@/components/common/PageHeader';
 
 /**
  * WHETHER anything in either book covers the row, and out of which one (AC-D15). The
@@ -754,25 +754,22 @@ export function OrderInquiriesClient() {
 
   return (
     <div className="space-y-5">
-      <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0 break-words">
-          <h1 className="text-xl font-semibold">Order inquiries</h1>
-          {/* The date every link on this page reaches up to by default: the latest
-              completed reorder plan's own Plan until (`plan_link_horizon`). Stated here
-              because it was only ever readable inside the Auto link dialog (the captain,
-              28 Aug 2026: "show the plan until ... for visibility"). */}
-          <p
-            data-testid="oi-plan-until"
-            className="text-sm text-muted-foreground"
-          >
-            {summary.isPending
-              ? 'Plan until ...'
-              : planHorizon
-                ? `Plan until ${formatDateInMalaysia(planHorizon)}`
-                : 'No Plan until in force'}
-          </p>
-        </div>
-      </header>
+      <PageHeader title="Order inquiries">
+        {/* The date every link on this page reaches up to by default: the latest
+            completed reorder plan's own Plan until (`plan_link_horizon`). Stated here
+            because it was only ever readable inside the Auto link dialog (the captain,
+            28 Aug 2026: "show the plan until ... for visibility"). */}
+        <p
+          data-testid="oi-plan-until"
+          className="text-sm text-muted-foreground"
+        >
+          {summary.isPending
+            ? 'Plan until ...'
+            : planHorizon
+              ? `Plan until ${formatDateInMalaysia(planHorizon)}`
+              : 'No Plan until in force'}
+        </p>
+      </PageHeader>
 
       {/* List | Schedule: the list reads the spreadsheet's own columns one page at a time;
           the schedule reads the same rows as a 2D matrix - by product, sales order,
@@ -1359,10 +1356,7 @@ export function OrderInquiriesClient() {
                   </p>
                 </div>
               ) : (
-                <ScrollArea>
-                  <DataGridTable />
-                  <ScrollBar orientation="horizontal" />
-                </ScrollArea>
+                <DataGridTable />
               )}
             </CardTable>
             <CardFooter>

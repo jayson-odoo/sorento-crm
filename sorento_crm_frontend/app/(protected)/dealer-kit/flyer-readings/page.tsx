@@ -1,15 +1,7 @@
 import { Metadata } from 'next';
 
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
 import { Container } from '@/components/common/container';
-import { Toolbar, ToolbarHeading, ToolbarTitle } from '@/components/common/toolbar';
+import { PageHeader } from '@/components/common/PageHeader';
 
 import { FlyerReadingsList } from './components/FlyerReadingsList';
 
@@ -21,26 +13,7 @@ export const metadata: Metadata = {
 export default function DealerKitFlyerReadingsPage() {
   return (
     <Container width="fluid">
-      <Toolbar>
-        <ToolbarHeading>
-          <ToolbarTitle>Flyers</ToolbarTitle>
-          <Breadcrumb>
-            <BreadcrumbList>
-              <BreadcrumbItem>
-                <BreadcrumbLink href="/">Home</BreadcrumbLink>
-              </BreadcrumbItem>
-              <BreadcrumbSeparator />
-              <BreadcrumbItem>
-                <BreadcrumbPage>Dealer Kit</BreadcrumbPage>
-              </BreadcrumbItem>
-              <BreadcrumbSeparator />
-              <BreadcrumbItem>
-                <BreadcrumbPage>Flyers</BreadcrumbPage>
-              </BreadcrumbItem>
-            </BreadcrumbList>
-          </Breadcrumb>
-        </ToolbarHeading>
-      </Toolbar>
+      <PageHeader title="Flyers" />
 
       <FlyerReadingsList />
     </Container>

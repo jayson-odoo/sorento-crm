@@ -14,6 +14,7 @@ const nav = vi.hoisted(() => ({ params: new URLSearchParams() }));
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
   useSearchParams: () => nav.params,
+  usePathname: () => '/master-data-management/products/p-1',
 }));
 
 // The record itself has its own suite; this test is about the toolbar's one link.

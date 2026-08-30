@@ -17,7 +17,6 @@ import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
 import { Trash2 } from 'lucide-react';
@@ -417,10 +416,7 @@ export default function EventLogTable({ trackingId, agentCode, teamSetCode }: Ev
           {eventLogs.length > 0 ? (
             <>
               <CardTable>
-                <ScrollArea>
-                  <DataGridTable />
-                  <ScrollBar orientation="horizontal" />
-                </ScrollArea>
+                <DataGridTable />
               </CardTable>
               <CardFooter>
                 <DataGridPagination />

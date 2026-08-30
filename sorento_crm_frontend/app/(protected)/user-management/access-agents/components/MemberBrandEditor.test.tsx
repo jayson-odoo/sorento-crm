@@ -120,7 +120,7 @@ describe('MemberBrandEditor', () => {
     openPicker();
     // The catalogue carries "CABANA"; the payload is always lower-case.
     fireEvent.click(screen.getByRole('option', { name: 'Cabana' }));
-    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^Save brands$/i }));
     expect(setMutate).toHaveBeenCalledTimes(1);
     expect(setMutate.mock.calls[0][0]).toEqual(['mocha', 'cabana']);
   });
@@ -130,7 +130,7 @@ describe('MemberBrandEditor', () => {
     renderWithClient(<MemberBrandEditor teamId="t1" userId="u1" />);
     openPicker();
     fireEvent.click(screen.getByRole('option', { name: 'Mocha' }));
-    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^Save brands$/i }));
     expect(setMutate.mock.calls[0][0]).toEqual([]);
   });
 
@@ -145,7 +145,7 @@ describe('MemberBrandEditor', () => {
       fireEvent.click(screen.getByLabelText(/edit brands/i)),
     ).not.toThrow();
     expect(screen.getByText('Brands served')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^Save brands$/i }));
     expect(setMutate.mock.calls[0][0]).toEqual([]);
   });
 
@@ -159,7 +159,7 @@ describe('MemberBrandEditor', () => {
     // A refetch resolves to a new array while the user is mid-edit.
     useMemberBrands.mockReturnValue({ data: ['mocha'], isLoading: false });
     rerender(<MemberBrandEditor teamId="t1" userId="u1" />);
-    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^Save brands$/i }));
     expect(setMutate.mock.calls[0][0]).toEqual(['mocha', 'cabana']);
   });
 
@@ -171,7 +171,7 @@ describe('MemberBrandEditor', () => {
     expect(screen.getByText(/no brands configured/i)).toBeInTheDocument();
     // The orphaned tag is still an option, so it can be taken off.
     fireEvent.click(screen.getByRole('option', { name: 'MOCHA' }));
-    const save = screen.getByRole('button', { name: /^save$/i });
+    const save = screen.getByRole('button', { name: /^Save brands$/i });
     expect(save).not.toBeDisabled();
     fireEvent.click(save);
     expect(setMutate.mock.calls[0][0]).toEqual([]);

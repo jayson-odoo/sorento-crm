@@ -203,7 +203,7 @@ export function CollectionDialog({
               Cancel
             </Button>
             <Button disabled={!name.trim() || saving} onClick={save}>
-              {saving ? 'Saving' : 'Save'}
+              {saving ? 'Saving' : 'Save collection'}
             </Button>
           </DialogFooter>
         </DialogContent>

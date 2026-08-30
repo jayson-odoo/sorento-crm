@@ -95,7 +95,7 @@ describe('CurrencyRatesPanel', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: /add rate for CNY/i }));
     fireEvent.change(await screen.findByLabelText(/^rate to/i), { target: { value: '0.62' } });
-    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^Save currency rate$/i }));
 
     await waitFor(() =>
       expect(saveCurrencyRate).toHaveBeenCalledWith(
@@ -113,7 +113,7 @@ describe('CurrencyRatesPanel', () => {
     fireEvent.click(await screen.findByRole('button', { name: /add rate for CNY/i }));
     fireEvent.change(await screen.findByLabelText(/^rate to/i), { target: { value: '0' } });
 
-    expect(screen.getByRole('button', { name: /^save$/i })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /^Save currency rate$/i })).toBeDisabled();
   });
 
   it('confirms before removing a rate, because the plan stops funding without it', async () => {

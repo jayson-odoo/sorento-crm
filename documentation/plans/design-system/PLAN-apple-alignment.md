@@ -5,7 +5,7 @@
 > Governs: `PRINCIPLES.md` + `documentation/reference/ADR-PRODUCT-STANDARDS.md`.
 
 **Slug:** `apple-alignment` | **Domain:** design-system (cross-cutting)
-**Status:** IN PROGRESS - plan approved 2026-08-29 (lavish review + grill; D15, D16 added); S1 started 2026-08-29.
+**Status:** IN PROGRESS - plan approved 2026-08-29 (lavish review + grill; D15, D16 added); S1 started 2026-08-29. S5 built 2026-08-30 (`feat/apple-S5-wayfinding`): PageHeader + the sweep of every module, GRN/SPO eyebrows, verb + noun labels, UUID titles, DataGrid `emptyAction`.
 **UAC:** `documentation/plans/design-system/apple-alignment-acceptance-criteria.md`
 **Audit:** artifact `https://claude.ai/code/artifact/86a2cb9e-41e2-4008-9fbd-1f86de8bb0db` (rounds 1-3, 29 Aug 2026)
 **Supersedes:** `documentation/plans/PLAN-record-navigation-standardization.md` (D1 backend neighbours, D2 unfiltered fallback, D3 circular wrap). Reversed by the user on 29 Aug: the pager is page-scoped and client-side, boundaries page, the neighbours code is deleted.

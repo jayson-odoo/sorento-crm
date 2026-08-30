@@ -593,7 +593,7 @@ export function BoardLineDecisionPanel({
                 onClick={save}
               >
                 <Check className="size-4" aria-hidden />
-                Save
+                Save decision
               </Button>
               <Button
                 type="button"

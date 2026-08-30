@@ -22,7 +22,6 @@ import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
@@ -31,6 +30,7 @@ import { usePartyMutations, useProjectParties } from '../../_shared/hooks/usePro
 import type { ProjectParty } from '../../_shared/types/project.types';
 import { PartyFormDialog } from './PartyFormDialog';
 import { PARTY_TYPE_OPTIONS, TYPE_LABEL } from './partyTypes';
+import { PageHeader } from '@/components/common/PageHeader';
 
 /**
  * The organisation master, as the same list every other screen in the product uses.
@@ -249,18 +249,19 @@ export function PartiesClient() {
 
   return (
     <div className="space-y-5">
-      <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0 break-words">
-          <h1 className="text-xl font-semibold">Parties</h1>
-          <p className="text-sm text-muted-foreground">
-            Developers, architects, contractors and consultants, reused across projects.
-          </p>
-        </div>
-        <Button type="button" onClick={() => setCreating(true)}>
-          <Plus className="size-4" aria-hidden />
-          Add party
-        </Button>
-      </header>
+      <PageHeader
+        title="Parties"
+        actions={
+          <Button type="button" onClick={() => setCreating(true)}>
+            <Plus className="size-4" aria-hidden />
+            Add party
+          </Button>
+        }
+      >
+        <p className="text-sm text-muted-foreground">
+          Developers, architects, contractors and consultants, reused across projects.
+        </p>
+      </PageHeader>
 
       <DataGrid
         table={table}
@@ -360,10 +361,7 @@ export function PartiesClient() {
             />
           </CardHeader>
           <CardTable>
-            <ScrollArea>
-              <DataGridTable />
-              <ScrollBar orientation="horizontal" />
-            </ScrollArea>
+            <DataGridTable />
           </CardTable>
           <CardFooter>
             <DataGridPagination />

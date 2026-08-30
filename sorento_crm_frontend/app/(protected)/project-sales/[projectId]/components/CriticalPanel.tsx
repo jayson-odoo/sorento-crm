@@ -122,7 +122,7 @@ export function CriticalPanel({ project }: { project: Project }) {
                 })
               }
             >
-              Save
+              Save management notes
             </Button>
           </div>
         )}

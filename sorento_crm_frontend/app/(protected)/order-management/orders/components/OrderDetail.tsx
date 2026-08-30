@@ -59,7 +59,7 @@ export default function OrderDetail({ orderId, listSearch }: OrderDetailProps) {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="space-y-1 min-w-0">
           <div className="flex flex-wrap items-center gap-3">
-            <h1 className="text-2xl font-bold break-words min-w-0">{order.order_number}</h1>
+            <h2 className="text-2xl font-bold break-words min-w-0">{order.order_number}</h2>
             {order.order_status && (
               <Badge status={order.order_status.status_name}>
                 {order.order_status.status_name}

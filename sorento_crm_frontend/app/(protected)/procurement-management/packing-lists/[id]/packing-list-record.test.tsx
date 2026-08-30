@@ -498,7 +498,7 @@ describe('the Shipment lines tab', () => {
     await renderTab(<LinesPage />);
 
     fireEvent.click(within(await openGear()).getByText('Edit'));
-    expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save packing list' })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: /Shipment lines/ })).toHaveAttribute(
       'aria-selected',
       'true',
@@ -512,7 +512,7 @@ describe('the Shipment lines tab', () => {
 
     fireEvent.click(within(await openGear()).getByText('Edit'));
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Save packing list' }));
     });
     expect(updatePackingList).toHaveBeenCalled();
     expect(routerState.push).not.toHaveBeenCalled();
@@ -552,7 +552,7 @@ describe('the edit draft, which now lives above every tab', () => {
 
     fireEvent.change(screen.getByLabelText('Seal No'), { target: { value: 'J0713349' } });
     fireEvent.change(screen.getByLabelText('Clearance cost'), { target: { value: '2700' } });
-    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^Save packing list$/i }));
 
     await waitFor(() => expect(updatePackingList).toHaveBeenCalledTimes(1));
     const { id, data } = updatePackingList.mock.calls[0][0];
@@ -568,7 +568,7 @@ describe('the edit draft, which now lives above every tab', () => {
     fireEvent.click(within(await openGear()).getByText('Edit'));
 
     fireEvent.change(screen.getByLabelText('Clearance cost'), { target: { value: '' } });
-    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^Save packing list$/i }));
 
     await waitFor(() => expect(updatePackingList).toHaveBeenCalledTimes(1));
     const { data } = updatePackingList.mock.calls[0][0];
@@ -591,7 +591,7 @@ describe('the edit draft, which now lives above every tab', () => {
     fireEvent.change(screen.getByLabelText('Material for SRTWT7443'), {
       target: { value: '铜' },
     });
-    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^Save packing list$/i }));
 
     await waitFor(() => expect(updatePackingList).toHaveBeenCalledTimes(1));
     const line = updatePackingList.mock.calls[0][0].data.shipment_lines[0];

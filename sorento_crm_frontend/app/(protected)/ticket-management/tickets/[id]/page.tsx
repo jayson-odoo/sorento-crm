@@ -4,14 +4,6 @@ import { use, useEffect, useRef, useState } from 'react';
 import { sanitizedHtml } from '@/lib/sanitize';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -20,12 +12,7 @@ import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { RichTextEditor } from '@/components/ui/rich-text-editor';
 import { Container } from '@/components/common/container';
-import {
-  Toolbar,
-  ToolbarActions,
-  ToolbarHeading,
-  ToolbarTitle,
-} from '@/components/common/toolbar';
+import { PageHeader } from '@/components/common/PageHeader';
 import EntityActivitiesLayout from '@/components/common/ActivitiesNotesPanel/EntityActivitiesLayout';
 import FormDetailWithSLATabs from '@/app/(protected)/sla-management/_shared/FormDetailWithSLATabs';
 import { useFormAction } from '@/app/(protected)/sla-management/_shared/useFormAction';
@@ -277,53 +264,41 @@ export default function TicketDetailPage({ params }: PageProps) {
   return (
     <>
       <Container>
-        <Toolbar>
-          <ToolbarHeading>
-            <ToolbarTitle className="whitespace-nowrap">
-              {ticket.ticket_number ?? 'Ticket'}
-            </ToolbarTitle>
-            <Breadcrumb>
-              <BreadcrumbList>
-                <BreadcrumbItem>
-                  <BreadcrumbLink href="/">Home</BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbLink href="/ticket-management/tickets">
-                    Tickets
-                  </BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbPage>{ticket.ticket_number ?? ticket.id}</BreadcrumbPage>
-                </BreadcrumbItem>
-              </BreadcrumbList>
-            </Breadcrumb>
-          </ToolbarHeading>
-          <ToolbarActions>
-            <Button variant="outline" onClick={() => router.push('/ticket-management/tickets')}>
-              Back to list
-            </Button>
-            {formAction.view.kind === 'undoable' && (
-              <Button
-                variant="outline"
-                onClick={() => setUndoDialogOpen(true)}
-                data-testid="undo-action-menu-item"
-              >
-                <Undo2 className="size-4" />
-                Undo last action
+        <PageHeader
+          title={ticket.ticket_number ?? 'Ticket'}
+          // The sidebar does not name Tickets, so the list is named here: a Back
+          // button is not a trail, and the crumb is what says where this sits.
+          crumbs={[
+            { title: 'Tickets', path: '/ticket-management/tickets' },
+            { title: ticket.ticket_number ?? 'Ticket' },
+          ]}
+          titleClassName="whitespace-nowrap"
+          actions={
+            <>
+              <Button variant="outline" onClick={() => router.push('/ticket-management/tickets')}>
+                Back to list
               </Button>
-            )}
-            <Button
-              variant="destructive"
-              onClick={() => setDeleteOpen(true)}
-              disabled={busy || formAction.ctasDisabled}
-            >
-              <Trash2 className="size-4" />
-              Delete
-            </Button>
-          </ToolbarActions>
-        </Toolbar>
+              {formAction.view.kind === 'undoable' && (
+                <Button
+                  variant="outline"
+                  onClick={() => setUndoDialogOpen(true)}
+                  data-testid="undo-action-menu-item"
+                >
+                  <Undo2 className="size-4" />
+                  Undo last action
+                </Button>
+              )}
+              <Button
+                variant="destructive"
+                onClick={() => setDeleteOpen(true)}
+                disabled={busy || formAction.ctasDisabled}
+              >
+                <Trash2 className="size-4" />
+                Delete
+              </Button>
+            </>
+          }
+        />
       </Container>
 
       <Container>
@@ -426,7 +401,7 @@ export default function TicketDetailPage({ params }: PageProps) {
                         Cancel
                       </Button>
                       <Button size="sm" onClick={saveDetails} disabled={busy || !titleDraft.trim()}>
-                        Save
+                        Save details
                       </Button>
                     </div>
                   </div>
@@ -516,7 +491,7 @@ export default function TicketDetailPage({ params }: PageProps) {
                         Cancel
                       </Button>
                       <Button variant="outline" size="sm" onClick={() => saveResponse(false)} disabled={busy || !htmlToText(responseDraft)}>
-                        Save
+                        Save response
                       </Button>
                       <Button size="sm" onClick={() => saveResponse(true)} disabled={busy || !htmlToText(responseDraft)}>
                         Update &amp; Reply
@@ -562,7 +537,7 @@ export default function TicketDetailPage({ params }: PageProps) {
                         Cancel
                       </Button>
                       <Button variant="outline" size="sm" onClick={() => saveResolution(false)} disabled={busy || formAction.ctasDisabled || !htmlToText(resolutionDraft)}>
-                        Save
+                        Save resolution
                       </Button>
                       <Button size="sm" onClick={() => saveResolution(true)} disabled={busy || formAction.ctasDisabled || !htmlToText(resolutionDraft)}>
                         Update &amp; Reply

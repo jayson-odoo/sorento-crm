@@ -701,7 +701,7 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
       screen.getByTestId('decision-pill-so-a|1|WESERP10B|2026-08-31'),
     ).toHaveTextContent('Suggested');
     expect(
-      screen.queryByRole('button', { name: 'Save' }),
+      screen.queryByRole('button', { name: 'Save decision' }),
     ).not.toBeInTheDocument();
     expect(
       screen.queryByRole('button', { name: 'Reject' }),
@@ -823,7 +823,7 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
     const { onDecide } = renderDialog([demand()]);
 
     fireEvent.click(screen.getByText('SO403340'));
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
 
     expect(onDecide).toHaveBeenCalledWith('so-a|1|WESERP10B|2026-08-31', {
       verdict: 'approved',
@@ -857,7 +857,7 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
     fireEvent.click(screen.getByText('SO403340'));
     // Buy is a whole-line switch: on, the stock rows clear and the whole 100 is bought.
     fireEvent.click(screen.getByLabelText('Buy the whole line'));
-    const save = screen.getByRole('button', { name: 'Save' });
+    const save = screen.getByRole('button', { name: 'Save decision' });
     expect(save).toBeDisabled();
 
     fireEvent.change(screen.getByLabelText(/^Why this differs/), {
@@ -906,7 +906,7 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
 
     expect(screen.getByLabelText('Reserve at BRW-BB')).toBeEnabled();
     expect(
-      screen.getByRole('button', { name: 'Save' }),
+      screen.getByRole('button', { name: 'Save decision' }),
     ).toBeInTheDocument();
   });
 
@@ -940,7 +940,7 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
     fireEvent.change(screen.getByLabelText('Reserve at BRW-BB'), {
       target: { value: '100' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
 
     expect(onDecide).toHaveBeenCalledWith('so-a|1|WESERP10B|2026-08-31', {
       verdict: 'approved',
@@ -988,7 +988,7 @@ describe('BoardCellBreakdownDialog: a covered row opens locked, Amend only (C11)
       within(panel).getByRole('button', { name: 'Amend' }),
     ).toBeInTheDocument();
     expect(
-      within(panel).queryByRole('button', { name: 'Save' }),
+      within(panel).queryByRole('button', { name: 'Save decision' }),
     ).not.toBeInTheDocument();
     expect(
       within(panel).queryByRole('button', { name: 'Reject' }),
@@ -1001,7 +1001,7 @@ describe('BoardCellBreakdownDialog: a line with no location (AC-FP16)', () => {
     renderDialog([demand({ fulfilment_location: null })]);
 
     expect(
-      screen.queryByRole('button', { name: 'Save' }),
+      screen.queryByRole('button', { name: 'Save decision' }),
     ).not.toBeInTheDocument();
     expect(screen.getByText('Needs a location')).toBeInTheDocument();
   });
@@ -1032,7 +1032,7 @@ describe('BoardCellBreakdownDialog: the actions can never be covered', () => {
     expect(body.className).toContain('min-h-0');
     expect(body.contains(contributionTable())).toBe(true);
     expect(
-      body.contains(screen.getByRole('button', { name: 'Save' })),
+      body.contains(screen.getByRole('button', { name: 'Save decision' })),
     ).toBe(true);
   });
 
@@ -1611,7 +1611,7 @@ describe('BoardCellBreakdownDialog: bulk approve and reject', () => {
 
     fireEvent.click(screen.getByText('SO000002'));
     expect(
-      screen.getByRole('button', { name: 'Save' }),
+      screen.getByRole('button', { name: 'Save decision' }),
     ).toBeInTheDocument();
   });
 });
@@ -2268,7 +2268,7 @@ describe('BoardCellBreakdownDialog: a line a decision already covers', () => {
     fireEvent.click(screen.getByText('SO403340'));
     expect(screen.getByLabelText('Buy the whole line')).toBeEnabled();
     expect(
-      screen.getByRole('button', { name: 'Save' }),
+      screen.getByRole('button', { name: 'Save decision' }),
     ).toBeInTheDocument();
     expect(
       screen.queryByRole('button', { name: 'Amend' }),
@@ -2796,24 +2796,51 @@ describe('BoardCellBreakdownDialog: the Decision card', () => {
  * 375px (ADR-PRODUCT-STANDARDS: "usable and non-clipped at 375px AND 1280px").
  *
  * jsdom does no real layout, so what this pins is structural, not a measured pixel width:
- * the table lives inside `PanelDataGrid`'s own `ScrollArea` (`overflow-hidden` on the Radix
- * root, which is what makes its internal viewport scroll rather than the dialog clipping the
- * table), and nothing on the way to it carries a fixed pixel width that would force the
- * dialog itself wider than the viewport at 375px.
+ * the table lives inside the GRID'S OWN horizontal scrollport (`data-grid-scroller`,
+ * `overflow-x-auto`), it is the only scrollport on that axis, and nothing on the way up
+ * from it carries a fixed pixel width that would force the dialog itself wider than the
+ * viewport at 375px.
+ *
+ * It used to be `PanelDataGrid`'s Radix `ScrollArea`, and that wrapper was the bug. A
+ * second horizontal scrollport around the grid's own puts a `display: table` viewport
+ * between them; that viewport shrink-fits, so `data-grid-scroller` measured
+ * `scrollWidth === clientWidth` and never overflowed, while still swallowing the wheel
+ * gesture through `overscroll-x-contain`. 165 lists could not be scrolled sideways at all.
+ * The wrapper is gone; `components/ui/data-grid-scroller.inventory.test.ts` keeps it gone
+ * across the tree, and this asserts the shape the dialog ends up with.
  */
 describe('BoardCellBreakdownDialog: the table scrolls inside its own container at 375px', () => {
-  it('wraps the table in a ScrollArea, not a fixed-width box', () => {
+  it("puts the table in the grid's own scroller, with no second scrollport and no fixed-width box", () => {
     renderDialog([demand({ qty: '71' })], { 'BRW-BB': '71' });
 
-    const scrollArea = document.querySelector('[data-slot="scroll-area"]');
-    expect(scrollArea).not.toBeNull();
-    expect(scrollArea).toHaveClass('overflow-hidden');
+    const scroller = document.querySelector('[data-slot="data-grid-scroller"]');
+    expect(scroller).not.toBeNull();
+    expect(scroller).toHaveClass('overflow-x-auto');
+    // `min-w-0` is what lets the scroller be narrower than the table it holds: `CardTable`
+    // is a grid and `Card` a flex column, and an item of either defaults to
+    // `min-width: auto`, i.e. its min-content - which is the table's own min-width.
+    expect(scroller).toHaveClass('min-w-0');
 
-    // No fixed pixel width anywhere between the scroll area and the dialog's own root: a
-    // `w-[960px]` (Tailwind's own fixed-width syntax) or an inline `style.width` in px would
-    // force the dialog to overflow a 375px viewport rather than scrolling its table.
-    let node: Element | null = scrollArea;
+    // The table is inside that scroller, with no Radix viewport in between.
+    const table = document.querySelector('[data-slot="data-grid-table"]') as HTMLElement | null;
+    expect(table).not.toBeNull();
+    expect(scroller!.contains(table!)).toBe(true);
+    for (let node = table!.parentElement; node && node !== scroller; node = node.parentElement) {
+      expect(node.hasAttribute('data-radix-scroll-area-viewport')).toBe(false);
+    }
+
+    // Walking up from the scroller to the dialog's own root, two things must hold.
+    //
+    // No second horizontal scrollport ABOVE it - that is the wrapper this screen used to
+    // have, and it is what stopped the grid scrolling at all.
+    //
+    // And no fixed pixel width: a `w-[960px]` (Tailwind's own fixed-width syntax) or an
+    // inline `style.width` in px would force the dialog to overflow a 375px viewport rather
+    // than scrolling its table.
+    let node: Element | null = scroller;
     while (node) {
+      expect(node.getAttribute('data-slot')).not.toBe('scroll-area');
+      expect(node.hasAttribute('data-radix-scroll-area-viewport')).toBe(false);
       expect(node.className).not.toMatch(/\bw-\[\d+px\]/);
       const inlineWidth = (node as HTMLElement).style?.width ?? '';
       expect(inlineWidth).not.toMatch(/^\d+px$/);

@@ -29,7 +29,6 @@ import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { useComplaintRootCausesSelect } from '../../complaint-root-causes/hooks/useComplaintRootCauses';
 import { useComplaintResolutionsSelect } from '../../complaint-resolutions/hooks/useComplaintResolutions';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { getUsersSelect } from '@/services/userSelectService';
 import { useComplaints, useExportComplaintPdf } from '../hooks/useComplaints';
@@ -371,6 +370,19 @@ export default function ComplaintsList() {
     columnResizeMode: 'onChange',
   });
 
+  // The one offer this listing makes, in both places it belongs: the
+  // toolbar, and the empty state's next step (S5-06).
+  const listPrimaryAction = (
+    <Button
+      onClick={() =>
+        router.push('/complaint-management/complaints/new')
+      }
+    >
+      <Plus />
+      Create Complaint
+    </Button>
+  );
+
   return (
     <DataGrid
       table={table}
@@ -379,6 +391,7 @@ export default function ComplaintsList() {
       rowHref={rowHref}
       standardToolbar={false}
       tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
+      emptyAction={listPrimaryAction}
     >
       <Card>
         <CardHeader className="block">
@@ -494,16 +507,7 @@ export default function ComplaintsList() {
             exportConfig={{ filename: 'complaints_export.xlsx' }}
             onRefresh={() => void refetch()}
             isRefreshing={isFetching && !isLoading}
-            primaryAction={
-              <Button
-                onClick={() =>
-                  router.push('/complaint-management/complaints/new')
-                }
-              >
-                <Plus />
-                Create Complaint
-              </Button>
-            }
+            primaryAction={listPrimaryAction}
             bulkActions={[
               {
                 key: 'delete',
@@ -516,10 +520,7 @@ export default function ComplaintsList() {
           />
         </CardHeader>
         <CardTable>
-          <ScrollArea>
-            <DataGridTable />
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
+          <DataGridTable />
         </CardTable>
         <CardFooter>
           <DataGridPagination />

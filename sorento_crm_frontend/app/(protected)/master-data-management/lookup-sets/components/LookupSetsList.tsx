@@ -151,6 +151,19 @@ export default function LookupSetsList() {
     enableRowSelection: true,
   });
 
+  // The one offer this listing makes, in both places it belongs: the
+  // toolbar, and the empty state's next step (S5-06).
+  const listPrimaryAction = (
+    <Button
+      onClick={() => {
+        setEditingId(undefined);
+        setFormOpen(true);
+      }}
+    >
+      <Plus className="size-4" /> Add lookup set
+    </Button>
+  );
+
   return (
     <>
       <DataGrid
@@ -159,6 +172,7 @@ export default function LookupSetsList() {
         isLoading={isLoading}
         tableLayout={{ width: 'fixed', columnsResizable: true }}
         onRowClick={(row) => handleView(row as LookupSet)}
+        emptyAction={listPrimaryAction}
       >
         <Card>
           <CardHeader className="block">
@@ -176,16 +190,7 @@ export default function LookupSetsList() {
                 </div>
               }
               exportConfig={{ filename: 'lookup_sets_export.xlsx' }}
-              primaryAction={
-                <Button
-                  onClick={() => {
-                    setEditingId(undefined);
-                    setFormOpen(true);
-                  }}
-                >
-                  <Plus className="size-4" /> Add lookup set
-                </Button>
-              }
+              primaryAction={listPrimaryAction}
             />
           </CardHeader>
           <CardTable>

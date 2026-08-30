@@ -382,7 +382,7 @@ function MediaLimitsDialog({
               });
             }}
           >
-            {isSaving ? 'Saving…' : 'Save'}
+            {isSaving ? 'Saving…' : 'Save media access'}
           </Button>
         </DialogFooter>
       </DialogContent>

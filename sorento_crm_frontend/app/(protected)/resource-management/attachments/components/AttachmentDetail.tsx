@@ -285,7 +285,7 @@ export default function AttachmentDetail({
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="space-y-1 min-w-0">
-          <h1 className="text-2xl font-bold break-words">{attachment.original_filename}</h1>
+          <h2 className="text-2xl font-bold break-words">{attachment.original_filename}</h2>
           <p className="text-sm text-muted-foreground">
             Uploaded: {formatDate(new Date(attachment.uploaded_at))}
           </p>

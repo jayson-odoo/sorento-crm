@@ -27,7 +27,6 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import LookupBoundLabel from '@/components/common/LookupBoundLabel';
 import { useQuery } from '@tanstack/react-query';
@@ -447,6 +446,15 @@ export default function PurchaseRequestsList({
   const filtersActiveCount =
     (statusFilter !== 'all' ? 1 : 0) + (assignedToFilter !== '__all__' ? 1 : 0);
 
+  // The one offer this listing makes, in both places it belongs: the
+  // toolbar, and the empty state's next step (S5-06).
+  const listPrimaryAction = (
+    <Button onClick={() => router.push(`${basePath}/new`)}>
+      <Plus />
+      Create
+    </Button>
+  );
+
   return (
     <DataGrid
       table={table}
@@ -455,6 +463,7 @@ export default function PurchaseRequestsList({
       rowHref={rowHref}
       standardToolbar={false}
       tableLayout={{ columnsVisibility: true }}
+      emptyAction={listPrimaryAction}
     >
       <Card>
         <CardHeader className="block">
@@ -567,12 +576,7 @@ export default function PurchaseRequestsList({
             }
             onRefresh={() => void refetch()}
             isRefreshing={isFetching && !isLoading}
-            primaryAction={
-              <Button onClick={() => router.push(`${basePath}/new`)}>
-                <Plus />
-                Create
-              </Button>
-            }
+            primaryAction={listPrimaryAction}
             bulkActions={[
               {
                 key: 'delete',
@@ -585,10 +589,7 @@ export default function PurchaseRequestsList({
           />
         </CardHeader>
         <CardTable>
-          <ScrollArea>
-            <DataGridTable />
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
+          <DataGridTable />
         </CardTable>
         <CardFooter>
           <DataGridPagination />

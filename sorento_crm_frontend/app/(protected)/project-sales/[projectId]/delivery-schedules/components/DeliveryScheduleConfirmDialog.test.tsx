@@ -68,7 +68,7 @@ describe('DeliveryScheduleConfirmDialog', () => {
     expect(screen.getByText(/Every column agrees with the PO/i)).toBeInTheDocument();
     expect(screen.queryByRole('checkbox')).toBeNull();
 
-    fireEvent.click(screen.getByRole('button', { name: /^Confirm$/ }));
+    fireEvent.click(screen.getByRole('button', { name: /^Confirm schedule$/ }));
     expect(onConfirm).toHaveBeenCalledWith({});
   });
 
@@ -100,7 +100,7 @@ describe('DeliveryScheduleConfirmDialog', () => {
   it('refuses until the acknowledgement carries a reason', () => {
     const { onConfirm } = renderDialog([column()]);
 
-    const submit = screen.getByRole('button', { name: /^Confirm$/ });
+    const submit = screen.getByRole('button', { name: /^Confirm schedule$/ });
     expect(submit).toBeDisabled();
 
     fireEvent.click(screen.getByRole('checkbox'));

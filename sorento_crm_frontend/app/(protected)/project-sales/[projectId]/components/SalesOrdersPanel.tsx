@@ -31,7 +31,6 @@ import {
   buildSelectColumn,
   selectedRowIds,
 } from '@/components/ui/data-grid-select-column';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
@@ -502,10 +501,7 @@ export function SalesOrdersPanel({ project }: { project: Project }) {
                 <h3 className="mt-2 text-sm font-semibold">No sales order drafted yet</h3>
               </div>
             ) : (
-              <ScrollArea>
-                <DataGridTable />
-                <ScrollBar orientation="horizontal" />
-              </ScrollArea>
+              <DataGridTable />
             )}
           </CardTable>
 

@@ -2,11 +2,7 @@
 
 import dynamic from 'next/dynamic';
 import { Container } from '@/components/common/container';
-import {
-  Toolbar,
-  ToolbarHeading,
-  ToolbarTitle,
-} from '@/components/common/toolbar';
+import { PageHeader } from '@/components/common/PageHeader';
 
 const MyPendingSLAWidget = dynamic(
   () => import('./sla-management/conversation-sla-tracking/components/MyPendingSLAWidget'),
@@ -30,11 +26,7 @@ export default function Page() {
     <Container width="fluid">
       {/* The only page in the app that never said what it was: every other route
           opens with a title, and the landing page opened with a widget. */}
-      <Toolbar>
-        <ToolbarHeading>
-          <ToolbarTitle>Dashboard</ToolbarTitle>
-        </ToolbarHeading>
-      </Toolbar>
+      <PageHeader title="Dashboards" />
       {/* MyPendingSLAWidget carries the My Pending / My Team / Coverage tabs so the
           dashboard stays a single compact surface. */}
       <div className="mb-5">
@@ -42,7 +34,7 @@ export default function Page() {
       </div>
       {/* Home embed: bound the (expensive, full-table) KPI aggregates to the last
           30 days. The dedicated /sla-management/kpi-dashboard route stays all-time. */}
-      <SLAKpiDashboardContent defaultWindowDays={30} />
+      <SLAKpiDashboardContent defaultWindowDays={30} embedded />
     </Container>
   );
 }

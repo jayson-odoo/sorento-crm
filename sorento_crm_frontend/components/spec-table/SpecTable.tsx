@@ -19,7 +19,6 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { readable, readableValue } from '@/lib/spec-readable';
 import { SpecSourceBadge } from './SpecSourceBadge';
@@ -359,10 +358,7 @@ export function SpecTable({
             {/* Horizontal scroll INSIDE the table's own container: at 375px four
                 columns cannot fit, and without this the page itself scrolls sideways
                 and takes the rest of the product record with it. */}
-            <ScrollArea>
-              <DataGridTable />
-              <ScrollBar orientation="horizontal" />
-            </ScrollArea>
+            <DataGridTable />
           </CardTable>
         </Card>
       </DataGrid>
