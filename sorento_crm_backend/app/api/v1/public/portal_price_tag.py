@@ -26,6 +26,7 @@ from app.schemas.price_tag import (
     PriceTagRequestListItem,
     PriceTagRequestResponse,
     PriceTagRequestUpdate,
+    TagItemLookupItem,
 )
 from app.services.error_handler import AppException
 from app.services.portal_form_visibility_service import resolve_visible_form_types
@@ -279,6 +280,30 @@ def portal_lookup_debtors_for_agent(
             or q_lower in (d.get("customer_code") or "").lower()
         ]
     return [DebtorForAgentItem(**d) for d in debtors]
+
+
+# ---------------------------------------------------------------------------
+# Item lookup: sets and products in one list
+# ---------------------------------------------------------------------------
+
+
+@router.get("/lookups/price-tag-items", response_model=list[TagItemLookupItem])
+def portal_lookup_tag_items(
+    q: Optional[str] = Query(None),
+    limit: int = Query(20, ge=1, le=50),
+    token: PortalToken = Depends(get_portal_token),
+    db: Session = Depends(get_db),
+):
+    """What the lines table's single Item dropdown reads (D47).
+
+    Gated the same way as every other price tag route: a contact who cannot see the
+    form cannot search the catalogue through it either.
+    """
+    _assert_visible(db, token.contact_id)
+    return [
+        TagItemLookupItem(**item)
+        for item in PriceTagRequestService.lookup_tag_items(db, q, limit=limit)
+    ]
 
 
 # ---------------------------------------------------------------------------

@@ -88,6 +88,21 @@ export interface ProductSetOption {
   name: string;
 }
 
+/**
+ * One row of the lines table's single Item picker (D47): a set OR a product, in
+ * the same list, because a dealer does not know which of the two a thing is.
+ *
+ * `id` is the real `products.id` / `product_sets.id`, which is what a line's
+ * foreign key stores. The portal's generic product lookup answers with a code and
+ * no id at all, so a product line built from it could never be saved.
+ */
+export interface TagItemOption {
+  kind: PriceTagLineType;
+  id: string;
+  code: string;
+  name: string;
+}
+
 export interface SetGuardResult {
   blocked: boolean;
   message: string | null;
@@ -155,6 +170,24 @@ export async function lookupProducts(query?: string): Promise<ProductOption[]> {
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 export async function lookupProductSets(query?: string): Promise<ProductSetOption[]> {
   return [];
+}
+
+/**
+ * Sets and products in one list, for the lines table's single Item dropdown.
+ *
+ * The alternatives picker reads the same call and keeps the products: one endpoint
+ * for one question ("what can go on a tag?") beats two round trips per keystroke,
+ * and the handful of sets it also returns costs nothing.
+ */
+export async function lookupTagItems(query?: string): Promise<TagItemOption[]> {
+  const usp = new URLSearchParams();
+  if (query && query.trim()) usp.set('q', query.trim());
+  const qs = usp.toString();
+  const url = qs
+    ? `${LOOKUPS}/price-tag-items?${qs}`
+    : `${LOOKUPS}/price-tag-items`;
+  const res = await portalFetch(url);
+  return unwrap<TagItemOption[]>(res, 'Failed to load products and sets');
 }
 
 // ---------------------------------------------------------------------------

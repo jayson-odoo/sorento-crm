@@ -299,6 +299,49 @@ class PriceTagRequestService:
         return q.order_by(PriceTagRequest.created_at.desc()).all()
 
     @staticmethod
+    def lookup_tag_items(
+        db: Session,
+        query: str | None = None,
+        limit: int = 20,
+    ) -> list[dict]:
+        """Sets and products in ONE list, for the lines table's single Item picker.
+
+        A dealer does not know whether a thing is a set or a product, so the form
+        stopped asking (D47) and this is what the one dropdown reads. Each row carries
+        the REAL `product_sets.id` / `products.id`, because that is what a line's
+        foreign key stores; the portal's generic product lookup answers with a code and
+        no id at all, which is why a product line could never be saved.
+
+        Sets come first, then products, each ordered by code and each capped at `limit`
+        (so at most `2 * limit` rows reach the picker). Sets lead because they are far
+        fewer and are the thing a salesperson is likeliest to miss.
+
+        The catalogue search itself is `tag_data_service`'s, the same one the marketing
+        canvas uses, so the portal and the editor cannot disagree about what exists.
+        """
+        from app.services.dealer_kit import tag_data_service
+
+        items: list[dict] = [
+            {
+                "kind": "product_set",
+                "id": str(row.id),
+                "code": row.set_code,
+                "name": row.name or "",
+            }
+            for row in tag_data_service.search_product_sets(db, query, limit=limit)
+        ]
+        items.extend(
+            {
+                "kind": "product",
+                "id": str(row.id),
+                "code": row.product_code,
+                "name": row.product_name or "",
+            }
+            for row in tag_data_service.search_products(db, query, limit=limit)
+        )
+        return items
+
+    @staticmethod
     def lookup_debtors_for_agent(
         db: Session,
         contact_id: str,

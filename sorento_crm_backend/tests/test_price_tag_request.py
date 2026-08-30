@@ -702,3 +702,71 @@ class TestDebtorLookup:
 
         debtors = PriceTagRequestService.lookup_debtors_for_agent(db, contact.id)
         assert debtors == []
+
+
+# ---------------------------------------------------------------------------
+# Merged item lookup (D47)
+#
+# The lines table asks ONE dropdown for both sets and products, because a dealer
+# does not know which of the two a thing is. It has to answer with the real
+# `products.id` / `product_sets.id`: `price_tag_request_lines.product_id` is a
+# uuid foreign key, and the portal's own product lookup returns no id at all, so
+# the form was posting a product CODE into it.
+# ---------------------------------------------------------------------------
+
+
+class TestTagItemLookup:
+    def test_lookup_returns_sets_and_products_together(self, db: Session):
+        product = _make_product(db, product_code="ZZTLOOKUP-P")
+        product_set = _make_product_set(db)
+
+        items = PriceTagRequestService.lookup_tag_items(db, None, limit=50)
+
+        by_id = {i["id"]: i for i in items}
+        assert product.id in by_id
+        assert product_set.id in by_id
+        assert by_id[product.id]["kind"] == "product"
+        assert by_id[product.id]["code"] == "ZZTLOOKUP-P"
+        assert by_id[product_set.id]["kind"] == "product_set"
+        assert by_id[product_set.id]["code"] == product_set.set_code
+
+    def test_lookup_ids_are_the_real_row_ids(self, db: Session):
+        """What the picker returns is what a line's foreign key stores.
+
+        A code here is refused by Postgres on the insert, which is exactly the
+        bug this endpoint exists to remove.
+        """
+        product = _make_product(db, product_code="ZZTLOOKUP-FK")
+        contact = _make_contact(db)
+
+        item = next(
+            i
+            for i in PriceTagRequestService.lookup_tag_items(db, "ZZTLOOKUP-FK")
+            if i["code"] == "ZZTLOOKUP-FK"
+        )
+
+        request = PriceTagRequestService.create_request(
+            db,
+            contact_id=contact.id,
+            company_id=_SORENTO_COMPANY_ID,
+            data={
+                "debtor_name": "ZZT Dealer",
+                "needed_by_date": date.today() + timedelta(days=7),
+                "lines": [
+                    {
+                        "line_type": "product",
+                        "product_id": item["id"],
+                        "quantity": 2,
+                    }
+                ],
+            },
+        )
+        db.flush()
+        assert request.lines[0].product_id == product.id
+
+    def test_lookup_honours_the_query(self, db: Session):
+        _make_product(db, product_code="ZZTFINDME-P")
+        _make_product(db, product_code="ZZTOTHER-P")
+
+        codes = [i["code"] for i in PriceTagRequestService.lookup_tag_items(db, "ZZTFINDME")]
+        assert codes == ["ZZTFINDME-P"]

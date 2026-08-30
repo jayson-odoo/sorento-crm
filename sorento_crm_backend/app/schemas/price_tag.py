@@ -455,6 +455,20 @@ class ProductSetSearchItem(BaseModel):
     name: str
 
 
+class TagItemLookupItem(BaseModel):
+    """One row of the portal lines table's single Item picker (D47).
+
+    `kind` is what turns into the line's `line_type`, and `id` into whichever of
+    `product_id` / `product_set_id` matches it. Both are the real row id: the
+    column is a foreign key, and a code there is refused by Postgres.
+    """
+
+    kind: Literal["product", "product_set"]
+    id: str
+    code: str
+    name: str
+
+
 class TagImage(BaseModel):
     """One photo of a bound product, signed for the viewer that asked."""
 

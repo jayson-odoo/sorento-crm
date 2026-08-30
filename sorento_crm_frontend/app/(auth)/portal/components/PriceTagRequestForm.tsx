@@ -6,7 +6,7 @@
  * Wired to real portal API via `price-tag-request-service.ts`.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   ArrowLeft,
@@ -54,15 +54,11 @@ import type {
   PriceTagRequestLine,
   DebtorOption,
   PromotionOption,
-  ProductOption,
-  ProductSetOption,
 } from '../lib/price-tag-request-service';
 import {
   lookupDebtors,
   lookupPromotions,
-  lookupProducts,
-  lookupProductSets,
-  checkSetGuard,
+  lookupTagItems,
   getRequest,
   createRequest,
   submitRequest,
@@ -92,10 +88,15 @@ interface DraftLine {
   guard_error: string | null;
 }
 
-function emptyDraftLine(lineType: 'product' | 'product_set'): DraftLine {
+/**
+ * A new row starts empty and TYPELESS in spirit: the Item picker decides whether
+ * it is a product or a set (D47), so the dealer never has to. `product` is only
+ * the placeholder until they pick, and an unpicked row blocks Submit either way.
+ */
+function emptyDraftLine(): DraftLine {
   return {
     key: `draft-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    line_type: lineType,
+    line_type: 'product',
     product_id: null,
     product_set_id: null,
     name: '',
@@ -106,6 +107,15 @@ function emptyDraftLine(lineType: 'product' | 'product_set'): DraftLine {
     included_accessories: '',
     guard_error: null,
   };
+}
+
+/** The Item picker's option value: kind and id together, so one dropdown can
+ *  answer for two tables without either half guessing which it got. */
+function itemValue(line: DraftLine): string {
+  if (line.line_type === 'product_set') {
+    return line.product_set_id ? `product_set:${line.product_set_id}` : '';
+  }
+  return line.product_id ? `product:${line.product_id}` : '';
 }
 
 function lineToDraft(line: PriceTagRequestLine): DraftLine {
@@ -163,8 +173,6 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
    *  just "not back yet", and must not read as "you are not linked". */
   const [debtorsLoaded, setDebtorsLoaded] = useState(false);
   const [promotions, setPromotions] = useState<PromotionOption[]>([]);
-  const [products, setProducts] = useState<ProductOption[]>([]);
-  const [productSets, setProductSets] = useState<ProductSetOption[]>([]);
 
   // ---- Form state ----
   const [debtorCode, setDebtorCode] = useState('');
@@ -197,8 +205,6 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         toast.error('Failed to load debtors');
       });
     lookupPromotions().then(setPromotions);
-    lookupProducts().then(setProducts);
-    lookupProductSets().then(setProductSets);
   }, []);
 
   // ---- Load existing request ----
@@ -253,46 +259,51 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     [promotions],
   );
 
-  // ---- Product options ----
-  const productOptions = useMemo<SearchableSelectOption[]>(
-    () =>
-      products.map((p) => ({
-        value: p.id,
-        label: p.name,
-        description: p.code,
-      })),
-    [products],
+  // ---- Item options: sets and products in ONE list (D47) ----
+  // The label carries the word Set or Product, because the two look alike in a
+  // dropdown and picking the wrong one produces a different tag.
+  const fetchItemOptions = useCallback(
+    async (query: string): Promise<SearchableSelectOption[]> => {
+      const items = await lookupTagItems(query);
+      return items.map((i) => ({
+        value: `${i.kind}:${i.id}`,
+        label: i.name || i.code,
+        description: `${i.kind === 'product_set' ? 'Set' : 'Product'} - ${i.code}`,
+      }));
+    },
+    [],
   );
 
-  // ---- Product set options ----
-  const setOptions = useMemo<SearchableSelectOption[]>(
-    () =>
-      productSets.map((s) => ({
-        value: s.id,
-        label: s.name,
-        description: s.code,
-      })),
-    [productSets],
-  );
-
-  // ---- Alternative product options (exclude already-selected product) ----
-  const alternativeOptions = useMemo<SearchableSelectOption[]>(
-    () =>
-      products.map((p) => ({
-        value: p.id,
-        label: p.name,
-        description: p.code,
-      })),
-    [products],
+  // Alternatives are products only: an OR choice on a tag names another product,
+  // never a whole set. Same call, filtered, rather than a second endpoint.
+  //
+  // The multi-select hands back values alone, and a line stores the product's NAME
+  // and CODE beside its id (that is what the request detail and the tag print
+  // read), so every product the picker has shown is remembered here. Bounded by
+  // what one person can scroll through in one form.
+  const seenProductsRef = useRef(new Map<string, { name: string; code: string }>());
+  const fetchAlternativeOptions = useCallback(
+    async (query: string): Promise<SearchableSelectOption[]> => {
+      const items = await lookupTagItems(query);
+      const products = items.filter((i) => i.kind === 'product');
+      for (const p of products) {
+        seenProductsRef.current.set(p.id, {
+          name: p.name || p.code,
+          code: p.code,
+        });
+      }
+      return products.map((i) => ({
+        value: i.id,
+        label: i.name || i.code,
+        description: i.code,
+      }));
+    },
+    [],
   );
 
   // ---- Line management ----
-  const addProductLine = useCallback(() => {
-    setLines((prev) => [...prev, emptyDraftLine('product')]);
-  }, []);
-
-  const addSetLine = useCallback(() => {
-    setLines((prev) => [...prev, emptyDraftLine('product_set')]);
+  const addLine = useCallback(() => {
+    setLines((prev) => [...prev, emptyDraftLine()]);
   }, []);
 
   const removeLine = useCallback((key: string) => {
@@ -318,36 +329,39 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     });
   }, []);
 
-  // ---- Set guard on product select ----
-  const handleProductSelect = useCallback(
-    (key: string, productId: string) => {
-      const product = products.find((p) => p.id === productId);
-      if (!product) return;
-
-      const guard = checkSetGuard(productId);
+  // ---- One picker, both kinds (D47) ----
+  // The chosen option decides the line's type; the payload the server reads is
+  // unchanged, still line_type plus whichever of the two ids matches it.
+  const handleItemSelect = useCallback(
+    (key: string, option: SearchableSelectOption | null) => {
+      if (!option) {
+        updateLine(key, {
+          product_id: null,
+          product_set_id: null,
+          name: '',
+          code: '',
+          guard_error: null,
+        });
+        return;
+      }
+      const [kind, id] = option.value.split(':');
+      const isSet = kind === 'product_set';
       updateLine(key, {
-        product_id: productId,
-        name: product.name,
-        code: product.code,
-        guard_error: guard.blocked ? guard.message : null,
-      });
-    },
-    [products, updateLine],
-  );
-
-  // ---- Set select ----
-  const handleSetSelect = useCallback(
-    (key: string, setId: string) => {
-      const pSet = productSets.find((s) => s.id === setId);
-      if (!pSet) return;
-      updateLine(key, {
-        product_set_id: setId,
-        name: pSet.name,
-        code: pSet.code,
+        line_type: isSet ? 'product_set' : 'product',
+        product_id: isSet ? null : id,
+        product_set_id: isSet ? id : null,
+        name: option.label,
+        // The description reads "Set - CODE" / "Product - CODE"; the code is what
+        // the row shows, so it is stored without the word in front of it.
+        code: (option.description ?? '').split(' - ').slice(1).join(' - '),
+        // A set is priced and printed as one thing, so any OR choices typed
+        // against a product line stop applying the moment it becomes a set.
+        // Spread, not a key set to undefined, which would wipe it on a product.
+        ...(isSet ? { alternatives: [] } : {}),
         guard_error: null,
       });
     },
-    [productSets, updateLine],
+    [updateLine],
   );
 
   // ---- Validation ----
@@ -393,8 +407,11 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       });
       toast.success('Draft saved');
       router.push(`${portalBase(slug)}?type=price_tag_request`);
-    } catch {
-      toast.error('Failed to save draft');
+    } catch (e) {
+      // The server's sentence, not ours: the set guard refuses an ala carte
+      // Bathroom Furniture line by NAME, and a generic message would leave the
+      // salesperson with no idea which line to change.
+      toast.error(e instanceof Error ? e.message : 'Failed to save draft');
     } finally {
       setSaving(false);
     }
@@ -426,8 +443,8 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       await submitRequest(created.id);
       toast.success('Request submitted');
       router.push(`${portalBase(slug)}?type=price_tag_request`);
-    } catch {
-      toast.error('Failed to submit request');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to submit request');
     } finally {
       setSubmitting(false);
     }
@@ -668,43 +685,60 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         />
       </div>
 
-      {/* Lines */}
+      {/* Lines: one table, one Add button, one Item dropdown (D47) */}
       <Card>
-        <CardHeader className="flex flex-row items-center justify-between py-3 px-4">
+        <CardHeader className="py-3 px-4">
           <CardTitle className="text-base">Lines</CardTitle>
-          <div className="flex gap-2">
-            <Button size="sm" variant="outline" onClick={addProductLine}>
-              <Plus className="size-3.5 mr-1" /> Product
-            </Button>
-            <Button size="sm" variant="outline" onClick={addSetLine}>
-              <Plus className="size-3.5 mr-1" /> Set
-            </Button>
-          </div>
         </CardHeader>
         <CardContent className="space-y-3 px-4 pb-4">
-          {lines.length === 0 && (
+          {lines.length === 0 ? (
             <p className="text-sm text-muted-foreground text-center py-6">
-              No lines added. Use the buttons above to add products or sets.
+              No lines yet.
             </p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
+                  <tr>
+                    <th className="w-8 px-2 py-2 text-left">#</th>
+                    <th className="min-w-[220px] px-2 py-2 text-left">Item</th>
+                    <th className="w-24 px-2 py-2 text-left">Qty (tags)</th>
+                    <th className="min-w-[200px] px-2 py-2 text-left">
+                      Alternatives
+                    </th>
+                    <th className="min-w-[180px] px-2 py-2 text-left">
+                      Accessories
+                    </th>
+                    {!!promotionId && (
+                      <th className="w-28 px-2 py-2 text-left">Promo price</th>
+                    )}
+                    <th className="w-24 px-2 py-2"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {lines.map((line, index) => (
+                    <LineRow
+                      key={line.key}
+                      line={line}
+                      index={index}
+                      total={lines.length}
+                      hasPromotion={!!promotionId}
+                      fetchItemOptions={fetchItemOptions}
+                      fetchAlternativeOptions={fetchAlternativeOptions}
+                      seenProducts={seenProductsRef.current}
+                      onItemSelect={handleItemSelect}
+                      onUpdate={updateLine}
+                      onRemove={removeLine}
+                      onMove={moveLine}
+                    />
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
-          {lines.map((line, index) => (
-            <LineRow
-              key={line.key}
-              line={line}
-              index={index}
-              total={lines.length}
-              hasPromotion={!!promotionId}
-              productOptions={productOptions}
-              setOptions={setOptions}
-              alternativeOptions={alternativeOptions}
-              products={products}
-              onProductSelect={handleProductSelect}
-              onSetSelect={handleSetSelect}
-              onUpdate={updateLine}
-              onRemove={removeLine}
-              onMove={moveLine}
-            />
-          ))}
+          <Button size="sm" variant="outline" onClick={addLine}>
+            <Plus className="size-3.5 mr-1" /> Add line
+          </Button>
         </CardContent>
       </Card>
 
@@ -814,110 +848,68 @@ interface LineRowProps {
   index: number;
   total: number;
   hasPromotion: boolean;
-  productOptions: SearchableSelectOption[];
-  setOptions: SearchableSelectOption[];
-  alternativeOptions: SearchableSelectOption[];
-  products: ProductOption[];
-  onProductSelect: (key: string, productId: string) => void;
-  onSetSelect: (key: string, setId: string) => void;
+  fetchItemOptions: (query: string) => Promise<SearchableSelectOption[]>;
+  fetchAlternativeOptions: (query: string) => Promise<SearchableSelectOption[]>;
+  seenProducts: Map<string, { name: string; code: string }>;
+  onItemSelect: (key: string, option: SearchableSelectOption | null) => void;
   onUpdate: (key: string, patch: Partial<DraftLine>) => void;
   onRemove: (key: string) => void;
   onMove: (index: number, direction: 'up' | 'down') => void;
 }
 
+/**
+ * One row of the lines table, on the Purchase Request pattern in `SubmissionForm`:
+ * a cell per field, a trash button, and horizontal scroll on a narrow screen.
+ *
+ * Alternatives are disabled on a set row and say why, which is the capability the
+ * Set card this replaced simply did not have.
+ */
 function LineRow({
   line,
   index,
   total,
   hasPromotion,
-  productOptions,
-  setOptions,
-  alternativeOptions,
-  products,
-  onProductSelect,
-  onSetSelect,
+  fetchItemOptions,
+  fetchAlternativeOptions,
+  seenProducts,
+  onItemSelect,
   onUpdate,
   onRemove,
   onMove,
 }: LineRowProps) {
+  const isSet = line.line_type === 'product_set';
+  const picked = itemValue(line);
+  const selectedItem: SearchableSelectOption | undefined = picked
+    ? {
+        value: picked,
+        label: line.name || line.code,
+        description: `${isSet ? 'Set' : 'Product'}${line.code ? ` - ${line.code}` : ''}`,
+      }
+    : undefined;
+
   return (
-    <div className="border rounded-lg p-3 space-y-3">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Badge variant="secondary" className="text-xs">
-            {line.line_type === 'product' ? 'Product' : 'Set'}
-          </Badge>
-          {line.code && (
-            <span className="text-xs text-muted-foreground">{line.code}</span>
-          )}
-        </div>
-        <div className="flex items-center gap-1">
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 w-7 p-0"
-            disabled={index === 0}
-            onClick={() => onMove(index, 'up')}
-          >
-            <ArrowUp className="size-3.5" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 w-7 p-0"
-            disabled={index === total - 1}
-            onClick={() => onMove(index, 'down')}
-          >
-            <ArrowDown className="size-3.5" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 w-7 p-0 text-destructive"
-            onClick={() => onRemove(line.key)}
-          >
-            <Trash2 className="size-3.5" />
-          </Button>
-        </div>
-      </div>
-
-      {/* Product / Set picker */}
-      {line.line_type === 'product' ? (
-        <div className="space-y-1.5">
-          <Label className="text-xs">Product</Label>
+    <>
+      <tr className="border-t border-border align-top">
+        <td className="px-2 py-2 text-muted-foreground">{index + 1}</td>
+        <td className="px-2 py-2">
           <SearchableSelect
-            value={line.product_id ?? ''}
-            onChange={(v) => onProductSelect(line.key, v)}
-            options={productOptions}
-            placeholder="Select product..."
+            value={picked}
+            onChange={() => {
+              /* the whole option is what carries the kind; see onOptionChange */
+            }}
+            onOptionChange={(option) => onItemSelect(line.key, option)}
+            fetchOptions={fetchItemOptions}
+            selectedOption={selectedItem}
+            clearable
+            wrapOptions
+            placeholder="Search a set or product..."
+            emptyMessage="No sets or products match."
           />
-        </div>
-      ) : (
-        <div className="space-y-1.5">
-          <Label className="text-xs">Product Set</Label>
-          <SearchableSelect
-            value={line.product_set_id ?? ''}
-            onChange={(v) => onSetSelect(line.key, v)}
-            options={setOptions}
-            placeholder="Select set..."
-          />
-        </div>
-      )}
-
-      {/* Set guard error */}
-      {line.guard_error && (
-        <p className="text-xs text-destructive bg-destructive/10 rounded px-2 py-1.5">
-          {line.guard_error}
-        </p>
-      )}
-
-      {/* Quantity */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-        <div className="space-y-1.5 flex-1">
-          <Label className="text-xs">Quantity (tags)</Label>
+        </td>
+        <td className="px-2 py-2">
           <Input
             type="number"
+            inputMode="numeric"
             min={1}
             value={line.quantity}
             onChange={(e) =>
@@ -925,61 +917,119 @@ function LineRow({
                 quantity: Math.max(1, parseInt(e.target.value) || 1),
               })
             }
-            className="w-24"
+            aria-label={`Quantity for line ${index + 1}`}
           />
-        </div>
-
-        {/* Show promo price toggle */}
+        </td>
+        <td
+          className="px-2 py-2"
+          title={
+            isSet
+              ? 'A set is printed as one thing, so it carries no OR choices.'
+              : undefined
+          }
+        >
+          <SearchableMultiSelect
+            value={line.alternatives.map((a) => a.product_id)}
+            onChange={(selected) => {
+              // Keep what the row already knows about a still-selected product,
+              // then fall back to what the picker has shown this session, so a
+              // chip never reads as a bare id.
+              const known = new Map(
+                line.alternatives.map((a) => [a.product_id, a]),
+              );
+              onUpdate(line.key, {
+                alternatives: selected.map((pid) => {
+                  const held = known.get(pid);
+                  if (held) return held;
+                  const seen = seenProducts.get(pid);
+                  return {
+                    product_id: pid,
+                    name: seen?.name ?? '',
+                    code: seen?.code ?? '',
+                  };
+                }),
+              });
+            }}
+            fetchOptions={fetchAlternativeOptions}
+            selectedOptions={line.alternatives.map((a) => ({
+              value: a.product_id,
+              label: a.name || a.code,
+              description: a.code,
+            }))}
+            disabled={isSet}
+            placeholder={isSet ? 'Not for a set' : 'Search products...'}
+            emptyMessage="No products match."
+          />
+        </td>
+        <td className="px-2 py-2">
+          <Input
+            value={line.included_accessories}
+            onChange={(e) =>
+              onUpdate(line.key, { included_accessories: e.target.value })
+            }
+            placeholder="e.g. Soft-close hinges"
+            aria-label={`Accessories for line ${index + 1}`}
+          />
+        </td>
         {hasPromotion && (
-          <div className="flex items-center gap-2">
+          <td className="px-2 py-2">
             <Switch
               checked={line.show_promo_price}
               onCheckedChange={(v) =>
                 onUpdate(line.key, { show_promo_price: v })
               }
+              aria-label={`Show promo price on line ${index + 1}`}
             />
-            <Label className="text-xs">Show promo price</Label>
-          </div>
+          </td>
         )}
-      </div>
-
-      {/* Alternatives (product lines only) */}
-      {line.line_type === 'product' && (
-        <div className="space-y-1.5">
-          <Label className="text-xs">Alternatives (OR choices)</Label>
-          <SearchableMultiSelect
-            value={line.alternatives.map((a) => a.product_id)}
-            onChange={(selected) => {
-              const alts = selected
-                .map((pid) => {
-                  const p = products.find((pr) => pr.id === pid);
-                  return p
-                    ? { product_id: p.id, name: p.name, code: p.code }
-                    : null;
-                })
-                .filter(Boolean) as DraftLine['alternatives'];
-              onUpdate(line.key, { alternatives: alts });
-            }}
-            options={alternativeOptions.filter(
-              (o) => o.value !== line.product_id,
-            )}
-            placeholder="Select alternatives..."
-          />
-        </div>
+        <td className="px-2 py-2">
+          <div className="flex items-center justify-end gap-0.5">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 w-7 p-0"
+              disabled={index === 0}
+              onClick={() => onMove(index, 'up')}
+              title="Move up"
+              aria-label={`Move line ${index + 1} up`}
+            >
+              <ArrowUp className="size-3.5" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 w-7 p-0"
+              disabled={index === total - 1}
+              onClick={() => onMove(index, 'down')}
+              title="Move down"
+              aria-label={`Move line ${index + 1} down`}
+            >
+              <ArrowDown className="size-3.5" />
+            </Button>
+            {/* No confirm: the row is unsaved form state, not a record. */}
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 w-7 p-0 text-destructive"
+              onClick={() => onRemove(line.key)}
+              title="Remove line"
+              aria-label={`Remove line ${index + 1}`}
+            >
+              <Trash2 className="size-3.5" />
+            </Button>
+          </div>
+        </td>
+      </tr>
+      {line.guard_error && (
+        <tr>
+          <td colSpan={hasPromotion ? 7 : 6} className="px-2 pb-2">
+            <p className="text-xs text-destructive bg-destructive/10 rounded px-2 py-1.5">
+              {line.guard_error}
+            </p>
+          </td>
+        </tr>
       )}
-
-      {/* Accessories */}
-      <div className="space-y-1.5">
-        <Label className="text-xs">Accessories</Label>
-        <Input
-          value={line.included_accessories}
-          onChange={(e) =>
-            onUpdate(line.key, { included_accessories: e.target.value })
-          }
-          placeholder="e.g. Soft-close hinges, mirror clips"
-        />
-      </div>
-    </div>
+    </>
   );
 }
 
