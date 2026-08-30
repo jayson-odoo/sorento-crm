@@ -8,20 +8,11 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
-import { useParams, useRouter } from 'next/navigation';
-import { ArrowLeft } from 'lucide-react';
+import { useParams } from 'next/navigation';
 import { toast } from 'sonner';
-import { Button } from '@/components/ui/button';
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
 import { Container } from '@/components/common/container';
 import { PageHeader } from '@/components/common/PageHeader';
+import BackToList from '@/components/common/BackToList';
 import { Skeleton } from '@/components/ui/skeleton';
 import dynamic from 'next/dynamic';
 import type { TagTemplate, TagTemplateDoc } from '@/lib/dealer-kit/tag-template-types';
@@ -34,7 +25,6 @@ const TagCanvasEditor = dynamic(
 
 export default function TagTemplateEditorPage() {
   const params = useParams<{ id: string }>();
-  const router = useRouter();
 
   const [template, setTemplate] = useState<TagTemplate | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -88,10 +78,7 @@ export default function TagTemplateEditorPage() {
         <PageHeader
           title="Template not found"
           actions={
-            <Button variant="outline" onClick={() => router.push('/dealer-kit/tag-templates')}>
-              <ArrowLeft className="mr-1.5 size-4" />
-              Back to templates
-            </Button>
+            <BackToList listPath="/dealer-kit/tag-templates" label="Back to templates" />
           }
         />
         <p className="mt-4 text-sm text-destructive">{error ?? 'Template not found'}</p>
@@ -100,43 +87,24 @@ export default function TagTemplateEditorPage() {
   }
 
   return (
-    <div className="flex h-[calc(100dvh-56px)] flex-col">
-      {/* Header */}
-      <div className="shrink-0 border-b px-4 py-2">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-base font-semibold">{template.name}</h1>
-            <Breadcrumb>
-              <BreadcrumbList>
-                <BreadcrumbItem>
-                  <BreadcrumbLink href="/">Home</BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbLink href="/dealer-kit">Dealer Kit</BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbLink href="/dealer-kit/tag-templates">
-                    Tag Templates
-                  </BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbPage>{template.name}</BreadcrumbPage>
-                </BreadcrumbItem>
-              </BreadcrumbList>
-            </Breadcrumb>
-          </div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => router.push('/dealer-kit/tag-templates')}
-          >
-            <ArrowLeft className="mr-1.5 size-3.5" />
-            Back
-          </Button>
-        </div>
+    <div className="flex h-[calc(100dvh-var(--header-height)-20px)] flex-col">
+      {/* Header: PageHeader keeps the trail and title one component and one
+          scale (S5-01, S5-02) even though this shell sits outside the normal
+          scrolling Toolbar rhythm - shrink-0 so the canvas below still gets
+          whatever height is left, exactly as the old compact bar did.
+          The 100dvh subtracts the fixed top bar's own height (the demo1
+          layout's `--header-height`, 70px desktop / 60px below lg) plus the
+          `<main>` wrapper's `pt-5` (20px) - both chrome above this div that a
+          flat 56px never accounted for and left the canvas short. */}
+      <div className="shrink-0 border-b">
+        <Container>
+          <PageHeader
+            title={template.name}
+            actions={
+              <BackToList listPath="/dealer-kit/tag-templates" label="Back to templates" />
+            }
+          />
+        </Container>
       </div>
 
       {/* Canvas editor fills remaining height */}

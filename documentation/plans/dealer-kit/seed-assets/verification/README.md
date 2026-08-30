@@ -672,3 +672,54 @@ Not converted: `PriceTagRequestDetail`'s Void confirmation still uses a plain
 now use it. Converting needs a new `price_tag_request.void` handler registered in
 `app/services/record_actions.py` plus its own tests - real feature work, not a
 merge adaptation, so it was left as a follow-up rather than added under this task.
+
+## CI red-fix round (PR #289), 31 Aug 2026
+
+Six CI failures fixed, each reproduced locally first with the exact failing test. Full
+detail in the coder report; the two `[FE]` ones with a chrome consequence get PNGs here.
+
+The tag template editor and the request designer had kept their own compact
+`Breadcrumb` bar through the S5/S6b merges above "on purpose" (both docstrings said so),
+reasoning they were full-height editor shells outside the `Toolbar` rhythm the sweep
+covered. `components/common/PageHeader.inventory.test.ts` (S5-01/S5-02) proved that
+reasoning wrong: the inventory scan does not carve out an exception for an editor, so
+both files hand-rolled an `<h1>` and a `@/components/ui/breadcrumb` import the scan
+correctly flagged. Converted both to `PageHeader` inside a `shrink-0 border-b` wrapper
+(same shape the rest of the sweep uses), with `BackToList` for the "back" action instead
+of a hand-rolled button (D6/S3-01, the actual house convention `BackToList`'s own
+docstring names).
+
+Converting also exposed a live height bug that predates this fix: both pages sized their
+flex shell with `h-[calc(100dvh-56px)]`, but `56px` was never the real chrome above
+them - the fixed top bar is `demo1.css`'s `--header-height` (70px desktop / 60px below
+`lg`), and `<main>` adds its own `pt-5` (20px) on top, for 90px total. With the old
+compact bar (~40px in the old markup) this bit no one because the bar itself absorbed
+part of the discrepancy in flow before `flex-1` sized off the same wrong base; swapping
+in a taller `PageHeader` made the shell 34px too tall and the toolbar row at the bottom
+of the canvas invisible below the fold. Both pages now compute
+`h-[calc(100dvh-var(--header-height)-20px)]`, which references the same CSS variable
+`demo1.css` defines rather than a copied constant, so it tracks the real chrome at any
+breakpoint. Measured in the browser post-fix: the flex shell's `getBoundingClientRect()`
+bottom equals `window.innerHeight` exactly (577 === 577 at the headless viewport size),
+where before it read 611 (34px of overflow).
+
+Run on the `:3030` lane, agent-browser session `pt-fix`, navigated from `/` through the
+sidebar every time (Dealer Kit -> Room Designer -> Tag Templates / Price Tag Requests).
+
+| File | What it shows |
+| --- | --- |
+| `ci-fix-1-tag-template-editor-pageheader-fills-viewport.png` | `Kitchen Sink - Ala Carte` in the tag template editor after the `PageHeader` conversion: title, derived trail (`Dashboards > Dealer Kit > Room Designer > Tag Templates > Kitchen Sink - Ala Carte`), `Back to templates`. The canvas, rulers, layers and inspector fill down to the bottom toolbar (`14 layers / 125.9 x 88.6 mm`, `Save`), which sat below the fold before the height fix. |
+| `ci-fix-2-request-designer-pageheader-fills-viewport.png` | `PT-202608-0001`'s `/design` route, reached via the request detail's `View design` CTA: `PageHeader` title "Design Price Tags", the same derived trail ending on it, `Back to request`. Below it the designer's own line/layer panels, canvas and the `Design | Arrange` / `Save` row all render unclipped. |
+
+Also fixed, no chrome consequence (backend + one other frontend file):
+`tests/test_company_scope.py` (125 owned tables, `price_tag_requests` + `tag_template`
+justified in the tripwire comment), `tests/test_dealer_kit_flyer_from_attachment.py`
+(`POST /dealer-kit/assets` is now a plain `def`, threadpooled like every other
+dealer-kit route except the flyer upload), `tests/test_form_sla_types_consistency.py`
+(schema's `_FORM_SLA_TYPES` gained `price_tag_request`, which the service tuple already
+had), `config/menu.config.test.ts` (the two Dealer Kit menu leaves this feature added
+now gate on `dealer_kit.page.view` like every other leaf in the group, matching main's
+convention from #285 - the specific `dealer_kit.price_tag_requests.view` /
+`dealer_kit.tag_templates.view` permissions still gate the backend routes themselves),
+and `components/ui/data-grid-scroller.inventory.test.ts` (`PriceTagRequestsList`'s
+`ScrollArea` around `DataGridTable` removed - the grid brings its own scroller).
