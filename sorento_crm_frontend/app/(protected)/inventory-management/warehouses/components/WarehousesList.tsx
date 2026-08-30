@@ -127,7 +127,6 @@ export default function WarehousesList() {
         cell: ({ row }) => (
           <Badge
             variant={row.original.fulfilment_planning ? 'success' : 'secondary'}
-            appearance="ghost"
           >
             {row.original.fulfilment_planning ? 'On' : 'Off'}
           </Badge>
