@@ -1,15 +1,7 @@
 import { Metadata } from 'next';
 
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
 import { Container } from '@/components/common/container';
-import { Toolbar, ToolbarHeading, ToolbarTitle } from '@/components/common/toolbar';
+import { PageHeader } from '@/components/common/PageHeader';
 
 import { EditionDetail } from './components/EditionDetail';
 
@@ -27,26 +19,7 @@ export default async function DealerKitEditionPage({
 
   return (
     <Container width="fluid">
-      <Toolbar>
-        <ToolbarHeading>
-          <ToolbarTitle>Edition</ToolbarTitle>
-          <Breadcrumb>
-            <BreadcrumbList>
-              <BreadcrumbItem>
-                <BreadcrumbLink href="/">Home</BreadcrumbLink>
-              </BreadcrumbItem>
-              <BreadcrumbSeparator />
-              <BreadcrumbItem>
-                <BreadcrumbLink href="/dealer-kit/editions">Editions</BreadcrumbLink>
-              </BreadcrumbItem>
-              <BreadcrumbSeparator />
-              <BreadcrumbItem>
-                <BreadcrumbPage>Edition</BreadcrumbPage>
-              </BreadcrumbItem>
-            </BreadcrumbList>
-          </Breadcrumb>
-        </ToolbarHeading>
-      </Toolbar>
+      <PageHeader title="Edition" />
 
       <EditionDetail editionId={editionId} />
     </Container>

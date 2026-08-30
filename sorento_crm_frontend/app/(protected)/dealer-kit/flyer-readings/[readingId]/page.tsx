@@ -1,15 +1,7 @@
 import { Metadata } from 'next';
 
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
 import { Container } from '@/components/common/container';
-import { Toolbar, ToolbarHeading, ToolbarTitle } from '@/components/common/toolbar';
+import { PageHeader } from '@/components/common/PageHeader';
 
 import { FlyerReviewScreen } from './components/FlyerReviewScreen';
 
@@ -27,26 +19,7 @@ export default async function DealerKitFlyerReviewRoute({
 
   return (
     <Container width="fluid">
-      <Toolbar>
-        <ToolbarHeading>
-          <ToolbarTitle>Review Flyer</ToolbarTitle>
-          <Breadcrumb>
-            <BreadcrumbList>
-              <BreadcrumbItem>
-                <BreadcrumbLink href="/">Home</BreadcrumbLink>
-              </BreadcrumbItem>
-              <BreadcrumbSeparator />
-              <BreadcrumbItem>
-                <BreadcrumbLink href="/dealer-kit/flyer-readings">Flyers</BreadcrumbLink>
-              </BreadcrumbItem>
-              <BreadcrumbSeparator />
-              <BreadcrumbItem>
-                <BreadcrumbPage>Review</BreadcrumbPage>
-              </BreadcrumbItem>
-            </BreadcrumbList>
-          </Breadcrumb>
-        </ToolbarHeading>
-      </Toolbar>
+      <PageHeader title="Review Flyer" />
 
       <FlyerReviewScreen readingId={readingId} />
     </Container>

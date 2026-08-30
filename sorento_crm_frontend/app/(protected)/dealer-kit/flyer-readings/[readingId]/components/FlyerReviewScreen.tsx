@@ -120,9 +120,9 @@ export function FlyerReviewScreen({ readingId }: { readingId: string }) {
           <div className="flex min-w-0 items-start gap-2">
             <FileText className="mt-0.5 size-5 shrink-0 text-muted-foreground" />
             <div className="min-w-0">
-              <h1 className="min-w-0 break-words text-lg font-semibold" data-testid="dk-fr-filename">
+              <h2 className="min-w-0 break-words text-lg font-semibold" data-testid="dk-fr-filename">
                 {data.filename}
-              </h1>
+              </h2>
               <p className="text-sm text-muted-foreground">{metaLine}</p>
               {isDone && isFetching && (
                 // The report is derived, not stored, so it is recomputed every
