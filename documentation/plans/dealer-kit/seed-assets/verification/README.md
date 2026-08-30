@@ -413,3 +413,38 @@ binding `{}` or `null`, `Kitchen Sink - Ala Carte` still 14 layers and never sav
 `ProductPickDialog` and `AssetPickerDialog` have always done so; the new
 `PreviewBlocksDialog` follows the same house pattern and adds one more instance of the same
 warning rather than a new kind of it.
+
+## Round 7, 30 Aug: the colour picker and merge fields (D54-D59, AC-M.23 / AC-M.24)
+
+Run on the `:3030` lane against a throwaway template, `ZZT merge fields` (family Ala Carte),
+created through Tag Templates -> New Template. No seeded template was opened or edited.
+
+| File | What it shows |
+| --- | --- |
+| `interaction-2x-colour-spectrum-popover.png` | The Colour control on a text layer, opened. The popover leads with the browser's own full-spectrum `input[type=color]` given a swatch-sized area (the large black rectangle), with the twelve brand swatches under it and the hex box beside the trigger (D54, AC-M.23). |
+| `interaction-2x-colour-picked-syncs-hex.png` | The same popover after a colour was picked on the spectrum. The spectrum, the trigger swatch and the hex box all read `#1565c0`: picking rewrote the box and the layer in one move. The OS colour panel is not scriptable, so the spectrum was driven the way the browser drives it, through the native value setter plus a real `input` event; the swatches under it were exercised by ordinary clicks (D54, AC-M.23). |
+| `interaction-2x-insert-field-no-preview.png` | The Insert field dialog. The content is editable at the top with the cursor kept, the search box has narrowed the catalogue to `Dimensions {{product.dimensions}}` under its PRODUCT heading, and the preview line reads `(preview a product to see values)` because nothing is previewed yet. The Inspector behind it shows the new `{}` Insert field button beside Content (D59, AC-M.24). |
+| `interaction-2x-canvas-draws-the-tokens.png` | The canvas with nothing previewed: the layer draws `Made of {{spec.material}} - {{product.dimensions}}` as written, so the designer can see which fields will fill it. The Layers panel row carries the `{}` marker and the Inspector reads `Draws from product data` in place of the amber unlinked note (D55, D57, AC-M.24). |
+
+Proven in this run, beyond the four images: the Specs group is fed by the live registry through
+`GET /api/v1/dealer-kit/spec-keys` (searching `material` offered `Material {{spec.material}}` and
+`Seat cover material {{spec.seat_material}}`, neither of them hard-coded anywhere in the
+frontend); a click in the catalogue inserts at the caret; Done writes the content back to
+`text_override` on a slot-bound layer, after which the Layers panel row reads `name {}` with the
+title `Draws from product data through merge fields`.
+
+**Not proven in this run.** Previewing the block with a real product, so that the preview line and
+the canvas show resolved values, and the round trip through Save / reload. The `:3030` dev server
+died part-way through the product picker (the search returned `No results found.` and every
+subsequent `fetch` from the page failed, with nothing listening on the port), and the standing
+rule for this lane is not to start or restart a server. The request designer half of the check is
+outstanding for the same reason.
+
+**Left behind.** The throwaway template `ZZT merge fields`
+(`9184baf7-b805-4c7b-8f2a-07e25620feb1`) could not be deleted through the list, because the UI
+went down before the cleanup step and the API key principal is refused
+`dealer_kit.tag_templates.manage`. It holds one group of two text layers and nothing else. Delete
+it from Tag Templates when the lane is back up.
+
+**Known noise, not introduced here.** Radix's missing-`Description` warning fires for
+`InsertFieldDialog` exactly as it does for every other dialog on this page.
