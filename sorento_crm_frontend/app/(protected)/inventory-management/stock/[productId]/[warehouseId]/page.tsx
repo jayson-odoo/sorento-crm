@@ -16,17 +16,9 @@ import {
   getCoreRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
 import { Button } from '@/components/ui/button';
 import { Container } from '@/components/common/container';
-import { Toolbar, ToolbarActions, ToolbarHeading, ToolbarTitle } from '@/components/common/toolbar';
+import { PageHeader } from '@/components/common/PageHeader';
 import { Card, CardContent, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
@@ -173,33 +165,16 @@ export default function StockDetailPage({ params }: StockDetailPageProps) {
     return (
       <>
         <Container>
-          <Toolbar>
-            <ToolbarHeading>
-              <ToolbarTitle>Stock</ToolbarTitle>
-              <Breadcrumb>
-                <BreadcrumbList>
-                  <BreadcrumbItem>
-                    <BreadcrumbLink href="/">Home</BreadcrumbLink>
-                  </BreadcrumbItem>
-                  <BreadcrumbSeparator />
-                  <BreadcrumbItem>
-                    <BreadcrumbPage>Inventory Management</BreadcrumbPage>
-                  </BreadcrumbItem>
-                  <BreadcrumbSeparator />
-                  <BreadcrumbItem>
-                    <BreadcrumbLink href="/inventory-management/stock">Stock</BreadcrumbLink>
-                  </BreadcrumbItem>
-                </BreadcrumbList>
-              </Breadcrumb>
-            </ToolbarHeading>
-            <ToolbarActions>
+          <PageHeader
+            title="Stock"
+            actions={
               <Button asChild variant="outline">
                 <Link href="/inventory-management/stock">
                   <MoveLeft /> Back to Stock
                 </Link>
               </Button>
-            </ToolbarActions>
-          </Toolbar>
+            }
+          />
         </Container>
         <Container>
           <div className="space-y-6">
@@ -215,33 +190,16 @@ export default function StockDetailPage({ params }: StockDetailPageProps) {
     return (
       <>
         <Container>
-          <Toolbar>
-            <ToolbarHeading>
-              <ToolbarTitle>Stock</ToolbarTitle>
-              <Breadcrumb>
-                <BreadcrumbList>
-                  <BreadcrumbItem>
-                    <BreadcrumbLink href="/">Home</BreadcrumbLink>
-                  </BreadcrumbItem>
-                  <BreadcrumbSeparator />
-                  <BreadcrumbItem>
-                    <BreadcrumbPage>Inventory Management</BreadcrumbPage>
-                  </BreadcrumbItem>
-                  <BreadcrumbSeparator />
-                  <BreadcrumbItem>
-                    <BreadcrumbLink href="/inventory-management/stock">Stock</BreadcrumbLink>
-                  </BreadcrumbItem>
-                </BreadcrumbList>
-              </Breadcrumb>
-            </ToolbarHeading>
-            <ToolbarActions>
+          <PageHeader
+            title="Stock"
+            actions={
               <Button asChild variant="outline">
                 <Link href="/inventory-management/stock">
                   <MoveLeft /> Back to Stock
                 </Link>
               </Button>
-            </ToolbarActions>
-          </Toolbar>
+            }
+          />
         </Container>
         <Container>
           <div className="text-center py-12">
@@ -258,31 +216,16 @@ export default function StockDetailPage({ params }: StockDetailPageProps) {
   return (
     <>
       <Container>
-        <Toolbar>
-          <ToolbarHeading>
-            <ToolbarTitle>Stock Balance</ToolbarTitle>
-            <Breadcrumb>
-              <BreadcrumbList>
-                <BreadcrumbItem>
-                  <BreadcrumbLink href="/">Home</BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbPage>Inventory Management</BreadcrumbPage>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbLink href="/inventory-management/stock">Stock</BreadcrumbLink>
-                </BreadcrumbItem>
-              </BreadcrumbList>
-            </Breadcrumb>
-          </ToolbarHeading>
-          <ToolbarActions>
-            {/* One Back, and nothing else on this row (D6, S3-01). The pager moved
-                down onto the record card, where every other detail page keeps it. */}
-            <BackToList listPath="/inventory-management/stock" label="Back to stock" />
-          </ToolbarActions>
-        </Toolbar>
+        <PageHeader
+          title="Stock Balance"
+          actions={
+            <>
+              {/* One Back, and nothing else on this row (D6, S3-01). The pager moved
+                  down onto the record card, where every other detail page keeps it. */}
+              <BackToList listPath="/inventory-management/stock" label="Back to stock" />
+            </>
+          }
+        />
       </Container>
 
       <Container>
@@ -292,9 +235,9 @@ export default function StockDetailPage({ params }: StockDetailPageProps) {
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div className="space-y-1 min-w-0">
                   <div className="flex flex-wrap items-center gap-3">
-                    <h1 className="text-2xl font-bold break-words min-w-0">
+                    <h2 className="text-2xl font-bold break-words min-w-0">
                       {stock.product?.product_code || '-'}
-                    </h1>
+                    </h2>
                     {stock.product?.product_name && (
                       <Badge variant="secondary">
                         {stock.product.product_name}

@@ -4,14 +4,6 @@ import { use, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { CalendarRange, Edit, Info, MoveLeft, Trash2 } from 'lucide-react';
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
 import { Button } from '@/components/ui/button';
 import { useBackToListHref } from '@/components/common/BackToList';
 import { Badge } from '@/components/ui/badge';
@@ -19,15 +11,10 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Container } from '@/components/common/container';
+import { PageHeader } from '@/components/common/PageHeader';
 import DetailActions from '@/components/common/DetailActions';
 import { warehousesPagerQuery } from '../hooks/useWarehouses';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
-import {
-  Toolbar,
-  ToolbarActions,
-  ToolbarHeading,
-  ToolbarTitle,
-} from '@/components/common/toolbar';
 import { useWarehouse } from '../hooks/useWarehouses';
 import { deleteWarehouse } from '../services/warehouseService';
 import { formatDate } from '@/lib/helpers';
@@ -59,35 +46,16 @@ function Field({
 function WarehouseToolbar() {
   return (
     <Container>
-      <Toolbar>
-        <ToolbarHeading>
-          <ToolbarTitle>Warehouse</ToolbarTitle>
-          <Breadcrumb>
-            <BreadcrumbList>
-              <BreadcrumbItem>
-                <BreadcrumbLink href="/">Home</BreadcrumbLink>
-              </BreadcrumbItem>
-              <BreadcrumbSeparator />
-              <BreadcrumbItem>
-                <BreadcrumbPage>Inventory Management</BreadcrumbPage>
-              </BreadcrumbItem>
-              <BreadcrumbSeparator />
-              <BreadcrumbItem>
-                <BreadcrumbLink href="/inventory-management/warehouses">
-                  Warehouses
-                </BreadcrumbLink>
-              </BreadcrumbItem>
-            </BreadcrumbList>
-          </Breadcrumb>
-        </ToolbarHeading>
-        <ToolbarActions>
+      <PageHeader
+        title="Warehouse"
+        actions={
           <Button asChild variant="outline">
             <Link href="/inventory-management/warehouses">
               <MoveLeft /> Back to warehouses
             </Link>
           </Button>
-        </ToolbarActions>
-      </Toolbar>
+        }
+      />
     </Container>
   );
 }
@@ -155,9 +123,9 @@ export default function WarehouseDetailPage({
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0 space-y-1">
               <div className="flex flex-wrap items-center gap-3">
-                <h1 className="text-2xl font-bold break-words">
+                <h2 className="text-2xl font-bold break-words">
                   {warehouse.warehouse_name || warehouse.warehouse_code}
-                </h1>
+                </h2>
                 <Badge variant={warehouse.is_active ? 'success' : 'secondary'}>
                   {warehouse.is_active ? 'Active' : 'Inactive'}
                 </Badge>
