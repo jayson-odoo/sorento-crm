@@ -15,9 +15,11 @@ The status graph:
 import logging
 from datetime import date, datetime, timedelta
 
-from sqlalchemy import func, or_
+from sqlalchemy import Integer, cast, func, or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.models.base import company_scope
 from app.models.price_tag import PriceTagRequest, PriceTagRequestLine
 from app.services.error_handler import AppException
 
@@ -62,6 +64,11 @@ VALID_TRANSITIONS: dict[str, set[str]] = {
     STATUS_VOID: set(),
 }
 
+# How many times a create re-derives its number after losing an insert race
+# before it gives up. Five is far past what a human-paced portal ever needs; the
+# point is that the loop terminates rather than spins.
+_DOC_NUMBER_ATTEMPTS = 5
+
 # The product class label that triggers the set guard. A product with this
 # class cannot be submitted ala carte - it must come as a product_set line.
 _BATHROOM_FURNITURE_CLASS = "Bathroom Furniture"
@@ -72,25 +79,42 @@ class PriceTagRequestService:
 
     @staticmethod
     def generate_doc_number(db: Session, company_id: str) -> str:
-        """Generate ``PT-YYYYMM-NNNN`` (zero-padded 4-digit per month per company).
+        """``PT-YYYYMM-NNNN``: the month's HIGHEST sequence so far, plus one.
 
-        The sequence is derived from the count of existing requests for the same
-        company in the current month. This is safe under normal concurrency
-        because the unique constraint on ``doc_number`` will reject a duplicate,
-        and the caller retries.
+        Two things about ``doc_number`` decide this, and neither is negotiable:
+        it is UNIQUE across the whole table, and a draft HARD-deletes (D48b).
+
+        A sequence derived from a COUNT of the surviving rows therefore re-issues
+        a number that a deleted draft already spent, and the next create died on
+        ``price_tag_requests_doc_number_key`` with a 500 - the salesperson's Save
+        Draft simply stopped working after any delete. A COUNT scoped to one
+        company had the same fault across companies: the constraint is global, so
+        the sequence has to be global too.
+
+        MAX over the four-digit suffix answers both. It is read with the company
+        scope OFF for the same reason: the numbering space is the table, not the
+        partition, and a scoped read would hand the next company a number that is
+        already taken. Nothing but the number is read.
+
+        ``company_id`` stays in the signature because the caller has it and a
+        future per-company prefix would need it; it does not narrow the sequence.
         """
         now = datetime.utcnow()
         prefix = f"PT-{now.strftime('%Y%m')}-"
-        count = (
-            db.query(func.count(PriceTagRequest.id))
-            .filter(
-                PriceTagRequest.company_id == company_id,
-                PriceTagRequest.doc_number.like(f"{prefix}%"),
-            )
-            .scalar()
-        ) or 0
-        seq = count + 1
-        return f"{prefix}{seq:04d}"
+        with company_scope(db, None):
+            highest = (
+                db.query(
+                    func.max(
+                        cast(
+                            func.substr(PriceTagRequest.doc_number, len(prefix) + 1),
+                            Integer,
+                        )
+                    )
+                )
+                .filter(PriceTagRequest.doc_number.like(f"{prefix}%"))
+                .scalar()
+            ) or 0
+        return f"{prefix}{int(highest) + 1:04d}"
 
     @staticmethod
     def create_request(
@@ -109,25 +133,61 @@ class PriceTagRequestService:
 
         Sets ``portal_draft_at`` on creation (the request starts as a draft).
         """
-        doc_number = PriceTagRequestService.generate_doc_number(db, company_id)
-
-        request = PriceTagRequest(
-            contact_id=contact_id,
-            company_id=company_id,
-            debtor_code=data.get("debtor_code"),
-            debtor_name=data.get("debtor_name"),
-            promotion_id=data.get("promotion_id"),
-            needed_by_date=data.get("needed_by_date"),
-            notes=data.get("notes"),
-            doc_number=doc_number,
-            portal_draft_at=datetime.utcnow(),
+        request = PriceTagRequestService._insert_with_doc_number(
+            db,
+            lambda doc_number: PriceTagRequest(
+                contact_id=contact_id,
+                company_id=company_id,
+                debtor_code=data.get("debtor_code"),
+                debtor_name=data.get("debtor_name"),
+                promotion_id=data.get("promotion_id"),
+                needed_by_date=data.get("needed_by_date"),
+                notes=data.get("notes"),
+                doc_number=doc_number,
+                portal_draft_at=datetime.utcnow(),
+            ),
+            company_id,
         )
-        db.add(request)
-        db.flush()  # get the id
 
         PriceTagRequestService._add_lines(db, request, data.get("lines") or [])
         db.flush()
         return request
+
+    @staticmethod
+    def _insert_with_doc_number(db: Session, build, company_id: str) -> PriceTagRequest:
+        """Insert a request, taking the next number if another writer took ours.
+
+        The MAX in ``generate_doc_number`` closes the gap a delete leaves, but two
+        creates in flight still read the same MAX, and the loser used to get a 500
+        instead of the next number. Each attempt runs inside a SAVEPOINT so a
+        unique violation costs the attempt and not the whole transaction, which by
+        then holds the caller's other work.
+        """
+        for attempt in range(_DOC_NUMBER_ATTEMPTS):
+            request = build(PriceTagRequestService.generate_doc_number(db, company_id))
+            db.add(request)
+            savepoint = db.begin_nested()
+            try:
+                db.flush()  # get the id, and find out about a collision here
+                savepoint.commit()
+                return request
+            except IntegrityError:
+                savepoint.rollback()
+                logger.warning(
+                    "Price tag doc number %s was taken while creating; retrying "
+                    "(attempt %s of %s).",
+                    request.doc_number,
+                    attempt + 1,
+                    _DOC_NUMBER_ATTEMPTS,
+                )
+        raise AppException(
+            status_code=409,
+            message=(
+                "Could not allocate a document number for this request. "
+                "Please try again."
+            ),
+            code="DOC_NUMBER_UNAVAILABLE",
+        )
 
     @staticmethod
     def _add_lines(db: Session, request: PriceTagRequest, lines: list[dict]) -> None:

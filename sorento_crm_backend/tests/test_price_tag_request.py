@@ -241,8 +241,13 @@ class TestDocNumber:
         doc2 = PriceTagRequestService.generate_doc_number(db, _SORENTO_COMPANY_ID)
         assert doc2.endswith("0002")
 
-    def test_different_company_independent_sequence(self, db: Session):
-        """Different companies have independent sequences."""
+    def test_the_month_sequence_is_global_not_per_company(self, db: Session):
+        """A second company continues the month's sequence rather than restarting it.
+
+        ``doc_number`` is UNIQUE across the whole table, so a per-company sequence
+        hands the second company a number the first company already spent. The
+        number is a document number, not a per-company counter.
+        """
         # Create a second company.
         from app.models.company import Company
 
@@ -257,7 +262,7 @@ class TestDocNumber:
         contact = _make_contact(db)
 
         # Create a request under Sorento.
-        PriceTagRequestService.create_request(
+        first = PriceTagRequestService.create_request(
             db,
             contact_id=contact.id,
             company_id=_SORENTO_COMPANY_ID,
@@ -269,9 +274,92 @@ class TestDocNumber:
         )
         db.flush()
 
-        # The other company's first doc number should still be 0001.
         doc_b = PriceTagRequestService.generate_doc_number(db, company_b_id)
-        assert doc_b.endswith("0001")
+        assert doc_b != first.doc_number
+        assert doc_b.endswith("0002")
+
+    def test_a_second_company_can_actually_create_in_the_same_month(self, db: Session):
+        """Two companies, one month, two creates: no unique violation.
+
+        The per-company COUNT gave both companies ``-0001`` and the second insert
+        died on ``price_tag_requests_doc_number_key`` with a 500.
+        """
+        from app.models.base import company_scope
+        from app.models.company import Company
+
+        company_b_id = str(uuid.uuid4())
+        db.execute(
+            Company.__table__.insert().values(
+                id=company_b_id, name="Other Co 2", code="OTH2", is_active=True,
+            )
+        )
+        db.flush()
+
+        contact = _make_contact(db)
+        first = PriceTagRequestService.create_request(
+            db,
+            contact_id=contact.id,
+            company_id=_SORENTO_COMPANY_ID,
+            data={"debtor_name": "D1", "lines": []},
+        )
+        db.flush()
+
+        second = PriceTagRequestService.create_request(
+            db,
+            contact_id=contact.id,
+            company_id=company_b_id,
+            data={"debtor_name": "D2", "lines": []},
+        )
+        db.flush()
+
+        assert first.doc_number != second.doc_number
+        # And both rows really are in the table.
+        with company_scope(db, None):
+            numbers = {
+                row.doc_number
+                for row in db.query(PriceTagRequest)
+                .filter(PriceTagRequest.id.in_([first.id, second.id]))
+                .all()
+            }
+        assert numbers == {first.doc_number, second.doc_number}
+
+    def test_a_deleted_draft_does_not_hand_its_number_to_the_next_request(
+        self, db: Session
+    ):
+        """Create two, delete one, create again: the third gets a fresh number.
+
+        A draft hard-deletes (D48b), so a sequence derived from a COUNT of the
+        SURVIVING rows re-issues a number that is still spent as far as the unique
+        index is concerned. The next create answered 500.
+        """
+        contact = _make_contact(db)
+        first = PriceTagRequestService.create_request(
+            db,
+            contact_id=contact.id,
+            company_id=_SORENTO_COMPANY_ID,
+            data={"debtor_name": "D1", "lines": []},
+        )
+        second = PriceTagRequestService.create_request(
+            db,
+            contact_id=contact.id,
+            company_id=_SORENTO_COMPANY_ID,
+            data={"debtor_name": "D2", "lines": []},
+        )
+        db.flush()
+        assert second.doc_number.endswith("0002")
+
+        db.delete(first)
+        db.flush()
+
+        third = PriceTagRequestService.create_request(
+            db,
+            contact_id=contact.id,
+            company_id=_SORENTO_COMPANY_ID,
+            data={"debtor_name": "D3", "lines": []},
+        )
+        db.flush()
+        assert third.doc_number.endswith("0003")
+        assert third.doc_number != second.doc_number
 
 
 # ---------------------------------------------------------------------------
