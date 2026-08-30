@@ -49,6 +49,8 @@ import {
   usersListFilters,
   usersListQueryKey,
 } from '../lib/listQuery';
+import { setDailySlaSummarySubscription } from '../services/userService';
+import { useEntityMutation } from '@/hooks/useEntityMutation';
 import { useRoleSelectQuery } from '../../roles/hooks/use-role-select-query';
 import { getUserStatusProps, UserStatusProps } from '../constants/status';
 import UserInviteDialog from './user-add-dialog';
@@ -73,7 +75,6 @@ const UserList = () => {
   const [bulkActionPending, setBulkActionPending] = useState(false);
   const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false);
   const [bulkConfirmAction, setBulkConfirmAction] = useState<'delete' | 'activate' | 'deactivate' | 'permanent_delete' | 'resend_invite' | null>(null);
-  const [togglingSubscriptionByUser, setTogglingSubscriptionByUser] = useState<Record<string, boolean>>({});
 
   // Role select query
   const { data: roleList } = useRoleSelectQuery();
@@ -89,29 +90,26 @@ const UserList = () => {
     setSelectedTrashed(state.filters.trashed ?? 'exclude');
   });
 
-  const updateDailySummarySubscription = async (userId: string, subscribed: boolean) => {
-    setTogglingSubscriptionByUser((prev) => ({ ...prev, [userId]: true }));
-    try {
-      const res = await apiFetch(
-        `/api/user-management/users/${userId}/daily-sla-summary-subscription`,
-        {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ subscribed }),
-        },
-      );
-      const payload = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(payload.detail || payload.message || 'Failed to update setting');
-      }
-      toast.success('Conversation summary setting updated');
-      queryClient.invalidateQueries({ queryKey: ['user-users'] });
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to update setting');
-    } finally {
-      setTogglingSubscriptionByUser((prev) => ({ ...prev, [userId]: false }));
-    }
-  };
+  /**
+   * The daily-summary switch. Optimistic (S7-01): it moves on press and goes
+   * back only if the server refuses, rather than sitting disabled through the
+   * write AND the list's refetch. The row is patched under both spellings
+   * because the service normalises the backend's snake_case into camel and a
+   * cached page can be holding either.
+   */
+  const dailySummarySubscription = useEntityMutation<
+    { userId: string; subscribed: boolean },
+    void
+  >({
+    mutationFn: ({ userId, subscribed }) => setDailySlaSummarySubscription(userId, subscribed),
+    keys: [['user-users']],
+    matchRow: (row, variables) => row.id === variables.userId,
+    patchRow: ({ subscribed }) => ({
+      dailySlaSummarySubscribed: subscribed,
+      daily_sla_summary_subscribed: subscribed,
+    }),
+    errorMessage: 'Could not change the conversation summary setting',
+  });
 
   // The list query, built through the shared key + fetch so the detail page's
   // pager reads THIS cache entry instead of asking the server again.
@@ -357,7 +355,6 @@ const UserList = () => {
             user.dailySlaSummarySubscribed ??
             user.daily_sla_summary_subscribed ??
             true;
-          const isPending = Boolean(togglingSubscriptionByUser[userId]);
           return (
             <div
               className="flex items-center gap-2"
@@ -365,10 +362,10 @@ const UserList = () => {
             >
               <Switch
                 checked={Boolean(subscribed)}
-                disabled={isPending}
-                onCheckedChange={(next) => {
-                  void updateDailySummarySubscription(userId, next);
-                }}
+                aria-label="Daily conversation summary"
+                onCheckedChange={(next) =>
+                  dailySummarySubscription.mutate({ userId, subscribed: next })
+                }
               />
             </div>
           );
@@ -437,7 +434,7 @@ const UserList = () => {
         enableResizing: false,
       },
     ],
-    [togglingSubscriptionByUser],
+    [dailySummarySubscription],
   );
 
   const [columnOrder, setColumnOrder] = useState<string[]>(() =>
