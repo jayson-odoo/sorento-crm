@@ -2,7 +2,7 @@
 
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Skeleton } from '@/components/ui/skeleton';
-import { formatDateTimeInMalaysia, getInitials } from '@/lib/helpers';
+import { getInitials } from '@/lib/helpers';
 import type { RespondContact } from '../../types/contact.types';
 
 interface ContactHeroProps {
@@ -12,24 +12,18 @@ interface ContactHeroProps {
   actions?: React.ReactNode;
 }
 
-function MetaItem({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="min-w-0">
-      <p className="text-xs text-muted-foreground">{label}</p>
-      <div className="text-sm font-medium">{children}</div>
-    </div>
-  );
-}
-
-const Empty = () => <span className="text-muted-foreground font-normal">Not set</span>;
-
 /**
- * Identity line plus read-only record metadata.
+ * The record card: identity on the left, and on the right the pager, the gear
+ * and the one primary button (D6) - the same shape as `UserHero`.
  *
- * The phone number is the contact's identity here, the way UserHero echoes a user's
- * name and email, and it stays an editable field inside the Profile tab. The meta
- * strip carries ONLY the values with no edit counterpart - Respond.io ID, Created At,
- * Updated At - so the read view and the edit dialog never disagree about a field.
+ * The phone number is the contact's identity here, the way UserHero echoes a
+ * user's name and email, and it stays an editable field inside the Profile tab.
+ *
+ * The read-only metadata that used to sit beside the actions (Respond.io ID,
+ * Created At, Updated At) is in the PAGE HEADER now. Below `lg` the whole
+ * right-hand column stacked under the identity, so the pager, the gear, the
+ * primary button and a three-column meta grid all landed in a strip at the
+ * bottom of the record and read as a footer.
  */
 export default function ContactHero({ contact, isLoading, actions }: ContactHeroProps) {
   if (isLoading || !contact) {
@@ -45,7 +39,7 @@ export default function ContactHero({ contact, isLoading, actions }: ContactHero
   }
 
   return (
-    <div className="flex flex-col gap-5 mb-5 lg:flex-row lg:items-center lg:justify-between">
+    <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
       <div className="flex items-center gap-5 min-w-0">
         <Avatar className="h-14 w-14">
           <AvatarFallback className="text-xl">
@@ -61,20 +55,7 @@ export default function ContactHero({ contact, isLoading, actions }: ContactHero
           </div>
         </div>
       </div>
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:gap-6">
-        {actions}
-        <div className="grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-3">
-        <MetaItem label="Respond.io ID">
-          {contact.respond_io_id ? (
-            <span className="font-mono">{contact.respond_io_id}</span>
-          ) : (
-            <Empty />
-          )}
-        </MetaItem>
-        <MetaItem label="Created At">{formatDateTimeInMalaysia(contact.created_at)}</MetaItem>
-          <MetaItem label="Updated At">{formatDateTimeInMalaysia(contact.updated_at)}</MetaItem>
-        </div>
-      </div>
+      {actions}
     </div>
   );
 }
