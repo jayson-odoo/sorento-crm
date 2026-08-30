@@ -214,10 +214,7 @@ export default function WarehouseDetailPage({
                     </Badge>
                   </Field>
                   <Field label="Fulfilment planning" className="md:col-span-2">
-                    <Badge
-                      variant={warehouse.fulfilment_planning ? 'success' : 'secondary'}
-                      appearance="ghost"
-                    >
+                    <Badge variant={warehouse.fulfilment_planning ? 'success' : 'secondary'}>
                       {warehouse.fulfilment_planning ? 'On' : 'Off'}
                     </Badge>
                   </Field>
