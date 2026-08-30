@@ -6,12 +6,15 @@ Before merging, verify compliance with [ADR-PRODUCT-STANDARDS.md](./ADR-PRODUCT-
 - [ ] List page has search/filter and "Add/Create" button
 - [ ] Create/edit uses modal by default (dedicated page only when ADR-exempt)
 - [ ] Dedicated detail page for view
-- [ ] Delete requires confirmation dialog (never inline or automatic)
+- [ ] Delete is a deferred (grace-window) action, not a confirmation dialog (D7 - see
+      "Apple Alignment" below); a bare `confirm()` or a new `ConfirmDeleteDialog` /
+      destructive `AlertDialog` importer is a defect, not a style choice
 
 ## Delete / Archive
 - [ ] Delete is hard delete (permanent)
 - [ ] If retention needed, separate Archive endpoint exists
-- [ ] Confirmation dialog shows clear consequence ("This action cannot be undone")
+- [ ] The record/list row shows the grace-window countdown with Cancel (10s hard delete,
+      5s reversible) and no dialog opens; Escape does not cancel the pending action
 
 ## Detail pages
 - [ ] All sections render even when empty (never hide entire section)
@@ -19,8 +22,22 @@ Before merging, verify compliance with [ADR-PRODUCT-STANDARDS.md](./ADR-PRODUCT-
 
 ## Shared usage
 - [ ] Uses `extractApiError`, `buildDataGridParams` from `lib/api-client` (no duplication)
-- [ ] Uses shared scaffolds: `ListPageToolbar`, `ConfirmDeleteDialog`, `FormDialogScaffold` where applicable
+- [ ] Uses shared scaffolds: `ListPageToolbar`, `DetailActions`, `FormDialogScaffold` where
+      applicable (`ConfirmDeleteDialog` is retired for anything on the deferred model)
 - [ ] User/team selects: `services/userSelectService` (no feature-local duplication)
+
+## Apple Alignment (design-system, every screen)
+- [ ] Status renders as a pill via `<Badge status>` (`getStatusBadgeVariant`), not a
+      hand-rolled coloured span
+- [ ] DataGrid rows use `rowHref` (or `onRowClick` for a lightbox-edited record); log and
+      sub-tables carry no pointer cursor and no row action
+- [ ] No confirm dialogs on a destructive or detach action - the grace-window/deferred-action
+      model (D7) is used instead; see "Delete / Archive" above
+- [ ] The page renders exactly one `PageHeader` (no hand-rolled `<h1>`, no `ToolbarTitle`)
+- [ ] Tab strips use `variant="line"` (the default) unless they are a two/three-option
+      segmented switch, which pins `variant="default"` explicitly
+- [ ] Every icon-only button (`mode="icon"` / `size="icon"`) has an `aria-label` or an
+      `sr-only` label - a bare icon with no accessible name is a defect
 
 ## Test cost
 - [ ] New backend tests do not add whole-suite-running slow tests without cause; check the `--durations=30` block in the backend CI logs for the PR ("Backend test suite (Postgres)" and "Backend test suite - SCM (Postgres)") and justify any new entry over ~2s

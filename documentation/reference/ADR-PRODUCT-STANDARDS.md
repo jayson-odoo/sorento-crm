@@ -15,7 +15,8 @@ This ADR defines mandatory standards for CRUD UX, delete/archive semantics, deta
 - **Create:** Modal dialog by default. Opens from list page.
 - **Edit:** Modal dialog by default. Triggered from list row actions or detail page.
 - **View:** Dedicated detail page at `/{module}/{id}`. Read-only overview with links to edit.
-- **Delete:** Always via confirmation dialog (never inline or automatic).
+- **Delete:** Hard delete, no confirmation dialog - a server-deferred pending action with a
+  countdown and Cancel (D7, Apple Alignment S6; see section 2).
 
 ### Modal vs Dedicated Page
 | Use case | Pattern | Rationale |
@@ -180,21 +181,25 @@ together. One card listing every column the entity has is banned.
 
 ## 2. Delete and Archive Semantics
 
-### Delete Policy
+### Delete Policy (D7, Apple Alignment S6)
 - **Delete is always hard delete** (permanent removal from the database).
-- **Confirmation required:** User MUST confirm in a dialog before delete executes.
+- **No confirmation dialog.** A destructive or detach action (Delete, Unlink, an Archive that
+  behaves like a delete) is a server-deferred **pending action**: clicking it turns the button
+  itself into a countdown with a Cancel (a toast with the countdown for a list row instead), the
+  server commits the action when the window lapses - 10s for `*.delete`, 5s for everything else,
+  both configurable in System Settings > General - even if the tab has been closed, and Escape
+  does not cancel it. Never `confirm()`. `ConfirmDeleteDialog` and a destructive `AlertDialog` are
+  retired for this - a new importer of either is a defect, not a style choice.
+- **The one exception is a bulk action on a multi-row selection** (e.g. "Delete selected (12)"):
+  a grace-window countdown names and dims ONE record, and a selection has no single record for it
+  to name, so a bulk delete keeps a confirmation dialog whose copy includes the count.
 - **No soft delete under the name "delete":** Do not use `is_deleted`, `deleted_at`, or similar for the primary delete action.
 
 ### Archive Policy
 - If historical retention is required, implement an explicit **Archive** action (separate from Delete).
 - Archive = mark as archived / inactive; data remains queryable for reporting.
-- Archive UI: Optional "Archive" button with its own confirmation; archived items appear in a filter or separate view.
-
-### Confirmation Dialog Requirements
-- Title: "Delete {entity name}?" or "Confirm delete"
-- Description: Explain consequence (e.g. "This action cannot be undone.")
-- Buttons: "Cancel" (outline), "Delete" (destructive)
-- No pre-checked "I understand" unless risk is exceptionally high
+- Archive UI: an "Archive" button on the deferred-action model above, same as Delete; archived
+  items appear in a filter or separate view.
 
 ---
 
