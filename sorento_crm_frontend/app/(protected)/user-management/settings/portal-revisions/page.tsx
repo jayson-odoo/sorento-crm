@@ -23,7 +23,6 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 
@@ -88,7 +87,7 @@ export default function PortalRevisionsSettingsPage() {
         minSize: 90,
         enableSorting: false,
         cell: ({ row }) => (
-          <Badge variant={row.original.is_enabled ? 'success' : 'secondary'} appearance="ghost">
+          <Badge variant={row.original.is_enabled ? 'success' : 'secondary'}>
             {row.original.is_enabled ? 'On' : 'Off'}
           </Badge>
         ),
@@ -249,10 +248,7 @@ export default function PortalRevisionsSettingsPage() {
             <CardTitle>Form Types</CardTitle>
           </CardHeader>
           <CardTable>
-            <ScrollArea>
-              <DataGridTable />
-              <ScrollBar orientation="horizontal" />
-            </ScrollArea>
+            <DataGridTable />
           </CardTable>
         </Card>
       </DataGrid>

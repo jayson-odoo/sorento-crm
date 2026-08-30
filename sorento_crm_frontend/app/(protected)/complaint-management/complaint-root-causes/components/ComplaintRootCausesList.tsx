@@ -10,10 +10,10 @@ import {
   type RowSelectionState,
 } from '@tanstack/react-table';
 import { Button } from '@/components/ui/button';
+import { RowActionsMenu } from '@/components/common/RowActionsMenu';
 import { Input } from '@/components/ui/input';
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Card, CardHeader, CardTable } from '@/components/ui/card';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
@@ -104,7 +104,6 @@ export default function ComplaintRootCausesList() {
           <Badge
             variant={row.original.is_active ? 'success' : 'secondary'}
             size="sm"
-            appearance="ghost"
             className="shrink-0"
           >
             <BadgeDot />
@@ -136,32 +135,28 @@ export default function ComplaintRootCausesList() {
         enableHiding: false,
         enableResizing: false,
         meta: { headerTitle: 'Actions' },
+        // The row opens the record; the cell carries the rest, in the same "..."
+        // menu the record page's gear mirrors (D15).
         cell: ({ row }) => (
-          <div className="flex items-center gap-1">
-            <Button
-              mode="icon"
-              variant="ghost"
-              size="sm"
-              onClick={(e) => {
-                e.stopPropagation();
-                handleEdit(row.original);
-              }}
-              title="Edit"
-            >
-              <Edit className="size-4" />
-            </Button>
-            <Button
-              mode="icon"
-              variant="ghost"
-              size="sm"
-              onClick={(e) => {
-                e.stopPropagation();
-                handleDelete(row.original);
-              }}
-              title="Delete"
-            >
-              <Trash2 className="size-4" />
-            </Button>
+          <div className="flex items-center justify-end gap-1">
+            <RowActionsMenu
+              ariaLabel="root cause"
+              actions={[
+                {
+                  key: 'complaint_root_cause.edit',
+                  label: 'Edit root cause',
+                  icon: Edit,
+                  run: () => handleEdit(row.original),
+                },
+                {
+                  key: 'complaint_root_cause.delete',
+                  label: 'Delete root cause',
+                  icon: Trash2,
+                  kind: 'destructive',
+                  run: () => handleDelete(row.original),
+                },
+              ]}
+            />
             <ChevronRight className="text-muted-foreground/70 size-3.5 shrink-0" />
           </div>
         ),
@@ -181,6 +176,20 @@ export default function ComplaintRootCausesList() {
     enableRowSelection: true,
   });
 
+  // The one offer this listing makes, in both places it belongs: the
+  // toolbar, and the empty state's next step (S5-06).
+  const listPrimaryAction = (
+    <Button
+      onClick={() => {
+        setEditingId(undefined);
+        setFormOpen(true);
+      }}
+    >
+      <Plus className="size-4" />
+      Add Root Cause
+    </Button>
+  );
+
   return (
     <>
       <DataGrid
@@ -191,6 +200,7 @@ export default function ComplaintRootCausesList() {
           router.push(`/complaint-management/complaint-root-causes/${row.id}`)
         }
         tableLayout={{ width: 'fixed', columnsResizable: true }}
+        emptyAction={listPrimaryAction}
       >
         <Card>
           <CardHeader className="block">
@@ -208,17 +218,7 @@ export default function ComplaintRootCausesList() {
                 </div>
               }
               exportConfig={{ filename: 'complaint_root_causes_export.xlsx' }}
-              primaryAction={
-                <Button
-                  onClick={() => {
-                    setEditingId(undefined);
-                    setFormOpen(true);
-                  }}
-                >
-                  <Plus className="size-4" />
-                  Add Root Cause
-                </Button>
-              }
+              primaryAction={listPrimaryAction}
             />
           </CardHeader>
           <CardTable>
@@ -227,10 +227,7 @@ export default function ComplaintRootCausesList() {
                 Loading root causes...
               </div>
             ) : (
-              <ScrollArea>
-                <ComplaintRootCauseTable isEmpty={filtered.length === 0} />
-                <ScrollBar orientation="horizontal" />
-              </ScrollArea>
+              <ComplaintRootCauseTable isEmpty={filtered.length === 0} />
             )}
           </CardTable>
         </Card>

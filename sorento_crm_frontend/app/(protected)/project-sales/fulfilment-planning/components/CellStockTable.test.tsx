@@ -57,12 +57,7 @@ function renderTable(
   });
   render(
     <QueryClientProvider client={client}>
-      <CellStockTable
-        locations={locations}
-        itemCode="B2155-NL-BLUE"
-        groupNote={groupNote}
-        taken={taken}
-      />
+      <CellStockTable locations={locations} groupNote={groupNote} taken={taken} />
     </QueryClientProvider>,
   );
 }
@@ -402,7 +397,9 @@ describe('CellStockTable: the documents, expanded in place', () => {
       screen.getByRole('button', { name: 'Show documents behind BRW-BB' }),
     );
 
-    await waitFor(() => expect(getStockDetail).toHaveBeenCalledWith('prod-1', 'wh-1', []));
+    await waitFor(() =>
+      expect(getStockDetail).toHaveBeenCalledWith('prod-1', 'wh-1', [], undefined),
+    );
     const expansion = await screen.findByTestId('stock-expansion-BRW-BB');
     expect(within(expansion).getByTestId('stock-documents-panel')).toBeInTheDocument();
     expect(await within(expansion).findByText('SO391698')).toBeInTheDocument();
@@ -431,7 +428,9 @@ describe('CellStockTable: the documents, expanded in place', () => {
 
     await screen.findByTestId('stock-expansion-BRW-BB');
     expect(screen.getByTestId('stock-expansion-BRW')).toBeInTheDocument();
-    await waitFor(() => expect(getStockDetail).toHaveBeenCalledWith('prod-1', 'wh-2', []));
+    await waitFor(() =>
+      expect(getStockDetail).toHaveBeenCalledWith('prod-1', 'wh-2', [], undefined),
+    );
   });
 
   /**
@@ -729,6 +728,71 @@ describe('CellStockTable: the net the ladder obeyed (AC-L12)', () => {
     expect(
       screen.getByTestId('stock-subtotal-on-hand-IB').getAttribute('title'),
     ).toBeNull();
+  });
+
+  /**
+   * The GROUP is the pile (captain, 30 August 2026). Step 1 of the ladder draws the whole
+   * ownership group - a `BRW-IB` line is fed by `MWH-IB` stock - so the running balance a
+   * planner checks a proposal against is opened from the SUBTOTAL row, not from one bin.
+   */
+  it('opens the whole set under its subtotal row, addressed by the group', async () => {
+    getStockDetail.mockResolvedValue({
+      product_id: 'prod-1',
+      item_code: 'B2155-NL-BLUE',
+      warehouse_id: null,
+      location: null,
+      group: 'IB',
+      bins: [{ warehouse_id: 'wh-brw-ib', location: 'BRW-IB', qty_on_hand: '5290' }],
+      qty_on_hand: '5290',
+      so_qty: '27804',
+      spo_qty: '0',
+      available_qty: '-22514',
+      qty_reserved: '0',
+      qty_held_by_decisions: '0',
+      qty_free: '5290',
+      sales_orders: [],
+      incoming: [],
+    });
+    renderTable(ibGroup());
+
+    expect(screen.queryByTestId('stock-set-expansion-IB')).not.toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Show documents behind IB group subtotal' }),
+    );
+
+    await waitFor(() =>
+      expect(getStockDetail).toHaveBeenCalledWith('prod-1', null, [], 'IB'),
+    );
+    const expansion = await screen.findByTestId('stock-set-expansion-IB');
+    expect(within(expansion).getByTestId('stock-documents-panel')).toBeInTheDocument();
+  });
+
+  it('opens the site pools the same way, as one pile', async () => {
+    getStockDetail.mockResolvedValue({
+      product_id: 'prod-1',
+      item_code: 'B2155-NL-BLUE',
+      warehouse_id: null,
+      location: null,
+      group: 'pools',
+      bins: [],
+      qty_on_hand: '1',
+      so_qty: '103',
+      spo_qty: '0',
+      available_qty: '-102',
+      qty_reserved: '0',
+      qty_held_by_decisions: '0',
+      qty_free: '1',
+      sales_orders: [],
+      incoming: [],
+    });
+    renderTable(ibGroup());
+
+    fireEvent.click(screen.getByTestId('stock-set-expand-pools'));
+
+    await waitFor(() =>
+      expect(getStockDetail).toHaveBeenCalledWith('prod-1', null, [], 'pools'),
+    );
   });
 
   it('lists a donor group whole, with its own net as the subtotal (AC-V3)', () => {

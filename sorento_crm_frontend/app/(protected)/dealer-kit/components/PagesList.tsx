@@ -23,11 +23,13 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
-import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
+import {
+  useDeferredRowAction,
+  useRowPending,
+} from '@/hooks/useDeferredRowAction';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
-import { deletePage, listPages } from '../services/dealerKitService';
+import { listPages } from '../services/dealerKitService';
 import { NewPageDialog } from './NewPageDialog';
 import type { PageSummary } from '@/lib/dealer-kit/types';
 
@@ -35,7 +37,14 @@ export function PagesList() {
   const router = useRouter();
   const [search, setSearch] = useState('');
   const [newOpen, setNewOpen] = useState(false);
-  const [deleting, setDeleting] = useState<PageSummary | null>(null);
+  // Delete asks nothing (D7): the row dims and a toast counts down with Cancel.
+  const deletion = useDeferredRowAction({
+    actionKey: 'dk_page.delete',
+    entityType: 'dk_page',
+    successMessage: 'Page deleted',
+    invalidateKeys: [['dealer-kit', 'pages']],
+  });
+  const rowPending = useRowPending<PageSummary>('dk_page');
   const [sorting, setSorting] = useState<SortingState>([]);
   const [pagination, setPagination] = useState<PaginationState>({
     pageIndex: 0,
@@ -94,11 +103,11 @@ export function PagesList() {
         header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
         cell: ({ row }) =>
           row.original.publishedVersion === null ? (
-            <Badge variant="outline" appearance="ghost" className="font-normal">
+            <Badge variant="outline" className="font-normal">
               Not published
             </Badge>
           ) : (
-            <Badge variant="success" appearance="ghost" className="font-normal">
+            <Badge variant="success" className="font-normal">
               Live · v{row.original.publishedVersion}
             </Badge>
           ),
@@ -137,9 +146,9 @@ export function PagesList() {
               aria-label={`Delete ${row.original.name}`}
               onClick={(event) => {
                 // The row itself opens the editor, so the action must not
-                // navigate on its way to the confirmation.
+                // navigate on its way to parking the delete.
                 event.stopPropagation();
-                setDeleting(row.original);
+                deletion.run({ id: row.original.id, subject: row.original.name });
               }}
             >
               <Trash2 className="size-4 text-destructive" />
@@ -152,7 +161,7 @@ export function PagesList() {
         meta: { headerTitle: 'Actions', skeleton: <Skeleton className="h-4 w-6" /> },
       },
     ],
-    [],
+    [deletion],
   );
 
   const table = useReactTable({
@@ -187,6 +196,7 @@ export function PagesList() {
       recordCount={rows.length}
       isLoading={isLoading}
       onRowClick={(row: PageSummary) => router.push(`/dealer-kit/pages/${row.id}`)}
+      rowPending={rowPending}
       standardToolbar={false}
       tableLayout={{ width: 'fixed', columnsResizable: true }}
       emptyMessage={
@@ -232,10 +242,7 @@ export function PagesList() {
         <CardTable>
           {/* The table is wider than a phone. It scrolls inside its own
               container so the page body never scrolls sideways. */}
-          <ScrollArea>
-            <DataGridTable />
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
+          <DataGridTable />
         </CardTable>
 
         <CardFooter>
@@ -245,22 +252,6 @@ export function PagesList() {
 
       <NewPageDialog open={newOpen} onOpenChange={setNewOpen} />
 
-      <ConfirmDeleteDialog
-        open={!!deleting}
-        onOpenChange={(open) => !open && setDeleting(null)}
-        title="Confirm delete"
-        description={
-          <>
-            Delete <strong>{deleting?.name}</strong>? Every saved version goes with it, including
-            the one that is live. This action cannot be undone.
-          </>
-        }
-        successMessage="Page deleted"
-        queryKeysToInvalidate={[['dealer-kit', 'pages']]}
-        onDelete={async () => {
-          if (deleting) await deletePage(deleting.id);
-        }}
-      />
     </DataGrid>
   );
 }

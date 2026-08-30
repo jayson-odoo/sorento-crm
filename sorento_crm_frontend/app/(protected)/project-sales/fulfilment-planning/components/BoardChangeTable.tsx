@@ -4,6 +4,7 @@ import * as React from 'react';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { cn } from '@/lib/utils';
 import type { BoardChangeAnnotation } from '../../_shared/lib/boardChangeAnnotations';
+import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 
 /**
  * What the re-uploaded book did to this line, as a table (AC-P3-2).
@@ -53,62 +54,65 @@ export function BoardChangeTable({
           {annotation.soNumber}
         </span>
       </div>
-      <table className="w-full table-fixed">
-        <thead>
-          <tr className="text-amber-800">
-            <th scope="col" className="w-[26%] text-start font-normal">
-              <span className="sr-only">What changed</span>
-            </th>
-            <th scope="col" className="w-[37%] text-start font-normal">
-              Was
-            </th>
-            <th scope="col" className="w-[37%] text-start font-normal">
-              Now
-            </th>
-          </tr>
-        </thead>
-        <tbody className="text-amber-900">
-          <tr>
-            <th scope="row" className="text-start font-normal text-amber-800">
-              Qty
-            </th>
-            <td className="tabular-nums">{annotation.was.qty ?? '-'}</td>
-            <td className="font-medium tabular-nums" data-testid="change-now-qty">
-              {annotation.closed ? 'Closed' : annotation.now.qty ?? '-'}
-            </td>
-          </tr>
-          <tr>
-            <th scope="row" className="text-start font-normal text-amber-800">
-              Date
-            </th>
-            <td className="tabular-nums">
-              {annotation.was.date ? formatDateInMalaysia(annotation.was.date) : '-'}
-            </td>
-            <td className="font-medium tabular-nums">
-              {annotation.closed
-                ? 'Closed'
-                : annotation.now.date
-                  ? formatDateInMalaysia(annotation.now.date)
-                  : '-'}
-            </td>
-          </tr>
-          <tr className={omitDecision ? 'hidden' : undefined}>
-            <th scope="row" className="text-start font-normal align-top text-amber-800">
-              Decision
-            </th>
-            <td className="truncate align-top" title={annotation.was.decision ?? ''}>
-              {annotation.was.decision ?? 'Not decided'}
-            </td>
-            <td
-              className="truncate align-top font-medium"
-              data-testid="change-now-decision"
-              title={annotation.now.decision ?? ''}
-            >
-              {annotation.closed ? 'Closed' : annotation.now.decision ?? 'Not decided'}
-            </td>
-          </tr>
-        </tbody>
-      </table>
+      <ScrollArea>
+        <table className="w-full table-fixed">
+          <thead>
+            <tr className="text-amber-800">
+              <th scope="col" className="w-[26%] text-start font-normal">
+                <span className="sr-only">What changed</span>
+              </th>
+              <th scope="col" className="w-[37%] text-start font-normal">
+                Was
+              </th>
+              <th scope="col" className="w-[37%] text-start font-normal">
+                Now
+              </th>
+            </tr>
+          </thead>
+          <tbody className="text-amber-900">
+            <tr>
+              <th scope="row" className="text-start font-normal text-amber-800">
+                Qty
+              </th>
+              <td className="tabular-nums">{annotation.was.qty ?? '-'}</td>
+              <td className="font-medium tabular-nums" data-testid="change-now-qty">
+                {annotation.closed ? 'Closed' : annotation.now.qty ?? '-'}
+              </td>
+            </tr>
+            <tr>
+              <th scope="row" className="text-start font-normal text-amber-800">
+                Date
+              </th>
+              <td className="tabular-nums">
+                {annotation.was.date ? formatDateInMalaysia(annotation.was.date) : '-'}
+              </td>
+              <td className="font-medium tabular-nums">
+                {annotation.closed
+                  ? 'Closed'
+                  : annotation.now.date
+                    ? formatDateInMalaysia(annotation.now.date)
+                    : '-'}
+              </td>
+            </tr>
+            <tr className={omitDecision ? 'hidden' : undefined}>
+              <th scope="row" className="text-start font-normal align-top text-amber-800">
+                Decision
+              </th>
+              <td className="truncate align-top" title={annotation.was.decision ?? ''}>
+                {annotation.was.decision ?? 'Not decided'}
+              </td>
+              <td
+                className="truncate align-top font-medium"
+                data-testid="change-now-decision"
+                title={annotation.now.decision ?? ''}
+              >
+                {annotation.closed ? 'Closed' : annotation.now.decision ?? 'Not decided'}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <ScrollBar orientation="horizontal" />
+      </ScrollArea>
 
       {/* Stock that is already physically somewhere else (AC-P3-9). Stated, never reversed:
           a movement is a person's decision, and the plan does not get to undo one. */}

@@ -13,6 +13,8 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
+import { buildDetailSearch } from '@/lib/listNavQuery';
 import { Switch } from '@/components/ui/switch';
 import { useStatusGraph } from '@/app/(protected)/system-management/status-graphs/hooks/useStatusGraphs';
 import {
@@ -24,6 +26,7 @@ import {
 import { ProjectsGrid } from '../../_shared/components/ProjectsGrid';
 import { EmptyState, PipelineBoard } from './PipelineBoard';
 import { RegisterProjectDialog } from './RegisterProjectDialog';
+import { PageHeader } from '@/components/common/PageHeader';
 
 const VIEW_STORAGE_KEY = 'project-sales.pipeline.view';
 
@@ -56,6 +59,20 @@ export function PipelineClient() {
   const [sorting, setSorting] = React.useState<SortingState>([
     { id: 'created_at', desc: true },
   ]);
+
+  // Back hands the grid its own query string back, and the pager keeps rewriting
+  // it, so the list reads it (S3-01). Below the state it writes: the hook applies
+  // during the render, and a const read above its own line throws.
+  useListStateFromUrl((urlState) => {
+    setPagination({ pageIndex: urlState.pageIndex, pageSize: urlState.pageSize });
+    setSorting(urlState.sorting);
+    setSearch(urlState.searchQuery);
+    setDebouncedSearch(urlState.searchQuery);
+    setDeveloperFilter(urlState.filters.developer_party_id ?? '');
+    setOwnerFilter(urlState.filters.owner_user_id ?? '');
+    setTypeFilter(urlState.filters.type_id ?? '');
+    setOnlyCritical(urlState.filters.only_critical === 'true');
+  });
 
   React.useEffect(() => {
     const stored = window.localStorage.getItem(VIEW_STORAGE_KEY);
@@ -104,6 +121,39 @@ export function PipelineClient() {
   );
 
   const projects = useProjects(listParams);
+
+  /**
+   * Carried into the record URL so the project page's pager walks the SAME
+   * searched, sorted, filtered page the reader was on. Grid view only: a board
+   * card is not a list row, and the board holds 200 projects in one column-less
+   * page that nothing pages through.
+   */
+  const detailSearch = React.useMemo(
+    () =>
+      buildDetailSearch(
+        {
+          pageIndex: pagination.pageIndex,
+          pageSize: pagination.pageSize,
+          sorting,
+          searchQuery: debouncedSearch,
+        },
+        {
+          developer_party_id: developerFilter,
+          owner_user_id: ownerFilter,
+          type_id: typeFilter,
+          only_critical: onlyCritical ? 'true' : '',
+        },
+      ),
+    [
+      debouncedSearch,
+      developerFilter,
+      onlyCritical,
+      ownerFilter,
+      pagination,
+      sorting,
+      typeFilter,
+    ],
+  );
 
   const statuses = React.useMemo(
     () =>
@@ -225,50 +275,51 @@ export function PipelineClient() {
 
   return (
     <div className="space-y-5">
-      <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0">
-          <h1 className="text-xl font-semibold">Pipeline</h1>
-          <p className="text-sm text-muted-foreground">
-            Every project in the company, so nobody works a development twice.
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <div
-            className="inline-flex rounded-md border border-border p-0.5"
-            role="group"
-            aria-label="Pipeline view"
-          >
-            <Button
-              type="button"
-              size="sm"
-              variant={view === 'board' ? 'primary' : 'ghost'}
-              onClick={() => switchView('board')}
-              aria-pressed={view === 'board'}
-              aria-label="Board view"
-              title="Board view"
-              mode="icon"
+      <PageHeader
+        title="Pipeline"
+        actions={
+          <div className="flex flex-wrap items-center gap-2">
+            <div
+              className="inline-flex rounded-md border border-border p-0.5"
+              role="group"
+              aria-label="Pipeline view"
             >
-              <KanbanSquare className="size-4" aria-hidden />
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant={view === 'grid' ? 'primary' : 'ghost'}
-              onClick={() => switchView('grid')}
-              aria-pressed={view === 'grid'}
-              aria-label="Grid view"
-              title="Grid view"
-              mode="icon"
-            >
-              <Table2 className="size-4" aria-hidden />
+              <Button
+                type="button"
+                size="sm"
+                variant={view === 'board' ? 'primary' : 'ghost'}
+                onClick={() => switchView('board')}
+                aria-pressed={view === 'board'}
+                aria-label="Board view"
+                title="Board view"
+                mode="icon"
+              >
+                <KanbanSquare className="size-4" aria-hidden />
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant={view === 'grid' ? 'primary' : 'ghost'}
+                onClick={() => switchView('grid')}
+                aria-pressed={view === 'grid'}
+                aria-label="Grid view"
+                title="Grid view"
+                mode="icon"
+              >
+                <Table2 className="size-4" aria-hidden />
+              </Button>
+            </div>
+            <Button type="button" onClick={() => setRegisterOpen(true)}>
+              <Plus className="size-4" aria-hidden />
+              Register project
             </Button>
           </div>
-          <Button type="button" onClick={() => setRegisterOpen(true)}>
-            <Plus className="size-4" aria-hidden />
-            Register project
-          </Button>
-        </div>
-      </header>
+        }
+      >
+        <p className="text-sm text-muted-foreground">
+          Every project in the company, so nobody works a development twice.
+        </p>
+      </PageHeader>
 
       {/* Board has no grid toolbar to host them, so it carries the same two controls in
           the same order the toolbar uses. Grid view feeds them into the toolbar instead,
@@ -340,6 +391,9 @@ export function PipelineClient() {
           // Its own key, separate from the Projects list: the same table serves two
           // jobs here, and a manager reading the pipeline arranges it differently
           // from somebody working the flat list.
+          rowHref={(project) =>
+            `/project-sales/${project.id}${detailSearch ? `?${detailSearch}` : ''}`
+          }
           listingKey="projects.projects.view::pipeline"
           emptyMessage={
             <div className="px-6 py-10 text-center">

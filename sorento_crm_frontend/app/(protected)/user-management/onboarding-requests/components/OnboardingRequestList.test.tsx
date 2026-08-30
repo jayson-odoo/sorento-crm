@@ -35,7 +35,6 @@ const listOnboardingRequests = vi.fn();
 const createOnboardingRequest = vi.fn();
 
 vi.mock('../services/onboardingService', () => ({
-  ONBOARDING_NEIGHBOURS_PATH: '/api/user-management/onboarding/requests/neighbours',
   listOnboardingRequests: (...a: unknown[]) => listOnboardingRequests(...a),
   createOnboardingRequest: (...a: unknown[]) => createOnboardingRequest(...a),
   getOnboardingRequest: vi.fn(),

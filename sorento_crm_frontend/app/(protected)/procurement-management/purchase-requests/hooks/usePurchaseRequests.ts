@@ -1,11 +1,7 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { buildDataGridParams } from '@/lib/api-client';
+
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
-import {
-  useRecordNeighbours,
-  type RecordNeighboursResult,
-} from '@/hooks/useRecordNeighbours';
 import {
   getPurchaseRequests,
   getPurchaseRequest,
@@ -17,59 +13,66 @@ import {
   updatePurchaseRequestAndReply,
   deletePurchaseRequestAttachment,
   getPurchaseRequestConversation,
-  PURCHASE_REQUEST_NEIGHBOURS_PATH,
   exportPurchaseRequestPdf,
 } from '../services/purchaseRequestService';
-import type {
-  PurchaseRequestUpdateAndReplyData,
-  PurchaseRequestsListParams,
-} from '../services/purchaseRequestService';
+import type { PurchaseRequestUpdateAndReplyData } from '../services/purchaseRequestService';
 import type { PurchaseRequestFormData } from '../types/purchaseRequest.types';
 import type { FormPdfExportOptions } from '@/lib/revision-export';
 import { requestTypeLabel, requestTypeLabelLower } from '../lib/purchase-request-field-labels';
+import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
+
+
+export type PurchaseRequestsListQueryParams = DataGridApiFetchParams & {
+  requestType?: string;
+  approvalStatus?: string;
+  assignedTo?: string;
+};
 
 /**
- * Prev/next neighbours of a purchase request / sponsorship form within the active
- * filtered+sorted list set. Serializes the list query (search/sort/request_type/
- * approval_status/assigned_to) with `buildDataGridParams` - the same serialization
- * the list page uses - so the backend honours filters identically. `request_type`
- * is forwarded so PR navigation stays within PRs and SF within SFs. `page`/`limit`
- * are sent but ignored by the neighbours endpoint.
+ * The list's React Query key. The detail page's pager rebuilds the SAME key from
+ * the URL, so it reads the page the list already fetched.
  */
-export function usePurchaseRequestNeighbours(
-  requestId: string | null,
-  listParams: PurchaseRequestsListParams,
-): RecordNeighboursResult {
-  const params = buildDataGridParams(listParams, {
-    request_type: listParams.request_type,
-    approval_status: listParams.approval_status,
-    assigned_to: listParams.assigned_to,
-  });
-  return useRecordNeighbours(
-    PURCHASE_REQUEST_NEIGHBOURS_PATH,
-    requestId,
-    params,
-  );
+export function purchaseRequestsListQueryKey(
+  params: PurchaseRequestsListQueryParams,
+): QueryKey {
+  return [
+    'purchase-requests',
+    params.pageIndex,
+    params.pageSize,
+    params.sorting,
+    params.searchQuery,
+    params.requestType,
+    params.approvalStatus,
+    params.assignedTo,
+  ];
 }
 
-export function usePurchaseRequests(
-  params: DataGridApiFetchParams & {
-    requestType?: string;
-    approvalStatus?: string;
-    assignedTo?: string;
-  },
-) {
+/** The list query a detail URL describes, in the shape the list passes. */
+export function purchaseRequestsListParamsFromUrl(
+  params: ListPagerParams,
+): PurchaseRequestsListQueryParams {
+  return {
+    pageIndex: params.pageIndex,
+    pageSize: params.pageSize,
+    sorting: params.sorting,
+    searchQuery: params.searchQuery,
+    requestType: params.filters.request_type,
+    approvalStatus: params.filters.approval_status,
+    assignedTo: params.filters.assigned_to,
+  };
+}
+
+/** The pager's two hooks into the purchase requests list. */
+export const purchaseRequestsPagerQuery = {
+  listQueryKey: (params: ListPagerParams): QueryKey =>
+    purchaseRequestsListQueryKey(purchaseRequestsListParamsFromUrl(params)),
+  fetchPage: (params: ListPagerParams): Promise<ListPagerPage> =>
+    getPurchaseRequests(purchaseRequestsListParamsFromUrl(params)),
+};
+
+export function usePurchaseRequests(params: PurchaseRequestsListQueryParams) {
   return useQuery({
-    queryKey: [
-      'purchase-requests',
-      params.pageIndex,
-      params.pageSize,
-      params.sorting,
-      params.searchQuery,
-      params.requestType,
-      params.approvalStatus,
-      params.assignedTo,
-    ],
+    queryKey: purchaseRequestsListQueryKey(params),
     queryFn: () => getPurchaseRequests(params),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,

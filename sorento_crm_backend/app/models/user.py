@@ -264,6 +264,16 @@ class SystemSetting(Base):
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     name = Column(String, default="My Company", nullable=False)
     logo = Column(String, nullable=True)
+    # The photograph an admin puts behind the sign-in card. NULL means "none uploaded",
+    # and the frontend then draws its designed default wash - which is a finished screen,
+    # not a placeholder, so nothing here needs a seed value or a backfill.
+    #
+    # Two columns for one file, exactly like `users.avatar` / `users.avatar_storage_provider`
+    # above: the stable non-signed CDN URL is what is durable, and the provider records which
+    # backend currently holds the bytes so a read can ask THAT one for a fresh signed URL.
+    # Storing a signed URL instead would put an expiry into the database.
+    signin_background = Column(String, nullable=True)
+    signin_background_storage_provider = Column(String(16), nullable=True)
     active = Column(Boolean, default=True, nullable=False)
     address = Column(Text, nullable=True)
     website_url = Column(String, nullable=True)
@@ -345,6 +355,13 @@ class SystemSetting(Base):
     # Global default grace window for form-SLA actions (PLAN-form-sla-undo.md). 0 =
     # every action fires immediately, i.e. today's behaviour; a stage may override it.
     form_sla_grace_seconds = Column(Integer, nullable=False, server_default="0", default=0)
+
+    # The two windows a deferred RECORD action waits out (D7/D16, S6): the product has
+    # no confirmation dialogs, so the countdown is the way back and its length is the
+    # only thing to tune. Destructive covers `<entity>.delete`; reversible covers a
+    # status change and anything else that can simply be set back.
+    deferred_delete_seconds = Column(Integer, nullable=False, server_default="10", default=10)
+    deferred_action_seconds = Column(Integer, nullable=False, server_default="5", default=5)
 
     # System-health observability (PLAN-system-health-observability):
     # daily digest + immediate watchdog alerts. Recipients = role ids (like notify_*_role_ids).

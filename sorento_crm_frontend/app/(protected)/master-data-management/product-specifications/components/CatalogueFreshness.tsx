@@ -95,7 +95,11 @@ export default function CatalogueFreshness({ refreshKey = 0 }: { refreshKey?: nu
                 : 'Not checked'}
       </Badge>
 
-      <p className="min-w-0 flex-1 text-sm text-muted-foreground">
+      {/* `flex-1` sets basis 0, and a WRAPPING row breaks lines on basis, so
+          the badge (86px) and the button (165px) kept this on their line and
+          left it 0px of the 301 available - 500px tall, one word per line at
+          375. Basis 100% under sm gives it a line of its own. */}
+      <p className="min-w-0 grow basis-full text-sm text-muted-foreground sm:basis-0">
         {running &&
           'Reading every product with the current rules. This takes a few minutes; you can leave the page.'}
         {!running && failed &&

@@ -1,19 +1,7 @@
 import { Metadata } from 'next';
 
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
 import { Container } from '@/components/common/container';
-import {
-  Toolbar,
-  ToolbarHeading,
-  ToolbarTitle,
-} from '@/components/common/toolbar';
+import { PageHeader } from '@/components/common/PageHeader';
 
 import { FlyerSpecReviewScreen } from '../components/FlyerSpecReviewScreen';
 
@@ -32,28 +20,7 @@ export default async function FlyerSpecProposalsReviewRoute({
 
   return (
     <Container width="fluid">
-      <Toolbar>
-        <ToolbarHeading>
-          <ToolbarTitle>Review Flyer Specs</ToolbarTitle>
-          <Breadcrumb>
-            <BreadcrumbList>
-              <BreadcrumbItem>
-                <BreadcrumbLink href="/">Home</BreadcrumbLink>
-              </BreadcrumbItem>
-              <BreadcrumbSeparator />
-              <BreadcrumbItem>
-                <BreadcrumbLink href="/master-data-management/flyer-spec-proposals">
-                  Flyer Spec Proposals
-                </BreadcrumbLink>
-              </BreadcrumbItem>
-              <BreadcrumbSeparator />
-              <BreadcrumbItem>
-                <BreadcrumbPage>Review</BreadcrumbPage>
-              </BreadcrumbItem>
-            </BreadcrumbList>
-          </Breadcrumb>
-        </ToolbarHeading>
-      </Toolbar>
+      <PageHeader title="Review Flyer Specs" />
 
       <FlyerSpecReviewScreen readingId={readingId} />
     </Container>

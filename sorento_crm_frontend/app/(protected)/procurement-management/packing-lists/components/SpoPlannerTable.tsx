@@ -502,7 +502,7 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
           />
         );
       case 'on_hand':
-        return <OnHandTable productId={ln.product_id} itemCode={ln.item_code ?? ''} />;
+        return <OnHandTable productId={ln.product_id} />;
       case 'spo':
         return <SpoTabs supplierId={ln.supplier_id ?? ''} productId={ln.product_id} />;
       default:
@@ -1072,10 +1072,7 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
           emptyMessage="This container has no line we hold a product for."
         >
           <CardTable>
-            <ScrollArea>
-              <DataGridTable />
-              <ScrollBar orientation="horizontal" />
-            </ScrollArea>
+            <DataGridTable />
           </CardTable>
         </DataGrid>
       ) : scheduleView === 'po' ? (

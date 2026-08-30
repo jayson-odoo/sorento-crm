@@ -17,16 +17,18 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
-import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
+import {
+  useDeferredRowAction,
+  useRowPending,
+} from '@/hooks/useDeferredRowAction';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
-import { deleteCollection, listCollections } from '../../services/catalogueService';
+import { listCollections } from '../../services/catalogueService';
 import type { CollectionSummary } from '@/lib/dealer-kit/types';
 import { CollectionDialog } from './CollectionDialog';
 
@@ -44,7 +46,14 @@ import { CollectionDialog } from './CollectionDialog';
  */
 export function CollectionsList() {
   const [search, setSearch] = useState('');
-  const [deleting, setDeleting] = useState<CollectionSummary | null>(null);
+  // Delete asks nothing (D7): the row dims and a toast counts down with Cancel.
+  const deletion = useDeferredRowAction({
+    actionKey: 'dk_collection.delete',
+    entityType: 'dk_collection',
+    successMessage: 'Collection deleted',
+    invalidateKeys: [['dealer-kit', 'collections']],
+  });
+  const rowPending = useRowPending<CollectionSummary>('dk_collection');
   /**
    * The collection being edited, or `undefined` when the dialog is shut.
    *
@@ -88,7 +97,7 @@ export function CollectionsList() {
         accessorKey: 'memberCount',
         header: ({ column }) => <DataGridColumnHeader title="Products" column={column} />,
         cell: ({ row }) => (
-          <Badge variant="outline" appearance="ghost" className="font-normal">
+          <Badge variant="outline" className="font-normal">
             {row.original.memberCount}
           </Badge>
         ),
@@ -117,7 +126,9 @@ export function CollectionsList() {
               variant="ghost"
               size="sm"
               aria-label={`Delete ${row.original.name ?? 'collection'}`}
-              onClick={() => setDeleting(row.original)}
+              onClick={() =>
+                deletion.run({ id: row.original.id, subject: row.original.name ?? 'this collection' })
+              }
             >
               <Trash2 className="size-4 text-destructive" />
             </Button>
@@ -129,7 +140,7 @@ export function CollectionsList() {
         meta: { headerTitle: 'Actions', skeleton: <Skeleton className="h-4 w-6" /> },
       },
     ],
-    [],
+    [deletion],
   );
 
   const table = useReactTable({
@@ -163,6 +174,7 @@ export function CollectionsList() {
       table={table}
       recordCount={rows.length}
       isLoading={isLoading}
+      rowPending={rowPending}
       standardToolbar={false}
       tableLayout={{ width: 'fixed', columnsResizable: true }}
       onRowClick={(row) => setEditing(row)}
@@ -203,10 +215,7 @@ export function CollectionsList() {
         </CardHeader>
 
         <CardTable>
-          <ScrollArea>
-            <DataGridTable />
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
+          <DataGridTable />
         </CardTable>
 
         <CardFooter>
@@ -220,22 +229,6 @@ export function CollectionsList() {
         collection={editing ?? null}
       />
 
-      <ConfirmDeleteDialog
-        open={!!deleting}
-        onOpenChange={(open) => !open && setDeleting(null)}
-        title="Confirm delete"
-        description={
-          <>
-            Delete <strong>{deleting?.name ?? 'this collection'}</strong>? Any page using it
-            loses its products. This action cannot be undone.
-          </>
-        }
-        successMessage="Collection deleted"
-        queryKeysToInvalidate={[['dealer-kit', 'collections']]}
-        onDelete={async () => {
-          if (deleting) await deleteCollection(deleting.id);
-        }}
-      />
     </DataGrid>
   );
 }

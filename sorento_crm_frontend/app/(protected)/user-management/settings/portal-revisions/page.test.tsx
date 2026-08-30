@@ -167,7 +167,7 @@ describe('PortalRevisionsSettingsPage per-type table', () => {
 
     const maxField = await screen.findByLabelText('Max revisions', { selector: '#portal-revision-max' });
     fireEvent.change(maxField, { target: { value: '3' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save revision policy' }));
 
     await waitFor(() => {
       const put = apiFetch.mock.calls.find(
@@ -192,7 +192,7 @@ describe('PortalRevisionsSettingsPage per-type table', () => {
     const maxField = await screen.findByLabelText('Max revisions', { selector: '#portal-revision-max' });
     expect((maxField as HTMLInputElement).value).toBe('0');
     fireEvent.change(maxField, { target: { value: '' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save revision policy' }));
 
     await waitFor(() => {
       const put = apiFetch.mock.calls.find(

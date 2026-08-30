@@ -32,11 +32,10 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import { usePurchaseOrders } from '../../hooks/usePurchaseOrders';
 import { usePurchaseOrderActions } from '../../hooks/usePurchaseOrderActions';
 import { ConfirmActionDialog } from '../../components/ConfirmActionDialog';
@@ -50,6 +49,7 @@ import {
   purchaseOrderStatusPill,
 } from '../../lib/purchaseOrderStatus';
 import type { PurchaseOrder } from '../../types/scm.types';
+import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 
 /** All / Outstanding / Completed - the buyer's "at a glance" read (the captain, 20 Aug: "how
  *  do i know the open PO / outstanding PO"). Maps straight onto the list's `outstanding`
@@ -96,6 +96,23 @@ export default function PurchaseOrdersList() {
   // "Have we ever bought this item, and for how much." The plan now takes its cost from
   // this book, so when a plan line shows no cost, this is where the buyer finds out why.
   const [productFilter, setProductFilter] = useState('');
+
+  // Back hands the list its own query string back, and the pager keeps
+  // rewriting it, so the list reads it (S3-01). One hook, every list.
+  useListStateFromUrl((state) => {
+    setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
+    setSorting(state.sorting);
+    setSearchQuery(state.searchQuery);
+    setStatusFilter(state.filters.status ?? '');
+    setProductFilter(state.filters.product_code ?? '');
+    setOutstandingFilter(
+      state.filters.outstanding === 'true'
+        ? 'outstanding'
+        : state.filters.outstanding === 'false'
+          ? 'completed'
+          : 'all',
+    );
+  });
   // Committed on Enter or blur rather than per keystroke: this filter hits the whole order
   // book by line, and firing it on every character is a query per letter typed.
   const [productDraft, setProductDraft] = useState('');
@@ -136,7 +153,6 @@ export default function PurchaseOrdersList() {
   // made against the delivery in hand, not a button on a list of 13,000 orders - the same
   // reason "Create DO" came off the sales-order list.
   const { confirm, bulkDelete } = usePurchaseOrderActions();
-  const router = useRouter();
 
   useEffect(() => {
     setPagination((p) => ({ ...p, pageIndex: 0 }));
@@ -419,7 +435,7 @@ export default function PurchaseOrdersList() {
         emptyMessage={emptyMessage}
         // The whole row opens the order, the same as the sales-order list. The PO-number
         // link stays a real anchor and stops its own click propagating.
-        onRowClick={(row) => router.push(detailHref(row))}
+        rowHref={(row) => detailHref(row)}
       >
         <Card>
           {documentsFilter.length ? (
@@ -624,10 +640,7 @@ export default function PurchaseOrdersList() {
             />
           </CardHeader>
           <CardTable>
-            <ScrollArea>
-              <DataGridTable />
-              <ScrollBar orientation="horizontal" />
-            </ScrollArea>
+            <DataGridTable />
           </CardTable>
           <CardFooter>
             <DataGridPagination />

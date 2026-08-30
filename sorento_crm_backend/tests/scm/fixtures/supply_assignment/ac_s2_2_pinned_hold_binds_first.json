@@ -4,7 +4,10 @@
     "A confirmed decision holds 30 at BRW-BB for the LATER line. The pin binds before any",
     "first-come assignment, so the earlier line finds the pile empty and goes short - which is",
     "the whole point of pinning: a decision that was taken is not re-taken every time somebody",
-    "opens the view."
+    "opens the view.",
+    "",
+    "September books X's 30, because September is when X goes without (R37). December reads 0:",
+    "Y is held, so it is short of nothing, and the stock behind it is spent rather than free."
   ],
   "as_of": "2026-09-01",
   "tba_from": "2029-01-01",
@@ -39,7 +42,13 @@
       "open_qty": 30
     }
   ],
-  "pinned": [{ "line": "Y", "supply": "on_hand:BRW-BB", "qty": 30 }],
+  "pinned": [
+    {
+      "line": "Y",
+      "supply": "on_hand:BRW-BB",
+      "qty": 30
+    }
+  ],
   "expect": {
     "lines": [
       {
@@ -47,21 +56,44 @@
         "status": "short",
         "uncovered": 30,
         "bucket": "2026-09",
-        "assigned": []
+        "assigned": [],
+        "short_at_date": 30
       },
       {
         "key": "Y",
         "status": "pinned",
         "uncovered": 0,
         "bucket": "2026-12",
-        "assigned": [["on_hand:BRW-BB", 30]]
+        "assigned": [
+          [
+            "on_hand:BRW-BB",
+            30
+          ]
+        ],
+        "short_at_date": 0
       }
     ],
     "months": [
-      { "key": "2026-09", "balance": 0, "tone": "green" },
-      { "key": "2026-10", "balance": 0, "tone": "green" },
-      { "key": "2026-11", "balance": 0, "tone": "green" },
-      { "key": "2026-12", "balance": -30, "tone": "amber" }
+      {
+        "key": "2026-09",
+        "balance": -30,
+        "tone": "red"
+      },
+      {
+        "key": "2026-10",
+        "balance": 0,
+        "tone": "green"
+      },
+      {
+        "key": "2026-11",
+        "balance": 0,
+        "tone": "green"
+      },
+      {
+        "key": "2026-12",
+        "balance": 0,
+        "tone": "green"
+      }
     ],
     "tba": 0,
     "undated": 0,

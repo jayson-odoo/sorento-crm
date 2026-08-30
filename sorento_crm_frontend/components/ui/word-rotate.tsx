@@ -44,7 +44,10 @@ export function WordRotate({
         opacity: 1,
         transition: {
           duration: 0.4,
-          ease: [0.4, 0.0, 0.2, 1], // Custom cubic-bezier for smooth fade
+          // The CSS side of this curve is the --ease-standard token; Motion takes
+          // an array, not a var(), so it is repeated here until S8 lands the shared
+          // presets in lib/motion.ts. This component has no call sites today.
+          ease: [0.4, 0.0, 0.2, 1],
         },
       },
       exit: {

@@ -23,11 +23,15 @@ import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useUOMs } from '../hooks/useUOM';
 import type { UnitOfMeasure } from '../types/uom.types';
-import UOMDeleteDialog from './UOMDeleteDialog';
+import {
+  useDeferredRowAction,
+  useRowPending,
+} from '@/hooks/useDeferredRowAction';
+import { buildDetailSearch } from '@/lib/listNavQuery';
+import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 
 export default function UOMList() {
   const router = useRouter();
@@ -35,8 +39,25 @@ export default function UOMList() {
   const [sorting, setSorting] = useState<SortingState>([{ id: 'created_at', desc: true }]);
   const [searchQuery, setSearchQuery] = useState('');
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  const [uomToDelete, setUomToDelete] = useState<UnitOfMeasure | null>(null);
+
+  // Back hands the list its own query string back, and the pager keeps
+  // rewriting it, so the list has to read it (S3-01).
+  useListStateFromUrl((state) => {
+    setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
+    setSorting(state.sorting);
+    setSearchQuery(state.searchQuery);
+  });
+  // Delete asks nothing (D7): the row dims, a toast counts down, and Cancel is
+  // the way back. A unit still on a product is refused by the server, and that
+  // refusal now arrives as the toast's own error rather than as a warning
+  // nobody could act on inside the dialog.
+  const deletion = useDeferredRowAction({
+    actionKey: 'uom.delete',
+    entityType: 'uom',
+    successMessage: 'Unit of measure deleted',
+    invalidateKeys: [['uoms'], ['uom-select']],
+  });
+  const rowPending = useRowPending<UnitOfMeasure>('uom');
 
   const { data, isLoading, refetch, isFetching } = useUOMs({
     pageIndex: pagination.pageIndex,
@@ -44,6 +65,18 @@ export default function UOMList() {
     sorting,
     searchQuery,
   });
+
+  // D3: the row opens the unit's page. The chevron button was the only way in,
+  // which meant hitting a 20px target to read a record.
+  const rowHref = (row: UnitOfMeasure) => {
+    const search = buildDetailSearch({
+      pageIndex: pagination.pageIndex,
+      pageSize: pagination.pageSize,
+      sorting,
+      searchQuery,
+    });
+    return `/master-data-management/units-of-measure/${row.id}${search ? `?${search}` : ''}`;
+  };
 
   const columns = useMemo<ColumnDef<UnitOfMeasure>[]>(
     () => [
@@ -93,7 +126,6 @@ export default function UOMList() {
         cell: ({ row }) => (
           <Badge
             variant={row.original.is_active ? 'success' : 'secondary'}
-            appearance="ghost"
           >
             <BadgeDot />
             {row.original.is_active ? 'Active' : 'Inactive'}
@@ -109,29 +141,26 @@ export default function UOMList() {
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => router.push(`/master-data-management/units-of-measure/${row.original.id}`)}
-            >
-              <ChevronRight className="text-muted-foreground/70 size-3.5" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
               onClick={(e) => {
                 e.stopPropagation();
-                setUomToDelete(row.original);
-                setDeleteDialogOpen(true);
+                deletion.run({
+                  id: row.original.id,
+                  subject: `${row.original.uom_name} (${row.original.uom_code})`,
+                });
               }}
               title="Delete"
             >
               <Trash2 className="size-4 text-muted-foreground" />
             </Button>
+            {/* The row is the way in now, so this says so rather than being it. */}
+            <ChevronRight className="text-muted-foreground/70 size-3.5 shrink-0" />
           </div>
         ),
         size: 80,
         enableHiding: false,
       },
     ],
-    [router],
+    [deletion],
   );
 
   const table = useReactTable({
@@ -152,9 +181,21 @@ export default function UOMList() {
     manualFiltering: true,
   });
 
+  // The one offer this listing makes, in both places it belongs: the
+  // toolbar, and the empty state's next step (S5-06).
+  const listPrimaryAction = (
+    <Button onClick={() => router.push('/master-data-management/units-of-measure/new')}>
+      <Plus />
+      Create UOM
+    </Button>
+  );
+
   return (
     <DataGrid table={table} recordCount={data?.pagination.total || 0} isLoading={isLoading}
+      rowHref={rowHref}
+      rowPending={rowPending}
       tableLayout={{ columnsVisibility: true }}
+      emptyAction={listPrimaryAction}
     >
       <Card>
         <CardHeader className="block">
@@ -184,35 +225,16 @@ export default function UOMList() {
             exportConfig={{ filename: 'units_of_measure_export.xlsx' }}
             onRefresh={() => void refetch()}
             isRefreshing={isFetching && !isLoading}
-            primaryAction={
-              <Button onClick={() => router.push('/master-data-management/units-of-measure/new')}>
-                <Plus />
-                Create UOM
-              </Button>
-            }
+            primaryAction={listPrimaryAction}
           />
         </CardHeader>
         <CardTable>
-          <ScrollArea>
-            <DataGridTable />
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
+          <DataGridTable />
         </CardTable>
         <CardFooter>
           <DataGridPagination />
         </CardFooter>
       </Card>
-
-      {uomToDelete && (
-        <UOMDeleteDialog
-          open={deleteDialogOpen}
-          closeDialog={() => {
-            setDeleteDialogOpen(false);
-            setUomToDelete(null);
-          }}
-          uom={uomToDelete}
-        />
-      )}
     </DataGrid>
   );
 }

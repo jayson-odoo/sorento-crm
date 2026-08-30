@@ -17,7 +17,6 @@ import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -56,7 +55,6 @@ import {
   useRetryEmailOutboxRow,
 } from '../hooks/useEmailOutbox';
 import type { EmailOutboxRow } from '../types/emailOutbox.types';
-import { getStatusBadgeVariant } from '@/lib/status-badge';
 
 export default function EmailOutboxList() {
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
@@ -127,7 +125,7 @@ export default function EmailOutboxList() {
         accessorKey: 'status',
         header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
         cell: ({ row }) => (
-          <Badge variant={getStatusBadgeVariant(row.original.status)} appearance="ghost">
+          <Badge status={row.original.status}>
             {row.original.status}
           </Badge>
         ),
@@ -342,10 +340,7 @@ export default function EmailOutboxList() {
           />
         </CardHeader>
         <CardTable>
-          <ScrollArea>
-            <DataGridTable />
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
+          <DataGridTable />
         </CardTable>
         <CardFooter>
           <DataGridPagination />
@@ -366,7 +361,7 @@ export default function EmailOutboxList() {
                 <div>
                   <div className="text-muted-foreground">Status</div>
                   <div>
-                    <Badge variant={getStatusBadgeVariant(detail.status)} appearance="ghost">
+                    <Badge status={detail.status}>
                       {detail.status}
                     </Badge>
                   </div>

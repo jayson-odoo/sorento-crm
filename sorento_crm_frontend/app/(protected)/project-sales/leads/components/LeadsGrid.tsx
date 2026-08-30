@@ -21,7 +21,6 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridListToolbar, type ListToolbarFilters } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import type { LeadWithAcceptance } from '../../_shared/types/leadAcceptance.types';
@@ -58,6 +57,7 @@ export function LeadsGrid({
   emptyState,
   onAssign,
   onDelete,
+  rowHref,
 }: {
   leads: LeadWithAcceptance[];
   total: number;
@@ -73,6 +73,11 @@ export function LeadsGrid({
   emptyState: React.ReactNode;
   onAssign: (lead: LeadWithAcceptance) => void;
   onDelete: (lead: LeadWithAcceptance) => void;
+  /**
+   * The record's URL, with this page, sort, search and filters on the end of it
+   * (D5). The detail page's pager reads them back and walks THIS page.
+   */
+  rowHref?: (lead: LeadWithAcceptance) => string;
 }) {
   const [columnVisibility, setColumnVisibility] = useState({});
 
@@ -359,7 +364,8 @@ export function LeadsGrid({
       // A row IS the record, so clicking it opens the record. Every list in this
       // product behaves this way, and a table whose rows do nothing teaches people to
       // hunt for the one cell that happens to be a link.
-      onRowClick={(row) => router.push(`/project-sales/leads/${row.id}`)}
+      rowHref={rowHref}
+      onRowClick={rowHref ? undefined : (row) => router.push(`/project-sales/leads/${row.id}`)}
       recordCount={total}
       isLoading={isLoading}
       // Pinned, never the pathname default: the fallback keys column preferences on the
@@ -381,10 +387,7 @@ export function LeadsGrid({
           />
         </CardHeader>
         <CardTable>
-          <ScrollArea>
-            <DataGridTable />
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
+          <DataGridTable />
         </CardTable>
         <CardFooter>
           <DataGridPagination />

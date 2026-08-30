@@ -189,7 +189,7 @@ function testButton() {
 }
 
 function confirmButton() {
-  return screen.getByRole('button', { name: /^Confirm$/i });
+  return screen.getByRole('button', { name: /^Import proforma invoice$/i });
 }
 
 function supplierSelect(): HTMLSelectElement {
@@ -387,11 +387,18 @@ describe('ProformaUploadDialog - a file the verdict blocks', () => {
     pickFile();
     fireEvent.click(testButton());
 
-    await waitFor(() => expect(confirmButton()).toBeDisabled());
-    expect(confirmButton()).toHaveAttribute(
-      'title',
-      expect.stringContaining('no unit_price column'),
-    );
+    // Confirm is also disabled while the preview is still in flight, so the
+    // verdict's own reason is the signal to wait on, not the disabled state. Both
+    // assertions live inside the SAME waitFor: the disabled flip and the title
+    // update land in separate re-renders, so checking one outside the wait races
+    // the other on a slow runner (seen in CI, not locally).
+    await waitFor(() => {
+      expect(confirmButton()).toBeDisabled();
+      expect(confirmButton()).toHaveAttribute(
+        'title',
+        expect.stringContaining('no unit_price column'),
+      );
+    });
   });
 
   it('refuses a priced file nothing can price, naming the invoice', async () => {
@@ -560,7 +567,7 @@ describe('ProformaUploadDialog - what the apply reports', () => {
     await screen.findByText(/Created 1 invoice/);
     expect(screen.queryByText('No errors')).not.toBeInTheDocument();
     // And the footer is done: Cancel becomes Close, and Test and Confirm are gone.
-    expect(screen.queryByRole('button', { name: /^Confirm$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Import proforma invoice$/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^Test$/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^Cancel$/i })).not.toBeInTheDocument();
   });

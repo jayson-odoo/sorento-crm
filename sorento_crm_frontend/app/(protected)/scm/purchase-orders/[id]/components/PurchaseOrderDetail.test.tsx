@@ -39,6 +39,8 @@ Element.prototype.scrollIntoView = vi.fn();
 // A `let`, not a literal return, so the `?edit=1` auto-open test can point it at a URL
 // carrying the param without a second mock module.
 let searchParams = new URLSearchParams();
+vi.mock('@/components/common/ListPager', () => ({ __esModule: true, default: () => null }));
+
 vi.mock('next/navigation', () => ({
   usePathname: () => '/scm/purchase-orders/po-1',
   useRouter: () => ({ push: vi.fn() }),
@@ -52,9 +54,14 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
 const usePurchaseOrder = vi.fn();
 const updatePurchaseOrderMutateAsync = vi.fn();
 vi.mock('../../../hooks/usePurchaseOrders', () => ({
+  // The pager reads the list page through the entity's shared key + fetch (S3-03).
+  purchaseOrdersPagerQuery: {
+    listQueryKey: () => ['scm-purchase-orders'],
+    fetchPage: async () => ({ data: [], pagination: { total: 0 } }),
+  },
   usePurchaseOrder: (...a: unknown[]) => usePurchaseOrder(...a),
-  // The header's prev/next pager reads the same list the user came from. One row means no
-  // neighbours, so the pager renders nothing and these tests stay about the record itself.
+  // The header's prev/next pager reads the same list the user came from. An empty page
+  // holds no record, so the pager renders nothing and these tests stay about the record.
   usePurchaseOrders: () => ({ data: { data: [], pagination: { total: 0, page: 1, limit: 25 } } }),
   useUpdatePurchaseOrder: () => ({
     mutateAsync: updatePurchaseOrderMutateAsync,
@@ -526,14 +533,14 @@ describe('PurchaseOrderDetail - correcting the order in place', () => {
   it('opens the session straight away on ?edit=1', () => {
     searchParams = new URLSearchParams('edit=1');
     renderDetail();
-    expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save purchase order' })).toBeInTheDocument();
   });
 
   it('writes the header alone when no line moved', async () => {
     renderDetail();
     fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
     fireEvent.change(screen.getByLabelText('Order date'), { target: { value: '2026-05-04' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save purchase order' }));
 
     await waitFor(() => expect(updatePurchaseOrderMutateAsync).toHaveBeenCalled());
     const payload = updatePurchaseOrderMutateAsync.mock.calls[0][0];
@@ -551,7 +558,7 @@ describe('PurchaseOrderDetail - correcting the order in place', () => {
     fireEvent.change(screen.getByLabelText('Unit price on CW-BASIN-450'), {
       target: { value: '88.5' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save purchase order' }));
 
     await waitFor(() => expect(updatePurchaseOrderMutateAsync).toHaveBeenCalled());
     const [line] = updatePurchaseOrderMutateAsync.mock.calls[0][0].data.lines;
@@ -590,7 +597,7 @@ describe('PurchaseOrderDetail - correcting the order in place', () => {
     fireEvent.change(screen.getByLabelText('Qty ordered on CW-BASIN-450'), {
       target: { value: '0' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save purchase order' }));
 
     expect(
       screen.getByText('Every line needs a product and a quantity above zero.'),

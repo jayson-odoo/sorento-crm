@@ -154,6 +154,29 @@ class SupplyFrozenLine(BaseModel):
     cited_document: Optional[str] = None
 
 
+class SupplyLadderOption(BaseModel):
+    """One step of ladder v7.1, answered whether or not it was taken (R36, AC-S3-14).
+
+    The wire contract is stated once, in
+    `app/(protected)/project-sales/_shared/services/fulfilmentPlanningService.ts`
+    ("LADDER v7.1: THE OPTIONS CONTRACT"), and this is the sheet's half of it. The board's
+    is `schemas/project_board.py::BoardLadderOption`; the two are the same six answers about
+    the same walk, kept as siblings because the two payloads already are.
+    """
+
+    step: str
+    label: str
+    whole: bool = False
+    #: Null exactly when the step offered nothing, and `days_late` is null with it.
+    fulfil_date: Optional[date] = None
+    #: Never negative: landing early is on time, not minus six days late.
+    days_late: Optional[int] = None
+    #: Set on the borrow steps only - `use` draws the free pile and `buy` orders new stock.
+    debt_so_number: Optional[str] = None
+    debt_month: Optional[str] = None
+    chosen: bool = False
+
+
 class SupplyLine(BaseModel):
     project_line_id: str
     line_no: int
@@ -189,6 +212,11 @@ class SupplyLine(BaseModel):
     pool_cap: Optional[str] = None
     pool_reorder_level: Optional[str] = None
     components: List[SupplyComponent] = []
+    #: The FIVE options of ladder v7.1 (R36, AC-S3-14), always all five and always in step
+    #: order, one chosen at most - the same table the board's contribution carries, because
+    #: the decision panel renders it on either surface. Declared here or `response_model`
+    #: would drop the field on its way out.
+    options: List["SupplyLadderOption"] = []
     timely_spo: List[SupplySpoRef] = []
     advisory_spo: List[SupplySpoRef] = []
     borrow_candidates: List[BorrowCandidate] = []

@@ -13,22 +13,6 @@ import type {
 import type { FormRevisionEntry } from '@/components/common/RevisionTimeline';
 import type { FormPdfExportOptions } from '@/lib/revision-export';
 
-/**
- * Path of the stock-inquiry neighbours endpoint. Consumed by
- * `useStockInquiryNeighbours` via the generic `useRecordNeighbours` hook.
- *
- * Contract:
- *   GET /api/v1/procurement/stock-inquiries/neighbours
- *   Query params: id=<uuid> + the SAME params the list GET accepts
- *                 (query, status, sort, dir). page/limit are ignored.
- *   Auth: same dependency + module guard as the list GET.
- *   200:  { total: number, index: number|null, prev_id: string|null, next_id: string|null }
- *       - index is 1-based; null when the record is not in the filtered set
- *           (the backend then falls back to the unfiltered, default-sorted set).
- *       - prev_id/next_id wrap circularly; null only when total <= 1.
- */
-export const STOCK_INQUIRY_NEIGHBOURS_PATH =
-  '/api/v1/procurement/stock-inquiries/neighbours';
 
 export async function getStockInquiries(
   params: DataGridApiFetchParams & { statuses?: string[] },

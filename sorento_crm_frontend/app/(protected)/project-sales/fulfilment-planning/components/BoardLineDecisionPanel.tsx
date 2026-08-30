@@ -32,6 +32,7 @@ import type {
   BoardDecision,
   BorrowCandidate,
 } from '../../_shared/types/fulfilmentPlanning.types';
+import { BoardLadderOptionsTable } from './BoardLadderOptionsTable';
 import { BorrowAddDialog } from './BorrowAddDialog';
 
 /**
@@ -266,6 +267,22 @@ export function BoardLineDecisionPanel({
       data-testid={`line-decision-${contribution.key}`}
       className="border-t bg-muted/30 px-4 py-3 sm:px-5"
     >
+      {/* WHAT THE LADDER OFFERED, above the editor that amends it (R36, AC-S3-14).
+          The same table the trail popover renders, and above rather than beside on purpose:
+          it is six columns of dates, and squeezed into the right-hand column it would wrap at
+          1280px, let alone at 375. It is what the planner reads BEFORE typing, so it reads
+          first. Display only - taking a different option is Amend, in the inputs below. */}
+      {(contribution.options?.length ?? 0) > 0 && (
+        <div className="mb-3 space-y-1">
+          <p className="text-2xs uppercase tracking-wide text-muted-foreground">
+            Options
+          </p>
+          <BoardLadderOptionsTable
+            options={contribution.options ?? []}
+            contributionKey={contribution.key}
+          />
+        </div>
+      )}
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
         {/* THE COMPOSITION. The row above already states the outstanding quantity, so the
             editor carries only what the planner decides. Every section renders whatever the
@@ -593,7 +610,7 @@ export function BoardLineDecisionPanel({
                 onClick={save}
               >
                 <Check className="size-4" aria-hidden />
-                Save
+                Save decision
               </Button>
               <Button
                 type="button"

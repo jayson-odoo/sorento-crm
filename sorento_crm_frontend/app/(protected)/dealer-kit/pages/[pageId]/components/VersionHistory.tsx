@@ -68,12 +68,12 @@ export function VersionHistory({
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="text-sm font-medium">Version {version.version}</span>
                     {isLive && (
-                      <Badge variant="success" appearance="ghost" className="font-normal">
+                      <Badge variant="success" className="font-normal">
                         Live
                       </Badge>
                     )}
                     {version.labels.includes('staging') && (
-                      <Badge variant="outline" appearance="ghost" className="font-normal">
+                      <Badge variant="outline" className="font-normal">
                         Staging
                       </Badge>
                     )}

@@ -164,7 +164,7 @@ export function StockListUploadDialog({
           {!result ? (
             <Button onClick={() => void upload.confirm()} disabled={!upload.canConfirm}>
               {upload.applying ? <LoaderCircle className="size-4 animate-spin" /> : null}
-              Confirm
+              Import stock list
             </Button>
           ) : null}
         </DialogFooter>

@@ -104,7 +104,7 @@ export function EditionDetail({ editionId }: { editionId: string }) {
         <CardContent className="flex flex-col gap-3 py-5 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex min-w-0 flex-col gap-1">
             <div className="flex flex-wrap items-center gap-2">
-              <h1 className="min-w-0 break-words text-lg font-semibold">{edition.name}</h1>
+              <h2 className="min-w-0 break-words text-lg font-semibold">{edition.name}</h2>
               <span className={`${STATUS_PILL_BASE} ${statusPillClass(edition.status)}`}>
                 {edition.statusLabel}
               </span>

@@ -18,7 +18,6 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import { ConfirmActionDialog } from '../../components/ConfirmActionDialog';
@@ -296,10 +295,7 @@ function TimelineGrid({ timeline }: { timeline: CoverageTimeline }) {
       }}
     >
       <div className="overflow-hidden rounded-lg border border-border">
-        <ScrollArea>
-          <DataGridTable />
-          <ScrollBar orientation="horizontal" />
-        </ScrollArea>
+        <DataGridTable />
       </div>
     </DataGrid>
   );
@@ -376,10 +372,7 @@ function UndatedGrid({ rows }: { rows: CoverageUndatedDemand[] }) {
       emptyMessage="Every commitment carries a date."
     >
       <div className="overflow-hidden rounded-lg border border-border">
-        <ScrollArea>
-          <DataGridTable />
-          <ScrollBar orientation="horizontal" />
-        </ScrollArea>
+        <DataGridTable />
       </div>
     </DataGrid>
   );
@@ -515,10 +508,7 @@ function TransferGrid({
       emptyMessage="No other site holds this item."
     >
       <div className="overflow-hidden rounded-lg border border-border">
-        <ScrollArea>
-          <DataGridTable />
-          <ScrollBar orientation="horizontal" />
-        </ScrollArea>
+        <DataGridTable />
       </div>
     </DataGrid>
   );

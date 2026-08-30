@@ -1,5 +1,15 @@
 'use client';
 
+import {
+  Coins,
+  Container,
+  Eye,
+  Layers,
+  Repeat,
+  SlidersHorizontal,
+  Star,
+  Truck,
+} from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ContainerSizesPanel } from './ContainerSizesPanel';
 import { CurrencyRatesPanel } from './CurrencyRatesPanel';
@@ -18,15 +28,39 @@ import { SupplierScoringPanel } from './SupplierScoringPanel';
 export function PolicyConfigView() {
   return (
     <Tabs defaultValue="planning-mode" className="w-full">
-      <TabsList variant="line" className="mb-5 w-full justify-start overflow-x-auto">
-        <TabsTrigger value="planning-mode">Planning mode</TabsTrigger>
-        <TabsTrigger value="reorder">Reorder policies</TabsTrigger>
-        <TabsTrigger value="fulfilment">Fulfilment</TabsTrigger>
-        <TabsTrigger value="classification">Classification thresholds</TabsTrigger>
-        <TabsTrigger value="supplier">Supplier scoring</TabsTrigger>
-        <TabsTrigger value="containers">Container sizes</TabsTrigger>
-        <TabsTrigger value="currency">Exchange rates</TabsTrigger>
-        <TabsTrigger value="preview">Resolution preview</TabsTrigger>
+      <TabsList className="mb-5">
+        <TabsTrigger value="planning-mode">
+          <SlidersHorizontal />
+          <span>Planning mode</span>
+        </TabsTrigger>
+        <TabsTrigger value="reorder">
+          <Repeat />
+          <span>Reorder policies</span>
+        </TabsTrigger>
+        <TabsTrigger value="fulfilment">
+          <Truck />
+          <span>Fulfilment</span>
+        </TabsTrigger>
+        <TabsTrigger value="classification">
+          <Layers />
+          <span>Classification thresholds</span>
+        </TabsTrigger>
+        <TabsTrigger value="supplier">
+          <Star />
+          <span>Supplier scoring</span>
+        </TabsTrigger>
+        <TabsTrigger value="containers">
+          <Container />
+          <span>Container sizes</span>
+        </TabsTrigger>
+        <TabsTrigger value="currency">
+          <Coins />
+          <span>Exchange rates</span>
+        </TabsTrigger>
+        <TabsTrigger value="preview">
+          <Eye />
+          <span>Resolution preview</span>
+        </TabsTrigger>
       </TabsList>
 
       <TabsContent value="planning-mode" className="mt-0 max-w-3xl focus-visible:outline-none">

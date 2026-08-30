@@ -15,6 +15,7 @@ import type {
 } from '../types/scm.types';
 import { ConfidenceBadge, HealthLegend, StateChip } from './HealthIndicators';
 import { ScmPager } from './ScmPager';
+import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 
 /** Supplier cards per page. */
 const SUPPLIER_PAGE_SIZE = 10;
@@ -177,41 +178,44 @@ function SupplierCard({ supplier }: { supplier: SupplierGroup }) {
       </button>
 
       {expanded ? (
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-2xs text-muted-foreground">
-              <th className="px-4 py-2 text-left font-medium">SKU</th>
-              <th className="px-2 py-2 text-right font-medium">On hand</th>
-              <th className="px-2 py-2 text-right font-medium">On order</th>
-              <th className="px-2 py-2 text-right font-medium">Net position</th>
-              <th className="px-2 py-2 text-left font-medium">Status</th>
-              <th className="px-4 py-2 text-right font-medium">Next ETA</th>
-            </tr>
-          </thead>
-          <tbody>
-            {supplier.skus.map((s) => (
-              <tr key={s.sku} className="border-t border-border/60">
-                <td className="px-4 py-2">
-                  <div className="font-medium">{s.sku}</div>
-                  <div className="truncate text-xs text-muted-foreground" title={s.product_name}>
-                    {s.product_name}
-                  </div>
-                </td>
-                <td className="px-2 py-2 text-right tabular-nums">{fmtInt(s.on_hand)}</td>
-                <td className="px-2 py-2 text-right tabular-nums">{fmtInt(s.on_order)}</td>
-                <td className="px-2 py-2 text-right font-medium tabular-nums">
-                  {fmtSigned(s.net_position)}
-                </td>
-                <td className="px-2 py-2">
-                  <StateChip state={s.status} />
-                </td>
-                <td className="px-4 py-2 text-right tabular-nums text-muted-foreground">
-                  {fmtDate(s.incoming_po_eta)}
-                </td>
+        <ScrollArea>
+          <table className="w-auto min-w-full text-sm">
+            <thead>
+              <tr className="text-2xs text-muted-foreground">
+                <th className="px-4 py-2 text-left font-medium">SKU</th>
+                <th className="px-2 py-2 text-right font-medium">On hand</th>
+                <th className="px-2 py-2 text-right font-medium">On order</th>
+                <th className="px-2 py-2 text-right font-medium">Net position</th>
+                <th className="px-2 py-2 text-left font-medium">Status</th>
+                <th className="px-4 py-2 text-right font-medium">Next ETA</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {supplier.skus.map((s) => (
+                <tr key={s.sku} className="border-t border-border/60">
+                  <td className="px-4 py-2">
+                    <div className="font-medium">{s.sku}</div>
+                    <div className="truncate text-xs text-muted-foreground" title={s.product_name}>
+                      {s.product_name}
+                    </div>
+                  </td>
+                  <td className="px-2 py-2 text-right tabular-nums">{fmtInt(s.on_hand)}</td>
+                  <td className="px-2 py-2 text-right tabular-nums">{fmtInt(s.on_order)}</td>
+                  <td className="px-2 py-2 text-right font-medium tabular-nums">
+                    {fmtSigned(s.net_position)}
+                  </td>
+                  <td className="px-2 py-2">
+                    <StateChip state={s.status} />
+                  </td>
+                  <td className="px-4 py-2 text-right tabular-nums text-muted-foreground">
+                    {fmtDate(s.incoming_po_eta)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <ScrollBar orientation="horizontal" />
+        </ScrollArea>
       ) : null}
     </Card>
   );

@@ -9,7 +9,7 @@ import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { useCategoriesTree } from '../hooks/useProductCategories';
 import CategoryTree from './CategoryTree';
 import CategoryForm from './CategoryForm';
-import CategoryDeleteDialog from './category-delete-dialog';
+import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
 import type { CategoryTreeItem } from '../types/category.types';
 
 export default function CategoriesList() {
@@ -17,15 +17,16 @@ export default function CategoriesList() {
   const [formOpen, setFormOpen] = useState(false);
   const [editingCategoryId, setEditingCategoryId] = useState<string | undefined>(undefined);
   const [copyFromCategory, setCopyFromCategory] = useState<CategoryTreeItem | null>(null);
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  const [categoryToDelete, setCategoryToDelete] = useState<CategoryTreeItem | null>(null);
   const { data: categories, isLoading } = useCategoriesTree();
 
-  const handleEdit = (category: CategoryTreeItem) => {
-    setCopyFromCategory(null);
-    setEditingCategoryId(category.id);
-    setFormOpen(true);
-  };
+  // Delete asks nothing (D7): a toast counts down with Cancel, and a category
+  // that still holds products is refused by the server when the window lapses.
+  const deletion = useDeferredRowAction({
+    actionKey: 'product_category.delete',
+    entityType: 'product_category',
+    successMessage: 'Category deleted',
+    invalidateKeys: [['product-categories-tree'], ['product-category-select']],
+  });
 
   const handleDuplicate = (category: CategoryTreeItem) => {
     setEditingCategoryId(undefined);
@@ -34,8 +35,10 @@ export default function CategoriesList() {
   };
 
   const handleDelete = (category: CategoryTreeItem) => {
-    setCategoryToDelete(category);
-    setDeleteDialogOpen(true);
+    deletion.run({
+      id: category.id,
+      subject: `${category.category_name} (${category.category_code})`,
+    });
   };
 
   const handleFormClose = (open: boolean) => {
@@ -80,7 +83,6 @@ export default function CategoriesList() {
               <CategoryTree
                 categories={categories || []}
                 searchQuery={searchQuery}
-                onEdit={handleEdit}
                 onDuplicate={handleDuplicate}
                 onDelete={handleDelete}
               />
@@ -96,17 +98,6 @@ export default function CategoriesList() {
         categoryId={editingCategoryId}
         copyFromCategory={copyFromCategory}
       />
-
-      {categoryToDelete && (
-        <CategoryDeleteDialog
-          open={deleteDialogOpen}
-          closeDialog={() => {
-            setDeleteDialogOpen(false);
-            setCategoryToDelete(null);
-          }}
-          category={categoryToDelete}
-        />
-      )}
     </>
   );
 }

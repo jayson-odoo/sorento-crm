@@ -321,7 +321,7 @@ describe('ContactMediaAccessSection - bounds', () => {
     fireEvent.click(screen.getByLabelText(/edit photos limits/i));
 
     const limitInput = await screen.findByLabelText('Monthly limit');
-    const dialogSave = () => screen.getByRole('button', { name: /^save$/i });
+    const dialogSave = () => screen.getByRole('button', { name: /^Save media access$/i });
 
     fireEvent.change(limitInput, { target: { value: '100001' } });
     expect(
@@ -382,7 +382,7 @@ describe('ContactMediaAccessSection - a failed limits save', () => {
 
     const limitInput = await screen.findByLabelText('Monthly limit');
     fireEvent.change(limitInput, { target: { value: '25' } });
-    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^Save media access$/i }));
 
     await waitFor(() => expect(putCalls()).toHaveLength(1));
     await waitFor(() => expect(toast.error).toHaveBeenCalled());

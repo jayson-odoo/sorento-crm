@@ -1865,7 +1865,9 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
               onClick={() => setConfirmOpen(true)}
               disabled={saving || submitting}
             >
-              {submitting ? 'Submitting...' : 'Submit'}
+              {submitting
+                ? 'Submitting...'
+                : `Submit ${SUBMISSION_LABELS[kind].toLowerCase()}`}
             </Button>
           )}
         </div>
@@ -1989,7 +1991,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
           <AlertDialogFooter>
             <AlertDialogCancel disabled={submitting}>Cancel</AlertDialogCancel>
             <AlertDialogAction onClick={handleSubmit} disabled={submitting}>
-              Submit
+              Submit {SUBMISSION_LABELS[kind].toLowerCase()}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

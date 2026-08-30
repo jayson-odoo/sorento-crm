@@ -22,7 +22,6 @@ import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { Input } from '@/components/ui/input';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { formatDateInMalaysia } from '@/lib/helpers';
@@ -50,6 +49,7 @@ import {
 import { InfoHint } from '../../[projectId]/components/InfoHint';
 import { FulfilmentBoardPanel } from './FulfilmentBoardPanel';
 import { FulfilmentPlanningSheet } from './FulfilmentPlanningSheet';
+import { PageHeader } from '@/components/common/PageHeader';
 
 /**
  * How many orders may be planned together (PLAN 13.2).
@@ -646,45 +646,49 @@ export function FulfilmentPlanningClient() {
 
   return (
     <>
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex min-w-0 items-center gap-2">
-          <h1 className="text-xl font-semibold break-words">Fulfilment planning</h1>
-          <InfoHint label="About fulfilment planning">
-            Outstanding project sales orders, earliest delivery date first.
-          </InfoHint>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {/* Over the cap, the count is STATED rather than the selection quietly trimmed to
-              50: a planner who ticked everything and got a board of the first fifty would be
-              planning a set they did not choose, which is the thing 13.2 exists to prevent. */}
-          {(overCap || refusedLink > 0) && (
-            <span className="text-sm text-destructive break-words">
-              {`${overCapCount} ticked. A board takes at most ${MAX_BOARD_SELECTION} sales orders.`}
-            </span>
-          )}
-          {selected.length > 0 && (
-            <Button type="button" variant="ghost" size="sm" onClick={() => setRowSelection({})}>
-              Clear the selection
+      <PageHeader
+        title={
+          <span className="inline-flex flex-wrap items-center gap-2">
+            Fulfilment planning
+            <InfoHint label="About fulfilment planning">
+              Outstanding project sales orders, earliest delivery date first.
+            </InfoHint>
+          </span>
+        }
+        actions={
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Over the cap, the count is STATED rather than the selection quietly trimmed to
+                50: a planner who ticked everything and got a board of the first fifty would be
+                planning a set they did not choose, which is the thing 13.2 exists to prevent. */}
+            {(overCap || refusedLink > 0) && (
+              <span className="text-sm text-destructive break-words">
+                {`${overCapCount} ticked. A board takes at most ${MAX_BOARD_SELECTION} sales orders.`}
+              </span>
+            )}
+            {selected.length > 0 && (
+              <Button type="button" variant="ghost" size="sm" onClick={() => setRowSelection({})}>
+                Clear the selection
+              </Button>
+            )}
+            <Button
+              type="button"
+              size="sm"
+              disabled={selected.length < 1 || overCap}
+              title={
+                overCap
+                  ? `Untick some: a board takes at most ${MAX_BOARD_SELECTION} sales orders`
+                  : selected.length < 1
+                    ? 'Tick one or more sales orders to plan them'
+                    : undefined
+              }
+              onClick={() => openBoard(selected)}
+            >
+              <LayoutGrid className="size-4" aria-hidden />
+              {selected.length === 1 ? `Plan ${selected[0]}` : `Plan together (${selected.length})`}
             </Button>
-          )}
-          <Button
-            type="button"
-            size="sm"
-            disabled={selected.length < 1 || overCap}
-            title={
-              overCap
-                ? `Untick some: a board takes at most ${MAX_BOARD_SELECTION} sales orders`
-                : selected.length < 1
-                  ? 'Tick one or more sales orders to plan them'
-                  : undefined
-            }
-            onClick={() => openBoard(selected)}
-          >
-            <LayoutGrid className="size-4" aria-hidden />
-            {selected.length === 1 ? `Plan ${selected[0]}` : `Plan together (${selected.length})`}
-          </Button>
-        </div>
-      </div>
+          </div>
+        }
+      />
 
       <DataGrid
         table={table}
@@ -812,10 +816,7 @@ export function FulfilmentPlanningClient() {
                 </Button>
               </div>
             ) : (
-              <ScrollArea>
-                <DataGridTable />
-                <ScrollBar orientation="horizontal" />
-              </ScrollArea>
+              <DataGridTable />
             )}
           </CardTable>
 

@@ -1,12 +1,45 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 import { getWarehouses, getWarehouse, createWarehouse, updateWarehouse, bulkDeleteWarehouses } from '../services/warehouseService';
 import type { WarehouseFormData } from '../types/warehouse.types';
+import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
+
+/**
+ * The list's React Query key. The detail page's pager rebuilds the SAME key from
+ * the URL, so it reads the page the list already fetched.
+ */
+export function warehousesListQueryKey(params: DataGridApiFetchParams): QueryKey {
+  return [
+    'warehouses',
+    params.pageIndex,
+    params.pageSize,
+    params.sorting,
+    params.searchQuery,
+  ];
+}
+
+/** The list query a detail URL describes, in the shape the list passes. */
+export function warehousesListParamsFromUrl(params: ListPagerParams): DataGridApiFetchParams {
+  return {
+    pageIndex: params.pageIndex,
+    pageSize: params.pageSize,
+    sorting: params.sorting,
+    searchQuery: params.searchQuery,
+  };
+}
+
+/** The pager's two hooks into the warehouses list. */
+export const warehousesPagerQuery = {
+  listQueryKey: (params: ListPagerParams): QueryKey =>
+    warehousesListQueryKey(warehousesListParamsFromUrl(params)),
+  fetchPage: (params: ListPagerParams): Promise<ListPagerPage> =>
+    getWarehouses(warehousesListParamsFromUrl(params)),
+};
 
 export function useWarehouses(params: DataGridApiFetchParams) {
   return useQuery({
-    queryKey: ['warehouses', params.pageIndex, params.pageSize, params.sorting, params.searchQuery],
+    queryKey: warehousesListQueryKey(params),
     queryFn: () => getWarehouses(params),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,
@@ -52,13 +85,13 @@ export function useUpdateWarehouse() {
   });
 }
 
-// There is deliberately no `useDeleteWarehouse`. Single delete goes through the shared
-// `ConfirmDeleteDialog`, which wraps the `onDelete` callback in its OWN mutation and owns the
-// toast plus the query invalidation. A hook that also toasted and invalidated meant every delete
-// reported itself twice, in two positions, and a 409 ("Warehouse has linked stock") said the same
-// thing to the user twice. Pass the bare `deleteWarehouse` service call to the dialog instead.
-// Bulk delete keeps its hook because `WarehouseBulkDeleteDialog` is a plain `Dialog` that owns no
-// mutation of its own, so there is nothing for this one to double up with.
+// There is deliberately no `useDeleteWarehouse`. Single delete is a deferred record
+// action since S6b: the record page parks `warehouse.delete` and the countdown, the
+// toast and the invalidation all belong to `useDeferredAction`. A hook that toasted
+// as well would report every outcome twice, in two positions, and a 409 ("Warehouse
+// has linked stock") would say the same thing to the user twice.
+// Bulk delete keeps its hook because `WarehouseBulkDeleteDialog` is a plain `Dialog`
+// that owns no mutation of its own, so there is nothing for this one to double up with.
 
 export function useBulkDeleteWarehouses() {
   const queryClient = useQueryClient();

@@ -347,7 +347,17 @@ def confirm_all(
 @router.get("/fulfilment-planning/stock-detail", response_model=StockDetail)
 def get_stock_detail(
     product_id: str = Query(..., description="Addressing only; the board's cell carries it."),
-    warehouse_id: str = Query(...),
+    warehouse_id: Optional[str] = Query(
+        None, description="One bin. Give this OR `group`, never neither."
+    ),
+    group: Optional[str] = Query(
+        None,
+        description=(
+            "A whole set instead of one bin: the ownership-group suffix (`IB`) or `pools` "
+            "for the five site pools. The ladder draws the GROUP's pile, so the group is "
+            "what a running balance has to be read over."
+        ),
+    ),
     line_ids: Optional[str] = Query(
         None,
         description=(
@@ -369,13 +379,20 @@ def get_stock_detail(
     """
     try:
         validate_uuid_path(product_id, resource="Product")
-        validate_uuid_path(warehouse_id, resource="Warehouse")
+        if not warehouse_id and not group:
+            raise AppException(
+                status_code=422,
+                message="Ask for one location or for one group.",
+                code="stock_detail_target_required",
+            )
+        if warehouse_id and not group:
+            validate_uuid_path(warehouse_id, resource="Warehouse")
         # The SAME reader every other `*_ids` filter uses: it takes CSV, a JSON array or
         # repeated params, deduplicates, and refuses a value that is not an id by naming the
         # parameter - rather than handing the typo to the query.
         wanted = parse_uuid_list([line_ids], param_name="line_ids") or []
         return FulfilmentBoardService(db).stock_detail(
-            product_id, warehouse_id, line_ids=wanted
+            product_id, warehouse_id, line_ids=wanted, group=group
         )
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))

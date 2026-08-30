@@ -140,6 +140,40 @@ describe('DataGrid scrolls on a phone (S1-05)', () => {
   });
 
   /*
+    The scroller has to be the table's IMMEDIATE parent.
+
+    S1 shipped the scroller and the min-width and lists still would not scroll:
+    161 of them wrapped the grid in a Radix `<ScrollArea>`, which puts a
+    `display: table` viewport between `data-grid-scroller` and the table. That
+    ancestor shrink-fits, so the scroller measured scrollWidth === clientWidth
+    (2178 === 2178 on Orders at 1280) and never overflowed - while still eating
+    the wheel gesture via `overscroll-x-contain`, so the one element that COULD
+    scroll never got the event.
+
+    jsdom has no layout, so what is pinned here is the containment: nothing sits
+    between the scroller and the table. The tree-wide version of the same rule
+    is `data-grid-scroller.inventory.test.ts`.
+  */
+  it('S1-05: no second scrollport sits between the scroller and the table', () => {
+    render(<Harness />);
+    const table = document.querySelector('[data-slot="data-grid-table"]') as HTMLElement;
+    const scroller = document.querySelector('[data-slot="data-grid-scroller"]') as HTMLElement;
+
+    const between: string[] = [];
+    for (let node = table.parentElement; node && node !== scroller; node = node.parentElement) {
+      between.push(node.tagName.toLowerCase());
+      // dnd-kit's context wrapper is allowed: it is a plain div with no
+      // scrolling and no layout of its own.
+      expect(node.hasAttribute('data-radix-scroll-area-viewport')).toBe(false);
+      expect(node.style.overflowX).not.toBe('scroll');
+    }
+    // The scroller is an ancestor at all: the walk terminated on it, not on the
+    // document root.
+    expect(scroller.contains(table)).toBe(true);
+    expect(between.every((tag) => tag === 'div')).toBe(true);
+  });
+
+  /*
     The table gets a DEFINITE min-width, never `min-w-max`.
 
     `min-width: max-content` is meaningless on a `table-layout: fixed` table -
@@ -197,42 +231,27 @@ describe('DataGrid scrolls on a phone (S1-05)', () => {
     expect(document.querySelector('[data-slot="data-grid-fade"]')).toBeNull();
   });
 
-  it('S1-05: under sm the first non-checkbox column is pinned left', () => {
+  /**
+   * S1 pinned the identifier column under `sm` so the row stayed labelled while
+   * the grid scrolled sideways. The user tried it and chose the opposite: a
+   * column that refuses to move with the rest reads as broken, and losing sight
+   * of the name for a moment does not (ruling 2026-08-30). So the phone pins
+   * nothing, and this is the test that used to assert the pin.
+   */
+  it('S1-05: at phone width the whole row scrolls as one, nothing sticks', () => {
     setMatchMedia(true);
     render(<Harness />);
 
     const nameHeader = screen.getByText('Name').closest('th') as HTMLTableCellElement;
-    expect(nameHeader).toHaveAttribute('data-pinned', 'left');
-
-    // The checkbox column is not the identifier, so it is not the pinned one.
-    const selectHeader = screen.getByLabelText('Select all rows on this page').closest('th');
-    expect(selectHeader).not.toHaveAttribute('data-pinned');
-  });
-
-  it('S1-05: the pinned column is actually stuck, not merely marked', () => {
-    setMatchMedia(true);
-    render(<Harness />);
-
-    const nameHeader = screen.getByText('Name').closest('th') as HTMLTableCellElement;
-
-    // `data-pinned` is only the STATE. Column drag-and-drop (on by default) sets
-    // `position: relative` on every cell from dnd-kit's transform, and it used to
-    // be spread after the pinning styles - so the identifier column carried the
-    // attribute, the tests passed, and on a phone it scrolled away with the rest.
-    expect(nameHeader.style.position).toBe('sticky');
-    expect(nameHeader.style.left).toBe('0px');
-  });
-
-  it('S1-05: a pinned body cell is stuck too, or the column splits from its header', () => {
-    setMatchMedia(true);
-    render(<Harness />);
+    expect(nameHeader).not.toHaveAttribute('data-pinned');
+    expect(nameHeader.style.position).not.toBe('sticky');
 
     const cell = screen.getByText('Alpha').closest('td') as HTMLTableCellElement;
-    expect(cell.style.position).toBe('sticky');
-    expect(cell.style.left).toBe('0px');
+    expect(cell).not.toHaveAttribute('data-pinned');
+    expect(cell.style.position).not.toBe('sticky');
   });
 
-  it('S1-05: at desktop width nothing is pinned', () => {
+  it('S1-05: at desktop width nothing is pinned either', () => {
     render(<Harness />);
     expect(screen.getByText('Name').closest('th')).not.toHaveAttribute('data-pinned');
   });
@@ -276,7 +295,10 @@ describe('A row is a link (S1-06)', () => {
     render(<Harness rowHref={(row) => `/order-management/orders/${row.id}`} />);
     const row = screen.getByText('Alpha').closest('tr')!;
 
-    expect(row).toHaveAttribute('role', 'link');
+    // No role override: an explicit one REPLACES the implicit `row`, and the
+    // table stops being a table to assistive tech. tabIndex plus Enter and
+    // Space is what S1-06 asks for and costs the grid nothing.
+    expect(row).not.toHaveAttribute('role');
     expect(row).toHaveAttribute('tabindex', '0');
 
     fireEvent.keyDown(row, { key: 'Enter' });
@@ -395,7 +417,8 @@ describe('A row is a link (S1-06)', () => {
     const row = screen.getByText('Alpha').closest('tr')!;
 
     expect(row).not.toHaveClass('cursor-pointer');
-    expect(row).not.toHaveAttribute('role', 'link');
+    expect(row).not.toHaveAttribute('role');
+    expect(row).not.toHaveAttribute('tabindex');
   });
 
   it('S1-06: onRowClick still works for lists that edit in a lightbox', () => {
@@ -406,6 +429,72 @@ describe('A row is a link (S1-06)', () => {
 
     expect(onRowClick).toHaveBeenCalledWith(DATA[0]);
     expect(push).not.toHaveBeenCalled();
+  });
+
+  it('S4-03: a lightbox row announces itself and answers the keyboard', () => {
+    // It had neither. The href branch carried role, tabIndex and Enter/Space
+    // and the onRowClick branch carried a bare onClick, so a Brands row could
+    // not be opened without a mouse and read as plain text to a screen reader.
+    const onRowClick = vi.fn();
+    render(<Harness onRowClick={onRowClick} />);
+    const row = screen.getByText('Alpha').closest('tr')!;
+
+    expect(row).toHaveAttribute('tabindex', '0');
+
+    fireEvent.keyDown(row, { key: 'Enter' });
+    expect(onRowClick).toHaveBeenCalledWith(DATA[0]);
+
+    fireEvent.keyDown(row, { key: ' ' });
+    expect(onRowClick).toHaveBeenCalledTimes(2);
+  });
+
+  it('S4-03: an openable row is still a table row', () => {
+    // `role="link"` on the <tr> replaced the implicit `row`, so the grid was no
+    // longer a table to assistive tech and `getAllByRole('row')` found nothing
+    // - which is how the fulfilment board's own tests reported it.
+    const { unmount } = render(<Harness onRowClick={vi.fn()} />);
+    expect(screen.getAllByRole('row').length).toBeGreaterThan(DATA.length);
+    unmount();
+
+    render(<Harness rowHref={(row) => `/order-management/orders/${row.id}`} />);
+    expect(screen.getAllByRole('row').length).toBeGreaterThan(DATA.length);
+  });
+
+  it('S4-03: a control inside a lightbox row keeps its own click', () => {
+    // The bug this closes: a Brands row carries a "View products" link, and
+    // clicking it navigated AND set the edit lightbox's state on the way out,
+    // so the row looked like it did nothing at all.
+    const onRowClick = vi.fn();
+    render(<Harness onRowClick={onRowClick} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Alpha' }));
+    expect(onRowClick).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByLabelText('Note for Alpha'));
+    expect(onRowClick).not.toHaveBeenCalled();
+
+    // ...and the row itself still opens.
+    fireEvent.click(screen.getByText('Alpha'));
+    expect(onRowClick).toHaveBeenCalledWith(DATA[0]);
+  });
+
+  it('S4-03: a lightbox row has no new tab to open in', () => {
+    // `role="button"`, not `"link"`: a middle click or a cmd-click has nowhere
+    // to go, so it must not try, and must not swallow the plain open either.
+    const onRowClick = vi.fn();
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null);
+    render(<Harness onRowClick={onRowClick} />);
+    const row = screen.getByText('Alpha').closest('tr')!;
+
+    fireEvent(row, new MouseEvent('auxclick', { bubbles: true, cancelable: true, button: 1 }));
+    expect(onRowClick).not.toHaveBeenCalled();
+    expect(open).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByText('Alpha'), { metaKey: true });
+    expect(onRowClick).toHaveBeenCalledWith(DATA[0]);
+    expect(open).not.toHaveBeenCalled();
+
+    open.mockRestore();
   });
 });
 

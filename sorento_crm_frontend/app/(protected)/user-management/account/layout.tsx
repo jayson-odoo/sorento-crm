@@ -10,12 +10,7 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Container } from '@/components/common/container';
 import { ContentLoader } from '@/components/common/content-loader';
-import {
-  Toolbar,
-  ToolbarActions,
-  ToolbarHeading,
-  ToolbarTitle,
-} from '@/components/common/toolbar';
+import { PageHeader } from '@/components/common/PageHeader';
 import { AccountProvider } from './components/account-context';
 import { useHasPermission } from '@/hooks/usePermissions';
 
@@ -110,12 +105,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       error instanceof Error ? error.message : 'Could not load your account.';
     return (
       <Container>
-        <Toolbar>
-          <ToolbarHeading>
-            <ToolbarTitle>Account</ToolbarTitle>
-          </ToolbarHeading>
-          <ToolbarActions />
-        </Toolbar>
+        <PageHeader title="Account" />
         <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-6 text-center text-sm">
           <p className="text-destructive font-medium">{message}</p>
           <button
@@ -133,33 +123,27 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   return (
     <AccountProvider user={user}>
       <Container>
-        <Toolbar>
-          <ToolbarHeading>
-            <div className="flex items-center gap-3">
-              <Avatar key={user.avatar ?? 'no-avatar'} className="size-12 shrink-0">
-                {user.avatar ? (
-                  <AvatarImage src={user.avatar} alt={user.name || ''} />
-                ) : null}
-                <AvatarFallback className="text-lg">
-                  {getInitials(user.name || user.email)}
-                </AvatarFallback>
-              </Avatar>
-              <div className="min-w-0 space-y-px">
-                <ToolbarTitle className="truncate">{user.name}</ToolbarTitle>
-                <div className="truncate text-2sm text-muted-foreground">
-                  {user.email}
-                  {(() => {
-                    const roles = user.roles?.length
-                      ? user.roles.map((r: { name: string }) => r.name).join(', ')
-                      : (user.role?.name ?? '');
-                    return roles ? ` · ${roles}` : '';
-                  })()}
-                </div>
-              </div>
+        <PageHeader title={user.name || user.email} titleClassName="truncate">
+          <div className="flex items-center gap-2">
+            <Avatar key={user.avatar ?? 'no-avatar'} className="size-6 shrink-0">
+              {user.avatar ? (
+                <AvatarImage src={user.avatar} alt={user.name || ''} />
+              ) : null}
+              <AvatarFallback className="text-2sm">
+                {getInitials(user.name || user.email)}
+              </AvatarFallback>
+            </Avatar>
+            <div className="truncate text-2sm text-muted-foreground">
+              {user.email}
+              {(() => {
+                const roles = user.roles?.length
+                  ? user.roles.map((r: { name: string }) => r.name).join(', ')
+                  : (user.role?.name ?? '');
+                return roles ? ` · ${roles}` : '';
+              })()}
             </div>
-          </ToolbarHeading>
-          <ToolbarActions />
-        </Toolbar>
+          </div>
+        </PageHeader>
         <Tabs defaultValue={activeTab} value={activeTab} className="mb-5">
           <TabsList variant="line">
             {Object.entries(navRoutes).map(

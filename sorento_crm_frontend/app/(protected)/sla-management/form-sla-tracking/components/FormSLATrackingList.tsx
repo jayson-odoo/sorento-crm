@@ -25,7 +25,6 @@ import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Progress } from '@/components/ui/progress';
 import { useFormSLATracking } from '../hooks/useFormSLATracking';
@@ -337,7 +336,7 @@ export default function FormSLATrackingList() {
         cell: ({ row }) => {
           if (row.original.is_resolved) {
             return (
-              <Badge variant="success" appearance="ghost">
+              <Badge variant="success">
                 <CheckCircle className="size-3 mr-1" />
                 Resolved
               </Badge>
@@ -345,14 +344,14 @@ export default function FormSLATrackingList() {
           }
           if (row.original.escalated_at) {
             return (
-              <Badge variant="warning" appearance="ghost">
+              <Badge variant="warning">
                 <AlertCircle className="size-3 mr-1" />
                 Escalated
               </Badge>
             );
           }
           return (
-            <Badge variant="info" appearance="ghost">
+            <Badge variant="info">
               <Clock className="size-3 mr-1" />
               Pending
             </Badge>
@@ -434,10 +433,7 @@ export default function FormSLATrackingList() {
           />
         </CardHeader>
         <CardTable>
-          <ScrollArea>
-            <DataGridTable />
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
+          <DataGridTable />
         </CardTable>
         <CardFooter>
           <DataGridPagination />

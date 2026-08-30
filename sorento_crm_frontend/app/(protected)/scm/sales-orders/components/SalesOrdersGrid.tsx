@@ -18,7 +18,6 @@ import {
   RefreshCw,
   RotateCcw,
   Search,
-  Trash2,
   Upload,
   X,
 } from 'lucide-react';
@@ -40,11 +39,13 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import { DateRangePicker } from '@/components/ui/date-range-picker';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
+import { RowActionsMenu } from '@/components/common/RowActionsMenu';
+import { useSalesOrderActions } from '../actions';
+import { useRowPending } from '@/hooks/useDeferredRowAction';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { formatMyrExact } from '@/app/(protected)/project-sales/_shared/lib/money';
@@ -61,7 +62,6 @@ import { useCustomerOptions } from '../../hooks/useScmOptions';
 import { useRouter } from 'next/navigation';
 import {
   useCreateSalesOrder,
-  useDeleteSalesOrder,
   useResetSalesOrderPlanning,
   useSalesOrders,
 } from '../../hooks/useSalesOrders';
@@ -74,6 +74,7 @@ import { SalesOrderFormModal } from './SalesOrderFormModal';
 // it, so the same dialog (never forked) is reused here too.
 import { OutstandingUploadDialog } from '../../reorder/components/OutstandingUploadDialog';
 import { runHistoryKey, todayRunKey } from '../../reorder/hooks/useReorderRun';
+import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 
 /**
  * THE sales-order table. One component, two places: the Sales Orders list (`SalesOrdersList`,
@@ -225,9 +226,20 @@ export interface SalesOrdersGridProps {
   listingKey?: string;
 }
 
+/**
+ * The row's "..." (D15): the same set the record's gear renders. Its own
+ * component because the action set is a hook.
+ */
+function SalesOrderRowActions({ order }: { order: SalesOrder }) {
+  const { actions } = useSalesOrderActions(order, { surface: 'toast' });
+  return <RowActionsMenu ariaLabel="sales order" actions={actions} />;
+}
+
 export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrdersGridProps = {}) {
   // One agent's orders, inside that agent's record. What it turns off is listed on the prop.
   const pinnedToAgent = !!salesAgentId;
+  // A row whose delete is counting down stays visible and dims (S6-07).
+  const rowPending = useRowPending<SalesOrder>('scm_sales_order');
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 25 });
   const [sorting, setSorting] = useState<SortingState>([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -248,10 +260,26 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
   const [agentFilter, setAgentFilter] = useState('');
   const [outstandingOnly, setOutstandingOnly] = useState(false);
 
+  // Back hands the list its own query string back, and the pager keeps
+  // rewriting it, so the list reads it (S3-01). One hook, every list.
+  useListStateFromUrl((state) => {
+    setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
+    setSorting(state.sorting);
+    setSearchQuery(state.searchQuery);
+    setStatusFilter(state.filters.status ?? '');
+    setPriorityFilter(state.filters.priority ?? '');
+    setSourceFilter(state.filters.source ?? '');
+    setDateFrom(state.filters.date_from ?? '');
+    setDateTo(state.filters.date_to ?? '');
+    setCustomerFilter(state.filters.customer_id ?? '');
+    setAgentFilter(state.filters.sales_agent_id ?? '');
+    setDemandClassFilter(state.filters.demand_class ?? '');
+    setOutstandingOnly(state.filters.outstanding === 'true');
+  });
+
   // Create-only: editing happens on the detail page in place (A5), the same shape as the
   // project sales order screen, and the row click is the way there.
   const [formOpen, setFormOpen] = useState(false);
-  const [deleting, setDeleting] = useState<SalesOrder | null>(null);
   // Reset planning (the captain, 27 Aug): a UAT walk has to be repeatable from the screen.
   const [resetOpen, setResetOpen] = useState(false);
   const [rewindBook, setRewindBook] = useState(false);
@@ -288,7 +316,6 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
   const router = useRouter();
 
   const createMut = useCreateSalesOrder();
-  const deleteMut = useDeleteSalesOrder();
   const resetMut = useResetSalesOrderPlanning();
 
   useEffect(() => {
@@ -675,28 +702,12 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
       },
       {
         id: 'actions',
-        header: '',
-        // Delete only. Editing is the detail page's job - the row already opens it, and a
-        // pencil beside a clickable row is a second door to the same screen. Creating a
-        // delivery order is a delivery decision, not a list one.
-        cell: ({ row }) => (
-          <div className="flex items-center justify-end gap-1">
-            <Button
-              mode="icon"
-              variant="ghost"
-              size="sm"
-              className="h-8 w-8 text-destructive"
-              onClick={(e) => {
-                e.stopPropagation();
-                setDeleting(row.original);
-              }}
-              aria-label="Delete"
-            >
-              <Trash2 className="size-4" />
-            </Button>
-          </div>
-        ),
-        size: 70,
+        header: () => <span className="sr-only">Actions</span>,
+        // The same set the record's gear renders (D15). Editing is the detail page's
+        // job - the row already opens it, and a pencil beside a clickable row is a
+        // second door to the same screen.
+        cell: ({ row }) => <SalesOrderRowActions order={row.original} />,
+        size: 60,
         enableHiding: false,
         enableSorting: false,
       },
@@ -797,7 +808,8 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
         emptyMessage={emptyMessage}
         // The whole row opens the order. The SO-number link stays a real anchor so
         // middle-click and copy-link still work, and stops its own click propagating.
-        onRowClick={(row) => router.push(detailHref(row))}
+        rowHref={(row) => detailHref(row)}
+        rowPending={rowPending}
         tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
         listingKey={listingKey}
       >
@@ -1047,10 +1059,7 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
             />
           </CardHeader>
           <CardTable>
-            <ScrollArea>
-              <DataGridTable />
-              <ScrollBar orientation="horizontal" />
-            </ScrollArea>
+            <DataGridTable />
           </CardTable>
           <CardFooter>
             <DataGridPagination />
@@ -1079,24 +1088,11 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
         />
       )}
 
-      <ConfirmDeleteDialog
-        open={!!deleting}
-        onOpenChange={(o) => !o && setDeleting(null)}
-        description={
-          <>
-            Delete sales order <span className="font-medium">{deleting?.so_number}</span> for{' '}
-            {deleting?.customer_name}? This action cannot be undone.
-          </>
-        }
-        onDelete={async () => {
-          if (deleting) await deleteMut.mutateAsync(deleting.id);
-        }}
-        successMessage="Sales order deleted"
-        onSuccess={() => setDeleting(null)}
-      />
 
-      {/* Back to never-planned, for a walk to be redone. Confirmed like a delete, because it
-          is one: the inquiries, links, allocations, transfers and decisions go for good. */}
+      {/* KEPT as a dialog where S6b turned single-record deletes into grace windows
+          (D7). Two reasons, either of them enough: it acts on a SELECTION of orders,
+          and one countdown cannot speak for a set; and it collects an answer
+          ("also rewind the book"), which a countdown has nowhere to put. */}
       <ConfirmDeleteDialog
         open={resetOpen}
         onOpenChange={(o) => {

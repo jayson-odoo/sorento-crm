@@ -8,6 +8,21 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+/* The grace window is the server's; what this file proves is that the row parks one. */
+const createPendingAction = vi.fn().mockResolvedValue({
+  id: 'pa-1',
+  action_key: 'loading_plan.delete',
+  entity_type: 'loading_plan',
+  entity_id: 'plan-1',
+  commit_at: '2026-08-30T10:00:10',
+  window_seconds: 10,
+});
+vi.mock('@/services/pendingActionService', () => ({
+  createPendingAction: (...args: unknown[]) => createPendingAction(...args),
+  cancelPendingAction: vi.fn(),
+  getCurrentPendingAction: vi.fn().mockResolvedValue({ pending: null, last_outcome: null }),
+}));
+
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
@@ -43,6 +58,7 @@ vi.mock('sonner', () => ({
     info: vi.fn(),
     warning: vi.fn(),
     custom: vi.fn(),
+    dismiss: vi.fn(),
   },
 }));
 
@@ -220,14 +236,23 @@ describe('LoadingPlansGrid', () => {
     expect((deletes[0] as HTMLButtonElement).disabled).toBe(false);
   });
 
-  it('hard deletes an unsent plan behind a confirmation', async () => {
+  it('parks the delete of an unsent plan, with no dialog in the way (S6-10)', async () => {
     renderGrid();
     fireEvent.click((await screen.findAllByRole('button', { name: 'Delete plan' }))[0]);
 
-    expect(await screen.findByText('Delete this plan?')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
-
-    await waitFor(() => expect(deleteLoadingPlan).toHaveBeenCalledWith('plan-1'));
+    // D7: the press IS the action. The sent-plan rule is still the server's, and it
+    // is stated up front by the disabled button in the test above.
+    await waitFor(() =>
+      expect(createPendingAction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          actionKey: 'loading_plan.delete',
+          entityType: 'loading_plan',
+          entityId: 'plan-1',
+        }),
+      ),
+    );
+    expect(deleteLoadingPlan).not.toHaveBeenCalled();
+    expect(screen.queryByText('Delete this plan?')).not.toBeInTheDocument();
   });
 
   it('says what an empty list means rather than showing an empty table', async () => {

@@ -184,7 +184,7 @@ describe('StockListUploadDialog', () => {
     await pickFile();
 
     expect(await screen.findByText(/no qty_packed column/)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Confirm' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Import stock list' })).toBeDisabled();
     expect(applyStockList).not.toHaveBeenCalled();
   });
 
@@ -215,7 +215,7 @@ describe('StockListUploadDialog', () => {
     const file = await pickFile();
     await screen.findByText('Replaces');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Import stock list' }));
 
     await waitFor(() => expect(applyStockList).toHaveBeenCalledWith(file, 'sup-1'));
     expect(await screen.findByText(/Saved 3 items/)).toBeInTheDocument();

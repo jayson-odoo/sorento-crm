@@ -44,7 +44,24 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: async () => {}, isLoading: false }),
 }));
 
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), custom: vi.fn() } }));
+vi.mock('sonner', () => ({
+  toast: { success: vi.fn(), error: vi.fn(), custom: vi.fn(), dismiss: vi.fn() },
+}));
+
+/* The grace window is the server's; what this file proves is that the gear parks one. */
+const createPendingAction = vi.fn().mockResolvedValue({
+  id: 'pa-1',
+  action_key: 'certificate.delete',
+  entity_type: 'certificate',
+  entity_id: 'cert-1',
+  commit_at: '2026-08-30T10:00:10',
+  window_seconds: 10,
+});
+vi.mock('@/services/pendingActionService', () => ({
+  createPendingAction: (...args: unknown[]) => createPendingAction(...args),
+  cancelPendingAction: vi.fn(),
+  getCurrentPendingAction: vi.fn().mockResolvedValue({ pending: null, last_outcome: null }),
+}));
 
 vi.mock('@/components/common/SearchableSelect', () => ({
   SearchableSelect: ({
@@ -86,6 +103,11 @@ const hooks = vi.hoisted(() => ({
   deleteAsync: vi.fn(),
 }));
 vi.mock('../hooks/useCertificates', () => ({
+  // The pager reads the list page through the entity's shared key + fetch (S3-03).
+  certificatesPagerQuery: {
+    listQueryKey: () => ['certificates', 'test-page'],
+    fetchPage: async () => pagerPage ?? { data: [], pagination: { total: 0 } },
+  },
   useCertificate: (...a: unknown[]) => hooks.useCertificate(...a),
   // The detail page pulls an unfiltered page of certificates to feed the
   // prev/next chevrons.
@@ -133,8 +155,12 @@ function bareCertificate(over: Partial<Certificate> = {}): Certificate {
   } as Certificate;
 }
 
+/** The list page the pager walks, seeded the way the list leaves it behind. */
+let pagerPage: { data: { id: string }[]; pagination: { total: number } } | null = null;
+
 function renderDetail() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  if (pagerPage) client.setQueryData(['certificates', 'test-page'], pagerPage);
   return render(
     <QueryClientProvider client={client}>
       <CertificateDetail certificateId="cert-1" />
@@ -374,58 +400,31 @@ describe('CertificateDetail - populated sections (FE-5 / FE-9)', () => {
   });
 });
 
-describe('CertificateDetail - delete confirmation (FE-8)', () => {
-  it('names the certificate, its revision count and its coverage count', async () => {
-    hooks.useCertificate.mockReturnValue({
-      data: bareCertificate({
-        covered_product_count: 3,
-        revisions: [
-          {
-            id: 'rev-1',
-            revision_no: 1,
-            issued_at: null,
-            valid_from: null,
-            valid_until: null,
-            is_current: true,
-            source: 'manual',
-            needs_review: false,
-            review_reasons: [],
-            unmatched_products: [],
-            access_levels: [],
-            attachment_filename: null,
-            attachment_is_deleted: null,
-            created_at: '2024-01-01T00:00:00',
-                      },
-        ],
-      }),
-      isLoading: false,
-    });
-    renderDetail();
-    openGearMenu();
-    fireEvent.click(await screen.findByRole('menuitem', { name: /^Delete$/ }));
-    expect(await screen.findByText('Confirm delete')).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        /Delete PPS PPS 123\/2024, its 1 revision and its 3 covered product links\./i,
-      ),
-    ).toBeInTheDocument();
-    expect(screen.getByText(/The uploaded files are kept/i)).toBeInTheDocument();
-    expect(screen.getByText(/This action cannot be undone/i)).toBeInTheDocument();
-  });
-
-  it('confirming deletes then navigates back to the list', async () => {
-    hooks.deleteAsync.mockResolvedValue(undefined);
+describe('CertificateDetail - delete parks a pending action (S6-10)', () => {
+  it('parks the delete on the first press, with no dialog in the way', async () => {
     hooks.useCertificate.mockReturnValue({ data: bareCertificate(), isLoading: false });
     renderDetail();
     openGearMenu();
-    fireEvent.click(await screen.findByRole('menuitem', { name: /^Delete$/ }));
-    const dialog = await screen.findByRole('dialog');
-    const confirm = Array.from(dialog.querySelectorAll('button')).find(
-      (b) => (b.textContent ?? '').trim() === 'Delete',
-    )!;
-    fireEvent.click(confirm);
-    await waitFor(() => expect(hooks.deleteAsync).toHaveBeenCalledWith('cert-1'));
-    await waitFor(() => expect(push).toHaveBeenCalledWith('/master-data-management/certificates'));
+    fireEvent.click(await screen.findByRole('menuitem', { name: /^Delete certificate$/ }));
+
+    // D7: the press IS the action, and Cancel in the countdown is the way back.
+    // What the delete takes with it (revisions, coverage) and what it leaves (the
+    // uploaded files) is the server's rule on either path, so it stopped being
+    // copy in a dialog nobody could act on.
+    await waitFor(() =>
+      expect(createPendingAction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          actionKey: 'certificate.delete',
+          entityType: 'certificate',
+          entityId: 'cert-1',
+        }),
+      ),
+    );
+    expect(hooks.deleteAsync).not.toHaveBeenCalled();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    // Nothing has happened yet, so the page stays where it is until the server says
+    // otherwise - a record page that left on the click would be lying for ten seconds.
+    expect(push).not.toHaveBeenCalledWith('/master-data-management/certificates');
   });
 });
 
@@ -461,13 +460,10 @@ describe('CertificateDetail - Malaysia time (backend sends naive UTC)', () => {
 describe('CertificateDetail - record navigation', () => {
   it('renders the chevrons with the index / total counter between them', () => {
     hooks.useCertificate.mockReturnValue({ data: bareCertificate(), isLoading: false });
-    hooks.useCertificates.mockReturnValue({
-      data: {
-        data: [{ id: 'cert-0' }, { id: 'cert-1' }, { id: 'cert-2' }],
-        pagination: { total: 3, page: 1, limit: 500 },
-      },
-      isLoading: false,
-    });
+    pagerPage = {
+      data: [{ id: 'cert-0' }, { id: 'cert-1' }, { id: 'cert-2' }],
+      pagination: { total: 3 },
+    };
     renderDetail();
     expect(screen.getByRole('button', { name: /Previous certificate/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Next certificate/i })).toBeInTheDocument();
@@ -476,21 +472,21 @@ describe('CertificateDetail - record navigation', () => {
 
   it('routes to the next certificate', () => {
     hooks.useCertificate.mockReturnValue({ data: bareCertificate(), isLoading: false });
-    hooks.useCertificates.mockReturnValue({
-      data: {
-        data: [{ id: 'cert-0' }, { id: 'cert-1' }, { id: 'cert-2' }],
-        pagination: { total: 3, page: 1, limit: 500 },
-      },
-      isLoading: false,
-    });
+    pagerPage = {
+      data: [{ id: 'cert-0' }, { id: 'cert-1' }, { id: 'cert-2' }],
+      pagination: { total: 3 },
+    };
     renderDetail();
     fireEvent.click(screen.getByRole('button', { name: /Next certificate/i }));
-    expect(push).toHaveBeenCalledWith('/master-data-management/certificates/cert-2');
+    // The step names the page the record now sits on, so the walk survives it.
+    expect(push).toHaveBeenCalledWith(
+      '/master-data-management/certificates/cert-2?page=1&limit=50',
+    );
   });
 
   it('does not crash before the navigation list has loaded', () => {
     hooks.useCertificate.mockReturnValue({ data: bareCertificate(), isLoading: false });
-    hooks.useCertificates.mockReturnValue({ data: undefined, isLoading: true });
+    pagerPage = null;
     renderDetail();
     expect(screen.getByRole('heading', { name: 'PPS PPS 123/2024' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Next certificate/i })).toBeDisabled();

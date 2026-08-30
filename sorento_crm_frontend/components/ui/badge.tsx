@@ -39,12 +39,6 @@ const badgeVariants = cva(
         outline: '',
         /** The pre-pill solid fill. Count badges (`shape="circle"`) keep it. */
         solid: '',
-        /**
-         * @deprecated Retired by PLAN-apple-alignment 3.1 - a dot-and-text badge
-         * with no fill read as a second status language beside the tinted pill.
-         * `Badge` maps it to `light`; the call-site sweep is a later slice.
-         */
-        ghost: '',
       },
       disabled: {
         true: 'opacity-50 pointer-events-none',
@@ -176,13 +170,10 @@ function Badge({
   }) {
   const Comp = asChild ? SlotPrimitive.Slot : 'span';
 
-  // `ghost` is retired (see the variant's deprecation note); map it so the
-  // remaining call sites keep rendering the tint until the sweep reaches them.
-  const resolvedAppearance = appearance === 'ghost' ? 'light' : appearance;
   const isStatus = status != null && String(status).trim() !== '';
   const resolvedVariant = isStatus ? getStatusBadgeVariant(status) : variant;
   // A count badge keeps the solid fill it had before the pill work.
-  const effectiveAppearance = shape === 'circle' && appearance === undefined ? 'solid' : resolvedAppearance;
+  const effectiveAppearance = shape === 'circle' && appearance === undefined ? 'solid' : appearance;
 
   return (
     <Comp

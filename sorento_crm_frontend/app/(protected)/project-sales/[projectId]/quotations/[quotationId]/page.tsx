@@ -1,14 +1,9 @@
 import { Metadata } from 'next';
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
 import { Container } from '@/components/common/container';
+import { PageHeader } from '@/components/common/PageHeader';
+import { projectCrumbs } from '@/app/(protected)/project-sales/_shared/lib/crumbs';
 import RequireAccess from '@/app/components/common/RequireAccess';
+import BackToList from '@/components/common/BackToList';
 import { QuotationDetailClient } from './components/QuotationDetailClient';
 
 export const metadata: Metadata = {
@@ -33,27 +28,22 @@ export default async function ProjectQuotationPage({
   return (
     <RequireAccess permission="projects.projects.view">
       <Container className="space-y-6 pb-64">
-        <Breadcrumb>
-          <BreadcrumbList>
-            <BreadcrumbItem>
-              <BreadcrumbLink href="/">Home</BreadcrumbLink>
-            </BreadcrumbItem>
-            <BreadcrumbSeparator />
-            <BreadcrumbItem>
-              <BreadcrumbLink href="/project-sales/pipeline">Project Sales</BreadcrumbLink>
-            </BreadcrumbItem>
-            <BreadcrumbSeparator />
-            <BreadcrumbItem>
-              <BreadcrumbLink href={`/project-sales/${projectId}?tab=quotations`}>
-                Quotations
-              </BreadcrumbLink>
-            </BreadcrumbItem>
-            <BreadcrumbSeparator />
-            <BreadcrumbItem>
-              <BreadcrumbPage>Scope</BreadcrumbPage>
-            </BreadcrumbItem>
-          </BreadcrumbList>
-        </Breadcrumb>
+        {/* Crumbs left, one Back right (D6, S3-01). The Back carries the query
+            string the list handed over, so it returns to the tab and page the
+            reader left. */}
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <PageHeader
+            title="Quotation"
+            crumbs={projectCrumbs(projectId, { title: 'Quotation' })}
+          />
+          <BackToList
+            listPath={`/project-sales/${projectId}?tab=quotations`}
+            label="Back to quotations"
+            // The path already names the tab; the pager's own params would only
+            // fight it, so nothing is appended.
+            appendListState={false}
+          />
+        </div>
         <QuotationDetailClient projectId={projectId} quotationId={quotationId} />
       </Container>
     </RequireAccess>

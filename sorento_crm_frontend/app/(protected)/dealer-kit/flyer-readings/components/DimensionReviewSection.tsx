@@ -160,7 +160,6 @@ export function DimensionReviewSection({
         cell: ({ row }) => (
           <Badge
             variant={row.original.verdict === 'conflicts' ? 'warning' : 'outline'}
-            appearance="ghost"
             className="font-normal"
           >
             {VERDICT_LABEL[row.original.verdict] ?? row.original.verdict}

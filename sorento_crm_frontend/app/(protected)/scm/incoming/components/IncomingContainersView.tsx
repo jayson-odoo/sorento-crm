@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader } from '@/components/ui/card';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
-import { formatStatusLabel, getStatusBadgeVariant } from '@/lib/status-badge';
+import { formatStatusLabel } from '@/lib/status-badge';
 import { fmtInt } from '../../lib/format';
 import { useFulfilmentSuppliers } from '../../hooks/useFulfilment';
 import { getIncomingShipments, type IncomingShipment } from '../../services/fulfilmentService';
@@ -137,7 +137,7 @@ export function IncomingContainersView() {
                   {/* Draft = proforma-created, not a real container read yet - must not be
                       mistaken for one, especially while testing against production data. */}
                   {s.status ? (
-                    <Badge variant={getStatusBadgeVariant(s.status)} size="sm" className="shrink-0">
+                    <Badge status={s.status} size="sm" className="shrink-0">
                       {formatStatusLabel(s.status)}
                     </Badge>
                   ) : null}

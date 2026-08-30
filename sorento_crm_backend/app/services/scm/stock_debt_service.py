@@ -4,8 +4,10 @@ S2 of `PLAN-scm-borrow-ladder-v7-stock-debt.md` (section 3.4), rulings R6/R7, R1
 
 **The view SHOWS; the board DECIDES** (R23). Nothing here writes, proposes or reserves. It
 reads the same book the ladder reads, hands it to `supply_assignment.assign()` - the one
-piece of arithmetic both surfaces share - and prints the answer as a running balance per
-month with the lines and documents behind each cell.
+piece of arithmetic both surfaces share - and prints the answer as a balance PER MONTH
+(R37: what is debted in August stays in August) with the lines and documents behind each
+cell. A cell and its drill are two readings of the same walk: free supply dated in the
+month, less what the lines due in it went short of on their own dates.
 
 **One read per input, never one per product.** The page is the whole flagged catalogue
 (1,000-2,000 products on the live book), so every fact is fetched for the WHOLE set in one
@@ -144,7 +146,9 @@ class StockDebtService:
         """The demand and the supply behind one cell (AC-S2-7, R28).
 
         The same reads as the board, narrowed to one product, so the two tables foot with the
-        cell that opened them by construction rather than by agreement. `group` is the
+        cell that opened them by construction rather than by agreement: the drill's
+        `free_qty` less its `short_qty`, over the rows of one month, IS that month's balance
+        (R37). `group` is the
         narrowing the BOARD was showing when the cell was pressed, and it is not optional
         detail: `group=BB` recomputes the balance from the BB span only, so a drill that read
         the whole book would answer a different question from the cell that opened it.
@@ -188,6 +192,11 @@ class StockDebtService:
                 "assigned_qty": round(sum(item.qty for item in line.assigned), 4),
                 "assigned_source": self._source_text(line),
                 "status": line.status,
+                # What this line booked into the month it sits in (R37): what it was short
+                # of ON ITS OWN DATE. A `late` line ends covered and still carries one,
+                # which is why the drill states it rather than leaving the reader to
+                # subtract Assigned from Open and get a different number from the cell.
+                "short_qty": line.short_at_date,
             }
             for line in result.lines
             if line.bucket == month
@@ -215,6 +224,10 @@ class StockDebtService:
                         "date": event.at,
                         "bought_for": event.bought_for,
                         "qty": event.qty,
+                        # What nobody took, once the whole walk was over - the other half of
+                        # the cell (R37). An overdue document is free of nothing: it is not
+                        # supply until somebody re-dates it (R31).
+                        "free_qty": result.free.get(event.key, 0.0) if counted else 0.0,
                         "overdue": not counted and event.at is not None,
                         "assigned_to": [
                             {"so_number": so_number, "qty": round(qty, 4)}
@@ -353,18 +366,38 @@ class StockDebtService:
             SalesOrderLine.warehouse_id.is_(None),
         )
 
+    def assignments_for(
+        self,
+        product_ids: Sequence[str],
+        warehouses: Dict[str, Warehouse],
+        *,
+        as_of: Optional[date] = None,
+    ) -> Dict[str, Assignment]:
+        """The same assignment, for a caller that holds product ids and a span of its own.
+
+        PUBLIC for the LADDER (S3, R21): the board reads the assignment this view reads, or
+        the two surfaces disagree about what is free. The ladder's span is this one plus the
+        site pools, because it has a pool step and the view has not (see
+        `ProjectSupplyService.planning_assignments`).
+        """
+        return self._assignments(
+            [(str(pid), "", None) for pid in product_ids], warehouses, as_of=as_of
+        )
+
     def _assignments(
         self,
         products: Sequence[Tuple[str, str, Optional[str]]],
         warehouses: Dict[str, Warehouse],
         *,
         keep_events: bool = False,
+        as_of: Optional[date] = None,
     ) -> Dict[str, Assignment]:
         """One `assign()` per product, off ONE read per input for the whole set."""
         self._event_cache: Dict[str, List[SupplyEvent]] = {}
         self._lead_cache: Dict[str, int] = {}
         product_ids = [product_id for product_id, _code, _name in products]
-        as_of = date.today()
+        # The CALLER's `as_of` when it pins one (the board's simulation does), else today.
+        as_of = as_of or date.today()
         tba_from = self._tba_from()
         if not product_ids:
             return {}
@@ -381,7 +414,7 @@ class StockDebtService:
         # states no lead paid its own round trip - ~1,900 extra queries per list request on
         # the dev copy.
         leads = self.supply.lead_times(product_ids)
-        supply_rows = self._supply(product_ids, warehouse_ids, codes, pools)
+        supply_rows = self._supply(product_ids, warehouse_ids, codes, pools, as_of=as_of)
         demand_rows = self._demand(product_ids, warehouse_ids, codes, pools)
         holds = self._holds(
             product_ids,
@@ -422,6 +455,8 @@ class StockDebtService:
         warehouse_ids: Sequence[str],
         codes: Dict[str, str],
         pools: set,
+        *,
+        as_of: Optional[date] = None,
     ) -> Dict[str, List[SupplyEvent]]:
         """On hand, SPO and PO for the whole page - three reads, none of them per product.
 
@@ -431,8 +466,13 @@ class StockDebtService:
         units twice. The confirmed HOLDS are subtracted separately, by pinning them to the
         lines that hold them (`_holds`) - which is the more useful shape, because the drill
         can then say which order has them.
+
+        `as_of` is the CALLER's day, not the clock: an on-hand event is stamped with the day
+        the walk starts, and stamping it `date.today()` while the walk ran at a pinned
+        earlier date put the stock after every line due between the two, so a board
+        simulated at a past date read its own floor as arriving late.
         """
-        as_of = date.today()
+        as_of = as_of or date.today()
         out: Dict[str, List[SupplyEvent]] = {}
 
         rows = (
@@ -520,9 +560,18 @@ class StockDebtService:
                 demand_qty().label("qty"),
                 SalesOrder.so_number,
                 SalesAgent.sales_agent,
+                # The PROJECT mirror's own line number. A core line nobody has adopted has
+                # none, and a missing number is treated as absent everywhere it is printed.
+                # Carried because a v7 borrow names the donor's line ("SO414285 line 4") and
+                # the ladder reads its donors out of this very list (AC-S3-2, AC-S3-11).
+                ProjectSalesOrderLine.line_no,
             )
             .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
             .outerjoin(SalesAgent, SalesAgent.id == SalesOrder.sales_agent_id)
+            .outerjoin(
+                ProjectSalesOrderLine,
+                ProjectSalesOrderLine.core_sales_order_line_id == SalesOrderLine.id,
+            )
             .filter(
                 SalesOrderLine.product_id.in_(product_ids),
                 self._demand_span(warehouse_ids),
@@ -538,7 +587,7 @@ class StockDebtService:
                 DemandLine(
                     key=str(row.id),
                     so_number=row.so_number or "",
-                    line_no=None,
+                    line_no=row.line_no,
                     # None for an unlocated line, which is what puts it in its own bucket.
                     warehouse=codes.get(warehouse_id),
                     agent_code=row.sales_agent,
@@ -721,26 +770,23 @@ class StockDebtService:
     def _months_on_axis(
         self, result: Assignment, axis: Sequence[str], product_id: str
     ) -> List[dict]:
-        """One entry per axis key, in axis order: the balance CARRIES past a row's own last
-        event, so a shorter row states its position rather than a gap."""
+        """One entry per axis key, in axis order. Past a row's own last event the months
+        read 0, because nothing is due and nothing arrives in them (R37) - the balance does
+        not carry, so a column states its own month or it states nothing owed."""
         as_of = date.today()
         lead = self._lead_cache.get(product_id, DEFAULT_LEAD_TIME_DAYS)
         by_key = {month.key: month for month in result.months}
         out: List[dict] = []
-        balance = 0.0
         for key in axis:
             month = by_key.get(key)
-            if month is not None:
-                balance = month.balance
-                out.append(
-                    {"key": key, "balance": month.balance, "tone": month.tone}
-                )
-                continue
+            balance = month.balance if month is not None else 0.0
             out.append(
                 {
                     "key": key,
                     "balance": balance,
-                    "tone": tone_for(balance, key, as_of=as_of, lead_days=lead),
+                    "tone": month.tone
+                    if month is not None
+                    else tone_for(balance, key, as_of=as_of, lead_days=lead),
                 }
             )
         return out

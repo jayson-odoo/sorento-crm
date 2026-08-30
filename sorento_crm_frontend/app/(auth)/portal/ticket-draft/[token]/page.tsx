@@ -214,8 +214,13 @@ export default function TicketDraftPortalPage({ params }: PageProps) {
       {submitted && (
         <Alert variant="success" className="mb-6">
           <AlertIcon><CheckCircle2 /></AlertIcon>
+          {/* A ticket with no number yet says so, rather than showing eight
+              characters of its id at a customer (S5-05). */}
           <AlertTitle>
-            Ticket {ticket.ticket_number ?? ticket.id.slice(0, 8)} submitted. Our IT team will follow up shortly.
+            {ticket.ticket_number
+              ? `Ticket ${ticket.ticket_number} submitted.`
+              : 'Your ticket has been submitted.'}{' '}
+            Our IT team will follow up shortly.
           </AlertTitle>
         </Alert>
       )}
@@ -291,7 +296,7 @@ export default function TicketDraftPortalPage({ params }: PageProps) {
                   Cancel
                 </Button>
                 <Button size="sm" onClick={saveEdit} disabled={busy || !draftText.trim()}>
-                  Save
+                  Save description
                 </Button>
               </div>
             </div>

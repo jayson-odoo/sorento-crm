@@ -26,8 +26,10 @@ import type { StockDebtRow, StockDebtTone } from '../types/stockDebt.types';
 import { StockDebtCellDialog } from './StockDebtCellDialog';
 
 /**
- * Stock Debt: one row per product, one column per month, the cell is the CUMULATIVE
- * dated balance of that product at the end of that month (AC-S2-10).
+ * Stock Debt: one row per product, one column per month, and the cell is that MONTH's own
+ * balance (R37, AC-S2-10) - the supply dated in it that stayed free, less what the lines
+ * due in it went short of on their own dates. What is debted in August stays in August; a
+ * month with nothing due and nothing arriving reads 0.
  *
  * The view shows and never decides (R23). A cell is a way into the two tables behind
  * it - the demand due and the supply held - and each demand line's Plan press hands

@@ -1,6 +1,6 @@
 'use client';
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
   approveLoadingPlan,
@@ -32,6 +32,7 @@ import {
   type LoadingPlanRecord,
   type SpoConfirmLine,
 } from '../services/fulfilmentService';
+import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
 
 const KEY = ['scm', 'fulfilment'] as const;
 
@@ -65,9 +66,39 @@ export function useSupplierStock(supplierId: string | null) {
  * The plans list (`/scm/loading-plan`, R3). Server-paged, server-sorted and server-searched,
  * so the grid never holds more than the page it shows.
  */
+/**
+ * The plans list's React Query key. The plan page's pager rebuilds the SAME key
+ * from the URL, so it reads the page the list already fetched.
+ */
+export function loadingPlanListQueryKey(params: LoadingPlanListParams): QueryKey {
+  return [...KEY, 'plan-list', params];
+}
+
+/** The list query a plan URL describes, in the shape the list passes. */
+export function loadingPlanListParamsFromUrl(
+  params: ListPagerParams,
+): LoadingPlanListParams {
+  return {
+    pageIndex: params.pageIndex,
+    pageSize: params.pageSize,
+    sorting: params.sorting,
+    searchQuery: params.searchQuery,
+    // `active` (planning + sent) is the chip the list opens on.
+    status: (params.filters.status as LoadingPlanListParams['status']) ?? 'active',
+  };
+}
+
+/** The pager's two hooks into the loading plans list. */
+export const loadingPlanPagerQuery = {
+  listQueryKey: (params: ListPagerParams): QueryKey =>
+    loadingPlanListQueryKey(loadingPlanListParamsFromUrl(params)),
+  fetchPage: (params: ListPagerParams): Promise<ListPagerPage> =>
+    getLoadingPlanList(loadingPlanListParamsFromUrl(params)),
+};
+
 export function useLoadingPlanList(params: LoadingPlanListParams) {
   return useQuery({
-    queryKey: [...KEY, 'plan-list', params],
+    queryKey: loadingPlanListQueryKey(params),
     queryFn: () => getLoadingPlanList(params),
     refetchOnWindowFocus: false,
     placeholderData: (prev) => prev,

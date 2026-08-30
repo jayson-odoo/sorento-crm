@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
-import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
+import { useDeferredAction } from '@/hooks/useDeferredAction';
 import {
   SearchableSelect,
   type SearchableSelectOption,
@@ -109,7 +109,7 @@ export function StockVisibilitySection({
   className,
 }: StockVisibilitySectionProps) {
   const { data, isLoading, isError, error } = useStockVisibilityQuery(scope);
-  const { save, remove } = useStockVisibilityMutations(scope);
+  const { save } = useStockVisibilityMutations(scope);
   const dealerPool = useDealerPoolWarehouses();
   const searchWarehouses = useStockVisibilityWarehouseSearch();
 
@@ -121,7 +121,27 @@ export function StockVisibilitySection({
   const [warehouseCache, setWarehouseCache] = useState<
     Record<string, StockVisibilityWarehouse>
   >({});
-  const [confirmRemoveOpen, setConfirmRemoveOpen] = useState(false);
+  // Remove asks nothing (D7): the countdown takes the button's place and Cancel
+  // is the way back. The scope IS the record here, so it is parked against the
+  // contact id or the access-type code, and the kind travels in the payload
+  // because the two are different columns rather than different ids.
+  const removal = useDeferredAction({
+    actionKey: 'stock_visibility_policy.remove',
+    entityType: 'stock_visibility_policy',
+    entityId:
+      scope.kind === 'contact'
+        ? scope.contactId
+        : scope.kind === 'access_type'
+          ? scope.accessTypeCode
+          : undefined,
+    verb: 'Removing',
+    subject: scope.kind === 'contact' ? 'this override' : 'this policy',
+    surface: 'inline',
+    watchFromMount: true,
+    successMessage: 'Stock visibility removed',
+    payload: { scope_kind: scope.kind },
+    invalidateKeys: [stockVisibilityScopeKey(scope)],
+  });
   /** Last server value the draft was seeded from - see the effect below. */
   const syncedRef = useRef<string | null>(null);
 
@@ -189,7 +209,7 @@ export function StockVisibilitySection({
 
   const hasOwnRow = !!data?.override;
   const canRemove = hasOwnRow && scope.kind !== 'default';
-  const isBusy = save.isPending || remove.isPending || dealerPool.isPending;
+  const isBusy = save.isPending || removal.isPending || dealerPool.isPending;
   // An inheriting tier has nothing of its own yet, so Save is the act of creating the
   // row - offered even when the values still match what is inherited.
   const canSave = !!data && !isBusy && (isDirty || !hasOwnRow);
@@ -241,7 +261,10 @@ export function StockVisibilitySection({
         </Badge>
       </div>
 
-      <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2">
+      {/* `items-start`, or the two columns stretch to the taller one: Locations
+          carries a picker plus two buttons, and the select trigger is `min-h`,
+          so Mode was drawn two to three times a control's height. */}
+      <div className="mt-3 grid grid-cols-1 items-start gap-4 md:grid-cols-2">
         <div className="grid gap-2">
           <Label htmlFor="stock-visibility-mode">Mode</Label>
           <SearchableSelect
@@ -319,35 +342,22 @@ export function StockVisibilitySection({
           }
           disabled={!canSave}
         >
-          Save
+          Save stock visibility
         </Button>
-        {canRemove ? (
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => setConfirmRemoveOpen(true)}
-            disabled={isBusy}
-          >
-            {scope.kind === 'contact' ? 'Remove override' : 'Remove policy'}
-          </Button>
-        ) : null}
+        {canRemove
+          ? removal.countdown ?? (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => removal.start()}
+                disabled={isBusy}
+              >
+                {scope.kind === 'contact' ? 'Remove override' : 'Remove policy'}
+              </Button>
+            )
+          : null}
       </div>
 
-      <ConfirmDeleteDialog
-        open={confirmRemoveOpen}
-        onOpenChange={setConfirmRemoveOpen}
-        title={scope.kind === 'contact' ? 'Remove override' : 'Remove policy'}
-        description={
-          scope.kind === 'contact'
-            ? 'This contact will fall back to the policy from its access type, or the default.'
-            : 'Contacts with this access type will fall back to the default policy.'
-        }
-        successMessage="Stock visibility removed"
-        onDelete={async () => {
-          await remove.mutateAsync();
-        }}
-        queryKeysToInvalidate={[stockVisibilityScopeKey(scope)]}
-      />
     </div>
   );
 }

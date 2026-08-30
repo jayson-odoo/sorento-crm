@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import {
   ColumnDef,
   PaginationState,
@@ -16,7 +16,6 @@ import {
   Plus,
   Search,
   X,
-  ChevronRight,
   Upload,
   AlertTriangle,
   Trash2,
@@ -33,57 +32,32 @@ import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
-import OrderBulkDeleteDialog from './OrderBulkDeleteDialog';
+import { OrderRowActions } from '../actions';
+import { useDeferredBulkAction } from '@/hooks/useDeferredBulkAction';
+import { pendingEntityKey, usePendingEntityKeys } from '@/lib/pending-entity-store';
 import { useOrders } from '../hooks/useOrders';
 import { useOrderStatusSelectQuery } from '../../shared/hooks/use-order-status-select-query';
 import type { Order } from '../types/order.types';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { formatDate } from '@/lib/helpers';
-import { getStatusBadgeVariant } from '@/lib/status-badge';
 import { TemplateUploadDialog } from '@/components/template/TemplateUploadDialog';
 import { bulkImportOrders, importOrderTracking, validateOrderTracking, validateDeliveryOrderDetail } from '../services/orderService';
 import { OrderTrackingUploadDialog } from './OrderTrackingUploadDialog';
 import { OrderLinesImportDialog } from './OrderLinesImportDialog';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { buildDetailSearch, parseDetailSearch } from '@/lib/listNavQuery';
+import {
+  buildDetailSearch,
+  decodeAdvancedFilter,
+  encodeAdvancedFilter,
+} from '@/lib/listNavQuery';
 import type { ListQueryFilterGroup } from '@/lib/list-query/listQueryService';
 import { useImportJobDrawer } from '@/components/upload-activity';
-
-/** Encode the advanced (POST list-query) filter for the detail URL round-trip. */
-function encodeAdvancedFilter(filter: ListQueryFilterGroup | null): string | undefined {
-  if (filter == null) return undefined;
-  try {
-    return encodeURIComponent(JSON.stringify(filter));
-  } catch {
-    return undefined;
-  }
-}
-
-/** Decode the advanced filter carried back from a detail URL (invalid -> null). */
-function decodeAdvancedFilter(raw: string | undefined): ListQueryFilterGroup | null {
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(decodeURIComponent(raw)) as ListQueryFilterGroup;
-    if (
-      parsed &&
-      typeof parsed === 'object' &&
-      (parsed.op === 'and' || parsed.op === 'or') &&
-      Array.isArray(parsed.children)
-    ) {
-      return parsed;
-    }
-  } catch {
-    /* ignore malformed / oversized */
-  }
-  return null;
-}
+import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 
 export default function OrdersList() {
   const router = useRouter();
-  const searchParams = useSearchParams();
   const queryClient = useQueryClient();
   const { notifyImportQueued } = useImportJobDrawer();
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
@@ -94,26 +68,24 @@ export default function OrdersList() {
   const [orderLinesImportOpen, setOrderLinesImportOpen] = useState(false);
   const [advancedFilter, setAdvancedFilter] = useState<ListQueryFilterGroup | null>(null);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
-  const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [linesFilter, setLinesFilter] = useState<'all' | 'yes' | 'no'>('all');
 
   const { data: orderStatuses = [] } = useOrderStatusSelectQuery();
 
-  /** Restore list state when returning from order detail/edit (same query string as detail URLs). */
-  const listNavSearchKey = useMemo(() => searchParams.toString(), [searchParams]);
-  useEffect(() => {
-    const parsed = parseDetailSearch(new URLSearchParams(listNavSearchKey));
-    setPagination({ pageIndex: parsed.pageIndex, pageSize: parsed.pageSize });
-    setSorting(parsed.sorting);
-    setSearchQuery(parsed.searchQuery);
-    setStatusFilter(parsed.filters.order_status_id ?? 'all');
-    const hol = parsed.filters.has_order_lines;
-    setLinesFilter(hol === 'yes' || hol === 'no' ? hol : 'all');
-    setAdvancedFilter(decodeAdvancedFilter(parsed.filters.advFilter));
-  }, [listNavSearchKey]);
+  // Back hands the list its own query string back, and the pager keeps
+  // rewriting it, so the list reads it (S3-01). One hook, every list.
+  useListStateFromUrl((state) => {
+    setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
+    setSorting(state.sorting);
+    setSearchQuery(state.searchQuery);
+    setStatusFilter(state.filters.order_status_id ?? 'all');
+    const lines = state.filters.has_order_lines;
+    setLinesFilter(lines === 'yes' || lines === 'no' ? lines : 'all');
+    setAdvancedFilter(decodeAdvancedFilter<ListQueryFilterGroup>(state.filters.advFilter));
+  });
 
-  const { data, isLoading, isError, error, refetch, isFetching } = useOrders({
+  const { data, isLoading, isError, error, refetch } = useOrders({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -145,10 +117,26 @@ export default function OrdersList() {
     return result;
   };
 
-  const handleRowClick = (row: Order) => {
-    const orderId = row.id;
-    // Carry the active list query into the detail URL so its prev/next pager
-    // walks the same filtered+sorted set (same param names as the list GET).
+  // The whole row opens the record. The grid appends its own page/sort/search;
+  // the filters it does not know about ride in this query string, and the pager
+  // rebuilds the list's query key from both.
+  // A delivery order whose action is counting down stays on the list, dimmed,
+  // until the window lapses - the toast holds the Cancel, this says which row.
+  const pendingKeys = usePendingEntityKeys();
+  const rowPending = (row: Order) => pendingKeys.has(pendingEntityKey('order', row.id));
+
+  // Delete selected asks nothing either (D7): one action per selected row, ONE
+  // countdown over them, one Cancel that withdraws the lot, and every selected row
+  // dimmed by the same `rowPending` a single delete uses.
+  const bulkDeletion = useDeferredBulkAction({
+    actionKey: 'order.delete',
+    entityType: 'order',
+    describe: (count) => `${count} delivery order${count === 1 ? '' : 's'}`,
+    invalidateKeys: [['orders']],
+    onStarted: () => setRowSelection({}),
+  });
+
+  const rowHref = (row: Order) => {
     const search = buildDetailSearch(
       {
         pageIndex: pagination.pageIndex,
@@ -159,13 +147,11 @@ export default function OrdersList() {
       {
         order_status_id: statusFilter === 'all' ? undefined : statusFilter,
         has_order_lines: linesFilter !== 'all' ? linesFilter : undefined,
-        // advFilter is restored on return but ignored by the GET neighbours
-        // endpoint (which mirrors the list GET, not the POST list-query).
         advFilter: encodeAdvancedFilter(advancedFilter),
       },
     );
     const qs = search ? `?${search}` : '';
-    router.push(`/order-management/orders/${orderId}${qs}`);
+    return `/order-management/orders/${row.id}${qs}`;
   };
 
   const columns = useMemo<ColumnDef<Order>[]>(
@@ -264,7 +250,7 @@ export default function OrdersList() {
         cell: ({ row }) => {
           const status = row.original.order_status;
           return status ? (
-            <Badge variant={getStatusBadgeVariant(status.status_name)}>
+            <Badge status={status.status_name}>
               {status.status_name}
             </Badge>
           ) : (
@@ -277,9 +263,11 @@ export default function OrdersList() {
       {
         accessorKey: 'actions',
         header: '',
-        cell: () => <ChevronRight className="text-muted-foreground/70 size-3.5" />,
-        size: 40,
+        cell: ({ row }) => <OrderRowActions order={row.original} />,
+        size: 60,
+        enableSorting: false,
         enableHiding: false,
+        enableResizing: false,
       },
     ],
     [],
@@ -307,13 +295,24 @@ export default function OrdersList() {
     enableColumnResizing: true,
   });
 
+  // The one offer this listing makes, in both places it belongs: the
+  // toolbar, and the empty state's next step (S5-06).
+  const listPrimaryAction = (
+    <Button onClick={() => router.push('/order-management/orders/new')}>
+      <Plus />
+      Create Delivery Order
+    </Button>
+  );
+
   return (
     <DataGrid
       table={table}
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
-      onRowClick={handleRowClick}
+      rowHref={rowHref}
+      rowPending={rowPending}
       tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
+      emptyAction={listPrimaryAction}
     >
       <Card>
         <CardHeader className="block">
@@ -366,12 +365,7 @@ export default function OrdersList() {
                 has_order_lines: linesFilter === 'all' ? undefined : linesFilter,
               }),
             }}
-            primaryAction={
-              <Button onClick={() => router.push('/order-management/orders/new')}>
-                <Plus />
-                Create Delivery Order
-              </Button>
-            }
+            primaryAction={listPrimaryAction}
             secondaryActions={[
               {
                 key: 'refresh',
@@ -399,7 +393,8 @@ export default function OrdersList() {
                 label: 'Delete',
                 icon: Trash2,
                 destructive: true,
-                onClick: () => setBulkDeleteDialogOpen(true),
+                onClick: () =>
+                  bulkDeletion.run(selectedRowIds(table).map((id) => ({ id }))),
               },
             ]}
           />
@@ -471,10 +466,7 @@ export default function OrdersList() {
           </div>
         ) : null}
         <CardTable>
-          <ScrollArea>
-            <DataGridTable />
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
+          <DataGridTable />
         </CardTable>
         <CardFooter>
           <DataGridPagination />
@@ -500,12 +492,6 @@ export default function OrdersList() {
           queryClient.invalidateQueries({ queryKey: ['orders'] });
           queryClient.invalidateQueries({ queryKey: ['import-jobs'] });
         }}
-      />
-      <OrderBulkDeleteDialog
-        open={bulkDeleteDialogOpen}
-        onOpenChange={setBulkDeleteDialogOpen}
-        orderIds={selectedRowIds(table)}
-        onSuccess={() => setRowSelection({})}
       />
     </DataGrid>
   );

@@ -17,6 +17,8 @@ const useSyncAssigneeFromRespond = vi.fn();
 vi.mock('../hooks/useConversationSLATracking', () => ({
   useConversationSLATracking: (...a: unknown[]) => useConversationSLATracking(...a),
   useSyncAssigneeFromRespond: (...a: unknown[]) => useSyncAssigneeFromRespond(...a),
+  // The row's "..." renders the shared action set, whose Delete needs this.
+  useDeleteConversationSLATracking: () => ({ isPending: false, mutateAsync: vi.fn() }),
 }));
 
 vi.mock('@tanstack/react-query', async () => {
@@ -25,6 +27,8 @@ vi.mock('@tanstack/react-query', async () => {
     ...actual,
     useQuery: () => ({ data: [] }),
     useQueryClient: () => ({ invalidateQueries: vi.fn() }),
+    // The row's "..." mounts the shared delete confirmation, which is a mutation.
+    useMutation: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
   };
 });
 

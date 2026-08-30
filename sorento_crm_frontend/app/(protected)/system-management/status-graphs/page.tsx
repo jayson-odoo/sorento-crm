@@ -1,14 +1,6 @@
 import { Metadata } from 'next';
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
 import { Container } from '@/components/common/container';
-import { Toolbar, ToolbarHeading, ToolbarTitle } from '@/components/common/toolbar';
+import { PageHeader } from '@/components/common/PageHeader';
 import RequireAccess from '@/app/components/common/RequireAccess';
 import StatusGraphsClient from './components/StatusGraphsClient';
 
@@ -22,28 +14,7 @@ export default function StatusGraphsPage() {
   return (
     <RequireAccess permission="system.statuses.view">
       <Container>
-        <Toolbar>
-          <ToolbarHeading>
-            <ToolbarTitle>Status Graphs</ToolbarTitle>
-            <Breadcrumb>
-              <BreadcrumbList>
-                <BreadcrumbItem>
-                  <BreadcrumbLink href="/">Home</BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbLink href="/system-management/import-jobs">
-                    System Management
-                  </BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbPage>Status Graphs</BreadcrumbPage>
-                </BreadcrumbItem>
-              </BreadcrumbList>
-            </Breadcrumb>
-          </ToolbarHeading>
-        </Toolbar>
+        <PageHeader title="Status Graphs" />
       </Container>
 
       <Container className="space-y-6">

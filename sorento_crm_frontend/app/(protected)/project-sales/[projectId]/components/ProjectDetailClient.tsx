@@ -3,16 +3,35 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Clock, Flame, Trash2 } from 'lucide-react';
+import {
+  CalendarRange,
+  Clock,
+  FileText,
+  Flame,
+  HandCoins,
+  History,
+  Info,
+  ListChecks,
+  Package,
+  Paperclip,
+  Receipt,
+  ShoppingCart,
+  Trash2,
+  Users,
+} from 'lucide-react';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
+import { useBackToListHref } from '@/components/common/BackToList';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
+import DetailActions from '@/components/common/DetailActions';
 import { useStatusGraph } from '@/app/(protected)/system-management/status-graphs/hooks/useStatusGraphs';
 import {
+  projectsPagerQuery,
   useChangeProjectStatus,
   useDeleteProject,
   useProject,
@@ -49,23 +68,24 @@ import { TasksPanel } from './TasksPanel';
  * "arrives with quotations" beats a stub that looks broken.
  */
 const TABS = [
-  { id: 'overview', label: 'Overview' },
-  { id: 'stakeholders', label: 'Stakeholders' },
-  { id: 'tasks', label: 'Tasks' },
-  { id: 'quotations', label: 'Quotations' },
-  { id: 'samples', label: 'Samples' },
-  { id: 'sponsorships', label: 'Sponsorships' },
-  { id: 'pos', label: 'POs' },
-  { id: 'schedules', label: 'Delivery schedules' },
-  { id: 'sales-orders', label: 'Sales orders' },
-  { id: 'activity', label: 'Activity' },
-  { id: 'documents', label: 'Documents' },
+  { id: 'overview', label: 'Overview', icon: Info },
+  { id: 'stakeholders', label: 'Stakeholders', icon: Users },
+  { id: 'tasks', label: 'Tasks', icon: ListChecks },
+  { id: 'quotations', label: 'Quotations', icon: FileText },
+  { id: 'samples', label: 'Samples', icon: Package },
+  { id: 'sponsorships', label: 'Sponsorships', icon: HandCoins },
+  { id: 'pos', label: 'POs', icon: ShoppingCart },
+  { id: 'schedules', label: 'Delivery schedules', icon: CalendarRange },
+  { id: 'sales-orders', label: 'Sales orders', icon: Receipt },
+  { id: 'activity', label: 'Activity', icon: History },
+  { id: 'documents', label: 'Documents', icon: Paperclip },
 ] as const;
 
 type TabId = (typeof TABS)[number]['id'];
 
 export function ProjectDetailClient({ projectId }: { projectId: string }) {
   const router = useRouter();
+  const backHref = useBackToListHref('/project-sales/pipeline');
   const searchParams = useSearchParams();
   const requestedTab = searchParams.get('tab') as TabId | null;
   const activeTab: TabId =
@@ -164,51 +184,60 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
             )}
             {!project.can_edit && <Badge variant="outline">Read only</Badge>}
           </div>
-          <h1 className="mt-1 text-xl font-semibold">{project.title}</h1>
+          <h2 className="mt-1 text-xl font-semibold">{project.title}</h2>
           <p className="text-sm text-muted-foreground">
             {[project.developer_name, project.location].filter(Boolean).join(' · ') ||
               'No developer or location recorded yet'}
           </p>
         </div>
 
-        {/* One primary action, and everything else behind the overflow. Delete used to
-            sit here in full, weighing the same as the step the person came to take. */}
-        <div
+        {/* Pager, gear, primary (D6). One primary action, and everything else behind
+            the gear: Delete used to sit here in full, weighing the same as the step
+            the person came to take. */}
+        <DetailActions
           data-testid="project-header-actions"
-          className="flex flex-wrap items-center gap-2"
-        >
-          <ProjectStatusAction
-            moves={moves}
-            isPending={move.isPending}
-            onMove={(toStatusId) =>
-              move.mutate({ projectId: project.id, toStatusId })
-            }
-          />
-          {project.can_edit && (
-            <DetailActionsMenu ariaLabel="Project actions">
-              {/* Exits and side moves. Deliberately not in the header: marking a pursuit
-                  lost should never sit one careless click from advancing it. */}
-              {secondaryMoves.map((option) => (
+          pager={{
+            ...projectsPagerQuery,
+            detailPath: '/project-sales',
+            currentId: project.id,
+            ariaLabel: 'project',
+          }}
+          gear={
+            project.can_edit && (
+              <DetailActionsMenu ariaLabel="Project actions">
+                {/* Exits and side moves. Deliberately not in the header: marking a
+                    pursuit lost should never sit one careless click from advancing it. */}
+                {secondaryMoves.map((option) => (
+                  <DropdownMenuItem
+                    key={option.transitionId}
+                    disabled={move.isPending}
+                    onSelect={() =>
+                      move.mutate({ projectId: project.id, toStatusId: option.toStatusId })
+                    }
+                  >
+                    {option.label}
+                  </DropdownMenuItem>
+                ))}
                 <DropdownMenuItem
-                  key={option.transitionId}
-                  disabled={move.isPending}
-                  onSelect={() =>
-                    move.mutate({ projectId: project.id, toStatusId: option.toStatusId })
-                  }
+                  variant="destructive"
+                  onSelect={() => setConfirmDelete(true)}
                 >
-                  {option.label}
+                  <Trash2 className="size-4" aria-hidden />
+                  Delete project
                 </DropdownMenuItem>
-              ))}
-              <DropdownMenuItem
-                variant="destructive"
-                onSelect={() => setConfirmDelete(true)}
-              >
-                <Trash2 className="size-4" aria-hidden />
-                Delete project
-              </DropdownMenuItem>
-            </DetailActionsMenu>
-          )}
-        </div>
+              </DetailActionsMenu>
+            )
+          }
+          primary={
+            <ProjectStatusAction
+              moves={moves}
+              isPending={move.isPending}
+              onMove={(toStatusId) =>
+                move.mutate({ projectId: project.id, toStatusId })
+              }
+            />
+          }
+        />
       </header>
 
       {/* The ladder says its own reason and its own consequence (AC-H6). A badge alone
@@ -227,130 +256,147 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
         </div>
       )}
 
-      {/* Horizontal scroll on the tab strip only, so nine tabs never make the page
-          itself scroll sideways. */}
-      <nav
-        className="-mx-1 flex gap-1 overflow-x-auto border-b border-border px-1"
-        aria-label="Project sections"
-      >
-        {TABS.map((tab) => (
-          <button
-            key={tab.id}
-            type="button"
-            onClick={() => selectTab(tab.id)}
-            aria-current={activeTab === tab.id ? 'page' : undefined}
-            className={
-              activeTab === tab.id
-                ? 'shrink-0 border-b-2 border-primary px-3 py-2 text-sm font-medium text-foreground'
-                : 'shrink-0 border-b-2 border-transparent px-3 py-2 text-sm text-muted-foreground hover:text-foreground'
-            }
-          >
-            {tab.label}
-          </button>
-        ))}
-      </nav>
+      {/* The shared strip, not a hand-rolled `<nav>` of buttons: it already owns
+          the scroller, the underline, the pressed state and the roving-focus
+          keyboard behaviour this reimplemented without.
 
-      {activeTab === 'overview' && (
-        // Four titled sections rather than one fifteen-field grid. The old single
-        // "Registration" card put the developer, the contract value and the originating
-        // lead in one undifferentiated list, so finding any one of them meant reading all
-        // of them, and the lead link was invisible at the bottom.
-        <div className="grid gap-4 lg:grid-cols-3">
-          <div className="space-y-4 lg:col-span-2">
-            <Section title="The development">
-              <Fact label="Developer" value={project.developer_name} />
-              <Fact label="Registered company / SPV" value={project.registered_company_name} />
-              <Fact label="Location" value={project.location} />
-              <Fact label="Project type" value={project.type_name} />
-              <Fact label="Template" value={project.template_name} />
-              <Fact label="Filing reference" value={project.admin_ref} />
-            </Section>
+          The sections are TabsContent inside the same `<Tabs>`, not siblings
+          after it: a trigger points `aria-controls` at its panel, and with the
+          panels outside it pointed at nothing while the sections carried no
+          `role="tabpanel"`. Routing is unchanged - `value` still comes from the
+          URL and `onValueChange` still writes it back, so each section keeps
+          its own link and only the open one mounts. */}
+      <Tabs value={activeTab} onValueChange={(value) => selectTab(value as TabId)}>
+        <TabsList aria-label="Project sections">
+          {TABS.map((tab) => (
+            <TabsTrigger key={tab.id} value={tab.id}>
+              <tab.icon />
+              <span>{tab.label}</span>
+            </TabsTrigger>
+          ))}
+        </TabsList>
+        <TabsContent value="overview">
+          {/* Four titled sections rather than one fifteen-field grid. The old
+              single "Registration" card put the developer, the contract value
+              and the originating lead in one undifferentiated list, so finding
+              any one of them meant reading all of them, and the lead link was
+              invisible at the bottom. */}
+          <div className="grid gap-4 lg:grid-cols-3">
+            <div className="space-y-4 lg:col-span-2">
+              <Section title="The development">
+                <Fact label="Developer" value={project.developer_name} />
+                <Fact label="Registered company / SPV" value={project.registered_company_name} />
+                <Fact label="Location" value={project.location} />
+                <Fact label="Project type" value={project.type_name} />
+                <Fact label="Template" value={project.template_name} />
+                <Fact label="Filing reference" value={project.admin_ref} />
+              </Section>
 
-            <Section title="Value and timing">
-              <Fact
-                label="Estimated sales value"
-                value={
-                  project.estimated_sales_value
-                    ? formatMyr(project.estimated_sales_value)
-                    : null
-                }
-              />
-              <Fact label="Launch date" value={formatDate(project.launch_date)} />
-              <Fact
-                label="Expected delivery"
-                value={
-                  project.expected_delivery_from || project.expected_delivery_to
-                    ? [
-                        formatDate(project.expected_delivery_from),
-                        formatDate(project.expected_delivery_to),
-                      ]
-                        .filter(Boolean)
-                        .join(' - ')
-                    : null
-                }
-              />
-              <Fact
-                label="Brands"
-                value={project.brands.length ? project.brands.join(', ') : null}
-              />
-            </Section>
+              <Section title="Value and timing">
+                <Fact
+                  label="Estimated sales value"
+                  value={
+                    project.estimated_sales_value
+                      ? formatMyr(project.estimated_sales_value)
+                      : null
+                  }
+                />
+                <Fact label="Launch date" value={formatDate(project.launch_date)} />
+                <Fact
+                  label="Expected delivery"
+                  value={
+                    project.expected_delivery_from || project.expected_delivery_to
+                      ? [
+                          formatDate(project.expected_delivery_from),
+                          formatDate(project.expected_delivery_to),
+                        ]
+                          .filter(Boolean)
+                          .join(' - ')
+                      : null
+                  }
+                />
+                <Fact
+                  label="Brands"
+                  value={project.brands.length ? project.brands.join(', ') : null}
+                />
+              </Section>
 
-            <Section title="Consultants">
-              <Fact label="Architect" value={project.architect_name} />
-              <Fact label="Main contractor" value={project.main_contractor_name} />
-            </Section>
+              <Section title="Consultants">
+                <Fact label="Architect" value={project.architect_name} />
+                <Fact label="Main contractor" value={project.main_contractor_name} />
+              </Section>
 
-            <CriticalPanel project={project} />
+              <CriticalPanel project={project} />
+            </div>
+
+            <div className="space-y-4">
+              {/* AC-O10, and its own card because "which lead did this come from" is a
+                  question people ask directly. As one more Fact in a long grid it read as
+                  filing metadata and got missed. "Registered directly" is a real answer,
+                  not a missing one: a tender notice claimed the same hour never had a lead. */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-sm">Where this came from</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {project.lead_id ? (
+                    <dl className="grid gap-x-6 gap-y-3">
+                      <div className="min-w-0">
+                        <dt className="text-xs text-muted-foreground">Lead</dt>
+                        <dd className="break-words text-sm font-medium">
+                          <Link
+                            href={`/project-sales/leads/${project.lead_id}`}
+                            className="text-primary hover:underline"
+                          >
+                            {project.lead_code ?? 'View the lead'}
+                          </Link>
+                        </dd>
+                      </div>
+                      <Fact label="Lead source" value={labelise(project.lead_source)} />
+                      <Fact label="Lead raised" value={formatDate(project.lead_created_at)} />
+                    </dl>
+                  ) : (
+                    <p className="text-sm">Registered directly, with no lead before it.</p>
+                  )}
+                </CardContent>
+              </Card>
+
+              <ProjectAccessPanel project={project} />
+            </div>
           </div>
+        </TabsContent>
 
-          <div className="space-y-4">
-            {/* AC-O10, and its own card because "which lead did this come from" is a
-                question people ask directly. As one more Fact in a long grid it read as
-                filing metadata and got missed. "Registered directly" is a real answer,
-                not a missing one: a tender notice claimed the same hour never had a lead. */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-sm">Where this came from</CardTitle>
-              </CardHeader>
-              <CardContent>
-                {project.lead_id ? (
-                  <dl className="grid gap-x-6 gap-y-3">
-                    <div className="min-w-0">
-                      <dt className="text-xs text-muted-foreground">Lead</dt>
-                      <dd className="break-words text-sm font-medium">
-                        <Link
-                          href={`/project-sales/leads/${project.lead_id}`}
-                          className="text-primary hover:underline"
-                        >
-                          {project.lead_code ?? 'View the lead'}
-                        </Link>
-                      </dd>
-                    </div>
-                    <Fact label="Lead source" value={labelise(project.lead_source)} />
-                    <Fact label="Lead raised" value={formatDate(project.lead_created_at)} />
-                  </dl>
-                ) : (
-                  <p className="text-sm">Registered directly, with no lead before it.</p>
-                )}
-              </CardContent>
-            </Card>
-
-            <ProjectAccessPanel project={project} />
-          </div>
-        </div>
-      )}
-
-      {activeTab === 'stakeholders' && <StakeholdersPanel project={project} />}
-
-      {activeTab === 'tasks' && <TasksPanel project={project} />}
-      {activeTab === 'quotations' && <QuotationsPanel project={project} />}
-      {activeTab === 'samples' && <SamplesPanel project={project} />}
-      {activeTab === 'sponsorships' && <SponsorshipsPanel project={project} />}
-      {activeTab === 'pos' && <PurchaseOrdersPanel project={project} />}
-      {activeTab === 'schedules' && <DeliverySchedulesPanel project={project} />}
-      {activeTab === 'sales-orders' && <SalesOrdersPanel project={project} />}
-      {activeTab === 'activity' && <ProjectActivityPanel project={project} />}
-      {activeTab === 'documents' && <ProjectDocumentsPanel project={project} />}
+        <TabsContent value="stakeholders">
+          <StakeholdersPanel project={project} />
+        </TabsContent>
+        <TabsContent value="tasks">
+          <TasksPanel project={project} />
+        </TabsContent>
+        <TabsContent value="quotations">
+          <QuotationsPanel project={project} />
+        </TabsContent>
+        <TabsContent value="samples">
+          <SamplesPanel project={project} />
+        </TabsContent>
+        <TabsContent value="sponsorships">
+          <SponsorshipsPanel project={project} />
+        </TabsContent>
+        <TabsContent value="pos">
+          <PurchaseOrdersPanel project={project} />
+        </TabsContent>
+        <TabsContent value="schedules">
+          <DeliverySchedulesPanel project={project} />
+        </TabsContent>
+        <TabsContent value="sales-orders">
+          <SalesOrdersPanel project={project} />
+        </TabsContent>
+        <TabsContent value="activity">
+          <ProjectActivityPanel project={project} />
+        </TabsContent>
+        <TabsContent value="documents">
+          <ProjectDocumentsPanel project={project} />
+        </TabsContent>
+      </Tabs>
 
       <ConfirmDeleteDialog
         open={confirmDelete}
@@ -360,7 +406,7 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
         onDelete={async () => {
           await remove.mutateAsync(project.id);
         }}
-        onSuccess={() => router.push('/project-sales/pipeline')}
+        onSuccess={() => router.push(backHref)}
         successMessage="Project deleted"
       />
     </div>

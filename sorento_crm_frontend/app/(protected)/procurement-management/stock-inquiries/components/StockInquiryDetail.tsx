@@ -17,6 +17,7 @@ import ReassignDialog from '@/app/(protected)/sla-management/conversation-sla-tr
 import { useReassignSLATracking } from '@/app/(protected)/sla-management/conversation-sla-tracking/hooks/useTeamPendingSLA';
 import ResponseAttachmentDropzone from '@/app/(protected)/complaint-management/complaints/components/ResponseAttachmentDropzone';
 import { RejectionReasonBanner } from '@/components/common/RejectionReasonBanner';
+import { useBackToListHref } from '@/components/common/BackToList';
 import { RevisionBanner } from '@/components/common/RevisionBanner';
 import { VoidBanner } from '@/components/common/VoidBanner';
 import { VoidDialog } from '@/components/common/VoidDialog';
@@ -70,8 +71,9 @@ import { formatDate } from '@/lib/helpers';
 import { useHasPermission } from '@/hooks/usePermissions';
 import StockInquiryDeleteDialog from './stock-inquiry-delete-dialog';
 import AuditTrail from '@/components/audit/AuditTrail';
-import StockInquiryNavigation from './StockInquiryNavigation';
+import { stockInquiriesPagerQuery } from '../hooks/useStockInquiries';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
+import DetailActions from '@/components/common/DetailActions';
 import { EntityDownloadsButton } from '@/components/my-downloads/EntityDownloadsButton';
 import StockInquiryAttachmentsSection from './StockInquiryAttachmentsSection';
 import StockInquiryConversationPanel from './StockInquiryConversationPanel';
@@ -87,6 +89,7 @@ export default function StockInquiryDetail({
   inquiryId,
 }: StockInquiryDetailProps) {
   const router = useRouter();
+  const backHref = useBackToListHref('/procurement-management/stock-inquiries');
   const isValidId = inquiryId && inquiryId !== 'new' && inquiryId !== 'edit';
   const { data: inquiry, isLoading } = useStockInquiry(
     isValidId ? inquiryId : null,
@@ -103,6 +106,7 @@ export default function StockInquiryDetail({
   const reassignMutation = useReassignSLATracking();
   const canReassign = useHasPermission('sla_management.conversation_sla_tracking.reassign');
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [downloadsOpen, setDownloadsOpen] = useState(false);
   const [replyComposePrefill, setReplyComposePrefill] = useState<{
     key: number;
     text: string;
@@ -369,12 +373,12 @@ export default function StockInquiryDetail({
       {/* Header */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="space-y-1 min-w-0">
-          <h1 className="text-2xl font-bold break-words">
+          <h2 className="text-2xl font-bold break-words">
             Stock Inquiry -{' '}
             {withRevisionSuffix(inquiry.inquiry_number, revisionNo) ||
               inquiry.product_code ||
               'Details'}
-          </h1>
+          </h2>
           <p className="text-sm text-muted-foreground">
             Created:{' '}
             {inquiry.created_at
@@ -397,274 +401,300 @@ export default function StockInquiryDetail({
             </p>
           )}
         </div>
-        <div className="flex items-center gap-2 flex-wrap sm:justify-end">
-          {/* Workflow actions: HIDDEN (not disabled) while the handling lock is held
-              by someone else / unclaimed - keeps the header uncluttered. When the lock
-              does not bite (tier 1, flag off, or I hold it) businessCtasEnabled is true
-              and they render on their normal status+permission gates. */}
-          {businessCtasEnabled && inquiry.status === 'new' && canSubmitForProjectSales && (
-            <Button
-              variant="primary"
-              size="sm"
-              disabled={submitForProjectSalesMutation.isPending}
-              onClick={() => submitForProjectSalesMutation.mutate(inquiryId)}
-            >
-              {submitForProjectSalesMutation.isPending ? 'Submitting…' : 'Submit for project sales'}
-            </Button>
-          )}
-          {businessCtasEnabled && inquiry.status === 'pending_project_sales' && (
-            <>
-              {canProjectSalesApprove && (
-                <Button
-                  variant="primary"
-                  size="sm"
-                  disabled={projectSalesApproveMutation.isPending}
-                  onClick={() => projectSalesApproveMutation.mutate(inquiryId)}
-                  data-guide-target="procurement.stock-inquiries.approve-button"
-                >
-                  <CheckCircle className="size-4 mr-1" />
-                  {projectSalesApproveMutation.isPending ? 'Approving…' : 'Approve (send to purchasing)'}
-                </Button>
-              )}
-              {canProjectSalesReject && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={projectSalesRejectMutation.isPending}
-                  onClick={() => {
-                    setRejectAction('project_sales');
-                    setRejectReason('');
-                    setRejectDialogOpen(true);
-                  }}
-                  data-guide-target="procurement.stock-inquiries.reject-button"
-                  className="text-destructive border-destructive/40 hover:bg-destructive/10"
-                >
-                  <XCircle className="size-4 mr-1" />
-                  Reject
-                </Button>
-              )}
-            </>
-          )}
-          {businessCtasEnabled && responseWritable && (
-            <Button
-              // Pending purchasing = the purchasing response is the next action →
-              // primary CTA; once responded it's a secondary edit.
-              variant={inquiry.status === 'pending_purchasing' ? 'primary' : 'outline'}
-              size="sm"
-              onClick={() => {
-                setEditPurchasingResponseValue(inquiry.purchasing_response ?? '');
-                setEditPurchasingResponseOpen(true);
-              }}
-              data-guide-target="procurement.stock-inquiries.edit-purchasing-response-button"
-            >
-              <Edit className="size-4 mr-1" />
-              Edit purchasing response
-            </Button>
-          )}
-          {businessCtasEnabled &&
-            (inquiry.status === 'pending_purchasing' ||
-              inquiry.status === 'responded') &&
-            canPurchasingReject && (
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={purchasingRejectMutation.isPending}
-              onClick={() => {
-                setRejectAction('purchasing');
-                setRejectReason('');
-                setRejectDialogOpen(true);
-              }}
-              data-guide-target="procurement.stock-inquiries.reject-button"
-              className="text-destructive border-destructive/40 hover:bg-destructive/10"
-            >
-              <XCircle className="size-4 mr-1" />
-              Reject
-            </Button>
-          )}
-          {businessCtasEnabled && inquiry.status === 'rejected' && canReopen && (
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={reopenMutation.isPending}
-              onClick={() => {
-                setReopenReason('');
-                setReopenDialogOpen(true);
-              }}
-              data-guide-target="procurement.stock-inquiries.reopen-button"
-            >
-              <RotateCcw className="size-4 mr-1" />
-              {inquiry.rejected_from === 'pending_purchasing'
-                ? 'Reopen to pending purchasing'
-                : 'Reopen to pending project sales'}
-            </Button>
-          )}
-          <EntityDownloadsButton
-            entityType="stock_inquiry"
-            entityId={inquiryId}
-            label={inquiry.inquiry_number ?? undefined}
-            className="h-8 border border-border"
-          />
-          <DetailActionsMenu ariaLabel="Stock inquiry actions">
-            {/* Post-grace Undo. Rendered only when the server says the last committed
-                action is reversible - eligibility is a server read, never a client
-                guess, and it is re-checked at execute time (AC-PG-6/7). */}
-            {formAction.view.kind === 'undoable' && (
+        <DetailActions
+          pager={{
+            ...stockInquiriesPagerQuery,
+            detailPath: '/procurement-management/stock-inquiries',
+            currentId: inquiryId,
+            ariaLabel: 'stock inquiry',
+          }}
+          gear={
+            <DetailActionsMenu ariaLabel="Stock inquiry actions">
+              {/* The download history is an action, so it sits in the gear with the rest;
+                  the record card carries the pager, the gear and the workflow CTAs, and
+                  nothing else. */}
               <DropdownMenuItem
                 onSelect={(e) => {
                   e.preventDefault();
-                  setUndoDialogOpen(true);
-                }}
-                data-testid="undo-action-menu-item"
-              >
-                <RotateCcw className="size-4" />
-                Undo last action
-              </DropdownMenuItem>
-            )}
-            {/* Edit is not lock-gated (deliberate), but a pending form action DOES
-                block it: the action must commit against the state it was requested on
-                (AC-D-10). The backend enforces the same rule; this keeps the UI honest. */}
-            {!isVoided && !formAction.ctasDisabled && (
-              <DropdownMenuItem
-                onClick={() =>
-                  router.push(
-                    `/procurement-management/stock-inquiries/${inquiryId}/edit`,
-                  )
-                }
-              >
-                <Edit className="size-4" />
-                Edit
-              </DropdownMenuItem>
-            )}
-            {activeTracker && (
-              <DropdownMenuItem
-                onSelect={(e) => {
-                  e.preventDefault();
-                  setEscalateReason('');
-                  setEscalateOpen(true);
+                  setDownloadsOpen(true);
                 }}
               >
-                <ArrowUpCircle className="size-4" />
-                Escalate SLA
+                <Printer className="size-4" />
+                Download history
               </DropdownMenuItem>
-            )}
-            <SlaExtendMenuItem activeTracker={activeTracker} onSelect={() => setExtendOpen(true)} />
-            {canReassign && activeTracker && !isVoided && (
-              <DropdownMenuItem
-                onSelect={(e) => {
-                  e.preventDefault();
-                  setReassignOpen(true);
-                }}
-              >
-                <UserRoundCog className="size-4" />
-                Reassign
-              </DropdownMenuItem>
-            )}
-            <HandlingLockReleaseMenuItem
-              state={handlingLock.state}
-              onRelease={handlingLock.release}
-            />
-            {inquiry.respond_inbox_url && (
-              <DropdownMenuItem onClick={() => setConversationSheetOpen(true)}>
-                <MessageSquare className="size-4" />
-                Chat records
-              </DropdownMenuItem>
-            )}
-            {publicViewLinksEnabled && (
-              <DropdownMenuItem
-                disabled={viewLinkCopying}
-                onClick={async () => {
-                  try {
-                    setViewLinkCopying(true);
-                    const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
-                    const { view_url } = await getOrCreateStockInquiryViewLink(inquiryId, baseUrl);
-                    await navigator.clipboard.writeText(view_url);
-                    toast.success('View link copied to clipboard');
-                  } catch {
-                    toast.error('Failed to copy view link');
-                  } finally {
-                    setViewLinkCopying(false);
-                  }
-                }}
-              >
-                <Link2 className="size-4" />
-                {viewLinkCopying ? 'Copying…' : 'Copy view link'}
-              </DropdownMenuItem>
-            )}
-            {publicViewLinksEnabled && (
-              <DropdownMenuItem
-                onClick={async () => {
-                  try {
-                    const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
-                    const { view_url } = await getOrCreateStockInquiryViewLink(inquiryId, baseUrl);
-                    window.open(view_url, '_blank');
-                  } catch {
-                    toast.error('Failed to open view link');
-                  }
-                }}
-              >
-                <ExternalLink className="size-4" />
-                View in system
-              </DropdownMenuItem>
-            )}
-            {businessCtasEnabled &&
-              inquiry.respond_inbox_url &&
-              responseWritable && (
+              {/* Post-grace Undo. Rendered only when the server says the last committed
+                  action is reversible - eligibility is a server read, never a client
+                  guess, and it is re-checked at execute time (AC-PG-6/7). */}
+              {formAction.view.kind === 'undoable' && (
                 <DropdownMenuItem
-                  disabled={openingReplySheet || updateAndReplyMutation.isPending}
+                  onSelect={(e) => {
+                    e.preventDefault();
+                    setUndoDialogOpen(true);
+                  }}
+                  data-testid="undo-action-menu-item"
+                >
+                  <RotateCcw className="size-4" />
+                  Undo last action
+                </DropdownMenuItem>
+              )}
+              {/* Edit is not lock-gated (deliberate), but a pending form action DOES
+                  block it: the action must commit against the state it was requested on
+                  (AC-D-10). The backend enforces the same rule; this keeps the UI honest. */}
+              {!isVoided && !formAction.ctasDisabled && (
+                <DropdownMenuItem
+                  onClick={() =>
+                    router.push(
+                      `/procurement-management/stock-inquiries/${inquiryId}/edit`,
+                    )
+                  }
+                >
+                  <Edit className="size-4" />
+                  Edit
+                </DropdownMenuItem>
+              )}
+              {activeTracker && (
+                <DropdownMenuItem
+                  onSelect={(e) => {
+                    e.preventDefault();
+                    setEscalateReason('');
+                    setEscalateOpen(true);
+                  }}
+                >
+                  <ArrowUpCircle className="size-4" />
+                  Escalate SLA
+                </DropdownMenuItem>
+              )}
+              <SlaExtendMenuItem activeTracker={activeTracker} onSelect={() => setExtendOpen(true)} />
+              {canReassign && activeTracker && !isVoided && (
+                <DropdownMenuItem
+                  onSelect={(e) => {
+                    e.preventDefault();
+                    setReassignOpen(true);
+                  }}
+                >
+                  <UserRoundCog className="size-4" />
+                  Reassign
+                </DropdownMenuItem>
+              )}
+              <HandlingLockReleaseMenuItem
+                state={handlingLock.state}
+                onRelease={handlingLock.release}
+              />
+              {inquiry.respond_inbox_url && (
+                <DropdownMenuItem onClick={() => setConversationSheetOpen(true)}>
+                  <MessageSquare className="size-4" />
+                  Chat records
+                </DropdownMenuItem>
+              )}
+              {publicViewLinksEnabled && (
+                <DropdownMenuItem
+                  disabled={viewLinkCopying}
                   onClick={async () => {
-                    setOpeningReplySheet(true);
                     try {
-                      await sendPurchasingUpdateAndReplyFromSavedRecord();
+                      setViewLinkCopying(true);
+                      const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
+                      const { view_url } = await getOrCreateStockInquiryViewLink(inquiryId, baseUrl);
+                      await navigator.clipboard.writeText(view_url);
+                      toast.success('View link copied to clipboard');
+                    } catch {
+                      toast.error('Failed to copy view link');
                     } finally {
-                      setOpeningReplySheet(false);
+                      setViewLinkCopying(false);
                     }
                   }}
                 >
-                  <Send className="size-4" />
-                  {openingReplySheet || updateAndReplyMutation.isPending
-                    ? 'Sending…'
-                    : 'Update & Reply'}
+                  <Link2 className="size-4" />
+                  {viewLinkCopying ? 'Copying…' : 'Copy view link'}
                 </DropdownMenuItem>
               )}
-            <DropdownMenuItem
-              data-guide-target="procurement.stock-inquiries.download-pdf"
-              disabled={exportPdfMutation.isPending}
-              onSelect={(e) => {
-                e.preventDefault();
-                handleExportPdf();
-              }}
-            >
-              <Printer className="size-4" />
-              {exportPdfMutation.isPending ? 'Preparing…' : 'Print / Download PDF'}
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              onClick={handleExportExcel}
-              disabled={exporting}
-            >
-              <FileDown className="size-4" />
-              {exporting ? 'Exporting…' : 'Export to Excel'}
-            </DropdownMenuItem>
-            {canVoid && !isVoided && !formAction.ctasDisabled && (
+              {publicViewLinksEnabled && (
+                <DropdownMenuItem
+                  onClick={async () => {
+                    try {
+                      const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
+                      const { view_url } = await getOrCreateStockInquiryViewLink(inquiryId, baseUrl);
+                      window.open(view_url, '_blank');
+                    } catch {
+                      toast.error('Failed to open view link');
+                    }
+                  }}
+                >
+                  <ExternalLink className="size-4" />
+                  View in system
+                </DropdownMenuItem>
+              )}
+              {businessCtasEnabled &&
+                inquiry.respond_inbox_url &&
+                responseWritable && (
+                  <DropdownMenuItem
+                    disabled={openingReplySheet || updateAndReplyMutation.isPending}
+                    onClick={async () => {
+                      setOpeningReplySheet(true);
+                      try {
+                        await sendPurchasingUpdateAndReplyFromSavedRecord();
+                      } finally {
+                        setOpeningReplySheet(false);
+                      }
+                    }}
+                  >
+                    <Send className="size-4" />
+                    {openingReplySheet || updateAndReplyMutation.isPending
+                      ? 'Sending…'
+                      : 'Update & Reply'}
+                  </DropdownMenuItem>
+                )}
               <DropdownMenuItem
-                className="text-destructive focus:text-destructive"
-                onClick={() => setVoidDialogOpen(true)}
+                data-guide-target="procurement.stock-inquiries.download-pdf"
+                disabled={exportPdfMutation.isPending}
+                onSelect={(e) => {
+                  e.preventDefault();
+                  handleExportPdf();
+                }}
               >
-                <Ban className="size-4" />
-                Void
+                <Printer className="size-4" />
+                {exportPdfMutation.isPending ? 'Preparing…' : 'Print / Download PDF'}
               </DropdownMenuItem>
-            )}
-            {!isVoided && !formAction.ctasDisabled && (
               <DropdownMenuItem
-                className="text-destructive focus:text-destructive"
-                onClick={() => setDeleteDialogOpen(true)}
+                onClick={handleExportExcel}
+                disabled={exporting}
               >
-                <Trash2 className="size-4" />
-                Delete
+                <FileDown className="size-4" />
+                {exporting ? 'Exporting…' : 'Export to Excel'}
               </DropdownMenuItem>
+              {canVoid && !isVoided && !formAction.ctasDisabled && (
+                <DropdownMenuItem
+                  variant="destructive"
+                  onClick={() => setVoidDialogOpen(true)}
+                >
+                  <Ban className="size-4" />
+                  Void
+                </DropdownMenuItem>
+              )}
+              {!isVoided && !formAction.ctasDisabled && (
+                <DropdownMenuItem
+                  variant="destructive"
+                  onClick={() => setDeleteDialogOpen(true)}
+                >
+                  <Trash2 className="size-4" />
+                  Delete
+                </DropdownMenuItem>
+              )}
+            </DetailActionsMenu>
+          }
+          primary={
+            <>
+            {/* Workflow actions: HIDDEN (not disabled) while the handling lock is held
+                by someone else / unclaimed - keeps the header uncluttered. When the lock
+                does not bite (tier 1, flag off, or I hold it) businessCtasEnabled is true
+                and they render on their normal status+permission gates. */}
+            {businessCtasEnabled && inquiry.status === 'new' && canSubmitForProjectSales && (
+              <Button
+                variant="primary"
+                size="sm"
+                disabled={submitForProjectSalesMutation.isPending}
+                onClick={() => submitForProjectSalesMutation.mutate(inquiryId)}
+              >
+                {submitForProjectSalesMutation.isPending ? 'Submitting…' : 'Submit for project sales'}
+              </Button>
             )}
-          </DetailActionsMenu>
-          <StockInquiryNavigation inquiryId={inquiryId} />
-        </div>
+            {businessCtasEnabled && inquiry.status === 'pending_project_sales' && (
+              <>
+                {canProjectSalesApprove && (
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    disabled={projectSalesApproveMutation.isPending}
+                    onClick={() => projectSalesApproveMutation.mutate(inquiryId)}
+                    data-guide-target="procurement.stock-inquiries.approve-button"
+                  >
+                    <CheckCircle className="size-4 mr-1" />
+                    {projectSalesApproveMutation.isPending ? 'Approving…' : 'Approve (send to purchasing)'}
+                  </Button>
+                )}
+                {canProjectSalesReject && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={projectSalesRejectMutation.isPending}
+                    onClick={() => {
+                      setRejectAction('project_sales');
+                      setRejectReason('');
+                      setRejectDialogOpen(true);
+                    }}
+                    data-guide-target="procurement.stock-inquiries.reject-button"
+                    className="text-destructive border-destructive/40 hover:bg-destructive/10"
+                  >
+                    <XCircle className="size-4 mr-1" />
+                    Reject
+                  </Button>
+                )}
+              </>
+            )}
+            {businessCtasEnabled && responseWritable && (
+              <Button
+                // Pending purchasing = the purchasing response is the next action →
+                // primary CTA; once responded it's a secondary edit.
+                variant={inquiry.status === 'pending_purchasing' ? 'primary' : 'outline'}
+                size="sm"
+                onClick={() => {
+                  setEditPurchasingResponseValue(inquiry.purchasing_response ?? '');
+                  setEditPurchasingResponseOpen(true);
+                }}
+                data-guide-target="procurement.stock-inquiries.edit-purchasing-response-button"
+              >
+                <Edit className="size-4 mr-1" />
+                Edit purchasing response
+              </Button>
+            )}
+            {businessCtasEnabled &&
+              (inquiry.status === 'pending_purchasing' ||
+                inquiry.status === 'responded') &&
+              canPurchasingReject && (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={purchasingRejectMutation.isPending}
+                onClick={() => {
+                  setRejectAction('purchasing');
+                  setRejectReason('');
+                  setRejectDialogOpen(true);
+                }}
+                data-guide-target="procurement.stock-inquiries.reject-button"
+                className="text-destructive border-destructive/40 hover:bg-destructive/10"
+              >
+                <XCircle className="size-4 mr-1" />
+                Reject
+              </Button>
+            )}
+            {businessCtasEnabled && inquiry.status === 'rejected' && canReopen && (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={reopenMutation.isPending}
+                onClick={() => {
+                  setReopenReason('');
+                  setReopenDialogOpen(true);
+                }}
+                data-guide-target="procurement.stock-inquiries.reopen-button"
+              >
+                <RotateCcw className="size-4 mr-1" />
+                {inquiry.rejected_from === 'pending_purchasing'
+                  ? 'Reopen to pending purchasing'
+                  : 'Reopen to pending project sales'}
+              </Button>
+            )}
+            </>
+          }
+          dialogs={
+            <EntityDownloadsButton
+              entityType="stock_inquiry"
+              entityId={inquiryId}
+              label={inquiry.inquiry_number ?? undefined}
+              open={downloadsOpen}
+              onOpenChange={setDownloadsOpen}
+            />
+          }
+        />
       </div>
 
       <ExportWithRevisionsDialog
@@ -884,7 +914,7 @@ export default function StockInquiryDetail({
           closeDialog={() => setDeleteDialogOpen(false)}
           inquiry={inquiry}
           onSuccess={() => {
-            router.push('/procurement-management/stock-inquiries');
+            router.push(backHref);
           }}
         />
       )}

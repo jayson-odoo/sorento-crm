@@ -1,18 +1,5 @@
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
 import { Container } from '@/components/common/container';
-import {
-  Toolbar,
-  ToolbarActions,
-  ToolbarHeading,
-  ToolbarTitle,
-} from '@/components/common/toolbar';
+import { PageHeader } from '@/components/common/PageHeader';
 import RequireAccess from '@/app/components/common/RequireAccess';
 import { PriceFloorsListClient } from './components/PriceFloorsListClient';
 
@@ -29,27 +16,7 @@ export default function Page() {
   return (
     <RequireAccess permission="projects.types.view">
       <Container>
-        <Toolbar>
-          <ToolbarHeading>
-            <ToolbarTitle>Price Floors</ToolbarTitle>
-            <Breadcrumb>
-              <BreadcrumbList>
-                <BreadcrumbItem>
-                  <BreadcrumbLink href="/">Home</BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbPage>Project Sales</BreadcrumbPage>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbPage>Price Floors</BreadcrumbPage>
-                </BreadcrumbItem>
-              </BreadcrumbList>
-            </Breadcrumb>
-          </ToolbarHeading>
-          <ToolbarActions></ToolbarActions>
-        </Toolbar>
+        <PageHeader title="Price Floors" />
       </Container>
 
       <Container>

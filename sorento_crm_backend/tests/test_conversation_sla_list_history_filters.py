@@ -249,22 +249,6 @@ def test_form_sla_rows_never_appear_under_a_contact_filter(db):
     assert _ids(result) == {str(a1.id)}
 
 
-def test_the_neighbours_pager_honours_the_same_filters(db):
-    """The detail pager walks the SAME filtered set, or "next" leaves the history
-    the user opened."""
-    seed = _seed(db)
-    a1 = _ticket(db, seed, phone=PHONE_A, assignee=seed["user_one"], source_message_id="m-a1")
-    a2 = _ticket(db, seed, phone=PHONE_A, assignee=seed["user_one"], source_message_id="m-a2")
-    _ticket(db, seed, phone=PHONE_B, assignee=seed["user_two"], source_message_id="m-b1")
-
-    result = ConversationSLATrackingService(db).neighbours(
-        tracking_id=str(a1.id), contact=seed["contact_a"]
-    )
-
-    assert result["total"] == 2
-    assert result["next_id"] == str(a2.id)
-
-
 def test_the_me_sentinel_expands_to_the_calling_user(db):
     from app.api.v1.sla.sla_tracking import _resolved_by_param
 

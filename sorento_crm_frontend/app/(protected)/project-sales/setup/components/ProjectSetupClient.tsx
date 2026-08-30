@@ -19,7 +19,6 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
@@ -33,6 +32,7 @@ import type { ProjectTemplate, ProjectType } from '../../_shared/types/project.t
 import { ProjectTypeDialog } from './ProjectTypeDialog';
 import { ProjectTemplateDialog } from './ProjectTemplateDialog';
 import { TemplateChecklistPanel } from './TemplateChecklistPanel';
+import { PageHeader } from '@/components/common/PageHeader';
 
 /**
  * Three levels of configuration on one screen, because they are only understandable
@@ -96,14 +96,13 @@ export function ProjectSetupClient() {
 
   return (
     <div className="space-y-5">
-      <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0 break-words">
-          <h1 className="text-xl font-semibold">Project setup</h1>
-          <p className="text-sm text-muted-foreground">
-            What kinds of project we pursue, and what a new one starts with.
-          </p>
-        </div>
-      </header>
+      <PageHeader
+        title="Project setup"
+      >
+        <p className="text-sm text-muted-foreground">
+          What kinds of project we pursue, and what a new one starts with.
+        </p>
+      </PageHeader>
 
       <div className="grid gap-4 xl:grid-cols-2">
         <ProjectTypesGrid
@@ -335,16 +334,20 @@ function ProjectTypesGrid({
       listingKey="projects.types.view::types"
       tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
       emptyMessage={
-        <div className="px-6 py-10 text-center">
-          <p className="text-sm font-semibold">No project types yet</p>
-          <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-            A type is the kind of job: property development, hotel, fitout.
-          </p>
-          <Button type="button" className="mt-4" onClick={onAdd}>
-            <Plus className="size-4" aria-hidden />
-            Add the first type
-          </Button>
-        </div>
+        <span className="block max-w-md">
+          <span className="block text-sm font-semibold text-foreground">
+            No project types yet
+          </span>
+          A type is the kind of job: property development, hotel, fitout.
+        </span>
+      }
+      // The same offer as the toolbar's, worded as the next step it is here
+      // (S5-06). It renders under the message, in the empty state's own slot.
+      emptyAction={
+        <Button type="button" onClick={onAdd}>
+          <Plus className="size-4" aria-hidden />
+          Add the first type
+        </Button>
       }
     >
       <Card>
@@ -364,10 +367,7 @@ function ProjectTypesGrid({
           />
         </CardHeader>
         <CardTable>
-          <ScrollArea>
-            <DataGridTable />
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
+          <DataGridTable />
         </CardTable>
         <CardFooter>
           <DataGridPagination />
@@ -502,25 +502,31 @@ function ProjectTemplatesGrid({
       tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
       emptyMessage={
         !hasType ? (
-          <div className="px-6 py-10 text-center">
-            <p className="text-sm font-semibold">No project type selected</p>
-            <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-              Select a project type to see its templates.
-            </p>
-          </div>
+          <span className="block max-w-md">
+            <span className="block text-sm font-semibold text-foreground">
+              No project type selected
+            </span>
+            Select a project type to see its templates.
+          </span>
         ) : (
-          <div className="px-6 py-10 text-center">
-            <p className="text-sm font-semibold">This type has no templates</p>
-            <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-              Without one, a project of this type has no roles to pick from and no
-              checklist to start with.
-            </p>
-            <Button type="button" className="mt-4" onClick={onAdd}>
-              <Plus className="size-4" aria-hidden />
-              Add the first template
-            </Button>
-          </div>
+          <span className="block max-w-md">
+            <span className="block text-sm font-semibold text-foreground">
+              This type has no templates
+            </span>
+            Without one, a project of this type has no roles to pick from and no
+            checklist to start with.
+          </span>
         )
+      }
+      // Nothing to offer until a type is chosen: the next step is the choice
+      // itself, and it is in the list beside this one.
+      emptyAction={
+        hasType ? (
+          <Button type="button" onClick={onAdd}>
+            <Plus className="size-4" aria-hidden />
+            Add the first template
+          </Button>
+        ) : undefined
       }
     >
       <Card>
@@ -544,10 +550,7 @@ function ProjectTemplatesGrid({
           />
         </CardHeader>
         <CardTable>
-          <ScrollArea>
-            <DataGridTable />
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
+          <DataGridTable />
         </CardTable>
         <CardFooter>
           <DataGridPagination />

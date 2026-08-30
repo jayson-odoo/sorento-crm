@@ -1,20 +1,7 @@
 import { Metadata } from 'next';
 import { redirect } from 'next/navigation';
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
 import { Container } from '@/components/common/container';
-import {
-  Toolbar,
-  ToolbarActions,
-  ToolbarHeading,
-  ToolbarTitle,
-} from '@/components/common/toolbar';
+import { PageHeader } from '@/components/common/PageHeader';
 import RequireAccess from '@/app/components/common/RequireAccess';
 import { ReorderRunsGrid } from './components/ReorderRunsGrid';
 
@@ -41,27 +28,7 @@ export default async function ReorderPlansPage({
   return (
     <RequireAccess permission="scm.reorder.run">
       <Container width="fluid">
-        <Toolbar>
-          <ToolbarHeading>
-            <ToolbarTitle>Reorder Planning</ToolbarTitle>
-            <Breadcrumb>
-              <BreadcrumbList>
-                <BreadcrumbItem>
-                  <BreadcrumbLink href="/">Home</BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbLink href="/scm">Supply Chain</BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbPage>Reorder Planning</BreadcrumbPage>
-                </BreadcrumbItem>
-              </BreadcrumbList>
-            </Breadcrumb>
-          </ToolbarHeading>
-          <ToolbarActions />
-        </Toolbar>
+        <PageHeader title="Reorder Planning" />
       </Container>
 
       <Container width="fluid">

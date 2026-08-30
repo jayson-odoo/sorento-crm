@@ -3,17 +3,23 @@ import { useState } from 'react';
 import { Plus, Pencil, Trash2 } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
+import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
 import { useOptions } from '../hooks/useLookupSets';
-import { deleteOption } from '../services/lookupSetService';
 import OptionFormDialog from './OptionFormDialog';
 import type { LookupOption } from '../types/lookup.types';
+import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 
 export default function OptionsSection({ setId }: { setId: string }) {
   const { data: options, isLoading } = useOptions(setId);
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<LookupOption | null>(null);
-  const [deleting, setDeleting] = useState<LookupOption | null>(null);
+  // Delete asks nothing (D7): a toast counts down with Cancel.
+  const deletion = useDeferredRowAction({
+    actionKey: 'lookup_option.delete',
+    entityType: 'lookup_option',
+    successMessage: 'Option deleted',
+    invalidateKeys: [['lookup-sets', setId, 'options']],
+  });
 
   return (
     <Card>
@@ -30,52 +36,49 @@ export default function OptionsSection({ setId }: { setId: string }) {
               No options yet. Click &quot;Add option&quot; to populate this dropdown.
             </div>
           ) : (
-            <table className="table-fixed w-full text-sm">
-              <thead>
-                <tr className="text-left border-b">
-                  <th className="px-3 py-2 w-48">Value</th>
-                  <th className="px-3 py-2">Label</th>
-                  <th className="px-3 py-2 w-20">Sort</th>
-                  <th className="px-3 py-2 w-20">Active</th>
-                  <th className="px-3 py-2 w-24">Keywords</th>
-                  <th className="px-3 py-2 w-28 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {options!.map((o) => (
-                  <tr key={o.id} className="border-b">
-                    <td className="px-3 py-2 font-mono">{o.value}</td>
-                    <td className="px-3 py-2">{o.label}</td>
-                    <td className="px-3 py-2">{o.sort_order}</td>
-                    <td className="px-3 py-2">{o.is_active ? 'Yes' : 'No'}</td>
-                    <td className="px-3 py-2">{o.keywords.length}</td>
-                    <td className="px-3 py-2 text-right">
-                      <Button size="icon" variant="ghost"
-                              onClick={() => { setEditing(o); setFormOpen(true); }}>
-                        <Pencil className="size-4" />
-                      </Button>
-                      <Button size="icon" variant="ghost" onClick={() => setDeleting(o)}>
-                        <Trash2 className="size-4" />
-                      </Button>
-                    </td>
+            <ScrollArea>
+              <table className="table-fixed w-full text-sm">
+                <thead>
+                  <tr className="text-left border-b">
+                    <th className="px-3 py-2 w-48">Value</th>
+                    <th className="px-3 py-2">Label</th>
+                    <th className="px-3 py-2 w-20">Sort</th>
+                    <th className="px-3 py-2 w-20">Active</th>
+                    <th className="px-3 py-2 w-24">Keywords</th>
+                    <th className="px-3 py-2 w-28 text-right">Actions</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {options!.map((o) => (
+                    <tr key={o.id} className="border-b">
+                      <td className="px-3 py-2 font-mono">{o.value}</td>
+                      <td className="px-3 py-2">{o.label}</td>
+                      <td className="px-3 py-2">{o.sort_order}</td>
+                      <td className="px-3 py-2">{o.is_active ? 'Yes' : 'No'}</td>
+                      <td className="px-3 py-2">{o.keywords.length}</td>
+                      <td className="px-3 py-2 text-right">
+                        <Button size="icon" variant="ghost"
+                                onClick={() => { setEditing(o); setFormOpen(true); }}>
+                          <Pencil className="size-4" />
+                        </Button>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          aria-label={`Delete option ${o.label}`}
+                          onClick={() => deletion.run({ id: o.id, subject: o.label })}
+                        >
+                          <Trash2 className="size-4" />
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <ScrollBar orientation="horizontal" />
+            </ScrollArea>
           )}
       </CardContent>
       <OptionFormDialog open={formOpen} onOpenChange={setFormOpen} setId={setId} editing={editing} />
-      {deleting && (
-        <ConfirmDeleteDialog
-          open={!!deleting}
-          onOpenChange={(o) => { if (!o) setDeleting(null); }}
-          title="Delete option?"
-          description={`This will permanently delete "${deleting.label}". This action cannot be undone.`}
-          onDelete={() => deleteOption(setId, deleting.id)}
-          queryKeysToInvalidate={[['lookup-sets', setId, 'options']]}
-          onSuccess={() => setDeleting(null)}
-        />
-      )}
     </Card>
   );
 }

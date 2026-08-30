@@ -20,14 +20,12 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
-import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
+import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
 import { TriangleAlert } from 'lucide-react';
 import { fmtDate } from '../../lib/format';
 import {
-  deleteCurrencyRate,
   getCurrencyRates,
   saveCurrencyRate,
-  type CurrencyRate,
 } from '../../services/currencyRateService';
 
 /**
@@ -56,7 +54,14 @@ export function CurrencyRatesPanel() {
   const qc = useQueryClient();
   const rates = useQuery({ queryKey: KEY, queryFn: getCurrencyRates });
   const [draft, setDraft] = useState<Draft | null>(null);
-  const [deleting, setDeleting] = useState<CurrencyRate | null>(null);
+  // Delete asks nothing (D7): a toast counts down with Cancel.
+  const deletion = useDeferredRowAction({
+    actionKey: 'currency_rate.delete',
+    entityType: 'currency_rate',
+    verb: 'Removing',
+    successMessage: 'Rate removed.',
+    invalidateKeys: [[...KEY]],
+  });
 
   const save = useMutation({
     mutationFn: (d: Draft) =>
@@ -176,7 +181,7 @@ export function CurrencyRatesPanel() {
                   mode="icon"
                   size="sm"
                   aria-label={`Remove ${r.currency}`}
-                  onClick={() => setDeleting(r)}
+                  onClick={() => deletion.run({ id: r.currency, subject: r.currency })}
                 >
                   <Trash2 className="size-4" />
                 </Button>
@@ -247,28 +252,12 @@ export function CurrencyRatesPanel() {
               onClick={() => draft && save.mutate(draft)}
               disabled={!valid || save.isPending}
             >
-              Save
+              Save currency rate
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      <ConfirmDeleteDialog
-        open={!!deleting}
-        onOpenChange={(open) => (open ? null : setDeleting(null))}
-        title="Remove exchange rate"
-        description={
-          deleting
-            ? `Suppliers priced in ${deleting.currency} will stop being ranked on cost or funded until a rate is entered again. This action cannot be undone.`
-            : ''
-        }
-        onDelete={async () => {
-          if (deleting) await deleteCurrencyRate(deleting.currency);
-        }}
-        queryKeysToInvalidate={[[...KEY]]}
-        successMessage="Rate removed."
-        onSuccess={() => setDeleting(null)}
-      />
     </div>
   );
 }

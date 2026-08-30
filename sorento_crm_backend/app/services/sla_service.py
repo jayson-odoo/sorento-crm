@@ -849,57 +849,6 @@ class ConversationSLATrackingService:
             primary = ConversationSLATracking.created_at.desc()
         return q.order_by(primary, ConversationSLATracking.id.asc())
 
-    def neighbours(
-        self,
-        tracking_id: str,
-        policy_id: Optional[str] = None,
-        query: Optional[str] = None,
-        sort_field: str = "created_at",
-        sort_dir: str = "desc",
-        assigned_to: Optional[str] = None,
-        tracking_ids: Optional[list[str]] = None,
-        contact: Optional[str] = None,
-        is_resolved: Optional[bool] = None,
-        resolved_by: Optional[str] = None,
-    ) -> dict:
-        """Resolve prev/next neighbours for ``tracking_id`` within the active
-        conversation-SLA list query.
-
-        Selects only the ordered ids (not full rows) for efficiency, then defers the
-        position/wrap math to the pure ``compute_neighbours`` helper. Stays in the
-        conversation scope (never form SLA rows). If the record is not in the filtered
-        set (deep link, or filtered out after an edit), falls back to the unfiltered,
-        default-sorted conversation set so the pager is never dead (D2).
-        """
-        from app.services.record_navigation import compute_neighbours
-
-        def _ordered_ids(q) -> list[str]:
-            ids_q = q.with_entities(ConversationSLATracking.id)
-            return [str(row[0]) for row in ids_q.all()]
-
-        filtered_q = self._build_conversation_list_query(
-            self.db.query(ConversationSLATracking),
-            policy_id=policy_id,
-            query=query,
-            sort_field=sort_field,
-            sort_dir=sort_dir,
-            assigned_to=assigned_to,
-            tracking_ids=tracking_ids,
-            contact=contact,
-            is_resolved=is_resolved,
-            resolved_by=resolved_by,
-        )
-        result = compute_neighbours(_ordered_ids(filtered_q), tracking_id)
-        if result["index"] is not None:
-            return result
-
-        # D2: current record not in the filtered conversation set -> fall back to the
-        # unfiltered, default-sorted conversation set so prev/next still works.
-        unfiltered_q = self._build_conversation_list_query(
-            self.db.query(ConversationSLATracking)
-        )
-        return compute_neighbours(_ordered_ids(unfiltered_q), tracking_id)
-
     def list_tracking(
         self,
         page: int = 1,
@@ -5313,10 +5262,56 @@ class ConversationSLATrackingService:
         return self.get_tracking(tracking_id)
 
     def delete_tracking(self, tracking_id: str):
-        """Delete a tracking record."""
-        tracking = self.get_tracking(tracking_id)
-        self.db.delete(tracking)
-        self.db.commit()
+        """Delete a tracking record, and record that it happened.
+
+        The integration log is written HERE rather than in the route because the delete
+        now has TWO callers: the immediate `DELETE /sla/conversation-tracking/{id}` and
+        the deferred `sla_tracking.delete` record action, which commits from the sweeper
+        or from a poll ten seconds after the click (S6b). A log kept by one caller is a
+        log the other silently stops keeping, and this channel is what the SLA
+        integration is reconciled against.
+        """
+        from app.schemas.integration import IntegrationLogCreate
+        from app.services.error_handler import AppException
+        from app.services.integration_service import IntegrationLogService
+
+        tracking_id = str(tracking_id)
+
+        def _log(status: str, error: str | None = None) -> None:
+            # Best-effort: a log that cannot be written must not turn a completed delete
+            # into a 500 the caller retries against a row that is already gone.
+            try:
+                IntegrationLogService(self.db).create_integration_log(
+                    IntegrationLogCreate(
+                        integration_channel="sla_management",
+                        business_table="conversation_sla_tracking",
+                        business_id=tracking_id,
+                        external_reference=tracking_id,
+                        direction="inbound",
+                        endpoint="/api/v1/sla/conversation-tracking/{tracking_id}",
+                        http_method="DELETE",
+                        status=status,
+                        error_message=error,
+                    ),
+                )
+            except Exception:
+                _module_logger.warning(
+                    "integration log for tracking delete %s failed", tracking_id, exc_info=True
+                )
+
+        try:
+            tracking = self.get_tracking(tracking_id)
+            self.db.delete(tracking)
+            self.db.commit()
+        except AppException:
+            # A deliberate 4xx is a refusal, not an integration failure. Logging it as
+            # `failed` is what once made every historical sla_management failure one
+            # benign idempotency race.
+            raise
+        except Exception as exc:
+            _log("failed", str(exc))
+            raise
+        _log("success")
         return tracking
 
     def delete_event_log(self, log_id: str):

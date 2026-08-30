@@ -1,134 +1,62 @@
 'use client';
 
-import { useMemo } from 'react';
-import { useRouter } from 'next/navigation';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
-/** Props when using API neighbours (prevId/nextId from useRecordNeighbours or similar). */
-export interface RecordNavigationIdsProps {
-  basePath: string;
-  prevId: string | null;
-  nextId: string | null;
-  /** e.g. "record", "complaint", "purchase request" for aria-label */
-  ariaLabel?: string;
-  className?: string;
-  /** When provided, called with prevId/nextId instead of router.push (e.g. modal in-place navigation) */
-  onSelect?: (id: string) => void;
-  /** Optional: show "current / total" when both provided. The backend supplies
-   * already-wrapped prevId/nextId (circular), so this component just renders them. */
-  currentIndex?: number;
-  totalCount?: number;
-  /** When true, render a neutral "… / total" counter while neighbours resolve. */
-  isLoading?: boolean;
-}
-
-/** Props when using a full list (compute prev/next from currentId + items). */
-export interface RecordNavigationListProps {
-  basePath: string;
-  currentId: string;
-  items: Array<{ id: string }>;
-  ariaLabel?: string;
-  className?: string;
-  /** When provided, called with selected id instead of router.push (e.g. modal in-place navigation) */
-  onSelect?: (id: string) => void;
-  /** When true (default), navigation wraps: next on last goes to first, previous on first goes to last */
-  circular?: boolean;
-  /** When provided, display total uses this (e.g. API pagination total) instead of items.length */
-  totalCount?: number;
-  /** 0-based index of the first row on this page within the full filtered list (pageIndex × pageSize). */
-  pageItemOffset?: number;
-}
-
-export type RecordNavigationProps = RecordNavigationIdsProps | RecordNavigationListProps;
-
-function isIdsProps(
-  props: RecordNavigationProps,
-): props is RecordNavigationIdsProps {
-  return 'prevId' in props && 'nextId' in props;
-}
-
 /**
- * Reusable prev/next (chevron) navigation for detail/form views.
- * Use with useRecordNeighbours when the backend has a neighbours endpoint,
- * or pass currentId + items when you have the full list in memory.
- * With list mode: shows "current / total" and circular scrolling (next on last → first, previous on first → last).
+ * The chevrons and the counter, and nothing else.
+ *
+ * Where a record is walked by URL, `ListPager` owns the position and hands it
+ * here (that is every detail page). Where it is walked IN PLACE - a dialog
+ * stepping through the rows it was opened over, or a record whose id is a pair
+ * rather than a row id - the caller computes the position from the rows it
+ * already holds and hands it here directly.
+ *
+ * Both chevrons are `type="button"`: the five edit forms render the pager inside
+ * their `<form>`, and an untyped `<button>` there is a SUBMIT button, so Next
+ * saved the record and followed the form's onSuccess instead of stepping.
+ *
+ * Until S3 this component also knew how to fetch neighbours from the backend and
+ * how to walk a whole list itself. Both went with the `/neighbours` endpoints:
+ * a pager that resolves its own set is a pager that can disagree with the list
+ * the reader is looking at.
  */
-export default function RecordNavigation(props: RecordNavigationProps) {
-  const router = useRouter();
-  const { basePath, ariaLabel = 'record', className, onSelect } = props;
+export interface RecordNavigationProps {
+  /** 1-based position on the page, or null when it is not known yet. */
+  index: number | null;
+  /** Rows on the page being walked. */
+  total: number;
+  hasPrevious: boolean;
+  hasNext: boolean;
+  onPrevious: () => void;
+  onNext: () => void;
+  isLoading?: boolean;
+  /** e.g. "delivery order" - used for the chevrons' accessible names. */
+  ariaLabel?: string;
+  className?: string;
+}
 
-  const { previousId, nextId, currentIndex, totalCount, positionUnknown, loading } = useMemo(() => {
-    if (isIdsProps(props)) {
-      const total = props.totalCount != null ? props.totalCount : null;
-      const current =
-        props.currentIndex != null ? props.currentIndex + 1 : null;
-      return {
-        previousId: props.prevId,
-        nextId: props.nextId,
-        currentIndex: current,
-        totalCount: total,
-        positionUnknown: total != null && current == null,
-        loading: !!props.isLoading,
-      };
-    }
-    const {
-      currentId,
-      items,
-      circular = true,
-      totalCount: totalOverride,
-      pageItemOffset = 0,
-    } = props;
-    const listLength = items.length;
-    const displayTotal = totalOverride != null ? totalOverride : listLength;
-    const idx = items.findIndex((item) => item.id === currentId);
-    const currentOneBased =
-      idx >= 0 ? pageItemOffset + idx + 1 : null;
-    const positionUnknown = listLength > 0 && idx < 0;
-
-    let previousId: string | null;
-    let nextId: string | null;
-    if (listLength === 0 || idx < 0) {
-      previousId = null;
-      nextId = null;
-    } else if (circular) {
-      previousId =
-        idx <= 0 ? items[listLength - 1].id : items[idx - 1].id;
-      nextId =
-        idx >= listLength - 1 ? items[0].id : items[idx + 1].id;
-    } else {
-      previousId = idx > 0 ? items[idx - 1].id : null;
-      nextId =
-        idx >= 0 && idx < listLength - 1 ? items[idx + 1].id : null;
-    }
-
-    return {
-      previousId,
-      nextId,
-      currentIndex: currentOneBased,
-      totalCount: displayTotal,
-      positionUnknown,
-      loading: false,
-    };
-  }, [props]);
-
-  const counterLabel = loading
-    ? totalCount != null && totalCount > 0
-      ? `… / ${totalCount}`
-      : '…'
-    : totalCount != null && totalCount > 0
-      ? positionUnknown
-        ? `- / ${totalCount}`
-        : currentIndex != null && currentIndex > 0
-          ? `${currentIndex} / ${totalCount}`
-          : null
-      : null;
-  const showCounter = counterLabel != null;
-
-  const handleNavigate = (id: string) => {
-    if (onSelect) onSelect(id);
-    else router.push(`${basePath}/${id}`);
-  };
+export default function RecordNavigation({
+  index,
+  total,
+  hasPrevious,
+  hasNext,
+  onPrevious,
+  onNext,
+  isLoading = false,
+  ariaLabel = 'record',
+  className,
+}: RecordNavigationProps) {
+  const counterLabel =
+    isLoading && index == null
+      ? total > 0
+        ? `… / ${total}`
+        : '…'
+      : total > 0
+        ? index != null && index > 0
+          ? `${index} / ${total}`
+          : `- / ${total}`
+        : null;
 
   return (
     <div
@@ -136,32 +64,34 @@ export default function RecordNavigation(props: RecordNavigationProps) {
       aria-label={`${ariaLabel} navigation`}
     >
       <Button
+        type="button"
         variant="outline"
         size="icon"
         aria-label={`Previous ${ariaLabel}`}
-        disabled={!previousId}
-        onClick={() => previousId && handleNavigate(previousId)}
+        disabled={!hasPrevious}
+        onClick={onPrevious}
       >
         <ChevronLeft className="size-4" />
       </Button>
-      {showCounter && (
+      {counterLabel != null && (
         <span
           className="min-w-[3rem] text-center text-sm text-muted-foreground tabular-nums"
           aria-label={
-            positionUnknown
-              ? `Position unknown within ${totalCount} records on this page`
-              : `${currentIndex} of ${totalCount} records`
+            index != null && index > 0
+              ? `${index} of ${total} records`
+              : `Position unknown within ${total} records on this page`
           }
         >
           {counterLabel}
         </span>
       )}
       <Button
+        type="button"
         variant="outline"
         size="icon"
         aria-label={`Next ${ariaLabel}`}
-        disabled={!nextId}
-        onClick={() => nextId && handleNavigate(nextId)}
+        disabled={!hasNext}
+        onClick={onNext}
       >
         <ChevronRight className="size-4" />
       </Button>

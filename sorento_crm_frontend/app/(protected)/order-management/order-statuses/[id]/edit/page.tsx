@@ -4,17 +4,9 @@ import { use } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { MoveLeft } from 'lucide-react';
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
 import { Button } from '@/components/ui/button';
 import { Container } from '@/components/common/container';
-import { Toolbar, ToolbarActions, ToolbarHeading, ToolbarTitle } from '@/components/common/toolbar';
+import { PageHeader } from '@/components/common/PageHeader';
 import OrderStatusForm from '../../components/OrderStatusForm';
 
 export default function EditOrderStatusPage({ params }: { params: Promise<{ id: string }> }) {
@@ -24,37 +16,16 @@ export default function EditOrderStatusPage({ params }: { params: Promise<{ id: 
   return (
     <>
       <Container>
-        <Toolbar>
-          <ToolbarHeading>
-            <ToolbarTitle>Edit Delivery Order Status</ToolbarTitle>
-            <Breadcrumb>
-              <BreadcrumbList>
-                <BreadcrumbItem>
-                  <BreadcrumbLink href="/">Home</BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbPage>Delivery Order Management</BreadcrumbPage>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbLink href="/order-management/order-statuses">Delivery Order Statuses</BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbLink href={`/order-management/order-statuses/${id}`}>Delivery Order Status</BreadcrumbLink>
-                </BreadcrumbItem>
-              </BreadcrumbList>
-            </Breadcrumb>
-          </ToolbarHeading>
-          <ToolbarActions>
+        <PageHeader
+          title="Edit Delivery Order Status"
+          actions={
             <Button asChild variant="outline">
               <Link href={`/order-management/order-statuses/${id}`}>
                 <MoveLeft /> Back to delivery order status
               </Link>
             </Button>
-          </ToolbarActions>
-        </Toolbar>
+          }
+        />
       </Container>
       <Container>
         <OrderStatusForm

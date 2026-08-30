@@ -64,7 +64,6 @@ tests/test_form_handling_lock_routes.py
 tests/test_list_column_preferences.py
 tests/test_market_segment_routing.py
 tests/test_order_analytics.py
-tests/test_product_neighbours.py
 tests/test_promotion_access_overlap_live.py
 tests/test_rbac.py
 tests/test_record_action_endpoints.py

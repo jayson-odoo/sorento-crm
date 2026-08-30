@@ -43,7 +43,8 @@ import type {
   ComplaintFormData,
   ComplaintAttachment,
 } from "../types/complaint.types";
-import ComplaintNavigation from "./ComplaintNavigation";
+import ListPager from '@/components/common/ListPager';
+import { complaintsPagerQuery } from '../hooks/useComplaints';
 import ComplaintManualAttachmentsSection from "./ComplaintManualAttachmentsSection";
 import { usePublicViewLinksEnabled } from "@/hooks/usePublicViewLinksEnabled";
 
@@ -418,7 +419,15 @@ export default function ComplaintForm({
       <form onSubmit={onFormSubmit} className="space-y-6">
         {isEditMode && complaintId && (
           <div className="flex justify-end">
-            <ComplaintNavigation complaintId={complaintId} />
+            <ListPager
+              {...complaintsPagerQuery}
+              detailPath="/complaint-management/complaints"
+              currentId={complaintId}
+              ariaLabel="complaint"
+              hrefFor={(id, search) =>
+                `/complaint-management/complaints/${id}/edit${search ? `?${search}` : ''}`
+              }
+            />
           </div>
         )}
         <Card>

@@ -88,67 +88,6 @@ async def get_grns(
         raise handle_internal_error(str(e))
 
 
-@router.get("/neighbours")
-async def get_grn_neighbours(
-    id: str = Query(..., description="GRN id (UUID or picking_number) to resolve neighbours for"),
-    query: Optional[str] = Query(None),
-    entities: Optional[list[str]] = Query(
-        None,
-        description=(
-            "Free-text entity bag. Server resolves via hybrid (substring → pg_trgm → RAG). "
-            "Product matches narrow linked picking_lines; picking_number matches narrow header. "
-            "ONE ENTITY PER ARRAY ELEMENT."
-        ),
-    ),
-    product_query: Optional[str] = Query(
-        None,
-        description="Legacy: partial product filter on linked picking_lines.",
-    ),
-    picking_status: Optional[str] = Query(None),
-    inspection_status: Optional[str] = Query(None),
-    sort: Optional[str] = Query("created_at"),
-    dir: Optional[str] = Query("asc"),
-    current_user: dict = Depends(get_current_user_or_api_key),
-    db: Session = Depends(get_db),
-):
-    """Prev/next neighbours of a GRN within the active filtered+sorted list set.
-
-    Accepts the same filter/sort/search params as the list GET (page/limit are
-    irrelevant and ignored). Returns ``{total, index, prev_id, next_id}`` with the
-    1-based ``index`` and circular wrap-around neighbours. If the record is not in
-    the filtered set, falls back to the unfiltered, default-sorted set (D2).
-    """
-    from app.services.entity_filter_helpers import (
-        normalize_entities_query_param,
-        resolve_or_empty,
-    )
-
-    # Mirror the list GET's entity resolution so neighbours and list stay aligned.
-    norm = normalize_entities_query_param(entities)
-    if norm:
-        buckets = resolve_or_empty(db, norm)
-        if buckets is not None:
-            if buckets.product_codes and not product_query:
-                product_query = buckets.product_codes[0]
-            if buckets.picking_numbers and not query:
-                query = buckets.picking_numbers[0]
-    try:
-        service = PickingHeaderService(db)
-        return service.neighbours(
-            grn_id=id,
-            query=query,
-            product_query=product_query,
-            picking_status=picking_status,
-            inspection_status=inspection_status,
-            sort_field=sort or "created_at",
-            sort_dir=dir or "asc",
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise handle_internal_error(str(e))
-
-
 @router.post("/import-listing", status_code=status.HTTP_202_ACCEPTED)
 async def import_grn_listing(
     file: UploadFile = File(..., description="Excel file: GRN listing (doc number, transfer from, date)"),

@@ -20,7 +20,6 @@ import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { STATUS_PILL_BASE } from '@/lib/status-pill';
@@ -29,6 +28,7 @@ import { usePlans } from '../../_shared/hooks/useFulfilmentPlanning';
 import { planBoardHref, planRowHref } from '../../_shared/lib/fulfilmentPlanningRows';
 import { PLAN_SORT_FIELDS, type PlanRow, type PlanState } from '../../_shared/types/fulfilmentPlanning.types';
 import { InfoHint } from '../../[projectId]/components/InfoHint';
+import { PageHeader } from '@/components/common/PageHeader';
 
 /** Soft-pastel per state, kept local: `challenged` deserves amber (something moved under a
  * confirmed decision) and `superseded` a neutral slate, neither of which the shared status
@@ -314,14 +314,16 @@ export function PlansClient() {
 
   return (
     <>
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex min-w-0 items-center gap-2">
-          <h1 className="text-xl font-semibold break-words">Plans</h1>
-          <InfoHint label="About plans">
-            Every confirmed composition, one row per revision, most recent first.
-          </InfoHint>
-        </div>
-      </div>
+      <PageHeader
+        title={
+          <span className="inline-flex flex-wrap items-center gap-2">
+            Plans
+            <InfoHint label="About plans">
+              Every confirmed composition, one row per revision, most recent first.
+            </InfoHint>
+          </span>
+        }
+      />
 
       <DataGrid
         table={table}
@@ -426,10 +428,7 @@ export function PlansClient() {
                 </Button>
               </div>
             ) : (
-              <ScrollArea>
-                <DataGridTable />
-                <ScrollBar orientation="horizontal" />
-              </ScrollArea>
+              <DataGridTable />
             )}
           </CardTable>
 

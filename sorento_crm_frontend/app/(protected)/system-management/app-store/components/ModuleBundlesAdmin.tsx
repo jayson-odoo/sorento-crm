@@ -341,7 +341,13 @@ export default function ModuleBundlesAdmin() {
               onClick={submitEditor}
               disabled={busy}
             >
-              {editing ? (updateMut.isPending ? 'Saving…' : 'Save') : createMut.isPending ? 'Creating…' : 'Create'}
+              {editing
+                ? updateMut.isPending
+                  ? 'Saving…'
+                  : 'Save bundle'
+                : createMut.isPending
+                  ? 'Creating…'
+                  : 'Create bundle'}
             </Button>
           </DialogFooter>
         </DialogContent>

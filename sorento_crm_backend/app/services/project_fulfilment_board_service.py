@@ -50,6 +50,7 @@ from typing import (
     Iterable,
     List,
     Mapping,
+    MutableMapping,
     Optional,
     Sequence,
     Tuple,
@@ -97,10 +98,14 @@ from app.services.scm.front_planning_engine import (
     RUNG_BUY,
     RUNG_GROUP_TAKE,
     RUNG_INCOMING,
+    RUNG_ORDER_BORROW,
+    RUNG_POOL,
+    RUNG_SUPPLY_BORROW,
     TIMELY_SPO,
     date_text,
     pool_reserve_capacity,
     qty_text,
+    reserve_window_end,
 )
 
 _ZERO = Decimal("0")
@@ -208,6 +213,11 @@ WHERE_GROUP = "group"
 WHERE_SITE_POOL = "site_pool"
 WHERE_OTHER_GROUP = "other_group"
 
+#: What `net_of` calls the five site pools when they are netted as ONE pile, and the value
+#: the stock drill accepts under `group=` to read that same pile. An ownership group is its
+#: own suffix (`IB`), and the pools have no suffix to be.
+POOLS_SET = "pools"
+
 #: Said by every question the ladder reached after the line was already covered. One sentence,
 #: in one place, so five questions cannot phrase the same fact five ways. "Question" and not
 #: "rung": the rung names are internal keys under ladder v5 and never reach a reader, and a
@@ -287,6 +297,26 @@ def _date_words(when: Optional[date]) -> str:
     return f"{when.day} {_MONTHS[when.month - 1]} {when.year}"
 
 
+def _option_row(option: Any) -> Dict[str, Any]:
+    """One ladder option, on the wire (R36, AC-S3-14).
+
+    The contract is stated once, in
+    `app/(protected)/project-sales/_shared/services/fulfilmentPlanningService.ts`, and this
+    is the server half of it: five entries, in step order, one chosen at most,
+    `fulfil_date` and `days_late` null TOGETHER, `debt_*` on the borrow steps only.
+    """
+    return {
+        "step": option.step,
+        "label": option.label,
+        "whole": bool(option.whole),
+        "fulfil_date": option.fulfil_date.isoformat() if option.fulfil_date else None,
+        "days_late": option.days_late,
+        "debt_so_number": option.debt_so_number,
+        "debt_month": option.debt_month,
+        "chosen": bool(option.chosen),
+    }
+
+
 def _project_key(label: Optional[str]) -> Optional[str]:
     """A stable key a pivot may group a project by.
 
@@ -325,7 +355,8 @@ class _Row:
         "project_label", "order_date", "line_no", "item_code", "product_id", "qty",
         "required_date", "warehouse_id", "location", "priority", "demand_class",
         "payment_terms_days", "bucket_key", "is_past", "rank_score", "rank_factors",
-        "sources", "trail", "contested", "qty_ordered", "qty_delivered", "proposed",
+        "sources", "trail", "options", "contested", "qty_ordered", "qty_delivered",
+        "proposed",
         "proposed_components",
         "free_before",
         "raw_facts", "taken_before", "last_taker", "borrow_candidates",
@@ -346,6 +377,10 @@ class _Row:
         # The ladder as it was walked for this line, rung by rung. Empty for an unplannable
         # line: no ladder was walked for it.
         self.trail = []
+        # The five OPTIONS behind that walk (R36, AC-S3-14): every step with the date it
+        # would have fulfilled the unit and how late that is. Empty on an unplannable or a
+        # frozen line, for the same reason `trail` is: no walk, no options.
+        self.options = []
         self.contested = False
         self.is_past = False
         # Filled by `_allocate`: what the engine proposes for this line, by kind, and what was
@@ -674,10 +709,11 @@ class FulfilmentBoardService:
     def stock_detail(
         self,
         product_id: str,
-        warehouse_id: str,
+        warehouse_id: Optional[str] = None,
         line_ids: Optional[Sequence[str]] = None,
+        group: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """One product at one location: the four totals, and the documents behind them.
+        """One product at one location - or at a whole OWNERSHIP GROUP - and its documents.
 
         AutoCount's Stock Status with Detail, which is the screen the captain checks stock on:
         On Hand, SO Qty, PO Qty, Available - and under it, every document contributing to those
@@ -701,6 +737,16 @@ class FulfilmentBoardService:
         claiming this stock and when it is wanted. `line_ids` are the lines the drawer was
         opened for - the cell's own contributions - and their rows come back marked
         `is_this_line` so a planner can find themselves in the list.
+
+        **`group` reads the whole SET instead of one bin** (captain, 30 August 2026). Step 1
+        of the ladder draws the OWNERSHIP GROUP's pile, not a bin's - a `BRW-IB` line is fed
+        by `MWH-IB` stock - so a running balance per bin would answer a question the engine
+        never asks. Given `group` (the suffix `IB`, or `pools` for the five site pools) the
+        totals and the documents cover every bin of that set, each row carrying the bin it
+        sits at, and `bins` states each member's own on hand so the reader can open the walk
+        on the pile it actually starts from. The set is resolved through `group_netting`,
+        which is the same reader the cell's subtotal prints its net from, so the drill and
+        the subtotal cannot come to disagree about who is in the group.
         """
         product = (
             self.db.query(Product).filter(Product.id == product_id).first()
@@ -709,15 +755,22 @@ class FulfilmentBoardService:
         )
         warehouse = (
             self.db.query(Warehouse).filter(Warehouse.id == warehouse_id).first()
-            if warehouse_id
+            if warehouse_id and not group
             else None
         )
-        if product is None or warehouse is None:
+        if product is None or (warehouse is None and not group):
             raise AppException(
                 status_code=404,
                 message="That product or location does not exist.",
                 code="stock_detail_not_found",
             )
+        # The bins this read covers: one, or the whole set. Codes by id, so every document
+        # row can say where it sits without a second lookup.
+        if group:
+            codes = self._set_locations(str(product.id), group)
+        else:
+            codes = {str(warehouse.id): warehouse.warehouse_code or ""}
+        target_ids = list(codes)
 
         owed = demand_qty()
         rows = (
@@ -731,6 +784,7 @@ class FulfilmentBoardService:
                 Customer.customer_name,
                 Customer.id.label("customer_id"),
                 SalesOrderLine.required_date,
+                SalesOrderLine.warehouse_id.label("warehouse_id"),
                 owed.label("owed"),
                 # Who sold it. A purchase row (the SPO list below) has no agent - it is not a
                 # sales document - so the column is S/O-only by construction, never a guess.
@@ -741,7 +795,7 @@ class FulfilmentBoardService:
             .outerjoin(SalesAgent, SalesAgent.id == SalesOrder.sales_agent_id)
             .filter(
                 SalesOrderLine.product_id == product_id,
-                SalesOrderLine.warehouse_id == warehouse_id,
+                SalesOrderLine.warehouse_id.in_(target_ids),
                 SalesOrder.status == "open",
                 is_open_demand(),
             )
@@ -766,6 +820,9 @@ class FulfilmentBoardService:
                 "so_number": row.so_number,
                 "customer_name": row.customer_name,
                 "customer_id": str(row.customer_id) if row.customer_id else None,
+                #: WHERE this claim sits. Always stated, so a group read can column it and a
+                #: bin read never has to ask a second time.
+                "location": codes.get(str(row.warehouse_id)),
                 "agent_code": row.agent_code,
                 "project_label": _project_label_from_note(row.internal_note),
                 "demand_class": row.demand_class,
@@ -782,13 +839,17 @@ class FulfilmentBoardService:
         # (R5): the earliest claim on the pile leads, and a document with no date lists
         # last rather than first, because "not stated" is not "wanted immediately".
         sales_orders = [_so_row(row) for row in rows]
-        incoming_rows = self.supply.incoming_by_location([product_id], [warehouse_id]).get(
-            (str(product_id), str(warehouse_id)), []
-        )
+        by_location = self.supply.incoming_by_location([product_id], target_ids)
+        incoming_rows = [
+            (bin_id, ref)
+            for bin_id in target_ids
+            for ref in by_location.get((str(product_id), bin_id), [])
+        ]
         incoming = [
             {
                 "spo_number": ref.spo_number,
                 "supplier_name": ref.supplier_name,
+                "location": codes.get(bin_id),
                 "expected_date": ref.arrival_date,
                 "spo_qty": qty_text(ref.qty),
                 # A promise whose date has passed is still supply and is still counted
@@ -797,28 +858,79 @@ class FulfilmentBoardService:
                 # read as fresh. Same number the engine's trail names.
                 "overdue_days": ref.overdue_days,
             }
-            for ref in sorted(
+            for bin_id, ref in sorted(
                 incoming_rows,
-                key=lambda ref: (ref.arrival_date is None, ref.arrival_date, ref.spo_number),
+                key=lambda pair: (
+                    pair[1].arrival_date is None,
+                    pair[1].arrival_date,
+                    pair[1].spo_number,
+                ),
             )
         ]
 
+        # A confirmed hold whose OWN line is booked outside this set (R40, 30 Aug): it takes
+        # stock out of this pile and appears in no row of this book, so a walk without it
+        # counts a pile nobody can draw on. A hold whose line IS in the set is already one of
+        # the sales-order rows above, and listing it again would subtract it twice. Only the
+        # GROUP reading asks: one bin's drill is read beside its own Available, which does
+        # not net holds either.
+        holds = [
+            {
+                "so_number": hold["so_number"],
+                "location": codes.get(hold["warehouse_id"]),
+                "required_date": hold["required_date"],
+                "qty": qty_text(hold["qty"]),
+            }
+            for hold in (
+                self.supply.holds_at_locations([product_id], target_ids) if group else []
+            )
+            if hold["line_warehouse_id"] not in codes
+        ]
+        holds.sort(
+            key=lambda hold: (
+                hold["required_date"] is None,
+                hold["required_date"] or date.min,
+                hold["so_number"] or "",
+            )
+        )
+
         levels = self.supply.stock_levels_by_location([product_id])
-        on_hand, reserved = levels.get((str(product_id), str(warehouse_id)), (_ZERO, _ZERO))
+        frees = self.supply.free_stock_by_location([product_id])
+        helds = self.supply.held_stock_by_location([product_id])
+        # Per bin, and then summed - a group read is the set's own position, and the members
+        # are stated so the drill can open its walk on the pile each one starts from.
+        bins = [
+            {
+                "warehouse_id": bin_id,
+                "location": codes.get(bin_id) or "",
+                "qty_on_hand": qty_text(
+                    levels.get((str(product_id), bin_id), (_ZERO, _ZERO))[0]
+                ),
+            }
+            for bin_id in sorted(target_ids, key=lambda bid: codes.get(bid) or "")
+        ]
+        on_hand = sum(
+            (levels.get((str(product_id), bid), (_ZERO, _ZERO))[0] for bid in target_ids),
+            _ZERO,
+        )
+        reserved = sum(
+            (levels.get((str(product_id), bid), (_ZERO, _ZERO))[1] for bid in target_ids),
+            _ZERO,
+        )
         so_qty = sum((_dec(row.owed) for row in rows), _ZERO)
-        spo_qty = sum((ref.qty for ref in incoming_rows), _ZERO)
-        free = self.supply.free_stock_by_location([product_id]).get(
-            (str(product_id), str(warehouse_id)), _ZERO
-        )
-        held = self.supply.held_stock_by_location([product_id]).get(
-            (str(product_id), str(warehouse_id)), _ZERO
-        )
+        spo_qty = sum((ref.qty for _bid, ref in incoming_rows), _ZERO)
+        free = sum((frees.get((str(product_id), bid), _ZERO) for bid in target_ids), _ZERO)
+        held = sum((helds.get((str(product_id), bid), _ZERO) for bid in target_ids), _ZERO)
         return {
             "product_id": str(product.id),
             "item_code": product.product_code,
             "description": product.product_name,
-            "warehouse_id": str(warehouse.id),
-            "location": warehouse.warehouse_code,
+            #: A group read names no single bin: it is the SET's position, and `bins` says
+            #: which locations that set holds.
+            "warehouse_id": str(warehouse.id) if warehouse is not None else None,
+            "location": warehouse.warehouse_code if warehouse is not None else None,
+            "group": group or None,
+            "bins": bins,
             "qty_on_hand": qty_text(on_hand),
             "so_qty": qty_text(so_qty),
             "spo_qty": qty_text(spo_qty),
@@ -830,6 +942,31 @@ class FulfilmentBoardService:
             "qty_free": qty_text(free),
             "sales_orders": sales_orders,
             "incoming": incoming,
+            "holds": holds,
+        }
+
+    def _set_locations(self, product_id: str, group: str) -> Dict[str, str]:
+        """Every bin of one set, by id: the ownership group's, or the five site pools'.
+
+        Read through `group_netting` - the SAME reader the cell's subtotal prints its net
+        from - so the documents the drill lists and the number it is expanded from are over
+        one membership. `planning_only` because the flag decides who is in a group (R17): a
+        bin flagged out holds stock no proposal may draw, and listing its documents under
+        the group's balance would show a pile the ladder cannot spend.
+
+        An unknown group answers with no bins, which is the honest reading: nothing was
+        found to look at.
+        """
+        from app.services.scm.group_netting import netting_for_products
+
+        netting = netting_for_products(self.db, [product_id], planning_only=True)
+        position = (
+            netting.pools_net(product_id)
+            if (group or "").strip().lower() == POOLS_SET
+            else netting.group_net(product_id, group)
+        )
+        return {
+            str(entry.warehouse_id): entry.location for entry in position.by_location
         }
 
     def pile_queue(
@@ -1883,7 +2020,10 @@ class FulfilmentBoardService:
             # What the shared pool still held when this line's UNIT was reached, captured
             # before the draw: the trail states what each source held, and reading it back
             # afterwards would state what was left instead.
-            components, pool_open, borrow_open, net_open = composed[row.key]
+            (
+                components, pool_open, borrow_open, net_open, options, other_group_open,
+            ) = composed[row.key]
+            row.options = [_option_row(option) for option in options]
             # Ladder v2's group take / group borrow / cross-group borrow rungs name a
             # location `warehouse_ids` (own + pool only, above) does not cover.
             for component in components:
@@ -1929,7 +2069,8 @@ class FulfilmentBoardService:
             # off the trail rather than filtered a second time out of the raw donor list
             # (AC-V4: the note must never offer what the proof has refused).
             row.trail, offerable = self._trail(
-                row, fact, components, pool_open, borrow_open, net_open
+                row, fact, components, pool_open, borrow_open, net_open, as_of=as_of,
+                other_group_open=other_group_open,
             )
             row.sources = [
                 self._source(component, row, offerable) for component in components
@@ -2214,6 +2355,8 @@ class FulfilmentBoardService:
         pool_open: Optional[Decimal],
         borrow_open: Optional[Mapping[str, Decimal]] = None,
         net_open: Optional[Decimal] = None,
+        as_of: Optional[date] = None,
+        other_group_open: Optional[MutableMapping[str, Decimal]] = None,
     ) -> Tuple[List[Dict[str, Any]], List[str]]:
         """The four questions ladder v5 asks about this line, and Buy (section 1e).
 
@@ -2342,15 +2485,46 @@ class FulfilmentBoardService:
         # questions. Under v5 NOTHING runs beyond it, incoming included, so every question
         # answers No with the rule as its reason and Buy takes the whole line.
         outside_window = bool(row.outside_reserve_window)
+        # The day a donor has to be due on or after to be able to wait (R12). Named in
+        # step 2's refusal, because "no donor" sends a planner nowhere and "no order due on
+        # or after 12 Dec 2026" tells them which orders would have qualified (AC-S3-4).
+        window = reserve_window_end(
+            as_of or date.today(), self.supply._lead_time_days(fact.product_id)
+        )
+        # The manual donors `BorrowAddDialog` also lists, read once for the Buy's own
+        # sentence: the same-ownership-group offers a person may pick at any rank, and -
+        # for a line whose bin carries no ownership group at all - the plain free-stock
+        # donors, which no step of the ladder reaches.
+        group_borrow_donors = (
+            []
+            if outside_window
+            else [c for c in row.borrow_candidates if c.get("rung") == "group_borrow"]
+        )
+        ungrouped_donors = (
+            [] if outside_window or fact.group_code else list(row.borrow_candidates)
+        )
 
-        # ------------------------------------------- 1. Can we use our location?
+        # ------------------------------------------- 1. Can we use our locations?
         #
         # The OWNERSHIP GROUP, this line's own location included, read as one pile
         # (`group_net`, section 1d). The old read-only own-location strip is folded in
         # here: it existed to name the queue, and the queue is one of this question's
         # facts, not a question of its own.
-        group_take_candidates = (
-            [] if outside_window else self.supply.group_take_candidates_for(fact)
+        # LADDER V7.1: step 1 has TWO halves - this line's own ownership group, date-aware
+        # (R24), and then the OTHER project groups' free piles (R5), which is the free stock
+        # the retired `cross_group_borrow` rung used to call a Borrow. Both are one question,
+        # because free stock is owed to nobody wherever it sits.
+        group_take_candidates, other_group_candidates, own_offer = (
+            ([], [], _ZERO)
+            if outside_window
+            # `other_group_open` is step 1b's own ledger as this unit found it, passed for
+            # exactly the reason `borrow_open` is: the proof has to be the answer the engine
+            # actually got. Without it question 1 re-read a pile an earlier unit of the same
+            # walk had spent, and the Buy's sentence sent a planner to a bin with nothing in
+            # it (`test_the_proof_never_offers_a_donor_the_walk_has_already_spent`).
+            else self.supply.use_candidates_for(
+                fact, as_of=as_of, other_left=other_group_open
+            )
         )
         # What the group has ON THE WATER, both halves. The timely half is already inside
         # `group_take_candidates`; the late half is named in the sentence and drawn by
@@ -2373,10 +2547,16 @@ class FulfilmentBoardService:
             if getattr(component, "rung", None) == RUNG_GROUP_TAKE
             and component.source_location
         ]
-        group_offered = sum((_dec(c.get("qty")) for c in group_take_candidates), _ZERO)
+        group_offered = sum(
+            (
+                _dec(c.get("qty"))
+                for c in [*group_take_candidates, *other_group_candidates]
+            ),
+            _ZERO,
+        )
         add(
             "own",
-            "Can we use our location?",
+            "Can we use our locations?",
             taken=group_taken,
             offered=group_offered,
             eligible=not outside_window,
@@ -2388,21 +2568,88 @@ class FulfilmentBoardService:
             ahead=fact.ahead_lines_named,
             ahead_more=fact.ahead_more,
             ahead_by_factor=fact.ahead_by_factor,
-            note=None if outside_window else self._group_take_note(group_take_candidates, fact),
+            note=(
+                None
+                if outside_window
+                else self._group_take_note(
+                    [*group_take_candidates, *other_group_candidates], fact
+                )
+            ),
             why=lambda outcome: (
                 _RESERVE_WINDOW_RUNG_WHY
                 if outside_window
                 else self._group_take_why(
-                    outcome, group_take_candidates, fact, group_water, group_drawn
+                    outcome,
+                    group_take_candidates,
+                    fact,
+                    group_water,
+                    group_drawn,
+                    other=other_group_candidates,
+                    offer=group_offered,
                 )
             ),
         )
 
-        # ------------------------------------------- 2. Can we take from the pool?
+        # --------------------- 2. Can we borrow on hand from a later order?
+        #
+        # LADDER V7.1 (R1, reversing the 25 August 2026 ruling): this is a RUNG now, not a
+        # person's pick. A later order holding stock on a floor can wait; the asker cannot;
+        # and the debt is recorded at the donor's own date, where purchasing can see it.
+        order_borrow_candidates = (
+            []
+            if outside_window
+            # `borrow_open` is the walk's DONOR LEDGER as this line's unit found it
+            # (`compose_lines`), passed here exactly as `pool_free_left=pool_open` is passed
+            # to the pool question: the proof has to be the answer the engine actually got,
+            # not a fresh read of a donor an earlier unit has already spent.
+            else self.supply.order_borrow_candidates_for(
+                fact, as_of=as_of, borrow_left=borrow_open
+            )
+        )
+        order_borrow_taken = took_at(RUNG_ORDER_BORROW)
+        add(
+            RUNG_ORDER_BORROW,
+            "Can we borrow on hand from a later order?",
+            taken=order_borrow_taken,
+            offered=sum((_dec(c.get("qty")) for c in order_borrow_candidates), _ZERO),
+            eligible=not outside_window,
+            sources=drawn_at(RUNG_ORDER_BORROW),
+            note=self._order_borrow_note(order_borrow_candidates),
+            why=lambda outcome: (
+                _RESERVE_WINDOW_RUNG_WHY
+                if outside_window
+                else self._order_borrow_why(
+                    outcome, order_borrow_candidates, components, window=window
+                )
+            ),
+        )
+
+        # --------------------- 3. Can we borrow incoming from a later order?
+        #
+        # S4 builds this step. It is ASKED all the same (AC-S3-14): a step the server left
+        # out reads as a step nobody walked, and "nothing was offered" is an answer.
+        add(
+            RUNG_SUPPLY_BORROW,
+            "Can we borrow incoming from a later order?",
+            taken=took_at(RUNG_SUPPLY_BORROW),
+            sources=drawn_at(RUNG_SUPPLY_BORROW),
+            eligible=not outside_window,
+            why=lambda _outcome: (
+                _RESERVE_WINDOW_RUNG_WHY
+                if outside_window
+                else (
+                    "No incoming document held by a later order was offered for this unit."
+                )
+            ),
+        )
+
+        # ------------------------------------------- 4. Can we take from the pool?
         #
         # ALL FIVE site pools as ONE pile (section 1d), and the dealer hot-selling gate
         # refuses the WHOLE pile rather than this site's share of it (AC-V6): the pool is
-        # kept for retail, wherever the retail is.
+        # kept for retail, wherever the retail is. Since v7.1 the step has a second half -
+        # a LATER POOL ORDER may lend its on hand, and that half DOES raise an order-back
+        # at the pool order's own date (R34).
         pool_chain = (
             [] if outside_window else self.supply.pool_chain_for(fact, pool_free_left=pool_open)
         )
@@ -2422,133 +2669,75 @@ class FulfilmentBoardService:
                 pools_net=pools_net_open,
             )
         )
+        # Step 4b's donors: the LATER POOL ORDERS holding on hand. Read off the same builder
+        # the engine walked (`pool=True`), because without them the step printed
+        # `answer=yes, took=30` beside `offered=0` and "No shared pool holds this product."
+        # over a borrow it had just composed.
+        pool_borrow_candidates = (
+            []
+            if outside_window or fact.is_dealer_hot_selling
+            else self.supply.order_borrow_candidates_for(
+                fact, as_of=as_of, borrow_left=borrow_open, pool=True
+            )
+        )
+        # The two halves are ALTERNATIVES, never a sum: one step, one story (R33), so the
+        # offer is the larger of them and not both added together.
+        pool_offered = max(
+            sum((amount for _location, amount in pool_capacity), _ZERO),
+            sum((_dec(c.get("qty")) for c in pool_borrow_candidates), _ZERO),
+        )
         add(
             "pool",
             "Can we take from the pool?",
             taken=pool_taken,
-            offered=sum((amount for _location, amount in pool_capacity), _ZERO),
+            offered=pool_offered,
             eligible=not outside_window and not fact.is_dealer_hot_selling,
             sources=drawn_at("pool"),
             location=pool_code,
             warehouse_id=row.warehouse_ids.get(pool_code) if pool_code else None,
-            note=None if outside_window else self._pool_note(fact, pool_chain),
+            note=(
+                None
+                if outside_window
+                else self._pool_note(fact, pool_chain)
+                or self._order_borrow_note(pool_borrow_candidates)
+            ),
             why=lambda outcome: (
                 _RESERVE_WINDOW_RUNG_WHY
                 if outside_window
                 else self._pool_answer_why(
                     fact, pool_chain, pool_taken, pool_pile, pool_open, outcome,
                     pools_net=pools_net_open,
+                    borrow_donors=pool_borrow_candidates,
+                    components=components,
                 )
             ),
             pool=pool_pile,
         )
 
-        # ------------------------------------------- 3. Can we borrow from another location?
-        #
-        # A DONOR GROUP as one pile (`donor_group_net`), and only within the small-quantity
-        # cap. Measured against the SAME residual `compose_line` capped the candidate list
-        # against - never the trail's own running balance. Once the whole-line rule fires,
-        # `components` carries no partial rungs at all, so a locally-recomputed remainder
-        # would read the full untouched Q and cap the donor list against a quantity the
-        # engine never asked it to cover. Called rather than mirrored: a second copy of this
-        # arithmetic is exactly the second allocator this trail exists never to be.
-        residual = (
-            _ZERO
-            if outside_window
-            else self.supply._ladder_residual_before_cross_group(
-                fact, pools=pool_chain, group_take=group_take_candidates
-            )
-        )
-        cross_group_candidates = (
-            []
-            if outside_window
-            # `borrow_open` is the walk's DONOR LEDGER as this line's unit found it
-            # (`compose_lines`), passed here exactly as `pool_free_left=pool_open` is
-            # passed to question 2. Without it the proof re-read the donor's live free
-            # stock and answered "free stock at DC1-NT, within the limit" beside a Buy
-            # that the same ledger had just forced, having spent that stock on an earlier
-            # delivery date.
-            else self.supply.cross_group_borrow_candidates_for(
-                fact, residual=residual, borrow_left=borrow_open
-            )
-        )
-        # A line whose location carries NO ownership group has no "outside the group" for
-        # this question to walk (`_cross_group_borrow_candidates` refuses it by rule), so
-        # nothing here refuses its donors and nothing here offers them either. They are
-        # still real free stock a person may pick in Amend, so the row names them rather
-        # than reading as "no location anywhere holds this".
-        ungrouped_donors = (
-            [] if outside_window or fact.group_code else list(row.borrow_candidates)
-        )
-        cross_taken = took_at("cross_group_borrow")
-        add(
-            "cross_group_borrow",
-            "Can we borrow from another location?",
-            taken=cross_taken,
-            offered=sum((_dec(c.get("qty")) for c in cross_group_candidates), _ZERO),
-            eligible=not outside_window,
-            sources=drawn_at("cross_group_borrow"),
-            note=None if outside_window else self._cross_group_note(row, fact),
-            why=lambda outcome: (
-                _RESERVE_WINDOW_RUNG_WHY
-                if outside_window
-                else self._cross_group_why(
-                    outcome,
-                    cross_group_candidates,
-                    row=row,
-                    fact=fact,
-                    residual=residual,
-                    ungrouped_donors=ungrouped_donors,
-                )
-            ),
-        )
-
-        # ------------------------------------------- 4. The same agent's other order
-        #
-        # NEVER PROPOSED (ruled 25 August 2026): taking another sales order's committed
-        # quantity is a person's pick in Amend, made with the donor's position in front of
-        # them, and every take raises an order-back. Stated as a question all the same, and
-        # with the donors NAMED (AC-V5), because silence here reads as "there was nothing
-        # there" - which is a different and usually false statement.
-        group_borrow_donors = (
-            []
-            if outside_window
-            else [c for c in row.borrow_candidates if c.get("rung") == "group_borrow"]
-        )
-        add(
-            "group_borrow",
-            "Can we borrow from the same agent's other order in this group?",
-            taken=took_at("group_borrow"),
-            sources=drawn_at("group_borrow"),
-            eligible=False,
-            note=None if outside_window else self._group_borrow_note(group_borrow_donors),
-            why=lambda _outcome: (
-                _RESERVE_WINDOW_RUNG_WHY
-                if outside_window
-                else self._group_borrow_manual_why(group_borrow_donors)
-            ),
-        )
-
         # ------------------------------------------- 5. Buy
         #
-        # The whole-line rule: a line that could not be covered in full above is bought
-        # WHOLE, and the partial components the questions above produced are what the
-        # ladder tried, not what it kept.
+        # The whole-line rule: a unit no single step could cover in full is bought WHOLE,
+        # and the partial components the steps above produced are what the ladder tried,
+        # not what it kept.
         bought = row.proposed.get(BUY, _ZERO)
         add(
             "buy",
-            "Buy the rest?",
+            "Buy",
             taken=bought,
             offered=bought,
             why=lambda outcome: self._buy_why(fact, outcome, outside_window),
         )
-        # Where a person could still borrow from, and it is exactly what the two borrow
-        # questions above put on the table - question 3's cap-and-net-filtered candidates,
-        # then question 4's named donors. In offer order, de-duplicated, because one
-        # location can answer both questions.
+        # Where a person could still borrow from, and it is exactly what the borrow steps
+        # above put on the table - step 2's windowed donors, then the manual same-group
+        # donors `BorrowAddDialog` also lists. In offer order, de-duplicated, because one
+        # location can answer both.
         offerable: List[str] = []
         for code in [
-            *(str(c["location"]) for c in cross_group_candidates if c.get("location")),
+            # Step 1's OTHER-GROUP half: free stock the question named and the whole-unit
+            # rule then refused. A person may still pick it in Amend, and it is exactly what
+            # question 1 put on the table, so the Buy's sentence may name it (AC-V4).
+            *(str(c["location"]) for c in other_group_candidates if c.get("location")),
+            *(str(c["location"]) for c in order_borrow_candidates if c.get("location")),
             *(
                 str(c["warehouse_code"])
                 for c in [*group_borrow_donors, *ungrouped_donors]
@@ -2558,6 +2747,60 @@ class FulfilmentBoardService:
             if code not in offerable:
                 offerable.append(code)
         return steps, offerable
+
+    @staticmethod
+    def _order_borrow_note(donors: Sequence[Dict[str, Any]]) -> Optional[str]:
+        """Who was on the table, in the order they were offered (R4, R19)."""
+        if not donors:
+            return None
+        shown = " · ".join(
+            f"{c.get('donor_so_number') or 'an unnamed order'}"
+            + (f" line {c['donor_line_no']}" if c.get("donor_line_no") is not None else "")
+            + f" {qty_text(_dec(c.get('qty')))} at {c.get('location')}"
+            for c in donors[:3]
+        )
+        more = len(donors) - 3
+        return f"{shown} (+{more} more)" if more > 0 else shown
+
+    def _order_borrow_why(
+        self,
+        outcome: str,
+        donors: Sequence[Dict[str, Any]],
+        components: Sequence[Any],
+        *,
+        window: Optional[date] = None,
+    ) -> str:
+        """Step 2's sentence (AC-S3-4, AC-S3-11).
+
+        On a YES it is the component's own sentence - the one that names the donor, the
+        agent, the date and the debt month - because a second wording of one fact is a
+        second fact. On a NO it names THE WINDOW DATE: "there was no donor" is not
+        actionable, and "no order dated on or after 12 December 2026 holds any of this on
+        hand" tells a planner exactly which orders would have qualified.
+        """
+        drawn = [
+            component
+            for component in components
+            if getattr(component, "rung", None) == RUNG_ORDER_BORROW
+        ]
+        if drawn:
+            return " ".join(component.reason for component in drawn)
+        if outcome == "none_needed":
+            return "This unit was already covered before a borrow was needed."
+        if donors:
+            named = ", ".join(
+                f"{c.get('donor_so_number') or 'an unnamed order'} {qty_text(_dec(c.get('qty')))}"
+                for c in donors[:3]
+            )
+            return (
+                f"{named} could lend, but no single set of them covers the whole unit, so "
+                "none of it is proposed."
+            )
+        when = f" dated on or after {_date_words(window)}" if window else ""
+        return (
+            f"No later order{when} holds any of this item on hand, so there is nothing to "
+            "borrow. An order due sooner than that cannot wait for a replacement either."
+        )
 
     def _pool_pile(
         self,
@@ -2688,6 +2931,8 @@ class FulfilmentBoardService:
         pool_open: Optional[Decimal],
         outcome: str,
         pools_net: Optional[Decimal] = None,
+        borrow_donors: Sequence[Dict[str, Any]] = (),
+        components: Sequence[Any] = (),
     ) -> str:
         """Question 2's one sentence, with the PILE's net inside it (section 1e).
 
@@ -2699,8 +2944,32 @@ class FulfilmentBoardService:
         from the pool" is about the five pools together and never about which of them this
         location happens to call its own. `_pool_why` still writes the sentence for a line
         that has a pool of its own, since it is the one that can quote the pile's triple.
+
+        STEP 4b comes first when it fired (R34): its component's own sentence names the pool
+        order that lent, and that is the fact a planner acts on. The free-pile sentences
+        below all describe the pile, which is not where the quantity came from - "No shared
+        pool holds this product." was printed over a borrow of 30 from a pool order, because
+        the pile was empty and the borrow was invisible here.
         """
+        drawn = [
+            component
+            for component in components
+            if getattr(component, "rung", None) == RUNG_POOL
+            and getattr(component, "donor_so_number", None)
+        ]
+        if drawn:
+            return " ".join(component.reason for component in drawn)
         if not pool_chain:
+            if borrow_donors:
+                named = ", ".join(
+                    f"{c.get('donor_so_number') or 'an unnamed pool order'} "
+                    f"{qty_text(_dec(c.get('qty')))}"
+                    for c in borrow_donors[:3]
+                )
+                return (
+                    f"The shared pile holds none of this, and {named} could lend from the "
+                    "pool, but no single set of them covers the whole unit."
+                )
             return "No shared pool holds this product."
         # `pool_reserve_capacity` is the SAME cap the ladder applied, read rather than
         # forked: an oversold pile whose raw free stock still reads positive must not show
@@ -2888,6 +3157,8 @@ class FulfilmentBoardService:
         fact: Any,
         water: Sequence[Any] = (),
         drawn: Sequence[Tuple[str, Decimal, bool]] = (),
+        other: Sequence[Dict[str, Any]] = (),
+        offer: Optional[Decimal] = None,
     ) -> str:
         """Why rung 2 (the ownership group) ended where it did (section 1d).
 
@@ -2914,8 +3185,14 @@ class FulfilmentBoardService:
                 "from."
             )
         net = _dec(getattr(fact, "group_net", _ZERO))
-        offer = _dec(getattr(fact, "group_offer", _ZERO))
+        # What step 1 could actually put on the table: the own group's date-aware share plus
+        # the other project groups' free piles (v7.1, R5/R24), stated by the caller because
+        # only the caller ran the walk that produced it.
+        offer = (
+            _dec(getattr(fact, "group_offer", _ZERO)) if offer is None else _dec(offer)
+        )
         late = self._late_water_clause(water)
+        candidates = [*candidates, *other]
         if not candidates:
             # LADDER V4 (section 1d): the group is ONE pile, so the sentence is about the
             # group's net and never about a single warehouse. `MWH-IB` holding 7000 is not
@@ -2987,126 +3264,6 @@ class FulfilmentBoardService:
         return (
             f" The group also has {named}{tail} on the water after the required date, so "
             "none of that is counted here."
-        )
-
-    @staticmethod
-    def _group_borrow_note(donors: Sequence[Dict[str, Any]]) -> Optional[str]:
-        if not donors:
-            return None
-        shown = " · ".join(
-            f"{c['donor_so_number']} line {c['donor_line_no']} {qty_text(_dec(c.get('qty', c.get('free_qty', 0))))}"
-            for c in donors[:3]
-        )
-        more = len(donors) - 3
-        return f"{shown} (+{more} more)" if more > 0 else shown
-
-    @staticmethod
-    def _group_borrow_manual_why(donors: Sequence[Dict[str, Any]]) -> str:
-        """Question 4's sentence: a person's pick in Amend, with the donors NAMED (AC-V5).
-
-        The engine never proposes this and never will (ruled 25 August 2026), so the useful
-        thing the row can say is WHO holds it. "Never auto-borrowed" alone reads as "there
-        was nothing there", which is usually false - the donors are on the contribution's own
-        `borrow_candidates`, waiting for somebody to pick one.
-
-        The caller states the donor list rather than filtering it again here: the Buy's own
-        note is written from the same list, and two filters over one set is how the two
-        sentences came to contradict each other (AC-V4).
-        """
-        if not donors:
-            return (
-                "No other sales order in this ownership group holds any of this item, so "
-                "there is nothing to borrow from a person's pick either."
-            )
-        named = ", ".join(
-            f"{c['donor_so_number']} line {c['donor_line_no']}" for c in donors[:3]
-        )
-        more = f" (+{len(donors) - 3} more)" if len(donors) > 3 else ""
-        return (
-            f"{named}{more} hold this in the group. Borrowing from another sales order is "
-            "a person's pick in Amend, where the donor's position and the order-back are in "
-            "front of you - never proposed here."
-        )
-
-    @staticmethod
-    def _cross_group_note(row: "_Row", fact: Any) -> Optional[str]:
-        donors = [c for c in row.borrow_candidates if c.get("rung") == "cross_group_borrow"]
-        if not donors:
-            return None
-        shown = " · ".join(
-            f"{c['warehouse_code']} {qty_text(_dec(c.get('free_qty', 0)))}"
-            for c in donors[:3]
-        )
-        more = len(donors) - 3
-        return f"{shown} (+{more} more)" if more > 0 else shown
-
-    def _cross_group_why(
-        self,
-        outcome: str,
-        candidates: List[Dict[str, Any]],
-        *,
-        row: "_Row",
-        fact: Any,
-        residual: Decimal,
-        ungrouped_donors: Sequence[Dict[str, Any]] = (),
-    ) -> str:
-        """Question 3's sentence, with the donor GROUP's net in it and, where the cap is
-        what refused the borrow, the cap's own number (AC-V4).
-
-        Two different Noes, and telling them apart is the whole point: "the NTC group nets
-        0" sends a planner nowhere, while "DC1-NTC holds 100 but the limit is 50 and 60 is
-        still needed" sends them to the policy screen. The old sentence said one thing for
-        both, and it named neither figure.
-        """
-        if outcome == "none_needed":
-            return _COVERED_BEFORE
-        if not fact.group_code:
-            # No group, so no cross-group question. Free stock elsewhere is still real and
-            # is still a person's pick, and a row that stayed silent about it would print a
-            # bare Buy beside stock sitting one location away.
-            if not ungrouped_donors:
-                return (
-                    "This location carries no ownership group, and no other location holds "
-                    "any of this item."
-                )
-            named = ", ".join(
-                f"{c['warehouse_code']} {qty_text(_dec(c.get('free_qty', 0)))}"
-                for c in ungrouped_donors[:3]
-            )
-            return (
-                f"This location carries no ownership group, so there is no other group to "
-                f"borrow from; {named} holds this item, which is a person's pick in Amend."
-            )
-        if candidates:
-            where = ", ".join(
-                f"{c['location']} ({c.get('group_code') or 'no'} group nets "
-                f"{qty_text(self._donor_group_net(fact, c.get('group_code')))})"
-                for c in candidates
-            )
-            if outcome == "took":
-                return f"Free stock at {where}."
-            # OFFERED and not taken: the whole-line rule is what dropped it. There is no
-            # cross-group cap left to blame since v7.1 (R5), so this is the only No that
-            # can be given once a donor has been offered.
-            return f"Free stock at {where}. {_WHOLE_LINE_RULE_DROPPED}"
-        # Nothing offered at all. `borrow_candidates` carries every donor the walk saw, so
-        # the sentence can still name which groups were looked at and what they net.
-        donors = [c for c in row.borrow_candidates if c.get("rung") == "cross_group_borrow"]
-        groups = sorted(
-            {
-                sales_agent_service.group_of_warehouse_code(c.get("warehouse_code"))
-                for c in donors
-            }
-            - {None, fact.group_code}
-        )
-        if groups:
-            named = ", ".join(
-                f"{group} nets {qty_text(self._donor_group_net(fact, group))}"
-                for group in groups
-            )
-            return f"No other ownership group has anything left: {named}."
-        return (
-            "No location outside this ownership group holds any of this item."
         )
 
     def _donor_group_net(self, fact: Any, group: Optional[str]) -> Decimal:
@@ -3907,7 +4064,7 @@ class FulfilmentBoardService:
                 "net": qty_text(
                     position.net + self._mine_in(position, own_demand, product_id)
                 ),
-                "net_of": "pools",
+                "net_of": POOLS_SET,
             }
         group = netting.group_of(warehouse_id)
         if not group:
@@ -4097,6 +4254,9 @@ class FulfilmentBoardService:
             # gave nothing, because "the pool was checked and had none" is the answer to "how
             # did you arrive at the Buy" and an omitted step reads as a step never taken.
             "trail": row.trail,
+            # The five steps of ladder v7.1, always all five and always in step order
+            # (R36, AC-S3-14). The client renders them as given and never re-sorts.
+            "options": row.options,
             # The item facts the ladder judged this line on. Null, never `false`, on a line
             # it did not walk: an unplannable or covered line was judged against nothing.
             "item_flags": row.item_flags,

@@ -34,6 +34,9 @@ const listingKeys: (string | null | undefined)[] = [];
 vi.mock('next/navigation', () => ({
   usePathname: () => '/project-sales/pipeline',
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  // The list restores its page, sort and filters from the query string Back hands
+  // it (S3-01), so it reads the URL on every render.
+  useSearchParams: () => new URLSearchParams(''),
 }));
 
 vi.mock('next/link', () => ({
@@ -163,7 +166,11 @@ describe('PipelineClient', () => {
   it('keeps the view toggle and Register project in the page header', async () => {
     renderClient();
 
-    const header = screen.getByRole('banner');
+    // The page header's action group (S5-01): the hand-rolled <header> that used
+    // to carry the banner role is now PageHeader's own toolbar row.
+    const header = document.querySelector(
+      '[data-slot="toolbar-actions"]',
+    ) as HTMLElement;
     expect(within(header).getByRole('button', { name: /board/i })).toBeInTheDocument();
     expect(within(header).getByRole('button', { name: /grid/i })).toBeInTheDocument();
     expect(

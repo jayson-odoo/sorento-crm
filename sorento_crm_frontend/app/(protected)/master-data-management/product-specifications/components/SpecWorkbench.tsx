@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { ArrowUpNarrowWide, BookOpen, ListChecks } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { getSpecRegistry } from '../services/productSpecService';
@@ -34,17 +35,24 @@ export default function SpecWorkbench() {
       <SpecSearchPreview />
 
       <Tabs defaultValue="specs" className="w-full">
-        <TabsList variant="line" className="mb-4 w-full justify-start overflow-x-auto">
-          <TabsTrigger value="specs" className="gap-2">
-            Specifications
+        <TabsList className="mb-4">
+          <TabsTrigger value="specs">
+            <ListChecks />
+            <span>Specifications</span>
             {specCount !== null && (
               <Badge variant="secondary" size="sm" appearance="light" shape="circle">
                 {specCount}
               </Badge>
             )}
           </TabsTrigger>
-          <TabsTrigger value="ranking">Ranking</TabsTrigger>
-          <TabsTrigger value="catalogue">Catalogue</TabsTrigger>
+          <TabsTrigger value="ranking">
+            <ArrowUpNarrowWide />
+            <span>Ranking</span>
+          </TabsTrigger>
+          <TabsTrigger value="catalogue">
+            <BookOpen />
+            <span>Catalogue</span>
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="specs" className="mt-0 focus-visible:outline-none">
