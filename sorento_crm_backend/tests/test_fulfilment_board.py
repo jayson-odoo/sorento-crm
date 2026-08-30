@@ -121,7 +121,7 @@ def _product(db, code: str) -> Product:
 def _warehouse(db, code: str) -> Warehouse:
     row = Warehouse(
         id=_uid(), warehouse_code=code, warehouse_name=code, is_active=True,
-        segment="project",
+        segment="project", fulfilment_planning=True,
     )
     db.add(row)
     db.flush()
@@ -3671,18 +3671,19 @@ def test_the_borrow_step_offers_what_it_found_and_takes_none_of_it():
         ]
 
 
-def test_the_cross_group_cap_is_measured_against_the_true_residual_not_the_whole_line():
-    """Nit fix: once the whole-line rule fires (section E rule 6), `components` drops every
-    partial rung and carries ONLY a Buy of the whole line - so the trail's own bookkeeping
+def test_the_cross_group_rung_is_asked_against_the_true_residual_not_the_whole_line():
+    """Once the whole-line rule fires (section E rule 6), `components` drops every partial
+    rung and carries ONLY a Buy of the whole line - so the trail's own bookkeeping
     (`remaining`) never moved off the full quantity by the time cross-group borrow is
-    reached, and capping the candidate list against it is capping against a number the
-    engine never asked that rung to cover. The engine's own residual
-    (`_ladder_residual_before_cross_group`) accounts for what the earlier rungs WOULD have
-    covered, whether or not the whole-line rule keeps that partial composition.
+    reached. The engine's own residual (`_ladder_residual_before_cross_group`) accounts for
+    what the earlier rungs WOULD have covered, whether or not the whole-line rule keeps that
+    partial composition, and that is the number the rung is asked about.
 
-    30 arrives in time, leaving a TRUE residual of 70; the donor holds only 5 (never
-    enough to cover the line in full, so the whole-line rule still buys 100 whole) but the
-    cap is configured at 80 - inside 70, outside the wrong (unmoved) 100."""
+    30 arrives in time, leaving a TRUE residual of 70; the donor holds only 5, never enough
+    to cover the line in full, so the whole-line rule still buys 100 whole and question 3
+    says so with the donor named. (v7.1, R5: there is no cross-group CAP left for the
+    residual to be measured against - what the residual still decides is whether the rung is
+    asked at all.)"""
     with blank_session() as db:
         from app.services.scm import priority
 
@@ -3698,7 +3699,6 @@ def test_the_cross_group_cap_is_measured_against_the_true_residual_not_the_whole
         priority.create_revision(
             db, name=f"zzt-cg-{_uid()[:6]}", factors={}, demand_class_weights={},
             reorder_coverage_until=None,
-            cross_group_borrow_max_qty=80, cross_group_borrow_max_pct=0,
         )
         db.commit()
         order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
@@ -3711,13 +3711,11 @@ def test_the_cross_group_cap_is_measured_against_the_true_residual_not_the_whole
         assert contribution["qty_proposed_buy"] == "100"
         step = _step(contribution, "cross_group_borrow")
         why = step["why"] or ""
-        # 70 (the true residual) is inside the 80 cap, so the donor is offered; the buggy
-        # reading (100, the untouched whole line) would have excluded it and said no donor
-        # was within the limit at all. Naming the donor is not enough to tell those apart -
-        # the CAP-refused sentence names it too - so the two discriminating phrases are
-        # what is pinned: the donor cleared the limit, and nothing "is still needed".
+        # The donor is SEEN and named (the residual of 70 is > 0, so the rung was asked),
+        # and the sentence is the whole-line one rather than a cap refusal - there is no cap
+        # left to refuse anything.
         assert elsewhere.warehouse_code in why
-        assert "within the cross-group borrow limit" in why, why
+        assert "cross-group borrow limit" not in why, why
         assert "is still needed" not in why, why
 
 
@@ -6233,3 +6231,117 @@ def test_the_pool_rung_names_the_pools_net_and_the_classification_in_front_of_it
             "the classification leads the sentence, per the captain's own instruction"
         )
         assert contribution["qty_proposed_buy"] == "10"
+
+
+# --------------------------------------------------------------------------- #
+# R17 / AC-S1-6 - the fulfilment-planning flag on the board
+# --------------------------------------------------------------------------- #
+
+
+def test_a_covered_row_at_a_bin_outside_planning_is_covered_not_unplannable():
+    """The flag verdict belongs to UNDECIDED lines only (review of S2, 30 Aug).
+
+    A line an active decision covers is covered: the stock was found, promised and
+    confirmed. Flagging the bin off afterwards says what may be PROPOSED next; it does not
+    retract what was decided. Reading `unplannable` off the flag alone turned a settled
+    order into `Needs a location` / `blocked`, took it out of the board's own
+    `unplannable_count` standing, and had the frontend's `confirmLinesFor` drop it.
+
+    It also kept its location in the counted read set only by a special case, because the
+    board fixes that set off the plannable rows - and a location never asked about prints
+    dashes, not zeroes (`_counted_warehouses`), so the frozen decision rendered beside a row
+    of `-`, which reads as "we lost the figures" rather than as "nobody plans here any more".
+    """
+    with blank_session() as db:
+        world = _covered_world(db)
+        _decide_line_one(db, world)
+        # Taken out of planning AFTER the decision was frozen, which is the live case: a
+        # location stops being planned against while decisions already stand at it.
+        world["own"].fulfilment_planning = False
+        db.flush()
+
+        board = _service(db).build(
+            ["ZZT-SO-COVER", "ZZT-SO-AHEAD"], granularity="week", as_of=TODAY
+        )
+
+        contribution = _covered_contribution(board, world)
+        cell = next(c for c in board["cells"] if contribution in c["contributions"])
+        row = next(
+            location for location in cell["locations"]
+            if location["location"] == world["own"].warehouse_code
+        )
+        standing = next(
+            entry for entry in board["orders"]
+            if entry["so_number"] == "ZZT-SO-COVER"
+        )
+        cell_unplannable = cell["unplannable_count"]
+        # The order's OTHER line, at the same bin and never decided: the verdict is still
+        # its verdict, which is what makes the covered line's exemption a rule rather than
+        # a hole.
+        sibling = next(
+            c for c in cell["contributions"]
+            if c["so_number"] == "ZZT-SO-COVER" and c["qty"] == "21"
+        )
+
+    # The decision is still what it says it is, and the row is not blocked.
+    assert contribution["covered"] is True
+    assert contribution["unplannable"] is False
+    assert contribution["decision"]["borrow"][0]["qty"] == "43"
+    # The count and the standing agree with it: the undecided sibling, and only it.
+    assert sibling["unplannable"] is True
+    assert cell_unplannable == 1
+    assert standing["unplannable_count"] == 1
+    # And its location was READ: every figure is a fact, none of them a dash.
+    assert row["qty_on_hand"] == "20"
+    assert row["qty_owed_all_orders"] is not None
+    assert row["qty_owed_confirmed"] is not None
+    assert row["qty_incoming"] is not None
+
+
+def test_a_deactivated_bin_is_not_told_it_is_outside_fulfilment_planning():
+    """The verdict belongs to an ACTIVE bin with the flag off, and to nothing else.
+
+    An inactive warehouse was already outside every read this branch narrowed - they were
+    all `is_active` filtered - so it keeps the verdict it carried before the flag existed.
+    Handing it `Outside fulfilment planning` instead sends a planner to the Warehouses
+    screen to turn on a switch that is already on, when what actually happened is that the
+    location was retired.
+    """
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        retired = _warehouse(db, f"ZZTRET{_uid()[:5]}"[:20])
+        retired.is_active = False
+        off = _warehouse(db, f"ZZTOFF{_uid()[:5]}"[:20])
+        off.fulfilment_planning = False
+        db.flush()
+        _stock(db, product, retired, on_hand=100)
+        _stock(db, product, off, on_hand=100)
+
+        retired_order = _order(db, so_number="ZZT-SO-RETIRED", order_date=date(2026, 1, 1))
+        _line(
+            db, retired_order, product, qty="10", required_date=date(2026, 9, 3),
+            warehouse=retired,
+        )
+        off_order = _order(db, so_number="ZZT-SO-OFFPLAN", order_date=date(2026, 1, 1))
+        _line(
+            db, off_order, product, qty="10", required_date=date(2026, 9, 3), warehouse=off,
+        )
+
+        board = _service(db).build(
+            ["ZZT-SO-RETIRED", "ZZT-SO-OFFPLAN"], granularity="week", as_of=TODAY
+        )
+
+        cell = _cell(board, product.product_code, "2026-08-31")
+        by_order = {c["so_number"]: c for c in cell["contributions"]}
+
+    on_retired = by_order["ZZT-SO-RETIRED"]
+    assert on_retired["unplannable"] is False
+    # Nothing at the retired location is drawable, so the line is bought - the same answer
+    # it got before the flag existed.
+    assert on_retired["qty_proposed_buy"] == "10"
+    assert "unplannable" not in {s["kind"] for s in on_retired["sources"]}
+
+    on_off_plan = by_order["ZZT-SO-OFFPLAN"]
+    assert on_off_plan["unplannable"] is True
+    assert [s["kind"] for s in on_off_plan["sources"]] == ["unplannable"]
+    assert on_off_plan["sources"][0]["reason"] == "Outside fulfilment planning"

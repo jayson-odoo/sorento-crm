@@ -169,6 +169,12 @@ EMAIL_EVENT_REGISTRY: list[EventDef] = [
         priority=5,
     ),
     EventDef(
+        "ticket_comment_mention",
+        "Mentioned in an internal note",
+        "Emails a user when a teammate mentions them in an internal note on a "
+        "conversation ticket. Gated on the user's notify_email_on_mention toggle.",
+    ),
+    EventDef(
         "notification_delivery",
         "Generic notification delivery",
         "Fallback event_key for legacy NotificationDelivery rows whose event_type does not "

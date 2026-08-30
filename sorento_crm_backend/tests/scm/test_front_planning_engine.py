@@ -757,8 +757,12 @@ def test_the_pool_rung_still_runs_when_the_group_holds_nothing():
 
 def test_cross_group_borrow_completes_the_line_within_the_cap():
     """Section 1b rung 4: "if pool also don't have then consider borrowing from other
-    location's available quantity" - the cap is the service's decision; this pins that the
-    engine draws whatever candidate list it is handed, after the group and the pool."""
+    location's available quantity" - this pins that the engine draws whatever candidate list
+    it is handed, after the group and the pool.
+
+    The name is historical: the small-quantity cap the rung used to be gated by is gone
+    (v7.1, R5, migration 443), so there is no limit left for the sentence to name.
+    """
     from app.services.scm.front_planning_engine import propose_line
 
     proposed = _components(
@@ -778,7 +782,7 @@ def test_cross_group_borrow_completes_the_line_within_the_cap():
     assert component.source_location == "BRW-HP"
     assert component.qty == Decimal("20")
     assert "BRW-HP" in component.reason
-    assert "cross-group borrow limit" in component.reason
+    assert "cross-group borrow limit" not in component.reason
 
 
 def test_borrowing_from_another_sales_order_is_never_proposed_automatically():

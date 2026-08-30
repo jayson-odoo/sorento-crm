@@ -139,7 +139,22 @@ def _product(db, *, discontinued: bool = False) -> Product:
     return row
 
 
-def _warehouse(db, code: str, *, segment=None, pool_warehouse_id=None, active: bool = True) -> Warehouse:
+def _warehouse(
+    db,
+    code: str,
+    *,
+    segment=None,
+    pool_warehouse_id=None,
+    active: bool = True,
+    fulfilment_planning: bool = True,
+) -> Warehouse:
+    """A location for a supply test, IN fulfilment planning unless the test says otherwise.
+
+    The column defaults to false on a real database (migration 443 flags the client's own
+    bins once and an admin edits it after), but a warehouse a supply test seeds exists in
+    order to be planned against - so the default here is the opposite of the column's, and
+    the tests that care about a flagged-OFF bin pass `fulfilment_planning=False` and say so.
+    """
     row = Warehouse(
         id=_uid(),
         warehouse_code=code,
@@ -148,6 +163,7 @@ def _warehouse(db, code: str, *, segment=None, pool_warehouse_id=None, active: b
         is_active=active,
         segment=segment,
         pool_warehouse_id=pool_warehouse_id,
+        fulfilment_planning=fulfilment_planning,
     )
     db.add(row)
     db.flush()

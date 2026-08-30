@@ -1,6 +1,8 @@
 /**
  * FulfilmentPriorityPanel - loading / empty / error / data states + save.
- * PLAN-demo-followups-19aug-ladder-v2.md C1/C2.
+ * PLAN-demo-followups-19aug-ladder-v2.md C1/C2, amended by borrow ladder v7.1 S1
+ * (AC-S1-4): the two cross-group cap inputs are gone and `TBA date from` sits beside
+ * `Purchasing covers demand until`.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -25,10 +27,26 @@ const DATA = {
   },
   demand_class_weights: { project: 1, retail: 0.4 },
   reorder_coverage_until: '2026-10-31',
-  cross_group_borrow_max_qty: 50,
-  cross_group_borrow_max_pct: 10,
+  tba_date_from: '2029-01-01',
   exists: true,
 };
+
+/** The column default of `scm.priority_policy.tba_date_from` (migration 443). */
+const DEFAULT_TBA = '2029-01-01';
+
+/** Local calendar day, the way the panel computes "today" for its own mirror check. */
+function todayIso(): string {
+  const now = new Date();
+  return new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+}
+
+function isoDaysFromToday(days: number): string {
+  const now = new Date();
+  const shifted = new Date(now.getTime() + days * 86400000);
+  return new Date(shifted.getTime() - shifted.getTimezoneOffset() * 60000)
+    .toISOString()
+    .slice(0, 10);
+}
 const mutateAsync = vi.fn();
 
 beforeEach(() => {
@@ -72,8 +90,9 @@ describe('FulfilmentPriorityPanel', () => {
     expect(screen.getByLabelText('Project')).toHaveValue(1);
     expect(screen.getByLabelText('Retail')).toHaveValue(0.4);
     expect(screen.getByLabelText(/Purchasing covers demand until/i)).toHaveValue('2026-10-31');
-    expect(screen.getByLabelText(/borrow cap \(qty\)/i)).toHaveValue(50);
-    expect(screen.getByLabelText(/borrow cap \(%\)/i)).toHaveValue(10);
+    expect(screen.getByLabelText(/TBA date from/i)).toHaveValue(DEFAULT_TBA);
+    // R5 dropped the cross-group caps, so the two inputs are gone entirely.
+    expect(screen.queryByLabelText(/borrow cap/i)).not.toBeInTheDocument();
   });
 
   it('save sends the edited weights and settings', async () => {
@@ -97,8 +116,7 @@ describe('FulfilmentPriorityPanel', () => {
       },
       demand_class_weights: { project: 1, retail: 0.4 },
       reorder_coverage_until: '2026-12-01',
-      cross_group_borrow_max_qty: 50,
-      cross_group_borrow_max_pct: 10,
+      tba_date_from: DEFAULT_TBA,
     });
   });
 
@@ -125,15 +143,113 @@ describe('FulfilmentPriorityPanel', () => {
     expect(mutateAsync).not.toHaveBeenCalled();
   });
 
-  it('blocks a save with an out-of-range cross-group borrow percentage', () => {
+  it('blocks a save with a TBA date in the past (client mirror of the 422)', () => {
     hooks.useFulfilmentPriority.mockReturnValue({ data: DATA, isLoading: false, isError: false });
     render(<FulfilmentPriorityPanel />);
 
-    fireEvent.change(screen.getByLabelText(/borrow cap \(%\)/i), { target: { value: '150' } });
+    fireEvent.change(screen.getByLabelText(/TBA date from/i), {
+      target: { value: isoDaysFromToday(-1) },
+    });
     fireEvent.click(screen.getByRole('button', { name: /Save fulfilment priority/i }));
 
-    expect(screen.getByText(/must be between 0 and 100/i)).toBeInTheDocument();
+    expect(screen.getByText('TBA date from must be today or later.')).toBeInTheDocument();
     expect(mutateAsync).not.toHaveBeenCalled();
+  });
+
+  it('saves a weight over a stored TBA date that has since passed', async () => {
+    // The freshness rule is about a CHANGE, not about the value. A TBA date is legal the
+    // day it is saved and historic a year later, and the panel sends the stored date back
+    // with EVERY save - so checking the value rather than the edit locked the whole screen:
+    // no weight, no coverage date and no class weight could be saved again until somebody
+    // also picked a new TBA date.
+    const stale = isoDaysFromToday(-400);
+    hooks.useFulfilmentPriority.mockReturnValue({
+      data: { ...DATA, tba_date_from: stale },
+      isLoading: false,
+      isError: false,
+    });
+    render(<FulfilmentPriorityPanel />);
+
+    fireEvent.change(screen.getByLabelText(/Delivery date/i), { target: { value: '7' } });
+    fireEvent.click(screen.getByRole('button', { name: /Save fulfilment priority/i }));
+
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
+    expect(screen.queryByText('TBA date from must be today or later.')).not.toBeInTheDocument();
+    expect(mutateAsync.mock.calls[0][0].tba_date_from).toBe(stale);
+    expect(mutateAsync.mock.calls[0][0].factors.need_by_date).toBe(7);
+  });
+
+  it('still blocks MOVING the TBA date to a different past day', () => {
+    const stale = isoDaysFromToday(-400);
+    hooks.useFulfilmentPriority.mockReturnValue({
+      data: { ...DATA, tba_date_from: stale },
+      isLoading: false,
+      isError: false,
+    });
+    render(<FulfilmentPriorityPanel />);
+
+    fireEvent.change(screen.getByLabelText(/TBA date from/i), {
+      target: { value: isoDaysFromToday(-1) },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Save fulfilment priority/i }));
+
+    expect(screen.getByText('TBA date from must be today or later.')).toBeInTheDocument();
+    expect(mutateAsync).not.toHaveBeenCalled();
+  });
+
+  it('accepts today itself - the boundary the backend allows', async () => {
+    hooks.useFulfilmentPriority.mockReturnValue({ data: DATA, isLoading: false, isError: false });
+    render(<FulfilmentPriorityPanel />);
+
+    fireEvent.change(screen.getByLabelText(/TBA date from/i), { target: { value: todayIso() } });
+    fireEvent.click(screen.getByRole('button', { name: /Save fulfilment priority/i }));
+
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
+    expect(mutateAsync.mock.calls[0][0].tba_date_from).toBe(todayIso());
+  });
+
+  it('Reset restores the default TBA date, and hides once the field is back at it', () => {
+    // The column is NOT NULL, so "clear" means "back to 2029-01-01", never an empty field.
+    hooks.useFulfilmentPriority.mockReturnValue({ data: DATA, isLoading: false, isError: false });
+    render(<FulfilmentPriorityPanel />);
+
+    // At the default there is nothing to reset to, so the button is not offered.
+    expect(screen.queryByRole('button', { name: 'Reset' })).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText(/TBA date from/i), { target: { value: '2031-05-01' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Reset' }));
+
+    expect(screen.getByLabelText(/TBA date from/i)).toHaveValue(DEFAULT_TBA);
+    expect(screen.queryByRole('button', { name: 'Reset' })).not.toBeInTheDocument();
+  });
+
+  it('the coverage-until Clear button still resolves beside the TBA Reset', () => {
+    // Two buttons live in this block now; `Clear` must still find the coverage date and
+    // leave the TBA date where it was.
+    hooks.useFulfilmentPriority.mockReturnValue({ data: DATA, isLoading: false, isError: false });
+    render(<FulfilmentPriorityPanel />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
+
+    expect(screen.getByLabelText(/Purchasing covers demand until/i)).toHaveValue('');
+    expect(screen.getByLabelText(/TBA date from/i)).toHaveValue(DEFAULT_TBA);
+  });
+
+  it('an emptied date input saves the column default, never an empty value', async () => {
+    // The column is NOT NULL and a native date input hands back '' when cleared, so the
+    // one fallback left on this screen turns that into the default rather than a blank.
+    hooks.useFulfilmentPriority.mockReturnValue({
+      data: { ...DATA, tba_date_from: '2031-05-01' },
+      isLoading: false,
+      isError: false,
+    });
+    render(<FulfilmentPriorityPanel />);
+
+    fireEvent.change(screen.getByLabelText(/TBA date from/i), { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: /Save fulfilment priority/i }));
+
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
+    expect(mutateAsync.mock.calls[0][0].tba_date_from).toBe(DEFAULT_TBA);
   });
 
   it('an extra factor / demand-class key the backend stored round-trips through save untouched', async () => {

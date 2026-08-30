@@ -40,6 +40,8 @@ _NOTIFICATION_TYPE_TO_EVENT_KEY: dict[str, str] = {
     # the same outbox event key / template use case (sla_deadline_extended).
     "form_sla:deadline_extended": "sla_deadline_extended",
     "conversation_sla:deadline_extended": "sla_deadline_extended",
+    # Mentioned in an internal note (email lane of the mention notification).
+    "conversation_ticket_comment": "ticket_comment_mention",
     "import_job_finished": "import_job_completed",
     "import_job_failed": "import_job_completed",
     "user_invitation": "user_invitation",

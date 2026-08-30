@@ -1,3 +1,25 @@
+/**
+ * ============================================================================
+ * Warehouses - feature service
+ * ============================================================================
+ * Layering: components -> hooks (useWarehouses*) -> THIS service -> lib/api -> backend.
+ *
+ * -- BACKEND CONTRACT for `fulfilment_planning` (borrow ladder v7.1 S1, migration 443) --
+ *
+ *   warehouses.fulfilment_planning : boolean, NOT NULL, DEFAULT false
+ *     Seeded true for every ACTIVE bin whose `warehouse_code` ends in `-BB`, `-IB`,
+ *     `-IR`, `-NTC` or `-AM` (24 of 83 on the 29 Aug dev copy); false everywhere else,
+ *     pools included. A bin that is off is outside fulfilment planning entirely
+ *     (UAC R17 / AC-S1-1).
+ *
+ *   GET  /api/v1/inventory/warehouses          -> each row carries `fulfilment_planning`;
+ *                                              `sort=fulfilment_planning` is a valid sort key
+ *                                              (the list column header offers it)
+ *   GET  /api/v1/inventory/warehouses/{id}     -> carries `fulfilment_planning`
+ *   POST /api/v1/inventory/warehouses          body may carry `fulfilment_planning`
+ *   PUT  /api/v1/inventory/warehouses/{id}     body may carry `fulfilment_planning`
+ * ============================================================================
+ */
 import { apiFetch } from '@/lib/api';
 import type { Warehouse, WarehouseFormData } from '../types/warehouse.types';
 import type { DataGridApiFetchParams, DataGridApiResponse } from '@/components/ui/data-grid';

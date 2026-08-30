@@ -43,7 +43,7 @@ async def get_warehouses(
             "visibility card's \"Dealer pool\" preset."
         ),
     ),
-    sort: Optional[str] = Query(None, description="Sort field: warehouse_code|warehouse_name|location|is_active|created_at|updated_at|zones_count|stock_count"),
+    sort: Optional[str] = Query(None, description="Sort field: warehouse_code|warehouse_name|location|is_active|fulfilment_planning|created_at|updated_at|zones_count|stock_count"),
     dir: Optional[str] = Query("asc", description="asc|desc"),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
