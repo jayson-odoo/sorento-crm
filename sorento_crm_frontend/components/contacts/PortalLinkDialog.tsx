@@ -2,7 +2,7 @@
 
 import { useEffect } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
-import { Loader2, Copy, ExternalLink, Send } from 'lucide-react';
+import { Check, Loader2, Copy, ExternalLink, Send } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   Dialog,
@@ -18,6 +18,7 @@ import {
   useContactPortalLinkMutation,
   useSendContactPortalLinkMutation,
 } from '@/hooks/useContactPortalLink';
+import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard';
 
 export interface PortalLinkDialogProps {
   open: boolean;
@@ -55,17 +56,14 @@ export default function PortalLinkDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, contactId]);
 
+  const { isCopied, copyToClipboard } = useCopyToClipboard();
   const data = linkMutation.data;
   const portalUrl = data?.portal_url ?? '';
 
+  // The tick on the button is the confirmation; only a refusal needs saying (S7-05).
   async function handleCopy() {
     if (!portalUrl) return;
-    try {
-      await navigator.clipboard.writeText(portalUrl);
-      toast.success('Copied');
-    } catch {
-      toast.error('Press Ctrl/Cmd+C to copy');
-    }
+    if (!(await copyToClipboard(portalUrl))) toast.error('Press Ctrl/Cmd+C to copy');
   }
 
   async function handleSend() {
@@ -110,7 +108,12 @@ export default function PortalLinkDialog({
             <div className="flex gap-2">
               <Input value={data.portal_url} readOnly onFocus={(e) => e.currentTarget.select()} />
               <Button type="button" variant="outline" onClick={handleCopy}>
-                <Copy className="size-4 mr-1" /> Copy
+                {isCopied ? (
+                  <Check className="size-4 mr-1" aria-hidden />
+                ) : (
+                  <Copy className="size-4 mr-1" aria-hidden />
+                )}
+                {isCopied ? 'Copied' : 'Copy'}
               </Button>
             </div>
             <div className="flex justify-center">
