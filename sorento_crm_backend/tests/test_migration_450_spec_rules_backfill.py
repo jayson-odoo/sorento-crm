@@ -50,11 +50,26 @@ _HUMAN_CLASS_RULES = [
 _HUMAN_LENGTH_RULES = [{"match": "regex", "pattern": r"\bL\s*(\d+)", "capture": 1}]
 
 
-def _migration():
+def _migration_module():
     spec = importlib.util.spec_from_file_location("zzt_migration_450", _MIGRATION_PATH)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def _run(db, direction: str = "upgrade") -> None:
+    """Run the migration body against this session's connection.
+
+    `op.get_bind()` needs a MigrationContext, so one is built over the test's own
+    connection - everything it writes is inside the transaction `pg_session` rolls back.
+    """
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+
+    module = _migration_module()
+    context = MigrationContext.configure(connection=db.connection())
+    with Operations.context(context):
+        getattr(module, direction)()
 
 
 def _has_column(db) -> bool:
@@ -109,9 +124,8 @@ def _hidden(spec_key: str, matches: set[str]) -> list[dict]:
 @pytest.fixture
 def db():
     with pg_session() as session:
-        migration = _migration()
         if _has_column(session):
-            migration.downgrade()
+            _run(session, "downgrade")
         _own(session, "class", _HUMAN_CLASS_RULES, None)
         _own(session, "dim_length", _HUMAN_LENGTH_RULES, "mm")
         _own(session, "thickness", [], "mm")
@@ -119,10 +133,17 @@ def db():
 
 
 def test_an_owned_class_key_keeps_the_name_head_and_the_category(db):
-    _migration().upgrade()
+    _run(db)
 
     stored = _rules(db, "class")
-    assert stored[: len(_HUMAN_CLASS_RULES)] == _HUMAN_CLASS_RULES, "a human's rules stay first"
+    # A human's own rules stay on top, their CODE row moved below their text rows: the
+    # engine this migration lands with runs the list in order, and the engine it
+    # replaces ran every text rule before any code rule wherever the row sat. Moving it
+    # changes what neither engine derives and makes the screen true.
+    assert stored[: len(_HUMAN_CLASS_RULES)] == [
+        _HUMAN_CLASS_RULES[1],
+        _HUMAN_CLASS_RULES[0],
+    ]
     added = stored[len(_HUMAN_CLASS_RULES) :]
     assert [rule["match"] for rule in added] == ["name_head", "from_field"]
     assert all(rule["shipped_backfill"] is True for rule in added)
@@ -133,7 +154,7 @@ def test_an_owned_class_key_keeps_the_name_head_and_the_category(db):
 
 
 def test_an_owned_dimension_key_keeps_the_column_above_the_text(db):
-    _migration().upgrade()
+    _run(db)
 
     stored = _rules(db, "dim_length")
     added = stored[: len(stored) - len(_HUMAN_LENGTH_RULES)]
@@ -146,13 +167,13 @@ def test_an_owned_dimension_key_keeps_the_column_above_the_text(db):
 
 
 def test_a_key_nobody_edited_is_left_alone(db):
-    _migration().upgrade()
+    _run(db)
 
     assert _rules(db, "thickness") == [], "an empty column inherits the shipped rules at read time"
 
 
 def test_the_cap_is_seeded_on_millimetre_keys_only(db):
-    _migration().upgrade()
+    _run(db)
 
     assert float(_max_value(db, "dim_length")) == 5000.0
     assert float(_max_value(db, "thickness")) == 5000.0
@@ -160,11 +181,13 @@ def test_the_cap_is_seeded_on_millimetre_keys_only(db):
 
 
 def test_the_downgrade_removes_only_what_it_added(db):
-    migration = _migration()
-    migration.upgrade()
-    migration.downgrade()
+    _run(db)
+    _run(db, "downgrade")
 
     assert not _has_column(db)
-    assert _rules(db, "class") == _HUMAN_CLASS_RULES
+    # The rows it added are gone. The code row stays where it moved to: that IS where
+    # the old engine ran it, so putting it back on top would be the reversal that
+    # changes behaviour.
+    assert _rules(db, "class") == [_HUMAN_CLASS_RULES[1], _HUMAN_CLASS_RULES[0]]
     assert _rules(db, "dim_length") == _HUMAN_LENGTH_RULES
     assert _rules(db, "thickness") == []
