@@ -25,6 +25,7 @@ def _build_tree_node(service: AttachmentDirectoryService, dir_id: str) -> Attach
     parent_id_raw = getattr(d, "parent_id", None)
     sort_order_raw = getattr(d, "sort_order", None)
     created_at = cast(datetime, getattr(d, "created_at"))
+    company_id_raw = getattr(d, "company_id", None)
     children = [
         _build_tree_node(service, str(c.id))
         for c in service.list_flat(dir_id)
@@ -35,6 +36,12 @@ def _build_tree_node(service: AttachmentDirectoryService, dir_id: str) -> Attach
         parent_id=str(parent_id_raw) if parent_id_raw is not None else None,
         sort_order=(int(sort_order_raw) if sort_order_raw is not None else None),
         created_at=created_at,
+        # Owning company (R14 / AC-E3): read straight off the already-loaded
+        # row - no extra query, no company_name lookup here (the tree/
+        # breadcrumb surfaces do not resolve names today; the id alone is
+        # enough for a future consumer to widen this, and NULL stays legible
+        # as Shared either way).
+        company_id=str(company_id_raw) if company_id_raw is not None else None,
         children=children,
     )
 

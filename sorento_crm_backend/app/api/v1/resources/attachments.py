@@ -464,11 +464,24 @@ async def get_drive_contents(
             it["attachment"] for it in result["items"] if it["kind"] == "file"
         ]
         user_map = _build_uploaded_by_user_map(db, file_attachments)
-        company_names = service.company_name_map(file_attachments)
+        # ONE company-name lookup covers BOTH kinds (R14 / AC-E3): a Company
+        # column shows on folder rows and file rows alike, so the id set is
+        # the union of both, never file-only.
+        folder_company_ids = {
+            it.get("company_id") for it in result["items"]
+            if it["kind"] == "folder" and it.get("company_id")
+        }
+        file_company_ids = {
+            str(getattr(att, "company_id", None))
+            for att in file_attachments
+            if getattr(att, "company_id", None)
+        }
+        company_names = service.company_name_map_for_ids(folder_company_ids | file_company_ids)
 
         data: list[dict] = []
         for it in result["items"]:
             if it["kind"] == "folder":
+                folder_company_id = it.get("company_id")
                 data.append(
                     DriveFolderItem(
                         id=it["id"],
@@ -477,6 +490,10 @@ async def get_drive_contents(
                         sort_order=it.get("sort_order"),
                         created_at=it.get("created_at"),
                         directory_path=it.get("directory_path"),
+                        company_id=folder_company_id,
+                        company_name=(
+                            company_names.get(folder_company_id) if folder_company_id else None
+                        ),
                     ).model_dump()
                 )
             else:

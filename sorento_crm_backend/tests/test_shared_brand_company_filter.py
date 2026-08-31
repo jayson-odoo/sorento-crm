@@ -238,3 +238,36 @@ def test_s6_attachments_route_accepts_a_uuid(api):
     with TestClient(app) as c:
         res = c.get(f"/api/v1/resource-management/attachments/?company={DEFAULT_COMPANY_ID}")
     assert res.status_code == 200, res.text
+
+
+# --- R14 / AC-E3: the drive listing's Company column - folder rows, through
+# response_model, not just files. ---------------------------------------------
+
+
+def test_drive_folder_rows_carry_company_id_and_company_name(api):
+    """`GET /attachments/drive` must stamp company_id/company_name on FOLDER
+    rows the same way it already does for file rows - an owned folder reads
+    its company's name, a shared folder reads null/null (the FE renders that
+    as "Shared"). Asserted on the raw HTTP JSON body, so a field
+    `response_model` silently drops would fail here, not just in
+    `DriveFolderItem.model_dump()`.
+    """
+    db = api
+    owned = _folder(db, company_id=DEFAULT_COMPANY_ID, name="ZZT Owned Folder")
+    shared = _folder(db, company_id=None, name="ZZT Shared Folder")
+    db.commit()
+
+    with TestClient(app) as c:
+        res = c.get(
+            "/api/v1/resource-management/attachments/drive",
+            params={"recursive": True, "limit": 50},
+        )
+
+    assert res.status_code == 200, res.text
+    rows = {
+        row["id"]: row for row in res.json()["data"] if row.get("kind") == "folder"
+    }
+    assert rows[owned.id]["company_id"] == DEFAULT_COMPANY_ID
+    assert rows[owned.id]["company_name"] == "Sorento"
+    assert rows[shared.id]["company_id"] is None
+    assert rows[shared.id]["company_name"] is None

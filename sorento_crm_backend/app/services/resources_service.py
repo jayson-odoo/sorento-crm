@@ -370,6 +370,9 @@ class AttachmentDirectoryService:
                     "parent_id": str(d.parent_id) if d.parent_id else None,
                     "sort_order": d.sort_order,
                     "created_at": d.created_at.isoformat() if d.created_at else None,
+                    # Owning company (R14 / AC-E3), same as the live tree - no
+                    # extra query, `d` is already the loaded row.
+                    "company_id": str(d.company_id) if d.company_id else None,
                     "children": build_node(str(d.id)),
                 }
                 for d in dirs
@@ -388,6 +391,7 @@ class AttachmentDirectoryService:
                 "parent_id": str(d.parent_id) if d.parent_id else None,
                 "sort_order": d.sort_order,
                 "created_at": d.created_at.isoformat() if d.created_at else None,
+                "company_id": str(d.company_id) if d.company_id else None,
                 "children": build_node(str(d.id)),
             }
             for d in roots
@@ -1317,6 +1321,10 @@ class AttachmentService:
                     "sort_order": fr.sort_order,
                     "created_at": fr.created_at,
                     "directory_path": path_map.get(parent_id) if parent_id else None,
+                    # Owning company (R14 / AC-E3): a folder is __company_shared__
+                    # same as an attachment, so NULL is legitimate - the route
+                    # resolves the name from this id, same convention as file rows.
+                    "company_id": str(fr.company_id) if fr.company_id else None,
                 })
             else:
                 att = file_map.get(item_id)
