@@ -7,14 +7,14 @@ import {
   ArrowUp,
   ArrowUpDown,
   Info,
-  Search,
   Trash2,
-  X,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import {
   Table,
@@ -124,7 +124,11 @@ export function PackingListLinesTab() {
     sourceInvoices,
   } = usePackingListRecord();
 
-  const [search, setSearch] = useState('');
+  const {
+    value: searchInput,
+    setValue: setSearchInput,
+    debouncedValue: search,
+  } = useDebouncedSearch();
   const [sortField, setSortField] = useState<SortField>('product');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
 
@@ -297,26 +301,12 @@ export function PackingListLinesTab() {
             at 375px, so the header wraps rather than pushing the page into scroll. */}
         <CardHeader className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
           <CardTitle className="min-w-0 break-words">Shipment Lines</CardTitle>
-          <div className="relative flex w-full items-center gap-2 sm:w-auto">
-            <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-            <Input
-              placeholder="Search by product code"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="ps-9 w-full sm:w-56"
-            />
-            {search && (
-              <Button
-                mode="icon"
-                variant="ghost"
-                size="sm"
-                className="h-8 w-8"
-                onClick={() => setSearch('')}
-              >
-                <X className="size-4" />
-              </Button>
-            )}
-          </div>
+          <ListSearchInput
+            value={searchInput}
+            onChange={setSearchInput}
+            placeholder="Search by product code"
+            className="w-full sm:w-56"
+          />
         </CardHeader>
         <CardContent>
           <div className="overflow-x-auto">

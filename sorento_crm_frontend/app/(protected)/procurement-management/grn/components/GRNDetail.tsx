@@ -2,11 +2,12 @@
 
 import { useState, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
-import { Edit, Search, X } from 'lucide-react';
+import { Edit } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useBackToListHref } from '@/components/common/BackToList';
-import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   Table,
@@ -42,7 +43,11 @@ export default function GRNDetail({ grnId }: GRNDetailProps) {
   const { actions, dialogs } = useGrnActions(grn, {
     onDeleted: () => router.push(backHref),
   });
-  const [lineSearch, setLineSearch] = useState('');
+  const {
+    value: lineSearchInput,
+    setValue: setLineSearchInput,
+    debouncedValue: lineSearch,
+  } = useDebouncedSearch();
   const allLines = grn?.picking_lines ?? [];
   const filteredLines = useMemo(() => {
     const q = lineSearch.trim().toLowerCase();
@@ -205,26 +210,12 @@ export default function GRNDetail({ grnId }: GRNDetailProps) {
           <CardTitle>Picking Lines</CardTitle>
           <div className="flex items-center gap-3">
             {allLines.length > 0 && (
-              <div className="relative">
-                <Search className="size-4 absolute start-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  value={lineSearch}
-                  onChange={(e) => setLineSearch(e.target.value)}
-                  placeholder="Search product or warehouse"
-                  className="ps-8 pe-8 w-64 h-8"
-                />
-                {lineSearch && (
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="size-6 absolute end-1 top-1/2 -translate-y-1/2"
-                    onClick={() => setLineSearch('')}
-                    aria-label="Clear search"
-                  >
-                    <X className="size-3.5" />
-                  </Button>
-                )}
-              </div>
+              <ListSearchInput
+                value={lineSearchInput}
+                onChange={setLineSearchInput}
+                placeholder="Search product or warehouse"
+                className="w-64"
+              />
             )}
             <span className="text-sm text-muted-foreground whitespace-nowrap">
               {lineSearch.trim()
