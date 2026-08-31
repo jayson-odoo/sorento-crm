@@ -71,6 +71,7 @@ const GROUP: FlyerSpecProductGroup = {
   product_code: 'SRTWC8066',
   product_name: 'Sorento Wall Hung Water Closet',
   pages: [3],
+  viaProductCode: null,
   proposals: [
     row({
       id: 'p-new',
@@ -226,6 +227,32 @@ describe('ProductProposalGroup, per-product select-all (AC-D.2, AC-D.8)', () => 
     expect(
       screen.queryByLabelText('Select every applicable row for SRTWC8066'),
     ).toBeNull();
+  });
+});
+
+describe('ProductProposalGroup, the family badge (PLAN-flyer-family-proposals.md R1)', () => {
+  it('shows no badge when viaProductCode is null (the base itself)', () => {
+    renderGroup();
+
+    expect(screen.queryByText(/^via /)).not.toBeInTheDocument();
+  });
+
+  it('shows "via <base>" when this group is a sibling read off another card', () => {
+    const sibling: FlyerSpecProductGroup = {
+      ...GROUP,
+      product_code: 'SRTWC8066-UF',
+      viaProductCode: 'SRTWC8066',
+    };
+
+    render(
+      <ProductProposalGroup
+        group={sibling}
+        selectedIds={new Set()}
+        onSelectionChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('via SRTWC8066')).toBeInTheDocument();
   });
 });
 

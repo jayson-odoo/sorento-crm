@@ -163,3 +163,7 @@ collapse it belonged to. The trick is reverted to a plain width animation.
 - A fix touching a mechanism re-verifies the mechanism's whole interaction, not the symptom.
 - A transform trick replacing plain layout needs measured evidence the layout animation is
   actually too slow; this one had none, and the fragility cost two rounds.
+
+## 95. `docker image prune -f` never removes SHA-tagged deploy images, so every deploy leaks ~4.7GB until the disk fills (31 Aug 2026)
+
+Prod hit 90% disk (173G/193G). `docker system df -v` showed 22 generations of `jayson1004/sorento-crm:{backend,frontend,mcp}-<sha>` - roughly 100GB of images with zero containers - because `blue_green_deploy.sh` step 8 ran `docker image prune -f`, which removes only DANGLING (untagged) images, and CI tags every image with the git SHA, so nothing ever qualified. The leak is invisible per-deploy (~4.7GB) and looks fine until the day it does not. Fix: `docker image prune -af --filter "until=48h"` - `-a` includes tagged-but-unused, the filter keeps the previous generation for same-day rollback, and images referenced by a running container are always kept. One-off recovery on the server: the same command by hand, then `df -h` to confirm.

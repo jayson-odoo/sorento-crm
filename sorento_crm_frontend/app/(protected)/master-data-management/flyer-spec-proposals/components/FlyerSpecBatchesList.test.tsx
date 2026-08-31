@@ -65,6 +65,7 @@ function batch(overrides: Partial<FlyerSpecBatch> = {}): FlyerSpecBatch {
     applied_at: null,
     created_by_name: 'Aisyah Rahman',
     applied_by_name: null,
+    viaCount: 0,
     ...overrides,
   };
 }

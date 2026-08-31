@@ -117,6 +117,7 @@ def _summary(
         unchanged_count=batch.unchanged_count,
         suppressed_count=batch.suppressed_count,
         applied_count=batch.applied_count,
+        via_count=batch.via_count,
         read_at=record.created_at,
         created_at=batch.created_at,
         finished_at=batch.finished_at,
@@ -235,6 +236,7 @@ def get_flyer_spec_proposals(
                 product_code=group["product_code"],
                 product_name=group["product_name"],
                 pages=group["pages"],
+                via_product_code=group["via_product_code"],
                 proposals=[FlyerSpecProposalOut(**row) for row in group["proposals"]],
             )
             for group in ingest.grouped_proposals(db, batch)

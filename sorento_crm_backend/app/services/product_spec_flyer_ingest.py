@@ -34,12 +34,13 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
+from sqlalchemy import ARRAY, String, cast, column, func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 import app.services.product_spec_write as spec_write
 from app.models.dealer_kit import FlyerReadingRecord
-from app.models.product import Product
+from app.models.product import Product, ProductCategory
 from app.models.product_spec import (
     ProductSpecFlyerBatch,
     ProductSpecFlyerProposal,
@@ -58,6 +59,7 @@ from app.services.product_spec_derivation import (
     configured_max_values,
     configured_rules,
     configured_scopes,
+    derive,
     propose_from_text,
 )
 from app.services.product_spec_extract import _in_scope, classify_spec_proposal
@@ -233,6 +235,7 @@ def _reset(batch: ProductSpecFlyerBatch) -> None:
     batch.conflict_count = 0
     batch.unchanged_count = 0
     batch.suppressed_count = 0
+    batch.via_count = 0
     batch.applied_count = 0
     batch.applied_at = None
     batch.applied_by = None
@@ -351,6 +354,74 @@ def _stored(db: Session, product_ids: list[str]) -> dict[str, ProductSpecificati
         .filter(ProductSpecifications.product_id.in_(product_ids))
         .all()
     }
+
+
+def _siblings(
+    db: Session, printed_codes: list[str]
+) -> dict[str, list[tuple[Product, ProductCategory | None]]]:
+    """`{printed code: [(sibling, its category)]}` for every code a card fills the gaps of.
+
+    A sibling of a printed code `X` is a product whose own code is `X-<anything>`
+    (PLAN-flyer-family-proposals.md R1) - the flyer prints the base and the code
+    itself already states the difference (UF, 150/200/300, P/S, RL, ...). ONE
+    statement for the whole pass (AC-A.10): the printed codes are unnested into a
+    derived table and joined to `Product`, with `Product` leading the query so the
+    company predicate lands on it and a sibling that exists only under another
+    company never surfaces (AC-A.2).
+
+    The join is a PREFIX COMPARISON, not a `LIKE`. In `LIKE` an underscore is a
+    single-character wildcard, so a printed `SRT_WC1` would have matched
+    `SRTXWC1-P` as well as its own family - a product code is data, and matching it
+    with a pattern language means escaping it. Comparing the first `len(code) + 1`
+    characters against `code || '-'` has no pattern language to escape and is the
+    same index-friendly left-anchored comparison.
+
+    The category comes back with the product because the sibling's own reading needs
+    it: `class` is read off the category row, and deriving with `None` there would
+    make the card speak for a key the sibling's own record answers.
+
+    A code that was ITSELF printed on the flyer is excluded: it has its own card,
+    so it is never anyone else's sibling (AC-A.1's `XY-1` rule, extended).
+
+    When a code extends TWO printed bases (`X` and `X-UF` both have their own
+    card, and `X-UF-300` extends both), the LONGEST - most specific - base wins,
+    so a family never double-counts a sibling under its grandparent's card.
+    """
+    if not printed_codes:
+        return {}
+
+    wanted = (
+        func.unnest(cast(printed_codes, ARRAY(String)))
+        .table_valued(column("code", String))
+        .render_derived()
+    )
+    base = wanted.c.code
+    rows = (
+        db.query(Product, ProductCategory, base.label("base_code"))
+        .join(
+            wanted,
+            func.substr(Product.product_code, 1, func.length(base) + 1)
+            == func.concat(base, "-"),
+        )
+        .outerjoin(ProductCategory, ProductCategory.id == Product.category_id)
+        .filter(~Product.product_code.in_(printed_codes))
+        .all()
+    )
+
+    by_code: dict[str, tuple[Product, ProductCategory | None]] = {}
+    best_base: dict[str, str] = {}
+    for product, category, base_code in rows:
+        by_code[product.product_code] = (product, category)
+        current = best_base.get(product.product_code)
+        if current is None or len(base_code) > len(current):
+            best_base[product.product_code] = base_code
+
+    grouped: dict[str, list[tuple[Product, ProductCategory | None]]] = {}
+    for code, base_code in best_base.items():
+        grouped.setdefault(base_code, []).append(by_code[code])
+    for pairs in grouped.values():
+        pairs.sort(key=lambda pair: pair[0].product_code)
+    return grouped
 
 
 def _proposals_for_product(
@@ -495,42 +566,122 @@ def _propose(
     # hundreds of products and these are three queries either way.
     rules_by_key = configured_rules(db)
     scopes_by_key = configured_scopes(db)
+    # The caps the CATALOGUE derives with, not the shipped defaults: a sibling's own
+    # reading has to be the same reading `derive_for_code` would make of it, or the
+    # card would fill a gap the catalogue does not actually have (S5).
+    max_values = configured_max_values(db)
     index = {row.spec_key: row for row in active_registry(db)}
-    stored = _stored(db, [entry.product_id for entry in matched])
+
+    printed_codes = [entry.product_code or entry.code for entry in matched]
+    siblings_by_base = _siblings(db, printed_codes)
+    sibling_products = [
+        product for pairs in siblings_by_base.values() for product, _ in pairs
+    ]
+
+    stored = _stored(
+        db,
+        [entry.product_id for entry in matched] + [p.id for p in sibling_products],
+    )
 
     rows: list[ProductSpecFlyerProposal] = []
     counts = {kind: 0 for kind in ("new", "change", "conflict", "unchanged", "suppressed")}
     products = set()
+    via_products = set()
 
     for entry in matched:
+        base_code = entry.product_code or entry.code
         text = texts.get(entry.code, "")
+        # A card with no words says nothing, to the base or to its family.
         if not text:
             continue
+
         spec = stored.get(entry.product_id)
         proposals = _proposals_for_product(
             text=text,
-            code=entry.product_code or entry.code,
+            code=base_code,
             stored_values=dict((spec.values if spec else None) or {}),
             stored_provenance=dict((spec.provenance if spec else None) or {}),
             index=index,
             rules_by_key=rules_by_key,
             scopes_by_key=scopes_by_key,
         )
-        if not proposals:
-            continue
-        products.add(entry.product_id)
-        for proposal in proposals:
-            counts[proposal["kind"]] += 1
-            rows.append(
-                ProductSpecFlyerProposal(
-                    id=str(uuid.uuid4()),
-                    batch_id=batch.id,
-                    product_id=entry.product_id,
-                    product_code=entry.product_code,
-                    pages=list(entry.pages),
-                    **proposal,
+        if proposals:
+            products.add(entry.product_id)
+            for proposal in proposals:
+                counts[proposal["kind"]] += 1
+                rows.append(
+                    ProductSpecFlyerProposal(
+                        id=str(uuid.uuid4()),
+                        batch_id=batch.id,
+                        product_id=entry.product_id,
+                        product_code=entry.product_code,
+                        pages=list(entry.pages),
+                        via_product_code=None,
+                        **proposal,
+                    )
                 )
+
+        # The family (PLAN-flyer-family-proposals.md R1): every product whose own
+        # code extends this one gets the SAME card, minus whatever its own
+        # description or code already answers (R2).
+        for sibling, sib_category in siblings_by_base.get(base_code, []):
+            sib_spec = stored.get(sibling.id)
+            sib_proposals = _proposals_for_product(
+                text=text,
+                code=sibling.product_code,
+                stored_values=dict((sib_spec.values if sib_spec else None) or {}),
+                stored_provenance=dict((sib_spec.provenance if sib_spec else None) or {}),
+                index=index,
+                rules_by_key=rules_by_key,
+                scopes_by_key=scopes_by_key,
             )
+            if not sib_proposals:
+                continue
+
+            # The sibling's OWN reading - everything its own rows and rules yield,
+            # never the card. Since #447 that is the WHOLE of what the catalogue
+            # would derive for it, columns included, because a column is a rule row
+            # now: so the card can never override a value the sibling's own product
+            # master states. Same category row and same caps the catalogue passes
+            # (`derive_for_code`), or this would be a different reading wearing the
+            # same name (S5).
+            own = derive(
+                sibling,
+                sib_category,
+                rules_by_key=rules_by_key,
+                scopes_by_key=scopes_by_key,
+                max_values=max_values,
+            )
+            own_keys = set(own.values.keys())
+            # A key the sibling answers itself drops out - UNLESS the row is about
+            # what is ALREADY STORED rather than about the card's reading. R4 beats
+            # R2 (captain, 31 Aug): a `conflict` says a person set this by hand and
+            # the card disagrees, and that question is still worth asking whoever
+            # else can read the key. `unchanged` is the same thing agreeing.
+            kept = [
+                proposal
+                for proposal in sib_proposals
+                if proposal["spec_key"] not in own_keys
+                or proposal["kind"] in ("unchanged", "conflict")
+            ]
+            if not kept:
+                continue
+
+            products.add(sibling.id)
+            via_products.add(sibling.id)
+            for proposal in kept:
+                counts[proposal["kind"]] += 1
+                rows.append(
+                    ProductSpecFlyerProposal(
+                        id=str(uuid.uuid4()),
+                        batch_id=batch.id,
+                        product_id=sibling.id,
+                        product_code=sibling.product_code,
+                        pages=list(entry.pages),
+                        via_product_code=base_code,
+                        **proposal,
+                    )
+                )
 
     db.add_all(rows)
     return {
@@ -541,6 +692,7 @@ def _propose(
         "conflict_count": counts["conflict"],
         "unchanged_count": counts["unchanged"],
         "suppressed_count": counts["suppressed"],
+        "via_count": len(via_products),
     }
 
 
@@ -620,6 +772,7 @@ def grouped_proposals(db: Session, batch: ProductSpecFlyerBatch) -> list[dict]:
                 "product_code": row.product_code,
                 "product_name": names.get(row.product_id) or row.product_code,
                 "pages": list(row.pages or []),
+                "via_product_code": row.via_product_code,
                 "proposals": [],
             }
             groups[row.product_id] = group
@@ -630,6 +783,10 @@ def grouped_proposals(db: Session, batch: ProductSpecFlyerBatch) -> list[dict]:
         groups.values(),
         key=lambda group: (
             min(group["pages"]) if group["pages"] else _NO_PAGE,
+            # A sibling sorts under its own base's card (PLAN-flyer-family-
+            # proposals.md), the base before its siblings, then alphabetically.
+            group["via_product_code"] or group["product_code"],
+            group["via_product_code"] is not None,
             group["product_code"],
         ),
     )
@@ -832,6 +989,7 @@ def refresh_counts(db: Session, batch: ProductSpecFlyerBatch) -> None:
     batch.unchanged_count = counts["unchanged"]
     batch.suppressed_count = counts["suppressed"]
     batch.applied_count = sum(1 for row in rows if row.outcome == APPLIED)
+    batch.via_count = len({row.product_id for row in rows if row.via_product_code})
     db.add(batch)
 
 
@@ -1337,12 +1495,19 @@ def _evidence(record: FlyerReadingRecord, row: ProductSpecFlyerProposal) -> str:
 
     A manual row has no printed words to quote - that is the whole reason somebody typed
     it - so it carries where it was typed instead (AC-G.2).
+
+    A sibling row (`via_product_code` set, PLAN-flyer-family-proposals.md) appends
+    `(card <base>)`, so provenance says WHERE the reading came from: the paper never
+    printed this product's own code.
     """
     if (row.origin or ORIGIN_FLYER) == ORIGIN_MANUAL:
         return MANUAL_EVIDENCE
     printed = (row.evidence or "").strip()
     label = f"flyer {record.filename}"
-    return f"{label}: {printed}" if printed else label
+    base = f"{label}: {printed}" if printed else label
+    if row.via_product_code:
+        return f"{base} (card {row.via_product_code})"
+    return base
 
 
 def _words(exc: AppException) -> str:

@@ -134,8 +134,13 @@ echo "==> Stopping ${OLD} color"
 docker compose stop "backend_${OLD}" "frontend_${OLD}" "mcp_${OLD}" || true
 docker compose rm -f "backend_${OLD}" "frontend_${OLD}" "mcp_${OLD}" || true
 
-# 8. Persist new active color, clean up
+# 8. Persist new active color, clean up.
+# -a is required: every image is SHA-tagged, so plain `prune -f` (dangling only)
+# never removes anything and old generations pile up ~4.7GB per deploy until the
+# disk fills (hit 90% on 31 Aug 2026, lesson 95). The until filter keeps the
+# previous generation around for a quick same-day rollback; running containers
+# are always kept regardless of age.
 echo "${NEW}" > .active_color
-docker image prune -f >/dev/null || true
+docker image prune -af --filter "until=48h" >/dev/null || true
 
 echo "==> Deploy complete. Active=${NEW}"
