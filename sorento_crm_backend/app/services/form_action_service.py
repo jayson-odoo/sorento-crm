@@ -187,6 +187,7 @@ class FormActionService:
         # afterwards (AC-PGE-1).
         prior_state = action.capture(self.db, payload) or {}
 
+        parked_at = _utc_naive_now()
         row = SlaFormAction(
             action_key=action_key,
             source_entity_type=entity_type,
@@ -197,7 +198,13 @@ class FormActionService:
             requested_by_id=actor_id,
             channel=channel,
             status=FORM_ACTION_PENDING,
-            commit_at=_utc_naive_now() + timedelta(seconds=grace_seconds) if defers else None,
+            # Both stamps from ONE clock. `created_at` used to come from the database
+            # default, and Postgres `now()` is the transaction START, which under a
+            # loaded CI shard sat seconds before this line ran; the countdown's
+            # denominator is derived from commit_at - created_at, so a 10 s window
+            # read back as 12 (test_current_carries_every_field_the_countdown_needs).
+            created_at=parked_at,
+            commit_at=parked_at + timedelta(seconds=grace_seconds) if defers else None,
         )
 
         if defers:
