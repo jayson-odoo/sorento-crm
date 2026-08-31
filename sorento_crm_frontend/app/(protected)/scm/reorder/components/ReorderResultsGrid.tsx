@@ -15,9 +15,7 @@ import {
   ChevronDown,
   Info,
   Layers,
-  Search,
   ShoppingCart,
-  X,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -27,7 +25,8 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { Input } from '@/components/ui/input';
+import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { Label } from '@/components/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -277,7 +276,12 @@ export function ReorderResultsGrid({
 }) {
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 25 });
   const [sorting, setSorting] = useState<SortingState>([]);
-  const [searchQuery, setSearchQuery] = useState('');
+  const {
+    value: searchInput,
+    setValue: setSearchInput,
+    debouncedValue: searchQuery,
+    isSettling: searchSettling,
+  } = useDebouncedSearch();
   // The row-click explanation popup - deterministic derivation from frozen inputs.
   const [explainRec, setExplainRec] = useState<ReorderRecommendation | null>(null);
 
@@ -537,26 +541,13 @@ export function ReorderResultsGrid({
             <DataGridListToolbar
               table={table}
               searchSlot={
-                <div className="relative">
-                  <Search className="absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    placeholder="Search SKU or product..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-64 ps-9"
-                  />
-                  {searchQuery ? (
-                    <Button
-                      mode="icon"
-                      variant="dim"
-                      className="absolute end-1.5 top-1/2 h-6 w-6 -translate-y-1/2"
-                      onClick={() => setSearchQuery('')}
-                      aria-label="Clear search"
-                    >
-                      <X />
-                    </Button>
-                  ) : null}
-                </div>
+                <ListSearchInput
+                  value={searchInput}
+                  onChange={setSearchInput}
+                  isSettling={isSearchInFlight(searchSettling, isFetching, searchQuery)}
+                  placeholder="Search SKU or product..."
+                  className="w-64"
+                />
               }
               filters={{
                 kind: 'custom',
