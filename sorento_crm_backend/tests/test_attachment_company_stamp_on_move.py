@@ -139,21 +139,39 @@ def test_move_to_root_leaves_company_alone(db):
 
 def test_form_attachment_stays_shared_after_a_move(db):
     """Complaint / PR / stock-inquiry attachments stay readable from every
-    company (AC-G3); filing one away must not hide it."""
+    company (AC-G3); filing one away must not hide it, and - review fix B2 -
+    it must not pull the destination folder's ancestor chain to shared
+    either. That NULL is the pre-existing form-sharing convention, not a
+    `Set company…` decision, so R19's ancestor pull does not apply to it."""
     set_company_scope(db, None)
     attachment = _upload(
         db, _payload(db, entity_type="complaint", entity_id=str(uuid.uuid4()))
     )
     assert attachment.company_id is None
 
-    folder_id = _mocha_folder(db)
-
     set_company_scope(db, frozenset({MOCHA_ID}))
+    root_id = _directory(db)
+    child = AttachmentDirectory(id=str(uuid.uuid4()), name="Testing child", company_id=MOCHA_ID, parent_id=root_id)
+    db.add(child)
+    db.flush()
+    folder_id = child.id
+
     AttachmentService(db).bulk_move([attachment.id], folder_id)
 
     assert _company_id(db, attachment.id) is None, (
         "a complaint attachment was stamped by a move, so it is now invisible "
         "from every other company"
+    )
+
+    db.expire_all()
+    dest = db.query(AttachmentDirectory).filter(AttachmentDirectory.id == folder_id).first()
+    root = db.query(AttachmentDirectory).filter(AttachmentDirectory.id == root_id).first()
+    assert dest.company_id == MOCHA_ID, (
+        "the destination folder must keep its own company - a shared FORM "
+        "attachment's NULL never pulls a folder's ancestor chain to shared"
+    )
+    assert root.company_id == MOCHA_ID, (
+        "the destination folder's ancestor must keep its own company too"
     )
 
 

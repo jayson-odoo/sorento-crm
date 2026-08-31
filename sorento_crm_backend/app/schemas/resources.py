@@ -420,6 +420,30 @@ class BulkCompanyRequest(BaseModel):
     directory_ids: list[str] = []
     company_id: Optional[str] = None
 
+    @field_validator("attachment_ids", "directory_ids")
+    @classmethod
+    def _ids_are_uuids(cls, v: list[str]) -> list[str]:
+        # A malformed id reaching the ORM `IN (...)` filter raises a raw
+        # psycopg `invalid input syntax for type uuid` - an unhandled 500.
+        # Caught here instead, it is a 422 like every other bad request body.
+        for item in v:
+            try:
+                uuid.UUID(str(item))
+            except (ValueError, AttributeError, TypeError):
+                raise ValueError(f"{item!r} is not a valid UUID.")
+        return v
+
+    @field_validator("company_id")
+    @classmethod
+    def _company_id_is_uuid(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        try:
+            uuid.UUID(str(v))
+        except (ValueError, AttributeError, TypeError):
+            raise ValueError(f"{v!r} is not a valid UUID.")
+        return v
+
     @model_validator(mode="after")
     def at_least_one_id(self):
         if not self.attachment_ids and not self.directory_ids:

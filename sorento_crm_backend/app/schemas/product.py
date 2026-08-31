@@ -405,14 +405,13 @@ class ProductAttachmentBase(BaseModel):
     #: Set only when a PRODUCT SET code fanned this link out. NULL means a person
     #: or an exact product code made it.
     linked_via_set_id: Optional[str] = None
-    #: Explicit owning company for this LINK row, taken from the linked
-    #: product. Omitted (None) keeps today's behaviour - the before_insert
-    #: auto-stamp fills it from the session scope. A caller resolving a
-    #: product under an ALL-COMPANIES scope (a shared attachment's n8n link,
-    #: PLAN-shared-brand-attachments S2) must pass this explicitly, or every
-    #: row - including a Mocha twin's - lands stamped to the incumbent
-    #: company instead of the product's own.
-    company_id: Optional[str] = None
+    # company_id is deliberately NOT a field here: this schema is the body of
+    # POST /master-data/product-attachments/, a client-facing route, and a
+    # client-settable company would let a signed-in user stamp a link into a
+    # company they hold no grant for. The one internal caller that needs an
+    # explicit company (the n8n twin linker, under an all-companies scope)
+    # passes it as a keyword to ProductService.create_product_attachment
+    # instead - never through this schema.
 
 
 class ProductAttachmentCreate(ProductAttachmentBase):

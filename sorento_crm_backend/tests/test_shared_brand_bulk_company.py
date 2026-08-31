@@ -303,6 +303,45 @@ def test_ac_b7_a_bad_second_id_leaves_the_first_unchanged(db):
 
 
 # --------------------------------------------------------------------------- #
+# AC-B7 (review fix S6) - one transaction the OTHER way: a failure AFTER the
+# in-memory company_id stamps already ran (not caught by the early id-existence
+# check) must still leave nothing committed.
+# --------------------------------------------------------------------------- #
+
+
+def test_ac_b7_a_failure_after_the_stamps_rolls_back_everything(db, monkeypatch):
+    s, m = _twin(db)
+    t = seed.att_type(db)
+    a = seed.attachment(db, company_id=SORENTO, type_id=t.id)
+    seed.product_attachment(db, company_id=SORENTO, product_id=s.id, attachment_id=a.id)
+    db.commit()
+
+    def _boom(self, files, targets, actor_id):
+        # By the time this runs, `apply()` has already set `attachment.
+        # company_id = None` in memory - proving the rollback undoes THAT,
+        # not just skips a write it never made.
+        assert a.company_id is None, "the stamp must have already run in memory"
+        raise RuntimeError("simulated failure mid-transaction")
+
+    monkeypatch.setattr(AttachmentCompanyService, "_insert_twin_links", _boom)
+
+    set_company_scope(db, frozenset({SORENTO, MOCHA}))
+    with pytest.raises(RuntimeError):
+        AttachmentCompanyService(db).apply(attachment_ids=[a.id], company_id=None)
+
+    db.rollback()
+    db.expire_all()
+    unchanged = db.query(Attachment).filter(Attachment.id == a.id).first()
+    assert unchanged.company_id == SORENTO, (
+        "a failure after the in-memory stamps must not leave a partial commit"
+    )
+    links = db.query(ProductAttachment).filter(ProductAttachment.attachment_id == a.id).all()
+    assert {str(l.product_id) for l in links} == {str(s.id)}, (
+        "no twin link may survive a rolled-back call"
+    )
+
+
+# --------------------------------------------------------------------------- #
 # AC-B8 - the n8n link-products path stamps each row from ITS OWN product's
 # company, not the incumbent (DEFAULT_COMPANY_ID)
 # --------------------------------------------------------------------------- #
@@ -330,6 +369,56 @@ def test_ac_b8_link_products_stamps_each_row_from_its_own_product(db):
     assert by_product[str(m.id)].company_id == MOCHA, (
         "the Mocha twin's link must be stamped MOCHA, not the incumbent "
         "(DEFAULT_COMPANY_ID) - the child-row-split gotcha this fixes"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# AC-B8 (review fix B1) - company_id is NOT a client-settable field: a
+# signed-in user posting one for a company they hold no grant for gets the
+# row stamped by the ordinary auto-stamp (their own single active company),
+# never the posted value.
+# --------------------------------------------------------------------------- #
+
+
+def test_ac_b8_client_facing_endpoint_ignores_a_posted_company_id(db):
+    cat = seed.category(db, company_id=SORENTO)
+    u = seed.uom(db, company_id=SORENTO)
+    p = seed.product(db, company_id=SORENTO, code="ZZT-B1-CLIENT", category_id=cat.id, uom_id=u.id)
+    t = seed.att_type(db)
+    a = seed.attachment(db, company_id=SORENTO, type_id=t.id)
+    actor = seed.user(db)
+    seed.grant(db, user_id=actor.id, company_id=SORENTO)  # NOT granted Mocha
+    db.commit()
+
+    c = _scope_client(db, actor_id=actor.id, scope=frozenset({SORENTO}))
+    try:
+        r = c.post(
+            "/api/v1/master-data/product-attachments/",
+            json={
+                "product_id": p.id,
+                "attachment_id": a.id,
+                # An attempt to stamp a company the actor holds no grant for.
+                # ProductAttachmentBase carries no company_id field, so this
+                # is simply an unknown key - pydantic drops it and the
+                # ordinary auto-stamp runs off the session's own scope.
+                "company_id": MOCHA,
+            },
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert r.status_code == 201, r.text
+    set_company_scope(db, frozenset({SORENTO, MOCHA}))
+    db.expire_all()
+    created = (
+        db.query(ProductAttachment)
+        .filter(ProductAttachment.product_id == p.id, ProductAttachment.attachment_id == a.id)
+        .first()
+    )
+    assert created is not None
+    assert created.company_id == SORENTO, (
+        "a posted company_id must never override the auto-stamp - it stamped "
+        f"{created.company_id!r} instead of the actor's own company"
     )
 
 
@@ -382,6 +471,41 @@ def test_ac_b10_route_requires_auth_same_as_attachment_put():
     assert post_response.status_code == put_response.status_code, (
         "bulk-company must be guarded by the SAME dependency as PUT /attachments/{id}"
     )
+
+
+# --------------------------------------------------------------------------- #
+# Review fix S7 - a malformed id is a 422 (pydantic), never a 500 from a raw
+# psycopg "invalid input syntax for type uuid".
+# --------------------------------------------------------------------------- #
+
+
+def test_a_malformed_attachment_id_is_422_not_500(db):
+    actor = seed.user(db)
+    seed.grant(db, user_id=actor.id, company_id=SORENTO)
+    db.commit()
+
+    c = _scope_client(db, actor_id=actor.id, scope=frozenset({SORENTO}))
+    try:
+        r = c.post(_URL, json={"attachment_ids": ["not-a-uuid"], "company_id": None})
+    finally:
+        app.dependency_overrides.clear()
+
+    assert r.status_code == 422, r.text
+
+
+def test_a_malformed_company_id_is_422_not_500(db):
+    a = seed.attachment(db, company_id=SORENTO, type_id=seed.att_type(db).id)
+    actor = seed.user(db)
+    seed.grant(db, user_id=actor.id, company_id=SORENTO)
+    db.commit()
+
+    c = _scope_client(db, actor_id=actor.id, scope=frozenset({SORENTO}))
+    try:
+        r = c.post(_URL, json={"attachment_ids": [a.id], "company_id": "not-a-uuid"})
+    finally:
+        app.dependency_overrides.clear()
+
+    assert r.status_code == 422, r.text
 
 
 # --------------------------------------------------------------------------- #
@@ -605,6 +729,10 @@ def test_ac_b13_five_hundred_files_share_in_one_insert_and_one_delete(db):
     uom_m = seed.uom(db, company_id=MOCHA)
     t = seed.att_type(db)
 
+    # 5 of the 500 carry a field-linkage template, so the fan-out loop (review
+    # fix S1/S2) has something to actually do - the other 495 must cost it
+    # NOTHING (no per-row statement at all when target_field_keys is empty).
+    FIELD_KEYED = 5
     attachment_ids: list[str] = []
     for i in range(500):
         code = f"ZZT-B13-{i:04d}"
@@ -612,7 +740,12 @@ def test_ac_b13_five_hundred_files_share_in_one_insert_and_one_delete(db):
             db, code=code, sorento_cat=cat_s.id, sorento_uom=uom_s.id,
             mocha_cat=cat_m.id, mocha_uom=uom_m.id,
         )
-        a = seed.attachment(db, company_id=SORENTO, type_id=t.id)
+        has_template = i < FIELD_KEYED
+        a = seed.attachment(
+            db, company_id=SORENTO, type_id=t.id,
+            target_entity_type="product" if has_template else None,
+            target_field_keys=["weight"] if has_template else None,
+        )
         seed.product_attachment(db, company_id=SORENTO, product_id=s.id, attachment_id=a.id)
         attachment_ids.append(a.id)
     db.commit()
@@ -620,9 +753,7 @@ def test_ac_b13_five_hundred_files_share_in_one_insert_and_one_delete(db):
     statements: list[str] = []
 
     def _capture(conn, cursor, statement, *_a, **_kw):
-        low = statement.lower()
-        if "product_attachments" in low and ("insert into" in low or "delete from" in low):
-            statements.append(low)
+        statements.append(statement.lower())
 
     connection = db.get_bind()
     event.listen(connection, "before_cursor_execute", _capture)
@@ -635,7 +766,21 @@ def test_ac_b13_five_hundred_files_share_in_one_insert_and_one_delete(db):
         event.remove(connection, "before_cursor_execute", _capture)
 
     assert result["links_added"] == 500
-    inserts = [s for s in statements if "insert into" in s]
-    deletes = [s for s in statements if "delete from" in s]
+    pa_statements = [s for s in statements if "product_attachments" in s]
+    inserts = [s for s in pa_statements if "insert into" in s]
+    deletes = [s for s in pa_statements if "delete from" in s]
     assert len(inserts) == 1, f"expected ONE insert for 500 files, saw {len(inserts)}"
     assert len(deletes) == 1, f"expected ONE delete for 500 files, saw {len(deletes)}"
+
+    # No statement count that scales with the 500 files - only with the 5
+    # field-keyed ones (a SAVEPOINT + a lookup SELECT + a flush INSERT + a
+    # RELEASE per row, generously bounded), plus a small fixed overhead for
+    # everything else `apply()` does (the folder/file collection queries, the
+    # twin INSERT/DELETE themselves, the outer commit).
+    BASE_STATEMENTS = 15
+    PER_FIELD_KEYED_ROW = 5
+    bound = BASE_STATEMENTS + FIELD_KEYED * PER_FIELD_KEYED_ROW
+    assert len(statements) <= bound, (
+        f"{len(statements)} statements for 500 files ({FIELD_KEYED} field-keyed) - "
+        f"expected at most {bound}, which would mean a per-FILE statement crept back in"
+    )
