@@ -76,13 +76,17 @@
  *
  *   POST /api/v1/master-data/spec-registry/{specKey}/preview   body { rules: SpecDerivationRule[] }
  *     -> { jobId: string }
- *        Enqueues a worker job that derives the key for every active product with the
- *        draft rules. Requires `master_data.spec_registry.edit`.
+ *        Starts an in-process background job (no worker, no queue - the same
+ *        mechanism `reread-catalogue` already runs on) that derives the key for
+ *        every active product with the draft rules. Requires
+ *        `master_data.spec_registry.edit`. 409 `spec_preview_running` while another
+ *        preview is already in flight, the running job's id in `detail`.
  *   GET  /api/v1/master-data/spec-registry/{specKey}/preview/{jobId}
  *     -> { status: 'pending' } | { status: 'done', changed, added, removed, unchanged,
  *          sample: [{ code, before, after }] (20) } | { status: 'failed', error }
  *        Hand-set values are never counted as changed - they are not derived. 404 an
- *        unknown jobId.
+ *        unknown jobId, or a jobId that belongs to a DIFFERENT specKey. Requires
+ *        `master_data.spec_registry.edit` - the same grant that started the job.
  *
  * THE 422 THAT IS NOT AN ERROR ENVELOPE
  *
@@ -790,8 +794,10 @@ export async function trySpecRules(
   return response.json();
 }
 
-/** Enqueue a worker job that derives the key for every active product with the draft
- *  rules. Poll `getSpecPreview` for the result. */
+/** Start an in-process background job (no worker, no queue) that derives the key for
+ *  every active product with the draft rules. Poll `getSpecPreview` for the result.
+ *  409 while another preview is already running - `extractApiError` reads that same
+ *  as any other failure, so the caller sees the sentence naming it, not a raw code. */
 export async function previewSpecRules(
   specKey: string,
   body: { rules: SpecDerivationRule[] },

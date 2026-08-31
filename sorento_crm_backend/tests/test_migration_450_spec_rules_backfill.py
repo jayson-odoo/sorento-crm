@@ -180,6 +180,25 @@ def test_the_cap_is_seeded_on_millimetre_keys_only(db):
     assert _max_value(db, "class") is None
 
 
+def test_upgrade_does_not_duplicate_shipped_rows_a_ui_save_already_added(db):
+    """S3: `dim_length` on the dev DB already carries its column/triple/lone-size
+    rows, UNTAGGED, because they arrived through an ordinary UI save rather than
+    through this migration. `upgrade()` must recognise them by what they READ
+    (`match`/`pattern`/`capture`/`source`), not by the `shipped_backfill` tag, or a
+    second copy of every reader lands on top of the first."""
+    existing = _hidden("dim_length", {"from_field", "regex"})
+    _own(db, "dim_length", existing, "mm")
+
+    _run(db)
+
+    stored = _rules(db, "dim_length")
+    assert stored == existing, "no duplicate rows were added"
+    assert all("shipped_backfill" not in rule for rule in stored), (
+        "the pre-existing rows are the business's own save, not this migration's "
+        "backfill, and stay untagged"
+    )
+
+
 def test_the_downgrade_removes_only_what_it_added(db):
     _run(db)
     _run(db, "downgrade")

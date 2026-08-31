@@ -1177,6 +1177,87 @@ def test_a_column_a_person_filled_in_is_never_called_implausible(db):
 
 
 # --------------------------------------------------------------------------- #
+# S1 - the cap is uniform now: EVERY firing row is checked against it, where main
+# checked only the rectangular length/width/height triple. Measured on the dev DB
+# (read-only, 31 Aug): 0 of 23,063 active products cross this delta - main already
+# capped the cases the live catalogue actually has (a mis-parsed separator landing
+# in length or width). These three are the shapes of row main let through
+# uncapped, pinned directly rather than by a live code (AC-A.2 amended in the UAC).
+# --------------------------------------------------------------------------- #
+def test_thickness_above_the_cap_on_a_round_product_is_dropped_and_flagged(db):
+    """Main set `thickness` (capture 3 when round) with no cap at all - only
+    `diameter`/`dim_length`/`dim_width`/`dim_height` were ever compared to
+    `MAX_PLAUSIBLE_MM`. A 6000mm thickness is as implausible as a 6000mm length."""
+    _product(db, "ZZT-S1-1", "CONCRETE ROUND BASIN (407X120X6000MM)")
+    derive_for_code(db, "ZZT-S1-1")
+
+    assert _value(db, "ZZT-S1-1", "diameter") == 407
+    assert _value(db, "ZZT-S1-1", "depth") == 120
+    assert _value(db, "ZZT-S1-1", "thickness") is None
+    assert "implausible_dimension" in _exceptions(db, "ZZT-S1-1")
+
+
+def test_the_fourth_number_above_the_cap_on_a_rectangular_product_is_dropped_and_flagged(db):
+    """Main capped `dim_length`/`dim_width`/`dim_height` (the `zip` over the first
+    three numbers) but stored the fourth (`thickness`) unconditionally."""
+    _product(db, "ZZT-S1-2", "SORENTO BASIN 300X200X100X6000MM")
+    derive_for_code(db, "ZZT-S1-2")
+
+    assert _value(db, "ZZT-S1-2", "dim_length") == 300
+    assert _value(db, "ZZT-S1-2", "dim_width") == 200
+    assert _value(db, "ZZT-S1-2", "dim_height") == 100
+    assert _value(db, "ZZT-S1-2", "thickness") is None
+    assert "implausible_dimension" in _exceptions(db, "ZZT-S1-2")
+
+
+def test_a_lone_size_above_the_cap_is_dropped_and_flagged(db):
+    """Main's lone-size branch was `if lone[0] <= MAX_PLAUSIBLE_MM: described[...] =
+    lone` with no `else` - an over-cap lone size was silently dropped, never flagged.
+    The uniform cap flags it exactly as it flags every other reading."""
+    _product(db, "ZZT-S1-3", "SORENTO SHOWER HOSE 6000MM")
+    derive_for_code(db, "ZZT-S1-3")
+
+    assert _value(db, "ZZT-S1-3", "dim_length") is None
+    assert "implausible_dimension" in _exceptions(db, "ZZT-S1-3")
+
+
+# --------------------------------------------------------------------------- #
+# B3 - `from_field column:<name>` on a non-numeric column reads nothing rather
+# than crashing derivation for the whole catalogue.
+#
+# `_validate_rules` refuses this shape at save time now, so a NEW rule cannot carry
+# it - but a row written before that guard existed (or one that reaches `derive()`
+# through any other path) must still fail SAFE.
+# --------------------------------------------------------------------------- #
+def test_a_from_field_row_on_a_text_column_reads_nothing_and_does_not_raise(db):
+    _product(db, "ZZT-B3-1", "SORENTO KITCHEN SINK ZZT-B3-1", brand="brand")
+
+    # `currency` is a real `Product` column and it is text ("MYR"), not a number -
+    # `_number(str(raw))` used to be an unguarded `float()`.
+    result = derive_for_code(
+        db,
+        "ZZT-B3-1",
+        rules_by_key={"zzt_bad_field": [{"match": "from_field", "pattern": "column:currency"}]},
+    )
+
+    assert result["exceptions"] == 0, "one bad row must not raise out of derive()"
+    assert _value(db, "ZZT-B3-1", "zzt_bad_field") is None
+
+
+def test_from_field_choices_is_the_numeric_product_columns_plus_category_and_brand(db):
+    """The whitelist `_validate_rules` enforces (B3, `spec_registry_bad_rule`) - the
+    HTTP-level refusal is `test_a_from_field_rule_naming_a_text_column_is_refused` in
+    `tests/test_spec_registry_pr2_routes.py`; this pins the whitelist itself against
+    the live `Product` model."""
+    from app.services.product_spec_registry import from_field_choices, numeric_product_columns
+
+    assert "column:currency" not in from_field_choices()
+    assert "currency" not in numeric_product_columns()
+    assert "column:dimensions_length" in from_field_choices()
+    assert "dimensions_length" in numeric_product_columns()
+
+
+# --------------------------------------------------------------------------- #
 # AC-A.8 - the sentence kinds compile to exactly one engine rule each
 #
 # The editor builds rules from sentences and compiles them client-side; the server

@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useRef, useState } from 'react';
+import { toast } from 'sonner';
 import {
   getSpecPreview,
   previewSpecRules,
@@ -74,10 +75,16 @@ export function useSpecPreview(specKey: string): UseSpecPreviewResult {
         })
         .catch((e) => {
           if (runSeq.current !== seq) return;
-          setError(
-            e instanceof Error ? e.message : 'Could not start the preview',
-          );
+          const message =
+            e instanceof Error ? e.message : 'Could not start the preview';
+          setError(message);
           setStatus('error');
+          // A toast too, not only the inline Alert (S4): the 409 a second run gets
+          // while one is already in flight is easy to miss inline, and the button
+          // is enabled again the instant `status` flips to `error` - a silent
+          // refusal reads as "nothing happened, try again", which is the one thing
+          // that is not true here.
+          toast.error(message);
         });
     },
     [specKey, poll],

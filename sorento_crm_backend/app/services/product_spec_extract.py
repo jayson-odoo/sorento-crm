@@ -103,9 +103,12 @@ def classify_spec_proposal(
         # longer reads the flyer at all; it survives as a proposal that arrives
         # unticked, which is the same precedence with a person in it.
         #
-        # Read off the SHIPPED rules rather than a hand-written list of six keys
-        # (#425): a key is description-first when a row in its list reads the product's
-        # own record or its own description, so the precedence moves when the rules do.
+        # `description_first_keys()` with no argument reads the SHIPPED rules only,
+        # cached on first call (#425) - not a live-configured registry, and not
+        # re-read per call. A key is description-first when a row in the SHIPPED list
+        # reads the product's own record or its own description; a `from_field`/
+        # `description` row a merchandiser adds through the editor does not move this
+        # set, because this comparison never asks the registry.
         return "conflict"
 
     return "change"

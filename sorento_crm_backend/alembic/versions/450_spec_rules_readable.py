@@ -160,6 +160,22 @@ def _has_column(bind) -> bool:
     }
 
 
+def _identity(rule: dict) -> tuple:
+    """A rule's identity for dedupe purposes: what it reads and how, not its tags.
+
+    `builder`/`_seed_marker` differ between a row this migration would add and the
+    same reader already sitting untouched on a key someone saved through the UI
+    before this revision ran (dev DB's `dim_length` on 31 Aug) - comparing on the
+    engine fields alone is what makes those two rows recognisably the same reader.
+    """
+    return (
+        str(rule.get("match") or "").lower(),
+        str(rule.get("pattern") or ""),
+        rule.get("capture"),
+        str(rule.get("source") or "any").lower(),
+    )
+
+
 def _owned_rows(bind):
     return bind.execute(
         sa.text(
@@ -200,8 +216,16 @@ def upgrade() -> None:
         rows = list(stored or [])
         if any(rule.get(_BACKFILL_TAG) for rule in rows):
             continue  # already backfilled; re-running is a no-op
+        # A key whose shipped rows arrived through a UI save rather than through this
+        # migration already carries them, untagged (S3) - adding a second copy would
+        # duplicate the reader instead of merely surfacing it. Left untagged: the
+        # pre-existing row is the business's own save, not this migration's backfill,
+        # so the downgrade must not touch it either.
+        existing = {_identity(rule) for rule in rows}
         added = [
-            dict(rule, **{_BACKFILL_TAG: True}) for rule in _HIDDEN_READERS[spec_key][0]
+            dict(rule, **{_BACKFILL_TAG: True})
+            for rule in _HIDDEN_READERS[spec_key][0]
+            if _identity(rule) not in existing
         ]
         # The code rules go where the old engine ran them: after every text rule.
         text_rows = [rule for rule in rows if rule.get("match") not in _CODE_KINDS]

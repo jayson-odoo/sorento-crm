@@ -10,8 +10,10 @@ shape `reread-catalogue` already uses, so:
     engine's default schema - a connection this test's scratch-schema data (rolled
     back at teardown, on a different connection) is invisible to, AND one that would
     otherwise run a real derivation pass over the actual prod-copy `products` table.
-  * the "job finishes with counts" tests call `product_spec_preview.run_inline(...)`
-    directly, against THIS test's own session, instead of polling a thread.
+  * the "job finishes with counts" tests call `product_spec_preview._run_job(...)`
+    directly, against THIS test's own session, instead of polling a thread - the same
+    function the real background thread runs (S4: `run_inline` was a second, test-only
+    copy of that call; `_run_job` takes an optional `db` so both callers share one).
 
 Fixture pattern copied from `test_spec_registry_pr2_routes.py` (the `api` fixture,
 `_grant`/`_seed`/`_key`/`_product`/`_spec`).
@@ -276,6 +278,22 @@ def test_try_404s_an_unknown_product(api):
     assert response.status_code == 404, response.text
 
 
+def test_try_404s_a_malformed_product_id(api):
+    """S5: a non-UUID `productId` used to reach the database driver unparsed and
+    raise `InvalidTextRepresentation` - a 500 for a typo in a URL nobody sees, not a
+    genuinely unknown product."""
+    db, _as = api
+    _as(_VIEWER)
+    client = TestClient(app)
+    _key(db, "zzt_length")
+
+    response = client.post(
+        f"{_BASE}/zzt_length/try",
+        json={"productId": "not-a-uuid", "rules": _ONE_ROW},
+    )
+    assert response.status_code == 404, response.text
+
+
 def test_try_404s_an_unknown_spec_key(api):
     db, _as = api
     _as(_VIEWER)
@@ -455,16 +473,75 @@ def test_preview_job_reports_pending_before_it_finishes(api, monkeypatch):
 
     status_response = client.get(f"{_BASE}/zzt_length/preview/{job_id}")
     assert status_response.status_code == 200, status_response.text
+    # `spec_key` is bookkeeping for the mismatch guard below, stripped before the
+    # body reaches a client - an exact-equality check is what proves it never leaks.
     assert status_response.json() == {"status": "pending"}
+
+    # The no-op thread double above never reaches `_run_job`'s `finally`, so
+    # `start()`'s single-run guard (S4) would otherwise stay "running" for the rest
+    # of this process and 409 every real `start()` call after this test.
+    product_spec_preview._RUNNING_JOB_ID = None
+
+
+def test_preview_get_requires_edit_not_view(api):
+    """UAC AC-B.2: the poll needs the same grant the POST that started the job does -
+    a viewer holding only `.view` is refused, not merely 404'd for guessing wrong."""
+    db, _as = api
+    _as(_VIEWER)
+    client = TestClient(app)
+    _key(db, "zzt_length")
+
+    response = client.get(f"{_BASE}/zzt_length/preview/no-such-job")
+    assert response.status_code == 403, response.text
 
 
 def test_preview_404s_an_unknown_job(api):
     db, _as = api
-    _as(_VIEWER)
+    _as(_EDITOR)
     client = TestClient(app)
 
     response = client.get(f"{_BASE}/zzt_length/preview/no-such-job")
     assert response.status_code == 404, response.text
+
+
+def test_preview_404s_a_job_started_under_a_different_spec_key(api):
+    db, _as = api
+    _as(_EDITOR)
+    client = TestClient(app)
+    _key(db, "zzt_length")
+    _key(db, "zzt_width")
+
+    from app.services import product_spec_preview
+
+    job_id = "zzt-other-key-job"
+    product_spec_preview._run_job(job_id, "zzt_width", _ONE_ROW, db)
+
+    response = client.get(f"{_BASE}/zzt_length/preview/{job_id}")
+    assert response.status_code == 404, response.text
+    # The job is real - reading it under its OWN key still works.
+    own = client.get(f"{_BASE}/zzt_width/preview/{job_id}")
+    assert own.status_code == 200, own.text
+
+
+def test_preview_refuses_a_second_run_while_one_is_running(api, monkeypatch):
+    """S4: only one preview at a time, the way `product_spec_rederive.start()` guards
+    its own single run. `_RUNNING_JOB_ID` is set through `monkeypatch` rather than a
+    real `start()` call, so this test cannot leak a stuck "running" state into any
+    test that runs after it - `monkeypatch` undoes the attribute on teardown."""
+    db, _as = api
+    _as(_EDITOR)
+    client = TestClient(app)
+    _key(db, "zzt_length")
+
+    from app.services import product_spec_preview
+
+    monkeypatch.setattr(product_spec_preview, "_RUNNING_JOB_ID", "zzt-already-running")
+
+    response = client.post(f"{_BASE}/zzt_length/preview", json={"rules": _ONE_ROW})
+    assert response.status_code == 409, response.text
+    body = response.json()
+    assert body["code"] == "spec_preview_running"
+    assert body["detail"] == "zzt-already-running"
 
 
 def test_preview_job_counts_and_sample_excluding_hand_set(api):
@@ -497,7 +574,7 @@ def test_preview_job_counts_and_sample_excluding_hand_set(api):
     from app.services import product_spec_preview
 
     job_id = "zzt-inline-job"
-    product_spec_preview.run_inline(job_id, "zzt_length", _ONE_ROW, db)
+    product_spec_preview._run_job(job_id, "zzt_length", _ONE_ROW, db)
 
     state = product_spec_preview.get(job_id)
     assert state["status"] == "done"
@@ -519,7 +596,7 @@ def test_preview_job_counts_and_sample_excluding_hand_set(api):
     assert hand_set_product.product_code not in by_code
 
     client = TestClient(app)
-    _as(_VIEWER)
+    _as(_EDITOR)
     status_response = client.get(f"{_BASE}/zzt_length/preview/{job_id}")
     assert status_response.status_code == 200, status_response.text
     assert status_response.json()["changed"] == 1
@@ -548,7 +625,7 @@ def test_preview_scans_with_the_all_companies_scope(api):
     from app.services import product_spec_preview
 
     job_id = "zzt-scope-job"
-    product_spec_preview.run_inline(job_id, "zzt_length", _ONE_ROW, db)
+    product_spec_preview._run_job(job_id, "zzt_length", _ONE_ROW, db)
 
     state = product_spec_preview.get(job_id)
     assert state["status"] == "done"
