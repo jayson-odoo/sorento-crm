@@ -12,7 +12,7 @@ import {
   type PaginationState,
   type SortingState,
 } from '@tanstack/react-table';
-import { AlertCircle, ScanLine, Search } from 'lucide-react';
+import { AlertCircle, ScanLine } from 'lucide-react';
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -20,7 +20,8 @@ import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { Input } from '@/components/ui/input';
+import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
@@ -77,7 +78,11 @@ function stamp(value: string | null): string {
 
 export function FlyerSpecBatchesList() {
   const router = useRouter();
-  const [search, setSearch] = useState('');
+  const {
+    value: searchInput,
+    setValue: setSearchInput,
+    debouncedValue: search,
+  } = useDebouncedSearch();
   const [sorting, setSorting] = useState<SortingState>([]);
   const [pagination, setPagination] = useState<PaginationState>({
     pageIndex: 0,
@@ -277,17 +282,12 @@ export function FlyerSpecBatchesList() {
     >
       <Card>
         <CardHeader className="block py-5">
-          <div className="relative w-full sm:max-w-xs">
-            <Search className="absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              id="fsp-search"
-              className="ps-9"
-              placeholder="Search flyers"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              aria-label="Search flyers"
-            />
-          </div>
+          <ListSearchInput
+            value={searchInput}
+            onChange={setSearchInput}
+            placeholder="Search flyers"
+            className="w-full sm:max-w-xs"
+          />
         </CardHeader>
 
         <CardTable>
