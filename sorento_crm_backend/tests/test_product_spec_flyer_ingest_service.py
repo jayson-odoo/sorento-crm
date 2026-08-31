@@ -785,6 +785,11 @@ def test_adopt_and_undo_never_touch_a_settled_batchs_rows_edits_or_dismissals(db
         printed_code="ZZT-FLYJOB-C3-UNMATCHED",
         product_id=product_c.id,
     )
+    # Each half on its own: an adopt that corrupted the batch and an undo that
+    # happened to put it back would pass a single comparison after the pair.
+    db.expire_all()
+    assert _row_snapshot(_proposals_for(db, batch.id)) == before_rows
+
     dk_svc.unadopt_code(db, reading, printed_code="ZZT-FLYJOB-C3-UNMATCHED")
 
     db.expire_all()

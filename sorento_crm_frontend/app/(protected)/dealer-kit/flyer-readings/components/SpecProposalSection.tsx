@@ -5,7 +5,7 @@ import { AlertTriangle, ListChecks, Loader2, ScanLine } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { useHasPermission, usePermissions } from '@/hooks/usePermissions';
-import { formatDateTimeInMalaysia } from '@/lib/helpers';
+import { formatDateTimeInMalaysia, parseDateTimeAsUTC } from '@/lib/helpers';
 
 import { proposalCountsSentence } from '../../../master-data-management/flyer-spec-proposals/lib/countsSentence';
 import {
@@ -84,8 +84,12 @@ export function SpecProposalSection({
     (status === 'proposed' || status === 'failed') &&
     Boolean(data.created_at) &&
     Boolean(codeOverridesChangedAt) &&
-    new Date(codeOverridesChangedAt as string).getTime() >
-      new Date(data.created_at as string).getTime();
+    // Both stamps are naive UTC off the same backend clock; parsed as UTC on
+    // purpose, because `new Date("...T10:00:00")` reads local wall time and
+    // the ordering would then depend on the browser's zone the day one side
+    // grows an offset.
+    parseDateTimeAsUTC(codeOverridesChangedAt!).getTime() >
+      parseDateTimeAsUTC(data.created_at!).getTime();
 
   const action = canWriteMaster ? (
     <Button

@@ -301,11 +301,11 @@ describe('SpecProposalSection, the adoption hint (AC-C.4)', () => {
       batch({
         status: 'proposed',
         id: 'batch-1',
-        created_at: '2026-08-30T10:00:00Z',
+        created_at: '2026-08-30T10:00:00',
       }),
     );
 
-    renderSection('done', '2026-08-30T11:00:00Z');
+    renderSection('done', '2026-08-30T11:00:00');
 
     expect(
       screen.getByTestId('dk-fr-spec-adoption-hint'),
@@ -319,11 +319,11 @@ describe('SpecProposalSection, the adoption hint (AC-C.4)', () => {
       batch({
         status: 'failed',
         id: 'batch-1',
-        created_at: '2026-08-30T10:00:00Z',
+        created_at: '2026-08-30T10:00:00',
       }),
     );
 
-    renderSection('done', '2026-08-30T11:00:00Z');
+    renderSection('done', '2026-08-30T11:00:00');
 
     expect(screen.getByTestId('dk-fr-spec-adoption-hint')).toBeInTheDocument();
   });
@@ -331,7 +331,7 @@ describe('SpecProposalSection, the adoption hint (AC-C.4)', () => {
   it('hides the hint when there is no batch at all', () => {
     setQuery(batch({ status: 'none' }));
 
-    renderSection('done', '2026-08-30T11:00:00Z');
+    renderSection('done', '2026-08-30T11:00:00');
 
     expect(screen.queryByTestId('dk-fr-spec-adoption-hint')).toBeNull();
   });
@@ -341,11 +341,11 @@ describe('SpecProposalSection, the adoption hint (AC-C.4)', () => {
       batch({
         status: 'proposing',
         id: 'batch-1',
-        created_at: '2026-08-30T10:00:00Z',
+        created_at: '2026-08-30T10:00:00',
       }),
     );
 
-    renderSection('done', '2026-08-30T11:00:00Z');
+    renderSection('done', '2026-08-30T11:00:00');
 
     expect(screen.queryByTestId('dk-fr-spec-adoption-hint')).toBeNull();
   });
@@ -355,11 +355,11 @@ describe('SpecProposalSection, the adoption hint (AC-C.4)', () => {
       batch({
         status: 'proposed',
         id: 'batch-1',
-        created_at: '2026-08-30T11:00:00Z',
+        created_at: '2026-08-30T11:00:00',
       }),
     );
 
-    renderSection('done', '2026-08-30T10:00:00Z');
+    renderSection('done', '2026-08-30T10:00:00');
 
     expect(screen.queryByTestId('dk-fr-spec-adoption-hint')).toBeNull();
   });
@@ -369,11 +369,11 @@ describe('SpecProposalSection, the adoption hint (AC-C.4)', () => {
       batch({
         status: 'proposed',
         id: 'batch-1',
-        created_at: '2026-08-30T10:00:00Z',
+        created_at: '2026-08-30T10:00:00',
       }),
     );
 
-    renderSection('done', '2026-08-30T10:00:00Z');
+    renderSection('done', '2026-08-30T10:00:00');
 
     expect(screen.queryByTestId('dk-fr-spec-adoption-hint')).toBeNull();
   });
@@ -383,7 +383,7 @@ describe('SpecProposalSection, the adoption hint (AC-C.4)', () => {
       batch({
         status: 'proposed',
         id: 'batch-1',
-        created_at: '2026-08-30T10:00:00Z',
+        created_at: '2026-08-30T10:00:00',
       }),
     );
 
@@ -394,6 +394,21 @@ describe('SpecProposalSection, the adoption hint (AC-C.4)', () => {
 });
 
 describe('SpecProposalSection, without master_data.products.edit (AC-D.1)', () => {
+  it('never shows the hint to someone who cannot propose', () => {
+    hasPermission.mockReturnValue(false);
+    setQuery(
+      batch({
+        status: 'proposed',
+        id: 'batch-1',
+        created_at: '2026-08-30T10:00:00',
+      }),
+    );
+
+    renderSection('done', '2026-08-30T11:00:00');
+
+    expect(screen.queryByTestId('dk-fr-spec-adoption-hint')).toBeNull();
+  });
+
   it('shows the empty copy and offers no button at all', () => {
     hasPermission.mockReturnValue(false);
     setQuery(batch({ status: 'none' }));
