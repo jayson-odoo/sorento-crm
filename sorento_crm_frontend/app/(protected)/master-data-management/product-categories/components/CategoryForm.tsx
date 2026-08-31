@@ -52,6 +52,7 @@ export default function CategoryForm({ open, onOpenChange, categoryId, copyFromC
 
   const form = useForm<z.infer<typeof CategorySchema>>({
     resolver: zodResolver(CategorySchema),
+    mode: 'onTouched',
     defaultValues: {
       category_code: '',
       category_name: '',

@@ -150,7 +150,7 @@ export default function ComplaintForm({
       required_on_site_support: false,
       attachments: [],
     },
-    mode: "onSubmit",
+    mode: 'onTouched',
   });
 
   const productLines = useFieldArray({

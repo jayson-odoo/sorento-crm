@@ -11,7 +11,7 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Search, X, ChevronRight, Upload, FileSpreadsheet, Trash2 } from 'lucide-react';
+import { ChevronRight, Upload, FileSpreadsheet, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -21,7 +21,6 @@ import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { buildSelectColumn, selectedRowIds } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -39,6 +38,8 @@ import { useQueryClient, useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { generateExcelFile, type ColumnOption } from '@/lib/excel-utils';
 import { useRouter } from 'next/navigation';
+import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 
 const EXPORT_FILENAME = 'stock_balance_export.xlsx';
 
@@ -71,7 +72,12 @@ export default function StockBalanceGrid() {
   const { notifyImportQueued } = useImportJobDrawer();
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [sorting, setSorting] = useState<SortingState>([{ id: 'product.product_code', desc: false }]);
-  const [searchQuery, setSearchQuery] = useState('');
+  const {
+    value: searchInput,
+    setValue: setSearchInput,
+    debouncedValue: searchQuery,
+    isSettling: searchSettling,
+  } = useDebouncedSearch();
   const [warehouseId, setWarehouseId] = useState<string>('');
   const [statusFilter, setStatusFilter] = useState<string>('');
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
@@ -92,7 +98,7 @@ export default function StockBalanceGrid() {
   });
   const warehouses: Warehouse[] = warehousesData?.data ?? [];
 
-  const { data, isLoading } = useStockBalance({
+  const { data, isLoading, isFetching } = useStockBalance({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -268,25 +274,13 @@ export default function StockBalanceGrid() {
           <DataGridListToolbar
             table={table}
             searchSlot={
-              <div className="relative">
-                <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
-                <Input
-                  placeholder="Search stock..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="ps-9 w-64"
-                />
-                {searchQuery && (
-                  <Button
-                    mode="icon"
-                    variant="dim"
-                    className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
-                    onClick={() => setSearchQuery('')}
-                  >
-                    <X />
-                  </Button>
-                )}
-              </div>
+              <ListSearchInput
+                value={searchInput}
+                onChange={setSearchInput}
+                isSettling={isSearchInFlight(searchSettling, isFetching, searchQuery)}
+                placeholder="Search stock..."
+                className="w-64"
+              />
             }
             filters={{
               kind: 'custom',

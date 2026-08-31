@@ -11,7 +11,7 @@ import {
   type PaginationState,
   type SortingState,
 } from '@tanstack/react-table';
-import { AlertCircle, FileUp, ScanLine, Search, Trash2 } from 'lucide-react';
+import { AlertCircle, FileUp, ScanLine, Trash2 } from 'lucide-react';
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -20,7 +20,6 @@ import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   useDeferredRowAction,
@@ -28,6 +27,8 @@ import {
 } from '@/hooks/useDeferredRowAction';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
+import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 
 import type { FlyerReadingStatus, FlyerReadingSummary } from '../../services/flyerReadingService';
 import { FLYER_READINGS_QUERY_KEY, useFlyerReadingsQuery } from '../hooks/useFlyerReadings';
@@ -61,7 +62,11 @@ const STATUS_LABEL: Record<FlyerReadingStatus, string> = {
  */
 export function FlyerReadingsList() {
   const router = useRouter();
-  const [search, setSearch] = useState('');
+  const {
+    value: searchInput,
+    setValue: setSearchInput,
+    debouncedValue: search,
+  } = useDebouncedSearch();
   const [uploadOpen, setUploadOpen] = useState(false);
   // Delete asks nothing (D7): the row dims and a toast counts down with Cancel.
   const deletion = useDeferredRowAction({
@@ -247,17 +252,14 @@ export function FlyerReadingsList() {
       <Card>
         <CardHeader className="block py-5">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="relative w-full sm:max-w-xs">
-              <Search className="absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                id="dk-fr-search"
-                className="ps-9"
-                placeholder="Search flyers"
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                aria-label="Search flyers"
-              />
-            </div>
+            <ListSearchInput
+              id="dk-fr-search"
+              value={searchInput}
+              onChange={setSearchInput}
+              placeholder="Search flyers"
+              aria-label="Search flyers"
+              className="w-full sm:max-w-xs"
+            />
             <Button size="sm" className="shrink-0" onClick={() => setUploadOpen(true)}>
               <FileUp className="size-4" />
               Read a flyer

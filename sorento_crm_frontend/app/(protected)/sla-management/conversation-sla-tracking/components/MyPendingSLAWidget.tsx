@@ -14,7 +14,6 @@ import {
   Clock,
   ExternalLink,
   History,
-  Search,
   TrendingUp,
   UserRoundCog,
   UserRoundPlus,
@@ -27,6 +26,8 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -197,7 +198,11 @@ export default function MyPendingSLAWidget() {
   const [teamItems, setTeamItems] = useState<TeamPendingItem[] | null>(null);
   const [teamError, setTeamError] = useState<string | null>(null);
   const [page, setPage] = useState(0);
-  const [search, setSearch] = useState('');
+  const {
+    value: searchInput,
+    setValue: setSearchInput,
+    debouncedValue: search,
+  } = useDebouncedSearch();
   const [resolveTarget, setResolveTarget] = useState<MyPendingSLAItem | null>(null);
   const [resolving, setResolving] = useState(false);
   const [escalateTarget, setEscalateTarget] = useState<MyPendingSLAItem | null>(null);
@@ -862,15 +867,12 @@ export default function MyPendingSLAWidget() {
       </div>
 
       {mode !== 'coverage' && activeLoaded && (
-        <div className="relative mb-3">
-          <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search by number, contact, or type…"
-            className="h-8 pl-8 text-sm"
-          />
-        </div>
+        <ListSearchInput
+          value={searchInput}
+          onChange={setSearchInput}
+          placeholder="Search by number, contact, or type…"
+          className="mb-3 w-full"
+        />
       )}
 
       {banner && (

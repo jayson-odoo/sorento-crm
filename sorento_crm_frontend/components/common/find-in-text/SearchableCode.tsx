@@ -44,7 +44,7 @@ export function SearchableCode({
 
   return (
     <div
-      className="relative"
+      className="relative rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       tabIndex={0}
       role="textbox"
       aria-readonly="true"

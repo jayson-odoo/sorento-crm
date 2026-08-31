@@ -220,6 +220,7 @@ export function WorkflowLineGroupsEditor({
                       variant="ghost"
                       className="absolute top-2 right-2"
                       onClick={() => removeRow(idx)}
+                      aria-label="Delete row"
                     >
                       <Trash2 className="size-4 text-destructive" />
                     </Button>

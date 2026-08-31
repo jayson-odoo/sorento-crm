@@ -57,7 +57,7 @@ export default function ContactCreateDialog({
       name: '',
       access_type_codes: [],
     },
-    mode: 'onSubmit',
+    mode: 'onTouched',
   });
 
   useEffect(() => {

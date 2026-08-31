@@ -54,7 +54,7 @@ export default function SupplierForm({ supplierId, onSuccess }: SupplierFormProp
       payment_terms_days: 30,
       is_active: true,
     },
-    mode: 'onSubmit',
+    mode: 'onTouched',
   });
 
   // Track if form has been initialized to prevent multiple resets

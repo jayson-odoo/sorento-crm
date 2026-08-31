@@ -8,8 +8,8 @@
  * written to end (Impersonate was list-only, Delete was record-only).
  */
 import React from 'react';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, cleanup, within } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, fireEvent, cleanup, within, act, waitFor } from '@testing-library/react';
 import { Mail, Trash2, UserCog } from 'lucide-react';
 
 import DetailActions from './DetailActions';
@@ -54,6 +54,20 @@ function menuItemLabels(): string[] {
   return screen
     .getAllByRole('menuitem')
     .map((item) => (item.textContent || '').trim());
+}
+
+/**
+ * A menu's items and separators, in document order.
+ *
+ * NOT `Array.from(menu.children)` - the menu's own scale/opacity spring
+ * (S8-01) animates an inner div rather than the `[role="menu"]` element
+ * itself (so it never fights Radix Popper's own positioning transform on that
+ * same node, apple-alignment S8), which makes every row a grandchild now
+ * rather than a direct child. `querySelectorAll` still returns them in
+ * document order regardless of nesting depth.
+ */
+function menuRows(menu: HTMLElement): HTMLElement[] {
+  return Array.from(menu.querySelectorAll<HTMLElement>('[role="menuitem"], [role="separator"]'));
 }
 
 beforeEach(() => {
@@ -104,7 +118,7 @@ describe('DetailActions', () => {
 
     // The separator sits between the last secondary item and the destructive one.
     const menu = destructive.closest('[role="menu"]') as HTMLElement;
-    const rows = Array.from(menu.children);
+    const rows = menuRows(menu);
     const separatorIndex = rows.findIndex(
       (el) => el.getAttribute('role') === 'separator',
     );
@@ -166,8 +180,8 @@ describe('DetailActionsMenu, children mode', () => {
       'Delete',
     ]);
 
-    const menu = screen.getByRole('menu');
-    const rows = Array.from(menu.children);
+    const menu = screen.getByRole('menu') as HTMLElement;
+    const rows = menuRows(menu);
     const separators = rows.filter((el) => el.getAttribute('role') === 'separator');
     expect(separators).toHaveLength(1);
     expect(rows.indexOf(separators[0])).toBe(
@@ -190,7 +204,7 @@ describe('DetailActionsMenu, children mode', () => {
     openMenu(screen.getByRole('button', { name: 'Actions' }));
 
     expect(
-      Array.from(screen.getByRole('menu').children).filter(
+      menuRows(screen.getByRole('menu') as HTMLElement).filter(
         (el) => el.getAttribute('role') === 'separator',
       ),
     ).toHaveLength(0);
@@ -232,6 +246,67 @@ describe('RowActionsMenu', () => {
     const { container } = render(<RowActionsMenu actions={[]} ariaLabel="user" />);
 
     expect(within(container).queryByRole('button')).toBeNull();
+  });
+});
+
+describe('a confirmable action (S7-06: Copy link had zero feedback)', () => {
+  /**
+   * A "Copy link" item used to run `copyToClipboard` and let Radix close the
+   * menu on select, same as any other item - so the confirmation the S7-05 tick
+   * pattern relies on had nowhere left to render by the time anyone looked.
+   * `confirmLabel` keeps the menu open long enough to show it, then closes
+   * itself.
+   */
+  it('swaps the icon and label to the confirmation, then closes the menu on its own', async () => {
+    const run = vi.fn().mockResolvedValue(true);
+    const actions: RecordAction[] = [
+      { key: 'record.copy_link', label: 'Copy link', run, confirmLabel: 'Copied' },
+    ];
+    render(<DetailActions actions={actions} />);
+
+    openMenu(screen.getByRole('button', { name: 'Actions' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Copy link' }));
+
+    expect(run).toHaveBeenCalledTimes(1);
+    // Real timers throughout: the close is animated now (S8), and motion's
+    // exit resolves on rAF, which sinon's faked clock freezes - fake-timer
+    // advances left the menu mounted forever. Reduced motion (vitest.setup)
+    // keeps the exit instant, so only the self-close delay is really waited.
+    await waitFor(() => expect(screen.getByRole('menuitem', { name: 'Copied' })).toBeInTheDocument());
+    // The menu is still open - a menu that closed on select would have taken
+    // this confirmation down with it before anyone read it.
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+
+    await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument(), { timeout: 4000 });
+  });
+
+  it('a refused write skips the tick and closes right away', async () => {
+    const run = vi.fn().mockResolvedValue(false);
+    const actions: RecordAction[] = [
+      { key: 'record.copy_link', label: 'Copy link', run, confirmLabel: 'Copied' },
+    ];
+    render(<DetailActions actions={actions} />);
+
+    openMenu(screen.getByRole('button', { name: 'Actions' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Copy link' }));
+
+    await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument());
+    expect(screen.queryByRole('menuitem', { name: 'Copied' })).not.toBeInTheDocument();
+  });
+
+  it('an action with no confirmLabel still closes on select, exactly as before', async () => {
+    const run = vi.fn();
+    render(
+      <DetailActions
+        actions={[{ key: 'record.plain', label: 'Plain action', run }]}
+      />,
+    );
+
+    openMenu(screen.getByRole('button', { name: 'Actions' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Plain action' }));
+
+    expect(run).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument());
   });
 });
 

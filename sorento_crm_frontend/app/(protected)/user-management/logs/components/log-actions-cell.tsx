@@ -64,7 +64,7 @@ export const LogActionsCell = ({ row }: { row: Row<SystemLog> }) => {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button className="h-7 w-7" mode="icon" variant="ghost">
+        <Button className="h-7 w-7" mode="icon" variant="ghost" aria-label="More actions">
           <Ellipsis />
         </Button>
       </DropdownMenuTrigger>

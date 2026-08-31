@@ -40,6 +40,7 @@ export default function Page() {
 
   const form = useForm<ChangePasswordSchemaType>({
     resolver: zodResolver(getChangePasswordSchema()),
+    mode: 'onTouched',
     defaultValues: {
       newPassword: '',
       confirmPassword: '',

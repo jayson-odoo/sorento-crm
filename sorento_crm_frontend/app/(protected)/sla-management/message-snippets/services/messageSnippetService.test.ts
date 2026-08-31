@@ -11,7 +11,6 @@ vi.mock('@/lib/api', () => ({ apiFetch: (...args: unknown[]) => apiFetch(...args
 
 import {
   createMessageSnippet,
-  deleteMessageSnippet,
   getMessageSnippetOptions,
   listMessageSnippets,
   updateMessageSnippet,
@@ -100,14 +99,6 @@ describe('write calls', () => {
       `${BASE}/s1`,
       expect.objectContaining({ method: 'PUT' }),
     );
-  });
-
-  it('DELETEs against the id', async () => {
-    apiFetch.mockResolvedValue(ok({ message: 'deleted' }));
-
-    await deleteMessageSnippet('s1');
-
-    expect(apiFetch).toHaveBeenCalledWith(`${BASE}/s1`, { method: 'DELETE' });
   });
 });
 

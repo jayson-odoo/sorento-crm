@@ -12,7 +12,7 @@ import {
   getPaginationRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { Pencil, Plus, Search, SlidersHorizontal, Trash2, X } from 'lucide-react';
+import { Pencil, Plus, SlidersHorizontal, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -30,6 +30,8 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { Label } from '@/components/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -56,7 +58,12 @@ export default function WorkflowDefinitionsList() {
 
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 20 });
   const [sorting, setSorting] = useState<SortingState>([{ id: 'updated_at', desc: true }]);
-  const [searchQuery, setSearchQuery] = useState('');
+  const {
+    value: searchInput,
+    setValue: setSearchInput,
+    debouncedValue: searchQuery,
+    isSettling: searchSettling,
+  } = useDebouncedSearch();
   const [advancedFilter, setAdvancedFilter] = useState<ListQueryFilterGroup | null>(null);
   const [quickStatus, setQuickStatus] = useState<'all' | 'active' | 'inactive'>('all');
 
@@ -220,25 +227,13 @@ export default function WorkflowDefinitionsList() {
             table={table}
             searchSlot={
               <div className="flex flex-wrap items-center gap-2">
-                <div className="relative">
-                  <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
-                  <Input
-                    placeholder="Search code or name…"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="ps-9 w-64 max-w-full"
-                  />
-                  {searchQuery ? (
-                    <Button
-                      mode="icon"
-                      variant="dim"
-                      className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
-                      onClick={() => setSearchQuery('')}
-                    >
-                      <X />
-                    </Button>
-                  ) : null}
-                </div>
+                <ListSearchInput
+                  value={searchInput}
+                  onChange={setSearchInput}
+                  isSettling={isSearchInFlight(searchSettling, isFetching, searchQuery)}
+                  placeholder="Search code or name…"
+                  className="w-64 max-w-full"
+                />
                 {listQueryToolsEnabled ? (
                   <Popover>
                     <PopoverTrigger asChild>

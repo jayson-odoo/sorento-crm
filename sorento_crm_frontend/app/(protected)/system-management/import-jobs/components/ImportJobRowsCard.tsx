@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ColumnDef,
   PaginationState,
@@ -18,7 +18,8 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useImportJobRows } from '../hooks/useImportJobs';
 import { downloadImportJobRowsCsv } from '../services/importJobService';
@@ -73,8 +74,13 @@ export function ImportJobRowsCard({
   onChangeOutcome,
 }: ImportJobRowsCardProps) {
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 25 });
-  const [searchInput, setSearchInput] = useState('');
-  const [search, setSearch] = useState('');
+  const {
+    value: searchInput,
+    setValue: setSearchInput,
+    debouncedValue: search,
+    isSettling: searchSettling,
+    reset: resetSearch,
+  } = useDebouncedSearch();
   const [downloading, setDownloading] = useState(false);
 
   const query = {
@@ -85,7 +91,17 @@ export function ImportJobRowsCard({
     query: search || undefined,
   };
 
-  const { data, isLoading, isError, error } = useImportJobRows(jobId, query);
+  const { data, isLoading, isFetching, isError, error } = useImportJobRows(jobId, query);
+
+  // A search brings the reader back to page 0 to see the matches.
+  const searchMounted = useRef(false);
+  useEffect(() => {
+    if (!searchMounted.current) {
+      searchMounted.current = true;
+      return;
+    }
+    setPagination((p) => ({ ...p, pageIndex: 0 }));
+  }, [search]);
 
   // Reason options come from the job's own breakdown, so the filter can only offer
   // codes this job actually produced.
@@ -280,24 +296,15 @@ export function ImportJobRowsCard({
                 size="sm"
               />
             </div>
-            <form
-              className="flex w-full items-center gap-2 sm:w-auto sm:flex-1"
-              onSubmit={(e) => {
-                e.preventDefault();
-                setSearch(searchInput.trim());
-                resetPage();
-              }}
-            >
-              <Input
-                placeholder="Search detail, value or identity…"
+            <div className="w-full sm:w-auto sm:flex-1">
+              <ListSearchInput
                 value={searchInput}
-                onChange={(e) => setSearchInput(e.target.value)}
-                className="h-8"
+                onChange={setSearchInput}
+                isSettling={isSearchInFlight(searchSettling, isFetching, search)}
+                placeholder="Search detail, value or identity…"
+                className="w-full"
               />
-              <Button type="submit" variant="outline" size="sm">
-                Search
-              </Button>
-            </form>
+            </div>
             {activeFilterCount > 0 && (
               <Button
                 variant="ghost"
@@ -305,8 +312,7 @@ export function ImportJobRowsCard({
                 onClick={() => {
                   onChangeOutcome?.('');
                   onChangeCode?.('');
-                  setSearchInput('');
-                  setSearch('');
+                  resetSearch('');
                   resetPage();
                 }}
               >

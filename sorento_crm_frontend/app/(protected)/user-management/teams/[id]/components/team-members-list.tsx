@@ -148,7 +148,6 @@ export default function TeamMembersList({
                         <Switch
                           size="sm"
                           checked={includeInRR}
-                          disabled={roundRobinMutation.isPending}
                           onCheckedChange={(checked) =>
                             roundRobinMutation.mutate({
                               userId: member.user_id,
@@ -165,6 +164,7 @@ export default function TeamMembersList({
                           className="text-destructive hover:text-destructive"
                           onClick={() => removeMutation.mutate(member.user_id)}
                           disabled={removeMutation.isPending}
+                          aria-label="Remove member"
                         >
                           <Trash2 className="size-4" />
                         </Button>

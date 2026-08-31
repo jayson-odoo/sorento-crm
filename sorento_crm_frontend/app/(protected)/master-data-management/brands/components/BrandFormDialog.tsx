@@ -57,6 +57,7 @@ export default function BrandFormDialog({
 
   const form = useForm<z.infer<typeof BrandFormSchema>>({
     resolver: zodResolver(BrandFormSchema),
+    mode: 'onTouched',
     defaultValues: {
       brand_code: '',
       brand_name: '',

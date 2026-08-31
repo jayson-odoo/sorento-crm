@@ -86,7 +86,6 @@ export default function AutomationDetailPage() {
                         <Switch
                           checked={automation.enabled}
                           onCheckedChange={(c) => toggleMut.mutate(c)}
-                          disabled={toggleMut.isPending}
                         />
                         <Badge variant={automation.enabled ? 'success' : 'secondary'}>
                           {automation.enabled ? 'Active' : 'Disabled'}

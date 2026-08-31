@@ -43,6 +43,7 @@ export default function PublicHolidayFormDialog({
 
   const form = useForm<PublicHolidaySchemaType>({
     resolver: zodResolver(PublicHolidaySchema),
+    mode: 'onTouched',
     defaultValues: {
       date: '',
       name: '',

@@ -203,6 +203,7 @@ export default function NotificationItem({
             size="icon"
             className="shrink-0 h-8 w-8"
             onClick={(e) => e.stopPropagation()}
+            aria-label="More actions"
           >
             <MoreHorizontal className="size-4" />
           </Button>

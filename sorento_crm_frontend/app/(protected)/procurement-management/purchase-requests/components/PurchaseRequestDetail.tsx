@@ -226,6 +226,9 @@ export default function PurchaseRequestDetail({
   const salesTypeOptions = useLookupOptionsByBinding('purchase_requests', 'sales_type');
   const [viewLinkCopying, setViewLinkCopying] = useState(false);
   const [approvalLinkCopying, setApprovalLinkCopying] = useState(false);
+  // Each item ticks in place and the menu stays open to be read (S7-05).
+  const [approvalLinkCopied, setApprovalLinkCopied] = useState(false);
+  const [viewLinkCopied, setViewLinkCopied] = useState(false);
   const [conversationSheetOpen, setConversationSheetOpen] = useState(false);
   const [replyComposePrefill, setReplyComposePrefill] = useState<{
     key: number;
@@ -587,7 +590,7 @@ export default function PurchaseRequestDetail({
               {showPrimarySendForApproval && (
                 <DropdownMenuItem
                   disabled={approvalLinkCopying}
-                  onClick={async (e) => {
+                  onSelect={async (e) => {
                     e.preventDefault();
                     if (!requestId) return;
                     const approverUserId =
@@ -607,7 +610,8 @@ export default function PurchaseRequestDetail({
                       });
                       if (res.approval_url) {
                         await navigator.clipboard.writeText(res.approval_url);
-                        toast.success('Approval link copied to clipboard');
+                        setApprovalLinkCopied(true);
+                        window.setTimeout(() => setApprovalLinkCopied(false), 2000);
                       } else {
                         toast.error('Could not generate approval link');
                       }
@@ -620,14 +624,18 @@ export default function PurchaseRequestDetail({
                     }
                   }}
                 >
-                  <Link2 className="size-4" />
-                  {approvalLinkCopying ? 'Generating…' : 'Copy approval link'}
+                  {approvalLinkCopied ? <Check className="size-4" /> : <Link2 className="size-4" />}
+                  {approvalLinkCopying
+                    ? 'Generating…'
+                    : approvalLinkCopied
+                      ? 'Copied'
+                      : 'Copy approval link'}
                 </DropdownMenuItem>
               )}
               {publicViewLinksEnabled && (
                 <DropdownMenuItem
                   disabled={viewLinkCopying}
-                  onClick={async (e) => {
+                  onSelect={async (e) => {
                     e.preventDefault();
                     if (!requestId) return;
                     setViewLinkCopying(true);
@@ -636,7 +644,8 @@ export default function PurchaseRequestDetail({
                       const { view_url } = await getOrCreateViewLink(requestId, baseUrl);
                       if (view_url) {
                         await navigator.clipboard.writeText(view_url);
-                        toast.success('View link copied to clipboard');
+                        setViewLinkCopied(true);
+                        window.setTimeout(() => setViewLinkCopied(false), 2000);
                       } else {
                         toast.error('Could not generate view link');
                       }
@@ -647,8 +656,8 @@ export default function PurchaseRequestDetail({
                     }
                   }}
                 >
-                  <Link2 className="size-4" />
-                  {viewLinkCopying ? 'Generating…' : 'Copy view link'}
+                  {viewLinkCopied ? <Check className="size-4" /> : <Link2 className="size-4" />}
+                  {viewLinkCopying ? 'Generating…' : viewLinkCopied ? 'Copied' : 'Copy view link'}
                 </DropdownMenuItem>
               )}
               <DropdownMenuItem
@@ -1019,6 +1028,7 @@ export default function PurchaseRequestDetail({
                       setCopied(true);
                       setTimeout(() => setCopied(false), 2000);
                     }}
+                    aria-label="Copy approval link"
                   >
                     {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
                   </Button>

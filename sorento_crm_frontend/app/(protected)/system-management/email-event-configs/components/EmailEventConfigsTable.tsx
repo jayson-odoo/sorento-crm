@@ -104,7 +104,6 @@ export default function EmailEventConfigsTable() {
                               payload: { enabled: checked },
                             })
                           }
-                          disabled={updateMut.isPending}
                         />
                       </TableCell>
                       <TableCell>

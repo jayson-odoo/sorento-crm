@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { useRouter } from 'next/navigation';
@@ -90,6 +90,60 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
     return d;
   })();
 
+  // The order fills the form through `values`, not a reset scheduled in an effect
+  // behind a `formInitialized` flag (S7-03). The flag existed to stop the reset
+  // running twice, and the price of it was that a refetched order never reached
+  // the inputs at all. `values` is react-hook-form's own answer: undefined in
+  // create mode, so the defaults below stand.
+  const editValues = useMemo<OrderSchemaType | undefined>(() => {
+    if (!order || !isEditMode) return undefined;
+    return {
+      order_number: order.order_number ?? '',
+      order_date: order.order_date ? dateOnlyUTC(order.order_date) ?? new Date() : new Date(),
+      estimated_delivery_date: dateOnlyUTC(order.estimated_delivery_date),
+      actual_delivery_date: dateOnlyUTC(order.actual_delivery_date),
+      customer_id: order.customer_id ? String(order.customer_id) : '',
+      order_status_id: order.order_status_id ? String(order.order_status_id) : '',
+      billing_address_id: order.billing_address_id || undefined,
+      shipping_address_id: order.shipping_address_id || undefined,
+      created_time: order.created_time ? new Date(order.created_time) : undefined,
+      debtor_code: order.debtor_code ?? '',
+      debtor_name: order.debtor_name ?? '',
+      agent: order.agent ?? '',
+      is_cancelled: order.is_cancelled ?? false,
+      remarks_cs: order.remarks_cs ?? '',
+      order_type: order.order_type ?? '',
+      pickup_time: order.pickup_time ?? '',
+      checker: order.checker ?? '',
+      transporter: order.transporter ?? '',
+      driver_name: order.driver_name ?? '',
+      lorry_plate: order.lorry_plate ?? '',
+      customer_ref: order.customer_ref ?? '',
+      delivery_remarks_cs: order.delivery_remarks_cs ?? '',
+      delivery_remarks: order.delivery_remarks ?? '',
+      salesman: order.salesman ?? '',
+      trips: order.trips ?? undefined,
+      warehouse: order.warehouse ?? '',
+      delivery_days: order.delivery_days ?? 2,
+      kpi_warning: order.kpi_warning ?? false,
+      subtotal_amount:
+        typeof order.subtotal_amount === 'number'
+          ? order.subtotal_amount
+          : Number(order.subtotal_amount) || 0,
+      discount_amount:
+        typeof order.discount_amount === 'number'
+          ? order.discount_amount
+          : Number(order.discount_amount) || 0,
+      tax_amount:
+        typeof order.tax_amount === 'number' ? order.tax_amount : Number(order.tax_amount) || 0,
+      total_amount:
+        typeof order.total_amount === 'number'
+          ? order.total_amount
+          : Number(order.total_amount) || 0,
+      remarks: order.remarks ?? '',
+    };
+  }, [order, isEditMode]);
+
   const form = useForm<OrderSchemaType>({
     resolver: zodResolver(OrderSchema),
     defaultValues: {
@@ -127,11 +181,13 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
       total_amount: 0,
       remarks: '',
     },
-    mode: 'onSubmit',
+    values: editValues,
+    // A refetch arriving mid-edit updates the fields nobody has touched and
+    // leaves the ones being typed in alone.
+    resetOptions: { keepDirtyValues: true },
+    // A field answers when the reader leaves it, not on submit.
+    mode: 'onTouched',
   });
-
-  // Track if form has been initialized to prevent multiple resets
-  const [formInitialized, setFormInitialized] = useState(false);
 
   // Watch financial fields to auto-calculate total
   const subtotal = form.watch('subtotal_amount');
@@ -164,57 +220,6 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
     form.setValue('delivery_days', days);
     form.setValue('kpi_warning', days > 2);
   }, [orderDate, actualDeliveryDate, form]);
-
-  // Load order data when editing
-  useEffect(() => {
-    if (order && isEditMode && !formInitialized) {
-      const orderStatusId = order.order_status_id ? String(order.order_status_id) : '';
-      const timeoutId = setTimeout(() => {
-        form.reset({
-          order_number: order.order_number ?? '',
-          order_date: order.order_date ? dateOnlyUTC(order.order_date) ?? new Date() : new Date(),
-          estimated_delivery_date: dateOnlyUTC(order.estimated_delivery_date),
-          actual_delivery_date: dateOnlyUTC(order.actual_delivery_date),
-          customer_id: order.customer_id ? String(order.customer_id) : '',
-          order_status_id: orderStatusId,
-          billing_address_id: order.billing_address_id || undefined,
-          shipping_address_id: order.shipping_address_id || undefined,
-          created_time: order.created_time ? new Date(order.created_time) : undefined,
-          debtor_code: order.debtor_code ?? '',
-          debtor_name: order.debtor_name ?? '',
-          agent: order.agent ?? '',
-          is_cancelled: order.is_cancelled ?? false,
-          remarks_cs: order.remarks_cs ?? '',
-          order_type: order.order_type ?? '',
-          pickup_time: order.pickup_time ?? '',
-          checker: order.checker ?? '',
-          transporter: order.transporter ?? '',
-          driver_name: order.driver_name ?? '',
-          lorry_plate: order.lorry_plate ?? '',
-          customer_ref: order.customer_ref ?? '',
-          delivery_remarks_cs: order.delivery_remarks_cs ?? '',
-          delivery_remarks: order.delivery_remarks ?? '',
-          salesman: order.salesman ?? '',
-          trips: order.trips ?? undefined,
-          warehouse: order.warehouse ?? '',
-          delivery_days: order.delivery_days ?? 2,
-          kpi_warning: order.kpi_warning ?? false,
-          subtotal_amount: typeof order.subtotal_amount === 'number' ? order.subtotal_amount : Number(order.subtotal_amount) || 0,
-          discount_amount: typeof order.discount_amount === 'number' ? order.discount_amount : Number(order.discount_amount) || 0,
-          tax_amount: typeof order.tax_amount === 'number' ? order.tax_amount : Number(order.tax_amount) || 0,
-          total_amount: typeof order.total_amount === 'number' ? order.total_amount : Number(order.total_amount) || 0,
-          remarks: order.remarks ?? '',
-        });
-        setFormInitialized(true);
-      }, 0);
-      return () => clearTimeout(timeoutId);
-    }
-  }, [order, isEditMode, form, formInitialized]);
-
-  // Reset formInitialized when orderId changes
-  useEffect(() => {
-    setFormInitialized(false);
-  }, [orderId]);
 
   const onSubmit = async (data: OrderSchemaType) => {
     try {

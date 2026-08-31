@@ -72,6 +72,7 @@ export default function GRNForm({ grnId, onSuccess }: GRNFormProps) {
 
   const form = useForm<GRNSchemaType>({
     resolver: zodResolver(grnSchema) as Resolver<GRNSchemaType>,
+    mode: 'onTouched',
     defaultValues: {
       picking_number: '',
       spo_number: '',
@@ -569,6 +570,7 @@ export default function GRNForm({ grnId, onSuccess }: GRNFormProps) {
                       onClick={() => handleRemoveSingle(index)}
                       className="text-destructive"
                       disabled={serverApproved}
+                      aria-label="Delete line"
                     >
                       <Trash2 className="size-4" />
                     </Button>

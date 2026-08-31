@@ -86,7 +86,7 @@ export default function StockInquiryForm({
       contact_id: null,
       space_id: null,
     },
-    mode: 'onSubmit',
+    mode: 'onTouched',
   });
 
   const [formInitialized, setFormInitialized] = useState(false);

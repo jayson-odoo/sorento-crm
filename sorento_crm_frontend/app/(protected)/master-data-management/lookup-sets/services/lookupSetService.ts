@@ -46,11 +46,6 @@ export async function updateLookupSet(id: string, data: Partial<LookupSetFormDat
   return r.json();
 }
 
-export async function deleteLookupSet(id: string): Promise<void> {
-  const r = await apiFetch(`${BASE}/${id}`, { method: 'DELETE' });
-  if (!r.ok) throw new Error(await extractApiError(r, 'Failed to delete lookup set'));
-}
-
 // Options
 
 export async function listOptions(setId: string): Promise<LookupOption[]> {
@@ -133,7 +128,6 @@ export async function setBindingDefaultValue(
   bindingId: string,
   default_value: string | null,
 ): Promise<{ id: string; default_value: string | null }> {
-  await new Promise((resolve) => setTimeout(resolve, 200));
   return { id: bindingId, default_value };
 }
 

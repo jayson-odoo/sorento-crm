@@ -22,12 +22,15 @@
  * record page passes to `DetailActions` and a list row leaves to the toast.
  */
 
-import type { ReactElement, ReactNode } from 'react';
-import type { LucideIcon } from 'lucide-react';
+import { useEffect, useState, type ReactElement, type ReactNode } from 'react';
+import { Check, type LucideIcon } from 'lucide-react';
 import {
   DropdownMenuItem,
   DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu';
+
+/** How long the tick + confirm label sit before a confirmable item closes the menu itself. */
+const CONFIRM_TIMEOUT_MS = 1500;
 
 export interface RecordAction {
   /** Stable identity for the item, e.g. `user.impersonate`. */
@@ -37,7 +40,18 @@ export interface RecordAction {
   /** `destructive` items are rendered last, after a separator, in red. */
   kind?: 'secondary' | 'destructive';
   disabled?: boolean;
-  run: () => void;
+  run: () => void | boolean | Promise<boolean | void>;
+  /**
+   * When set, selecting this item does not close the menu the instant it is
+   * clicked. It runs `run`, and unless the result is explicitly `false` shows a
+   * check mark and this label for ~1.5s before closing (S7-05's tick, adapted
+   * for a menu item - a menu that closes on select erases a confirmation before
+   * anyone sees it, which is exactly what left "Copy link" with no feedback at
+   * all). `run` resolving to `false` skips the tick and closes immediately; the
+   * caller surfaces that failure itself (a toast, same as any other clipboard
+   * refusal - see `useCopyToClipboard`).
+   */
+  confirmLabel?: string;
 }
 
 /** What a `use<Entity>Actions` hook returns. */
@@ -65,6 +79,71 @@ export function orderRecordActions(actions: RecordAction[]): {
 }
 
 /**
+ * One item. A plain action fires and closes the menu, exactly as before. A
+ * confirmable one (`confirmLabel` set) holds the menu open, swaps its icon for
+ * a check mark and its label for `confirmLabel`, then closes itself after
+ * `CONFIRM_TIMEOUT_MS` - the tick IS the confirmation, so nothing needs a toast
+ * to say a copy landed.
+ */
+function RecordActionItem({
+  action,
+  onRequestClose,
+}: {
+  action: RecordAction;
+  onRequestClose: () => void;
+  /**
+   * Unused here - `action.kind` is what actually drives the rendered item's
+   * colour. It exists so `DetailActionsMenu`'s `orderChildren` (which moves a
+   * destructive CHILD ELEMENT last by reading `props.variant` off it) can still
+   * see the same signal on a caller that splices `recordActionItems` straight
+   * into its own raw menu, instead of going through `RecordActionMenuItems`.
+   */
+  variant?: 'destructive';
+}) {
+  const [confirmed, setConfirmed] = useState(false);
+
+  useEffect(() => {
+    if (!confirmed) return;
+    const timer = setTimeout(() => {
+      setConfirmed(false);
+      onRequestClose();
+    }, CONFIRM_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [confirmed, onRequestClose]);
+
+  const handleSelect = (event: Event) => {
+    if (!action.confirmLabel) {
+      action.run();
+      return;
+    }
+    // Keep the menu open: `run` (e.g. a clipboard write) has to resolve, and the
+    // tick that reports it has nowhere to render once the menu is gone.
+    event.preventDefault();
+    Promise.resolve(action.run()).then((result) => {
+      if (result === false) {
+        onRequestClose();
+        return;
+      }
+      setConfirmed(true);
+    });
+  };
+
+  const Icon = confirmed ? Check : action.icon;
+
+  return (
+    <DropdownMenuItem
+      key={action.key}
+      variant={action.kind === 'destructive' ? 'destructive' : undefined}
+      disabled={action.disabled}
+      onSelect={handleSelect}
+    >
+      {Icon && <Icon className="size-4" />}
+      {confirmed ? action.confirmLabel : action.label}
+    </DropdownMenuItem>
+  );
+}
+
+/**
  * The items as an ARRAY, not a fragment.
  *
  * A gear whose other items are a workflow (the SLA tracking one, say) splices
@@ -72,29 +151,39 @@ export function orderRecordActions(actions: RecordAction[]): {
  * destructive item, and move it last, if the array is flattened into its
  * children rather than hidden inside one fragment.
  */
-export function recordActionItems(actions: RecordAction[]): ReactElement[] {
+export function recordActionItems(
+  actions: RecordAction[],
+  // Optional: a caller splicing these into its own raw DropdownMenu (the
+  // workflow gears) has no `confirmLabel` actions today, so it has nothing to
+  // close. Only `RecordActionMenuItems` (below) needs to wire this up for real.
+  onRequestClose: () => void = () => {},
+): ReactElement[] {
   return actions.map((action) => (
-    <DropdownMenuItem
+    <RecordActionItem
       key={action.key}
+      action={action}
+      onRequestClose={onRequestClose}
       variant={action.kind === 'destructive' ? 'destructive' : undefined}
-      disabled={action.disabled}
-      onSelect={() => action.run()}
-    >
-      {action.icon && <action.icon className="size-4" />}
-      {action.label}
-    </DropdownMenuItem>
+    />
   ));
 }
 
 /** The menu items themselves, so the gear and the row "..." render one list. */
-export function RecordActionMenuItems({ actions }: { actions: RecordAction[] }) {
+export function RecordActionMenuItems({
+  actions,
+  onRequestClose,
+}: {
+  actions: RecordAction[];
+  /** Closes the menu that owns these items - the confirmable ones need it once their tick times out. */
+  onRequestClose: () => void;
+}) {
   const { secondary, destructive } = orderRecordActions(actions);
 
   return (
     <>
-      {recordActionItems(secondary)}
+      {recordActionItems(secondary, onRequestClose)}
       {secondary.length > 0 && destructive.length > 0 && <DropdownMenuSeparator />}
-      {recordActionItems(destructive)}
+      {recordActionItems(destructive, onRequestClose)}
     </>
   );
 }

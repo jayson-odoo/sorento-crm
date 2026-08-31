@@ -107,9 +107,18 @@
 /* Reduced motion: an overlay still fades, it just stops travelling. Zeroing the
    tw-animate translate/scale variables leaves the enter/exit keyframes in place and
    turns them into a plain 150ms opacity change. Spinners keep spinning - they report
-   that work is happening, and a frozen one reads as a hung screen. */
+   that work is happening, and a frozen one reads as a hung screen.
+
+   `dialog-content` and `sheet-content` are excluded (S8-01/S8-02): Radix's `asChild`
+   merges those two straight onto the `motion.div` that Framer Motion animates, so this
+   rule's own `transition-duration: 150ms` would land on that very node and CSS-transition
+   its opacity out from under the JS spring - the spring commits `opacity: 1` in one frame
+   (`REDUCED_MOTION_TRANSITION`, lib/motion.ts) and the browser then smears that jump over
+   150ms anyway. Popover and DropdownMenu don't need the same exclusion: their animated
+   `motion.div` is an inner child with no `data-slot` of its own, so this selector never
+   touches it in the first place. */
 @media (prefers-reduced-motion: reduce) {
-  [data-slot$='-content'],
+  [data-slot$='-content']:not([data-slot='dialog-content']):not([data-slot='sheet-content']),
   [data-radix-popper-content-wrapper],
   [data-radix-popper-content-wrapper] > * {
     --tw-enter-translate-x: 0 !important;

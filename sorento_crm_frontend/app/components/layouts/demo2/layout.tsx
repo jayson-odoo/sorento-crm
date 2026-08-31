@@ -46,7 +46,7 @@ export function Demo2Layout({ children }: { children: ReactNode }) {
 
         <Navbar />
 
-        <main className="grow" role="content">
+        <main className="grow">
           {!pathname.includes('/public-profile/') &&
             !pathname.includes('/user-management') &&
             !pathname.includes('/store-client') && (

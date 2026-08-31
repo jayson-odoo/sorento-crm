@@ -80,7 +80,7 @@ opinion. Running a step in the wrong seat is a process violation.
    issue that contradicts the UAC loses. Defer-items go to `documentation/backlogs/backlog.md`.
 2. **Component-library discipline** - reuse first; a new variant = add a prop/mode to the shared
    component, never a parallel one-off. (`extractApiError`, `buildDataGridParams`,
-   `userSelectService`, `ConfirmDeleteDialog`, `DataGrid`, mutation-hook factories.)
+   `userSelectService`, `DataGrid`, mutation-hook factories.)
 3. **Phase 1 - Frontend-first (mock).** UI → hook → service → **mock**. Tune every state
    (loading / empty / error / partial / success) with no backend running. Verify in a real
    browser (agent-browser headless, sidebar-click nav). Document the expected API contract. NO tests yet
@@ -178,11 +178,16 @@ the same axis as the module decision - not a separate schema axis.
   Add; create/edit = **modal by default** (dedicated page only for complex/multi-tab/file flows);
   view = dedicated `/{module}/{id}` detail page rendering **every section** with an explicit empty
   state + next-step CTA (never hide a section on missing data).
-- **Delete = hard delete + confirmation.** Never `confirm()`; use `AlertDialog` /
-  `ConfirmDeleteDialog`. Bulk-delete copy includes the count. Backend `DELETE` is hard; a
-  soft-delete endpoint is **Archive**, never named "delete".
-- **Confirm before every destructive OR detach action** - including Unlink, not just delete. Never
-  one-click.
+- **Delete = hard delete, no confirmation dialog** (D7, Apple Alignment S6). A destructive or
+  detach action - delete, archive-as-delete, Unlink - is a server-deferred pending action, not a
+  modal: the button on screen becomes a countdown (a toast for a list row) with a Cancel, the
+  window is 10s for hard delete / 5s for everything reversible (both configurable in System
+  Settings > General), the server commits when it lapses even if the tab is closed, and Escape
+  does not cancel it. Never `confirm()`; `ConfirmDeleteDialog` is retired - a new importer of it,
+  or a new destructive `AlertDialog`, is a defect to fix, not a style choice. Bulk-delete (a
+  multi-row selection, not one record) is the one case that stays a dialog: a grace-window
+  countdown names ONE record, and a selection has none. Backend `DELETE` is hard; a soft-delete
+  endpoint is **Archive**, never named "delete".
 - **View and Edit are the SAME layout.** Same tabs in the same order, same fields in the same order
   within each tab; editing swaps a read-only value for an input **in place**. Nothing moves,
   appears or disappears between the two views. The read view is what teaches the user where things
@@ -228,8 +233,16 @@ the same axis as the module decision - not a separate schema axis.
 ## Code-review hard-fail rules (auto-reject)
 
 Raw SQL / DB query in a router · a React component calling axios/fetch directly · duplicated
-`extractApiError`/`buildDataGridParams`/user-select · a delete without a confirmation dialog · a
-soft-delete named "delete" · a hidden empty section on a detail page · a hand-rolled
+`extractApiError`/`buildDataGridParams`/user-select · a delete or destructive/detach action wired
+to a confirmation dialog instead of the deferred-action grace window (D7), or to native `confirm()`
+- **except the deliberate carve-outs `ADR-PRODUCT-STANDARDS.md` section 2 names**: a bulk action
+on a multi-row selection (no single record for the countdown to name); token-scoped surfaces
+(`PeopleGrid`, the portal ticket-draft confirm) that run outside the authenticated session the
+deferred-action route needs; `ReportViewsMenu` (a request-time grant, not a stored record); and
+the 22 `project-sales` files still on `ConfirmDeleteDialog`/a destructive `AlertDialog`, kept until
+`FormAction` can carry a record-level authorisation callback (see S6-10 in the Apple Alignment UAC
+for the trigger) - a new importer of either outside that named list is still a defect
+· a soft-delete named "delete" · a hidden empty section on a detail page · a hand-rolled
 `<table className="table-fixed">` (use shared `DataGrid`) · a "done" slice still serving a mock ·
 a new column/engine with no backfill for existing rows · a new permission with no existing-role
 grant path · a new DB column missing from a manual dict builder · a write to `spec.values` /

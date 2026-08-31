@@ -857,7 +857,11 @@ describe('R22 - the destinations expand under the row', () => {
     expect(qtyRow(1)).toHaveValue(70);
     expect(qtyRow(2)).toHaveValue(30);
     expect(screen.getByRole('button', { name: /add location/i })).toBeInTheDocument();
-    expect(trigger).toHaveAttribute('aria-expanded', 'true');
+    // Re-queried: the expand re-renders the grid's cells, so the pre-click node can be
+    // detached by now (its stale aria-expanded reads false on a slow runner).
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /BRW|locations/ })).toHaveAttribute('aria-expanded', 'true'),
+    );
   });
 
   it('carries no coverage list - that is the SO covered lightbox (AC-G4)', async () => {

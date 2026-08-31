@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   ColumnDef,
@@ -15,9 +15,7 @@ import {
 import {
   Ellipsis,
   Plus,
-  Search,
   UserRound,
-  X,
 } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import { Badge } from '@/components/ui/badge';
@@ -40,7 +38,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Input } from '@/components/ui/input';
+import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { Skeleton } from '@/components/ui/skeleton';
 import { UserRole } from '@/app/models/user';
 import RoleDefaultDialog from './role-default-dialog';
@@ -79,10 +78,15 @@ const RoleList = () => {
   const [defaultRole, setDefaultRole] = useState<UserRole | null>(null);
 
   // Query state management
-  const [searchQuery, setSearchQuery] = useState('');
+  const {
+    value: searchInput,
+    setValue: setSearchInput,
+    debouncedValue: searchQuery,
+    isSettling: searchSettling,
+  } = useDebouncedSearch();
 
   // Role list
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isFetching } = useQuery({
     queryKey: ['user-roles', pagination, sorting, searchQuery],
     queryFn: () =>
       fetchRoles({
@@ -227,7 +231,7 @@ const RoleList = () => {
         cell: ({ row }) => (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button className="h-7 w-7" mode="icon" variant="ghost">
+              <Button className="h-7 w-7" mode="icon" variant="ghost" aria-label="More actions">
                 <Ellipsis />
               </Button>
             </DropdownMenuTrigger>
@@ -295,10 +299,15 @@ const RoleList = () => {
     manualFiltering: true,
   });
 
-  const handleSearchChange = (value: string) => {
-    setSearchQuery(value);
+  // A search brings the reader back to page 0 to see the matches.
+  const searchMounted = useRef(false);
+  useEffect(() => {
+    if (!searchMounted.current) {
+      searchMounted.current = true;
+      return;
+    }
     setPagination((p) => ({ ...p, pageIndex: 0 }));
-  };
+  }, [searchQuery]);
 
   // The one offer this listing makes, in both places it belongs: the
   // toolbar, and the empty state's next step (S5-06).
@@ -338,25 +347,13 @@ const RoleList = () => {
             <DataGridListToolbar
               table={table}
               searchSlot={
-                <div className="relative">
-                  <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
-                  <Input
-                    placeholder="Search roles"
-                    value={searchQuery}
-                    onChange={(e) => handleSearchChange(e.target.value)}
-                    className="ps-9 w-64"
-                  />
-                  {searchQuery && (
-                    <Button
-                      mode="icon"
-                      variant="dim"
-                      className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
-                      onClick={() => handleSearchChange('')}
-                    >
-                      <X />
-                    </Button>
-                  )}
-                </div>
+                <ListSearchInput
+                  value={searchInput}
+                  onChange={setSearchInput}
+                  isSettling={isSearchInFlight(searchSettling, isFetching, searchQuery)}
+                  placeholder="Search roles"
+                  className="w-64"
+                />
               }
               exportConfig={{ filename: 'roles_export.xlsx' }}
               primaryAction={listPrimaryAction}

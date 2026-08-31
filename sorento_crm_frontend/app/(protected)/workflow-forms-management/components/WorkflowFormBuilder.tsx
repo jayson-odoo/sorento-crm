@@ -502,7 +502,7 @@ export default function WorkflowFormBuilder({ definitionId }: { definitionId: st
                       <Plus className="size-4 mr-1" />
                       Column
                     </Button>
-                    <Button size="icon" variant="ghost" onClick={() => removeLineGroup(gi)}>
+                    <Button size="icon" variant="ghost" onClick={() => removeLineGroup(gi)} aria-label="Delete line group">
                       <Trash2 className="size-4 text-destructive" />
                     </Button>
                   </div>
@@ -552,7 +552,7 @@ export default function WorkflowFormBuilder({ definitionId }: { definitionId: st
                             Req
                           </Label>
                         </div>
-                        <Button size="icon" variant="ghost" onClick={() => removeLineField(gi, fi)}>
+                        <Button size="icon" variant="ghost" onClick={() => removeLineField(gi, fi)} aria-label="Delete column">
                           <Trash2 className="size-4 text-destructive" />
                         </Button>
                       </div>
@@ -627,7 +627,7 @@ export default function WorkflowFormBuilder({ definitionId }: { definitionId: st
                     />
                   </div>
                   <div className="md:col-span-12 flex justify-end">
-                    <Button size="icon" variant="ghost" onClick={() => removeState(idx)}>
+                    <Button size="icon" variant="ghost" onClick={() => removeState(idx)} aria-label="Delete state">
                       <Trash2 className="size-4 text-destructive" />
                     </Button>
                   </div>
@@ -690,7 +690,7 @@ export default function WorkflowFormBuilder({ definitionId }: { definitionId: st
                     />
                   </div>
                   <div className="md:col-span-12 flex justify-end">
-                    <Button size="icon" variant="ghost" onClick={() => removeTransition(idx)}>
+                    <Button size="icon" variant="ghost" onClick={() => removeTransition(idx)} aria-label="Delete transition">
                       <Trash2 className="size-4 text-destructive" />
                     </Button>
                   </div>
@@ -757,7 +757,7 @@ export default function WorkflowFormBuilder({ definitionId }: { definitionId: st
                     onChange={(ids) => updateNotificationRule(idx, { recipient_role_ids: ids })}
                   />
                   <div className="flex justify-end">
-                    <Button size="icon" variant="ghost" onClick={() => removeNotificationRule(idx)}>
+                    <Button size="icon" variant="ghost" onClick={() => removeNotificationRule(idx)} aria-label="Delete notification rule">
                       <Trash2 className="size-4 text-destructive" />
                     </Button>
                   </div>

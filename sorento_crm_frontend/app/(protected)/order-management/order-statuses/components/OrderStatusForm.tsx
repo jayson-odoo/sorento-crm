@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useMemo } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { useRouter } from 'next/navigation';
@@ -35,6 +35,25 @@ export default function OrderStatusForm({ orderStatusId, onSuccess }: OrderStatu
   const createMutation = useCreateOrderStatus();
   const updateMutation = useUpdateOrderStatus();
 
+  // The record fills the form through `values`, not a reset scheduled in an effect
+  // (S7-03). The old shape waited a tick for "the fields to be ready" and guarded
+  // itself with a `formInitialized` flag, which meant a refetched record never
+  // reached the inputs. `values` is react-hook-form's own answer: undefined in
+  // create mode, so the defaults stand.
+  const editValues = useMemo<OrderStatusSchemaType | undefined>(
+    () =>
+      orderStatus && isEditMode
+        ? {
+            status_code: orderStatus.status_code,
+            status_name: orderStatus.status_name,
+            description: orderStatus.description || '',
+            sequence: orderStatus.sequence,
+            is_final_status: orderStatus.is_final_status,
+          }
+        : undefined,
+    [orderStatus, isEditMode],
+  );
+
   const form = useForm<OrderStatusSchemaType>({
     resolver: zodResolver(OrderStatusSchema),
     defaultValues: {
@@ -44,35 +63,14 @@ export default function OrderStatusForm({ orderStatusId, onSuccess }: OrderStatu
       sequence: 0,
       is_final_status: false,
     },
-    mode: 'onSubmit',
+    values: editValues,
+    // A refetch arriving mid-edit updates the fields nobody has touched and
+    // leaves the ones being typed in alone.
+    resetOptions: { keepDirtyValues: true },
+    // A field answers when the reader leaves it, not on submit and not on every
+    // keystroke: onTouched is the one that does not shout at a half-typed word.
+    mode: 'onTouched',
   });
-
-  // Track if form has been initialized to prevent multiple resets
-  const [formInitialized, setFormInitialized] = useState(false);
-
-  // Load order status data when editing
-  useEffect(() => {
-    if (orderStatus && isEditMode && !formInitialized) {
-      // Use setTimeout to ensure form fields are ready
-      const timeoutId = setTimeout(() => {
-        form.reset({
-          status_code: orderStatus.status_code,
-          status_name: orderStatus.status_name,
-          description: orderStatus.description || '',
-          sequence: orderStatus.sequence,
-          is_final_status: orderStatus.is_final_status,
-        });
-        setFormInitialized(true);
-      }, 0);
-
-      return () => clearTimeout(timeoutId);
-    }
-  }, [orderStatus, isEditMode, form, formInitialized]);
-
-  // Reset formInitialized when orderStatusId changes
-  useEffect(() => {
-    setFormInitialized(false);
-  }, [orderStatusId]);
 
   const onSubmit = async (data: OrderStatusSchemaType) => {
     try {

@@ -182,6 +182,7 @@ export default function ImportJobDetailPage({ params }: ImportJobDetailPageProps
                     className="h-8 w-8"
                     disabled={!hasPrev}
                     asChild={!!prevId}
+                    aria-label="Previous import job"
                   >
                     {prevId ? (
                       <Link href={`/system-management/import-jobs/${prevId}?page=${(pageIndex ?? 0) + 1}&pageSize=${pageSize}`}>
@@ -200,6 +201,7 @@ export default function ImportJobDetailPage({ params }: ImportJobDetailPageProps
                     className="h-8 w-8"
                     disabled={!hasNext}
                     asChild={!!nextId}
+                    aria-label="Next import job"
                   >
                     {nextId ? (
                       <Link href={`/system-management/import-jobs/${nextId}?page=${(pageIndex ?? 0) + 1}&pageSize=${pageSize}`}>

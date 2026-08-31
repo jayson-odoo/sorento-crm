@@ -91,7 +91,7 @@ export default function ContactEditDialog({
       company_ids: [],
       requires_registered_project: contact?.requires_registered_project ?? false,
     },
-    mode: 'onSubmit',
+    mode: 'onTouched',
   });
 
   const companiesResetRef = useRef<string | null>(null);

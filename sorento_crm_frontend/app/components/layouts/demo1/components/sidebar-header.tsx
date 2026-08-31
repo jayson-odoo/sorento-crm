@@ -62,6 +62,7 @@ export function SidebarHeader() {
             ? 'ltr:rotate-180'
             : 'rtl:rotate-180',
         )}
+        aria-label="Collapse sidebar"
       >
         <ChevronFirst className="size-4!" />
       </Button>

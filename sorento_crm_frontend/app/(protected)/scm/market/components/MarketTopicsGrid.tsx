@@ -11,7 +11,7 @@ import {
   getSortedRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { Pencil, Plus, Search, Trash2, X } from 'lucide-react';
+import { Pencil, Plus, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -26,7 +26,6 @@ import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   useDeferredRowAction,
@@ -42,11 +41,17 @@ import {
 import { CADENCE_LABEL, resolveCategoryLabel } from '../lib/marketLabels';
 import type { MarketResearchTopic, MarketResearchTopicWrite } from '../types/market.types';
 import { AddEditTopicModal } from './AddEditTopicModal';
+import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 
 export function MarketTopicsGrid() {
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 10 });
   const [sorting, setSorting] = useState<SortingState>([]);
-  const [searchQuery, setSearchQuery] = useState('');
+  const {
+    value: searchInput,
+    setValue: setSearchInput,
+    debouncedValue: searchQuery,
+  } = useDebouncedSearch();
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<MarketResearchTopic | null>(null);
@@ -180,7 +185,6 @@ export function MarketTopicsGrid() {
     state: { pagination, sorting, globalFilter: searchQuery },
     onPaginationChange: setPagination,
     onSortingChange: setSorting,
-    onGlobalFilterChange: setSearchQuery,
     globalFilterFn: (row, _columnId, filterValue) => {
       const q = String(filterValue).toLowerCase().trim();
       if (!q) return true;
@@ -231,26 +235,12 @@ export function MarketTopicsGrid() {
         <Card>
           <CardHeader className="flex items-center justify-between gap-3">
             <CardHeading>
-              <div className="relative">
-                <Search className="absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  placeholder="Search topics..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-64 ps-9"
-                />
-                {searchQuery ? (
-                  <Button
-                    mode="icon"
-                    variant="dim"
-                    className="absolute end-1.5 top-1/2 h-6 w-6 -translate-y-1/2"
-                    onClick={() => setSearchQuery('')}
-                    aria-label="Clear search"
-                  >
-                    <X />
-                  </Button>
-                ) : null}
-              </div>
+              <ListSearchInput
+                value={searchInput}
+                onChange={setSearchInput}
+                placeholder="Search topics..."
+                className="w-64"
+              />
             </CardHeading>
             <CardToolbar>
               <Button

@@ -81,6 +81,7 @@ export default function PackingListForm({
 
   const form = useForm<PackingListSchemaType>({
     resolver: zodResolver(packingListSchema) as Resolver<PackingListSchemaType>,
+    mode: 'onTouched',
     defaultValues: {
       supplier_id: '',
       shipment_date: '',
@@ -467,7 +468,7 @@ export default function PackingListForm({
                       </FormItem>
                     )}
                   />
-                  <Button type="button" variant="ghost" size="icon" onClick={() => remove(index)} className="text-destructive">
+                  <Button type="button" variant="ghost" size="icon" onClick={() => remove(index)} className="text-destructive" aria-label="Delete line">
                     <Trash2 className="size-4" />
                   </Button>
                 </div>

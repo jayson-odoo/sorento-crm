@@ -18,8 +18,6 @@ import {
   ChevronRight,
   ChevronsDownUp,
   ChevronsUpDown,
-  Search,
-  X,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -28,10 +26,11 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridListToolbar, type ToolbarAction } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { Input } from '@/components/ui/input';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { cn } from '@/lib/utils';
 import { Skeleton } from '@/components/ui/skeleton';
+import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { EM_DASH, fmtDecimal, fmtInt, fmtMoney, fmtSigned } from '../../lib/format';
 import {
   PLAN_LINE_STATUS_LABEL,
@@ -358,7 +357,11 @@ export function PlanLinesGrid({
   // `getRowId` - a group row is never expanded by default, matching "1 line of retail, 1
   // line of project" being the resting state the buyer asked for.
   const [expanded, setExpanded] = useState<ExpandedState>({});
-  const [searchQuery, setSearchQuery] = useState('');
+  const {
+    value: searchInput,
+    setValue: setSearchInput,
+    debouncedValue: searchQuery,
+  } = useDebouncedSearch();
   const statusFilter: string = statusFilterProp ?? 'all';
   const setStatusFilter = (next: string) =>
     onStatusFilterChange?.(next === 'all' ? null : (next as PlanLineStatus));
@@ -1128,26 +1131,12 @@ export function PlanLinesGrid({
           </div>
         }
         searchSlot={
-          <div className="relative">
-            <Search className="absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              placeholder="Search product, location, or supplier"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full ps-9 sm:w-64 md:w-80"
-            />
-            {searchQuery.length > 0 && (
-              <Button
-                mode="icon"
-                variant="dim"
-                className="absolute end-1.5 top-1/2 h-6 w-6 -translate-y-1/2"
-                onClick={() => setSearchQuery('')}
-                aria-label="Clear search"
-              >
-                <X />
-              </Button>
-            )}
-          </div>
+          <ListSearchInput
+            value={searchInput}
+            onChange={setSearchInput}
+            placeholder="Search product, location, or supplier"
+            className="w-full sm:w-64 md:w-80"
+          />
         }
         filters={{
           kind: 'custom',

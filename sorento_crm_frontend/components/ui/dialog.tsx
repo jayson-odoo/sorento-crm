@@ -5,17 +5,21 @@ import { cn } from '@/lib/utils';
 import { cva, VariantProps } from 'class-variance-authority';
 import { X } from 'lucide-react';
 import { Dialog as DialogPrimitive } from 'radix-ui';
-import { OVERLAY_CLASS } from '@/components/ui/primitive-classes';
+import { AnimatePresence, motion } from 'motion/react';
+import { OVERLAY_CLASS, OVERLAY_CLASS_STATIC } from '@/components/ui/primitive-classes';
+import { surfaceTransition, surfaceVariants, useOpenState, useReducedMotion } from '@/lib/motion';
 
 const dialogContentVariants = cva(
   // `overflow-y-auto` + a bounded `max-h` make EVERY modal scrollable - without
   // it, tall content (long role lists, template pickers, multi-field forms)
   // overflows the viewport on mobile with no way to reach the submit button.
-  'flex flex-col fixed outline-0 z-50 border border-border bg-background p-6 shadow-lg shadow-black/5 duration-(--duration-base) ease-(--ease-standard) overflow-y-auto data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 sm:rounded-lg',
+  // The open/close motion itself is a spring (S8-01, see the DialogContent
+  // AnimatePresence below), so no `animate-in`/`duration`/`ease` classes here.
+  'flex flex-col fixed outline-0 z-50 border border-border bg-background p-6 shadow-lg shadow-black/5 overflow-y-auto sm:rounded-lg',
   {
     variants: {
       variant: {
-        default: 'left-[50%] top-[50%] max-h-[90dvh] max-w-lg translate-x-[-50%] translate-y-[-50%] w-full',
+        default: 'left-[50%] top-[50%] max-h-[90dvh] max-w-lg w-full',
         fullscreen: 'inset-5',
       },
     },
@@ -25,14 +29,30 @@ const dialogContentVariants = cva(
   },
 );
 
-function Dialog({ modal, ...props }: React.ComponentProps<typeof DialogPrimitive.Root>) {
+// Mirrors the Root's open state so DialogContent can gate its own
+// <AnimatePresence> - Radix's Presence unmounts on a CSS animation it can
+// detect, which a JS spring is not (see lib/motion.ts useOpenState).
+const DialogOpenContext = React.createContext(true);
+
+function Dialog({
+  open: openProp,
+  defaultOpen = false,
+  onOpenChange,
+  modal,
+  ...props
+}: React.ComponentProps<typeof DialogPrimitive.Root>) {
+  const [open, setOpen] = useOpenState(openProp, defaultOpen, onOpenChange);
   // A dialog is a lightbox: it owns the screen while it is open. Modal mode is
   // what gives it the focus trap, the scroll lock and the aria-hidden page
   // behind it; without those the page stayed tabbable and a stray wheel
   // scrolled the list under the form. Radix inerts the AI assistant bubble
   // along with everything else, which is correct for a modal surface.
   // A caller with a genuinely modeless surface passes `modal={false}`.
-  return <DialogPrimitive.Root data-slot="dialog" modal={modal ?? true} {...props} />;
+  return (
+    <DialogOpenContext.Provider value={open}>
+      <DialogPrimitive.Root data-slot="dialog" modal={modal ?? true} open={open} onOpenChange={setOpen} {...props} />
+    </DialogOpenContext.Provider>
+  );
 }
 
 function DialogTrigger({ ...props }: React.ComponentProps<typeof DialogPrimitive.Trigger>) {
@@ -83,6 +103,22 @@ function DialogContent({
     showCloseButton?: boolean;
     overlay?: boolean;
   }) {
+  const open = React.useContext(DialogOpenContext);
+  const prefersReducedMotion = useReducedMotion();
+  // Dialog positions `variant="default"` with `left-50%/top-50%` + a
+  // `translate(-50%,-50%)` to center it; that translate has to travel along
+  // with the animated scale/opacity below (Framer Motion owns the element's
+  // whole `transform`, so a separate Tailwind `translate-*` class would be
+  // silently overwritten the moment the spring ticks). `fullscreen` uses
+  // `inset-5` instead and needs no offset.
+  const centerOffset = variant === 'fullscreen' ? {} : { x: '-50%', y: '-50%' };
+  const base = surfaceVariants(prefersReducedMotion);
+  const variants = {
+    initial: { ...base.initial, ...centerOffset },
+    animate: { ...base.animate, ...centerOffset },
+    exit: { ...base.exit, ...centerOffset },
+  };
+  const transition = surfaceTransition(prefersReducedMotion);
   const needsFallbackTitle = !hasDialogTitleInChildren(children);
   // Track the moment the actual Content DOM node attaches (i.e. the moment
   // the dialog truly opens). We can't use mount of this React component
@@ -192,30 +228,53 @@ function DialogContent({
     }
   };
   return (
-    <DialogPortal>
-      {overlay && <DialogOverlay />}
-      <DialogPrimitive.Content
-        ref={contentRefCallback}
-        data-slot="dialog-content"
-        className={cn(dialogContentVariants({ variant }), className)}
-        onPointerDownOutside={guardOutsideInteraction}
-        onInteractOutside={guardOutsideInteraction}
-        onFocusOutside={guardOutsideInteraction}
-        onCloseAutoFocus={restoreFocusToOpener}
-        {...props}
-      >
-        {needsFallbackTitle ? (
-          <DialogPrimitive.Title className="sr-only">Dialog</DialogPrimitive.Title>
-        ) : null}
-        {children}
-        {showCloseButton && (
-          <DialogClose className="cursor-pointer outline-0 absolute end-5 top-5 rounded-sm opacity-60 ring-offset-background transition-opacity hover:opacity-100 focus:outline-hidden disabled:pointer-events-none data-[state=open]:bg-accent data-[state=open]:text-muted-foreground">
-            <X className="size-4" />
-            <span className="sr-only">Close</span>
-          </DialogClose>
-        )}
-      </DialogPrimitive.Content>
-    </DialogPortal>
+    <AnimatePresence>
+      {open && (
+        <DialogPortal forceMount>
+          {overlay && (
+            <DialogPrimitive.Overlay asChild forceMount data-slot="dialog-overlay">
+              <motion.div
+                className={OVERLAY_CLASS_STATIC}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={transition}
+              />
+            </DialogPrimitive.Overlay>
+          )}
+          <DialogPrimitive.Content
+            ref={contentRefCallback}
+            asChild
+            forceMount
+            data-slot="dialog-content"
+            onPointerDownOutside={guardOutsideInteraction}
+            onInteractOutside={guardOutsideInteraction}
+            onFocusOutside={guardOutsideInteraction}
+            onCloseAutoFocus={restoreFocusToOpener}
+            {...props}
+          >
+            <motion.div
+              className={cn(dialogContentVariants({ variant }), className)}
+              initial={variants.initial}
+              animate={variants.animate}
+              exit={variants.exit}
+              transition={transition}
+            >
+              {needsFallbackTitle ? (
+                <DialogPrimitive.Title className="sr-only">Dialog</DialogPrimitive.Title>
+              ) : null}
+              {children}
+              {showCloseButton && (
+                <DialogClose className="cursor-pointer outline-0 absolute end-5 top-5 rounded-sm opacity-60 ring-offset-background transition-opacity hover:opacity-100 focus:outline-hidden disabled:pointer-events-none data-[state=open]:bg-accent data-[state=open]:text-muted-foreground">
+                  <X className="size-4" />
+                  <span className="sr-only">Close</span>
+                </DialogClose>
+              )}
+            </motion.div>
+          </DialogPrimitive.Content>
+        </DialogPortal>
+      )}
+    </AnimatePresence>
   );
 }
 

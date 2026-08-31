@@ -99,7 +99,7 @@ As specified in the audit report sections "Fix these first" 3, 4, 5, 7 and "Mate
 
 ### 3.11 Motion (S8) and guardrails (S9)
 
-- `lib/motion.ts` presets; `AnimatePresence` on Dialog/Sheet/Popover/DropdownMenu; origin anchoring; sidebar `transform`; `vaul` for the mobile nav (`header.tsx:90`) and bottom sheets; AI bubble materialise + pointer capture; row DnD sensors + `DragOverlay`; embla `duration`.
+- `lib/motion.ts` presets; `AnimatePresence` on Dialog/Sheet/Popover/DropdownMenu; origin anchoring; sidebar collapse animates `width` (the `scaleX` + counter-scaled `.sidebar-rail` trick built for S8-03 was dropped 31 Aug 2026 - see the S8-03 line in the UAC for why); `vaul` for the mobile nav (`header.tsx:90`) and bottom sheets; AI bubble materialise + pointer capture; row DnD sensors + `DragOverlay`; embla `duration`.
 - ESLint rules (warn) + `text-[Npx]` ban; aria-labels; `role="content"` removed; skip link; ring on the 73 `outline-none` sites; `IssuedKeyDialog` Escape allowed.
 
 ## 4. Slices and order

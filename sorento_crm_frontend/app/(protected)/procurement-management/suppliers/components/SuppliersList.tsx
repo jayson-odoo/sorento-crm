@@ -14,7 +14,7 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { ChevronDown, PencilLine, Plus, Search, X } from 'lucide-react';
+import { ChevronDown, PencilLine, Plus } from 'lucide-react';
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -30,7 +30,8 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Input } from '@/components/ui/input';
+import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   BulkUpdateDialog,
@@ -67,7 +68,13 @@ export default function SuppliersList() {
   const [bulkOpen, setBulkOpen] = useState(false);
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [sorting, setSorting] = useState<SortingState>([{ id: 'created_at', desc: true }]);
-  const [searchQuery, setSearchQuery] = useState('');
+  const {
+    value: searchInput,
+    setValue: setSearchInput,
+    debouncedValue: searchQuery,
+    isSettling: searchSettling,
+    reset: resetSearch,
+  } = useDebouncedSearch();
   const [advancedFilter, setAdvancedFilter] = useState<ListQueryFilterGroup | null>(null);
 
   // Back hands the list its own query string back, and the pager keeps
@@ -75,7 +82,7 @@ export default function SuppliersList() {
   useListStateFromUrl((state) => {
     setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
     setSorting(state.sorting);
-    setSearchQuery(state.searchQuery);
+    resetSearch(state.searchQuery);
     setAdvancedFilter(
       decodeAdvancedFilter<ListQueryFilterGroup>(state.filters.advFilter),
     );
@@ -84,9 +91,9 @@ export default function SuppliersList() {
 
   useEffect(() => {
     setPagination((p) => ({ ...p, pageIndex: 0 }));
-  }, [advancedFilter]);
+  }, [advancedFilter, searchQuery]);
 
-  const { data, isLoading, isError, error } = useSuppliers({
+  const { data, isLoading, isFetching, isError, error } = useSuppliers({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -242,25 +249,13 @@ export default function SuppliersList() {
               </DropdownMenu>
             )}
             searchSlot={
-              <div className="relative">
-                <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
-                <Input
-                  placeholder="Search suppliers..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="ps-9 w-64"
-                />
-                {searchQuery && (
-                  <Button
-                    mode="icon"
-                    variant="dim"
-                    className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
-                    onClick={() => setSearchQuery('')}
-                  >
-                    <X />
-                  </Button>
-                )}
-              </div>
+              <ListSearchInput
+                value={searchInput}
+                onChange={setSearchInput}
+                isSettling={isSearchInFlight(searchSettling, isFetching, searchQuery)}
+                placeholder="Search suppliers..."
+                className="w-64"
+              />
             }
             filters={{
               kind: 'listQuery',

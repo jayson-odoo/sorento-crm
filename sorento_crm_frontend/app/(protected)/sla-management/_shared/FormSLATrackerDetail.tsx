@@ -293,7 +293,7 @@ export default function FormSLATrackerDetail({
           {canTestOverride ? (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="icon" title="Test overrides">
+                <Button variant="outline" size="icon" title="Test overrides" aria-label="Test overrides">
                   <Settings className="size-4" />
                 </Button>
               </DropdownMenuTrigger>

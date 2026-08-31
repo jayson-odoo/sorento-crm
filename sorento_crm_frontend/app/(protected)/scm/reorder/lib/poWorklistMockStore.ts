@@ -45,9 +45,6 @@ import type {
  */
 export const USE_PO_WORKLIST_MOCKS = false;
 
-/** How long the mock takes to "fetch", so the loading skeleton is actually visible. */
-const MOCK_LATENCY_MS = 400;
-
 /** The date every ageing and lateness figure below is counted to. */
 const AS_OF = '2026-08-04';
 const RUN_ID = 'run-2026-w32';
@@ -226,7 +223,7 @@ function stateKey(productCode: string, warehouseCode: string | null | undefined)
 }
 
 function delay<T>(value: T): Promise<T> {
-  return new Promise((resolve) => setTimeout(() => resolve(value), MOCK_LATENCY_MS));
+  return Promise.resolve(value);
 }
 
 /**

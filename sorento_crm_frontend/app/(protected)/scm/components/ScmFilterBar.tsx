@@ -1,11 +1,13 @@
 'use client';
 
-import { Search, X } from 'lucide-react';
+import { useEffect, useRef } from 'react';
+import { X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 import {
   useCategoryOptions,
   useSupplierOptions,
@@ -58,13 +60,45 @@ const LIFECYCLE_OPTIONS = [
 export function ScmFilterBar({
   filters,
   onChange,
+  isFetching,
 }: {
   filters: ScmFilters;
   onChange: (next: ScmFilters) => void;
+  /** The dashboard's own fetch state, so the box can spin while a debounced
+   * search is in flight - this bar owns the debounce, not the caller. */
+  isFetching?: boolean;
 }) {
   const warehouseOptions = useWarehouseOptions();
   const categoryOptions = useCategoryOptions();
   const supplierOptions = useSupplierOptions();
+  const {
+    value: productSearchInput,
+    setValue: setProductSearchInput,
+    debouncedValue: productSearch,
+    isSettling: productSearchSettling,
+    reset: resetProductSearch,
+  } = useDebouncedSearch(filters.productSearch);
+
+  // The box owns its own live value and debounces before telling the parent -
+  // `lastPushed` tells the two effects below apart: a change that came FROM
+  // this component (push it up) from one that arrived from OUTSIDE it (the
+  // Clear button below, or the scope chip resetting the whole filter set),
+  // which the box has to catch up to instead.
+  const lastPushed = useRef(filters.productSearch);
+  useEffect(() => {
+    if (filters.productSearch !== lastPushed.current) {
+      resetProductSearch(filters.productSearch);
+      lastPushed.current = filters.productSearch;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filters.productSearch]);
+  useEffect(() => {
+    if (productSearch !== lastPushed.current) {
+      lastPushed.current = productSearch;
+      onChange({ ...filters, productSearch });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [productSearch]);
   // "Clear" resets to the FOCUSED default (not to `all`), so a widened lifecycle
   // scope also counts as an active filter worth clearing.
   const hasActive =
@@ -81,26 +115,13 @@ export function ScmFilterBar({
     <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
       <div className="min-w-52 flex-1">
         <Label className="mb-1 block text-xs text-muted-foreground">Search product</Label>
-        <div className="relative">
-          <Search className="absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={filters.productSearch}
-            onChange={(e) => onChange({ ...filters, productSearch: e.target.value })}
-            placeholder="Search product…"
-            className="ps-9"
-          />
-          {filters.productSearch ? (
-            <Button
-              mode="icon"
-              variant="dim"
-              className="absolute end-1.5 top-1/2 h-6 w-6 -translate-y-1/2"
-              onClick={() => onChange({ ...filters, productSearch: '' })}
-              aria-label="Clear search"
-            >
-              <X />
-            </Button>
-          ) : null}
-        </div>
+        <ListSearchInput
+          value={productSearchInput}
+          onChange={setProductSearchInput}
+          isSettling={isSearchInFlight(productSearchSettling, isFetching ?? false, productSearch)}
+          placeholder="Search product…"
+          className="w-full"
+        />
       </div>
       <div className="min-w-52 flex-1">
         <Label className="mb-1 block text-xs text-muted-foreground">Warehouses</Label>

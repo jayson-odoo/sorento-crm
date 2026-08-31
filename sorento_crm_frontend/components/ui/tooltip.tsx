@@ -24,7 +24,10 @@ function TooltipTrigger({ ...props }: React.ComponentProps<typeof TooltipPrimiti
 const tooltipVariants = cva(
   // z-[70] keeps tooltips above cards AND dialog overlays/content (both z-50);
   // rendered through a Portal (below) so a card's stacking context can't clip them.
-  'z-[70] overflow-hidden rounded-md px-3 py-1.5 text-xs animate-in fade-in-0 zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2',
+  // `origin-(--radix-popper-content-transform-origin)` scales it from the
+  // trigger (S8-02) instead of its own center - Radix sets that variable to
+  // whichever side it actually rendered on.
+  'z-[70] overflow-hidden rounded-md px-3 py-1.5 text-xs origin-(--radix-popper-content-transform-origin) animate-in fade-in-0 zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95',
   {
     variants: {
       variant: {

@@ -72,6 +72,7 @@ export function ScheduledTaskForm({ task, onSubmit, isSubmitting }: ScheduledTas
     formState: { errors, isDirty },
   } = useForm<FormValues>({
     resolver: zodResolver(schema),
+    mode: 'onTouched',
     defaultValues: {
       name: task.name,
       description: task.description ?? '',

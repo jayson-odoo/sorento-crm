@@ -769,6 +769,28 @@ def test_trap_length_is_read_independently_of_trap_type(db, description, expecte
     assert _value(db, "ZZT-TLEN", "trap_length") == expected
 
 
+@pytest.mark.parametrize(
+    "description",
+    [
+        "SORENTO ONE PIECE TWISTER FLUSH WC (P-TRAP 180MM) SRTWC8354-SH-P (WITH UF SEAT COVER)",
+        "SORENTO ONE PIECE WASH DOWN -  RIMLESS WC (S-TRAP:250MM) SRTWC289-RL",
+        "SORENTO CERAMIC AUTO INDUCTION INTELLIGENT TOILET ( S- TRAP 250MM )",
+    ],
+)
+def test_a_trap_length_is_never_read_as_the_length(db, description):
+    """889 catalog rows state a trap length and no size; 843 spec rows had it as Length."""
+    _product(db, "ZZT-TRAPL", description)
+    derive_for_code(db, "ZZT-TRAPL")
+    assert _value(db, "ZZT-TRAPL", "dim_length") is None
+    assert _value(db, "ZZT-TRAPL", "trap_length") in (180, 250)
+
+
+def test_a_lone_size_is_still_the_length_when_it_is_not_a_trap(db):
+    _product(db, "ZZT-LONE", "SORENTO MARBLE TOP BASIN (800MM)")
+    derive_for_code(db, "ZZT-LONE")
+    assert _value(db, "ZZT-LONE", "dim_length") == 800
+
+
 def test_overflow_is_read_whether_the_word_is_split_or_joined(db):
     """"OVER FLOW" (5 catalog rows) and "OVERFLOW" (137) must set the same key."""
     _product(db, "ZZT-OF1", "SORENTO UNDER COUNTER BASIN (560X375X175MM) C/W RECTANGULAR SHAPE OVER FLOW")

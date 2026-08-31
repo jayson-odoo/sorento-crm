@@ -1,9 +1,8 @@
 'use client';
 
 import { useState } from 'react';
-import { Plus, Search } from 'lucide-react';
+import { Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Card, CardHeader, CardTable } from '@/components/ui/card';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { useCategoriesTree } from '../hooks/useProductCategories';
@@ -11,9 +10,15 @@ import CategoryTree from './CategoryTree';
 import CategoryForm from './CategoryForm';
 import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
 import type { CategoryTreeItem } from '../types/category.types';
+import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 
 export default function CategoriesList() {
-  const [searchQuery, setSearchQuery] = useState('');
+  const {
+    value: searchInput,
+    setValue: setSearchInput,
+    debouncedValue: searchQuery,
+  } = useDebouncedSearch();
   const [formOpen, setFormOpen] = useState(false);
   const [editingCategoryId, setEditingCategoryId] = useState<string | undefined>(undefined);
   const [copyFromCategory, setCopyFromCategory] = useState<CategoryTreeItem | null>(null);
@@ -53,15 +58,12 @@ export default function CategoriesList() {
     <>
       <Card>
         <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="relative">
-            <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
-            <Input
-              placeholder="Search categories..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="ps-9 w-64"
-            />
-          </div>
+          <ListSearchInput
+            value={searchInput}
+            onChange={setSearchInput}
+            placeholder="Search categories..."
+            className="w-64"
+          />
           <Button
             onClick={() => {
               setCopyFromCategory(null);

@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   type ColumnDef,
@@ -11,9 +11,7 @@ import {
   getPaginationRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { Search, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardTable } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -29,6 +27,8 @@ import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { getApiCallLogs, getApiCallLogSources } from './services/apiCallLogService';
 import { ApiCallDetailDrawer } from './components/ApiCallDetailDrawer';
 import type { ApiCallLogRow } from './types/apiCallLog.types';
+import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 
 function localInput(offsetHours: number): string {
   const d = new Date(Date.now() - offsetHours * 3600_000);
@@ -59,10 +59,25 @@ export default function ApiCallLogsPage() {
   const [source, setSource] = useState('');
   const [outcome, setOutcome] = useState('');
   const [correlationId, setCorrelationId] = useState('');
-  const [searchQuery, setSearchQuery] = useState('');
+  const {
+    value: searchInput,
+    setValue: setSearchInput,
+    debouncedValue: searchQuery,
+    isSettling: searchSettling,
+  } = useDebouncedSearch();
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [sorting, setSorting] = useState<SortingState>([{ id: 'created_at', desc: true }]);
   const [selected, setSelected] = useState<ApiCallLogRow | null>(null);
+
+  // A search brings the reader back to page 0 to see the matches.
+  const searchMounted = useRef(false);
+  useEffect(() => {
+    if (!searchMounted.current) {
+      searchMounted.current = true;
+      return;
+    }
+    setPagination((p) => ({ ...p, pageIndex: 0 }));
+  }, [searchQuery]);
 
   const filters = useMemo(
     () => ({
@@ -80,7 +95,7 @@ export default function ApiCallLogsPage() {
     [dateFrom, dateTo, source, outcome, correlationId, searchQuery, pagination, sorting],
   );
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isFetching } = useQuery({
     queryKey: ['apiCallLogs', filters],
     queryFn: () => getApiCallLogs(filters),
   });
@@ -254,26 +269,14 @@ export default function ApiCallLogsPage() {
           <DataGridListToolbar
             table={table}
             searchSlot={
-              <div className="relative w-full max-w-xs">
-                <Search className="absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  placeholder="Search endpoint, tool, error..."
-                  value={searchQuery}
-                  data-testid="api-call-log-search"
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="ps-9"
-                />
-                {searchQuery && (
-                  <Button
-                    mode="icon"
-                    variant="dim"
-                    className="absolute end-1.5 top-1/2 h-6 w-6 -translate-y-1/2"
-                    onClick={() => setSearchQuery('')}
-                  >
-                    <X />
-                  </Button>
-                )}
-              </div>
+              <ListSearchInput
+                value={searchInput}
+                onChange={setSearchInput}
+                isSettling={isSearchInFlight(searchSettling, isFetching, searchQuery)}
+                placeholder="Search endpoint, tool, error..."
+                data-testid="api-call-log-search"
+                className="w-full max-w-xs"
+              />
             }
           />
           <CardTable>

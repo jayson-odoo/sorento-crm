@@ -10,7 +10,7 @@ import {
   getPaginationRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { FileClock, LayoutGrid, Search, X } from 'lucide-react';
+import { FileClock, LayoutGrid } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -19,7 +19,6 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { Input } from '@/components/ui/input';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { usePlanningChangeBatches } from '../../_shared/hooks/usePlanningChanges';
 import {
@@ -27,6 +26,8 @@ import {
   type PlanningChangeBatchSummary,
 } from '../../_shared/types/planningChange.types';
 import { PageHeader } from '@/components/common/PageHeader';
+import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 
 /**
  * Where a batch is decided: the fulfilment board, opened on the orders it moved (AC-P3-1).
@@ -61,18 +62,17 @@ const STATE_TABS: { value: 'all' | 'pending' | 'applied'; label: string }[] = [
  */
 export function PlanningChangesListClient() {
   const router = useRouter();
-  const [search, setSearch] = React.useState('');
-  const [debounced, setDebounced] = React.useState('');
+  const {
+    value: search,
+    setValue: setSearch,
+    debouncedValue: debounced,
+    isSettling: debouncedSettling,
+  } = useDebouncedSearch();
   const [stateFilter, setStateFilter] = React.useState<'all' | 'pending' | 'applied'>('all');
   const [pagination, setPagination] = React.useState<PaginationState>({
     pageIndex: 0,
     pageSize: 25,
   });
-
-  React.useEffect(() => {
-    const timer = window.setTimeout(() => setDebounced(search.trim()), 300);
-    return () => window.clearTimeout(timer);
-  }, [search]);
 
   React.useEffect(() => {
     setPagination((previous) => ({ ...previous, pageIndex: 0 }));
@@ -271,30 +271,14 @@ export function PlanningChangesListClient() {
               table={table}
               exportConfig={false}
               searchSlot={
-                <div className="relative">
-                  <Search
-                    className="absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
-                    aria-hidden
-                  />
-                  <Input
-                    placeholder="Search by uploader or file"
-                    value={search}
-                    onChange={(event) => setSearch(event.target.value)}
-                    aria-label="Search planning change batches"
-                    className="w-full ps-9 sm:w-72"
-                  />
-                  {search.length > 0 && (
-                    <Button
-                      mode="icon"
-                      variant="dim"
-                      aria-label="Clear the search"
-                      className="absolute end-1.5 top-1/2 h-6 w-6 -translate-y-1/2"
-                      onClick={() => setSearch('')}
-                    >
-                      <X />
-                    </Button>
-                  )}
-                </div>
+                <ListSearchInput
+                  value={search}
+                  onChange={setSearch}
+                  isSettling={isSearchInFlight(debouncedSettling, list.isFetching, debounced)}
+                  placeholder="Search by uploader or file"
+                  aria-label="Search planning change batches"
+                  className="w-full"
+                />
               }
               onRefresh={async () => {
                 await list.refetch();

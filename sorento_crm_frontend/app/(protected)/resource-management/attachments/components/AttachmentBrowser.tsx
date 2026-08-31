@@ -14,7 +14,7 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Search, X, Trash2, Plus, RefreshCw, RotateCcw, FileArchive, Tag } from 'lucide-react';
+import { Trash2, Plus, RefreshCw, RotateCcw, FileArchive, Tag } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { RowActionsMenu } from '@/components/common/RowActionsMenu';
 import { useAttachmentActions } from '../actions';
@@ -45,6 +45,8 @@ import AttachmentBulkImportDialog from './AttachmentBulkImportDialog';
 import AttachmentBulkDeleteDialog from './AttachmentBulkDeleteDialog';
 import EditAttachmentTypeDialog from './EditAttachmentTypeDialog';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
+import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 
 /**
  * The row's "..." (D15): the same set the record's gear renders. Its own
@@ -63,7 +65,13 @@ function AttachmentRowActions({ attachment }: { attachment: Attachment }) {
 export default function AttachmentBrowser() {
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [sorting, setSorting] = useState<SortingState>([{ id: 'uploaded_at', desc: true }]);
-  const [searchQuery, setSearchQuery] = useState('');
+  const {
+    value: searchInput,
+    setValue: setSearchInput,
+    debouncedValue: searchQuery,
+    isSettling: searchSettling,
+    reset: resetSearchQuery,
+  } = useDebouncedSearch();
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
   const [bulkImportDialogOpen, setBulkImportDialogOpen] = useState(false);
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
@@ -81,7 +89,7 @@ export default function AttachmentBrowser() {
   useListStateFromUrl((state) => {
     setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
     setSorting(state.sorting);
-    setSearchQuery(state.searchQuery);
+    resetSearchQuery(state.searchQuery);
     setDirectoryId(state.filters.directory_id ?? null);
     setAttachmentTypeId(state.filters.attachment_type_id ?? '__all__');
     setLinkStatus(
@@ -97,7 +105,7 @@ export default function AttachmentBrowser() {
   const { data: attachmentTypes = [] } = useAttachmentTypesList();
   const isTrashView = directoryId === '__trash__';
 
-  const { data, isLoading } = useAttachments({
+  const { data, isLoading, isFetching } = useAttachments({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -389,25 +397,13 @@ export default function AttachmentBrowser() {
             <DataGridListToolbar
               table={table}
               searchSlot={
-                <div className="relative">
-                  <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
-                  <Input
-                    placeholder="Search attachments..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="ps-9 w-64"
-                  />
-                  {searchQuery && (
-                    <Button
-                      mode="icon"
-                      variant="dim"
-                      className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
-                      onClick={() => setSearchQuery('')}
-                    >
-                      <X />
-                    </Button>
-                  )}
-                </div>
+                <ListSearchInput
+                  value={searchInput}
+                  onChange={setSearchInput}
+                  isSettling={isSearchInFlight(searchSettling, isFetching, searchQuery)}
+                  placeholder="Search attachments..."
+                  className="w-64"
+                />
               }
               filters={{
                 kind: 'custom',

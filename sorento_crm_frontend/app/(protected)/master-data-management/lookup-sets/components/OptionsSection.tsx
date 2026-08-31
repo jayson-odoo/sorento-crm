@@ -58,7 +58,8 @@ export default function OptionsSection({ setId }: { setId: string }) {
                       <td className="px-3 py-2">{o.keywords.length}</td>
                       <td className="px-3 py-2 text-right">
                         <Button size="icon" variant="ghost"
-                                onClick={() => { setEditing(o); setFormOpen(true); }}>
+                                onClick={() => { setEditing(o); setFormOpen(true); }}
+                          aria-label="Edit">
                           <Pencil className="size-4" />
                         </Button>
                         <Button

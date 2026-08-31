@@ -470,11 +470,6 @@ export async function getProformaInvoice(id: string): Promise<ProformaInvoiceDet
   return readJson<ProformaInvoiceDetail>(res, 'Failed to load the proforma invoice');
 }
 
-export async function deleteProformaInvoice(id: string): Promise<void> {
-  const res = await apiFetch(`/api/v1/scm/proforma-invoices/${id}`, { method: 'DELETE' });
-  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to delete the proforma invoice'));
-}
-
 /** What a convert may say beyond "these invoices". Every part of it is optional. */
 export interface ConvertOptions {
   /** Per PI line, how much to place. Omitted lines place their remaining quantity. */

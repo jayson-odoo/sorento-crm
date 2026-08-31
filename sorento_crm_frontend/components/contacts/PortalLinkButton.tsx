@@ -52,6 +52,7 @@ export default function PortalLinkButton({
           variant="ghost"
           size="sm"
           title="Portal link"
+        aria-label="Portal link"
           disabled={disabled}
           onClick={(e) => {
             e.stopPropagation();

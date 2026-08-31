@@ -50,6 +50,11 @@ function Carousel({
 }: React.ComponentProps<'div'> & CarouselProps) {
   const [carouselRef, api] = useEmblaCarousel(
     {
+      // Embla's `duration` (S8-06) paces a programmatic scroll (arrows, dots) -
+      // it shipped unset, i.e. Embla's own default, which reads noticeably
+      // snappier than the rest of the app's motion. 20 (~330ms) lands it next
+      // to `--duration-slow`. A caller's own `opts.duration` still wins.
+      duration: 20,
       ...opts,
       axis: orientation === 'horizontal' ? 'x' : 'y',
     },

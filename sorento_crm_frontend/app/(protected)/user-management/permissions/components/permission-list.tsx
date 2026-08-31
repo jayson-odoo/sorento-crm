@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   ColumnDef,
@@ -12,7 +12,7 @@ import {
   SortingState,
   useReactTable,
 } from '@tanstack/react-table';
-import { Ellipsis, Plus, Search, Trash2, X } from 'lucide-react';
+import { Ellipsis, Plus, Trash2 } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import { formatDateTimeSafe } from '@/lib/helpers';
 import { Badge } from '@/components/ui/badge';
@@ -39,7 +39,8 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Input } from '@/components/ui/input';
+import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -73,7 +74,12 @@ const PermissionList = () => {
   const [selectedRole, setSelectedRole] = useState<string | null>(null);
 
   // Query state management
-  const [searchQuery, setSearchQuery] = useState('');
+  const {
+    value: searchInput,
+    setValue: setSearchInput,
+    debouncedValue: searchQuery,
+    isSettling: searchSettling,
+  } = useDebouncedSearch();
 
   // Role select query
   const { data: roleList } = useRoleSelectQuery();
@@ -112,7 +118,7 @@ const PermissionList = () => {
   };
 
   // Permissions query
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isFetching } = useQuery({
     queryKey: [
       'user-permissions',
       pagination,
@@ -142,6 +148,16 @@ const PermissionList = () => {
     setSelectedRole(roleId);
     setPagination({ ...pagination, pageIndex: 0 }); // Reset to first page when filtering
   };
+
+  // A search brings the reader back to page 0 to see the matches.
+  const searchMounted = useRef(false);
+  useEffect(() => {
+    if (!searchMounted.current) {
+      searchMounted.current = true;
+      return;
+    }
+    setPagination((p) => ({ ...p, pageIndex: 0 }));
+  }, [searchQuery]);
 
   useEffect(() => {
     const selectedRowIds = Object.keys(rowSelection);
@@ -232,7 +248,7 @@ const PermissionList = () => {
         cell: ({ row }) => (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button mode="icon" variant="ghost">
+              <Button mode="icon" variant="ghost" aria-label="More actions">
                 <Ellipsis />
               </Button>
             </DropdownMenuTrigger>
@@ -298,13 +314,6 @@ const PermissionList = () => {
     manualFiltering: true,
   });
 
-  const [searchInput, setSearchInput] = useState(searchQuery);
-
-  const handleSearch = () => {
-    setSearchQuery(searchInput);
-    setPagination({ ...pagination, pageIndex: 0 });
-  };
-
   // The one offer this listing makes, in both places it belongs: the
   // toolbar, and the empty state's next step (S5-06).
   const listPrimaryAction = (
@@ -342,30 +351,13 @@ const PermissionList = () => {
             <DataGridListToolbar
               table={table}
               searchSlot={
-                <div className="relative">
-                  <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
-                  <Input
-                    placeholder="Search permissions"
-                    value={searchInput}
-                    onChange={(e) => setSearchInput(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-                    disabled={isLoading}
-                    className="ps-9 w-64"
-                  />
-                  {searchInput.length > 0 && (
-                    <Button
-                      mode="icon"
-                      variant="dim"
-                      className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
-                      onClick={() => {
-                        setSearchInput('');
-                        setSearchQuery('');
-                      }}
-                    >
-                      <X />
-                    </Button>
-                  )}
-                </div>
+                <ListSearchInput
+                  value={searchInput}
+                  onChange={setSearchInput}
+                  isSettling={isSearchInFlight(searchSettling, isFetching, searchQuery)}
+                  placeholder="Search permissions"
+                  className="w-64"
+                />
               }
               filters={{
                 kind: 'custom',

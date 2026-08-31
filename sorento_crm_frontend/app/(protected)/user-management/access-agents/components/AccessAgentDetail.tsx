@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Edit, ChevronDown, ChevronRight, RefreshCw, ContactRound, Copy } from 'lucide-react';
+import { Check, Edit, ChevronDown, ChevronRight, RefreshCw, ContactRound, Copy } from 'lucide-react';
 import AccessAgentFormModal from './AccessAgentFormModal';
 import { useCompany } from '@/app/providers/CompanyProvider';
 import { Button } from '@/components/ui/button';
@@ -24,6 +24,7 @@ import ContactAccessAgentsTable from './ContactAccessAgentsTable';
 import AgentFieldAccessCard from './AgentFieldAccessCard';
 import DetailActions from '@/components/common/DetailActions';
 import { useAccessAgentActions } from '../actions';
+import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard';
 import MemberMarketSegmentEditor from './MemberMarketSegmentEditor';
 import MemberBrandEditor from './MemberBrandEditor';
 import type { AgentTeamMemberInfo, AgentTeamAssignment } from '../services/accessAgentService';
@@ -54,17 +55,14 @@ function TeamMemberRespondIoButton({ member }: { member: AgentTeamMemberInfo }) 
           ? 'bg-amber-500'
           : 'bg-muted-foreground';
 
+  // The tick on the button is the confirmation; only a refusal needs saying (S7-05).
+  const { isCopied, copyToClipboard } = useCopyToClipboard();
   const copyId = async () => {
     if (!rid) {
       toast.error('No Respond user ID on file for this user.');
       return;
     }
-    try {
-      await navigator.clipboard.writeText(rid);
-      toast.success('Respond user ID copied');
-    } catch {
-      toast.error('Could not copy to clipboard');
-    }
+    if (!(await copyToClipboard(rid))) toast.error('Could not copy to clipboard');
   };
 
   return (
@@ -101,8 +99,8 @@ function TeamMemberRespondIoButton({ member }: { member: AgentTeamMemberInfo }) 
             </p>
           </div>
           <Button type="button" variant="outline" size="sm" className="w-full gap-2" onClick={copyId} disabled={!rid}>
-            <Copy className="size-3.5" />
-            Copy Respond user ID
+            {isCopied ? <Check className="size-3.5" aria-hidden /> : <Copy className="size-3.5" aria-hidden />}
+            {isCopied ? 'Copied' : 'Copy Respond user ID'}
           </Button>
         </div>
       </PopoverContent>

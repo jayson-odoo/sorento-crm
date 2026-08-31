@@ -44,7 +44,7 @@ const ChangeEmailDialog = ({
     defaultValues: {
       email: '',
     },
-    mode: 'onSubmit',
+    mode: 'onTouched',
   });
 
   useEffect(() => {

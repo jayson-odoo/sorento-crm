@@ -89,7 +89,7 @@ export default function AccessAgentFormModal({
       is_active: true,
       assign_to_new_internal_contacts: false,
     },
-    mode: 'onSubmit',
+    mode: 'onTouched',
   });
 
   const [formInitialized, setFormInitialized] = useState(false);
@@ -334,6 +334,7 @@ export default function AccessAgentFormModal({
                                   className="text-destructive hover:text-destructive"
                                   disabled={isLoading}
                                   onClick={() => setAssignmentGroups(assignmentGroups.filter((_, i) => i !== groupIdx))}
+                                  aria-label="Remove assignment group"
                                 >
                                   <Trash2 className="size-4" />
                                 </Button>
@@ -425,6 +426,7 @@ export default function AccessAgentFormModal({
                                         next[groupIdx].rows = next[groupIdx].rows.filter((_, i) => i !== rowIdx);
                                         setAssignmentGroups(next);
                                       }}
+                                      aria-label="Remove tier row"
                                     >
                                       <Trash2 className="size-4" />
                                     </Button>
