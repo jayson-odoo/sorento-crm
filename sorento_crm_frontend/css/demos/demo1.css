@@ -37,11 +37,14 @@
    * The sidebar's own box is ALWAYS the expanded width (S8-03) - collapse is a
    * `transform: scaleX()` on this box below, not a `width` change, so toggling
    * it never asks the browser to lay this element's own (deeply nested menu)
-   * subtree out again. `overflow: hidden` clips whatever the scale hides.
+   * subtree out again. The clip that hides what the scale shrinks lives on
+   * `.sidebar-rail` below, not here - the collapse toggle (sidebar.tsx) is a
+   * sibling of the rail specifically so it is NOT inside that clip and can
+   * still float past the sidebar's edge, as it always could (S8 review
+   * finding: `overflow: hidden` used to sit here and cut the toggle in half).
    */
   .demo1 .sidebar {
     width: var(--sidebar-default-width);
-    overflow: hidden;
   }
 
   .demo1.header-fixed .wrapper {
@@ -58,13 +61,15 @@
      * `.sidebar-rail` (sidebar.tsx) wraps the header + menu and counter-scales
      * by the reciprocal of `.sidebar`'s own scale, in lockstep with it. The two
      * cancel exactly at every instant, so the content never visually stretches
-     * or squashes - only how much of it `.sidebar`'s `overflow: hidden` shows
-     * changes. This is the whole trick: a "width" animation with no `width`
-     * transition anywhere in it.
+     * or squashes - only how much of it THIS `overflow: hidden` shows changes.
+     * This is the whole trick: a "width" animation with no `width` transition
+     * anywhere in it. The clip sits on the rail, not on `.sidebar` itself, so
+     * the collapse toggle - a sibling of the rail - is never inside it.
      */
     .demo1 .sidebar .sidebar-rail {
       width: var(--sidebar-default-width);
       transform: scaleX(calc(1 / var(--sidebar-scale, 1)));
+      overflow: hidden;
     }
 
     .demo1 .sidebar .sidebar-header {
