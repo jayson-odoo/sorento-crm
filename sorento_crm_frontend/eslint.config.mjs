@@ -68,6 +68,16 @@ const eslintConfig = [
       'jsx-a11y/click-events-have-key-events': 'warn',
       'jsx-a11y/no-static-element-interactions': 'warn',
       'jsx-a11y/control-has-associated-label': 'warn',
+      // Apple alignment preview Finding 1's root cause, generalised: a component
+      // declared INSIDE another component's render body gets a new identity on
+      // every parent re-render, so React remounts it - which is exactly how the
+      // Users list search box lost focus on every keystroke (the toolbar was
+      // nested, and the search box's own state lived in the parent). 'warn' so
+      // the ~pre-existing offenders this run found don't fail CI outright,
+      // matching the jsx-a11y trio above. `allowAsProps` because a render-prop
+      // (a DataGrid cell renderer built inline, say) is a legitimate pattern
+      // this rule would otherwise also catch.
+      'react/no-unstable-nested-components': ['warn', { allowAsProps: true }],
       // Searchable Dropdown Standard (PLAN-searchable-dropdown-standard). Doctrine:
       // every dropdown-select must be searchable and use the standard component
       // (@/components/common/SearchableSelect | SearchableMultiSelect). 'error' so any
