@@ -15,8 +15,6 @@ import {
 } from '@tanstack/react-table';
 import {
   Plus,
-  Search,
-  X,
   Trash2,
   Upload,
   Download,
@@ -34,7 +32,6 @@ import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { buildSelectColumn, selectedRowIds } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { Input } from '@/components/ui/input';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useProductFilters } from '../hooks/useProductFilters';
@@ -65,6 +62,8 @@ import { toast } from 'sonner';
 import { generateExcelFile } from '@/lib/excel-utils';
 import type { ColumnOption } from '@/lib/excel-utils';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
+import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 
 const PRODUCT_IMPORT_COLUMNS: ColumnOption[] = [
   { key: 'Item Code', label: 'Item Code', selected: true },
@@ -101,8 +100,13 @@ const ProductsList = () => {
   const [sorting, setSorting] = useState<SortingState>([
     { id: 'created_at', desc: true },
   ]);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [searchInput, setSearchInput] = useState('');
+  const {
+    value: searchInputValue,
+    setValue: setSearchInputValue,
+    debouncedValue: searchQuery,
+    isSettling: searchSettling,
+    reset: resetSearchQuery,
+  } = useDebouncedSearch();
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [selectedBrand, setSelectedBrand] = useState<string | null>(null);
   const [selectedStatus, setSelectedStatus] = useState<string | null>('all');
@@ -152,8 +156,7 @@ const ProductsList = () => {
     (state) => {
       setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
       setSorting(state.sorting);
-      setSearchQuery(state.searchQuery);
-      setSearchInput(state.searchQuery);
+      resetSearchQuery(state.searchQuery);
       setSearch(state.searchQuery || undefined);
       const category = state.filters.category_id ?? null;
       setSelectedCategory(category);
@@ -222,7 +225,7 @@ const ProductsList = () => {
     ],
   );
 
-  const { data, isLoading, isError, error } = useQuery({
+  const { data, isLoading, isFetching, isError, error } = useQuery({
     queryKey: productsListQueryKey(listParams),
     queryFn: () => fetchProductsPage(listParams),
     staleTime: Infinity,
@@ -701,11 +704,13 @@ const ProductsList = () => {
     enableRowSelection: true,
   });
 
-  const handleSearch = () => {
-    setSearchQuery(searchInput);
-    setSearch(searchInput || undefined);
+  // The search box drives the server query itself (via useDebouncedSearch), so
+  // this only has to keep the two OTHER consumers of the term in step: the
+  // chat-search filter panel, and the page reset every other filter already gets.
+  useEffect(() => {
+    setSearch(searchQuery || undefined);
     setPagination((prev) => ({ ...prev, pageIndex: 0 }));
-  };
+  }, [searchQuery]);
 
   const simpleFiltersActiveCount =
     (selectedCategory && selectedCategory !== 'all' ? 1 : 0) +
@@ -764,31 +769,13 @@ const ProductsList = () => {
           <DataGridListToolbar
             table={table}
             searchSlot={
-              <div className="relative">
-                <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
-                <Input
-                  placeholder="Search products..."
-                  value={searchInput}
-                  onChange={(e) => setSearchInput(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-                  disabled={isLoading}
-                  className="ps-9 w-64"
-                />
-                {searchInput.length > 0 && (
-                  <Button
-                    mode="icon"
-                    variant="dim"
-                    className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
-                    onClick={() => {
-                      setSearchQuery('');
-                      setSearchInput('');
-                      setSearch(undefined);
-                    }}
-                  >
-                    <X />
-                  </Button>
-                )}
-              </div>
+              <ListSearchInput
+                value={searchInputValue}
+                onChange={setSearchInputValue}
+                isSettling={isSearchInFlight(searchSettling, isFetching, searchQuery)}
+                placeholder="Search products..."
+                className="w-64"
+              />
             }
             filters={{
               kind: 'custom',

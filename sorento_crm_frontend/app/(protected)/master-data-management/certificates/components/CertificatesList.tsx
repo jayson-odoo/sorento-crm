@@ -12,7 +12,7 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { AlertTriangle, Plus, Search, Trash2, X } from 'lucide-react';
+import { AlertTriangle, Plus, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -22,7 +22,6 @@ import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { buildSelectColumn, selectedRowIds } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -52,6 +51,8 @@ import type { Certificate } from '../types/certificate.types';
 import CertificateFormDialog from './CertificateFormDialog';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
+import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { RowActionsMenu } from '@/components/common/RowActionsMenu';
 
 /**
@@ -74,7 +75,13 @@ function validityStateParam(filter: string): string | undefined {
 export default function CertificatesList() {
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [sorting, setSorting] = useState<SortingState>([{ id: 'valid_until', desc: false }]);
-  const [searchQuery, setSearchQuery] = useState('');
+  const {
+    value: searchInputValue,
+    setValue: setSearchInputValue,
+    debouncedValue: searchQuery,
+    isSettling: searchSettling,
+    reset: resetSearchQuery,
+  } = useDebouncedSearch();
   const [validityFilter, setValidityFilter] = useState<string>(DEFAULT_VALIDITY);
   const [expiringWithin, setExpiringWithin] = useState<string>('any');
   const [schemeFilter, setSchemeFilter] = useState<string>('all');
@@ -86,7 +93,7 @@ export default function CertificatesList() {
   useListStateFromUrl((state) => {
     setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
     setSorting(state.sorting);
-    setSearchQuery(state.searchQuery);
+    resetSearchQuery(state.searchQuery);
     setValidityFilter(state.filters.validity_state ?? DEFAULT_VALIDITY);
     setExpiringWithin(state.filters.expiring_within_days ?? 'any');
     setSchemeFilter(state.filters.scheme ?? 'all');
@@ -366,25 +373,13 @@ export default function CertificatesList() {
           <DataGridListToolbar
             table={table}
             searchSlot={
-              <div className="relative">
-                <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
-                <Input
-                  placeholder="Search by number..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="ps-9 w-64"
-                />
-                {searchQuery && (
-                  <Button
-                    mode="icon"
-                    variant="dim"
-                    className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
-                    onClick={() => setSearchQuery('')}
-                  >
-                    <X />
-                  </Button>
-                )}
-              </div>
+              <ListSearchInput
+                value={searchInputValue}
+                onChange={setSearchInputValue}
+                isSettling={isSearchInFlight(searchSettling, isFetching, searchQuery)}
+                placeholder="Search by number..."
+                className="w-64"
+              />
             }
             filters={{
               kind: 'custom',
