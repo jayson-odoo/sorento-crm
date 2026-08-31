@@ -226,6 +226,18 @@ function openStartMenu() {
   });
 }
 
+/**
+ * Escape closes the menu - and, like every Radix modal layer, it stays
+ * mounted (keeping `aria-hidden` over the rest of the page) for as long as
+ * its own close animation runs (S8-01's shared spring actually ticks in
+ * jsdom, unlike the CSS transition it replaced), so a caller has to await it
+ * rather than assume Escape is synchronous.
+ */
+async function closeMenu() {
+  fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+  await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument());
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   window.localStorage.clear();
@@ -514,9 +526,7 @@ describe('AC-D13/AC-D14: one toolbar row, Actions + Start, counts disabling at 0
     openActionsMenu();
     let item = screen.getByRole('menuitem', { name: 'Link selected (1)' });
     expect(item).not.toHaveAttribute('aria-disabled', 'true');
-    fireEvent.keyDown(document.activeElement ?? document.body, {
-      key: 'Escape',
-    });
+    await closeMenu();
 
     // A second tick drops it back to disabled - the manual dialog is a ONE-row override.
     fireEvent.click(screen.getByLabelText('Select SRTWT107 on SO363150'));
@@ -557,9 +567,7 @@ describe('AC-D13/AC-D14: one toolbar row, Actions + Start, counts disabling at 0
     expect(
       screen.getByRole('menuitem', { name: 'Unlink selected (0)' }),
     ).toHaveAttribute('aria-disabled', 'true');
-    fireEvent.keyDown(document.activeElement ?? document.body, {
-      key: 'Escape',
-    });
+    await closeMenu();
 
     // row-5 IS linked (placed) - ticking it enables the count.
     fireEvent.click(screen.getByLabelText('Select SRTWCY7405-PJ on SO381895'));
@@ -589,9 +597,7 @@ describe('AC-D13/AC-D14: one toolbar row, Actions + Start, counts disabling at 0
     });
     expect(empty).toHaveAttribute('aria-disabled', 'true');
     expect(empty).toHaveAttribute('title', 'Tick the rows you are taking on.');
-    fireEvent.keyDown(document.activeElement ?? document.body, {
-      key: 'Escape',
-    });
+    await closeMenu();
 
     fireEvent.click(
       screen.getByLabelText('Select SRTWC8605-SC-RL on SO386461'),

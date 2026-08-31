@@ -82,3 +82,11 @@ If unable to reach a browser (server down, sandboxed, daemon unresponsive), stat
 - AI / file-extraction / portal flows → a recorded agent-browser evidence run, against a real fixture, is what a spec would have been. No new spec (see above).
 - Pure visual / Tailwind tweak → an agent-browser `screenshot` is sufficient.
 
+
+## End states over frames (added 2026-08-31, lesson 94)
+
+Any interaction check (dialog, sheet, collapse, drawer, drag) is verified as a full round-trip -
+open then close then open again, collapse then expand then collapse - and the assertion is the
+MEASURED final state (element rects, computed transform/overflow, no overlap with the content
+pane), not a mid-animation screenshot. Animated UIs park stale content in exit phases; a pass
+recorded mid-flight has repeatedly hidden broken end states.

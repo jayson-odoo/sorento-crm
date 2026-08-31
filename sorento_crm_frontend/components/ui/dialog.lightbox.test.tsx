@@ -181,6 +181,12 @@ describe('Overlay is one shared scrim (S1-02)', () => {
     ],
   ];
 
+  // Dialog and sheet fade their scrim with the shared spring (S8-01) instead of
+  // the `animate-in` CSS keyframe alert dialog still uses - a still-running CSS
+  // animation on `opacity` would fight a concurrent JS-driven one on the same
+  // property, so the two mechanisms cannot coexist on one element.
+  const cssAnimatedSurfaces = new Set(['alert dialog']);
+
   for (const [name, renderSurface, selector] of surfaces) {
     it(`S1-02: the ${name} scrim is 50% black with an 8px blur`, () => {
       render(renderSurface());
@@ -189,8 +195,11 @@ describe('Overlay is one shared scrim (S1-02)', () => {
       expect(overlay).not.toBeNull();
       expect(overlay).toHaveClass('bg-black/50');
       expect(overlay).toHaveClass('backdrop-blur-md');
-      // The blur fades in with the scrim rather than snapping on.
-      expect(overlay).toHaveClass('data-[state=open]:animate-in');
+      // The blur fades in with the scrim rather than snapping on - either via
+      // the CSS keyframe (alert dialog) or the shared JS spring (dialog, sheet).
+      if (cssAnimatedSurfaces.has(name)) {
+        expect(overlay).toHaveClass('data-[state=open]:animate-in');
+      }
     });
 
     it(`S1-02: the ${name} scrim drops the blur under reduced transparency`, () => {

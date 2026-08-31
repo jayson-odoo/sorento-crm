@@ -938,6 +938,9 @@ describe('DeliveryScheduleReviewClient revision diff and amendment banner', () =
     fireEvent.click(dialog.getByRole('button', { name: /^Confirm schedule$/ }));
 
     await waitFor(() => expect(confirmDeliveryScheduleVersion).toHaveBeenCalled());
+    // The confirm dialog's exit animation keeps it (and its aria-hidden on
+    // the rest of the page) mounted a tick after the confirm resolves.
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
 
     expect(await screen.findByTestId('amendment-needed-banner')).toHaveTextContent(
       'the linked sales order has not been amended yet',

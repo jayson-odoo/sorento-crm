@@ -259,6 +259,17 @@ describe('S2-04 accessibility preference blocks', () => {
     expect(reduced).toMatch(/animation-duration:\s*150ms/);
   });
 
+  it('excludes dialog/sheet content from the 150ms CSS transition (S8-01 fix)', () => {
+    // Radix `asChild` merges DialogContent/SheetContent straight onto the `motion.div`
+    // Framer Motion animates (dialog.tsx, sheet.tsx), so this rule's own
+    // `transition-duration: 150ms` would otherwise land on that very node and smear the
+    // JS spring's one-frame opacity commit (`REDUCED_MOTION_TRANSITION`, lib/motion.ts)
+    // over 150ms instead of applying it instantly.
+    const reduced = reducedMotion();
+    const selector = /^[^{]*\{/.exec(reduced)?.[0] ?? '';
+    expect(selector).toMatch(/\[data-slot\$='-content'\]:not\(\[data-slot='dialog-content'\]\):not\(\[data-slot='sheet-content'\]\)/);
+  });
+
   it('gives every -content slot the reduced-motion rule to bite on', () => {
     // The rule keys off [data-slot$='-content'], so a primitive without the attribute
     // keeps sliding under prefers-reduced-motion.
@@ -377,10 +388,15 @@ describe('S2-06 motion tokens', () => {
     expect(offenders).toEqual([]);
   });
 
-  it('gives the sheet equal open and close durations', () => {
+  it('gives the sheet one shared open/close transition, not a bespoke CSS one (S8-01)', () => {
+    // The slide is a JS spring now, not a `data-state`-keyed CSS transition - a
+    // bespoke duration per direction is exactly the drift this token exists to
+    // prevent, and a spring can't have one anyway (its settle time emerges from
+    // the spring, it has no fixed duration to key per direction).
     const sheet = read('components/ui/sheet.tsx');
     expect(sheet).not.toMatch(/data-\[state=(open|closed)\]:duration-/);
-    expect(sheet).toContain('duration-(--duration-slow)');
-    expect(sheet).toContain('ease-(--ease-standard)');
+    expect(sheet).not.toMatch(/\bduration-\d+/);
+    expect(sheet).toContain("from '@/lib/motion'");
+    expect(sheet).toContain('surfaceTransition(');
   });
 });

@@ -247,7 +247,7 @@ Added 2026-08-30 from the user's run on the built S6 (the window works; what hap
 
 - **S8-01** Dialog, Sheet, Popover and DropdownMenu animate with the shared critically damped spring from `lib/motion.ts`; re-opening mid-close continues from the current value (no jump). [FE][T]
 - **S8-02** Popover, dropdown and tooltip scale from the trigger (`origin-(--radix-popper-content-transform-origin)`). [FE]
-- **S8-03** The sidebar collapse animates `transform` only; wrapper and header do not transition layout properties; `layout-initialized` is set on the next frame. [FE]
+- **S8-03** ~~The sidebar collapse animates `transform` only; wrapper and header do not transition layout properties~~ - dropped 31 Aug 2026: the `scaleX` + counter-scaled `.sidebar-rail` trick distorted both end states (squished icons, content overlapping the page past the collapsed rail) once its clip had to move off `.sidebar` for the toggle-button fix, and a second element (the toggle itself) needed position tracking without shape distortion, which the same transform could not give both at once. The collapse animates `width` again (wrapper/header transition `padding-inline-start`/`inset-inline-start` in lockstep, as before S8); `layout-initialized` is kept, set on the next frame via `requestAnimationFrame` rather than the old 1s timeout. [FE]
 - **S8-04** The mobile nav drawer is a `vaul` drawer: it tracks the finger, dismisses on swipe with velocity, and is inert to input during no phase. [FE][E2E]
 - **S8-05** The AI bubble panel materialises (scale + blur + opacity) from the bottom-right and resizes with pointer capture, touch included. [FE]
 - **S8-06** Row drag-and-drop has an activation distance and a drop animation. [FE]

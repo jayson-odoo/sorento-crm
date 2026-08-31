@@ -350,6 +350,12 @@ async function openGear() {
 async function pressEdit() {
   const menu = await openGear();
   fireEvent.click(within(menu).getByRole('menuitem', { name: 'Edit quotation' }));
+  // Selecting an item closes the menu, which - like every Radix modal layer -
+  // keeps `aria-hidden` over the rest of the page for as long as it stays
+  // mounted for its own close animation (S8-01's shared spring, unlike the old
+  // CSS transition, actually ticks in jsdom). Without this, every role query
+  // right after `pressEdit()` comes back empty.
+  await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
 }
 
 /**

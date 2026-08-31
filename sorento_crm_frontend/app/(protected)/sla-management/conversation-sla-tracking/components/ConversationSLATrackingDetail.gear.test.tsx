@@ -107,8 +107,13 @@ describe('ConversationSLATrackingDetail gear (D6, S3-02)', () => {
     const destructive = screen.getByRole('menuitem', { name: 'Delete tracking' });
     expect(destructive.className).toContain('text-destructive');
 
+    // Not `Array.from(menu.children)` - the menu's scale/opacity spring
+    // (S8-01) animates an inner div rather than `[role="menu"]` itself (so it
+    // never fights Radix Popper's own positioning transform on that node),
+    // which makes every row a grandchild now. `querySelectorAll` still
+    // returns them in document order regardless of nesting depth.
     const menu = destructive.closest('[role="menu"]') as HTMLElement;
-    const rows = Array.from(menu.children);
+    const rows = Array.from(menu.querySelectorAll<HTMLElement>('[role="menuitem"], [role="separator"]'));
     const separatorIndex = rows.findIndex(
       (el) => el.getAttribute('role') === 'separator',
     );
