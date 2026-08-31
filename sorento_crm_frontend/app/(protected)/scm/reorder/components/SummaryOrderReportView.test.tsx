@@ -20,7 +20,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, within } from '@testing-library/react';
+import { render, screen, fireEvent, within, waitFor } from '@testing-library/react';
 
 // jsdom polyfills for ScrollArea / DataGrid / Sheet.
 class ResizeObserverStub {
@@ -125,13 +125,13 @@ describe('SummaryOrderReportView - states', () => {
     expect(screen.getByText(/As of 03\/08\/2026/)).toBeInTheDocument();
   });
 
-  it('filters the grid by product or supplier without re-fetching', () => {
+  it('filters the grid by product or supplier without re-fetching', async () => {
     const s = renderView(state({ data: REPORT }));
     fireEvent.change(screen.getByLabelText('Search product or supplier'), {
       target: { value: 'SRTWT' },
     });
+    await waitFor(() => expect(screen.queryByTitle('B2155-NL-BLUE')).not.toBeInTheDocument());
     expect(screen.getByTitle('SRTWT7408')).toBeInTheDocument();
-    expect(screen.queryByTitle('B2155-NL-BLUE')).not.toBeInTheDocument();
     expect(s.refetch).not.toHaveBeenCalled();
   });
 });

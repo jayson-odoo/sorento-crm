@@ -1727,7 +1727,7 @@ describe('FulfilmentBoardPanel: searching the product rows', () => {
     await waitFor(() => expect(productRows()).toEqual(['TPE-9204']));
 
     fireEvent.click(
-      screen.getByRole('button', { name: 'Clear the product search' }),
+      screen.getByRole('button', { name: 'Clear search' }),
     );
 
     await waitFor(() =>

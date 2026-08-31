@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, cleanup, within } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, within, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import RespondContactsOutboundList from './RespondContactsOutboundList';
@@ -187,7 +187,7 @@ describe('RespondContactsOutboundList - states', () => {
 });
 
 describe('RespondContactsOutboundList - search and filter', () => {
-  it('passes the search term to the query and resets to the first page', () => {
+  it('passes the search term to the query and resets to the first page', async () => {
     mockState();
     renderWithClient(<RespondContactsOutboundList />);
 
@@ -195,9 +195,8 @@ describe('RespondContactsOutboundList - search and filter', () => {
       target: { value: '10025902' },
     });
 
-    const args = lastQueryArgs();
-    expect(args.searchQuery).toBe('10025902');
-    expect(args.pageIndex).toBe(0);
+    await waitFor(() => expect(lastQueryArgs().searchQuery).toBe('10025902'));
+    expect(lastQueryArgs().pageIndex).toBe(0);
   });
 });
 

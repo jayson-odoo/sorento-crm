@@ -293,13 +293,13 @@ describe('AllocationPanel', () => {
     fireEvent.change(screen.getByPlaceholderText('Search product or location'), {
       target: { value: 'CB6633' },
     });
+    await waitFor(() => expect(screen.queryByText('SRT382-6')).not.toBeInTheDocument());
     expect(screen.getByText('CB6633')).toBeInTheDocument();
-    expect(screen.queryByText('SRT382-6')).not.toBeInTheDocument();
 
     fireEvent.change(screen.getByPlaceholderText('Search product or location'), {
       target: { value: 'nothing matches this' },
     });
-    expect(screen.getByText('No line matches')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText('No line matches')).toBeInTheDocument());
     expect(
       screen.getByText('Clear the search or the state filter to see the rest.'),
     ).toBeInTheDocument();
