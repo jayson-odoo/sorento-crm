@@ -95,6 +95,7 @@ export function DetailActionsMenu({
           variant={trigger === 'ellipsis' ? 'ghost' : 'outline'}
           size="icon"
           aria-label={ariaLabel}
+          title={ariaLabel}
           disabled={disabled}
           className={className}
         >
