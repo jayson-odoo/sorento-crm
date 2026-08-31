@@ -59,15 +59,8 @@ export default function SetCompanyDialog({
   const triggerId = useId();
 
   useEffect(() => {
-    if (open) {
-      setCompanyValue('');
-      // Focused on open (AC-F4): the trigger is the one control in this dialog.
-      const timer = setTimeout(() => {
-        document.getElementById(triggerId)?.focus();
-      }, 0);
-      return () => clearTimeout(timer);
-    }
-  }, [open, triggerId]);
+    if (open) setCompanyValue('');
+  }, [open]);
 
   const totalCount = fileIds.length + folderIds.length;
 
@@ -118,7 +111,17 @@ export default function SetCompanyDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
+      <DialogContent
+        className="max-w-md"
+        onOpenAutoFocus={(e) => {
+          // Focused on open (AC-F4): the trigger is the one control in this
+          // dialog. Radix's own default (the content wrapper) is a no-op for
+          // this purpose, so this claims focus in the SAME frame instead of
+          // racing it with a timeout.
+          e.preventDefault();
+          document.getElementById(triggerId)?.focus();
+        }}
+      >
         <DialogHeader>
           <DialogTitle>Set company</DialogTitle>
           <DialogDescription>{describeCounts(folderIds.length, fileIds.length) || '-'}</DialogDescription>
@@ -127,7 +130,19 @@ export default function SetCompanyDialog({
         <div
           className="py-2 space-y-2"
           onKeyDown={(e) => {
-            if (e.key === 'Enter') {
+            // Only the CLOSED trigger, with a value already chosen, applies on
+            // Enter. An Enter fired from inside the open popover (the search
+            // input, a highlighted row) must reach cmdk's own handling - React
+            // portals still bubble through this react subtree even though the
+            // popover renders outside it in the DOM, so this has to be
+            // narrowed to the trigger button itself or every keyboard pick
+            // would be swallowed before it can select anything.
+            const target = e.target as HTMLElement;
+            if (
+              e.key === 'Enter' &&
+              companyValue &&
+              target.getAttribute('role') === 'combobox'
+            ) {
               e.preventDefault();
               handleApply();
             }
