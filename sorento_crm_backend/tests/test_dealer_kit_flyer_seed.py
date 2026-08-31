@@ -1170,3 +1170,41 @@ class TestTheReviewedHeadingIsTheSeededHeading:
         sections = _doc(db, body["pageId"])["sections"]
         assert sections[0]["name"] != ""
         assert "1" in sections[0]["name"]
+
+
+# --------------------------------------------------------------------------- #
+# An adopted code is a matched code, seeding included (PLAN-flyer-code-adopt.md)
+# --------------------------------------------------------------------------- #
+class TestAdoptedCodesAreSeeded:
+    """AC-A.2. ``flyer_seed_service.product_by_code`` is built straight off
+    ``report.matched`` (S1's design note), so an adopted code needs no change
+    there to be placed - this pins that it actually is, on the real fixture,
+    rather than trusting the claim.
+    """
+
+    def test_an_adopted_code_is_placed_in_its_printed_row(self, api) -> None:
+        # BATHTUB_ROW is 8037, 8030, 8041 in PRINTED order. Products are made
+        # for two of the three; the third is adopted onto a product with an
+        # unrelated code, so only the adoption can be why it is placed at all.
+        db, _as, _scope = api
+        products = _products(db, ["SRTJC8030", "SRTJC8041"])
+        adopted = _product(db, "ZZTFSADOPTED")
+
+        with TestClient(app) as c:
+            reading_id = _upload(c)
+            put = c.put(
+                f"/api/v1/dealer-kit/flyer-readings/{reading_id}"
+                "/code-overrides/SRTJC8037",
+                json={"productId": adopted.id},
+            )
+            assert put.status_code == 200, put.text
+            body = _seed(c, reading_id).json()
+
+        doc = _doc(db, body["pageId"])
+        collection = _collection(db, _collection_ids(doc["sections"][1])[0])
+
+        assert collection.pinned_product_ids == [
+            adopted.id,
+            products["SRTJC8030"].id,
+            products["SRTJC8041"].id,
+        ]

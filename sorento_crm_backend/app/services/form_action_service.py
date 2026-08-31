@@ -187,6 +187,7 @@ class FormActionService:
         # afterwards (AC-PGE-1).
         prior_state = action.capture(self.db, payload) or {}
 
+        parked_at = _utc_naive_now()
         row = SlaFormAction(
             action_key=action_key,
             source_entity_type=entity_type,
@@ -197,7 +198,13 @@ class FormActionService:
             requested_by_id=actor_id,
             channel=channel,
             status=FORM_ACTION_PENDING,
-            commit_at=_utc_naive_now() + timedelta(seconds=grace_seconds) if defers else None,
+            # Both stamps from ONE clock. `created_at` used to come from the database
+            # default, and Postgres `now()` is the transaction START, which under a
+            # loaded CI shard sat seconds before this line ran; the countdown's
+            # denominator is derived from commit_at - created_at, so a 10 s window
+            # read back as 12 (test_current_carries_every_field_the_countdown_needs).
+            created_at=parked_at,
+            commit_at=parked_at + timedelta(seconds=grace_seconds) if defers else None,
         )
 
         if defers:
@@ -274,6 +281,20 @@ class FormActionService:
         The sweep and the lazy-commit-on-read can both reach the same row. A
         conditional UPDATE with a rowcount check is what makes the loser a no-op -
         checking `row.status` in Python would let both pass (AC-D-6).
+
+        The claim UPDATE is deliberately left UNCOMMITTED here: Postgres holds
+        the row lock from the moment the statement runs, not from commit, so a
+        concurrent claim attempt already blocks on it and re-reads `pending` as
+        `committed` once we finally commit - AC-D-6 needs no commit of its own to
+        hold. Committing the claim early used to stamp `status=committed` durable
+        BEFORE the handler had written anything: a process that died between that
+        commit and the handler's (a `--reload` restart mid-request, a SIGKILL) left
+        the row reading `committed`, no `error_text`, with the domain mutation
+        never applied - and nothing ever retries a row that already reads
+        `committed`. Leaving the claim uncommitted folds it into the SAME
+        transaction as the handler's own commit (or `_execute`'s rollback-then-
+        refail on an exception): either both land, or neither does, and a crash
+        before either leaves the row `pending` for the next sweep to pick up.
         """
         claimed = (
             self.db.query(SlaFormAction)
@@ -291,7 +312,8 @@ class FormActionService:
         )
         if not claimed:
             return False
-        self.db.commit()
+        # No commit here - see the docstring. `refresh` still reads back what we
+        # just wrote, visible to ourselves inside the same open transaction.
         self.db.refresh(row)
 
         action = action_for(row.action_key)
