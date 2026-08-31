@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DIM_TRIPLE_PATTERN, compileBuilder } from './ruleSentence';
+import { compileBuilder } from './ruleSentence';
 import type { SpecRuleBuilder } from '../types/productSpec.types';
 
 /**
@@ -68,7 +68,19 @@ const SENTENCES: [
   ],
   [
     { kind: 'size_triple', position: 2 },
-    { match: 'regex', pattern: DIM_TRIPLE_PATTERN, capture: 2 },
+    {
+      match: 'regex',
+      // NOT `DIM_TRIPLE_PATTERN` - both suites were self-referential, each
+      // comparing its own compiler against its own engine regex, so a drift
+      // between the two languages' patterns would pass on both sides (reviewer,
+      // 31 Aug). Copied verbatim from Python's `_DIM_RE.pattern`
+      // (`app/services/product_spec_derivation.py`), pinned on that side by
+      // `tests/test_product_spec_derivation.py::_SENTENCES`'s own `size_triple`
+      // row - a change to EITHER pattern that the other does not follow fails HERE.
+      pattern:
+        '(?:[LWHDlwhd]\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM|mm)?\\s*[xX*]\\s*(?:[LWHDlwhd]\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM|mm)?(?:\\s*[xX*]\\s*(?:[LWHDlwhd]\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM|mm)?)?(?:\\s*[xX*]\\s*(?:[LWHDlwhd]\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM|mm)?)?',
+      capture: 2,
+    },
   ],
   [{ kind: 'name_head' }, { match: 'name_head', pattern: 'class_tail' }],
 ];

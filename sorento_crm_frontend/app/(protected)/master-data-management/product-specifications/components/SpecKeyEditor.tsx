@@ -263,6 +263,19 @@ export default function SpecKeyEditor({
         liveValues,
         droppedValues,
       );
+      // Blank clears the cap (AC-C.5): `null`. A typed number rides as itself. Any
+      // other stray text - `Number('abc')` is `NaN` - is omitted from the request
+      // entirely rather than sent as `NaN` (which used to serialise to `null` and
+      // silently clear the cap the same as an intentional blank).
+      const maxValueTrimmed = maxValue.trim();
+      const maxValueNumber =
+        maxValueTrimmed === '' ? null : Number(maxValueTrimmed);
+      const maxValuePayload =
+        maxValueTrimmed === ''
+          ? { max_value: null }
+          : Number.isFinite(maxValueNumber)
+            ? { max_value: maxValueNumber }
+            : {};
       const updated = await updateSpecKey(specKey.spec_key, {
         label,
         rank_weight: Number(weight),
@@ -273,8 +286,7 @@ export default function SpecKeyEditor({
         suppressed_synonyms,
         excluded_values: excluded,
         derivation_rules: rules,
-        // Blank clears the cap (AC-C.5); a stray non-number never reaches the request.
-        max_value: maxValue.trim() === '' ? null : Number(maxValue),
+        ...maxValuePayload,
         // An empty list means "every class". Sent as an absent key rather than an
         // empty array so the stored gate is removed, not stored as a gate that
         // permits nothing.

@@ -248,12 +248,12 @@ export interface SpecRegistryKey {
   synonyms: Record<string, string[]>;
   applies_when: Record<string, string[]>;
   /**
-   * `rules` - filled in by the derivation rules below.
-   * `measurement_then_rules` - the size in the description comes first; rules fill the
-   * gap when it states none, which is how the flyer's "L680xW375xH770mm" gets in.
-   * `product_record` - read off the product itself. Brand only; no rule can change it.
+   * Always `'rules'` now (#425): brand and the dimension columns are rows in the
+   * list too - "From the product's brand field", "From the product's
+   * `dimensions_length` column" - so there is no longer a second way a key can be
+   * read, and no second value this ever carries.
    */
-  read_from: 'rules' | 'measurement_then_rules' | 'product_record';
+  read_from: 'rules';
   rank_weight: number | null;
   measured_coverage: number | null;
   /**

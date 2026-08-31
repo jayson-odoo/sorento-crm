@@ -3,6 +3,7 @@
 import { Loader2 } from 'lucide-react';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { Textarea } from '@/components/ui/textarea';
 import { fetchProductPickerOptions } from '../services/productSpecService';
 import type { TryItSource } from '../hooks/useSpecTryIt';
 
@@ -58,8 +59,9 @@ export default function SpecTryItPanel({
           />
         </div>
         <span className="pt-2 text-xs text-muted-foreground sm:pt-0">or</span>
-        <textarea
-          className="min-h-[2.25rem] min-w-[16rem] flex-1 rounded-md border border-input bg-background p-2 text-xs"
+        <Textarea
+          variant="sm"
+          className="min-h-[2.25rem] min-w-[16rem] flex-1"
           placeholder="Paste a product description to try instead"
           value={pastedText}
           onChange={(e) => {
