@@ -283,11 +283,20 @@ Tiers, in order:
 4. **substring**, every product carrying the code (this tier already existed here before sets -
    `product_attachments` has always done substring matching; what's NEW is tier 2 landing above
    it, and the shared helper itself)
+5. **prefix**, OPT-IN (`allow_prefix=True`, `PLAN-shared-brand-attachments.md` S1), reached only
+   when 1-4 all miss: the code names a FAMILY by its head (text before the first ` - `, else the
+   first whitespace token), e.g. a certificate reading `"SRTBV - BRASS BALL VALVE"` resolves to
+   every `SRTBV...` product. Guarded by a minimum head length (4) and a fan-out cap (200 distinct
+   normalised codes). Only the attachment-link path (this route's bulk leg and the certificate
+   adapter) passes `allow_prefix=True`; the single-code `POST /` route here, packing lists and
+   promotions (Surface 4) all keep the four-tier default, so a family head they cannot resolve
+   stays reported as missing rather than silently linked.
 
 For product attachments specifically, tiers 1, 3 and 4 are unchanged behaviour (substring
 matching on a code was already how this route worked - `"WC7601"` already matched every SKU
-containing it and linked the file to all of them). The only actual behaviour change here is
-**tier 2, the set expansion**, plus one new response field.
+containing it and linked the file to all of them). The behaviour changes here are **tier 2, the
+set expansion**, **tier 5, the opt-in prefix tier** (bulk callers only), plus one new response
+field.
 
 ### Before / after, for a set code
 
@@ -308,7 +317,9 @@ Take the real set `SRTWC8608-RL` (company Sorento, 3 members: `SRTWCX8608-RL`, `
   `linked_via_set_id` (`app/schemas/product.py:395`, inherited via `ProductAttachmentBase`), so
   n8n CAN see, per call, whether the link it just made came from set expansion.
 - **Bulk (`POST /` with `products`, or `POST /link-products`):** returns
-  `ProductAttachmentBulkLinkResponse { linked: [{product_id, product_code}], skipped_product_codes, already_linked }`.
+  `ProductAttachmentBulkLinkResponse { linked: [{product_id, product_code, via}], skipped_product_codes, already_linked }`.
+  `via` (`exact` / `product_set` / `plus_split` / `substring` / `prefix`) is NEW
+  (`PLAN-shared-brand-attachments.md` S1) and says which tier reached each link.
   **`ProductAttachmentBulkLinkItem` does NOT carry `linked_via_set_id`** - checked against
   `app/schemas/external/attachments.py:158`. The bulk shape cannot tell n8n which of its linked
   codes came from a set; only the single-code response can. Reported, not changed here.
