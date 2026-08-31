@@ -1,6 +1,5 @@
 'use client';
 
-import { useState } from 'react';
 import { GripVertical, X } from 'lucide-react';
 import {
   DndContext,
@@ -23,7 +22,6 @@ import { CSS } from '@dnd-kit/utilities';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
-import { ruleSentence } from '../lib/ruleSentence';
 import type { SpecDerivationRule } from '../types/productSpec.types';
 
 /**
@@ -88,16 +86,12 @@ function SortableRule({
   rule,
   index,
   isClassKey,
-  label,
-  advanced,
   onPatch,
   onRemove,
 }: {
   rule: SpecDerivationRule;
   index: number;
   isClassKey: boolean;
-  label: string;
-  advanced: boolean;
   onPatch: (patch: Partial<SpecDerivationRule>) => void;
   onRemove: () => void;
 }) {
@@ -128,24 +122,18 @@ function SortableRule({
       <span className="w-6 shrink-0 text-center font-mono text-xs text-muted-foreground">
         {index + 1}
       </span>
-      {!advanced && (
-        <span className="min-w-[16rem] flex-1 text-sm">{ruleSentence(rule, label)}</span>
-      )}
-      {advanced && (
       <SearchableSelect
         value={rule.match}
         onChange={(value) => onPatch({ match: value })}
         options={MATCH_KINDS.map((k) => ({ value: k.value, label: k.label }))}
         triggerClassName="w-56"
-      />)}
-      {advanced && (
+      />
       <Input
         className="min-w-[10rem] flex-1 font-mono text-xs"
         placeholder={readsCode ? 'part of the product code' : 'what to look for'}
         value={rule.pattern}
         onChange={(e) => onPatch({ pattern: e.target.value })}
-      />)}
-      {advanced && (<>
+      />
       {!capturesNumber && (
         <>
           <span className="text-xs text-muted-foreground">→</span>
@@ -167,8 +155,7 @@ function SortableRule({
           onChange={(e) => onPatch({ capture: Number(e.target.value) })}
         />
       )}
-      </>)}
-      {advanced && (readsCode ? (
+      {readsCode ? (
         <span className="w-56 shrink-0 text-xs text-muted-foreground">Reads the product code</span>
       ) : isClassKey ? (
         // Class rules read a cleaned tail, never the raw description, so offering the
@@ -183,7 +170,7 @@ function SortableRule({
           options={SOURCES}
           triggerClassName="w-56"
         />
-      ))}
+      )}
       <Button
         size="icon"
         variant="ghost"
@@ -200,20 +187,13 @@ function SortableRule({
 export default function SpecRuleEditor({
   rules,
   specKey,
-  label,
   onChange,
 }: {
   rules: SpecDerivationRule[];
   specKey?: string;
-  /** What staff call this key, so a rule can be read as a sentence about it. */
-  label?: string;
   onChange: (rules: SpecDerivationRule[]) => void;
 }) {
   const isClassKey = specKey === 'class';
-  // Rules read as sentences by default. The match kind, the raw pattern and the source
-  // are the engine's own notation - correct, and unreadable to the merchandiser who
-  // owns this vocabulary. They are one click away rather than in the way.
-  const [advanced, setAdvanced] = useState(false);
   const sensors = useSensors(
     // A few pixels of travel before a drag starts, so clicking into a field on the row
     // is still a click.
@@ -242,18 +222,8 @@ export default function SpecRuleEditor({
 
   return (
     <div className="flex flex-col gap-2">
-      <div className="flex items-center justify-between gap-2">
-        <div className="text-xs uppercase tracking-wide text-muted-foreground">
-          How this is read from a product
-        </div>
-        <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          <input
-            type="checkbox"
-            checked={advanced}
-            onChange={(e) => setAdvanced(e.target.checked)}
-          />
-          Edit the patterns
-        </label>
+      <div className="text-xs uppercase tracking-wide text-muted-foreground">
+        How this is read from a product
       </div>
 
       {rules.length === 0 && (
@@ -279,8 +249,6 @@ export default function SpecRuleEditor({
                 rule={rule}
                 index={index}
                 isClassKey={isClassKey}
-                label={label || specKey || 'this'}
-                advanced={advanced}
                 onPatch={(patch) => update(index, patch)}
                 onRemove={() => remove(index)}
               />

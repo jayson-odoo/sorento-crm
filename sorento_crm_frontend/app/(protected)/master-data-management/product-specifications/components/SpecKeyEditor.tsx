@@ -403,7 +403,7 @@ export default function SpecKeyEditor({
               &quot;Flyer only&quot; to keep it out of the description.
             </p>
           )}
-          <SpecRuleEditor rules={rules} specKey={specKey.spec_key} label={label} onChange={setRules} />
+          <SpecRuleEditor rules={rules} specKey={specKey.spec_key} onChange={setRules} />
         </div>
       )}
 
