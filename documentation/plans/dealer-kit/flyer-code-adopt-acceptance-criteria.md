@@ -1,7 +1,7 @@
 # UAC - Flyer reading: adopt an unmatched printed code as an existing product
 
 **Companion to:** `PLAN-flyer-code-adopt.md`
-**Status:** S1 built (adopt + undo, Groups A and B). S2 (proposals follow, Group C) pending
+**Status:** S1 merged (#429); S2 built, PR #446.
 - see `#422`. Undo revised to a deferred action, not an `AlertDialog`, in the S1 review pass
 (31 Aug 2026) - see AC-B.3. Approved in session 31 Aug 2026 (captain rulings R1-R5 in the plan).
 **Legend:** `[BE]` backend/pytest · `[FE]` frontend/vitest · `[E2E]` real FE->BE->DB via agent-browser · `[MIG]` migration · `[T]` CI guard.
