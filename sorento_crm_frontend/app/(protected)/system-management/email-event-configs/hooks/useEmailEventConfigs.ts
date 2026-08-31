@@ -1,10 +1,13 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { useQuery } from '@tanstack/react-query';
+import { useEntityMutation } from '@/hooks/useEntityMutation';
 import {
   listEmailEventConfigs,
   updateEmailEventConfig,
 } from '../services/emailEventConfigsService';
-import type { EmailEventConfigUpdate } from '../types/emailEventConfig.types';
+import type {
+  EmailEventConfig,
+  EmailEventConfigUpdate,
+} from '../types/emailEventConfig.types';
 
 export function useEmailEventConfigs() {
   return useQuery({
@@ -15,15 +18,21 @@ export function useEmailEventConfigs() {
   });
 }
 
+/**
+ * Backs both the kill switch and the Save overrides button on the same row.
+ * Optimistic (S7-01) for the switch's sake: it is the control that has to move
+ * on press, and the overrides inherit the same rollback for free.
+ */
 export function useUpdateEmailEventConfig() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ event_key, payload }: { event_key: string; payload: EmailEventConfigUpdate }) =>
-      updateEmailEventConfig(event_key, payload),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['email-event-configs'] });
-      toast.success('Event config updated.');
-    },
-    onError: (err: Error) => toast.error(err.message),
+  return useEntityMutation<
+    { event_key: string; payload: EmailEventConfigUpdate },
+    EmailEventConfig
+  >({
+    mutationFn: ({ event_key, payload }) => updateEmailEventConfig(event_key, payload),
+    keys: [['email-event-configs']],
+    matchRow: (row, variables) => row.event_key === variables.event_key,
+    patchRow: (variables) => ({ ...variables.payload }),
+    successMessage: () => 'Event config updated.',
+    errorMessage: 'Could not update the event config',
   });
 }

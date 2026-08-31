@@ -1,9 +1,10 @@
 'use client';
 
 import * as React from 'react';
-import { AlertTriangle, Lock, RefreshCw, Search, TriangleAlert } from 'lucide-react';
+import { AlertTriangle, Lock, RefreshCw, TriangleAlert } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
+import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
@@ -194,7 +195,11 @@ export function QuotationVersionEditor({
   const [revising, setRevising] = React.useState(false);
   const recompute = useQuotationRecomputeMutation(project.id);
   const [recomputed, setRecomputed] = React.useState<QuotationRecomputeResult | null>(null);
-  const [lineSearch, setLineSearch] = React.useState('');
+  const {
+    value: lineSearchInput,
+    setValue: setLineSearchInput,
+    debouncedValue: lineSearch,
+  } = useDebouncedSearch();
 
   const rows = React.useMemo(
     () => [...(versions.data ?? [])].sort((a, b) => b.version_no - a.version_no),
@@ -787,19 +792,13 @@ export function QuotationVersionEditor({
           the search that hid it. Ctrl-F cannot do this job: it only finds what is scrolled
           into the DOM, so on a 59-line version it answers 0/0 for lines that plainly exist. */}
       {lineRows.length > 0 && (
-        <div className="relative w-full sm:max-w-xs">
-          <Search
-            className="pointer-events-none absolute inset-y-0 start-0 my-auto size-4 translate-x-2.5 text-muted-foreground"
-            aria-hidden
-          />
-          <Input
-            value={lineSearch}
-            onChange={(event) => setLineSearch(event.target.value)}
-            placeholder="Search lines"
-            aria-label="Search lines by product or description"
-            className="ps-9"
-          />
-        </div>
+        <ListSearchInput
+          value={lineSearchInput}
+          onChange={setLineSearchInput}
+          placeholder="Search lines"
+          aria-label="Search lines by product or description"
+          className="w-full sm:max-w-xs"
+        />
       )}
 
       <InlineLineTable<LineRow>

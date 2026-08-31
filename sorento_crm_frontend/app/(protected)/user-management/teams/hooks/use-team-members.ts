@@ -1,5 +1,6 @@
 import { useCompany } from '@/app/providers/CompanyProvider';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useEntityMutation } from '@/hooks/useEntityMutation';
 import { toast } from 'sonner';
 import {
   getTeam,
@@ -9,7 +10,7 @@ import {
   removeTeamMember,
   updateTeamMember,
 } from '../services/teamService';
-import type { TeamAddMemberPayload } from '../types/team.types';
+import type { TeamAddMemberPayload, TeamMember } from '../types/team.types';
 
 export function useTeam(teamId: string | null) {
   return useQuery({
@@ -62,14 +63,17 @@ export function useRemoveTeamMember(teamId: string) {
   });
 }
 
+/**
+ * The round-robin switch on a member row. Optimistic (S7-01): the switch moves
+ * on press instead of waiting out the write and the member list's refetch.
+ */
 export function useUpdateTeamMemberRoundRobin(teamId: string) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({ userId, includeInRoundRobin }: { userId: string; includeInRoundRobin: boolean }) =>
+  return useEntityMutation<{ userId: string; includeInRoundRobin: boolean }, TeamMember>({
+    mutationFn: ({ userId, includeInRoundRobin }) =>
       updateTeamMember(teamId, userId, { include_in_round_robin: includeInRoundRobin }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['user-management-team-members', teamId] });
-    },
-    onError: (error: Error) => toast.error(error.message),
+    keys: [['user-management-team-members', teamId]],
+    matchRow: (row, variables) => row.user_id === variables.userId,
+    patchRow: (variables) => ({ include_in_round_robin: variables.includeInRoundRobin }),
+    errorMessage: 'Could not change round-robin',
   });
 }

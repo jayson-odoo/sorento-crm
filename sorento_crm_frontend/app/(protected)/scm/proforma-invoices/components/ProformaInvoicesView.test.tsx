@@ -278,15 +278,17 @@ describe('ProformaInvoicesView - loading / empty / error / data states', () => {
     ).toBeInTheDocument();
   });
 
-  it('says the search found nothing, rather than that nothing was uploaded', () => {
+  it('says the search found nothing, rather than that nothing was uploaded', async () => {
     state.data = { data: [], total: 0 };
     renderView();
 
     fireEvent.change(searchBox(), { target: { value: 'FSCU' } });
 
-    expect(
-      screen.getByText('No proforma invoice matches this search and filter.'),
-    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        screen.getByText('No proforma invoice matches this search and filter.'),
+      ).toBeInTheDocument(),
+    );
   });
 
   it('renders every row once loaded', () => {

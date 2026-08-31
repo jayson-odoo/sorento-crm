@@ -8,7 +8,7 @@
  * people are waiting.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import {
   getCoreRowModel,
@@ -18,7 +18,6 @@ import {
   type RowSelectionState,
   type SortingState,
 } from '@tanstack/react-table';
-import { Search, X } from 'lucide-react';
 import { RowActionsMenu } from '@/components/common/RowActionsMenu';
 import { useOnboardingRequestActions } from '../actions';
 import { Button } from '@/components/ui/button';
@@ -29,7 +28,8 @@ import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { Input } from '@/components/ui/input';
+import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
@@ -70,7 +70,13 @@ function OnboardingRowActions({ request }: { request: OnboardingRequestSummary }
 }
 
 export function OnboardingRequestList() {
-  const [searchQuery, setSearchQuery] = useState('');
+  const {
+    value: searchInput,
+    setValue: setSearchInput,
+    debouncedValue: searchQuery,
+    isSettling: searchSettling,
+    reset: resetSearch,
+  } = useDebouncedSearch();
   const [statusFilter, setStatusFilter] = useState('all');
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [sorting, setSorting] = useState<SortingState>([{ id: 'created_at', desc: true }]);
@@ -80,7 +86,7 @@ export function OnboardingRequestList() {
   useListStateFromUrl((state) => {
     setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
     setSorting(state.sorting);
-    setSearchQuery(state.searchQuery);
+    resetSearch(state.searchQuery);
     setStatusFilter(state.filters.status_key ?? 'all');
   });
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
@@ -91,12 +97,17 @@ export function OnboardingRequestList() {
    * Anything that changes WHICH rows match sends the reader back to page one.
    * Searching from page 3 otherwise narrows the set to two rows and then asks
    * for the third page of it, which renders as an empty grid and reads like
-   * "nothing matched".
+   * "nothing matched". The mounted guard keeps the URL-restored page from
+   * being clobbered on first render.
    */
-  const search = (value: string) => {
-    setSearchQuery(value);
+  const searchMounted = useRef(false);
+  useEffect(() => {
+    if (!searchMounted.current) {
+      searchMounted.current = true;
+      return;
+    }
     firstPage();
-  };
+  }, [searchQuery]);
 
   const isFiltered = searchQuery.trim().length > 0 || statusFilter !== 'all';
 
@@ -291,25 +302,13 @@ export function OnboardingRequestList() {
           <DataGridListToolbar
             table={table}
             searchSlot={
-              <div className="relative">
-                <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
-                <Input
-                  placeholder="Search requests..."
-                  value={searchQuery}
-                  onChange={(e) => search(e.target.value)}
-                  className="ps-9 w-64"
-                />
-                {searchQuery ? (
-                  <Button
-                    mode="icon"
-                    variant="dim"
-                    className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
-                    onClick={() => search('')}
-                  >
-                    <X />
-                  </Button>
-                ) : null}
-              </div>
+              <ListSearchInput
+                value={searchInput}
+                onChange={setSearchInput}
+                isSettling={isSearchInFlight(searchSettling, isFetching, searchQuery)}
+                placeholder="Search requests..."
+                className="w-64"
+              />
             }
             filters={{
               kind: 'custom',

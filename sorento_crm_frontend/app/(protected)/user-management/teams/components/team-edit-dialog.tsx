@@ -46,7 +46,7 @@ export default function TeamEditDialog({
   const form = useForm<TeamSchemaType>({
     resolver: zodResolver(TeamSchema),
     defaultValues: { name: '', description: '', parent_team_id: null },
-    mode: 'onSubmit',
+    mode: 'onTouched',
   });
 
   const { data: teams = [] } = useQuery({

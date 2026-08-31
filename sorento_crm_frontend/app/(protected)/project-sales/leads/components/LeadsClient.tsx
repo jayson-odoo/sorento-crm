@@ -2,9 +2,8 @@
 
 import * as React from 'react';
 import type { PaginationState, SortingState } from '@tanstack/react-table';
-import { Plus, Search, X } from 'lucide-react';
+import { Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
@@ -17,6 +16,8 @@ import { AssignLeadDialog } from './AssignLeadDialog';
 import { LeadsGrid } from './LeadsGrid';
 import { LeadWizardDialog } from './LeadWizardDialog';
 import { PageHeader } from '@/components/common/PageHeader';
+import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 
 const OUTCOME_OPTIONS = [
   { value: 'open', label: 'Open' },
@@ -51,8 +52,13 @@ const SOURCE_OPTIONS = [
  */
 export function LeadsClient() {
   const [wizardOpen, setWizardOpen] = React.useState(false);
-  const [search, setSearch] = React.useState('');
-  const [debounced, setDebounced] = React.useState('');
+  const {
+    value: search,
+    setValue: setSearch,
+    debouncedValue: debounced,
+    isSettling: debouncedSettling,
+    reset: resetSearch,
+  } = useDebouncedSearch();
   const [outcome, setOutcome] = React.useState('open');
   const [source, setSource] = React.useState('');
   const [pagination, setPagination] = React.useState<PaginationState>({
@@ -69,8 +75,7 @@ export function LeadsClient() {
   useListStateFromUrl((urlState) => {
     setPagination({ pageIndex: urlState.pageIndex, pageSize: urlState.pageSize });
     setSorting(urlState.sorting);
-    setSearch(urlState.searchQuery);
-    setDebounced(urlState.searchQuery);
+    resetSearch(urlState.searchQuery);
     setOutcome(urlState.filters.outcome ?? '');
     setSource(urlState.filters.source ?? '');
   });
@@ -80,11 +85,6 @@ export function LeadsClient() {
 
   const { assign } = useLeadAcceptanceMutations();
   const { remove } = useLeadMutations();
-
-  React.useEffect(() => {
-    const timer = window.setTimeout(() => setDebounced(search.trim()), 300);
-    return () => window.clearTimeout(timer);
-  }, [search]);
 
   // Narrowing the set changes which rows exist, so page 3 of the old set is a page of
   // nothing in the new one.
@@ -130,30 +130,14 @@ export function LeadsClient() {
   const activeFilterCount = (outcome !== 'open' ? 1 : 0) + (source ? 1 : 0);
 
   const searchSlot = (
-    <div className="relative w-full max-w-xs">
-      <Search
-        className="pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
-        aria-hidden
-      />
-      <Input
-        value={search}
-        onChange={(event) => setSearch(event.target.value)}
-        placeholder="Search title or lead code…"
-        className="ps-9"
-        aria-label="Search leads"
-      />
-      {search && (
-        <Button
-          mode="icon"
-          variant="dim"
-          className="absolute end-1.5 top-1/2 h-6 w-6 -translate-y-1/2"
-          onClick={() => setSearch('')}
-          aria-label="Clear search"
-        >
-          <X />
-        </Button>
-      )}
-    </div>
+    <ListSearchInput
+      value={search}
+      onChange={setSearch}
+      isSettling={isSearchInFlight(debouncedSettling, leads.isFetching, debounced)}
+      placeholder="Search title or lead code…"
+      aria-label="Search leads"
+      className="w-full max-w-xs"
+    />
   );
 
   return (

@@ -331,8 +331,8 @@ describe('StockClaimsClient', () => {
       target: { value: 'WH-JB' },
     });
 
+    await waitFor(() => expect(screen.queryByText('SRT382-6')).not.toBeInTheDocument());
     expect(screen.getByText('CB6633')).toBeInTheDocument();
-    expect(screen.queryByText('SRT382-6')).not.toBeInTheDocument();
   });
 
   it('renders no UUID-looking id anywhere in the list', async () => {

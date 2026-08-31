@@ -64,7 +64,7 @@ export default function WarehouseForm({ warehouseId, onSuccess }: WarehouseFormP
       pool_warehouse_id: null,
       segment: null,
     },
-    mode: 'onSubmit',
+    mode: 'onTouched',
   });
 
   // Candidate pools. Any location can be a pool, so this is the warehouse list itself,

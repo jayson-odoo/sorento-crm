@@ -39,7 +39,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { formatDate } from '@/lib/helpers';
 import {
-  useDeleteAttachment,
   useDownloadAttachment,
   useResubmitAttachmentWebhook,
   useRestoreAttachment,
@@ -68,6 +67,7 @@ import { getPromotions } from '@/app/(protected)/marketing-management/promotions
 import { getPackingLists } from '@/app/(protected)/procurement-management/packing-lists/services/packingListService';
 import { linkAttachmentToPackingList, deleteAttachmentLink, unlinkPackingListFromAttachment } from '../services/attachmentService';
 import { useContactAccessTypes } from '@/app/(protected)/user-management/contact-access-types/hooks/useContactAccessTypes';
+import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { AccessLevelsMultiSelect } from './AccessLevelsMultiSelect';
 
 const ENTITY_ROUTES = {
@@ -96,7 +96,7 @@ function LinkagesTable({
   refetch: () => void;
 }) {
   const hasLinkId = type === 'product' || type === 'promotion';
-  const canUnlink = hasLinkId ? (item: LinkedEntityRef) => !!item.link_id : (item: LinkedEntityRef) => true;
+  const canUnlink = hasLinkId ? (item: LinkedEntityRef) => !!item.link_id : () => true;
   const canUnlinkPackingList = true;
   const [manageFieldLinksFor, setManageFieldLinksFor] = useState<string | null>(null);
 
@@ -224,15 +224,11 @@ function LinkagesTabs({
     onRefetch();
   };
 
-  const [unlinkPackingListPending, setUnlinkPackingListPending] = useState(false);
   const handleUnlinkPackingList = (item: LinkedEntityRef) => {
-    setUnlinkPackingListPending(true);
     const promise = item.link_id
       ? deleteAttachmentLink(item.link_id, 'inbound_shipment')
       : unlinkPackingListFromAttachment(attachment.id, item.id);
-    promise
-      .then(() => invalidate())
-      .finally(() => setUnlinkPackingListPending(false));
+    void promise.then(() => invalidate());
   };
 
   const [linkPackingListPending, setLinkPackingListPending] = useState(false);
@@ -480,13 +476,8 @@ function LinkProductForm({
   onCancel: () => void;
   isPending: boolean;
 }) {
-  const [search, setSearch] = useState('');
-  const [debounced, setDebounced] = useState('');
+  const { setValue: setSearch, debouncedValue: debounced } = useDebouncedSearch();
   const [pickedLabel, setPickedLabel] = useState<string | null>(null);
-  useEffect(() => {
-    const t = setTimeout(() => setDebounced(search.trim()), 250);
-    return () => clearTimeout(t);
-  }, [search]);
   useEffect(() => {
     if (!selectedId) setPickedLabel(null);
   }, [selectedId]);
@@ -556,13 +547,8 @@ function LinkPromotionForm({
   onCancel: () => void;
   isPending: boolean;
 }) {
-  const [search, setSearch] = useState('');
-  const [debounced, setDebounced] = useState('');
+  const { setValue: setSearch, debouncedValue: debounced } = useDebouncedSearch();
   const [pickedLabel, setPickedLabel] = useState<string | null>(null);
-  useEffect(() => {
-    const t = setTimeout(() => setDebounced(search.trim()), 250);
-    return () => clearTimeout(t);
-  }, [search]);
   useEffect(() => {
     if (!selectedId) setPickedLabel(null);
   }, [selectedId]);
@@ -629,13 +615,8 @@ function LinkFormForm({
   onCancel: () => void;
   isPending: boolean;
 }) {
-  const [search, setSearch] = useState('');
-  const [debounced, setDebounced] = useState('');
+  const { setValue: setSearch, debouncedValue: debounced } = useDebouncedSearch();
   const [pickedLabel, setPickedLabel] = useState<string | null>(null);
-  useEffect(() => {
-    const t = setTimeout(() => setDebounced(search.trim()), 250);
-    return () => clearTimeout(t);
-  }, [search]);
   useEffect(() => {
     if (!selectedId) setPickedLabel(null);
   }, [selectedId]);
@@ -702,13 +683,8 @@ function LinkPackingListForm({
   onCancel: () => void;
   isPending: boolean;
 }) {
-  const [search, setSearch] = useState('');
-  const [debounced, setDebounced] = useState('');
+  const { setValue: setSearch, debouncedValue: debounced } = useDebouncedSearch();
   const [pickedLabel, setPickedLabel] = useState<string | null>(null);
-  useEffect(() => {
-    const t = setTimeout(() => setDebounced(search.trim()), 250);
-    return () => clearTimeout(t);
-  }, [search]);
   useEffect(() => {
     if (!selectedId) setPickedLabel(null);
   }, [selectedId]);
@@ -863,11 +839,6 @@ export default function AttachmentDetailModal({
       },
     ];
   }, [attachment]);
-
-  const handleClose = () => {
-    onOpenChange(false);
-    queryClient.invalidateQueries({ queryKey: ['attachments'] });
-  };
 
   return (
     <>

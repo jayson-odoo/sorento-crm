@@ -2,12 +2,14 @@
 
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
-import { Layers, RotateCcw, Search, X } from 'lucide-react';
+import { Layers, RotateCcw } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
+import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import {
@@ -40,7 +42,13 @@ export default function ActivityTimeline() {
   const [userId, setUserId] = useState<string>(ANY);
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
-  const [q, setQ] = useState('');
+  const {
+    value: qInput,
+    setValue: setQInput,
+    debouncedValue: q,
+    isSettling: qSettling,
+    reset: resetQ,
+  } = useDebouncedSearch();
 
   const { data, isLoading, isError, error, refetch, isFetching } =
     useActivityFeed({
@@ -69,7 +77,7 @@ export default function ActivityTimeline() {
     setUserId(ANY);
     setDateFrom('');
     setDateTo('');
-    setQ('');
+    resetQ('');
   };
 
   const toggleEntityType = (type: ActivityEntityType) => {
@@ -81,8 +89,9 @@ export default function ActivityTimeline() {
   return (
     <div className="space-y-4">
       <FilterBar
-        q={q}
-        onQChange={setQ}
+        q={qInput}
+        onQChange={setQInput}
+        isSettling={isSearchInFlight(qSettling, isFetching, q)}
         entityTypes={entityTypes}
         onToggleEntityType={toggleEntityType}
         action={action}
@@ -155,6 +164,7 @@ function countTrace(items: ActivityItem[], traceId?: string | null): number {
 interface FilterBarProps {
   q: string;
   onQChange: (v: string) => void;
+  isSettling: boolean;
   entityTypes: ActivityEntityType[];
   onToggleEntityType: (t: ActivityEntityType) => void;
   action: string;
@@ -177,25 +187,13 @@ function FilterBar(props: FilterBarProps) {
     <Card>
       <CardContent className="flex flex-col gap-3 p-4 lg:flex-row lg:items-center">
         {/* Search */}
-        <div className="relative w-full lg:max-w-xs">
-          <Search className="absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            placeholder="Search activity..."
-            value={props.q}
-            onChange={(e) => props.onQChange(e.target.value)}
-            className="ps-9"
-          />
-          {props.q && (
-            <Button
-              mode="icon"
-              variant="dim"
-              className="absolute end-1.5 top-1/2 h-6 w-6 -translate-y-1/2"
-              onClick={() => props.onQChange('')}
-            >
-              <X />
-            </Button>
-          )}
-        </div>
+        <ListSearchInput
+          value={props.q}
+          onChange={props.onQChange}
+          isSettling={props.isSettling}
+          placeholder="Search activity..."
+          className="w-full lg:max-w-xs"
+        />
 
         <div className="flex flex-wrap items-center gap-2">
           {/* Entity types multi-select */}

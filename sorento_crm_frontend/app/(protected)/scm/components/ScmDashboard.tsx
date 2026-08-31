@@ -91,7 +91,7 @@ export function ScmDashboard() {
           </div>
         </div>
         <div className="mt-4">
-          <ScmFilterBar filters={filters} onChange={setFilters} />
+          <ScmFilterBar filters={filters} onChange={setFilters} isFetching={rollups.isFetching} />
         </div>
       </Card>
 

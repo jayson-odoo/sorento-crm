@@ -51,7 +51,7 @@ export default function UOMForm({ uomId, onSuccess }: UOMFormProps) {
       description: null,
       is_active: true,
     },
-    mode: 'onSubmit',
+    mode: 'onTouched',
   });
 
   // Load UOM data when editing

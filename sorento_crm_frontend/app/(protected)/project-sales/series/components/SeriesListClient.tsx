@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
-import { Plus, Search, X } from 'lucide-react';
+import { Plus } from 'lucide-react';
 import {
   getCoreRowModel,
   getPaginationRowModel,
@@ -20,7 +20,8 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
-import { Input } from '@/components/ui/input';
+import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useProjectSeries } from '../../_shared/hooks/useProjects';
 import type { ProjectSeries } from '../../_shared/types/project.types';
@@ -39,7 +40,11 @@ import type { ProjectSeries } from '../../_shared/types/project.types';
 export function SeriesListClient() {
   const router = useRouter();
   const series = useProjectSeries(true);
-  const [search, setSearch] = React.useState('');
+  const {
+    value: searchInput,
+    setValue: setSearchInput,
+    debouncedValue: search,
+  } = useDebouncedSearch();
   const [pagination, setPagination] = React.useState<PaginationState>({
     pageIndex: 0,
     pageSize: 15,
@@ -176,25 +181,12 @@ export function SeriesListClient() {
           <DataGridListToolbar
             table={table}
             searchSlot={
-              <div className="relative">
-                <Search className="absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  placeholder="Search series"
-                  value={search}
-                  onChange={(event) => setSearch(event.target.value)}
-                  className="w-full ps-9 sm:w-56 md:w-64"
-                />
-                {search.length > 0 && (
-                  <Button
-                    mode="icon"
-                    variant="dim"
-                    className="absolute end-1.5 top-1/2 h-6 w-6 -translate-y-1/2"
-                    onClick={() => setSearch('')}
-                  >
-                    <X />
-                  </Button>
-                )}
-              </div>
+              <ListSearchInput
+                value={searchInput}
+                onChange={setSearchInput}
+                placeholder="Search series"
+                className="w-full sm:w-56 md:w-64"
+              />
             }
             exportConfig={{ filename: 'series_export.xlsx' }}
             onRefresh={() => void series.refetch()}

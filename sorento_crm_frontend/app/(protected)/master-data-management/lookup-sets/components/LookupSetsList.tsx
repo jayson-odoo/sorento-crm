@@ -1,6 +1,6 @@
 'use client';
 import { useMemo, useState } from 'react';
-import { Edit, Plus, Search } from 'lucide-react';
+import { Edit, Plus } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import {
   useReactTable,
@@ -9,7 +9,6 @@ import {
   type RowSelectionState,
 } from '@tanstack/react-table';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Card, CardHeader, CardTable } from '@/components/ui/card';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
@@ -21,15 +20,22 @@ import { useLookupSets } from '../hooks/useLookupSets';
 import type { LookupSet } from '../types/lookup.types';
 import LookupSetTable from './LookupSetTable';
 import LookupSetFormDialog from './LookupSetFormDialog';
+import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 
 export default function LookupSetsList() {
   const router = useRouter();
-  const [searchQuery, setSearchQuery] = useState('');
+  const {
+    value: searchInputValue,
+    setValue: setSearchInputValue,
+    debouncedValue: searchQuery,
+    isSettling: searchSettling,
+  } = useDebouncedSearch();
   const [formOpen, setFormOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | undefined>();
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
-  const { data, isLoading } = useLookupSets({
+  const { data, isLoading, isFetching } = useLookupSets({
     pageIndex: 0,
     pageSize: 100,
     sorting: [{ id: 'name', desc: false }],
@@ -179,15 +185,13 @@ export default function LookupSetsList() {
             <DataGridListToolbar
               table={table}
               searchSlot={
-                <div className="relative">
-                  <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
-                  <Input
-                    placeholder="Search lookup sets..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="ps-9 w-64"
-                  />
-                </div>
+                <ListSearchInput
+                  value={searchInputValue}
+                  onChange={setSearchInputValue}
+                  isSettling={isSearchInFlight(searchSettling, isFetching, searchQuery)}
+                  placeholder="Search lookup sets..."
+                  className="w-64"
+                />
               }
               exportConfig={{ filename: 'lookup_sets_export.xlsx' }}
               primaryAction={listPrimaryAction}

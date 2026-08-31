@@ -42,6 +42,7 @@ export default function CompanyFormDialog({
 
   const form = useForm<z.infer<typeof CompanySchema>>({
     resolver: zodResolver(CompanySchema),
+    mode: 'onTouched',
     defaultValues: {
       name: '',
       code: '',

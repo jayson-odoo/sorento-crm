@@ -150,14 +150,17 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe('loading state', () => {
-  it('shows the progress-line skeleton and a disabled search box while the worklist loads', () => {
+  // The shared ListSearchInput is never disabled while a query is in flight -
+  // each keystroke changes the query key, so the box is pending for most of
+  // the typing, and disabling it on that flip drops the rest of the word.
+  it('shows the progress-line skeleton while the worklist loads, search box usable', () => {
     getSpecVerificationWorklist.mockReturnValue(new Promise(() => {})); // never resolves
     renderList();
 
     expect(
       screen.queryByTestId('verification-progress')?.textContent ?? '',
     ).not.toContain('Verified');
-    expect(screen.getByPlaceholderText('Search code or name')).toBeDisabled();
+    expect(screen.getByPlaceholderText('Search code or name')).not.toBeDisabled();
   });
 });
 

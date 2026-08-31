@@ -3,7 +3,7 @@
 import { useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Edit, Trash2, FileDown, Printer, Send, Link2, ExternalLink, CheckCircle, XCircle, RotateCcw, MessageSquare, ArrowUpCircle, Ban, UserRoundCog } from 'lucide-react';
+import { Check, Edit, Trash2, FileDown, Printer, Send, Link2, ExternalLink, CheckCircle, XCircle, RotateCcw, MessageSquare, ArrowUpCircle, Ban, UserRoundCog } from 'lucide-react';
 import { getFormSLATrackers, escalateFormTracking } from '@/app/(protected)/sla-management/_shared/formSLAService';
 import { SlaActiveTrackerControls } from '@/app/(protected)/sla-management/_shared/SlaActiveTrackerControls';
 import { SlaExtendMenuItem, SlaExtendDialog } from '@/app/(protected)/sla-management/_shared/SlaExtendAction';
@@ -153,6 +153,8 @@ export default function StockInquiryDetail({
     ? `Being handled by ${handlingLock.tracker?.handled_by_name ?? 'someone else'} - take over to act`
     : undefined;
   const [viewLinkCopying, setViewLinkCopying] = useState(false);
+  // The item ticks in place and the menu stays open to be read (S7-05).
+  const [viewLinkCopied, setViewLinkCopied] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [conversationSheetOpen, setConversationSheetOpen] = useState(false);
   const [editPurchasingResponseOpen, setEditPurchasingResponseOpen] = useState(false);
@@ -489,13 +491,15 @@ export default function StockInquiryDetail({
               {publicViewLinksEnabled && (
                 <DropdownMenuItem
                   disabled={viewLinkCopying}
-                  onClick={async () => {
+                  onSelect={async (event) => {
+                    event.preventDefault();
                     try {
                       setViewLinkCopying(true);
                       const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
                       const { view_url } = await getOrCreateStockInquiryViewLink(inquiryId, baseUrl);
                       await navigator.clipboard.writeText(view_url);
-                      toast.success('View link copied to clipboard');
+                      setViewLinkCopied(true);
+                      window.setTimeout(() => setViewLinkCopied(false), 2000);
                     } catch {
                       toast.error('Failed to copy view link');
                     } finally {
@@ -503,8 +507,8 @@ export default function StockInquiryDetail({
                     }
                   }}
                 >
-                  <Link2 className="size-4" />
-                  {viewLinkCopying ? 'Copying…' : 'Copy view link'}
+                  {viewLinkCopied ? <Check className="size-4" /> : <Link2 className="size-4" />}
+                  {viewLinkCopying ? 'Copying…' : viewLinkCopied ? 'Copied' : 'Copy view link'}
                 </DropdownMenuItem>
               )}
               {publicViewLinksEnabled && (

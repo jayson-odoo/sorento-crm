@@ -81,6 +81,7 @@ export default function PackingListForm({
 
   const form = useForm<PackingListSchemaType>({
     resolver: zodResolver(packingListSchema) as Resolver<PackingListSchemaType>,
+    mode: 'onTouched',
     defaultValues: {
       supplier_id: '',
       shipment_date: '',

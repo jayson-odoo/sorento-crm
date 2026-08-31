@@ -12,7 +12,7 @@ import {
   getSortedRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { Plus, Search } from 'lucide-react';
+import { Plus } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -23,12 +23,13 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { Input } from '@/components/ui/input';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 
 import { useIntegrations } from '../hooks/useIntegrations';
 import type { Integration } from '../types/integration.types';
 import { IntegrationFormDialog } from './IntegrationFormDialog';
+import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 
 export function StatusCell({ integration }: { integration: Integration }) {
   if (!integration.is_active) {
@@ -48,7 +49,11 @@ export function StatusCell({ integration }: { integration: Integration }) {
 export function IntegrationsView() {
   const router = useRouter();
   const { data, isLoading, isError, error } = useIntegrations();
-  const [search, setSearch] = useState('');
+  const {
+    value: searchInput,
+    setValue: setSearchInput,
+    debouncedValue: search,
+  } = useDebouncedSearch();
   const [formOpen, setFormOpen] = useState(false);
   const [sorting, setSorting] = useState<SortingState>([{ id: 'name', desc: false }]);
   const [pagination, setPagination] = useState<PaginationState>({
@@ -226,15 +231,12 @@ export function IntegrationsView() {
           <DataGridListToolbar
             table={table}
             searchSlot={
-              <div className="relative w-full max-w-xs">
-                <Search className="absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  className="ps-9"
-                  placeholder="Search integrations..."
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                />
-              </div>
+              <ListSearchInput
+                value={searchInput}
+                onChange={setSearchInput}
+                placeholder="Search integrations..."
+                className="w-full max-w-xs"
+              />
             }
             primaryAction={listPrimaryAction}
             exportConfig={false}

@@ -12,7 +12,7 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Plus, Search, X, Upload, Trash2 } from 'lucide-react';
+import { Plus, Upload, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useQueryClient } from '@tanstack/react-query';
 import { Badge } from '@/components/ui/badge';
@@ -25,7 +25,6 @@ import { buildSelectColumn, selectedRowIds } from '@/components/ui/data-grid-sel
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { buildDetailSearch } from '@/lib/listNavQuery';
-import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { TemplateUploadDialog } from '@/components/template/TemplateUploadDialog';
 import { useImportJobDrawer } from '@/components/upload-activity';
@@ -33,6 +32,8 @@ import { useWarehouses } from '../hooks/useWarehouses';
 import { bulkImportWarehouses, validateWarehouseImport } from '../services/warehouseService';
 import type { Warehouse } from '../types/warehouse.types';
 import WarehouseBulkDeleteDialog from './WarehouseBulkDeleteDialog';
+import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 
 export default function WarehousesList() {
   const router = useRouter();
@@ -40,7 +41,12 @@ export default function WarehousesList() {
   const { notifyImportQueued } = useImportJobDrawer();
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [sorting, setSorting] = useState<SortingState>([{ id: 'created_at', desc: true }]);
-  const [searchQuery, setSearchQuery] = useState('');
+  const {
+    value: searchInput,
+    setValue: setSearchInput,
+    debouncedValue: searchQuery,
+    isSettling: searchSettling,
+  } = useDebouncedSearch();
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
@@ -178,25 +184,13 @@ export default function WarehousesList() {
           <DataGridListToolbar
             table={table}
             searchSlot={
-              <div className="relative">
-                <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
-                <Input
-                  placeholder="Search warehouses..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="ps-9 w-64"
-                />
-                {searchQuery && (
-                  <Button
-                    mode="icon"
-                    variant="dim"
-                    className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
-                    onClick={() => setSearchQuery('')}
-                  >
-                    <X />
-                  </Button>
-                )}
-              </div>
+              <ListSearchInput
+                value={searchInput}
+                onChange={setSearchInput}
+                isSettling={isSearchInFlight(searchSettling, isFetching, searchQuery)}
+                placeholder="Search warehouses..."
+                className="w-64"
+              />
             }
             exportConfig={{ filename: 'warehouses_export.xlsx' }}
             onRefresh={() => void refetch()}

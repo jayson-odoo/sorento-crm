@@ -4,7 +4,8 @@ import * as React from 'react';
 import { useMcpToolsCatalog } from '../hooks/useMcpAdmin';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Switch } from '@/components/ui/switch';
-import { Input } from '@/components/ui/input';
+import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 import {
   Table,
   TableBody,
@@ -16,7 +17,11 @@ import {
 
 export function McpToolsList() {
   const [includeInactive, setIncludeInactive] = React.useState(false);
-  const [search, setSearch] = React.useState('');
+  const {
+    value: searchInput,
+    setValue: setSearchInput,
+    debouncedValue: search,
+  } = useDebouncedSearch();
   const { data, isLoading } = useMcpToolsCatalog({ is_active: !includeInactive });
   const rows = (data ?? []).filter((r) => {
     if (!search.trim()) return true;
@@ -34,10 +39,10 @@ export function McpToolsList() {
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="flex items-center gap-4">
-          <Input
+          <ListSearchInput
+            value={searchInput}
+            onChange={setSearchInput}
             placeholder="Search tool / module / owner..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
             className="max-w-sm"
           />
           <label className="flex items-center gap-2 text-sm">

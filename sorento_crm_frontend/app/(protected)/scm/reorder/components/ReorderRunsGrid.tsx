@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -11,7 +11,7 @@ import {
   getCoreRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { PlayCircle, RefreshCw, Search, X } from 'lucide-react';
+import { PlayCircle, RefreshCw } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -20,7 +20,8 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridListToolbar, type ToolbarAction } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { Input } from '@/components/ui/input';
+import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EM_DASH, fmtDate, fmtInt, fmtMoney } from '../../lib/format';
 import { runHistoryKey, todayRunKey, useReorderRuns } from '../hooks/useReorderRun';
@@ -45,7 +46,12 @@ export function ReorderRunsGrid({ autoOpenRun = false }: { autoOpenRun?: boolean
   const queryClient = useQueryClient();
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 25 });
   const [sorting, setSorting] = useState<SortingState>([]);
-  const [searchQuery, setSearchQuery] = useState('');
+  const {
+    value: searchInput,
+    setValue: setSearchInput,
+    debouncedValue: searchQuery,
+    isSettling: searchSettling,
+  } = useDebouncedSearch();
   const [modalOpen, setModalOpen] = useState(autoOpenRun);
   const [starting, setStarting] = useState(false);
 
@@ -55,6 +61,16 @@ export function ReorderRunsGrid({ autoOpenRun = false }: { autoOpenRun?: boolean
     sorting,
     searchQuery,
   });
+
+  // A search brings the reader back to page 0 to see the matches.
+  const searchMounted = useRef(false);
+  useEffect(() => {
+    if (!searchMounted.current) {
+      searchMounted.current = true;
+      return;
+    }
+    setPagination((p) => ({ ...p, pageIndex: 0 }));
+  }, [searchQuery]);
 
   const uploads = useUploadDataActions(() => {
     void queryClient.invalidateQueries({ queryKey: todayRunKey });
@@ -305,29 +321,13 @@ export function ReorderRunsGrid({ autoOpenRun = false }: { autoOpenRun?: boolean
               secondaryActions={secondaryActions}
               primaryAction={listPrimaryAction}
               searchSlot={
-                <div className="relative">
-                  <Search className="absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    placeholder="Search plans by warehouse"
-                    value={searchQuery}
-                    onChange={(e) => {
-                      setSearchQuery(e.target.value);
-                      setPagination((p) => ({ ...p, pageIndex: 0 }));
-                    }}
-                    className="w-full ps-9 sm:w-64"
-                  />
-                  {searchQuery.length > 0 ? (
-                    <Button
-                      mode="icon"
-                      variant="dim"
-                      className="absolute end-1.5 top-1/2 h-6 w-6 -translate-y-1/2"
-                      onClick={() => setSearchQuery('')}
-                      aria-label="Clear search"
-                    >
-                      <X />
-                    </Button>
-                  ) : null}
-                </div>
+                <ListSearchInput
+                  value={searchInput}
+                  onChange={setSearchInput}
+                  isSettling={isSearchInFlight(searchSettling, isFetching, searchQuery)}
+                  placeholder="Search plans by warehouse"
+                  className="w-full sm:w-64"
+                />
               }
               onRefresh={() => void refetch()}
               isRefreshing={isFetching}

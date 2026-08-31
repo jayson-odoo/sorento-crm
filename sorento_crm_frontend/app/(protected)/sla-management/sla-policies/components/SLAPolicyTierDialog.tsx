@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { LoaderCircleIcon, Save } from 'lucide-react';
@@ -51,11 +51,27 @@ export default function SLAPolicyTierDialog({
   const isEditMode = !!tier;
   const createMutation = useCreateSLAPolicyTier();
   const updateMutation = useUpdateSLAPolicyTier();
-  const [formInitialized, setFormInitialized] = useState(false);
   // Local string state for number inputs so user can clear and type (e.g. 72) without being blocked
   const [tierLevelStr, setTierLevelStr] = useState('');
   const [responseHoursStr, setResponseHoursStr] = useState('');
   const [resolutionHoursStr, setResolutionHoursStr] = useState('');
+
+  // What the dialog opens on, fed through `values` rather than a reset scheduled
+  // in an effect (S7-03). Both branches are the ones the effect had: the tier
+  // being edited, or a blank first tier. The component stays mounted between
+  // openings, so create mode has to name its values too - `undefined` there
+  // would reopen on whatever the last tier left in the fields.
+  const openValues = useMemo<SLAPolicyTierFormInputType | undefined>(() => {
+    if (!open) return undefined;
+    return tier && isEditMode
+      ? {
+          tier_level: tier.tier_level,
+          tier_name: tier.tier_name,
+          response_hours: Number(tier.response_hours),
+          resolution_hours: Number(tier.resolution_hours ?? 24),
+        }
+      : { tier_level: 1, tier_name: '', response_hours: 24, resolution_hours: 24 };
+  }, [open, tier, isEditMode]);
 
   const form = useForm<SLAPolicyTierFormInputType>({
     resolver: zodResolver(SLAPolicyTierSchema),
@@ -65,49 +81,27 @@ export default function SLAPolicyTierDialog({
       response_hours: 24,
       resolution_hours: 24,
     },
-    mode: 'onSubmit',
+    values: openValues,
+    // A field answers when the reader leaves it, not on submit.
+    mode: 'onTouched',
   });
 
-  // Load tier data when editing and sync local number strings
-  useEffect(() => {
-    if (tier && isEditMode && !formInitialized && open) {
-      const timeoutId = setTimeout(() => {
-        form.reset({
-          tier_level: tier.tier_level,
-          tier_name: tier.tier_name,
-          response_hours: Number(tier.response_hours),
-          resolution_hours: Number(tier.resolution_hours ?? 24),
-        });
-        setTierLevelStr(String(tier.tier_level));
-        setResponseHoursStr(String(Number(tier.response_hours)));
-        setResolutionHoursStr(String(Number(tier.resolution_hours ?? 24)));
-        setFormInitialized(true);
-      }, 0);
-
-      return () => clearTimeout(timeoutId);
-    } else if (!isEditMode && open) {
-      form.reset({
-        tier_level: 1,
-        tier_name: '',
-        response_hours: 24,
-        resolution_hours: 24,
-      });
-      setTierLevelStr('1');
-      setResponseHoursStr('24');
-      setResolutionHoursStr('24');
-      setFormInitialized(true);
-    }
-  }, [tier, isEditMode, form, open, formInitialized]);
-
-  // Reset formInitialized and local number strings when dialog closes
+  // The three number inputs keep their own string state so a half-typed "7" is
+  // not coerced, so they still have to be seeded when the dialog opens - and
+  // cleared when it closes, or reopening on a different tier shows the last one.
   useEffect(() => {
     if (!open) {
-      setFormInitialized(false);
       setTierLevelStr('');
       setResponseHoursStr('');
       setResolutionHoursStr('');
+      return;
     }
-  }, [open]);
+    setTierLevelStr(String(tier && isEditMode ? tier.tier_level : 1));
+    setResponseHoursStr(String(tier && isEditMode ? Number(tier.response_hours) : 24));
+    setResolutionHoursStr(
+      String(tier && isEditMode ? Number(tier.resolution_hours ?? 24) : 24),
+    );
+  }, [open, tier, isEditMode]);
 
   const onSubmit = async (data: SLAPolicyTierFormInputType) => {
     // Use local number strings so values are correct; allow empty -> 1

@@ -16,11 +16,9 @@ import {
   ChevronDown,
   Download,
   LoaderCircle,
-  Search,
   Settings,
   Trash2,
   Upload,
-  X,
 } from 'lucide-react';
 import {
   AlertDialog,
@@ -44,7 +42,6 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { buildDetailSearch } from '@/lib/listNavQuery';
@@ -63,6 +60,8 @@ import { EM_DASH, fmtDate, fmtInt, fmtQty, fmtSupplierCost } from '../../lib/for
 import { OverCapacityDialog } from './OverCapacityDialog';
 import { ProformaUploadDialog } from './ProformaUploadDialog';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
+import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 
 /**
  * What is on file per supplier: the priced document the loading plan and the eventual
@@ -148,7 +147,13 @@ export function ProformaInvoicesView() {
   const suppliers = useFulfilmentSuppliers();
   const canUpload = useHasPermission(UPLOAD_PERMISSION);
   const canConvert = useHasPermission(CONVERT_PERMISSION);
-  const [searchQuery, setSearchQuery] = useState('');
+  const {
+    value: searchInput,
+    setValue: setSearchInput,
+    debouncedValue: searchQuery,
+    isSettling: searchSettling,
+    reset: resetSearchQuery,
+  } = useDebouncedSearch();
   const [supplierId, setSupplierId] = useState<string | null>(null);
   // Defaulted to what has NOT been converted, because that is the question being asked by
   // anyone opening this screen: which of these still has to go into a container (AC-F6).
@@ -159,7 +164,7 @@ export function ProformaInvoicesView() {
   // rewriting it, so the list reads it (S3-01). One hook, every list.
   useListStateFromUrl((state) => {
     setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
-    setSearchQuery(state.searchQuery);
+    resetSearchQuery(state.searchQuery);
     setSupplierId(state.filters.supplier_id ?? null);
     setPlacement((state.filters.placement as ProformaPlacement) ?? null);
   });
@@ -174,7 +179,7 @@ export function ProformaInvoicesView() {
     setRowSelection({});
   }, [searchQuery, supplierId, placement]);
 
-  const { data, isLoading } = useProformaInvoices(supplierId, {
+  const { data, isLoading, isFetching } = useProformaInvoices(supplierId, {
     limit: pagination.pageSize,
     offset: pagination.pageIndex * pagination.pageSize,
     placement,
@@ -536,27 +541,14 @@ export function ProformaInvoicesView() {
             <DataGridListToolbar
               table={table}
               searchSlot={
-                <div className="relative">
-                  <Search className="absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    aria-label="Search proforma invoices"
-                    placeholder="Search PI, supplier, container or BL..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-72 ps-9"
-                  />
-                  {searchQuery ? (
-                    <Button
-                      mode="icon"
-                      variant="dim"
-                      className="absolute end-1.5 top-1/2 h-6 w-6 -translate-y-1/2"
-                      onClick={() => setSearchQuery('')}
-                      aria-label="Clear search"
-                    >
-                      <X />
-                    </Button>
-                  ) : null}
-                </div>
+                <ListSearchInput
+                  value={searchInput}
+                  onChange={setSearchInput}
+                  isSettling={isSearchInFlight(searchSettling, isFetching, searchQuery)}
+                  aria-label="Search proforma invoices"
+                  placeholder="Search PI, supplier, container or BL..."
+                  className="w-72"
+                />
               }
               filters={{
                 kind: 'custom',

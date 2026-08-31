@@ -77,3 +77,28 @@ export async function deleteUser(id: string): Promise<void> {
     throw new Error(await extractApiError(response, 'Failed to trash the user'));
   }
 }
+
+/**
+ * The row switch on the users list: is this user sent the daily conversation
+ * summary? PATCHed one user at a time, so the write is the whole story and the
+ * caller's optimistic patch (S7-01) is what the reader sees move.
+ */
+export async function setDailySlaSummarySubscription(
+  id: string,
+  subscribed: boolean,
+): Promise<void> {
+  const response = await apiFetch(
+    `/api/user-management/users/${id}/daily-sla-summary-subscription`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ subscribed }),
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error(
+      await extractApiError(response, 'Failed to update the conversation summary setting'),
+    );
+  }
+}

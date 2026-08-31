@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState, useEffect } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -10,7 +10,7 @@ import {
   getCoreRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Search, X } from 'lucide-react';
+import { X } from 'lucide-react';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
@@ -22,6 +22,8 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 import {
   Dialog,
   DialogBody,
@@ -96,7 +98,12 @@ export default function AuditLogsList() {
   const [entityType, setEntityType] = useState('');
   const [action, setAction] = useState(ACTION_ALL);
   const [userId, setUserId] = useState('');
-  const [entityId, setEntityId] = useState('');
+  const {
+    value: entityIdInput,
+    setValue: setEntityIdInput,
+    debouncedValue: entityId,
+    isSettling: entityIdSettling,
+  } = useDebouncedSearch();
   const [selectedLog, setSelectedLog] = useState<AuditLog | null>(null);
   // Seed the date range from the URL so a drill-down link (e.g. from the System
   // Health "Audit Activity" tile) lands here pre-filtered to that day.
@@ -121,6 +128,16 @@ export default function AuditLogsList() {
     queryFn: () => getUsersSelect(),
     staleTime: 5 * 60 * 1000,
   });
+  // A search brings the reader back to page 0 to see the matches.
+  const searchMounted = useRef(false);
+  useEffect(() => {
+    if (!searchMounted.current) {
+      searchMounted.current = true;
+      return;
+    }
+    setPagination((p) => ({ ...p, pageIndex: 0 }));
+  }, [entityId]);
+
   const activeFilterCount =
     (entityType ? 1 : 0) +
     (action !== ACTION_ALL ? 1 : 0) +
@@ -312,25 +329,13 @@ export default function AuditLogsList() {
             <DataGridListToolbar
               table={table}
               searchSlot={
-                <div className="relative">
-                  <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
-                  <Input
-                    placeholder="Search by entity ID..."
-                    value={entityId}
-                    onChange={(e) => setEntityId(e.target.value)}
-                    className="ps-9 w-72"
-                  />
-                  {entityId && (
-                    <Button
-                      mode="icon"
-                      variant="dim"
-                      className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
-                      onClick={() => setEntityId('')}
-                    >
-                      <X />
-                    </Button>
-                  )}
-                </div>
+                <ListSearchInput
+                  value={entityIdInput}
+                  onChange={setEntityIdInput}
+                  isSettling={isSearchInFlight(entityIdSettling, isFetching, entityId)}
+                  placeholder="Search by entity ID..."
+                  className="w-72"
+                />
               }
               filters={{
                 kind: 'custom',

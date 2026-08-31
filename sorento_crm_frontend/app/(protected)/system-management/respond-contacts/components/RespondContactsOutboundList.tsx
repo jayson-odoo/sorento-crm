@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ColumnDef,
   PaginationState,
@@ -9,7 +9,7 @@ import {
   getCoreRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { MessageCircle, MessageCircleOff, Search, TriangleAlert, X } from 'lucide-react';
+import { MessageCircle, MessageCircleOff, TriangleAlert } from 'lucide-react';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -30,7 +30,8 @@ import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
-import { Input } from '@/components/ui/input';
+import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
@@ -56,10 +57,25 @@ export default function RespondContactsOutboundList() {
     pageIndex: 0,
     pageSize: 50,
   });
-  const [searchQuery, setSearchQuery] = useState('');
+  const {
+    value: searchInput,
+    setValue: setSearchInput,
+    debouncedValue: searchQuery,
+    isSettling: searchSettling,
+  } = useDebouncedSearch();
   const [outbound, setOutbound] = useState<OutboundFilter>('all');
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [pending, setPending] = useState<PendingAction>(null);
+
+  // A search brings the reader back to page 0 to see the matches.
+  const searchMounted = useRef(false);
+  useEffect(() => {
+    if (!searchMounted.current) {
+      searchMounted.current = true;
+      return;
+    }
+    setPagination((p) => ({ ...p, pageIndex: 0 }));
+  }, [searchQuery]);
 
   const { data, isLoading, isFetching, isError, error, refetch } = useRespondContactsOutbound({
     pageIndex: pagination.pageIndex,
@@ -74,7 +90,9 @@ export default function RespondContactsOutboundList() {
   const total = data?.pagination?.total ?? 0;
   const counts = data?.counts ?? { enabled: 0, disabled: 0, total: 0 };
   const selectedIds = useMemo(() => Object.keys(rowSelection), [rowSelection]);
-  const busy = setOne.isPending || setBulk.isPending;
+  // Only the BULK write blocks the switches. The per-row one is optimistic
+  // (S7-01), so it has already moved the switch and can be flipped straight back.
+  const busy = setBulk.isPending;
 
   const clearSelection = () => setRowSelection({});
 
@@ -276,28 +294,13 @@ export default function RespondContactsOutboundList() {
             <DataGridListToolbar
               table={table}
               searchSlot={
-                <div className="relative">
-                  <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
-                  <Input
-                    placeholder="Search name, phone or Respond.io ID..."
-                    value={searchQuery}
-                    onChange={(e) => {
-                      setSearchQuery(e.target.value);
-                      setPagination((p) => ({ ...p, pageIndex: 0 }));
-                    }}
-                    className="ps-9 w-72"
-                  />
-                  {searchQuery && (
-                    <Button
-                      mode="icon"
-                      variant="dim"
-                      className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
-                      onClick={() => setSearchQuery('')}
-                    >
-                      <X />
-                    </Button>
-                  )}
-                </div>
+                <ListSearchInput
+                  value={searchInput}
+                  onChange={setSearchInput}
+                  isSettling={isSearchInFlight(searchSettling, isFetching, searchQuery)}
+                  placeholder="Search name, phone or Respond.io ID..."
+                  className="w-72"
+                />
               }
               filters={{
                 kind: 'custom',

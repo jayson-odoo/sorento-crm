@@ -91,7 +91,9 @@ export function useConversationSlaActions(
       key: 'conversation_sla.open_conversation',
       label: 'Open conversation',
       icon: ExternalLink,
-      run: () => window.open(inboxUrl, '_blank', 'noopener,noreferrer'),
+      run: () => {
+        window.open(inboxUrl, '_blank', 'noopener,noreferrer');
+      },
     });
   }
 

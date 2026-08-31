@@ -32,6 +32,7 @@ export default function Page() {
 
   const form = useForm<SigninSchemaType>({
     resolver: zodResolver(getSigninSchema()),
+    mode: 'onTouched',
     defaultValues: {
       email: '',
       password: '',

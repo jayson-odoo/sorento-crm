@@ -2,21 +2,26 @@
 
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Plus, Search, X } from 'lucide-react';
+import { Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { Team } from '../types/team.types';
 import { getTeams } from '../services/teamService';
 import TeamEditDialog from './team-edit-dialog';
 import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
 import TeamTree from './team-tree';
+import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 
 export default function TeamList() {
   const [editOpen, setEditOpen] = useState(false);
   const [selectedTeam, setSelectedTeam] = useState<Team | null>(null);
-  const [query, setQuery] = useState('');
+  const {
+    value: queryInput,
+    setValue: setQueryInput,
+    debouncedValue: query,
+  } = useDebouncedSearch();
   // Delete asks nothing (D7): a toast counts down with Cancel.
   const deletion = useDeferredRowAction({
     actionKey: 'team.delete',
@@ -35,25 +40,12 @@ export default function TeamList() {
     <>
       <Card>
         <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="relative w-full sm:max-w-xs">
-            <Search className="text-muted-foreground absolute start-2.5 top-1/2 size-4 -translate-y-1/2" />
-            <Input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search teams…"
-              className="ps-8 pe-8"
-            />
-            {query && (
-              <button
-                type="button"
-                onClick={() => setQuery('')}
-                className="text-muted-foreground hover:text-foreground absolute end-2 top-1/2 -translate-y-1/2"
-                aria-label="Clear search"
-              >
-                <X className="size-4" />
-              </button>
-            )}
-          </div>
+          <ListSearchInput
+            value={queryInput}
+            onChange={setQueryInput}
+            placeholder="Search teams…"
+            className="w-full sm:max-w-xs"
+          />
           <Button
             onClick={() => {
               setSelectedTeam(null);

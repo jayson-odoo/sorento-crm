@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect, useRef } from 'react';
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -13,7 +13,7 @@ import {
   SortingState,
   useReactTable,
 } from '@tanstack/react-table';
-import { LoaderCircleIcon, Mail, Plus, Search, Trash2, UserCheck, UserX, X } from 'lucide-react';
+import { LoaderCircleIcon, Mail, Plus, Trash2, UserCheck, UserX } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import {
   AlertDialog,
@@ -36,12 +36,13 @@ import { DataGridListToolbar, type ToolbarAction } from '@/components/ui/data-gr
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
-import { User, UserStatus } from '@/app/models/user';
+import { User, UserRoleSimple, UserStatus } from '@/app/models/user';
 import { buildDetailSearch } from '@/lib/listNavQuery';
+import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { UserRowActions } from '../actions';
 import { pendingEntityKey, usePendingEntityKeys } from '@/lib/pending-entity-store';
 import {
@@ -49,11 +50,277 @@ import {
   usersListFilters,
   usersListQueryKey,
 } from '../lib/listQuery';
+import { setDailySlaSummarySubscription } from '../services/userService';
+import { useEntityMutation } from '@/hooks/useEntityMutation';
 import { useRoleSelectQuery } from '../../roles/hooks/use-role-select-query';
 import { getUserStatusProps, UserStatusProps } from '../constants/status';
 import UserInviteDialog from './user-add-dialog';
 import { toast } from 'sonner';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
+import type { Table as ReactTable } from '@tanstack/react-table';
+
+type UserFilterField = 'role' | 'status' | 'trashed';
+type UserFilterCondition = { id: string; field: UserFilterField; value: string };
+
+interface UsersToolbarProps {
+  table: ReactTable<User>;
+  searchInput: string;
+  setSearchInput: (value: string) => void;
+  searchSettling: boolean;
+  searchQuery: string;
+  isFetching: boolean;
+  resetSearch: (value: string) => void;
+  selectedRole: string | null;
+  setSelectedRole: (value: string) => void;
+  selectedStatus: string | null;
+  setSelectedStatus: (value: string) => void;
+  selectedTrashed: string;
+  setSelectedTrashed: (value: string) => void;
+  setPagination: React.Dispatch<React.SetStateAction<PaginationState>>;
+  bulkActionPending: boolean;
+  runBulkAction: (
+    action: 'delete' | 'activate' | 'deactivate' | 'permanent_delete' | 'resend_invite',
+  ) => void;
+  roleList: UserRoleSimple[] | undefined;
+  isLoading: boolean;
+  addUserButton: React.ReactNode;
+}
+
+/**
+ * The list toolbar (search + filters + bulk actions), hoisted to module scope
+ * so it keeps a stable component identity across parent re-renders. Defining
+ * this inside UserList made every keystroke in the search box create a NEW
+ * function type, so React unmounted and remounted the whole toolbar - and
+ * with it the search input, dropping focus after every character.
+ */
+const UsersToolbar = ({
+  table,
+  searchInput,
+  setSearchInput,
+  searchSettling,
+  searchQuery,
+  isFetching,
+  resetSearch,
+  selectedRole,
+  setSelectedRole,
+  selectedStatus,
+  setSelectedStatus,
+  selectedTrashed,
+  setSelectedTrashed,
+  setPagination,
+  bulkActionPending,
+  runBulkAction,
+  roleList,
+  isLoading,
+  addUserButton,
+}: UsersToolbarProps) => {
+  const initialConditionsFromApplied = (): UserFilterCondition[] => {
+    const out: UserFilterCondition[] = [];
+    if ((selectedRole || 'all') !== 'all') {
+      out.push({ id: crypto.randomUUID(), field: 'role', value: selectedRole || 'all' });
+    }
+    if ((selectedStatus || 'all') !== 'all') {
+      out.push({ id: crypto.randomUUID(), field: 'status', value: selectedStatus || 'all' });
+    }
+    if (selectedTrashed !== 'exclude') {
+      out.push({ id: crypto.randomUUID(), field: 'trashed', value: selectedTrashed });
+    }
+    return out;
+  };
+
+  const [draftConditions, setDraftConditions] = useState<UserFilterCondition[]>(() => initialConditionsFromApplied());
+
+  const addCondition = () => {
+    setDraftConditions((prev) => [...prev, { id: crypto.randomUUID(), field: 'role', value: 'all' }]);
+  };
+
+  const updateCondition = (id: string, patch: Partial<UserFilterCondition>) => {
+    setDraftConditions((prev) => prev.map((c) => (c.id === id ? { ...c, ...patch } : c)));
+  };
+
+  const removeCondition = (id: string) => {
+    setDraftConditions((prev) => prev.filter((c) => c.id !== id));
+  };
+
+  const applyConditions = () => {
+    let role = 'all';
+    let status = 'all';
+    let trashed = 'exclude';
+    for (const c of draftConditions) {
+      if (c.field === 'role' && c.value) role = c.value;
+      if (c.field === 'status' && c.value) status = c.value;
+      if (c.field === 'trashed' && c.value) trashed = c.value;
+    }
+    setSelectedRole(role);
+    setSelectedStatus(status);
+    setSelectedTrashed(trashed);
+    setPagination((prev) => ({ ...prev, pageIndex: 0 }));
+  };
+
+  const filtersActiveCount =
+    ((selectedRole || 'all') !== 'all' ? 1 : 0) +
+    ((selectedStatus || 'all') !== 'all' ? 1 : 0) +
+    (selectedTrashed !== 'exclude' ? 1 : 0);
+
+  const bulkActions: ToolbarAction[] = [
+    {
+      key: 'activate',
+      label: 'Bulk activate',
+      icon: UserCheck,
+      disabled: bulkActionPending || selectedTrashed === 'only',
+      onClick: () => runBulkAction('activate'),
+    },
+    {
+      key: 'deactivate',
+      label: 'Bulk deactivate',
+      icon: UserX,
+      disabled: bulkActionPending || selectedTrashed === 'only',
+      onClick: () => runBulkAction('deactivate'),
+    },
+    {
+      key: 'resend_invite',
+      label: 'Bulk send invitation',
+      icon: Mail,
+      disabled: bulkActionPending || selectedTrashed === 'only',
+      onClick: () => runBulkAction('resend_invite'),
+    },
+    {
+      key: 'delete',
+      label: 'Trash',
+      icon: Trash2,
+      destructive: true,
+      disabled: bulkActionPending || selectedTrashed === 'only',
+      onClick: () => runBulkAction('delete'),
+    },
+    ...(selectedTrashed === 'only'
+      ? [
+          {
+            key: 'permanent_delete',
+            label: 'Permanently delete',
+            icon: Trash2,
+            destructive: true,
+            disabled: bulkActionPending,
+            onClick: () => runBulkAction('permanent_delete'),
+          } as ToolbarAction,
+        ]
+      : []),
+  ];
+
+  return (
+    <CardHeader className="block">
+      <DataGridListToolbar
+        table={table}
+        searchSlot={
+          <ListSearchInput
+            value={searchInput}
+            onChange={setSearchInput}
+            isSettling={isSearchInFlight(searchSettling, isFetching, searchQuery)}
+            onSubmit={() => resetSearch(searchInput)}
+            placeholder="Search users"
+            className="w-full sm:w-40 md:w-64"
+          />
+        }
+        filters={{
+          kind: 'custom',
+          active: filtersActiveCount > 0,
+          activeCount: filtersActiveCount,
+          content: (
+            <div className="space-y-3">
+              <p className="text-sm font-medium">Advanced filters</p>
+              <div className="space-y-2">
+                {draftConditions.map((cond) => (
+                  <div key={cond.id} className="grid grid-cols-[1fr_1fr_auto] gap-2">
+                    <SearchableSelect
+                      value={cond.field}
+                      onChange={(v) =>
+                        updateCondition(cond.id, {
+                          field: v as UserFilterField,
+                          value: v === 'trashed' ? 'exclude' : 'all',
+                        })
+                      }
+                      options={[
+                        { value: 'role', label: 'Role' },
+                        { value: 'status', label: 'Status' },
+                        { value: 'trashed', label: 'Trashed' },
+                      ]}
+                    />
+                    {cond.field === 'role' ? (
+                      <SearchableSelect
+                        value={cond.value}
+                        onChange={(v) => updateCondition(cond.id, { value: v })}
+                        disabled={isLoading}
+                        options={[
+                          { value: 'all', label: 'All roles' },
+                          ...(roleList ?? []).map((role) => ({
+                            value: role.id,
+                            label: role.name,
+                          })),
+                        ]}
+                      />
+                    ) : cond.field === 'status' ? (
+                      <SearchableSelect
+                        value={cond.value}
+                        onChange={(v) => updateCondition(cond.id, { value: v })}
+                        disabled={isLoading}
+                        options={[
+                          { value: 'all', label: 'All users' },
+                          ...Object.entries(UserStatusProps).map(([status, { label }]) => ({
+                            value: status,
+                            label,
+                          })),
+                        ]}
+                      />
+                    ) : (
+                      <SearchableSelect
+                        value={cond.value}
+                        onChange={(v) => updateCondition(cond.id, { value: v })}
+                        disabled={isLoading}
+                        options={[
+                          { value: 'exclude', label: 'Active only' },
+                          { value: 'only', label: 'Trashed only' },
+                          { value: 'all', label: 'All' },
+                        ]}
+                      />
+                    )}
+                    <Button type="button" mode="icon" variant="ghost" onClick={() => removeCondition(cond.id)}>
+                      <Trash2 className="size-4" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+              <div className="flex gap-2">
+                <Button type="button" variant="outline" size="sm" className="flex-1" onClick={addCondition}>
+                  <Plus className="size-4" />
+                  Add condition
+                </Button>
+                <Button type="button" variant="outline" size="sm" className="flex-1" onClick={applyConditions}>
+                  Apply
+                </Button>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full"
+                onClick={() => {
+                  setDraftConditions([]);
+                  setSelectedRole('all');
+                  setSelectedStatus('all');
+                  setSelectedTrashed('exclude');
+                  setPagination((prev) => ({ ...prev, pageIndex: 0 }));
+                }}
+              >
+                Clear filters
+              </Button>
+            </div>
+          ),
+        }}
+        exportConfig={{ filename: 'users_export.xlsx' }}
+        bulkActions={bulkActions}
+        primaryAction={addUserButton}
+      />
+    </CardHeader>
+  );
+};
 
 const UserList = () => {
   const queryClient = useQueryClient();
@@ -66,14 +333,19 @@ const UserList = () => {
   ]);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [inviteDialogOpen, setInviteDialogOpen] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
+  const {
+    value: searchInput,
+    setValue: setSearchInput,
+    debouncedValue: searchQuery,
+    isSettling: searchSettling,
+    reset: resetSearch,
+  } = useDebouncedSearch();
   const [selectedRole, setSelectedRole] = useState<string | null>(null);
   const [selectedStatus, setSelectedStatus] = useState<string | null>('all');
   const [selectedTrashed, setSelectedTrashed] = useState<string>('exclude');
   const [bulkActionPending, setBulkActionPending] = useState(false);
   const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false);
   const [bulkConfirmAction, setBulkConfirmAction] = useState<'delete' | 'activate' | 'deactivate' | 'permanent_delete' | 'resend_invite' | null>(null);
-  const [togglingSubscriptionByUser, setTogglingSubscriptionByUser] = useState<Record<string, boolean>>({});
 
   // Role select query
   const { data: roleList } = useRoleSelectQuery();
@@ -83,35 +355,41 @@ const UserList = () => {
   useListStateFromUrl((state) => {
     setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
     setSorting(state.sorting);
-    setSearchQuery(state.searchQuery);
+    resetSearch(state.searchQuery);
     setSelectedRole(state.filters.roleId ?? 'all');
     setSelectedStatus(state.filters.status ?? 'all');
     setSelectedTrashed(state.filters.trashed ?? 'exclude');
   });
 
-  const updateDailySummarySubscription = async (userId: string, subscribed: boolean) => {
-    setTogglingSubscriptionByUser((prev) => ({ ...prev, [userId]: true }));
-    try {
-      const res = await apiFetch(
-        `/api/user-management/users/${userId}/daily-sla-summary-subscription`,
-        {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ subscribed }),
-        },
-      );
-      const payload = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(payload.detail || payload.message || 'Failed to update setting');
-      }
-      toast.success('Conversation summary setting updated');
-      queryClient.invalidateQueries({ queryKey: ['user-users'] });
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to update setting');
-    } finally {
-      setTogglingSubscriptionByUser((prev) => ({ ...prev, [userId]: false }));
+  const searchMounted = useRef(false);
+  useEffect(() => {
+    if (!searchMounted.current) {
+      searchMounted.current = true;
+      return;
     }
-  };
+    setPagination((prev) => ({ ...prev, pageIndex: 0 }));
+  }, [searchQuery]);
+
+  /**
+   * The daily-summary switch. Optimistic (S7-01): it moves on press and goes
+   * back only if the server refuses, rather than sitting disabled through the
+   * write AND the list's refetch. The row is patched under both spellings
+   * because the service normalises the backend's snake_case into camel and a
+   * cached page can be holding either.
+   */
+  const dailySummarySubscription = useEntityMutation<
+    { userId: string; subscribed: boolean },
+    void
+  >({
+    mutationFn: ({ userId, subscribed }) => setDailySlaSummarySubscription(userId, subscribed),
+    keys: [['user-users']],
+    matchRow: (row, variables) => row.id === variables.userId,
+    patchRow: ({ subscribed }) => ({
+      dailySlaSummarySubscribed: subscribed,
+      daily_sla_summary_subscribed: subscribed,
+    }),
+    errorMessage: 'Could not change the conversation summary setting',
+  });
 
   // The list query, built through the shared key + fetch so the detail page's
   // pager reads THIS cache entry instead of asking the server again.
@@ -130,7 +408,7 @@ const UserList = () => {
     [pagination, sorting, searchQuery, selectedRole, selectedStatus, selectedTrashed],
   );
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isFetching } = useQuery({
     queryKey: usersListQueryKey(listParams),
     queryFn: () => fetchUsersListPage(listParams),
     staleTime: Infinity,
@@ -357,7 +635,6 @@ const UserList = () => {
             user.dailySlaSummarySubscribed ??
             user.daily_sla_summary_subscribed ??
             true;
-          const isPending = Boolean(togglingSubscriptionByUser[userId]);
           return (
             <div
               className="flex items-center gap-2"
@@ -365,10 +642,10 @@ const UserList = () => {
             >
               <Switch
                 checked={Boolean(subscribed)}
-                disabled={isPending}
-                onCheckedChange={(next) => {
-                  void updateDailySummarySubscription(userId, next);
-                }}
+                aria-label="Daily conversation summary"
+                onCheckedChange={(next) =>
+                  dailySummarySubscription.mutate({ userId, subscribed: next })
+                }
               />
             </div>
           );
@@ -437,7 +714,7 @@ const UserList = () => {
         enableResizing: false,
       },
     ],
-    [togglingSubscriptionByUser],
+    [dailySummarySubscription],
   );
 
   const [columnOrder, setColumnOrder] = useState<string[]>(() =>
@@ -483,237 +760,6 @@ const UserList = () => {
     </Button>
   );
 
-  const DataGridToolbar = () => {
-    const [inputValue, setInputValue] = useState(searchQuery);
-    type UserFilterField = 'role' | 'status' | 'trashed';
-    type UserFilterCondition = { id: string; field: UserFilterField; value: string };
-
-    const initialConditionsFromApplied = (): UserFilterCondition[] => {
-      const out: UserFilterCondition[] = [];
-      if ((selectedRole || 'all') !== 'all') {
-        out.push({ id: crypto.randomUUID(), field: 'role', value: selectedRole || 'all' });
-      }
-      if ((selectedStatus || 'all') !== 'all') {
-        out.push({ id: crypto.randomUUID(), field: 'status', value: selectedStatus || 'all' });
-      }
-      if (selectedTrashed !== 'exclude') {
-        out.push({ id: crypto.randomUUID(), field: 'trashed', value: selectedTrashed });
-      }
-      return out;
-    };
-
-    const [draftConditions, setDraftConditions] = useState<UserFilterCondition[]>(() => initialConditionsFromApplied());
-
-    const addCondition = () => {
-      setDraftConditions((prev) => [...prev, { id: crypto.randomUUID(), field: 'role', value: 'all' }]);
-    };
-
-    const updateCondition = (id: string, patch: Partial<UserFilterCondition>) => {
-      setDraftConditions((prev) => prev.map((c) => (c.id === id ? { ...c, ...patch } : c)));
-    };
-
-    const removeCondition = (id: string) => {
-      setDraftConditions((prev) => prev.filter((c) => c.id !== id));
-    };
-
-    const applyConditions = () => {
-      let role = 'all';
-      let status = 'all';
-      let trashed = 'exclude';
-      for (const c of draftConditions) {
-        if (c.field === 'role' && c.value) role = c.value;
-        if (c.field === 'status' && c.value) status = c.value;
-        if (c.field === 'trashed' && c.value) trashed = c.value;
-      }
-      setSelectedRole(role);
-      setSelectedStatus(status);
-      setSelectedTrashed(trashed);
-      setPagination((prev) => ({ ...prev, pageIndex: 0 }));
-    };
-
-    const handleSearch = () => {
-      setSearchQuery(inputValue);
-      setPagination({ ...pagination, pageIndex: 0 });
-    };
-
-    const filtersActiveCount =
-      ((selectedRole || 'all') !== 'all' ? 1 : 0) +
-      ((selectedStatus || 'all') !== 'all' ? 1 : 0) +
-      (selectedTrashed !== 'exclude' ? 1 : 0);
-
-    const bulkActions: ToolbarAction[] = [
-      {
-        key: 'activate',
-        label: 'Bulk activate',
-        icon: UserCheck,
-        disabled: bulkActionPending || selectedTrashed === 'only',
-        onClick: () => runBulkAction('activate'),
-      },
-      {
-        key: 'deactivate',
-        label: 'Bulk deactivate',
-        icon: UserX,
-        disabled: bulkActionPending || selectedTrashed === 'only',
-        onClick: () => runBulkAction('deactivate'),
-      },
-      {
-        key: 'resend_invite',
-        label: 'Bulk send invitation',
-        icon: Mail,
-        disabled: bulkActionPending || selectedTrashed === 'only',
-        onClick: () => runBulkAction('resend_invite'),
-      },
-      {
-        key: 'delete',
-        label: 'Trash',
-        icon: Trash2,
-        destructive: true,
-        disabled: bulkActionPending || selectedTrashed === 'only',
-        onClick: () => runBulkAction('delete'),
-      },
-      ...(selectedTrashed === 'only'
-        ? [
-            {
-              key: 'permanent_delete',
-              label: 'Permanently delete',
-              icon: Trash2,
-              destructive: true,
-              disabled: bulkActionPending,
-              onClick: () => runBulkAction('permanent_delete'),
-            } as ToolbarAction,
-          ]
-        : []),
-    ];
-
-    return (
-        <CardHeader className="block">
-        <DataGridListToolbar
-          table={table}
-          searchSlot={
-            <div className="relative">
-              <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
-              <Input
-                placeholder="Search users"
-                value={inputValue}
-                onChange={(e) => setInputValue(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-                disabled={isLoading}
-                className="ps-9 w-full sm:40 md:w-64"
-              />
-              {searchQuery.length > 0 && (
-                <Button
-                  mode="icon"
-                  variant="dim"
-                  className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
-                  onClick={() => setSearchQuery('')}
-                >
-                  <X />
-                </Button>
-              )}
-            </div>
-          }
-          filters={{
-            kind: 'custom',
-            active: filtersActiveCount > 0,
-            activeCount: filtersActiveCount,
-            content: (
-              <div className="space-y-3">
-                <p className="text-sm font-medium">Advanced filters</p>
-                <div className="space-y-2">
-                  {draftConditions.map((cond) => (
-                    <div key={cond.id} className="grid grid-cols-[1fr_1fr_auto] gap-2">
-                      <SearchableSelect
-                        value={cond.field}
-                        onChange={(v) =>
-                          updateCondition(cond.id, {
-                            field: v as UserFilterField,
-                            value: v === 'trashed' ? 'exclude' : 'all',
-                          })
-                        }
-                        options={[
-                          { value: 'role', label: 'Role' },
-                          { value: 'status', label: 'Status' },
-                          { value: 'trashed', label: 'Trashed' },
-                        ]}
-                      />
-                      {cond.field === 'role' ? (
-                        <SearchableSelect
-                          value={cond.value}
-                          onChange={(v) => updateCondition(cond.id, { value: v })}
-                          disabled={isLoading}
-                          options={[
-                            { value: 'all', label: 'All roles' },
-                            ...(roleList ?? []).map((role: User) => ({
-                              value: role.id,
-                              label: role.name,
-                            })),
-                          ]}
-                        />
-                      ) : cond.field === 'status' ? (
-                        <SearchableSelect
-                          value={cond.value}
-                          onChange={(v) => updateCondition(cond.id, { value: v })}
-                          disabled={isLoading}
-                          options={[
-                            { value: 'all', label: 'All users' },
-                            ...Object.entries(UserStatusProps).map(([status, { label }]) => ({
-                              value: status,
-                              label,
-                            })),
-                          ]}
-                        />
-                      ) : (
-                        <SearchableSelect
-                          value={cond.value}
-                          onChange={(v) => updateCondition(cond.id, { value: v })}
-                          disabled={isLoading}
-                          options={[
-                            { value: 'exclude', label: 'Active only' },
-                            { value: 'only', label: 'Trashed only' },
-                            { value: 'all', label: 'All' },
-                          ]}
-                        />
-                      )}
-                      <Button type="button" mode="icon" variant="ghost" onClick={() => removeCondition(cond.id)}>
-                        <Trash2 className="size-4" />
-                      </Button>
-                    </div>
-                  ))}
-                </div>
-                <div className="flex gap-2">
-                  <Button type="button" variant="outline" size="sm" className="flex-1" onClick={addCondition}>
-                    <Plus className="size-4" />
-                    Add condition
-                  </Button>
-                  <Button type="button" variant="outline" size="sm" className="flex-1" onClick={applyConditions}>
-                    Apply
-                  </Button>
-                </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="w-full"
-                  onClick={() => {
-                    setDraftConditions([]);
-                    setSelectedRole('all');
-                    setSelectedStatus('all');
-                    setSelectedTrashed('exclude');
-                    setPagination((prev) => ({ ...prev, pageIndex: 0 }));
-                  }}
-                >
-                  Clear filters
-                </Button>
-              </div>
-            ),
-          }}
-          exportConfig={{ filename: 'users_export.xlsx' }}
-          bulkActions={bulkActions}
-          primaryAction={addUserButton}
-        />
-      </CardHeader>
-    );
-  };
-
   return (
     <>
       <DataGrid
@@ -735,7 +781,27 @@ const UserList = () => {
         }}
       >
         <Card>
-          <DataGridToolbar />
+          <UsersToolbar
+            table={table}
+            searchInput={searchInput}
+            setSearchInput={setSearchInput}
+            searchSettling={searchSettling}
+            searchQuery={searchQuery}
+            isFetching={isFetching}
+            resetSearch={resetSearch}
+            selectedRole={selectedRole}
+            setSelectedRole={setSelectedRole}
+            selectedStatus={selectedStatus}
+            setSelectedStatus={setSelectedStatus}
+            selectedTrashed={selectedTrashed}
+            setSelectedTrashed={setSelectedTrashed}
+            setPagination={setPagination}
+            bulkActionPending={bulkActionPending}
+            runBulkAction={runBulkAction}
+            roleList={roleList}
+            isLoading={isLoading}
+            addUserButton={addUserButton}
+          />
           <CardTable>
             <DataGridTable />
           </CardTable>

@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import {
   ColumnDef,
   PaginationState,
@@ -9,14 +9,15 @@ import {
   getCoreRowModel,
   getExpandedRowModel,
 } from '@tanstack/react-table';
-import { ChevronDown, ChevronRight, Plus, Search, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, Plus } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
-import { Input } from '@/components/ui/input';
+import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useContactAccessAgents } from '../hooks/useContactAccessAgents';
@@ -56,7 +57,12 @@ export default function ContactAccessAgentsGroupedList() {
   const queryClient = useQueryClient();
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [sorting, setSorting] = useState<SortingState>([{ id: 'respond_contact_phone', desc: false }]);
-  const [searchQuery, setSearchQuery] = useState('');
+  const {
+    value: searchInput,
+    setValue: setSearchInput,
+    debouncedValue: searchQuery,
+    isSettling: searchSettling,
+  } = useDebouncedSearch();
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [dialogOpen, setDialogOpen] = useState(false);
   const [agentSelectDialogOpen, setAgentSelectDialogOpen] = useState(false);
@@ -71,6 +77,16 @@ export default function ContactAccessAgentsGroupedList() {
     sorting: [],
     searchQuery: '',
   });
+
+  // A search brings the reader back to page 0 to see the matches.
+  const searchMounted = useRef(false);
+  useEffect(() => {
+    if (!searchMounted.current) {
+      searchMounted.current = true;
+      return;
+    }
+    setPagination((p) => ({ ...p, pageIndex: 0 }));
+  }, [searchQuery]);
 
   const { data, isLoading, refetch, isFetching } = useContactAccessAgents({
     pageIndex: 0,
@@ -122,7 +138,9 @@ export default function ContactAccessAgentsGroupedList() {
 
   const { setOne: setOutboundOne, setBulk: setOutboundBulk } =
     useRespondContactOutboundMutations();
-  const outboundBusy = setOutboundOne.isPending || setOutboundBulk.isPending;
+  // Only the BULK write blocks the switches. The per-row one is optimistic
+  // (S7-01), so it has already moved the switch and can be flipped straight back.
+  const outboundBusy = setOutboundBulk.isPending;
 
   // One group is one contact, so counting groups already counts contacts.
   const outboundCounts = useMemo(
@@ -286,25 +304,13 @@ export default function ContactAccessAgentsGroupedList() {
             <DataGridListToolbar
               table={table}
               searchSlot={
-                <div className="relative">
-                  <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
-                  <Input
-                    placeholder="Search contact access agents..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="ps-9 w-64"
-                  />
-                  {searchQuery && (
-                    <Button
-                      mode="icon"
-                      variant="dim"
-                      className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
-                      onClick={() => setSearchQuery('')}
-                    >
-                      <X />
-                    </Button>
-                  )}
-                </div>
+                <ListSearchInput
+                  value={searchInput}
+                  onChange={setSearchInput}
+                  isSettling={isSearchInFlight(searchSettling, isFetching, searchQuery)}
+                  placeholder="Search contact access agents..."
+                  className="w-64"
+                />
               }
               showColumns={false}
               exportConfig={false}

@@ -632,45 +632,48 @@ describe('SalesOrderDetail - finding one product on a long order', () => {
     });
   });
 
-  it('filters the lines by product code', () => {
+  it('filters the lines by product code', async () => {
     renderDetail();
     openTab('Lines');
 
     fireEvent.change(screen.getByLabelText('Search lines'), { target: { value: 'tap-chr' } });
 
+    await waitFor(() => expect(screen.queryByText('CW-BASIN-450')).not.toBeInTheDocument());
     expect(screen.getByText('TAP-CHR-12')).toBeInTheDocument();
-    expect(screen.queryByText('CW-BASIN-450')).not.toBeInTheDocument();
   });
 
-  it('filters by the description too - the code is not always what is remembered', () => {
+  it('filters by the description too - the code is not always what is remembered', async () => {
     renderDetail();
     openTab('Lines');
 
     fireEvent.change(screen.getByLabelText('Search lines'), { target: { value: 'basin' } });
 
+    await waitFor(() => expect(screen.queryByText('TAP-CHR-12')).not.toBeInTheDocument());
     expect(screen.getByText('CW-BASIN-450')).toBeInTheDocument();
-    expect(screen.queryByText('TAP-CHR-12')).not.toBeInTheDocument();
   });
 
-  it('says the search found nothing, rather than claiming the order has no lines', () => {
+  it('says the search found nothing, rather than claiming the order has no lines', async () => {
     renderDetail();
     openTab('Lines');
 
     fireEvent.change(screen.getByLabelText('Search lines'), { target: { value: 'zzz' } });
 
-    expect(screen.getByText(/No line on this order matches that product/i)).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByText(/No line on this order matches that product/i)).toBeInTheDocument(),
+    );
     expect(screen.queryByText('This sales order has no lines.')).not.toBeInTheDocument();
   });
 
-  it('restores every line when the search is cleared', () => {
+  it('restores every line when the search is cleared', async () => {
     renderDetail();
     openTab('Lines');
 
     fireEvent.change(screen.getByLabelText('Search lines'), { target: { value: 'basin' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Clear line search' }));
+    await waitFor(() => expect(screen.getByText('CW-BASIN-450')).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: 'Clear search' }));
 
+    await waitFor(() => expect(screen.getByText('TAP-CHR-12')).toBeInTheDocument());
     expect(screen.getByText('CW-BASIN-450')).toBeInTheDocument();
-    expect(screen.getByText('TAP-CHR-12')).toBeInTheDocument();
   });
 
   it('offers the standard Columns control, so the chosen columns survive the visit', () => {

@@ -8,10 +8,8 @@ import {
   LayoutGrid,
   List,
   PackageSearch,
-  Search,
   Settings,
   Undo2,
-  X,
 } from 'lucide-react';
 import {
   Alert,
@@ -39,10 +37,11 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
+import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 import {
   useConfirmManyMutation,
   useFulfilmentPlanningMutations,
@@ -182,9 +181,11 @@ export function FulfilmentBoardPanel({
    * selection: the board is a single response, and asking the server again for a subset of
    * rows it already sent would be slower and could disagree with the cells beside it.
    */
-  const [productSearch, setProductSearch] = React.useState(
-    () => searchParams.get('product') ?? '',
-  );
+  const {
+    value: productSearchInput,
+    setValue: setProductSearchInput,
+    debouncedValue: productSearch,
+  } = useDebouncedSearch(searchParams.get('product') ?? '');
   const [rowAxis, setRowAxis] = React.useState<BoardRowAxis>(() =>
     rowAxisFrom(searchParams.get('rows')),
   );
@@ -778,30 +779,13 @@ export function FulfilmentBoardPanel({
         >
           {`Planning ${soNumbers.length} sales orders together`}
         </h2>
-        <div className="relative w-full sm:w-64">
-          <Search
-            className="absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
-            aria-hidden
-          />
-          <Input
-            placeholder="Search sales order, customer, project or product"
-            aria-label="Search sales order, customer, project or product"
-            value={productSearch}
-            onChange={(event) => setProductSearch(event.target.value)}
-            className="w-full ps-9"
-          />
-          {productSearch.length > 0 && (
-            <Button
-              mode="icon"
-              variant="dim"
-              aria-label="Clear the product search"
-              className="absolute end-1.5 top-1/2 h-6 w-6 -translate-y-1/2"
-              onClick={() => setProductSearch('')}
-            >
-              <X />
-            </Button>
-          )}
-        </div>
+        <ListSearchInput
+          value={productSearchInput}
+          onChange={setProductSearchInput}
+          placeholder="Search sales order, customer, project or product"
+          aria-label="Search sales order, customer, project or product"
+          className="w-full sm:w-64"
+        />
 
         <div
           data-testid="board-header-actions"

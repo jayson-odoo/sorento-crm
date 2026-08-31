@@ -11,7 +11,7 @@ import {
   type PaginationState,
   type SortingState,
 } from '@tanstack/react-table';
-import { AlertCircle, Layers, Plus, Search, Trash2 } from 'lucide-react';
+import { AlertCircle, Layers, Plus, Trash2 } from 'lucide-react';
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -25,9 +25,10 @@ import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
+import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { listCollections } from '../../services/catalogueService';
 import type { CollectionSummary } from '@/lib/dealer-kit/types';
 import { CollectionDialog } from './CollectionDialog';
@@ -45,7 +46,11 @@ import { CollectionDialog } from './CollectionDialog';
  * a confirmation: it is not scoped to the page you happen to be looking at.
  */
 export function CollectionsList() {
-  const [search, setSearch] = useState('');
+  const {
+    value: searchInput,
+    setValue: setSearchInput,
+    debouncedValue: search,
+  } = useDebouncedSearch();
   // Delete asks nothing (D7): the row dims and a toast counts down with Cancel.
   const deletion = useDeferredRowAction({
     actionKey: 'dk_collection.delete',
@@ -194,16 +199,13 @@ export function CollectionsList() {
     >
       <Card>
         <CardHeader className="flex-wrap gap-2 py-5">
-          <div className="relative w-full sm:max-w-xs">
-            <Search className="absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              className="ps-9"
-              placeholder="Search collections"
-              aria-label="Search collections"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-            />
-          </div>
+          <ListSearchInput
+            value={searchInput}
+            onChange={setSearchInput}
+            placeholder="Search collections"
+            aria-label="Search collections"
+            className="w-full sm:max-w-xs"
+          />
           {/* A collection could only be born inside a page editor, by picking
               products in a block and then promoting the result. That is a fine
               shortcut and a poor only-way-in: this is a list of records, and

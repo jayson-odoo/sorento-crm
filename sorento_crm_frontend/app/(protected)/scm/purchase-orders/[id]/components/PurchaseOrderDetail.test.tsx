@@ -462,17 +462,19 @@ describe('PurchaseOrderDetail - the lines grid', () => {
     expect(skuOrder()).toEqual(['SKU-C', 'SKU-B', 'SKU-A']);
   });
 
-  it('searches the lines already loaded, and says so when nothing matches', () => {
+  it('searches the lines already loaded, and says so when nothing matches', async () => {
     renderDetail();
     openTab('Lines');
 
     fireEvent.change(screen.getByLabelText('Search lines'), { target: { value: 'SKU-C' } });
-    expect(skuOrder()).toEqual(['SKU-C']);
+    await waitFor(() => expect(skuOrder()).toEqual(['SKU-C']));
 
     fireEvent.change(screen.getByLabelText('Search lines'), { target: { value: 'nothing' } });
-    expect(
-      screen.getByText('No line on this order matches that product.'),
-    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        screen.getByText('No line on this order matches that product.'),
+      ).toBeInTheDocument(),
+    );
   });
 
   it('totals the quantities and the money under the columns they sum', () => {

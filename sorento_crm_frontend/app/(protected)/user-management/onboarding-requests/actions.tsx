@@ -14,8 +14,8 @@
  */
 
 import { Copy, KeyRound, Link2Off, Trash2 } from 'lucide-react';
-import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard';
 import { toast } from 'sonner';
+import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard';
 
 import { useDeferredAction } from '@/hooks/useDeferredAction';
 import type { RecordAction, RecordActionSet } from '@/components/common/recordActions';
@@ -49,9 +49,7 @@ export function useOnboardingRequestActions(
   { onDeleted, surface = 'inline' }: UseOnboardingRequestActionsOptions = {},
 ): RecordActionSet {
   const { revoke, regenerate } = useOnboardingRequestMutations(request?.id ?? '');
-  const { copyToClipboard } = useCopyToClipboard({
-    onCopy: () => toast.success('Link copied'),
-  });
+  const { copyToClipboard } = useCopyToClipboard();
   // Delete asks nothing (D7): the countdown takes the record's primary slot, or
   // the toast on a list row, and its people go with the request either way.
   const deletion = useDeferredAction({
@@ -79,7 +77,15 @@ export function useOnboardingRequestActions(
       label: 'Copy link',
       icon: Copy,
       disabled: !linkLive,
-      run: () => copyToClipboard(request.intake_url as string),
+      // The tick + "Copied" label on this item IS the confirmation (S7-05); a
+      // refusal is the only thing that still needs a toast, same as everywhere
+      // else `useCopyToClipboard` is called.
+      confirmLabel: 'Copied',
+      run: async () => {
+        const ok = await copyToClipboard(request.intake_url as string);
+        if (!ok) toast.error('Press Ctrl/Cmd+C to copy');
+        return ok;
+      },
     });
   }
 

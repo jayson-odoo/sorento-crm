@@ -5,7 +5,6 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
@@ -21,6 +20,8 @@ import { useListBoardViewPreference } from '@/hooks/useListBoardViewPreference';
 import { Plus, Trash2 } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
+import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { bulkDeleteTickets, getTickets } from '../services/ticketService';
 import type {
   Ticket,
@@ -59,8 +60,12 @@ export default function TicketsList() {
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState('');
-  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const {
+    value: search,
+    setValue: setSearch,
+    debouncedValue: debouncedSearch,
+    isSettling: debouncedSearchSettling,
+  } = useDebouncedSearch();
   const [statusFilter, setStatusFilter] = useState<TicketStatus | 'all'>('all');
   const [priorityFilter, setPriorityFilter] = useState<TicketPriority | 'all'>('all');
   const [categoryFilter, setCategoryFilter] = useState<TicketCategory | 'all'>('all');
@@ -68,12 +73,6 @@ export default function TicketsList() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [reloadTick, setReloadTick] = useState(0);
-
-  // Debounce search input.
-  useEffect(() => {
-    const t = setTimeout(() => setDebouncedSearch(search.trim()), 300);
-    return () => clearTimeout(t);
-  }, [search]);
 
   // Reset to page 1 whenever filters change.
   useEffect(() => {
@@ -145,10 +144,12 @@ export default function TicketsList() {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center gap-2">
-        <Input
+        <ListSearchInput
           value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          onChange={setSearch}
+          isSettling={isSearchInFlight(debouncedSearchSettling, loading, debouncedSearch)}
           placeholder="Search title, description, ticket number…"
+          aria-label="Search tickets"
           className="max-w-sm"
         />
         {mode === 'list' && (
