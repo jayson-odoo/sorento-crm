@@ -272,8 +272,13 @@ def test_the_backfilled_owned_class_rules_derive_the_sample_exactly_as_before(sa
     hidden = [rule for rule in shipped["class"] if rule["match"] in {"name_head", "from_field"}]
     assert len(hidden) == 2, "the class readers that used to run outside the list"
 
+    # As migration 450 leaves the list: a human's own rules, their code rows moved down
+    # to where the old engine ran them (it ran every text rule first, wherever the code
+    # row sat), then the two readers that used to run outside the list entirely.
+    stored = list(GOLDEN["owned_class_rules"])
+    code_rows = [rule for rule in stored if rule["match"].startswith("code_")]
     rules = dict(shipped)
-    rules["class"] = list(GOLDEN["owned_class_rules"]) + hidden
+    rules["class"] = [rule for rule in stored if rule not in code_rows] + code_rows + hidden
     scopes = shipped_scopes()
 
     differences: list[str] = []

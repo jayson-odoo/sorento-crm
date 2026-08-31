@@ -1282,7 +1282,7 @@ def test_a_sentence_compiles_to_one_engine_rule(builder, expected, text, reads):
     if text is None:
         return
     texts = {"description": text.upper(), "flyer": "", "class_tail": "", "size_text": text.upper()}
-    hit = _rule_matches(compiled, texts, "SRTSC1234-UF", only_text="description")
+    hit = _rule_matches(compiled, texts, "SRTSC1234-UF")
     assert hit is not None, f"{builder['kind']} read nothing from {text!r}"
     assert hit[0] == reads
 

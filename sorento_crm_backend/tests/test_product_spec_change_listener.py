@@ -121,6 +121,7 @@ def test_inline_rederive_reads_the_registry_once_and_hands_the_same_object_to_ev
     count is the honest way to pin it, per the tester brief."""
     rules_calls: list[int] = []
     scopes_calls: list[int] = []
+    cap_calls: list[int] = []
     derive_calls: list[tuple] = []
 
     def _counting_rules(db):
@@ -131,12 +132,19 @@ def test_inline_rederive_reads_the_registry_once_and_hands_the_same_object_to_ev
         scopes_calls.append(1)
         return {}
 
-    def _fake_derive_for_code(db, code, *, commit=False, rules_by_key=None, scopes_by_key=None):
+    def _counting_max_values(db):
+        cap_calls.append(1)
+        return {}
+
+    def _fake_derive_for_code(
+        db, code, *, commit=False, rules_by_key=None, scopes_by_key=None, max_values=None
+    ):
         derive_calls.append((code, id(rules_by_key), id(scopes_by_key)))
         return {"written": 0, "skipped": 0, "exceptions": 0}
 
     monkeypatch.setattr(derivation, "configured_rules", _counting_rules)
     monkeypatch.setattr(derivation, "configured_scopes", _counting_scopes)
+    monkeypatch.setattr(derivation, "configured_max_values", _counting_max_values)
     monkeypatch.setattr(derivation, "derive_for_code", _fake_derive_for_code)
 
     codes = _codes("ONCE", 5)
@@ -144,6 +152,7 @@ def test_inline_rederive_reads_the_registry_once_and_hands_the_same_object_to_ev
 
     assert len(rules_calls) == 1, "configured_rules must be read once per batch, not once per code"
     assert len(scopes_calls) == 1, "configured_scopes must be read once per batch, not once per code"
+    assert len(cap_calls) == 1, "configured_max_values must be read once per batch too"
     assert len(derive_calls) == 5, "every code in the batch must still be derived"
 
     rules_object_ids = {rid for (_code, rid, _sid) in derive_calls}

@@ -33,11 +33,11 @@ from sqlalchemy.orm import Session
 from app.models.product import Product
 from app.models.product_spec import ProductSpecifications
 from app.services.product_spec_derivation import (
-    _DESCRIPTION_FIRST_KEYS,
     _apply_scope,
     _Derivation,
     configured_rules,
     configured_scopes,
+    description_first_keys,
     propose_from_text,
 )
 from app.services.product_spec_understanding import (
@@ -97,11 +97,15 @@ def classify_spec_proposal(
     if stored_entry is None:
         return "new"
 
-    if key in _DESCRIPTION_FIRST_KEYS:
+    if key in description_first_keys():
         # The lifted "the description beats the flyer for sizes" rule. It is no
         # longer applied silently inside one derivation, because derivation no
         # longer reads the flyer at all; it survives as a proposal that arrives
         # unticked, which is the same precedence with a person in it.
+        #
+        # Read off the SHIPPED rules rather than a hand-written list of six keys
+        # (#425): a key is description-first when a row in its list reads the product's
+        # own record or its own description, so the precedence moves when the rules do.
         return "conflict"
 
     return "change"
