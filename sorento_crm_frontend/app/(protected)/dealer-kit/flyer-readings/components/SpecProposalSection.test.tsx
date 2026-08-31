@@ -89,9 +89,14 @@ function setQuery(
 
 function renderSection(
   readingStatus: 'processing' | 'done' | 'failed' = 'done',
+  codeOverridesChangedAt: string | null = null,
 ) {
   return render(
-    <SpecProposalSection readingId="r-1" readingStatus={readingStatus} />,
+    <SpecProposalSection
+      readingId="r-1"
+      readingStatus={readingStatus}
+      codeOverridesChangedAt={codeOverridesChangedAt}
+    />,
   );
 }
 
@@ -290,7 +295,120 @@ describe('SpecProposalSection, while the permissions are still being fetched (AC
   });
 });
 
+describe('SpecProposalSection, the adoption hint (AC-C.4)', () => {
+  it('shows the hint when a code was adopted or undone after a proposed batch', () => {
+    setQuery(
+      batch({
+        status: 'proposed',
+        id: 'batch-1',
+        created_at: '2026-08-30T10:00:00',
+      }),
+    );
+
+    renderSection('done', '2026-08-30T11:00:00');
+
+    expect(
+      screen.getByTestId('dk-fr-spec-adoption-hint'),
+    ).toHaveTextContent(
+      'Codes were adopted or undone after this proposal. Propose again to reflect them.',
+    );
+  });
+
+  it('shows the hint on a failed batch too, when the code moved after it', () => {
+    setQuery(
+      batch({
+        status: 'failed',
+        id: 'batch-1',
+        created_at: '2026-08-30T10:00:00',
+      }),
+    );
+
+    renderSection('done', '2026-08-30T11:00:00');
+
+    expect(screen.getByTestId('dk-fr-spec-adoption-hint')).toBeInTheDocument();
+  });
+
+  it('hides the hint when there is no batch at all', () => {
+    setQuery(batch({ status: 'none' }));
+
+    renderSection('done', '2026-08-30T11:00:00');
+
+    expect(screen.queryByTestId('dk-fr-spec-adoption-hint')).toBeNull();
+  });
+
+  it('hides the hint while the batch is still proposing', () => {
+    setQuery(
+      batch({
+        status: 'proposing',
+        id: 'batch-1',
+        created_at: '2026-08-30T10:00:00',
+      }),
+    );
+
+    renderSection('done', '2026-08-30T11:00:00');
+
+    expect(screen.queryByTestId('dk-fr-spec-adoption-hint')).toBeNull();
+  });
+
+  it('hides the hint when the code changed before the batch was created', () => {
+    setQuery(
+      batch({
+        status: 'proposed',
+        id: 'batch-1',
+        created_at: '2026-08-30T11:00:00',
+      }),
+    );
+
+    renderSection('done', '2026-08-30T10:00:00');
+
+    expect(screen.queryByTestId('dk-fr-spec-adoption-hint')).toBeNull();
+  });
+
+  it('hides the hint when the timestamps are equal', () => {
+    setQuery(
+      batch({
+        status: 'proposed',
+        id: 'batch-1',
+        created_at: '2026-08-30T10:00:00',
+      }),
+    );
+
+    renderSection('done', '2026-08-30T10:00:00');
+
+    expect(screen.queryByTestId('dk-fr-spec-adoption-hint')).toBeNull();
+  });
+
+  it('hides the hint when no code has ever been adopted or undone', () => {
+    setQuery(
+      batch({
+        status: 'proposed',
+        id: 'batch-1',
+        created_at: '2026-08-30T10:00:00',
+      }),
+    );
+
+    renderSection('done', null);
+
+    expect(screen.queryByTestId('dk-fr-spec-adoption-hint')).toBeNull();
+  });
+});
+
 describe('SpecProposalSection, without master_data.products.edit (AC-D.1)', () => {
+  it('never shows the hint to someone who cannot propose', () => {
+    hasPermission.mockReturnValue(false);
+    setQuery(
+      batch({
+        status: 'proposed',
+        id: 'batch-1',
+        created_at: '2026-08-30T10:00:00',
+      }),
+    );
+
+    renderSection('done', '2026-08-30T11:00:00');
+
+    expect(screen.queryByTestId('dk-fr-spec-adoption-hint')).toBeNull();
+  });
+
   it('shows the empty copy and offers no button at all', () => {
     hasPermission.mockReturnValue(false);
     setQuery(batch({ status: 'none' }));

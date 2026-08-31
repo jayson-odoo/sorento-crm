@@ -616,3 +616,197 @@ def test_start_batch_answers_409_when_a_concurrent_press_won_the_insert(db, monk
     )
     assert [str(row.id) for row in rows] == [str(winner.id)], "one batch per reading, the winner's"
     assert rows[0].status == "proposing"
+
+
+# --------------------------------------------------------------------------- #
+# AC-C.1..C.3 - `PLAN-flyer-code-adopt.md`: propose follows an adoption, and
+# never rewrites what a reviewer already decided on a settled batch.
+#
+# No production code changes these three: `report_for` already threads
+# `record.code_overrides` through `match_reading` (S1), and `_propose` already
+# keys card text by `entry.code` - the PRINTED code - regardless of whether
+# that entry resolved on its own or by adoption. These tests exist to pin that
+# fact so a later refactor of either module cannot break it silently.
+# --------------------------------------------------------------------------- #
+def test_adopt_then_propose_writes_rows_for_the_adopted_product_from_its_printed_card(db):
+    """AC-C.1: adopt X as P, then a pass reads X's card and writes to P."""
+    from app.services.product_spec_flyer_ingest import run_propose
+
+    product = _product(db, "ZZT-FLYJOB-ADOPTP", "SORENTO ONE PIECE WC ZZT-FLYJOB-ADOPTP")
+    db.commit()
+    derive_for_code(db, "ZZT-FLYJOB-ADOPTP", commit=True)
+
+    reading = _reading(
+        db, cards=[_card("ZZT-FLYJOB-ADOPTX", "Washdown. S-Trap outlet 250mm")]
+    )
+    db.commit()
+
+    dk_svc.adopt_code(
+        db, reading, printed_code="ZZT-FLYJOB-ADOPTX", product_id=product.id
+    )
+
+    batch = _batch_row(db, reading)
+    db.commit()
+
+    run_propose(db, batch.id)
+
+    rows = _by_product_key(_proposals_for(db, batch.id))
+    row = rows[("ZZT-FLYJOB-ADOPTP", "trap_type")]
+    assert row.value == "s_trap"
+    assert row.product_id == product.id
+    assert row.product_code == "ZZT-FLYJOB-ADOPTP"
+    assert row.pages == [1], "X's pages, not P's - P was never printed"
+    assert row.origin == "flyer", "the same source as any matched card, not manual"
+    assert row.evidence, "the printed words, exactly as any matched card gets"
+
+
+def test_undo_before_a_pass_writes_no_rows_for_the_undone_product(db):
+    """AC-C.2: adopt X as P, undo, THEN a pass runs - no row names P."""
+    from app.services.product_spec_flyer_ingest import run_propose
+
+    product = _product(db, "ZZT-FLYJOB-UNDOP", "SORENTO ONE PIECE WC ZZT-FLYJOB-UNDOP")
+    db.commit()
+    derive_for_code(db, "ZZT-FLYJOB-UNDOP", commit=True)
+
+    reading = _reading(
+        db, cards=[_card("ZZT-FLYJOB-UNDOX", "Washdown. S-Trap outlet 250mm")]
+    )
+    db.commit()
+
+    dk_svc.adopt_code(
+        db, reading, printed_code="ZZT-FLYJOB-UNDOX", product_id=product.id
+    )
+    dk_svc.unadopt_code(db, reading, printed_code="ZZT-FLYJOB-UNDOX")
+
+    batch = _batch_row(db, reading)
+    db.commit()
+
+    run_propose(db, batch.id)
+
+    rows = _proposals_for(db, batch.id)
+    assert rows == [], "the code is unmatched again, so its card is ignored, exactly like any unmatched code"
+
+
+def _row_snapshot(rows: list[ProductSpecFlyerProposal]) -> list[dict]:
+    """Every field a reviewer's edit or dismissal could touch, by row id, in a
+    stable order - so the comparison catches ANY change, not just the ones this
+    test remembered to name."""
+    return sorted(
+        (
+            {
+                "id": str(row.id),
+                "batch_id": str(row.batch_id),
+                "product_id": str(row.product_id),
+                "product_code": row.product_code,
+                "pages": row.pages,
+                "spec_key": row.spec_key,
+                "value": row.value,
+                "unit": row.unit,
+                "evidence": row.evidence,
+                "kind": row.kind,
+                "stored_value": row.stored_value,
+                "stored_unit": row.stored_unit,
+                "stored_source": row.stored_source,
+                "origin": row.origin,
+                "edited_at": row.edited_at,
+                "edited_by": row.edited_by,
+                "outcome": row.outcome,
+                "applied_at": row.applied_at,
+                "applied_by": row.applied_by,
+                "created_at": row.created_at,
+            }
+            for row in rows
+        ),
+        key=lambda item: item["id"],
+    )
+
+
+def test_adopt_and_undo_never_touch_a_settled_batchs_rows_edits_or_dismissals(db):
+    """AC-C.3: a settled batch with one edited row and one dismissed row is
+    byte-for-byte unchanged by adopting, or undoing, a DIFFERENT code on the
+    same reading."""
+    from app.services.product_spec_flyer_ingest import (
+        delete_proposal,
+        edit_proposal,
+        run_propose,
+    )
+
+    product_a = _product(db, "ZZT-FLYJOB-C3-A", "SORENTO ONE PIECE WC ZZT-FLYJOB-C3-A")
+    product_b = _product(
+        db, "ZZT-FLYJOB-C3-B", "SORENTO CERAMIC ART BASIN ONLY BLACK ZZT-FLYJOB-C3-B"
+    )
+    product_c = _product(db, "ZZT-FLYJOB-C3-C", "SORENTO ONE PIECE WC ZZT-FLYJOB-C3-C")
+    db.commit()
+    derive_for_code(db, "ZZT-FLYJOB-C3-A", commit=True)
+    derive_for_code(db, "ZZT-FLYJOB-C3-B", commit=True)
+    derive_for_code(db, "ZZT-FLYJOB-C3-C", commit=True)
+
+    reading = _reading(
+        db,
+        cards=[
+            _card("ZZT-FLYJOB-C3-A", "Washdown. S-Trap outlet 250mm"),
+            _card("ZZT-FLYJOB-C3-B", "Chrome finish"),
+            # Unmatched at propose time - adopted only after the batch settles.
+            _card("ZZT-FLYJOB-C3-UNMATCHED", "Two year warranty. Please contact your dealer."),
+        ],
+    )
+    batch = _batch_row(db, reading)
+    db.commit()
+
+    run_propose(db, batch.id)
+    db.refresh(batch)
+    assert batch.status == "proposed"
+
+    rows = _by_product_key(_proposals_for(db, batch.id))
+    edited_row = rows[("ZZT-FLYJOB-C3-A", "trap_type")]
+    dismissed_row = rows[("ZZT-FLYJOB-C3-B", "finish")]
+
+    edit_proposal(db, batch, edited_row, value="p_trap", user=_USER)
+    delete_proposal(db, batch, dismissed_row)
+
+    before_rows = _row_snapshot(_proposals_for(db, batch.id))
+    assert dismissed_row.id not in {row["id"] for row in before_rows}
+    before_batch = {
+        "status": batch.status,
+        "proposal_count": batch.proposal_count,
+        "product_count": batch.product_count,
+        "new_count": batch.new_count,
+        "change_count": batch.change_count,
+        "conflict_count": batch.conflict_count,
+        "unchanged_count": batch.unchanged_count,
+        "suppressed_count": batch.suppressed_count,
+        "applied_count": batch.applied_count,
+        "finished_at": batch.finished_at,
+    }
+
+    dk_svc.adopt_code(
+        db,
+        reading,
+        printed_code="ZZT-FLYJOB-C3-UNMATCHED",
+        product_id=product_c.id,
+    )
+    # Each half on its own: an adopt that corrupted the batch and an undo that
+    # happened to put it back would pass a single comparison after the pair.
+    db.expire_all()
+    assert _row_snapshot(_proposals_for(db, batch.id)) == before_rows
+
+    dk_svc.unadopt_code(db, reading, printed_code="ZZT-FLYJOB-C3-UNMATCHED")
+
+    db.expire_all()
+    after_rows = _row_snapshot(_proposals_for(db, batch.id))
+    assert after_rows == before_rows
+
+    batch = db.query(ProductSpecFlyerBatch).filter_by(id=batch.id).one()
+    after_batch = {
+        "status": batch.status,
+        "proposal_count": batch.proposal_count,
+        "product_count": batch.product_count,
+        "new_count": batch.new_count,
+        "change_count": batch.change_count,
+        "conflict_count": batch.conflict_count,
+        "unchanged_count": batch.unchanged_count,
+        "suppressed_count": batch.suppressed_count,
+        "applied_count": batch.applied_count,
+        "finished_at": batch.finished_at,
+    }
+    assert after_batch == before_batch
