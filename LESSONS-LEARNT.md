@@ -149,7 +149,7 @@ Tests compared `public_token_expires_at > now()` to count live links. `now()` is
 
 `f"... {refusal.detail["failing_lines"]}"` passed every local run (3.14 accepts nested same-quote expressions) and broke `Validate backend imports` on PR #400 with `SyntaxError: f-string: unmatched '['`, taking a second file down with it through an import while every test suite stayed green. Use the other quote inside the braces (`{d['k']}`), and before pushing a branch with new Python, compile it with a real 3.12 (`uv python install 3.12`, then `python3.12 -m py_compile` over `git diff --name-only origin/main -- '*.py'`); a regex audit is not a parser.
 
-## 89. A motion pass that samples mid-animation proves nothing about the end states (2026-08-31)
+## 94. A motion pass that samples mid-animation proves nothing about the end states (2026-08-31)
 
 S8's sidebar collapse (scaleX + counter-scaled rail) passed browser review because the tester
 sampled mid-collapse frames; both defects lived in the AFTER states (a rail that re-inflates its

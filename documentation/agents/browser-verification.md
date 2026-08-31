@@ -83,7 +83,7 @@ If unable to reach a browser (server down, sandboxed, daemon unresponsive), stat
 - Pure visual / Tailwind tweak → an agent-browser `screenshot` is sufficient.
 
 
-## End states over frames (added 2026-08-31, lesson 89)
+## End states over frames (added 2026-08-31, lesson 94)
 
 Any interaction check (dialog, sheet, collapse, drawer, drag) is verified as a full round-trip -
 open then close then open again, collapse then expand then collapse - and the assertion is the
