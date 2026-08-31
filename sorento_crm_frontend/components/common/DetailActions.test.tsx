@@ -9,7 +9,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, cleanup, within, act } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, within, act, waitFor } from '@testing-library/react';
 import { Mail, Trash2, UserCog } from 'lucide-react';
 
 import DetailActions from './DetailActions';
@@ -257,9 +257,6 @@ describe('a confirmable action (S7-06: Copy link had zero feedback)', () => {
    * `confirmLabel` keeps the menu open long enough to show it, then closes
    * itself.
    */
-  beforeEach(() => vi.useFakeTimers());
-  afterEach(() => vi.useRealTimers());
-
   it('swaps the icon and label to the confirmation, then closes the menu on its own', async () => {
     const run = vi.fn().mockResolvedValue(true);
     const actions: RecordAction[] = [
@@ -271,19 +268,16 @@ describe('a confirmable action (S7-06: Copy link had zero feedback)', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: 'Copy link' }));
 
     expect(run).toHaveBeenCalledTimes(1);
-    // Flush the pending `run()` promise before asserting the swap.
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(0);
-    });
-    expect(screen.getByRole('menuitem', { name: 'Copied' })).toBeInTheDocument();
+    // Real timers throughout: the close is animated now (S8), and motion's
+    // exit resolves on rAF, which sinon's faked clock freezes - fake-timer
+    // advances left the menu mounted forever. Reduced motion (vitest.setup)
+    // keeps the exit instant, so only the self-close delay is really waited.
+    await waitFor(() => expect(screen.getByRole('menuitem', { name: 'Copied' })).toBeInTheDocument());
     // The menu is still open - a menu that closed on select would have taken
     // this confirmation down with it before anyone read it.
     expect(screen.getByRole('menu')).toBeInTheDocument();
 
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(1500);
-    });
-    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument(), { timeout: 4000 });
   });
 
   it('a refused write skips the tick and closes right away', async () => {
@@ -296,14 +290,11 @@ describe('a confirmable action (S7-06: Copy link had zero feedback)', () => {
     openMenu(screen.getByRole('button', { name: 'Actions' }));
     fireEvent.click(screen.getByRole('menuitem', { name: 'Copy link' }));
 
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(0);
-    });
-    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument());
     expect(screen.queryByRole('menuitem', { name: 'Copied' })).not.toBeInTheDocument();
   });
 
-  it('an action with no confirmLabel still closes on select, exactly as before', () => {
+  it('an action with no confirmLabel still closes on select, exactly as before', async () => {
     const run = vi.fn();
     render(
       <DetailActions
@@ -315,7 +306,7 @@ describe('a confirmable action (S7-06: Copy link had zero feedback)', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: 'Plain action' }));
 
     expect(run).toHaveBeenCalledTimes(1);
-    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument());
   });
 });
 
