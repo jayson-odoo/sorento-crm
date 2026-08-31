@@ -9,8 +9,8 @@
  * takes it from there - so this pins the class set at both ends: two columns and twenty.
  */
 import React from 'react';
-import { render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { fireEvent, render, screen } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
 import { FulfilmentBoardMatrix } from './FulfilmentBoardMatrix';
 import { COLOURS } from '../../_shared/lib/supplyVocabulary';
 import type {
@@ -413,5 +413,38 @@ describe('FulfilmentBoardMatrix: a refused line', () => {
       'title',
       'Rejected by purchasing: no reason given',
     );
+  });
+});
+
+/**
+ * AC-3.1/3.8: the WHOLE cell is the click target, and it says so before the pointer ever
+ * reaches the small text inside it (mockup round 2, the captain: "no separate small link").
+ */
+describe('FulfilmentBoardMatrix: the whole cell is the click target', () => {
+  it('carries a pointer cursor and a hover ring across the whole button, not a corner of it', () => {
+    renderMatrix([cellWith([contribution()])]);
+
+    const button = screen.getByRole('button');
+    expect(button.className).toContain('cursor-pointer');
+    expect(button.className).toContain('hover:ring-1');
+    // Fills the cell (the `td` gives it no padding of its own to fill).
+    expect(button.className).toContain('w-full');
+  });
+
+  it('one click anywhere in the cell opens it - no separate small link inside', () => {
+    const onOpenCell = vi.fn();
+    render(
+      <FulfilmentBoardMatrix
+        dateBuckets={buckets(2)}
+        rows={rows}
+        rowHeader="Product"
+        cells={[cellWith([contribution()])]}
+        draft={{}}
+        onOpenCell={onOpenCell}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button'));
+    expect(onOpenCell).toHaveBeenCalledTimes(1);
   });
 });

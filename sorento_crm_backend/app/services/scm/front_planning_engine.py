@@ -22,9 +22,10 @@ not it is taken:
 2. **order_borrow** - ON HAND held by a LATER order (R3, R4, R9, R12, R19, R25). The donor
    receives an order-back at its OWN required date, and a decided donor's decision falls
    with it, inside the same Confirm;
-3. **supply_borrow** - the DOCUMENT a later order is waiting on, ONE document whole
-   (R27, R32, R33): eligible when it arrives by the asker's date or before a fresh buy
-   would land, SPO before PO, and the donor receives an order-back at its own date;
+3. **supply_borrow** - the SPO a later order is waiting on, ONE document whole
+   (R32, R33): eligible when it arrives by the asker's date or before a fresh buy would
+   land, and the donor receives an order-back at its own date. Incoming means SPO
+   (31 Aug ruling, R-A) - a PO is still ON ORDER, not arriving, and is never offered here;
 4. **pool** - the site pools' own book: its free pile, then a later POOL order's on hand,
    which does raise an order-back (R34). The dealer hot-selling gate refuses the whole step;
 5. **buy** - the whole unit at ``as_of + lead``.
@@ -151,12 +152,6 @@ STEP_LABELS = {
     STEP_POOL: "Take from the pool",
     STEP_BUY: "Buy",
 }
-
-#: Days a transfer between two bins costs, when the quantity is not already at the asking
-#: line's own location (R36: "today, +2 days with a transfer"). A literal because nobody
-#: has asked to configure it; the trigger for a policy field is the first request to change
-#: it without a deploy.
-TRANSFER_DAYS = 2
 
 BUY_REASON = "remaining uncovered need"
 
@@ -587,15 +582,19 @@ def supply_borrow_reason(
     donor_agent_code: Optional[str] = None,
     donor_required_date: Optional[date] = None,
 ) -> str:
-    """Step 3's sentence (AC-S4-1, R27, R29, R30).
+    """Step 3's sentence (AC-S4-1).
 
     `Borrow 50 arriving 15 Sep 2026 (SPO 202607-S0105) from SO414285 line 4 (JEREMY, due
-    12 Nov 2026); its debt lands in Nov 2026` for a shipping order, and `Borrow 20 on order
-    (PO 202607-P0031 line 3, arriving about 20 Oct 2026) from ...` for a purchase-order
-    line. Two openings because they are two different things and a planner acts on the
-    difference: an SPO is ARRIVING - cut from a purchase order and put on a shipment - while
-    a PO is still ON ORDER, and its date is computed (`issue + lead`, R29) rather than
-    promised, which is what "about" says.
+    12 Nov 2026); its debt lands in Nov 2026`. Incoming means SPO (31 Aug ruling, R-A): a
+    PO is still ON ORDER rather than arriving, and step 3 no longer offers one, so `kind`
+    reaching this function is always `"spo"` from a LIVE walk.
+
+    The `kind == "po"` branch below is DEAD for every new proposal and kept only for an OLD
+    stored decision being re-rendered: a frozen `SOSupplyDecision.line_snapshots` component
+    saved before this ruling can still carry a `po:` supply key, and
+    `_borrow_shortfalls`/`ProjectSupplyService` rebuilds that snapshot's sentence through
+    this same function (`parse_supply_key(supply_key)[0]`) rather than a second one. Once no
+    such snapshot is reachable any more this branch and the `kind` parameter can go.
 
     **TAKE, not Borrow, when nobody is waiting on the document.** A free document is owed to
     nobody, so there is no donor to name and no debt to state, and calling that a Borrow
@@ -605,6 +604,7 @@ def supply_borrow_reason(
     named = document or "an unnamed document"
     when = date_text(arrival_date) if arrival_date else "an unstated date"
     if kind == "po":
+        # Historical snapshot only - see the docstring above.
         head = f"{verb} {qty_text(qty)} on order ({named}, arriving about {when})"
     else:
         head = f"{verb} {qty_text(qty)} arriving {when} ({named})"
@@ -665,8 +665,13 @@ def walk_line(
     #: The product's lead time, for Buy's own fulfil date. `None` is the documented default.
     lead_time_days: Optional[int] = None,
     #: The asking line's own bin. READ since v7.1, and only for the option dates: a
-    #: quantity that is not already there costs a transfer, which is two days (R36).
+    #: quantity that is not already there costs a transfer, `transfer_days` below (R36).
     fulfilment_location: Optional[str] = None,
+    #: Days a transfer between two bins costs an option's fulfil date, when the quantity is
+    #: not already at the asking line's own location (R36). Default 0 (31 Aug ruling, R-B):
+    #: the policy field `app.services.scm.priority.FULFILMENT_SETTINGS_DEFAULTS` carries,
+    #: the caller reads off `_fulfilment_settings()` and passes through.
+    transfer_days: int = 0,
     group_code: Optional[str] = None,
     is_dealer_hot_selling: bool = False,
     #: Accepted and NOT read since ladder v4 (section 1d). 3.3a capped a project
@@ -700,10 +705,10 @@ def walk_line(
        windowed and ordered by the caller: same agent, latest date, same group, same
        warehouse). Several donors may combine for one unit (R35). Every take raises an
        order-back at the DONOR's own required date;
-    3. **supply_borrow**: the DOCUMENT a later order is waiting on
-       (`supply_borrow_candidates`, already narrowed by the caller to the ONE document
-       that covers the whole unit - SPO before PO, R27/R33/R35). A row with no donor is
-       free supply and is taken rather than borrowed;
+    3. **supply_borrow**: the SPO a later order is waiting on (`supply_borrow_candidates`,
+       already narrowed by the caller to the ONE document that covers the whole unit,
+       R33). Incoming means SPO (31 Aug ruling, R-A) - a PO never reaches this list. A row
+       with no donor is free supply and is taken rather than borrowed;
     4. **pool**: the site pools' own book - its free pile (`pools`/`pools_net`, the dealer
        hot-selling gate in front of the whole step), then a later POOL order's on hand
        (`pool_borrow_candidates`), which does raise an order-back (R34);
@@ -800,6 +805,7 @@ def walk_line(
         need=open_amount,
         as_of=today,
         own_location=fulfilment_location,
+        transfer_days=transfer_days,
     )
     if chosen is None:
         covered = max(
@@ -1008,10 +1014,10 @@ def _draw_supply_borrow(
 ) -> "_Offer":
     """Step 3: ONE document, whole (R33), in the rows the caller chose it as.
 
-    Every row here belongs to the SAME document - the caller picks it (nearest arriving
-    SPO, then a PO only where no single SPO covers, R35) and returns nothing at all when no
-    single document covers the unit. So this never has to decide between two of them, which
-    is the point: half a promise off one document and half off another is two arrival dates
+    Every row here belongs to the SAME document - the caller picks the nearest arriving SPO
+    (incoming means SPO, 31 Aug ruling R-A) and returns nothing at all when no single
+    document covers the unit. So this never has to decide between two of them, which is
+    the point: half a promise off one document and half off another is two arrival dates
     for one delivery.
 
     A row with no donor is FREE - nobody is waiting on that part of the document - so it is
@@ -1111,6 +1117,7 @@ def _options(
     need: Decimal = ZERO,
     as_of: Optional[date] = None,
     own_location: Optional[str] = None,
+    transfer_days: int = 0,
 ) -> Tuple[Option, ...]:
     """The five rows the trail and the decision panel print (R36, AC-S3-14).
 
@@ -1140,8 +1147,8 @@ def _options(
             out.append(Option(step=step, label=STEP_LABELS[step], whole=False))
             continue
         fulfil = offer.arrival or today
-        if any(code != own_location for code in offer.locations):
-            fulfil = max(fulfil, today + timedelta(days=TRANSFER_DAYS))
+        if transfer_days and any(code != own_location for code in offer.locations):
+            fulfil = max(fulfil, today + timedelta(days=transfer_days))
         debt = step in (STEP_ORDER_BORROW, STEP_SUPPLY_BORROW, STEP_POOL)
         out.append(
             Option(

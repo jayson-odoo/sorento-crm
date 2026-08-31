@@ -9,6 +9,10 @@ import { StockDocumentsPanel } from './StockDocumentsPanel';
 import type {
   BoardCellLocation,
   BoardLocationWhere,
+  CellStockTableHandle,
+  StockDocumentMatch,
+  StockDonorMatch,
+  StockJumpTarget,
 } from '../../_shared/types/fulfilmentPlanning.types';
 
 const CHEVRON_COL = 'w-[36px] min-w-[36px] max-w-[36px]';
@@ -30,7 +34,8 @@ const WHERE_COL = 'min-w-[104px]';
  * and there is no location to be empty.
  */
 const BLANK = '-';
-const NOT_STATED_TITLE = 'No location on the sales order line, so nothing to count';
+const NOT_STATED_TITLE =
+  'No location on the sales order line, so nothing to count';
 
 /** Nothing drawn: every row reads 0. Module-level, so it is not a new object per render. */
 const EMPTY_TAKEN: Map<string, string> = new Map();
@@ -72,13 +77,7 @@ const WHERE_LABELS: Record<BoardLocationWhere, string> = {
  * sales order names no location at all. That one row keeps its blanks, and it is now the only
  * row that can have any - the server states a figure for every location it names.
  */
-export function CellStockTable({
-  locations,
-  groupNote,
-  taken,
-  lineIds,
-  forLine,
-}: {
+export interface CellStockTableProps {
   locations: BoardCellLocation[];
   /**
    * Why this table is showing the line's own location and nothing else, when that is all there
@@ -110,7 +109,52 @@ export function CellStockTable({
    * to distinguish.
    */
   forLine?: string;
-}) {
+  /**
+   * Every donor the active suggestion names, if any (AC-3.3/3.13) - a LIST, because a
+   * step-2 combine can draw from several donors on one line (R35) and each of their rows
+   * needs its own "Donor" badge, not only the first one's (review round, S3).
+   */
+  donor?: StockDonorMatch[] | null;
+  /** The SPO document the active suggestion names, if any (AC-3.4). */
+  documentInfo?: StockDocumentMatch | null;
+  /**
+   * The sticky toolbar's search (AC-3.5), filtering the documents inside whichever sections
+   * are already expanded. Never triggers an expansion by itself - a search answers "what is
+   * in what I opened", not "open something for me".
+   */
+  filterText?: string;
+  /**
+   * AC-3.1: land on "This line" - own-location expanded, scrolled, flashed - the moment this
+   * table mounts, with no click. OPT-IN and off by default: this component's own test suite
+   * (and any other reader of a stock position) opens closed until asked, and only the cell
+   * dialog wants the auto-land its own default-landing contract promises.
+   */
+  landOnMount?: boolean;
+}
+
+/**
+ * See the module doc above. Forwards a small imperative handle (`CellStockTableHandle`) so
+ * the dialog's sticky toolbar and its suggestion-sentence links can drive a jump without this
+ * table's own open/closed state leaking upward - the same shape `StockDocumentsPanel`'s "My
+ * line" button already used locally, generalised to a target this component chooses.
+ */
+export const CellStockTable = React.forwardRef<
+  CellStockTableHandle,
+  CellStockTableProps
+>(function CellStockTable(
+  {
+    locations,
+    groupNote,
+    taken,
+    lineIds,
+    forLine,
+    donor,
+    documentInfo,
+    filterText,
+    landOnMount,
+  },
+  ref,
+) {
   const drawn = taken ?? EMPTY_TAKEN;
   /**
    * Which locations stand open. Several at once on purpose: a cell that draws on its own
@@ -123,7 +167,118 @@ export function CellStockTable({
    * a `BRW-IB` line is fed by `MWH-IB` stock - so the running balance a planner needs is
    * read here, under the subtotal, and never under one bin.
    */
-  const [expandedSets, setExpandedSets] = React.useState<Record<string, boolean>>({});
+  const [expandedSets, setExpandedSets] = React.useState<
+    Record<string, boolean>
+  >({});
+  /**
+   * The active jump (AC-3.1/3.2/3.3/3.4): which section to open, and the signal every
+   * mounted `StockDocumentsPanel` reads to know whether it holds the row that should scroll
+   * and flash. Broadcast to every open panel rather than addressed to one, because the panel
+   * that owns the match is the only thing that can find it - the row lives inside a query
+   * this component never reads (`useStockDetail`).
+   */
+  const [activeJump, setActiveJump] = React.useState<StockJumpTarget | null>(
+    null,
+  );
+  /**
+   * `nonce`'s only job is to be a value that DIFFERS from the last jump so the effect that
+   * reads it re-fires on a repeat press of the same jump - `Date.now()` collided within the
+   * same millisecond on a fast repeat click (review round, S3) and a second "My line" press
+   * inside that millisecond silently did nothing. A ref-held counter can never repeat.
+   */
+  const jumpNonceRef = React.useRef(0);
+
+  /**
+   * The rows cut into the SETS availability is actually counted over (ladder v4), computed
+   * once so both the render below and the imperative jump handles agree on where a location
+   * sits - a second, ad hoc scan here would risk answering the two questions differently.
+   */
+  const sections = React.useMemo(() => sectionsOf(locations), [locations]);
+
+  /**
+   * Opens whichever section a jump names - the GROUP subtotal when the set nets one (the
+   * mockup's "Balance after" reading), or the bin's own row when it does not - and raises the
+   * signal every open `StockDocumentsPanel` checks itself against.
+   */
+  const openSectionAndJump = React.useCallback(
+    (section: StockSection | undefined, kind: StockJumpTarget['kind']) => {
+      if (!section) return;
+      if (section.netOf && sectionProductId(section)) {
+        setExpandedSets((current) => ({ ...current, [section.key]: true }));
+      } else {
+        setExpanded((current) => {
+          const next = { ...current };
+          for (const row of section.rows) {
+            if (row.location && row.product_id && row.warehouse_id) {
+              next[row.location] = true;
+            }
+          }
+          return next;
+        });
+      }
+      jumpNonceRef.current += 1;
+      setActiveJump({ kind, nonce: jumpNonceRef.current });
+    },
+    [],
+  );
+
+  const ownSection = React.useCallback(
+    () =>
+      sections.find((section) =>
+        section.rows.some((row) => (row.where ?? 'own') === 'own'),
+      ),
+    [sections],
+  );
+  const sectionAt = React.useCallback(
+    (location?: string | null) =>
+      location
+        ? sections.find((section) =>
+            section.rows.some((row) => row.location === location),
+          )
+        : undefined,
+    [sections],
+  );
+
+  React.useImperativeHandle(
+    ref,
+    () => ({
+      jumpToThisLine: () => openSectionAndJump(ownSection(), 'this-line'),
+      // Explicit ARGUMENT wins over the component's own `donor` prop - the suggestion
+      // sentence passes the SOURCE'S OWN donor (a step-2 combine can name several, R35), and
+      // the toolbar's single "Donor" button, which has no one source to point at, falls back
+      // to the first.
+      jumpToDonor: (target) =>
+        openSectionAndJump(
+          sectionAt((target ?? donor?.[0])?.location) ?? ownSection(),
+          'donor',
+        ),
+      jumpToDocument: (target) =>
+        openSectionAndJump(
+          sectionAt((target ?? documentInfo)?.location) ?? ownSection(),
+          'document',
+        ),
+    }),
+    [openSectionAndJump, ownSection, sectionAt, donor, documentInfo],
+  );
+
+  /**
+   * AC-3.1: the default landing, raised on this table's OWN mount rather than waited for
+   * through the ref from outside. The dialog's `<Tabs>` needs a commit of its own before this
+   * "stock" panel's content actually exists in the tree, so a jump fired from ABOVE (keyed on
+   * the cell) would run against a ref that is still null on that first commit and never get a
+   * second chance - the cell's own key does not change between it and the commit that
+   * follows. This component remounting per cell (the dialog keys it by
+   * `cell.row_key|cell.bucket_key`) is what makes "once per mount" the same thing as "once
+   * per cell". `landOnMount` is OPT-IN (see the prop doc) - only the dialog asks for it.
+   *
+   * Fires once on mount only, deliberately: a fresh mount is guaranteed per cell by the
+   * caller's own remount key, not by this dependency array.
+   */
+  React.useEffect(() => {
+    if (!landOnMount) return;
+    openSectionAndJump(ownSection(), 'this-line');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   if (locations.length === 0) {
     // Rendered rather than hidden, per the CRUD standard. A pivoted cell holds several products,
@@ -138,7 +293,10 @@ export function CellStockTable({
           No stock position for this cell
         </div>
         {groupNote ? (
-          <p data-testid="cell-stock-group-note" className="text-xs text-muted-foreground">
+          <p
+            data-testid="cell-stock-group-note"
+            className="text-xs text-muted-foreground"
+          >
             {groupNote}
           </p>
         ) : null}
@@ -148,282 +306,357 @@ export function CellStockTable({
 
   const showTotals = locations.length > 1;
   /**
-   * The rows grouped into the SETS the engine nets over (ladder v4), in the order the server
-   * sent them. A section carries a subtotal when it holds several rows, or when it states a
-   * net - the net is the number the ladder obeyed and it is over the whole set, including
-   * members this cell never listed, so it says something no sum of these rows can.
+   * A section carries a subtotal when it holds several rows, or when it states a net - the
+   * net is the number the ladder obeyed and it is over the whole set, including members this
+   * cell never listed, so it says something no sum of these rows can. `sections` itself is
+   * the memo above, shared with the imperative jump handles.
    */
-  const sections = sectionsOf(locations);
-  const showSubtotals = sections.length > 1 || sections.some((section) => section.net !== null);
+  const showSubtotals =
+    sections.length > 1 || sections.some((section) => section.net !== null);
 
   return (
     <div className="space-y-1">
-    {forLine ? (
-      <p data-testid="cell-stock-for-line" className="text-xs text-muted-foreground">
-        {`Available for ${forLine}`}
-      </p>
-    ) : null}
-    <div
-      data-testid="cell-stock-table"
-      className="max-h-[50vh] w-full overflow-x-auto overflow-y-auto overscroll-x-contain rounded-lg border border-border"
-    >
-      {/* `w-full`, never `table-fixed`: the table fills the dialog (the captain's screenshot
+      {forLine ? (
+        <p
+          data-testid="cell-stock-for-line"
+          className="text-xs text-muted-foreground"
+        >
+          {`Available for ${forLine}`}
+        </p>
+      ) : null}
+      <div
+        data-testid="cell-stock-table"
+        className="max-h-[50vh] w-full overflow-x-auto overflow-y-auto overscroll-x-contain rounded-lg border border-border"
+      >
+        {/* `w-full`, never `table-fixed`: the table fills the dialog (the captain's screenshot
           had it stopping at two thirds with an empty band on the right), the numeric columns
           hold a min-width floor, and the Location column above carries the slack. */}
-      <table className="w-full border-separate border-spacing-0 text-xs">
-        <thead>
-          <tr>
-            <th scope="col" className={cn(CHEVRON_COL, HEAD_CELL)} />
-            <th scope="col" className={cn(LOCATION_COL, HEAD_CELL)}>
-              Location
-            </th>
-            <th scope="col" className={cn(WHERE_COL, HEAD_CELL)}>
-              Where
-            </th>
-            {NUMERIC_COLUMNS.map((column) => (
-              <th key={column.key} scope="col" className={cn(NUMBER_COL, HEAD_CELL, 'text-end')}>
-                {column.label}
+        <table className="w-full border-separate border-spacing-0 text-xs">
+          <thead>
+            <tr>
+              <th scope="col" className={cn(CHEVRON_COL, HEAD_CELL)} />
+              <th scope="col" className={cn(LOCATION_COL, HEAD_CELL)}>
+                Location
               </th>
-            ))}
-          </tr>
-        </thead>
+              <th scope="col" className={cn(WHERE_COL, HEAD_CELL)}>
+                Where
+              </th>
+              {NUMERIC_COLUMNS.map((column) => (
+                <th
+                  key={column.key}
+                  scope="col"
+                  className={cn(NUMBER_COL, HEAD_CELL, 'text-end')}
+                >
+                  {column.label}
+                </th>
+              ))}
+            </tr>
+          </thead>
 
-        <tbody>
-          {sections.flatMap((section) => [
-          ...section.rows.map((entry) => {
-            const key = entry.location ?? '__none__';
-            const testKey = entry.location ?? 'none';
-            // Only a position the server ADDRESSED can be opened: two products share the code
-            // B2155-NL-BLUE on the live book, so resolving one from the code would answer
-            // confidently about the wrong product.
-            const addressable = Boolean(entry.product_id && entry.warehouse_id);
-            const isOpen = Boolean(expanded[key]);
-            return (
-              <React.Fragment key={key}>
-                <tr data-testid={`cell-location-${testKey}`}>
-                  <td className={cn(CHEVRON_COL, BODY_CELL, 'px-1')}>
-                    {addressable ? (
-                      <Button
-                        type="button"
-                        mode="icon"
-                        variant="ghost"
-                        size="sm"
-                        className="size-5"
-                        data-testid={`stock-expand-${testKey}`}
-                        aria-label={`${isOpen ? 'Hide' : 'Show'} documents behind ${
-                          entry.location ?? 'this location'
-                        }`}
-                        aria-expanded={isOpen}
-                        onClick={() =>
-                          setExpanded((current) => ({ ...current, [key]: !current[key] }))
-                        }
-                      >
-                        {isOpen ? (
-                          <ChevronDown className="size-3.5" aria-hidden />
+          <tbody>
+            {sections.flatMap((section) => [
+              ...section.rows.map((entry) => {
+                const key = entry.location ?? '__none__';
+                const testKey = entry.location ?? 'none';
+                // Only a position the server ADDRESSED can be opened: two products share the code
+                // B2155-NL-BLUE on the live book, so resolving one from the code would answer
+                // confidently about the wrong product.
+                const addressable = Boolean(
+                  entry.product_id && entry.warehouse_id,
+                );
+                const isOpen = Boolean(expanded[key]);
+                return (
+                  <React.Fragment key={key}>
+                    <tr data-testid={`cell-location-${testKey}`}>
+                      <td className={cn(CHEVRON_COL, BODY_CELL, 'px-1')}>
+                        {addressable ? (
+                          <Button
+                            type="button"
+                            mode="icon"
+                            variant="ghost"
+                            size="sm"
+                            className="size-5"
+                            data-testid={`stock-expand-${testKey}`}
+                            aria-label={`${isOpen ? 'Hide' : 'Show'} documents behind ${
+                              entry.location ?? 'this location'
+                            }`}
+                            aria-expanded={isOpen}
+                            onClick={() =>
+                              setExpanded((current) => ({
+                                ...current,
+                                [key]: !current[key],
+                              }))
+                            }
+                          >
+                            {isOpen ? (
+                              <ChevronDown className="size-3.5" aria-hidden />
+                            ) : (
+                              <ChevronRight className="size-3.5" aria-hidden />
+                            )}
+                          </Button>
                         ) : (
-                          <ChevronRight className="size-3.5" aria-hidden />
+                          // The sales order named no warehouse, so there is no position to open.
+                          <span
+                            className="inline-block size-4"
+                            title="Not addressable"
+                          />
                         )}
-                      </Button>
-                    ) : (
-                      // The sales order named no warehouse, so there is no position to open.
-                      <span className="inline-block size-4" title="Not addressable" />
-                    )}
-                  </td>
-                  <td className={cn(LOCATION_COL, BODY_CELL)}>
-                    <span
-                      className={cn(
-                        'block truncate font-medium',
-                        !entry.location && 'text-destructive',
-                      )}
-                      title={entry.location ?? 'No location'}
-                    >
-                      {entry.location ?? 'No location'}
-                    </span>
-                  </td>
-                  <td className={cn(WHERE_COL, BODY_CELL)}>
-                    <span
-                      className="block truncate text-muted-foreground"
-                      title={WHERE_LABELS[entry.where ?? 'own']}
-                    >
-                      {WHERE_LABELS[entry.where ?? 'own']}
-                    </span>
-                  </td>
-                  {NUMERIC_COLUMNS.map((column) => {
-                    const value = valueOf(column, entry, drawn);
-                    // Signed and never clamped: a negative Available IS the shortfall, and the
-                    // colour is what makes it the number the eye lands on.
-                    const negative = column.signed && isNegative(value);
-                    return (
-                      <td key={column.key} className={cn(NUMBER_COL, BODY_CELL)}>
+                      </td>
+                      <td className={cn(LOCATION_COL, BODY_CELL)}>
                         <span
-                          data-testid={`stock-${column.key}-${testKey}`}
                           className={cn(
-                            'block truncate text-end tabular-nums',
-                            value === null && 'text-muted-foreground',
-                            negative && 'text-destructive',
+                            'block truncate font-medium',
+                            !entry.location && 'text-destructive',
                           )}
-                          title={value ?? NOT_STATED_TITLE}
+                          title={entry.location ?? 'No location'}
                         >
-                          {value ?? BLANK}
+                          {entry.location ?? 'No location'}
                         </span>
                       </td>
-                    );
-                  })}
-                </tr>
+                      <td className={cn(WHERE_COL, BODY_CELL)}>
+                        <span
+                          className="block truncate text-muted-foreground"
+                          title={WHERE_LABELS[entry.where ?? 'own']}
+                        >
+                          {WHERE_LABELS[entry.where ?? 'own']}
+                        </span>
+                      </td>
+                      {NUMERIC_COLUMNS.map((column) => {
+                        const value = valueOf(column, entry, drawn);
+                        // Signed and never clamped: a negative Available IS the shortfall, and the
+                        // colour is what makes it the number the eye lands on.
+                        const negative = column.signed && isNegative(value);
+                        return (
+                          <td
+                            key={column.key}
+                            className={cn(NUMBER_COL, BODY_CELL)}
+                          >
+                            <span
+                              data-testid={`stock-${column.key}-${testKey}`}
+                              className={cn(
+                                'block truncate text-end tabular-nums',
+                                value === null && 'text-muted-foreground',
+                                negative && 'text-destructive',
+                              )}
+                              title={value ?? NOT_STATED_TITLE}
+                            >
+                              {value ?? BLANK}
+                            </span>
+                          </td>
+                        );
+                      })}
+                    </tr>
 
-                {isOpen && addressable && (
-                  <tr data-testid={`stock-expansion-${testKey}`}>
-                    {/* Under the row it belongs to, spanning the whole table: the documents are
+                    {isOpen && addressable && (
+                      <tr data-testid={`stock-expansion-${testKey}`}>
+                        {/* Under the row it belongs to, spanning the whole table: the documents are
                         this location's evidence, not a column of it. */}
-                    <td colSpan={3 + NUMERIC_COLUMNS.length} className="border-b border-border p-0">
-                      <StockDocumentsPanel
-                        productId={entry.product_id as string}
-                        warehouseId={entry.warehouse_id as string}
-                        lineIds={lineIds}
-                      />
-                    </td>
-                  </tr>
-                )}
-              </React.Fragment>
-            );
-          }),
-          // What this section holds, added up - and for Available, what the SET NETS, which
-          // is the figure the ladder actually drew on. The two differ on purpose: the net
-          // covers every location of the group, and this table lists the ones this cell
-          // consulted.
-          ...(showSubtotals && (section.rows.length > 1 || section.net !== null)
-            ? [
-                <tr key={`subtotal-${section.key}`} data-testid={`stock-subtotal-${section.key}`}>
-                  <td className={cn(CHEVRON_COL, FOOT_CELL, 'px-1')}>
-                    {section.netOf && sectionProductId(section) ? (
-                      <Button
-                        type="button"
-                        mode="icon"
-                        variant="ghost"
-                        size="sm"
-                        className="size-5"
-                        data-testid={`stock-set-expand-${section.key}`}
-                        aria-label={`${
-                          expandedSets[section.key] ? 'Hide' : 'Show'
-                        } documents behind ${section.label}`}
-                        aria-expanded={Boolean(expandedSets[section.key])}
-                        onClick={() =>
-                          setExpandedSets((current) => ({
-                            ...current,
-                            [section.key]: !current[section.key],
-                          }))
-                        }
-                      >
-                        {expandedSets[section.key] ? (
-                          <ChevronDown className="size-3.5" aria-hidden />
-                        ) : (
-                          <ChevronRight className="size-3.5" aria-hidden />
-                        )}
-                      </Button>
-                    ) : null}
-                  </td>
-                  <td className={cn(LOCATION_COL, FOOT_CELL, 'text-muted-foreground')}>
-                    {section.label}
-                  </td>
-                  <td className={cn(WHERE_COL, FOOT_CELL)} />
-                  {NUMERIC_COLUMNS.map((column) => {
-                    if (!column.total) {
-                      return <td key={column.key} className={cn(NUMBER_COL, FOOT_CELL)} />;
-                    }
-                    const isNet = column.key === 'available' && section.net !== null;
-                    const total = isNet
-                      ? section.net
-                      : sumOf(section.rows, (entry) => valueOf(column, entry, drawn));
-                    return (
-                      <td key={column.key} className={cn(NUMBER_COL, FOOT_CELL)}>
-                        <span
-                          data-testid={`stock-subtotal-${column.key}-${section.key}`}
-                          className={cn(
-                            'block truncate text-end tabular-nums',
-                            total === null && 'font-normal text-muted-foreground',
-                            column.signed && isNegative(total) && 'text-destructive',
-                          )}
-                          // Why this one figure is not the column above it added up: the
-                          // net covers EVERY location of the set, and the table lists the
-                          // ones this cell consulted.
-                          title={isNet ? netTitle(section) : undefined}
-                        >
-                          {total ?? BLANK}
-                        </span>
-                      </td>
-                    );
-                  })}
-                </tr>,
-                ...(expandedSets[section.key] && section.netOf && sectionProductId(section)
-                  ? [
-                      // The SET's own documents, merged across its bins and walked in date
-                      // order: the pile the ladder's first step draws is the group's, so
-                      // this is the level at which "what was left when my line came round"
-                      // is a true question.
-                      <tr
-                        key={`set-expansion-${section.key}`}
-                        data-testid={`stock-set-expansion-${section.key}`}
-                      >
                         <td
                           colSpan={3 + NUMERIC_COLUMNS.length}
                           className="border-b border-border p-0"
                         >
                           <StockDocumentsPanel
-                            productId={sectionProductId(section) as string}
-                            group={section.netOf}
+                            productId={entry.product_id as string}
+                            warehouseId={entry.warehouse_id as string}
                             lineIds={lineIds}
+                            donor={donor}
+                            documentInfo={documentInfo}
+                            filterText={filterText}
+                            jumpTarget={activeJump}
                           />
                         </td>
-                      </tr>,
-                    ]
-                  : []),
-              ]
-            : []),
-          ])}
-        </tbody>
-
-        {showTotals && (
-          // Only when there is something to add up. One location IS its own total, and a totals
-          // row repeating it is a row that says nothing.
-          <tfoot>
-            <tr>
-              <td className={cn(CHEVRON_COL, FOOT_CELL)} />
-              <td className={cn(LOCATION_COL, FOOT_CELL, 'text-muted-foreground')}>Total</td>
-              <td className={cn(WHERE_COL, FOOT_CELL)} />
-              {NUMERIC_COLUMNS.map((column) => {
-                if (!column.total) {
-                  return <td key={column.key} className={cn(NUMBER_COL, FOOT_CELL)} />;
-                }
-                const total = sumOf(locations, (entry) => valueOf(column, entry, drawn));
-                return (
-                  <td key={column.key} className={cn(NUMBER_COL, FOOT_CELL)}>
-                    <span
-                      className={cn(
-                        'block truncate text-end tabular-nums',
-                        total === null && 'font-normal text-muted-foreground',
-                        column.signed && isNegative(total) && 'text-destructive',
-                      )}
-                    >
-                      {total ?? BLANK}
-                    </span>
-                  </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
                 );
-              })}
-            </tr>
-          </tfoot>
-        )}
-      </table>
-    </div>
+              }),
+              // What this section holds, added up - and for Available, what the SET NETS, which
+              // is the figure the ladder actually drew on. The two differ on purpose: the net
+              // covers every location of the group, and this table lists the ones this cell
+              // consulted.
+              ...(showSubtotals &&
+              (section.rows.length > 1 || section.net !== null)
+                ? [
+                    <tr
+                      key={`subtotal-${section.key}`}
+                      data-testid={`stock-subtotal-${section.key}`}
+                    >
+                      <td className={cn(CHEVRON_COL, FOOT_CELL, 'px-1')}>
+                        {section.netOf && sectionProductId(section) ? (
+                          <Button
+                            type="button"
+                            mode="icon"
+                            variant="ghost"
+                            size="sm"
+                            className="size-5"
+                            data-testid={`stock-set-expand-${section.key}`}
+                            aria-label={`${
+                              expandedSets[section.key] ? 'Hide' : 'Show'
+                            } documents behind ${section.label}`}
+                            aria-expanded={Boolean(expandedSets[section.key])}
+                            onClick={() =>
+                              setExpandedSets((current) => ({
+                                ...current,
+                                [section.key]: !current[section.key],
+                              }))
+                            }
+                          >
+                            {expandedSets[section.key] ? (
+                              <ChevronDown className="size-3.5" aria-hidden />
+                            ) : (
+                              <ChevronRight className="size-3.5" aria-hidden />
+                            )}
+                          </Button>
+                        ) : null}
+                      </td>
+                      <td
+                        className={cn(
+                          LOCATION_COL,
+                          FOOT_CELL,
+                          'text-muted-foreground',
+                        )}
+                      >
+                        {section.label}
+                      </td>
+                      <td className={cn(WHERE_COL, FOOT_CELL)} />
+                      {NUMERIC_COLUMNS.map((column) => {
+                        if (!column.total) {
+                          return (
+                            <td
+                              key={column.key}
+                              className={cn(NUMBER_COL, FOOT_CELL)}
+                            />
+                          );
+                        }
+                        const isNet =
+                          column.key === 'available' && section.net !== null;
+                        const total = isNet
+                          ? section.net
+                          : sumOf(section.rows, (entry) =>
+                              valueOf(column, entry, drawn),
+                            );
+                        return (
+                          <td
+                            key={column.key}
+                            className={cn(NUMBER_COL, FOOT_CELL)}
+                          >
+                            <span
+                              data-testid={`stock-subtotal-${column.key}-${section.key}`}
+                              className={cn(
+                                'block truncate text-end tabular-nums',
+                                total === null &&
+                                  'font-normal text-muted-foreground',
+                                column.signed &&
+                                  isNegative(total) &&
+                                  'text-destructive',
+                              )}
+                              // Why this one figure is not the column above it added up: the
+                              // net covers EVERY location of the set, and the table lists the
+                              // ones this cell consulted.
+                              title={isNet ? netTitle(section) : undefined}
+                            >
+                              {total ?? BLANK}
+                            </span>
+                          </td>
+                        );
+                      })}
+                    </tr>,
+                    ...(expandedSets[section.key] &&
+                    section.netOf &&
+                    sectionProductId(section)
+                      ? [
+                          // The SET's own documents, merged across its bins and walked in date
+                          // order: the pile the ladder's first step draws is the group's, so
+                          // this is the level at which "what was left when my line came round"
+                          // is a true question.
+                          <tr
+                            key={`set-expansion-${section.key}`}
+                            data-testid={`stock-set-expansion-${section.key}`}
+                          >
+                            <td
+                              colSpan={3 + NUMERIC_COLUMNS.length}
+                              className="border-b border-border p-0"
+                            >
+                              <StockDocumentsPanel
+                                productId={sectionProductId(section) as string}
+                                group={section.netOf}
+                                lineIds={lineIds}
+                                donor={donor}
+                                documentInfo={documentInfo}
+                                filterText={filterText}
+                                jumpTarget={activeJump}
+                              />
+                            </td>
+                          </tr>,
+                        ]
+                      : []),
+                  ]
+                : []),
+            ])}
+          </tbody>
+
+          {showTotals && (
+            // Only when there is something to add up. One location IS its own total, and a totals
+            // row repeating it is a row that says nothing.
+            <tfoot>
+              <tr>
+                <td className={cn(CHEVRON_COL, FOOT_CELL)} />
+                <td
+                  className={cn(
+                    LOCATION_COL,
+                    FOOT_CELL,
+                    'text-muted-foreground',
+                  )}
+                >
+                  Total
+                </td>
+                <td className={cn(WHERE_COL, FOOT_CELL)} />
+                {NUMERIC_COLUMNS.map((column) => {
+                  if (!column.total) {
+                    return (
+                      <td
+                        key={column.key}
+                        className={cn(NUMBER_COL, FOOT_CELL)}
+                      />
+                    );
+                  }
+                  const total = sumOf(locations, (entry) =>
+                    valueOf(column, entry, drawn),
+                  );
+                  return (
+                    <td key={column.key} className={cn(NUMBER_COL, FOOT_CELL)}>
+                      <span
+                        className={cn(
+                          'block truncate text-end tabular-nums',
+                          total === null && 'font-normal text-muted-foreground',
+                          column.signed &&
+                            isNegative(total) &&
+                            'text-destructive',
+                        )}
+                      >
+                        {total ?? BLANK}
+                      </span>
+                    </td>
+                  );
+                })}
+              </tr>
+            </tfoot>
+          )}
+        </table>
+      </div>
       {groupNote ? (
         // Muted and one line, under the table it explains. Stated rather than left silent: a
         // single row with nothing said about it reads as the whole answer.
-        <p data-testid="cell-stock-group-note" className="text-xs text-muted-foreground">
+        <p
+          data-testid="cell-stock-group-note"
+          className="text-xs text-muted-foreground"
+        >
           {groupNote}
         </p>
       ) : null}
     </div>
   );
-}
+});
 
 type StockSection = {
   /** Stable per table, and what the subtotal row is addressed by in a test. */
@@ -466,7 +699,8 @@ function sectionsOf(locations: BoardCellLocation[]): StockSection[] {
     // only if one set is ever split into two runs, which is what keeps the id unique
     // without putting an index on the ordinary case.
     let key = entry.net_of ?? where;
-    for (let n = 2; used.has(key); n += 1) key = `${entry.net_of ?? where}-${n}`;
+    for (let n = 2; used.has(key); n += 1)
+      key = `${entry.net_of ?? where}-${n}`;
     used.add(key);
     sections.push({
       key,
@@ -516,7 +750,8 @@ const POOLS_SET = 'pools';
 const HEAD_CELL =
   'sticky top-0 z-10 border-b border-e border-border bg-muted px-2 py-1.5 text-start align-bottom font-medium';
 const BODY_CELL = 'border-b border-e border-border px-2 py-1.5 align-middle';
-const FOOT_CELL = 'border-b border-e border-border bg-muted/50 px-2 py-1.5 font-medium';
+const FOOT_CELL =
+  'border-b border-e border-border bg-muted/50 px-2 py-1.5 font-medium';
 
 /**
  * The columns, in AutoCount's order, because this is the order the planner reads over there and
@@ -540,13 +775,28 @@ const NUMERIC_COLUMNS: {
   /** May legitimately be negative, and is coloured when it is. */
   signed?: boolean;
 }[] = [
-  { key: 'on-hand', label: 'On hand', of: (entry) => entry.qty_on_hand ?? null, total: true },
+  {
+    key: 'on-hand',
+    label: 'On hand',
+    of: (entry) => entry.qty_on_hand ?? null,
+    total: true,
+  },
   // No Reserved column, and no Free one. Free was `On hand - Reserved`, and Reserved itself is
   // read by nothing on this screen: `Available` is `On hand - SO + SPO` and does not use it.
   // Both went to make room for the two columns below, which answer questions no other number
   // here does. Reserved is still on the wire and still in the row's own expansion.
-  { key: 'so', label: 'SO qty', of: (entry) => entry.so_qty ?? null, total: true },
-  { key: 'spo', label: 'SPO qty', of: (entry) => entry.spo_qty ?? null, total: true },
+  {
+    key: 'so',
+    label: 'SO qty',
+    of: (entry) => entry.so_qty ?? null,
+    total: true,
+  },
+  {
+    key: 'spo',
+    label: 'SPO qty',
+    of: (entry) => entry.spo_qty ?? null,
+    total: true,
+  },
   {
     key: 'available',
     label: 'Available',
@@ -558,13 +808,19 @@ const NUMERIC_COLUMNS: {
   // line through a link, never by sitting at the location. "500 already on order at DC1" is
   // what decides between a Buy and a transfer, and until now the planner had to leave the
   // dialog to find it.
-  { key: 'po', label: 'PO qty', of: (entry) => entry.po_open_qty ?? null, total: true },
+  {
+    key: 'po',
+    label: 'PO qty',
+    of: (entry) => entry.po_open_qty ?? null,
+    total: true,
+  },
   // What the cell actually draws from this row. A location nothing was needed from reads 0,
   // which is the answer to "why not MWH" - it was listed, it had stock, nothing was taken.
   {
     key: 'taken',
     label: 'Taken',
-    of: (entry, taken) => (entry.location ? taken.get(entry.location) ?? '0' : null),
+    of: (entry, taken) =>
+      entry.location ? (taken.get(entry.location) ?? '0') : null,
     total: true,
   },
 ];
@@ -580,7 +836,9 @@ const NUMERIC_COLUMNS: {
  * Stated once, so the cells and the two totals rows cannot come to disagree about a blank.
  */
 function valueOf(
-  column: { of: (entry: BoardCellLocation, taken: Map<string, string>) => string | null },
+  column: {
+    of: (entry: BoardCellLocation, taken: Map<string, string>) => string | null;
+  },
   entry: BoardCellLocation,
   taken: Map<string, string>,
 ): string | null {
@@ -594,7 +852,9 @@ function sumOf(
   locations: BoardCellLocation[],
   pick: (entry: BoardCellLocation) => string | null,
 ): string | null {
-  const stated = locations.map(pick).filter((value): value is string => value !== null);
+  const stated = locations
+    .map(pick)
+    .filter((value): value is string => value !== null);
   if (stated.length === 0) return null;
   return fromMinor(stated.reduce((total, value) => total + toMinor(value), 0));
 }

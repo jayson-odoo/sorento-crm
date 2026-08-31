@@ -293,6 +293,7 @@ describe('fulfilment priority carries `tba_date_from` (borrow ladder v7.1 S1)', 
     demand_class_weights: { project: 1 },
     reorder_coverage_until: '2026-10-31',
     tba_date_from: '2030-06-30',
+    transfer_days: 0,
     exists: true,
   };
 
@@ -310,6 +311,7 @@ describe('fulfilment priority carries `tba_date_from` (borrow ladder v7.1 S1)', 
       demand_class_weights: { project: 1 },
       reorder_coverage_until: null,
       tba_date_from: '2029-01-01',
+      transfer_days: 0,
     });
     expect(lastInit().method).toBe('PUT');
     expect(JSON.parse(String(lastInit().body))).toEqual({
@@ -317,6 +319,7 @@ describe('fulfilment priority carries `tba_date_from` (borrow ladder v7.1 S1)', 
       demand_class_weights: { project: 1 },
       reorder_coverage_until: null,
       tba_date_from: '2029-01-01',
+      transfer_days: 0,
     });
     expect(saved.tba_date_from).toBe('2029-01-01');
   });

@@ -218,6 +218,14 @@ class FulfilmentPriorityWrite(BaseModel):
     # `cross_group_borrow_max_qty` / `cross_group_borrow_max_pct` were dropped with the
     # cap they gated (R5): any ownership group may donate now.
     tba_date_from: Optional[date] = None
+    # The flat 2-day transfer charge retired 31 Aug (R-B): a policy field, default 0, in
+    # place of `front_planning_engine.TRANSFER_DAYS`'s literal. OPTIONAL and None-means-
+    # unchanged, the same shape as `tba_date_from` above - an older writer that does not
+    # know the field yet must not silently reset it to 0 while saving something else.
+    # Negative is refused with a 422 in the service layer (`priority.save_fulfilment_priority`,
+    # code `transfer_days_negative`), the same coded-422 shape as the TBA freshness rule,
+    # because it too needs the ACTIVE policy's own value to decide "unchanged".
+    transfer_days: Optional[int] = None
 
     @model_validator(mode="after")
     def _check(self) -> "FulfilmentPriorityWrite":
@@ -230,6 +238,8 @@ class FulfilmentPriorityWrite(BaseModel):
         # The TBA freshness rule is NOT here. It has to compare the submitted date with
         # the ACTIVE policy's own, which needs the database, so it lives in the route
         # (`policies.put_fulfilment_priority`). See the note on `tba_date_from` above.
+        # `transfer_days`'s negative check is likewise in the service layer - see the note
+        # on the field above.
         return self
 
 
@@ -247,6 +257,9 @@ class FulfilmentPriorityPolicy(BaseModel):
     #: NOT NULL on the row, so a response always states it - past dates included, because
     #: this is what WAS saved and history is allowed to be old.
     tba_date_from: date
+    #: NOT NULL on the row (migration 451), default 0. `response_model` drops an undeclared
+    #: field, so this is declared explicitly even though it travels alongside the others.
+    transfer_days: int = 0
     name: str
     #: False only on a database that has never activated a fulfilment-priority policy at
     #: all - every seeded/migrated database (migration 385) has one.
