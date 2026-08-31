@@ -1,4 +1,5 @@
 import { apiFetch } from '@/lib/api';
+import { extractApiError } from '@/lib/api-client';
 import type { Attachment } from '../types/attachment.types';
 import type { DataGridApiFetchParams, DataGridApiResponse } from '@/components/ui/data-grid';
 
@@ -28,11 +29,13 @@ export type AttachmentsListParams = DataGridApiFetchParams & {
   mime_type?: string;
   /** Several mime types. Unions with `mime_type`, the same way `attachment_type_ids` does. */
   mime_types?: string[];
+  /** A company id, `shared`, or omitted for today's `IS NULL OR IN (scope)` result. */
+  company?: string;
 };
 
 
 export async function getAttachments(params: AttachmentsListParams): Promise<DataGridApiResponse<Attachment>> {
-  const { pageIndex, pageSize, sorting, searchQuery, entity_type, file_type, attachment_type_id, upload_date_from, upload_date_to, uploaded_at_from, uploaded_at_to, uploaded_by, is_deleted, virus_status, directory_id, link_status, storage_status, resolve_signed_urls, access_levels, access_levels_match, mime_type, mime_types } = params;
+  const { pageIndex, pageSize, sorting, searchQuery, entity_type, file_type, attachment_type_id, upload_date_from, upload_date_to, uploaded_at_from, uploaded_at_to, uploaded_by, is_deleted, virus_status, directory_id, link_status, storage_status, resolve_signed_urls, access_levels, access_levels_match, mime_type, mime_types, company } = params;
   const sortField = sorting?.[0]?.id || '';
   const sortDirection = sorting?.[0]?.desc ? 'desc' : 'asc';
   const queryParams = new URLSearchParams({
@@ -52,6 +55,7 @@ export async function getAttachments(params: AttachmentsListParams): Promise<Dat
     ...(storage_status ? { storage_status } : {}),
     ...(resolve_signed_urls !== undefined ? { resolve_signed_urls: String(resolve_signed_urls) } : {}),
     ...(mime_type ? { mime_type } : {}),
+    ...(company ? { company } : {}),
   });
   // Repeated params, like access_levels: the backend unions `mime_types` with
   // `mime_type`. Absent means every type, which is what every caller that does
@@ -362,6 +366,38 @@ export async function bulkMoveAttachments(
     const error = await response.json().catch(() => ({ detail: 'Failed to move attachments' }));
     const message = typeof error.detail === 'string' ? error.detail : error.message ?? 'Failed to move attachments';
     throw new Error(message);
+  }
+  return response.json();
+}
+
+export interface BulkCompanyResponse {
+  updated_directories: number;
+  updated_attachments: number;
+  company_id: string | null;
+  links_added: number;
+  links_removed: number;
+  certificates_updated: number;
+}
+
+/**
+ * The popup single-row `Edit` fallback for `Set company…` (R4). The bulk
+ * strip and row context menu never call this directly - they start deferred
+ * actions (`attachment.set_company` / `attachment_directory.set_company`)
+ * through `useDeferredBulkAction` instead (R22), so a slip is undone by
+ * Cancel inside the grace window rather than by a confirmation dialog.
+ */
+export async function bulkSetCompany(body: {
+  attachment_ids?: string[];
+  directory_ids?: string[];
+  company_id: string | null;
+}): Promise<BulkCompanyResponse> {
+  const response = await apiFetch('/api/v1/resource-management/attachments/bulk-company', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to set company'));
   }
   return response.json();
 }

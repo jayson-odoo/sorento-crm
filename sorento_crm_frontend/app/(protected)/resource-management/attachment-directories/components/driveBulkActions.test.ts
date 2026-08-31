@@ -9,6 +9,7 @@ const handlers: DriveBulkActionHandlers = {
   onExport: vi.fn(),
   onSetAccessLevels: vi.fn(),
   onSetAttachmentType: vi.fn(),
+  onSetCompany: vi.fn(),
   onResubmit: vi.fn(),
   onDelete: vi.fn(),
   onRestore: vi.fn(),
@@ -45,6 +46,7 @@ describe('buildDriveBulkActions', () => {
       'bulk-export',
       'bulk-access-levels',
       'bulk-attachment-type',
+      'bulk-company',
       'bulk-resubmit',
       'bulk-delete',
     ]);

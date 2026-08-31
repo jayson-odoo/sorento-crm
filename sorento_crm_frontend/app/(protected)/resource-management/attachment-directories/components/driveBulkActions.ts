@@ -24,6 +24,7 @@ export interface DriveBulkActionHandlers {
   onExport: () => void;
   onSetAccessLevels: () => void;
   onSetAttachmentType: () => void;
+  onSetCompany: () => void;
   onResubmit: () => void;
   onDelete: () => void;
   onRestore: () => void;
@@ -85,6 +86,13 @@ export function buildDriveBulkActions(
       disabled: state.selectionHasFolder,
       disabledReason: fileOnlyReason,
       onClick: handlers.onSetAttachmentType,
+    },
+    // Company is a folder AND a file attribute (R17), so - unlike the file-only
+    // actions above it - this stays enabled on any mix of the two (R4).
+    {
+      key: 'bulk-company',
+      label: 'Set company',
+      onClick: handlers.onSetCompany,
     },
     {
       key: 'bulk-resubmit',

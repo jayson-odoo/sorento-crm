@@ -34,6 +34,7 @@ const noopHandlers: DriveRowActionHandlers = {
   onRevealInFolder: vi.fn(),
   onRename: vi.fn(),
   onMove: vi.fn(),
+  onSetCompany: vi.fn(),
   onResubmit: vi.fn(),
   onRestore: vi.fn(),
   onDelete: vi.fn(),
