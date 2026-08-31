@@ -26,7 +26,7 @@ import { ProjectsGrid } from '../../_shared/components/ProjectsGrid';
 import { EmptyState, PipelineBoard } from './PipelineBoard';
 import { RegisterProjectDialog } from './RegisterProjectDialog';
 import { PageHeader } from '@/components/common/PageHeader';
-import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 
 const VIEW_STORAGE_KEY = 'project-sales.pipeline.view';
@@ -178,7 +178,7 @@ export function PipelineClient() {
     <ListSearchInput
       value={search}
       onChange={setSearch}
-      isSettling={debouncedSearchSettling}
+      isSettling={isSearchInFlight(debouncedSearchSettling, projects.isFetching, debouncedSearch)}
       placeholder="Search title or code…"
       aria-label="Search projects"
       className="w-full"

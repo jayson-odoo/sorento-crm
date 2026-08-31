@@ -115,7 +115,7 @@ import { OrderInquiryScheduleMatrix } from './OrderInquiryScheduleMatrix';
 import { OrderInquiryStrip } from './OrderInquiryStrip';
 import { useOrderInquiryWorklistColumns } from './orderInquiryWorklistColumns';
 import { PageHeader } from '@/components/common/PageHeader';
-import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 
 /**
@@ -1007,7 +1007,7 @@ export function OrderInquiriesClient() {
                   <ListSearchInput
                     value={search}
                     onChange={setSearch}
-                    isSettling={debouncedSettling}
+                    isSettling={isSearchInFlight(debouncedSettling, list.isFetching, debounced)}
                     placeholder="Search S/O, item, product, customer or CS name…"
                     aria-label="Search order inquiry rows"
                     className="w-full max-w-xs"

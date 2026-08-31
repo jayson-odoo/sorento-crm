@@ -16,7 +16,7 @@ import { AssignLeadDialog } from './AssignLeadDialog';
 import { LeadsGrid } from './LeadsGrid';
 import { LeadWizardDialog } from './LeadWizardDialog';
 import { PageHeader } from '@/components/common/PageHeader';
-import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 
 const OUTCOME_OPTIONS = [
@@ -133,7 +133,7 @@ export function LeadsClient() {
     <ListSearchInput
       value={search}
       onChange={setSearch}
-      isSettling={debouncedSettling}
+      isSettling={isSearchInFlight(debouncedSettling, leads.isFetching, debounced)}
       placeholder="Search title or lead code…"
       aria-label="Search leads"
       className="w-full max-w-xs"

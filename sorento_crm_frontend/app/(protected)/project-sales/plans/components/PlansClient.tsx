@@ -29,7 +29,7 @@ import { planBoardHref, planRowHref } from '../../_shared/lib/fulfilmentPlanning
 import { PLAN_SORT_FIELDS, type PlanRow, type PlanState } from '../../_shared/types/fulfilmentPlanning.types';
 import { InfoHint } from '../../[projectId]/components/InfoHint';
 import { PageHeader } from '@/components/common/PageHeader';
-import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 
 /** Soft-pastel per state, kept local: `challenged` deserves amber (something moved under a
@@ -342,7 +342,7 @@ export function PlansClient() {
                 <ListSearchInput
                   value={search}
                   onChange={setSearch}
-                  isSettling={debouncedSettling}
+                  isSettling={isSearchInFlight(debouncedSettling, plans.isFetching, debounced)}
                   placeholder="Search sales order, customer or agent"
                   className="w-full"
                 />

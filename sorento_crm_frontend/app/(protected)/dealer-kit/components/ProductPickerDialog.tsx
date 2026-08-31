@@ -20,7 +20,7 @@ import type { RuleGroup } from '@/components/rule-builder/types';
 import { cn } from '@/lib/utils';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import {
   PICKER_PAGE_SIZE,
@@ -342,7 +342,7 @@ export function ProductPickerDialog({
             <ListSearchInput
               value={search}
               onChange={setSearch}
-              isSettling={debouncedSettling}
+              isSettling={isSearchInFlight(debouncedSettling, isFetching, debounced)}
               placeholder="Search products"
               aria-label="Search products"
             />

@@ -27,7 +27,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { formatDateInMalaysia } from '@/lib/helpers';
-import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import {
   useOrderInquiryMutations,
@@ -499,7 +499,7 @@ export function OrderInquiryClient({ projectId }: { projectId: string }) {
                 <ListSearchInput
                   value={search}
                   onChange={setSearch}
-                  isSettling={debouncedSettling}
+                  isSettling={isSearchInFlight(debouncedSettling, inquiry.isFetching, debounced)}
                   placeholder="Search item code, SPO or S/O…"
                   aria-label="Search order inquiry rows"
                   className="w-full max-w-xs"

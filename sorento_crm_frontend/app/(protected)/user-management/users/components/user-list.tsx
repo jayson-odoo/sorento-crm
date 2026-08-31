@@ -41,7 +41,7 @@ import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { User, UserRoleSimple, UserStatus } from '@/app/models/user';
 import { buildDetailSearch } from '@/lib/listNavQuery';
-import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { UserRowActions } from '../actions';
 import { pendingEntityKey, usePendingEntityKeys } from '@/lib/pending-entity-store';
@@ -67,6 +67,8 @@ interface UsersToolbarProps {
   searchInput: string;
   setSearchInput: (value: string) => void;
   searchSettling: boolean;
+  searchQuery: string;
+  isFetching: boolean;
   resetSearch: (value: string) => void;
   selectedRole: string | null;
   setSelectedRole: (value: string) => void;
@@ -96,6 +98,8 @@ const UsersToolbar = ({
   searchInput,
   setSearchInput,
   searchSettling,
+  searchQuery,
+  isFetching,
   resetSearch,
   selectedRole,
   setSelectedRole,
@@ -210,7 +214,7 @@ const UsersToolbar = ({
           <ListSearchInput
             value={searchInput}
             onChange={setSearchInput}
-            isSettling={searchSettling}
+            isSettling={isSearchInFlight(searchSettling, isFetching, searchQuery)}
             onSubmit={() => resetSearch(searchInput)}
             placeholder="Search users"
             className="w-full sm:w-40 md:w-64"
@@ -404,7 +408,7 @@ const UserList = () => {
     [pagination, sorting, searchQuery, selectedRole, selectedStatus, selectedTrashed],
   );
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isFetching } = useQuery({
     queryKey: usersListQueryKey(listParams),
     queryFn: () => fetchUsersListPage(listParams),
     staleTime: Infinity,
@@ -782,6 +786,8 @@ const UserList = () => {
             searchInput={searchInput}
             setSearchInput={setSearchInput}
             searchSettling={searchSettling}
+            searchQuery={searchQuery}
+            isFetching={isFetching}
             resetSearch={resetSearch}
             selectedRole={selectedRole}
             setSelectedRole={setSelectedRole}

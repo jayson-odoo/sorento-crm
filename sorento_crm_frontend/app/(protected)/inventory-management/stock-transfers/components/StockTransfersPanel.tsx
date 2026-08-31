@@ -50,7 +50,7 @@ import {
 } from './StockTransferActions';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 import { RowActionsMenu } from '@/components/common/RowActionsMenu';
-import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { stockTransferActions } from '../actions';
 
@@ -568,7 +568,7 @@ export function StockTransfersPanel({
                   <ListSearchInput
                     value={search}
                     onChange={setSearch}
-                    isSettling={debouncedSettling}
+                    isSettling={isSearchInFlight(debouncedSettling, list.isFetching, debounced)}
                     placeholder="Search by transfer, item, order or location"
                     aria-label="Search stock transfers"
                     className="w-full"

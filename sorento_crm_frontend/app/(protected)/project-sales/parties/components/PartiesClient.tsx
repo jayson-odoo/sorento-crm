@@ -30,7 +30,7 @@ import type { ProjectParty } from '../../_shared/types/project.types';
 import { PartyFormDialog } from './PartyFormDialog';
 import { PARTY_TYPE_OPTIONS, TYPE_LABEL } from './partyTypes';
 import { PageHeader } from '@/components/common/PageHeader';
-import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 
 /**
@@ -301,7 +301,7 @@ export function PartiesClient() {
                 <ListSearchInput
                   value={search}
                   onChange={setSearch}
-                  isSettling={debouncedSettling}
+                  isSettling={isSearchInFlight(debouncedSettling, parties.isFetching, debounced)}
                   placeholder="Search by name…"
                   aria-label="Search parties"
                   className="w-full max-w-xs"

@@ -26,7 +26,7 @@ import {
   type PlanningChangeBatchSummary,
 } from '../../_shared/types/planningChange.types';
 import { PageHeader } from '@/components/common/PageHeader';
-import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 
 /**
@@ -274,7 +274,7 @@ export function PlanningChangesListClient() {
                 <ListSearchInput
                   value={search}
                   onChange={setSearch}
-                  isSettling={debouncedSettling}
+                  isSettling={isSearchInFlight(debouncedSettling, list.isFetching, debounced)}
                   placeholder="Search by uploader or file"
                   aria-label="Search planning change batches"
                   className="w-full"

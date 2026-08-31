@@ -19,7 +19,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { cn } from '@/lib/utils';
-import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { useStockDebtQuery } from '../hooks/useStockDebtQuery';
 import type { StockDebtRow, StockDebtTone } from '../types/stockDebt.types';
@@ -355,7 +355,7 @@ export function StockDebtClient() {
                 <ListSearchInput
                   value={search}
                   onChange={setSearch}
-                  isSettling={debouncedSettling}
+                  isSettling={isSearchInFlight(debouncedSettling, list.isFetching, debounced)}
                   placeholder="Search product code or name…"
                   aria-label="Search products"
                   className="w-full max-w-xs"

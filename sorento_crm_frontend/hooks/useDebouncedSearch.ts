@@ -67,3 +67,22 @@ export function useDebouncedSearch(
     reset,
   };
 }
+
+/**
+ * `isSettling` alone only covers the 200ms the box is ahead of the query - it
+ * goes false the instant the debounce fires, which is also the instant the
+ * request goes out. The reader is still waiting on the network for however
+ * long that takes, and nothing on screen said so (S7 feedback).
+ *
+ * This is the other half: true while `isSettling`, OR while the list's own
+ * query is fetching for a term that is not empty. The empty-term guard matters
+ * - `isFetching` also flips on ordinary pagination and background refetches
+ * with no search active, and those must not spin the search icon.
+ */
+export function isSearchInFlight(
+  isSettling: boolean,
+  isFetching: boolean,
+  activeTerm: string,
+): boolean {
+  return isSettling || (isFetching && activeTerm.trim() !== '');
+}

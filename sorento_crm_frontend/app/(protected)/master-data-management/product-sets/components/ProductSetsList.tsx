@@ -25,7 +25,7 @@ import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { useProductSets } from '../hooks/useProductSets';
 import type { ProductSet } from '../types/productSet.types';
@@ -294,7 +294,7 @@ export default function ProductSetsList() {
                   <ListSearchInput
                     value={searchQuery}
                     onChange={setSearchQuery}
-                    isSettling={debouncedSearchSettling}
+                    isSettling={isSearchInFlight(debouncedSearchSettling, isFetching, debouncedSearch)}
                     placeholder="Search set code or name..."
                     className="w-64"
                   />

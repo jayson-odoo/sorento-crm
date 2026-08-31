@@ -25,7 +25,7 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
-import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { EM_DASH, fmtDate, fmtDecimal, fmtDoc, fmtInt, fmtMoney, fmtSigned } from '../lib/format';
 import { useDemandExplain, useScmProducts } from '../hooks/useScmDashboard';
@@ -392,7 +392,7 @@ export function ProductListDialog({
         <ListSearchInput
           value={search}
           onChange={setSearch}
-          isSettling={debouncedSettling}
+          isSettling={isSearchInFlight(debouncedSettling, isFetching, debounced)}
           placeholder="Search product code or name…"
           aria-label="Search products"
         />

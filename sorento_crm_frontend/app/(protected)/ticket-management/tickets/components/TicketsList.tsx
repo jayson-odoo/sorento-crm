@@ -20,7 +20,7 @@ import { useListBoardViewPreference } from '@/hooks/useListBoardViewPreference';
 import { Plus, Trash2 } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
-import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { bulkDeleteTickets, getTickets } from '../services/ticketService';
 import type {
@@ -147,7 +147,7 @@ export default function TicketsList() {
         <ListSearchInput
           value={search}
           onChange={setSearch}
-          isSettling={debouncedSearchSettling}
+          isSettling={isSearchInFlight(debouncedSearchSettling, loading, debouncedSearch)}
           placeholder="Search title, description, ticket number…"
           aria-label="Search tickets"
           className="max-w-sm"

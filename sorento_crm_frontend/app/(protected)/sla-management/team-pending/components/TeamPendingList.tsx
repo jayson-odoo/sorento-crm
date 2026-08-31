@@ -13,7 +13,7 @@ import { UserRoundCog, UserRoundPlus, UserRoundCheck } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
-import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
@@ -274,7 +274,7 @@ export default function TeamPendingList() {
                 <ListSearchInput
                   value={searchInput}
                   onChange={setSearchInput}
-                  isSettling={searchSettling}
+                  isSettling={isSearchInFlight(searchSettling, isFetching, search)}
                   placeholder="Search number, contact, assignee…"
                   className="w-full max-w-xs"
                 />

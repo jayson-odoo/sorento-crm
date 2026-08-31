@@ -21,7 +21,7 @@ import {
   useDeferredRowAction,
   useRowPending,
 } from '@/hooks/useDeferredRowAction';
-import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { EM_DASH } from '../../lib/format';
 import {
@@ -81,7 +81,7 @@ export function ReorderPolicyGrid() {
   // Server-side paging / sorting / search - the backend GET /policies honours
   // page/limit/sort/dir/query, so nothing is truncated and search reaches fields
   // the grid never renders (product_code, name, category).
-  const { data, isLoading, isError, error } = useReorderPolicies({
+  const { data, isLoading, isFetching, isError, error } = useReorderPolicies({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -295,7 +295,7 @@ export function ReorderPolicyGrid() {
               <ListSearchInput
                 value={searchQuery}
                 onChange={setSearchQuery}
-                isSettling={debouncedSearchSettling}
+                isSettling={isSearchInFlight(debouncedSearchSettling, isFetching, debouncedSearch)}
                 placeholder="Search scope or type..."
                 className="w-64"
               />

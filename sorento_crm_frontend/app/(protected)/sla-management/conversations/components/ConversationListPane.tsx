@@ -5,7 +5,7 @@ import { AlertCircle, ArrowDownLeft, ArrowUpRight, Loader2 } from 'lucide-react'
 
 import { Button } from '@/components/ui/button';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
-import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateTimeInMalaysia, parseDateTimeAsUTC, timeAgo } from '@/lib/helpers';
 import { stripWhatsAppMarkup } from '@/lib/whatsappText';
@@ -133,7 +133,7 @@ export default function ConversationListPane({
       <ListSearchInput
         value={searchText}
         onChange={setSearchText}
-        isSettling={searchSettling}
+        isSettling={isSearchInFlight(searchSettling, query.isFetching, appliedQuery)}
         placeholder="Search name or phone"
         aria-label="Search conversations"
         data-testid="inbox-search"

@@ -18,7 +18,7 @@ import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
-import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -310,7 +310,7 @@ export function AwaitingAcceptanceClient() {
                   <ListSearchInput
                     value={searchInput}
                     onChange={setSearchInput}
-                    isSettling={searchSettling}
+                    isSettling={isSearchInFlight(searchSettling, query.isFetching, search)}
                     placeholder="Search title or lead code…"
                     aria-label="Search leads awaiting acceptance"
                     className="w-full max-w-xs"

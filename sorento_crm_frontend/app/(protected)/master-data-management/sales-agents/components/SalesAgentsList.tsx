@@ -38,7 +38,7 @@ import { DEMAND_CLASS_OPTIONS, demandClassLabel } from '../lib/demandClass';
 import { salesAgentSourceLabel } from '../lib/salesAgentSource';
 import type { SalesAgent } from '../types/salesAgent.types';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
-import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 
 /** Which annotation a bulk dialog is setting. One field at a time, deliberately: a dialog
@@ -306,7 +306,7 @@ export default function SalesAgentsList() {
                 <ListSearchInput
                   value={searchQuery}
                   onChange={setSearchQuery}
-                  isSettling={debouncedSearchSettling}
+                  isSettling={isSearchInFlight(debouncedSearchSettling, isFetching, debouncedSearch)}
                   placeholder="Search agent code..."
                   className="w-64"
                 />

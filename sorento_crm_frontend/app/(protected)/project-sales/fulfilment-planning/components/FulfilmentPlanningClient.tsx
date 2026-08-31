@@ -49,7 +49,7 @@ import { InfoHint } from '../../[projectId]/components/InfoHint';
 import { FulfilmentBoardPanel } from './FulfilmentBoardPanel';
 import { FulfilmentPlanningSheet } from './FulfilmentPlanningSheet';
 import { PageHeader } from '@/components/common/PageHeader';
-import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 
 /**
@@ -725,7 +725,7 @@ export function FulfilmentPlanningClient() {
                 <ListSearchInput
                   value={search}
                   onChange={setSearch}
-                  isSettling={debouncedSettling}
+                  isSettling={isSearchInFlight(debouncedSettling, planning.isFetching, debounced)}
                   placeholder="Search sales order, customer, project or product"
                   // The one surprise, as a hint on the box rather than prose on the page: a
                   // product needle matches the ORDER, so the row still counts the whole

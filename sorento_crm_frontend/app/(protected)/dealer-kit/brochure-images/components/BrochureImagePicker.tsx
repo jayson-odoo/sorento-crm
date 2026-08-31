@@ -50,7 +50,7 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
-import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { TriangleAlert, Check, ImageOff, Images } from 'lucide-react';
@@ -337,7 +337,7 @@ export function BrochureImagePicker() {
                 id="dk-bi-search"
                 value={searchInput}
                 onChange={setSearchInput}
-                isSettling={searchSettling}
+                isSettling={isSearchInFlight(searchSettling, query.isFetching, search)}
                 placeholder="Code or name"
                 aria-label="Product code or name"
                 className="w-full sm:w-56"

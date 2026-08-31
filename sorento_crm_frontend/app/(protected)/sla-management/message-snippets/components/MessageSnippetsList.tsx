@@ -35,7 +35,7 @@ import {
   useDeferredRowAction,
   useRowPending,
 } from '@/hooks/useDeferredRowAction';
-import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import type {
   MessageSnippet,
@@ -59,7 +59,7 @@ export default function MessageSnippetsList() {
     setPagination((p) => ({ ...p, pageIndex: 0 }));
   }, [debouncedSearch, sorting]);
 
-  const { data, isLoading, isError, error } = useMessageSnippets({
+  const { data, isLoading, isFetching, isError, error } = useMessageSnippets({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -226,7 +226,7 @@ export default function MessageSnippetsList() {
               <ListSearchInput
                 value={searchQuery}
                 onChange={setSearchQuery}
-                isSettling={debouncedSearchSettling}
+                isSettling={isSearchInFlight(debouncedSearchSettling, isFetching, debouncedSearch)}
                 placeholder="Search snippets..."
                 aria-label="Search snippets"
                 className="w-64"

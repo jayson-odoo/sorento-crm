@@ -6,7 +6,7 @@ import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
-import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { Skeleton } from '@/components/ui/skeleton';
 import { getSpecKeyProducts } from '../services/productSpecService';
 import type { SpecKeyProducts as Products } from '../services/productSpecService';
@@ -88,7 +88,7 @@ export default function SpecKeyProducts({
             className="w-64"
             value={search}
             onChange={setSearch}
-            isSettling={searchSettling}
+            isSettling={isSearchInFlight(searchSettling, loading, query)}
             placeholder="Find a code, description or value"
           />
           <Button size="sm" variant="outline" onClick={onClose}>

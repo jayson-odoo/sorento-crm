@@ -16,7 +16,7 @@ import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
-import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   getKeysForProduct,
@@ -64,6 +64,9 @@ export default function SpecRegistryTable() {
   // code, and answering it meant opening the product page in another tab.
   const [productKeys, setProductKeys] = useState<Record<string, ProductSpecKey> | null>(null);
   const [matchedCode, setMatchedCode] = useState<string | null>(null);
+  // Only the product-code lookup below is a network round trip; the table itself
+  // filters `keys` in the browser. This is what the icon should keep spinning for.
+  const [probeLoading, setProbeLoading] = useState(false);
   // The live count, which is not `measured_coverage`: that is a note made when the key
   // was written, and it goes out of date the first time anyone edits a rule.
   const [coverage, setCoverage] = useState<Record<string, number>>({});
@@ -90,6 +93,7 @@ export default function SpecRegistryTable() {
       setMatchedCode(null);
       return;
     }
+    setProbeLoading(true);
     getKeysForProduct(probe)
       .then((r) => {
         setProductKeys(r.matched_product ? r.keys : null);
@@ -98,7 +102,8 @@ export default function SpecRegistryTable() {
       .catch(() => {
         setProductKeys(null);
         setMatchedCode(null);
-      });
+      })
+      .finally(() => setProbeLoading(false));
   }, [probe]);
 
   const allSynonyms = (key: SpecRegistryKey): string[] => {
@@ -431,7 +436,7 @@ export default function SpecRegistryTable() {
               className="w-full sm:w-72"
               value={filter}
               onChange={setFilter}
-              isSettling={filterSettling}
+              isSettling={isSearchInFlight(filterSettling, probeLoading, probe)}
               placeholder="Find a spec, word or product code"
             />
             <Button variant="outline" size="sm" onClick={() => setAdding(true)} disabled={adding}>
