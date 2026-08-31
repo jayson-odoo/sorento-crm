@@ -42,6 +42,11 @@ export function useSpecPreview(specKey: string): UseSpecPreviewResult {
             window.setTimeout(() => poll(jobId, seq), POLL_MS);
             return;
           }
+          if (r.status === 'failed') {
+            setError(r.error ?? 'Could not preview these rules');
+            setStatus('error');
+            return;
+          }
           setResult(r);
           setStatus('done');
         })

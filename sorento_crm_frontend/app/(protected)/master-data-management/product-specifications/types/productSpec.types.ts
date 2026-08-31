@@ -198,14 +198,17 @@ export interface SpecPreviewSampleRow {
   after: string | number | boolean | null;
 }
 
-/** What `GET .../preview/{jobId}` answers, pending or done. */
+/** What `GET .../preview/{jobId}` answers: still running, done, or the job itself
+ *  threw (the derivation over one product raised something `derive()` does not turn
+ *  into a flag). */
 export interface SpecPreviewJobResult {
-  status: 'pending' | 'done';
+  status: 'pending' | 'done' | 'failed';
   changed?: number;
   added?: number;
   removed?: number;
   unchanged?: number;
   sample?: SpecPreviewSampleRow[];
+  error?: string;
 }
 
 export interface SpecRegistryKey {

@@ -51,11 +51,7 @@ export function useSpecTryIt(
     const timer = window.setTimeout(() => {
       const body =
         source.type === 'product'
-          ? {
-              rules,
-              productId: source.productId,
-              productLabel: source.productLabel,
-            }
+          ? { rules, productId: source.productId }
           : { rules, text: source.text };
       trySpecRules(specKey, body)
         .then((r) => {

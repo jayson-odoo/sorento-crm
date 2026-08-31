@@ -6,13 +6,11 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { updateSpecKey } from '../services/productSpecService';
-import { mockShippedDimLengthRules } from '../services/specRulesMock';
 import SpecPreviewPanel from './SpecPreviewPanel';
 import SpecRuleEditor from './SpecRuleEditor';
 import SpecTryItPanel from './SpecTryItPanel';
 import TokenInput from './TokenInput';
 import { readable } from '@/lib/spec-readable';
-import { ruleSentence } from '../lib/ruleSentence';
 import {
   seedValuesFor,
   seedWordsFor,
@@ -24,11 +22,6 @@ import type {
   SpecDerivationRule,
   SpecRegistryKey,
 } from '../types/productSpec.types';
-
-/** Phase 1 only (see `specRulesMock.ts`): the real GET does not carry `builder`/`shipped`
- *  for `dim_length` until S2, so a freshly-loaded Length key would have nothing to show
- *  the sentence UI against. Deleted with the rest of the mock in S3. */
-const SEED_DIM_LENGTH_DEMO = true;
 
 /**
  * Edit one spec key.
@@ -105,13 +98,6 @@ export default function SpecKeyEditor({
   // Given an identity on the way in so dragging moves a RULE, not a position.
   const [rules, setRules] = useState<SpecDerivationRule[]>(() => {
     const stored = specKey.effective_rules ?? specKey.derivation_rules ?? [];
-    if (
-      stored.length === 0 &&
-      SEED_DIM_LENGTH_DEMO &&
-      specKey.spec_key === 'dim_length'
-    ) {
-      return mockShippedDimLengthRules();
-    }
     return stored.map((rule, index) => ({ ...rule, _uid: `r${index}` }));
   });
 
@@ -453,43 +439,26 @@ export default function SpecKeyEditor({
         />
       </Field>
 
-      {specKey.read_from === 'product_record' ? (
-        <div className="flex flex-col gap-1.5">
-          <div className="text-xs uppercase tracking-wide text-muted-foreground">
-            How this is read from a product
-          </div>
-          {/* Reading a column is a rule too. Saying "there are no rules" about the one
-              key everybody asks about left the derivation unexplained. */}
-          <div className="rounded-md border bg-background p-2 text-sm">
-            {ruleSentence(
-              { match: 'product_column', pattern: specKey.spec_key },
-              specKey.label || specKey.spec_key,
-            )}
-          </div>
-          <span className="text-xs text-muted-foreground">
-            Curated data outranks anything parsed out of text, so this rule
-            cannot be reordered or switched off here.
-          </span>
-        </div>
-      ) : (
-        <div className="flex flex-col gap-2">
-          <SpecTryItPanel
-            source={trySource}
-            onSourceChange={setTrySource}
-            description={tryResult?.description ?? null}
-            loading={tryLoading}
-            error={tryError}
-          />
-          <SpecRuleEditor
-            rules={rules}
-            specKey={specKey.spec_key}
-            onChange={setRules}
-            reads={tryResult?.reads}
-            winnerIndex={tryResult?.winner_index}
-          />
-          <SpecPreviewPanel specKey={specKey.spec_key} rules={rules} />
-        </div>
-      )}
+      {/* Every key reads through the rule list now, brand and the dimension columns
+          included (#425) - `read_from` is always `'rules'`, so there is no longer a
+          second branch here for a key that reads the product record directly. */}
+      <div className="flex flex-col gap-2">
+        <SpecTryItPanel
+          source={trySource}
+          onSourceChange={setTrySource}
+          description={tryResult?.description ?? null}
+          loading={tryLoading}
+          error={tryError}
+        />
+        <SpecRuleEditor
+          rules={rules}
+          specKey={specKey.spec_key}
+          onChange={setRules}
+          reads={tryResult?.reads}
+          winnerIndex={tryResult?.winner_index}
+        />
+        <SpecPreviewPanel specKey={specKey.spec_key} rules={rules} />
+      </div>
 
       <Field
         label="Prefer these values"

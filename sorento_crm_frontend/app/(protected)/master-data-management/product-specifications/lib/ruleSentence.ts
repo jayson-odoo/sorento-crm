@@ -77,8 +77,14 @@ export function ruleSentence(rule: SpecDerivationRule, label: string): string {
       return `If the product code starts with “${shown}”, ${label} is ${answer}.`;
     case 'code_suffix':
       return `If the product code ends in “${shown}”, ${label} is ${answer}.`;
-    case 'product_column':
-      return `${label} is taken straight from the product's own ${shown || 'record'}.`;
+    // The two readers that used to run before any rule did (#425): the product's own
+    // row rather than its text. A shipped row always carries a `builder`, so
+    // `builderSentence` below is what actually renders these in the editor - this is
+    // the fallback for the same row shown as a raw pattern (Advanced -> Edit pattern).
+    case 'from_field':
+      return `${fromFieldSentence(rule.pattern)}.`;
+    case 'name_head':
+      return `${label} comes from the product name head.`;
     default:
       return `${label}: ${rule.match} “${shown}”.`;
   }

@@ -62,7 +62,7 @@
  *     which shows the whole list and submits the whole list). `max_value` rides this
  *     PATCH too (AC-A.5, C.5) - null/absent clears the cap.
  *
- * TRY IT AND PREVIEW (AC-B.1, B.2 - S3; MOCKED behind `USE_MOCK` below until then)
+ * TRY IT AND PREVIEW (AC-B.1, B.2)
  *
  *   POST /api/v1/master-data/spec-registry/{specKey}/try
  *     body { productId?: string, text?: string, rules: SpecDerivationRule[] }
@@ -80,8 +80,9 @@
  *        draft rules. Requires `master_data.spec_registry.edit`.
  *   GET  /api/v1/master-data/spec-registry/{specKey}/preview/{jobId}
  *     -> { status: 'pending' } | { status: 'done', changed, added, removed, unchanged,
- *          sample: [{ code, before, after }] (20) }
- *        Hand-set values are never counted as changed - they are not derived.
+ *          sample: [{ code, before, after }] (20) } | { status: 'failed', error }
+ *        Hand-set values are never counted as changed - they are not derived. 404 an
+ *        unknown jobId.
  *
  * THE 422 THAT IS NOT AN ERROR ENVELOPE
  *
@@ -174,27 +175,11 @@ import type {
   SpecPreviewResult,
   SpecRegistryKey,
 } from '../types/productSpec.types';
-import {
-  mockDescriptionFor,
-  mockCodeFor,
-  mockGetSpecPreview,
-  mockPreviewSpecRules,
-  mockTrySpecRules,
-  PRODUCT_PICKER_FALLBACK,
-} from './specRulesMock';
 
 interface Paged<T> {
   data: T[];
   pagination: { total: number; page: number; limit: number };
 }
-
-/**
- * Try it and preview (AC-B.1, B.2) have no backend yet - that is S3. Until then this is
- * the ONE place the frontend takes a different path, so the S3 swap is deleting this
- * switch and `specRulesMock.ts`, not rewriting the components or hooks that call the
- * functions below - they already call the service, never the mock module directly.
- */
-const USE_MOCK = true;
 
 export async function getProductSpecs(params: {
   page?: number;
@@ -774,36 +759,17 @@ export async function extractSpecProposals(
  * the table half-applied. The server refuses the whole batch when any entry is bad,
  * which is why the caller can refetch once and trust what it reads.
  */
-// --- Try it and preview (AC-B.1, B.2 - S3; mocked until then, see USE_MOCK above) ---
+// --- Try it and preview (AC-B.1, B.2) -------------------------------------------
 
 export type TrySpecRulesSource =
-  | {
-      productId: string;
-      /**
-       * Mock-only: the picked option's label, so `USE_MOCK` can hand back a canned
-       * description keyed by it (products/select does not return description text).
-       * S3 drops this field along with the rest of the mock; the real endpoint never
-       * sees it.
-       */
-      productLabel?: string;
-      text?: undefined;
-    }
-  | { text: string; productId?: undefined; productLabel?: undefined };
+  | { productId: string; text?: undefined }
+  | { text: string; productId?: undefined };
 
 /** Try the DRAFT rules against a real product or a pasted text, unsaved. */
 export async function trySpecRules(
   specKey: string,
   body: { rules: SpecDerivationRule[] } & TrySpecRulesSource,
 ): Promise<SpecTryResult> {
-  if (USE_MOCK) {
-    const key = body.productId
-      ? (body.productLabel ?? body.productId)
-      : (body.text ?? '');
-    const { text, code } = body.productId
-      ? { text: mockDescriptionFor(key), code: mockCodeFor(key) }
-      : { text: body.text ?? '', code: '' };
-    return mockTrySpecRules(body.rules, { text, code });
-  }
   const response = await apiFetch(
     `/api/v1/master-data/spec-registry/${specKey}/try`,
     {
@@ -830,7 +796,6 @@ export async function previewSpecRules(
   specKey: string,
   body: { rules: SpecDerivationRule[] },
 ): Promise<{ jobId: string }> {
-  if (USE_MOCK) return mockPreviewSpecRules();
   const response = await apiFetch(
     `/api/v1/master-data/spec-registry/${specKey}/preview`,
     {
@@ -851,7 +816,6 @@ export async function getSpecPreview(
   specKey: string,
   jobId: string,
 ): Promise<SpecPreviewJobResult> {
-  if (USE_MOCK) return mockGetSpecPreview();
   const response = await apiFetch(
     `/api/v1/master-data/spec-registry/${specKey}/preview/${jobId}`,
   );
@@ -865,9 +829,7 @@ export async function getSpecPreview(
 
 /**
  * The try-it product picker, in `fetchOptions` mode over the whole product master
- * (AC-B.3, R5 of flyer-code-adopt). Falls back to a small canned list when the real
- * endpoint cannot be reached, so the picker still opens rather than looking dead - either
- * is fine for Phase 1, since try-it itself is mocked regardless (see USE_MOCK above).
+ * (AC-B.3, R5 of flyer-code-adopt).
  */
 export async function fetchProductPickerOptions(
   query: string,
@@ -878,29 +840,22 @@ export async function fetchProductPickerOptions(
     offset: String(pageIndex * 50),
     ...(query ? { query } : {}),
   });
-  try {
-    const response = await apiFetch(
-      `/api/v1/master-data/products/select?${search.toString()}`,
+  const response = await apiFetch(
+    `/api/v1/master-data/products/select?${search.toString()}`,
+  );
+  if (!response.ok) {
+    throw new Error(
+      await extractApiError(response, 'Could not search the products'),
     );
-    if (!response.ok) throw new Error('products/select failed');
-    const body = await response.json();
-    const options: SearchableSelectOption[] = (body.data ?? []).map(
-      (p: { id: string; product_code: string; product_name: string }) => ({
-        value: p.id,
-        label: `${p.product_code} - ${p.product_name}`,
-        searchText: `${p.product_code} ${p.product_name}`,
-      }),
-    );
-    return options;
-  } catch {
-    if (pageIndex > 0) return [];
-    const needle = query.trim().toLowerCase();
-    return needle
-      ? PRODUCT_PICKER_FALLBACK.filter((o) =>
-          o.label.toLowerCase().includes(needle),
-        )
-      : PRODUCT_PICKER_FALLBACK;
   }
+  const body = await response.json();
+  return (body.data ?? []).map(
+    (p: { id: string; product_code: string; product_name: string }) => ({
+      value: p.id,
+      label: `${p.product_code} - ${p.product_name}`,
+      searchText: `${p.product_code} ${p.product_name}`,
+    }),
+  );
 }
 
 export async function applySpecProposals(
