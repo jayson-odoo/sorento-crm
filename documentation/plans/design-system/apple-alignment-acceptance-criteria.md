@@ -152,6 +152,55 @@ Added 2026-08-30 from the user's run on the built S6 (the window works; what hap
   sidebar's world, as in S5) and the mention autocomplete in the internal comment composer, which
   is not a search box. `ConversationListPane`'s existing debounce test was re-timed from 300 to the
   shared 200.
+
+  **Second sweep, reconciled against the tree on 31 Aug (same day, later pass):** the first pass's
+  24 covered the boxes already using a two-state pattern; a full grep for
+  `placeholder="Search` outside `ListSearchInput` still found **144** hand-rolled boxes across
+  `app/`. This pass (worked concurrently by more than one coder against the same tree, hence the
+  jump in one sitting) brings the total using `ListSearchInput` to **122**; **48** remain, all
+  classified below rather than silently skipped:
+
+  - **Unreachable demo/legacy scaffolding (24, untouched):** `account/invite-a-friend`,
+    `account/members/*` (4), `account/security/*` (4), `components/demo1/light-sidebar/teams`,
+    `network/user-table/*` (6), `store-admin/*` (3), `store-client/*` (2),
+    `components/layouts/demo1|demo6|demo9` (3). Verified against `config/menu.config.tsx`: every
+    one of these routes is commented out of the real `MENU_SIDEBAR` (lines 64-1190) and only
+    reachable from `MENU_SIDEBAR_COMPACT` / `MENU_MEGA*`, which back the Metronic demo layouts
+    (`demo2`-`demo10`), not the app shell `PageHeader` actually renders from. Same standing
+    exemption as the demo layouts already carried.
+  - **In-dialog or in-form pickers (17, untouched):** the `placeholder="Search..."` sits on a
+    `SearchableSelect`/`SearchableMultiSelect` field or inside a `<Dialog>`, not a list toolbar -
+    `ComplaintForm`, `RoomDesigner` (canvas "add product" picker), `PromotionAttachmentsTab`
+    (`LinkAttachmentDialog`), `LinkAttachmentBrowserDialog`, `ProductForm` (category/brand
+    fields), `GRNForm`, `PurchaseRequestForm`, `StakeholdersPanel` (party field),
+    `PriceFloorDialog`, `QualifyLeadDialog`, `RegisterProjectDialog`, `MatchToProductDialog`,
+    `UnmatchedSupplierCodesPanel` (per-row match picker), `ProformaInvoiceDetail` (add-line
+    picker), `ContactAgentAccessDialog`, `CopyAccessAgentsFromContactDialog`,
+    `BulkCopySettingsFromContactDialog`.
+  - **Explicitly named exempt (5, untouched):** `ActivityTimeline`, `ChatTranscript` (find-within-
+    a-page, not a list search), `AIAssistantSettingsForm` (a tool checklist, not a list),
+    `AIAssistantBubble`, and the command palette `search-dialog.tsx` (fuzzy nav, not a list).
+  - **Portal design conflict (1, untouched):** `(auth)/portal/components/PortalLanding.tsx` uses
+    `Input variant="lg"` at `h-12` for a touch-friendly target on an unauthenticated, largely
+    mobile customer surface; `ListSearchInput` has no size variant and migrating it today would
+    shrink that target. Flagged as a follow-up for whenever `ListSearchInput` grows one, not
+    silently dropped.
+  - **Deliberately deferred, not exempt (1):** `FlyerSpecReviewScreen.tsx` filters an
+    already-loaded batch client-side and would be a same-shape migration, but its own test file
+    (`FlyerSpecReviewScreen.test.tsx`) asserts the filtered rows synchronously right after
+    `fireEvent.change`, with no `waitFor` - a dozen assertions across that file would need
+    rewriting to tolerate the 200ms debounce. Left for a pass that owns that test file rather than
+    changed as a side effect of this sweep.
+
+  Migrated boxes that were server-searching pick up `isSettling={isSearchInFlight(...)}` wired to
+  the list's own `isFetching`; boxes that filter rows already in memory (client-side) migrate
+  without `isSettling` - there is nothing to wait for. One exception is deliberate:
+  `scm/components/ScmFilterBar.tsx` takes lifted filter state via `{ filters, onChange }` props
+  from `ScmDashboard` rather than owning local state, so the debounce now lives INSIDE the bar (it
+  syncs its raw value from `filters.productSearch` when that changes from outside - the bar's own
+  Clear button, or the scope chip - and pushes its own debounced value up via `onChange` otherwise)
+  and the bar takes a new optional `isFetching` prop the dashboard threads through from its rollup
+  query, rather than the bar reading a query hook itself.
 - **S7-03** Forms validate `onTouched`; the eight `setTimeout(form.reset)` are replaced by `defaultValues` / `values`. [FE][T]
   Reconciled against the tree on 31 Aug: **43** forms carried `mode: 'onSubmit'` or no mode at all
   and now validate `onTouched`. Two exceptions: `user-restore-dialog` keeps `onChange`, because its
