@@ -9,7 +9,7 @@ import {
   getPaginationRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { CheckCircle2, Search, X } from 'lucide-react';
+import { CheckCircle2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -18,7 +18,8 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { Input } from '@/components/ui/input';
+import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { formatDateInMalaysia } from '@/lib/helpers';
@@ -55,7 +56,11 @@ function ageTone(days: number): 'secondary' | 'warning' | 'destructive' {
  */
 export function DivergenceListClient() {
   const [statusFilter, setStatusFilter] = React.useState('open');
-  const [search, setSearch] = React.useState('');
+  const {
+    value: searchInput,
+    setValue: setSearchInput,
+    debouncedValue: search,
+  } = useDebouncedSearch();
   const [pagination, setPagination] = React.useState<PaginationState>({
     pageIndex: 0,
     pageSize: 25,
@@ -254,29 +259,12 @@ export function DivergenceListClient() {
               table={table}
               exportConfig={false}
               searchSlot={
-                <div className="relative">
-                  <Search
-                    className="absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
-                    aria-hidden
-                  />
-                  <Input
-                    placeholder="Search project or document number"
-                    value={search}
-                    onChange={(event) => setSearch(event.target.value)}
-                    className="w-full ps-9 sm:w-72"
-                  />
-                  {search.length > 0 && (
-                    <Button
-                      mode="icon"
-                      variant="dim"
-                      aria-label="Clear the search"
-                      className="absolute end-1.5 top-1/2 h-6 w-6 -translate-y-1/2"
-                      onClick={() => setSearch('')}
-                    >
-                      <X />
-                    </Button>
-                  )}
-                </div>
+                <ListSearchInput
+                  value={searchInput}
+                  onChange={setSearchInput}
+                  placeholder="Search project or document number"
+                  className="w-full sm:w-72"
+                />
               }
               filters={{
                 kind: 'custom',
