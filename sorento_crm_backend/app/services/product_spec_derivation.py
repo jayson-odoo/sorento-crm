@@ -1058,7 +1058,12 @@ def description_first_keys(rules_by_key: dict[str, list[dict]] | None = None) ->
     person to settle, not a value to apply silently.
     """
     if rules_by_key is None:
-        rules_by_key = shipped_rules()
+        # Cached: `classify_spec_proposal` asks this per proposal, and a flyer batch is
+        # hundreds of them against every rule in the registry.
+        global _SHIPPED_DESCRIPTION_FIRST
+        if _SHIPPED_DESCRIPTION_FIRST is None:
+            _SHIPPED_DESCRIPTION_FIRST = description_first_keys(shipped_rules())
+        return _SHIPPED_DESCRIPTION_FIRST
     return frozenset(
         key
         for key, rules in (rules_by_key or {}).items()
@@ -1068,6 +1073,9 @@ def description_first_keys(rules_by_key: dict[str, list[dict]] | None = None) ->
             for rule in rules or []
         )
     )
+
+
+_SHIPPED_DESCRIPTION_FIRST: frozenset[str] | None = None
 
 
 # The shipped rules, used when a caller has not loaded the configured ones. Built lazily
