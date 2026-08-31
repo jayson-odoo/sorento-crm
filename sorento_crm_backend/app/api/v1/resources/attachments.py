@@ -17,6 +17,7 @@ from app.database import get_db
 from app.services.uuid_path_param import validate_uuid_path
 from app.dependencies import get_current_user, get_current_user_or_api_key, require_permission
 from app.services.resources_service import AttachmentService, AttachmentTypeService, AttachmentDirectoryService
+from app.services.attachment_company_service import AttachmentCompanyService
 from app.services.storage_router import (
     PROVIDER_R2,
     normalize_provider,
@@ -49,6 +50,8 @@ from app.schemas.resources import (
     BulkAccessLevelsApplyResponse,
     BulkAttachmentTypeRequest,
     BulkAttachmentTypeResponse,
+    BulkCompanyRequest,
+    BulkCompanyResponse,
 )
 from app.schemas.resources import (
     DriveFolderItem,
@@ -1599,6 +1602,39 @@ async def bulk_set_attachment_type(
             body.attachment_ids,
             body.attachment_type_id,
         )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post(
+    "/bulk-company",
+    response_model=BulkCompanyResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def bulk_set_company(
+    body: BulkCompanyRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """`Set company…` on one or many attachments and/or folders (R4, R13).
+
+    Same guard as `PUT /attachments/{attachment_id}` - no new permission slug
+    (R13). The UI never calls this directly (R22): it parks a deferred action
+    per selected row through `attachment.set_company` / `attachment_directory.
+    set_company` (app/services/record_actions.py). This route is the popup's
+    single-row Edit fallback, plus tests and n8n-style callers.
+    """
+    try:
+        service = AttachmentCompanyService(db)
+        result = service.apply(
+            attachment_ids=body.attachment_ids,
+            directory_ids=body.directory_ids,
+            company_id=body.company_id,
+            actor_id=current_user.get("id"),
+        )
+        return result
     except HTTPException:
         raise
     except Exception as e:

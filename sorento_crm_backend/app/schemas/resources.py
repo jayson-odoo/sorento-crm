@@ -63,6 +63,9 @@ class AttachmentTypeBase(BaseModel):
     # is left out of the upload-activity drawer. A type n8n never answers would
     # otherwise show "Processing" forever, waiting on a reply that is not coming.
     triggers_n8n_webhook: bool = True
+    # When true, an upload of this type is written with company_id = NULL -
+    # visible to every company. Flipping this later touches no existing row.
+    is_shared: bool = False
 
 
 class AttachmentTypeCreate(AttachmentTypeBase):
@@ -79,6 +82,7 @@ class AttachmentTypeUpdate(BaseModel):
     is_certificate: Optional[bool] = None
     max_validity_months: Optional[int] = None
     triggers_n8n_webhook: Optional[bool] = None
+    is_shared: Optional[bool] = None
 
 
 class AttachmentTypeResponse(AttachmentTypeBase):
@@ -406,6 +410,54 @@ class BulkAttachmentTypeRequest(BaseModel):
 class BulkAttachmentTypeResponse(BaseModel):
     updated_attachments: int
     attachment_type_id: str
+
+
+class BulkCompanyRequest(BaseModel):
+    """`Set company…` (PLAN-shared-brand-attachments R4/S2). At least one id
+    overall; `company_id: null` means Shared."""
+
+    attachment_ids: list[str] = []
+    directory_ids: list[str] = []
+    company_id: Optional[str] = None
+
+    @field_validator("attachment_ids", "directory_ids")
+    @classmethod
+    def _ids_are_uuids(cls, v: list[str]) -> list[str]:
+        # A malformed id reaching the ORM `IN (...)` filter raises a raw
+        # psycopg `invalid input syntax for type uuid` - an unhandled 500.
+        # Caught here instead, it is a 422 like every other bad request body.
+        for item in v:
+            try:
+                uuid.UUID(str(item))
+            except (ValueError, AttributeError, TypeError):
+                raise ValueError(f"{item!r} is not a valid UUID.")
+        return v
+
+    @field_validator("company_id")
+    @classmethod
+    def _company_id_is_uuid(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        try:
+            uuid.UUID(str(v))
+        except (ValueError, AttributeError, TypeError):
+            raise ValueError(f"{v!r} is not a valid UUID.")
+        return v
+
+    @model_validator(mode="after")
+    def at_least_one_id(self):
+        if not self.attachment_ids and not self.directory_ids:
+            raise ValueError("At least one attachment or directory ID is required.")
+        return self
+
+
+class BulkCompanyResponse(BaseModel):
+    updated_directories: int
+    updated_attachments: int
+    company_id: Optional[str] = None
+    links_added: int
+    links_removed: int
+    certificates_updated: int
 
 
 # ---------------------------------------------------------------------------

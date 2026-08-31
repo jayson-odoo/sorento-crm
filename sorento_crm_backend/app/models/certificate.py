@@ -157,10 +157,16 @@ class Certificate(Base, CompanyScopedMixin):
         ),
         # Identity: the scheme is part of the key, so PPS/04124FC and
         # SPAN/04124FC stay two rows while "PPS 0119" / "PPS-0119" / "pps0119"
-        # collapse to one.
+        # collapse to one. company_id is coalesced to a sentinel zero-uuid
+        # (never a real company id) so two NULL-company (shared) certificates
+        # with the same identity cannot coexist - a plain unique index treats
+        # every NULL as distinct, which would let a shared certificate be
+        # re-filed indefinitely (PLAN-shared-brand-attachments S6, migration
+        # 449). The certificate-sharing logic that actually writes a
+        # NULL company_id lands in a later slice; this index is ready for it.
         Index(
             "uq_certificates_company_scheme_number",
-            "company_id",
+            text("coalesce(company_id, '00000000-0000-0000-0000-000000000000')"),
             text("upper(regexp_replace(scheme || certificate_number, '[^A-Za-z0-9]', '', 'g'))"),
             unique=True,
         ),

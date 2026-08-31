@@ -57,7 +57,14 @@ tester seeds its own `ZZT-` twin products and `ZZT-` folders, never reads existi
   `unmatched` and no product is linked (no partial fan-out).
 - **AC-A5** `[BE]` Every pre-existing resolver test passes unchanged (tiers 1-4 untouched).
 - **AC-A6** `[BE]` Given `link-products` with `"ZZT-SRTBV - BRASS BALL VALVE"`, Then `linked`
-  lists the 9 products each with `via = "prefix"`, and `skipped_product_codes` is empty.
+  lists the 9 products each with `via = "prefix"`, `skipped_product_codes` and
+  `already_linked` are empty, asserted on the HTTP JSON body through `response_model`.
+- **AC-A7** `[BE]` Given the same family head sent to the packing-list ingest, the promotion
+  ingest and the single-code `POST /external/product-attachments`, Then it lands in
+  `skipped_product_codes` / `missing_codes` / 400 respectively: the tier is opt-in and only
+  the attachment link path passes `allow_prefix=True`.
+- **AC-A8** `[BE]` Given a family whose prefix matches 150 distinct codes as 300 twin rows
+  under the all-companies scope, Then it resolves (the cap counts distinct codes).
 
 ## Group B - `bulk-company` on files: twin linker
 

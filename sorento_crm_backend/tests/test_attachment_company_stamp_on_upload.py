@@ -62,7 +62,19 @@ def _att_type(db) -> str:
 
 
 def _directory(db) -> str:
-    row = AttachmentDirectory(id=str(uuid.uuid4()), name="Testing")
+    """A folder under whatever single company is active, else shared (None).
+
+    `AttachmentDirectory` is `__company_shared__` (PLAN-shared-brand-
+    attachments R17), so the before_insert auto-stamp never fills this in -
+    this mirrors what `AttachmentDirectoryService.create_directory` now does
+    for a root folder, so a raw ORM build here still lands owned the same way
+    a real create call would.
+    """
+    from app.models.base import get_company_scope
+
+    scope = get_company_scope(db)
+    company_id = next(iter(scope)) if isinstance(scope, frozenset) and len(scope) == 1 else None
+    row = AttachmentDirectory(id=str(uuid.uuid4()), name="Testing", company_id=company_id)
     db.add(row)
     db.flush()
     return row.id

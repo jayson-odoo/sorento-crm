@@ -187,6 +187,59 @@ def _actor(db: Session, payload: dict) -> dict:
     }
 
 
+# ----- Resources (attachments/folders) --------------------------------------------------
+#
+# `Set company…` (PLAN-shared-brand-attachments.md R4/R22). Reversible - the twin links
+# it maintains are just as reversible as the company itself, so it takes the short window
+# like `order.set_status`. `permission=OWN_RECORD` mirrors the route it defers to
+# (`POST .../bulk-company`), which is guarded the same as `PUT /attachments/{id}` - no
+# permission slug of its own, just a signed-in caller (R13); `AttachmentCompanyService`
+# still checks the target company against the actor's own grants (AC-B6).
+
+
+def _set_attachment_company(db: Session, payload: dict):
+    from app.services.attachment_company_service import AttachmentCompanyService
+
+    return AttachmentCompanyService(db).apply(
+        attachment_ids=[_entity_id(payload)],
+        company_id=payload.get("company_id"),
+        actor_id=payload.get("requested_by_id"),
+    )
+
+
+def _set_directory_company(db: Session, payload: dict):
+    from app.services.attachment_company_service import AttachmentCompanyService
+
+    return AttachmentCompanyService(db).apply(
+        directory_ids=[_entity_id(payload)],
+        company_id=payload.get("company_id"),
+        actor_id=payload.get("requested_by_id"),
+    )
+
+
+register(
+    FormAction(
+        key="attachment.set_company",
+        entity_types=("attachment",),
+        execute=_set_attachment_company,
+        window=WINDOW_REVERSIBLE,
+        permission=OWN_RECORD,
+        label="Set company",
+    )
+)
+
+register(
+    FormAction(
+        key="attachment_directory.set_company",
+        entity_types=("attachment_directory",),
+        execute=_set_directory_company,
+        window=WINDOW_REVERSIBLE,
+        permission=OWN_RECORD,
+        label="Set company",
+    )
+)
+
+
 # ----- Master data ---------------------------------------------------------------------
 
 

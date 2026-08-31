@@ -168,12 +168,21 @@ Rule:
 deferred actions, and the engine calls the service at commit. The endpoint exists for the
 popup single-row Edit fallback, for tests, and for n8n-style callers.
 
-- Registry (`app/services/form_actions.py`): `attachment.set_company` (`entity_types=("attachment",)`)
-  and `attachment_directory.set_company` (`entity_types=("attachment_directory",)`), both
-  `window="reversible"`, `execute=lambda db, payload: AttachmentCompanyService(db).apply(...)`
+- Registry (`app/services/record_actions.py`, **not** `form_actions.py` - S3 coder correction:
+  `form_actions.py` is the form-SLA undo registry (PR/SI/CX/ticket pairs with `capture`/`invert`
+  snapshots); `record_actions.py` is where `product.delete`, `order.set_status` etc already live,
+  the exact "wrap an existing service method behind a deferred action, permission checked at
+  park time" shape this needs. Same underlying `FormAction`/`register` machinery either way, just
+  the file `product.delete` is precedent for.): `attachment.set_company`
+  (`entity_types=("attachment",)`) and `attachment_directory.set_company`
+  (`entity_types=("attachment_directory",)`), both `window=WINDOW_REVERSIBLE`,
+  `execute=lambda db, payload: AttachmentCompanyService(db).apply(...)`
   with `payload = {"company_id": str | None}`; the entity id is the target. A bulk selection
   is N pending actions (one per file / folder), exactly how `product.delete` bulk works
-  (`ProductsList.tsx` -> `useDeferredBulkAction`).
+  (`ProductsList.tsx` -> `useDeferredBulkAction`). `permission=OWN_RECORD` (record_actions.py's
+  "just signed in" sentinel), matching R13's "same guard as `PUT /attachments/{id}`" - the route
+  has no permission slug of its own; `AttachmentCompanyService` separately checks the target
+  company against the actor's grants (AC-B6).
 - **Request** `BulkCompanyRequest { attachment_ids: list[str] = [], directory_ids: list[str] = [], company_id: str | None }`
   (at least one id overall; `None` = shared). **Response**
   `BulkCompanyResponse { updated_directories: int, updated_attachments: int, company_id: str | None, links_added: int, links_removed: int, certificates_updated: int }`.
@@ -333,7 +342,8 @@ Backend
   `AttachmentTypeCreate/Update/Response.is_shared`, `company` filter.
 - `app/api/v1/resources/attachments.py`: `bulk-company` route; `company` query on `/` and
   `/drive`. `app/api/v1/resources/attachment_types.py`: `is_shared`.
-- `app/services/form_actions.py`: the two `set_company` registrations (R22).
+- `app/services/record_actions.py`: the two `set_company` registrations (R22; see the S3
+  coder correction under S2 above - not `form_actions.py`).
 - `app/services/attachment_company_service.py` (new): folder expansion, ancestor pull,
   twin linker, certificate follow, one transaction.
 - `app/services/resources_service.py`: upload rule (`is_shared` -> NULL + ancestor pull),

@@ -59,10 +59,33 @@ class AttachmentDirectoryService:
         return d
 
     def create_directory(self, data: AttachmentDirectoryCreate):
-        """Create a new directory."""
+        """Create a new directory.
+
+        Multi-company (PLAN-shared-brand-attachments R20): a folder is
+        ``__company_shared__``, so the before_insert auto-stamp never runs for
+        it - this has to set ``company_id`` itself, or every new folder would
+        land NULL (shared) regardless of where it was created. A folder under
+        a shared parent is shared too (NULL company_id inherits as NULL,
+        no scope resolution needed - the parent already answered the
+        question). At ROOT there is no parent to inherit from, so this
+        resolves the write exactly as the retired auto-stamp did for every
+        other owned table: the one active company, ``DEFAULT_COMPANY_ID``
+        under an all-companies (``None``) scope, or a 400 under an ambiguous
+        one (``UNSET`` / several companies) - a root folder is never silently
+        shared by a guess.
+        """
+        from app.services.company_scope import resolve_write_company_id
+
+        parent = None
         if data.parent_id:
-            self.get_directory(data.parent_id, include_deleted=False)
-        d = AttachmentDirectory(**data.model_dump())
+            parent = self.get_directory(data.parent_id, include_deleted=False)
+        directory_dict = data.model_dump()
+        directory_dict["company_id"] = (
+            parent.company_id
+            if parent is not None
+            else resolve_write_company_id(get_company_scope(self.db))
+        )
+        d = AttachmentDirectory(**directory_dict)
         self.db.add(d)
         self.db.commit()
         self.db.refresh(d)
@@ -76,9 +99,21 @@ class AttachmentDirectoryService:
             raise handle_conflict("Directory cannot be its own parent.")
         for k, v in payload.items():
             setattr(d, k, v)
+        if "parent_id" in payload and payload["parent_id"] and d.company_id is None:
+            self._share_ancestors_of(payload["parent_id"])
         self.db.commit()
         self.db.refresh(d)
         return d
+
+    def _share_ancestors_of(self, directory_id: Optional[str]) -> None:
+        """R19: reparenting a SHARED folder under an owned one pulls the new
+        parent's ancestor chain to shared too, so the shared folder's path
+        still resolves from every company."""
+        if not directory_id:
+            return
+        from app.services.attachment_company_service import share_ancestor_chain
+
+        share_ancestor_chain(self.db, directory_id)
 
     def move_directory(self, directory_id: str, parent_id: Optional[str], position: Optional[int]):
         """Reparent + reorder. Re-sequences sort_order on the new parent's children at 10-step intervals."""
@@ -92,6 +127,11 @@ class AttachmentDirectoryService:
             self.get_directory(parent_id, include_deleted=False)
 
         setattr(d, "parent_id", parent_id)
+
+        # PLAN-shared-brand-attachments R19: moving a SHARED folder under an
+        # owned one pulls the new parent's ancestor chain to shared too.
+        if parent_id and d.company_id is None:
+            self._share_ancestors_of(parent_id)
 
         siblings_q = self.db.query(AttachmentDirectory).filter(
             AttachmentDirectory.is_deleted == False,
@@ -481,44 +521,6 @@ def _single_active_company(scope) -> Optional[str]:
     if isinstance(scope, frozenset) and len(scope) == 1:
         return next(iter(scope))
     return None
-
-
-def _inherit_company_from_folder(
-    row: Attachment,
-    directory_id: Optional[str],
-    folder: Optional[AttachmentDirectory],
-    scope,
-) -> bool:
-    """Give a company-less attachment the company of the folder it was just filed
-    into. Returns True only when ``company_id`` actually changed.
-
-    For an attachment NULL is not neutral, it means SHARED (the read predicate is
-    ``company_id IS NULL OR company_id IN (scope)``), so every file that predates
-    the upload-side stamp below is still readable from every company even after a
-    user files it under, say, Purchasing. ``AttachmentDirectory`` is strictly
-    owned - its ``company_id`` is always set - so the folder the user picked is an
-    exact source for the missing company, no scope guessing needed.
-
-    ``folder`` may still be None while ``directory_id`` is set: a folder whose own
-    company_id is NULL is invisible under a single-company scope (owned rows read
-    as ``company_id IN (ids)``). In that one case there is nothing exact to copy,
-    so we fall back to the active scope exactly as ``create_attachment`` does -
-    single active company or nothing. The folder always wins when it has a company.
-
-    Three cases deliberately change nothing: an existing company is never
-    overwritten (a move must not re-home a file away from its own company), the
-    shared form entity types stay NULL so they remain readable everywhere (AC-G3),
-    and a move to root (no ``directory_id``) has no folder to inherit from.
-    """
-    if not directory_id or row.company_id is not None:
-        return False
-    if (row.entity_type or "").strip().lower() in _SHARED_FORM_ENTITY_TYPES:
-        return False
-    company_id = (folder.company_id if folder else None) or _single_active_company(scope)
-    if not company_id:
-        return False
-    row.company_id = company_id
-    return True
 
 
 class AttachmentService:
@@ -1794,7 +1796,23 @@ class AttachmentService:
         # Anything uploaded while exactly one company is active belongs to that
         # company, folder or not: a file dropped at the root of All files is just as
         # owned as one filed away. Only the shared form entity types keep NULL.
-        if attachment_dict.get("company_id") is None:
+        #
+        # PLAN-shared-brand-attachments R11: an upload of a TYPE flagged
+        # `is_shared` is written NULL regardless of the active company - the
+        # type decides, never the folder (AC-D2). R19: filing it into an owned
+        # folder pulls that folder's ancestor chain to shared too, so the path
+        # to it resolves from every company.
+        upload_type_is_shared = False
+        if attachment_dict.get("attachment_type_id"):
+            upload_type_is_shared = bool(
+                self.db.query(AttachmentType.is_shared)
+                .filter(AttachmentType.id == attachment_dict["attachment_type_id"])
+                .scalar()
+            )
+
+        if upload_type_is_shared:
+            attachment_dict["company_id"] = None
+        elif attachment_dict.get("company_id") is None:
             entity_type = (attachment_dict.get("entity_type") or "").strip().lower()
             if entity_type not in _SHARED_FORM_ENTITY_TYPES:
                 attachment_dict["company_id"] = _single_active_company(
@@ -1805,7 +1823,21 @@ class AttachmentService:
         self.db.add(attachment)
         self.db.commit()
         self.db.refresh(attachment)
-        
+
+        # A shared FORM attachment (complaint/PR/stock-inquiry) is NULL by the
+        # pre-existing form-sharing convention (AC-G3), not a `Set company…`
+        # decision - it must never pull a folder's ancestor chain along.
+        upload_entity_type = (attachment_dict.get("entity_type") or "").strip().lower()
+        if (
+            upload_type_is_shared
+            and directory_id
+            and upload_entity_type not in _SHARED_FORM_ENTITY_TYPES
+        ):
+            from app.services.attachment_company_service import share_ancestor_chain
+
+            share_ancestor_chain(self.db, directory_id)
+            self.db.commit()
+
         # Reload with relationship
         attachment = self.db.query(Attachment).options(
             joinedload(Attachment.attachment_type)
@@ -1835,17 +1867,10 @@ class AttachmentService:
             )
 
         # Recalculate full_directory_path when directory_id is updated
-        target_folder = None
         if "directory_id" in update_data:
             new_directory_id = update_data["directory_id"]
             dir_service = AttachmentDirectoryService(self.db)
             update_data["full_directory_path"] = dir_service.get_full_directory_path(new_directory_id)
-            if new_directory_id:
-                target_folder = (
-                    self.db.query(AttachmentDirectory)
-                    .filter(AttachmentDirectory.id == new_directory_id)
-                    .first()
-                )
 
         # Rename is DB-only and edits stored_filename (the user-facing label). original_filename
         # is immutable (it is the object-key basename - uuid-segregated key, independent of the
@@ -1854,15 +1879,22 @@ class AttachmentService:
         for key, value in update_data.items():
             setattr(attachment, key, value)
 
-        # After the caller's own fields land, so an explicit company_id still wins.
+        # PLAN-shared-brand-attachments R10: a move never re-stamps the FILE's
+        # own company - only `Set company…` (AttachmentCompanyService) does
+        # that now. R19: moving a SHARED file into an owned folder instead
+        # pulls that folder's ancestor chain to shared, so the path it now
+        # lives under still resolves from every company. A shared FORM
+        # attachment's NULL is the pre-existing form-sharing convention
+        # (AC-G3), not a `Set company…` decision, so it is excluded here too.
         changed_fields = list(update_data.keys())
-        if _inherit_company_from_folder(
-            attachment,
-            update_data.get("directory_id"),
-            target_folder,
-            get_company_scope(self.db),
+        if (
+            update_data.get("directory_id")
+            and attachment.company_id is None
+            and (attachment.entity_type or "").strip().lower() not in _SHARED_FORM_ENTITY_TYPES
         ):
-            changed_fields.append("company_id")
+            from app.services.attachment_company_service import share_ancestor_chain
+
+            share_ancestor_chain(self.db, update_data["directory_id"])
 
         self.db.commit()
         self.db.refresh(attachment)
@@ -1892,27 +1924,30 @@ class AttachmentService:
             return 0
         dir_service = AttachmentDirectoryService(self.db)
         full_path = dir_service.get_full_directory_path(directory_id) if directory_id else None
-        # One load for the whole batch: every row inherits from the same folder.
-        target_folder = (
-            self.db.query(AttachmentDirectory)
-            .filter(AttachmentDirectory.id == directory_id)
-            .first()
-            if directory_id
-            else None
-        )
-        scope = get_company_scope(self.db)
-        stamped_ids = set()
         for row in rows:
             row.directory_id = directory_id
             row.full_directory_path = full_path
-            if _inherit_company_from_folder(row, directory_id, target_folder, scope):
-                stamped_ids.add(row.id)
+
+        # PLAN-shared-brand-attachments R10/R19: a move never re-stamps a
+        # file's own company - only `Set company…` does that now. A SHARED
+        # file among the movers instead pulls the destination folder's
+        # ancestor chain to shared, once for the whole batch - EXCLUDING a
+        # shared FORM attachment, whose NULL is the pre-existing form-sharing
+        # convention (AC-G3), not a `Set company…` decision.
+        def _is_set_company_shared(row: Attachment) -> bool:
+            return row.company_id is None and (
+                (row.entity_type or "").strip().lower() not in _SHARED_FORM_ENTITY_TYPES
+            )
+
+        if directory_id and any(_is_set_company_shared(row) for row in rows):
+            from app.services.attachment_company_service import share_ancestor_chain
+
+            share_ancestor_chain(self.db, directory_id)
+
         self.db.commit()
         for row in rows:
             self.db.refresh(row)
             changed_fields = ["directory_id", "full_directory_path"]
-            if row.id in stamped_ids:
-                changed_fields.append("company_id")
             publish_embedding_event(
                 self.db,
                 source_type="attachment",
