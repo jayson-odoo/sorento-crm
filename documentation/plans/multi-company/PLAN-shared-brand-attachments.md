@@ -334,7 +334,10 @@ Two PRs so the tiny one ships first:
 
 Backend
 - alembic migration (one): `attachment_types.is_shared`; `attachment_directories.company_id`
-  nullable, default dropped; certificate identity index rebuilt. `down_revision` = the main
+  nullable, default dropped; certificate identity index rebuilt; `certificates.company_id`
+  nullable too (S4 correction: migration 312 gave it NOT NULL, missed when this plan was
+  written - `Certificate.__company_shared__` needs the same DROP NOT NULL / restore-with-
+  stamp pair `attachment_directories.company_id` gets). `down_revision` = the main
   head at branch time, id <= 32 chars, `alembic heads` = one.
 - `app/models/resources.py` (`AttachmentDirectory.__company_shared__`, `AttachmentType.is_shared`),
   `app/models/certificate.py` (`__company_shared__`).

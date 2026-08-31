@@ -7,6 +7,18 @@ head after upgrade, downgrade restores NOT NULL on
 incumbent company), drops `is_shared`, restores the old (non-coalesced)
 certificate identity index.
 
+A fourth piece landed with the S4 slice (certificate follow, R5): migration 312
+already gave `certificates.company_id` NOT NULL, which the ORM-level
+`nullable=True` never surfaced against `blank_session`'s `create_all` schema
+(hence `upgrade()`'s DROP NOT NULL on it being exercised here, same as the
+`attachment_directories` piece). Downgrade restores that NOT NULL too (after
+stamping any NULL rows to Sorento, same pattern), which makes the "two NULL
+rows collide" scenario for the OLD plain index genuinely unreachable post-
+downgrade: a NULL company_id is rejected before the index is ever consulted.
+That is a STRONGER guarantee than what the old index alone gave, so the test
+below asserts the NOT NULL rejection rather than the old duplicate-NULL
+behaviour it can no longer produce.
+
 `tests/test_alembic_revision_ids.py` already asserts id-length and
 single-head GRAPH-WIDE; this file is the one that actually EXECUTES 449's
 `upgrade()`/`downgrade()` on a scratch schema, the way
@@ -215,10 +227,93 @@ def test_downgrade_drops_is_shared_column(db):
     assert cols == 0
 
 
-def test_downgrade_restores_the_old_index_allowing_two_null_identities_again(db):
+def test_downgrade_stamps_null_certificates_with_sorento_before_restoring_not_null(db):
     _run_upgrade(db)
     scheme = f"ZZT-SCHEME-{uuid.uuid4().hex[:6]}"
     number = f"ZZT-{uuid.uuid4().hex[:8]}"
+    cert_id = str(uuid.uuid4())
+    db.execute(
+        text(
+            "INSERT INTO certificates (id, scheme, certificate_number, company_id) "
+            "VALUES (:i, :s, :n, NULL)"
+        ),
+        {"i": cert_id, "s": scheme, "n": number},
+    )
+    db.commit()
+
+    _run_downgrade(db)
+
+    stamped = db.execute(
+        text("SELECT company_id FROM certificates WHERE id = :i"), {"i": cert_id}
+    ).scalar()
+    assert str(stamped) == SORENTO, (
+        "a shared certificate must be stamped to the incumbent company BEFORE "
+        "the NOT NULL constraint comes back, or the ALTER itself would fail"
+    )
+
+    # A NULL certificate is now rejected by the restored NOT NULL BEFORE the
+    # old (non-coalesced) index is ever consulted - a certificate cannot be
+    # shared at all post-downgrade, which is the stronger, correct guarantee.
+    with pytest.raises(IntegrityError):
+        db.execute(
+            text(
+                "INSERT INTO certificates (id, scheme, certificate_number, company_id) "
+                "VALUES (:i, :s, :n, NULL)"
+            ),
+            {"i": str(uuid.uuid4()), "s": scheme, "n": number},
+        )
+    db.rollback()
+
+
+def test_downgrade_restores_the_old_index_allowing_two_distinct_company_duplicates(db):
+    """The OLD plain (non-coalesced) index only ever distinguished on the real
+    `company_id` value - it never had to reason about NULL at all before this
+    slice. Post-downgrade, two SORENTO-company rows with the same identity
+    still collide (this was always true); this is the index-shape assertion
+    the retired NULL-duplicate test conflated with the (now separately
+    enforced) NOT NULL question above."""
+    _run_upgrade(db)
+    _run_downgrade(db)
+
+    scheme = f"ZZT-SCHEME-{uuid.uuid4().hex[:6]}"
+    number = f"ZZT-{uuid.uuid4().hex[:8]}"
+    db.execute(
+        text(
+            "INSERT INTO certificates (id, scheme, certificate_number, company_id) "
+            "VALUES (:i, :s, :n, :c)"
+        ),
+        {"i": str(uuid.uuid4()), "s": scheme, "n": number, "c": SORENTO},
+    )
+    db.commit()
+
+    with pytest.raises(IntegrityError):
+        db.execute(
+            text(
+                "INSERT INTO certificates (id, scheme, certificate_number, company_id) "
+                "VALUES (:i, :s, :n, :c)"
+            ),
+            {"i": str(uuid.uuid4()), "s": scheme, "n": number, "c": SORENTO},
+        )
+    db.rollback()
+
+
+def test_downgrade_drops_the_coalesced_index_before_stamping_so_a_real_collision_surfaces_at_index_create(db):
+    """Reviewer fix round (S8): dropping the coalesced index BEFORE the
+    stamp-to-Sorento UPDATE means that UPDATE can never fail on a still-live
+    unique index. Seed a Sorento-owned certificate AND a SHARED certificate
+    with the SAME identity - legal today (NULL and Sorento coalesce to
+    different keys) - and prove the eventual duplicate surfaces at the LAST
+    step (the plain index's CREATE), not mid-UPDATE."""
+    _run_upgrade(db)
+    scheme = f"ZZT-SCHEME-{uuid.uuid4().hex[:6]}"
+    number = f"ZZT-{uuid.uuid4().hex[:8]}"
+    db.execute(
+        text(
+            "INSERT INTO certificates (id, scheme, certificate_number, company_id) "
+            "VALUES (:i, :s, :n, :c)"
+        ),
+        {"i": str(uuid.uuid4()), "s": scheme, "n": number, "c": SORENTO},
+    )
     db.execute(
         text(
             "INSERT INTO certificates (id, scheme, certificate_number, company_id) "
@@ -228,19 +323,37 @@ def test_downgrade_restores_the_old_index_allowing_two_null_identities_again(db)
     )
     db.commit()
 
-    _run_downgrade(db)
+    # The stamp-to-Sorento UPDATE inside downgrade() must not be what raises -
+    # the coalesced index is already gone by then, so it always succeeds; the
+    # genuine duplicate this creates only fails the LATER plain-index CREATE.
+    with pytest.raises(IntegrityError):
+        _run_downgrade(db)
+    db.rollback()
 
-    # The OLD plain unique index treats every NULL as distinct, so a second
-    # NULL-company row with the same identity is allowed again post-downgrade.
-    db.execute(
+
+# --------------------------------------------------------------------------- #
+# Round trip (AC-H7 / S9): nullability toggles correctly both directions
+# --------------------------------------------------------------------------- #
+
+
+def _certificates_company_id_nullable(db) -> str:
+    schema = _current_schema(db)
+    return db.execute(
         text(
-            "INSERT INTO certificates (id, scheme, certificate_number, company_id) "
-            "VALUES (:i, :s, :n, NULL)"
+            "SELECT is_nullable FROM information_schema.columns "
+            "WHERE table_name = 'certificates' AND column_name = 'company_id' "
+            "AND table_schema = :s"
         ),
-        {"i": str(uuid.uuid4()), "s": scheme, "n": number},
-    )
-    count = db.execute(
-        text("SELECT count(*) FROM certificates WHERE scheme = :s AND certificate_number = :n"),
-        {"s": scheme, "n": number},
+        {"s": schema},
     ).scalar()
-    assert count == 2
+
+
+def test_upgrade_downgrade_upgrade_round_trip_toggles_certificates_company_id_nullability(db):
+    _run_upgrade(db)
+    assert _certificates_company_id_nullable(db) == "YES"
+
+    _run_downgrade(db)
+    assert _certificates_company_id_nullable(db) == "NO"
+
+    _run_upgrade(db)
+    assert _certificates_company_id_nullable(db) == "YES"

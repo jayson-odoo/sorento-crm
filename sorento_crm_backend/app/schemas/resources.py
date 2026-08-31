@@ -32,6 +32,13 @@ class AttachmentDirectoryResponse(AttachmentDirectoryBase):
 
     id: str
     created_at: datetime
+    # Owning company (R14 / AC-E3): same __company_shared__ contract as
+    # DriveFolderItem below - NULL is a legitimate Shared folder, not a
+    # missing value. Populated for free from the ORM row wherever a route
+    # returns one directly (from_attributes); the tree endpoint stamps it
+    # explicitly since it builds nodes from raw field values, not an ORM row.
+    company_id: Optional[str] = None
+    company_name: Optional[str] = None
 
 
 class AttachmentDirectoryTreeNode(AttachmentDirectoryResponse):
@@ -301,6 +308,14 @@ class LinkedEntityRef(BaseModel):
     name: str
     description: Optional[str] = None
     link_id: Optional[str] = None  # ProductAttachment/PromotionAttachment id for unlink; forms use id as form_id
+    # Populated for linked_products / linked_certificates on a SHARED
+    # attachment (PLAN-shared-brand-attachments.md S5, UAC group G): the
+    # entity's own company and whether it is the viewer's ACTIVE company.
+    # Left at the defaults (None / None / True) for every other linked list,
+    # so a single-company attachment's payload is unchanged (AC-G3).
+    company_id: Optional[str] = None
+    company_name: Optional[str] = None
+    in_scope: bool = True
 
 
 class AttachmentResponse(AttachmentBase):
@@ -478,8 +493,14 @@ class DriveFolderItem(BaseModel):
     created_at: Optional[datetime] = None
     # Human-readable path to THIS folder's parent (shown as Location during search).
     directory_path: Optional[str] = None
+    # Owning company (R14 / AC-E3): a folder is __company_shared__ same as an
+    # attachment, so NULL is legitimate - both keys are explicit None, which
+    # the FE renders as "Shared", the same convention _stamp_company already
+    # uses for file rows.
+    company_id: Optional[str] = None
+    company_name: Optional[str] = None
 
-    @field_validator("id", "parent_id", mode="before")
+    @field_validator("id", "parent_id", "company_id", mode="before")
     @classmethod
     def _uuid_to_str(cls, v):
         if v is None:

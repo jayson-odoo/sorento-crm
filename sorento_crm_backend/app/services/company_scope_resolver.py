@@ -112,6 +112,25 @@ def _user_grant_ids(db: Session, user_id: str) -> set[str]:
     }
 
 
+def resolve_user_grant_ids(db: Session, user_id: str) -> set[str]:
+    """The companies ``user_id`` may see, superadmin/admin included.
+
+    Mirrors the ``grants`` computation inside ``_resolve_user_scope`` - a
+    superadmin/admin can switch into any company, so their grant set is every
+    company, not just what ``user_companies`` happens to list. Exposed so a
+    shared-attachment's linked-entity widening (PLAN-shared-brand-attachments.md
+    S5) can query product/certificate links across the SAME companies the
+    active-company switcher would offer this user, never more.
+    """
+    from app.services.user_service import UserPermissionService
+
+    perm = UserPermissionService(db)
+    is_super = bool(
+        perm.get_user_role_slugs(user_id) & {UserPermissionService.SUPERADMIN_ROLE_SLUG, "admin"}
+    )
+    return _all_company_ids(db) if is_super else _user_grant_ids(db, user_id)
+
+
 def _impersonation_target_id(db: Session, request: Request, real_user_id: str) -> Optional[str]:
     """Return a VALIDATED impersonation target id, or None.
 

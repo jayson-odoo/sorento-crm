@@ -1,6 +1,6 @@
-"""Shared brand attachments and folders: the three DDL pieces (PLAN-shared-brand-attachments.md S3, S6).
+"""Shared brand attachments and folders: the four DDL pieces (PLAN-shared-brand-attachments.md S3, S6).
 
-Three independent changes, bundled into one migration because they land in the
+Four independent changes, bundled into one migration because they land in the
 same PR and none has a dependency on the others:
 
 1. ``attachment_types.is_shared`` - an upload of a type flagged shared writes
@@ -17,10 +17,12 @@ same PR and none has a dependency on the others:
    ``coalesce(company_id, '00000000-0000-0000-0000-000000000000')`` so two
    NULL-company (shared) certificates with the same identity cannot coexist -
    a plain unique index treats every NULL as distinct, which would let a
-   shared certificate be re-filed indefinitely. The certificate FOLLOW logic
-   that actually produces a NULL-company certificate lands in a later slice
-   (S4); this migration only prepares the constraint so that slice needs no
-   DDL of its own.
+   shared certificate be re-filed indefinitely.
+4. ``certificates.company_id`` loses the NOT NULL migration 312 gave it -
+   ``Certificate.__company_shared__`` (S4, app/models/certificate.py) makes a
+   shared certificate a real, deliberate row (R5: the certificate follows its
+   filed attachment's company), and Postgres has to allow writing one. The
+   ORM column was already permissive for the test schema, same as piece 2.
 
 Revision ID: 449_shared_brand_attach
 Revises: 448_merge_s6b_ptag
@@ -85,12 +87,36 @@ def upgrade() -> None:
             """
         )
 
+    # --- 4. certificates.company_id -> nullable (a shared certificate) -----
+    if "company_id" in cert_columns:
+        op.execute("ALTER TABLE certificates ALTER COLUMN company_id DROP NOT NULL")
+
 
 def downgrade() -> None:
-    # --- 3. restore the plain (non-coalesced) certificate identity index --
+    # --- 3a. drop the coalesced identity index FIRST ------------------------
+    # It must be gone before the piece-4 stamp below: that UPDATE moves a
+    # shared (NULL) certificate's company_id to Sorento, and the COALESCED
+    # index treats NULL and Sorento as different keys - a certificate already
+    # sharing Sorento's identity would make the UPDATE itself collide against
+    # a still-live unique index mid-statement. Dropping it first means the
+    # UPDATE always succeeds; a genuine duplicate then surfaces cleanly at the
+    # plain index's CREATE below, not as a confusing UPDATE failure.
     cert_columns = _columns("certificates")
     if cert_columns:
         op.execute("DROP INDEX IF EXISTS uq_certificates_company_scheme_number")
+
+    # --- 4. certificates.company_id -> NOT NULL again -----------------------
+    if "company_id" in cert_columns:
+        # A certificate shared while this migration was up has NULL here;
+        # stamp it to the incumbent company first, same pattern as piece 2.
+        op.execute(
+            f"UPDATE certificates SET company_id = '{SORENTO_COMPANY_ID}' "
+            f"WHERE company_id IS NULL"
+        )
+        op.execute("ALTER TABLE certificates ALTER COLUMN company_id SET NOT NULL")
+
+    # --- 3b. restore the plain (non-coalesced) certificate identity index --
+    if cert_columns:
         op.execute(
             """
             CREATE UNIQUE INDEX IF NOT EXISTS uq_certificates_company_scheme_number

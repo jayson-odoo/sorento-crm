@@ -255,3 +255,13 @@ def test_ac_c7_drive_under_mocha_scope_shows_the_shared_subtree_not_the_sibling(
     assert "ZZT-mid.pdf" in names
     assert "ZZT-leaf.pdf" in names
     assert "ZZT-x.pdf" not in names, "the Sorento-only sibling must not leak into Mocha scope"
+
+    # R14 / AC-E3, through response_model: both folder rows are shared by this
+    # scenario (mid was shared directly, root pulled up as its ancestor, leaf
+    # pulled down as its descendant) - every folder row must read company_id
+    # AND company_name as null/null, not silently drop the fields.
+    folder_rows = {row["id"]: row for row in body["data"] if row.get("kind") == "folder"}
+    assert set(folder_rows) == {mid.id, leaf.id}
+    for row in folder_rows.values():
+        assert row["company_id"] is None
+        assert row["company_name"] is None

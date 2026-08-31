@@ -1,5 +1,5 @@
 """`Set company…` on attachments and folders - the twin linker (PLAN-shared-brand-
-attachments.md S2, S3; UAC groups B, C).
+attachments.md S2, S3, S6; UAC groups B, C, H).
 
 One service, two entry points (R4): `POST /resource-management/attachments/
 bulk-company` (the popup single-row Edit fallback, tests, n8n-style callers) and
@@ -19,14 +19,18 @@ Resolution order inside one call, all in ONE transaction (R6, R21):
 4. The TWIN LINKER: over the whole collected file set, one `INSERT … SELECT`
    and one `DELETE`, never a per-file loop (R26 / AC-B13) - so a folder with
    thousands of files still commits inside one execute.
-5. Certificate follow (S6) is NOT wired here yet - it lands in a later slice;
-   `certificates_updated` is always 0 in this slice.
+5. Certificate follow (S6, R5): every collected file that is a certificate's
+   CURRENT filed revision moves that certificate's `company_id`, rewrites its
+   coverage with the same expand/shrink rule, and re-projects
+   `product_attachments` (`_apply_certificate_follow`). One JOIN finds every
+   touched certificate, same reasoning as the twin linker (R26 / AC-B13).
 
 Folder/file lookups that must see ACROSS companies (the descendant walk, the
-ancestor pull, the twin linker's target-company products) run with the session
-scope set to `None` (all companies) in a `try/finally`, restoring the caller's
-scope on exit - ORM only, never `text()`, so the audit/scope machinery still
-sees every statement (R6 note in the plan).
+ancestor pull, the twin linker's target-company products, the certificate
+follow hook) run with the session scope set to `None` (all companies) via
+`company_scope(db, None)`, restoring the caller's scope on exit - ORM only,
+never `text()`, so the audit/scope machinery still sees every statement (R6
+note in the plan).
 """
 from __future__ import annotations
 
@@ -41,7 +45,12 @@ from app.models.company import Company
 from app.models.product import Product, ProductAttachment
 from app.models.resources import Attachment, AttachmentDirectory
 from app.services.attachment_field_link_service import AttachmentFieldLinkService
-from app.services.error_handler import AppException, handle_not_found, handle_validation_error
+from app.services.error_handler import (
+    AppException,
+    handle_conflict,
+    handle_not_found,
+    handle_validation_error,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +102,9 @@ class AttachmentCompanyService:
             links_added, links_removed = self._sync_product_links(
                 files, company_id, actor_id
             )
+            certificates_updated = self._apply_certificate_follow(
+                list(files.keys()), company_id, actor_id
+            )
 
             self.db.commit()
 
@@ -102,8 +114,7 @@ class AttachmentCompanyService:
             "company_id": company_id,
             "links_added": links_added,
             "links_removed": links_removed,
-            # Certificate follow (S6) is wired in a later slice.
-            "certificates_updated": 0,
+            "certificates_updated": certificates_updated,
         }
 
     # ------------------------------------------------------------------
@@ -343,6 +354,227 @@ class AttachmentCompanyService:
         )
         removed = self.db.execute(delete_stmt).fetchall()
         return len(removed)
+
+    # ------------------------------------------------------------------
+    # 5. Certificate follow (S6, R5) - a filed certificate's revision
+    # attachment carries the company decision with it.
+    # ------------------------------------------------------------------
+    def _apply_certificate_follow(
+        self, file_ids: list[str], company_id: Optional[str], actor_id: Optional[str]
+    ) -> int:
+        """Every collected file that is the CURRENT filed revision of a
+        certificate takes that certificate with it: ``certificate.company_id``
+        moves to the same target, coverage is rewritten with the SAME
+        expand/shrink/move rule the twin linker uses (over product codes), and
+        ``reconcile_certificate`` re-projects ``product_attachments`` so it
+        never drifts from coverage. A superseded revision's certificate is
+        left alone - only the live document decides.
+
+        Runs inside the caller's ``company_scope(db, None)`` (set by
+        ``apply()``), so every company's rows are visible while this executes.
+
+        ONE query finds every touched certificate - a per-file
+        ``find_by_revision_attachment`` loop would be an N+1 exactly like the
+        twin linker was built to avoid (R26 / AC-B13); the same
+        current-revision rule that method uses (``current_revision_id`` when
+        set, else the ``is_current`` flag) is expressed directly in the JOIN.
+        The ``current_revision_id IS NULL`` branch is the SAME dangling-
+        pointer fallback ``get_current_revision`` falls back to: the FK is
+        ``ondelete="SET NULL"``, so a certificate whose pointed-to revision
+        row was deleted out from under it reads ``current_revision_id`` as
+        NULL even though a revision with ``is_current = true`` still exists.
+        """
+        if not file_ids:
+            return 0
+        from sqlalchemy import and_, or_
+
+        from app.models.certificate import Certificate, CertificateRevision
+        from app.services.certificate_service import CertificateService
+
+        cert_service = CertificateService(self.db)
+        targets = (
+            [r[0] for r in self.db.query(Company.id).all()]
+            if company_id is None
+            else [company_id]
+        )
+
+        rows = (
+            self.db.query(Certificate)
+            .join(CertificateRevision, CertificateRevision.certificate_id == Certificate.id)
+            .filter(
+                CertificateRevision.attachment_id.in_(file_ids),
+                or_(
+                    Certificate.current_revision_id == CertificateRevision.id,
+                    and_(
+                        Certificate.current_revision_id.is_(None),
+                        CertificateRevision.is_current.is_(True),
+                    ),
+                ),
+            )
+            .all()
+        )
+        touched = {str(c.id): c for c in rows}
+        self._assert_no_identity_collision(touched.values(), company_id)
+
+        for certificate in touched.values():
+            certificate.company_id = company_id
+            self._rewrite_certificate_coverage(cert_service, certificate, targets, actor_id)
+
+        return len(touched)
+
+    def _assert_no_identity_collision(self, certificates, company_id) -> None:
+        """Two DIFFERENT certificates landing on the same target `company_id`
+        must not collide on identity (`uq_certificates_company_scheme_number`)
+        - a raw `IntegrityError` surfacing at commit is a 500 with no
+        explanation; this catches it early and names which identity clashed.
+
+        Two shapes, both checked:
+        1. Both certificates are touched by THIS action (loop below).
+        2. One is touched here; the OTHER already sits at the target company
+           from an EARLIER action - e.g. Sorento's copy of identity X was
+           shared yesterday (company_id NULL), and today's action shares
+           Mocha's copy of the SAME identity X. `touched` alone never sees
+           yesterday's row, so this needs its own probe against `certificates`
+           for the same identities, excluding whatever THIS action already
+           touched.
+        """
+        from app.models.certificate import Certificate
+        from app.services.certificate_service import CertificateService, normalize_identity
+
+        certificates = list(certificates)
+        touched_ids = {str(c.id) for c in certificates}
+        seen: dict[str, object] = {}
+        for certificate in certificates:
+            key = normalize_identity(certificate.scheme, certificate.certificate_number)
+            if not key:
+                continue
+            other = seen.get(key)
+            if other is not None and str(other.id) != str(certificate.id):
+                label = f"{certificate.scheme} {certificate.certificate_number}".strip()
+                raise handle_conflict(
+                    f"{label} names the same certificate identity as another "
+                    "certificate in this action - they cannot both move to the "
+                    "same company."
+                )
+            seen[key] = certificate
+
+        if not seen:
+            return
+
+        identity_expr = CertificateService._identity_expression()
+        company_filter = (
+            Certificate.company_id.is_(None)
+            if company_id is None
+            else Certificate.company_id == company_id
+        )
+        existing = (
+            self.db.query(Certificate.id, Certificate.scheme, Certificate.certificate_number)
+            .filter(company_filter)
+            .filter(identity_expr.in_(list(seen.keys())))
+            .filter(Certificate.id.notin_(touched_ids))
+            .all()
+        )
+        if existing:
+            row = existing[0]
+            label = f"{row.scheme} {row.certificate_number}".strip()
+            raise handle_conflict(
+                f"{label} already exists at the target company - an earlier "
+                "action already moved a different certificate onto the same "
+                "identity."
+            )
+
+    def _rewrite_certificate_coverage(
+        self, cert_service, certificate, targets: list[str], actor_id: Optional[str]
+    ) -> None:
+        """Coverage follows the same expand/shrink/move rule as the twin
+        linker, over product CODES rather than a caller-supplied set: every
+        currently-covered product's code is looked up, then coverage is
+        replaced with every product (in ``targets``) sharing one of those
+        codes. Sharing (``targets`` = every company) adds the twin; moving to
+        one company (``targets`` = ``[company_id]``) drops the others.
+
+        Written directly against ``certificate_products`` rather than through
+        ``CertificateService.set_coverage`` (which takes ONE ``source`` for
+        the whole call): a twin row copies ``source`` AND ``created_by`` from
+        the EXISTING row for the same product code, never defaulting to
+        manual - an AI-extracted certificate's twin coverage must not read as
+        human-confirmed just because it arrived via a company share.
+        """
+        import uuid
+
+        from app.models.certificate import CERTIFICATE_SOURCE_MANUAL, CertificateProduct
+
+        existing_rows = (
+            self.db.query(CertificateProduct)
+            .filter(CertificateProduct.certificate_id == certificate.id)
+            # Deterministic per-code representative below (setdefault keeps
+            # the FIRST row seen) needs a stable row order - oldest first,
+            # ties broken by id, never physical/scan order.
+            .order_by(CertificateProduct.created_at, CertificateProduct.id)
+            .all()
+        )
+        if not existing_rows:
+            return
+
+        existing_by_product = {str(r.product_id): r for r in existing_rows}
+        products = {
+            str(p.id): p
+            for p in self.db.query(Product)
+            .filter(Product.id.in_(existing_by_product.keys()))
+            .all()
+        }
+        # One representative existing row per product code - the source every
+        # twin row for that code inherits from. Deterministic: the oldest row
+        # (lowest created_at, then id) for that code, per the ORDER BY above.
+        representative_by_code: dict[str, CertificateProduct] = {}
+        codes: set[str] = set()
+        for pid, row in existing_by_product.items():
+            product = products.get(pid)
+            code = product.product_code if product is not None else None
+            if not code:
+                continue
+            codes.add(code)
+            representative_by_code.setdefault(code, row)
+
+        target_products = (
+            self.db.query(Product)
+            .filter(Product.product_code.in_(codes), Product.company_id.in_(targets))
+            .all()
+            if codes
+            else []
+        )
+        wanted_ids = {str(p.id) for p in target_products}
+
+        for pid, row in existing_by_product.items():
+            if pid not in wanted_ids:
+                self.db.delete(row)
+
+        for product in target_products:
+            pid = str(product.id)
+            if pid in existing_by_product:
+                continue
+            representative = representative_by_code.get(product.product_code)
+            self.db.add(
+                CertificateProduct(
+                    id=str(uuid.uuid4()),
+                    certificate_id=certificate.id,
+                    product_id=pid,
+                    source=(
+                        representative.source
+                        if representative is not None
+                        else CERTIFICATE_SOURCE_MANUAL
+                    ),
+                    created_by=(
+                        representative.created_by
+                        if representative is not None
+                        else actor_id
+                    ),
+                )
+            )
+
+        self.db.flush()
+        cert_service.reconcile_certificate(certificate)
+        cert_service.refresh_review_state(certificate)
 
 
 # --------------------------------------------------------------------------------------
