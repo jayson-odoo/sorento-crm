@@ -896,8 +896,19 @@ def apply_rules(
     product=None,
     category=None,
     max_values: dict | None = None,
+    explain_key: str | None = None,
 ) -> dict:
     """What each key reads, and what else its own list had to say about it.
+
+    `explain_key`, when given, makes the found entry for THAT ONE key carry
+    `explain` - one `{index, value, evidence}` per row of its list, in order (index
+    0-based, aligned to `rules[index]`), with `value`/`evidence` null where the row
+    does not fire - and `explain_winner_index`, the row that actually won. Try-it
+    (AC-B.1) is this and nothing else: the
+    same loop below, run once with a draft list substituted for one key, reading every
+    row instead of stopping at the first match. It changes nothing for a caller that
+    does not pass it - every added branch below is `and not is_explain`, so a normal
+    derive/derive_all run takes the same first-match path it always has.
 
     `{spec_key: {value, evidence, origin, column, text, flags}}`. `column` and `text` are
     the readings a `from_field column:` row and the first text row made, kept whether or
@@ -932,6 +943,7 @@ def apply_rules(
     for key in ordered:
         rules = rules_by_key.get(key) or []
         default_scope = _DEFAULT_SCOPE_BY_KEY.get(key, "any")
+        is_explain = explain_key is not None and key == explain_key
         read: dict = {
             "value": None,
             "evidence": "",
@@ -942,7 +954,8 @@ def apply_rules(
         }
         # Only a key with a column row can disagree with its column, and only that case
         # needs the whole list read after a winner is found. Everything else stops at
-        # the first match, as it always has.
+        # the first match, as it always has. Try-it (`is_explain`) is the other case
+        # that needs every row read, and it needs it for every rule kind.
         wants_conflict = any(
             str(rule.get("match")) == "from_field"
             and str(rule.get("pattern") or "").startswith("column:")
@@ -952,8 +965,19 @@ def apply_rules(
         # Gold + Matt Black" - both true, and a customer asking for either is right.
         collected: list = []
         evidences: list[str] = []
+        explain_rows: list[dict] = []
+        explain_winner_index: int | None = None
 
-        for rule in rules:
+        # 0-based: this `index` aligns to `rules[index]`, which is how the frontend's
+        # `SpecRuleEditor` maps a read back onto its row (`reads[index]`). Unrelated to
+        # `_validate_rules`'s 1-based "Rule N" wording, which names a row in an error
+        # sentence rather than indexing into an array.
+        for index, rule in enumerate(rules):
+            explain_row = None
+            if is_explain:
+                explain_row = {"index": index, "value": None, "evidence": None}
+                explain_rows.append(explain_row)
+
             kind = str(rule.get("match") or "contains").lower()
             if not _gate_passes(rule, values):
                 continue
@@ -968,6 +992,9 @@ def apply_rules(
             if hit is None or hit[0] is None:
                 continue
             value, evidence, origin = hit
+            if explain_row is not None:
+                explain_row["value"] = value
+                explain_row["evidence"] = evidence
 
             cap = max_values.get(key)
             if (
@@ -985,7 +1012,9 @@ def apply_rules(
                         "stored": None,
                     }
                 )
-                break
+                if not is_explain:
+                    break
+                continue
 
             if is_column:
                 if read["column"] is None:
@@ -999,10 +1028,14 @@ def apply_rules(
                 # but a code suffix must not add a third to what the words already
                 # answered.
                 if collected and origin != read["origin"]:
-                    break
+                    if not is_explain:
+                        break
+                    continue
                 if value not in collected:
                     if not collected:
                         read["origin"] = origin
+                        if is_explain:
+                            explain_winner_index = index
                     collected.append(value)
                     evidences.append(evidence)
                 continue
@@ -1010,13 +1043,18 @@ def apply_rules(
                 read["value"] = value
                 read["evidence"] = evidence
                 read["origin"] = origin
-                if not wants_conflict:
+                if is_explain:
+                    explain_winner_index = index
+                if not wants_conflict and not is_explain:
                     break
 
         if collected:
             read["value"] = collected[0] if len(collected) == 1 else collected
             read["evidence"] = " + ".join(evidences)
-        if read["value"] is not None or read["flags"]:
+        if is_explain:
+            read["explain"] = explain_rows
+            read["explain_winner_index"] = explain_winner_index
+        if read["value"] is not None or read["flags"] or is_explain:
             found[key] = read
             if read["value"] is not None:
                 values[key] = read["value"]
@@ -1261,6 +1299,71 @@ def derive(
     _apply_scope(out, scopes_by_key)
 
     return out
+
+
+def try_read(
+    spec_key: str,
+    rules: list[dict],
+    *,
+    product: Product | None = None,
+    category: ProductCategory | None = None,
+    text: str | None = None,
+    rules_by_key: dict[str, list[dict]] | None = None,
+    scopes_by_key: dict[str, dict] | None = None,
+    max_values: dict[str, float] | None = None,
+) -> dict:
+    """What a DRAFT rule list (unsaved) would read for one key, row by row (AC-B.1).
+
+    The one thing `derive()` and `propose_from_text()` do not offer: they report the
+    winner, not every row that was tried. This calls the same `apply_rules` they call,
+    with `rules_by_key[spec_key]` swapped for the draft and `explain_key=spec_key`, so
+    every other key still reads with its OWN configured rules - a size row gated on
+    `shape` still needs `shape` derived first, draft or not.
+
+    Exactly one of `product`/`text` is expected: a product reads its own description,
+    code and fields; pasted text has none of those, so a `from_field` or `name_head`
+    row reads nothing from it - it plays the same role a flyer card does in
+    `propose_from_text`, not the product's own description.
+
+    Returns `{"reads": [{"index", "value", "evidence"}, ...], "winner_index": int | None}`.
+    """
+    if rules_by_key is None:
+        rules_by_key = dict(shipped_rules())
+    else:
+        rules_by_key = dict(rules_by_key)
+    rules_by_key[spec_key] = rules
+    if scopes_by_key is None:
+        scopes_by_key = shipped_scopes()
+    if max_values is None:
+        max_values = shipped_max_values()
+
+    if product is not None:
+        description = (product.description or "").upper()
+        code = (product.product_code or "").upper()
+        texts = {
+            "description": description,
+            "flyer": "",
+            "class_tail": class_text(product.description or "", code),
+            "size_text": _TRAP_LENGTH_RE.sub(" ", description),
+        }
+    else:
+        code = ""
+        texts = {"description": "", "flyer": (text or "").upper(), "class_tail": "", "size_text": ""}
+
+    fired = apply_rules(
+        rules_by_key,
+        texts,
+        code,
+        product=product,
+        category=category,
+        max_values=max_values,
+        explain_key=spec_key,
+    )
+    read = fired.get(spec_key) or {}
+    return {
+        "reads": read.get("explain") or [],
+        "winner_index": read.get("explain_winner_index"),
+    }
 
 
 def _apply_scope(out: "_Derivation", applies_when: dict[str, dict]) -> None:

@@ -32,7 +32,7 @@ from app.dependencies import (
     require_permission_with_api_key,
 )
 from app.models.product_spec import ProductSpecRegistry, ProductSpecSearchPolicy
-from app.services import product_spec_rederive
+from app.services import product_spec_preview, product_spec_rederive
 from app.services.error_handler import handle_internal_error, handle_not_found
 from app.services.product_spec_registry import (
     SEARCH_POLICY_SEED,
@@ -746,6 +746,162 @@ async def products_carrying_spec(
             for spec, product in rows
         ],
     }
+
+
+class SpecTryRequest(BaseModel):
+    """One rule list, tried against a real product or a paste (AC-B.1).
+
+    Exactly one of `productId`/`text` - a request naming both or neither is refused,
+    because there is no way to tell which one the rows should read.
+    """
+
+    productId: Optional[str] = None
+    text: Optional[str] = None
+    rules: list[dict] = Field(default_factory=list)
+
+
+class SpecPreviewRequest(BaseModel):
+    """The draft list a catalogue-wide preview runs against (AC-B.2)."""
+
+    rules: list[dict] = Field(default_factory=list)
+
+
+def _rule_allowed_values(row) -> list[str]:
+    """Suppressed values included, same as the PATCH: a rule pointed at a value this
+    business took away must not be refused as unknown, or removing the value would
+    also silently break the rule that used to read it."""
+    return [*merged_allowed_values(row), *[str(v) for v in (row.suppressed_values or [])]]
+
+
+@router.post("/{spec_key}/try")
+async def try_spec_key(
+    spec_key: str,
+    payload: SpecTryRequest = Body(...),
+    current_user: dict = Depends(require_permission_with_api_key("master_data.spec_registry.view")),
+    db: Session = Depends(get_db),
+):
+    """What the DRAFT rules would read from one real product, row by row (AC-B.1).
+
+    Unsaved: the rules travel in the request body and are never stored. Every OTHER
+    key still reads with its own configured rules, because a row on this key can be
+    gated on one of them (`shape`, for the round/square rows) and that gate has to be
+    answered for real, draft or not.
+    """
+    try:
+        from app.models.product import Product, ProductCategory
+        from app.services.product_spec_derivation import (
+            configured_max_values,
+            configured_rules,
+            configured_scopes,
+            try_read,
+        )
+
+        row = db.query(ProductSpecRegistry).filter_by(spec_key=spec_key).first()
+        if row is None:
+            raise handle_not_found("Spec key", spec_key)
+
+        has_product = bool((payload.productId or "").strip())
+        has_text = bool((payload.text or "").strip())
+        if has_product == has_text:
+            raise _reject(
+                "Try it on either a product or pasted text, not both and not neither.",
+                "spec_registry_try_ambiguous_source",
+            )
+
+        cleaned = _validate_rules(
+            payload.rules or [],
+            allowed_values=_rule_allowed_values(row),
+            data_type=row.data_type,
+        )
+
+        rules_by_key = configured_rules(db)
+        scopes_by_key = configured_scopes(db)
+        max_values = configured_max_values(db)
+
+        if has_product:
+            found = (
+                db.query(Product, ProductCategory)
+                .outerjoin(ProductCategory, ProductCategory.id == Product.category_id)
+                .filter(Product.id == payload.productId)
+                .first()
+            )
+            if found is None:
+                raise handle_not_found("Product", payload.productId)
+            product, category = found
+            result = try_read(
+                spec_key,
+                cleaned,
+                product=product,
+                category=category,
+                rules_by_key=rules_by_key,
+                scopes_by_key=scopes_by_key,
+                max_values=max_values,
+            )
+            description = product.description or product.product_name or ""
+        else:
+            result = try_read(
+                spec_key,
+                cleaned,
+                text=payload.text,
+                rules_by_key=rules_by_key,
+                scopes_by_key=scopes_by_key,
+                max_values=max_values,
+            )
+            description = payload.text or ""
+
+        return {
+            "description": description,
+            "reads": result["reads"],
+            "winner_index": result["winner_index"],
+        }
+    except Exception as e:
+        if type(e).__name__ in {"AppException", "HTTPException"}:
+            raise
+        raise handle_internal_error(str(e))
+
+
+@router.post("/{spec_key}/preview")
+async def preview_spec_key(
+    spec_key: str,
+    payload: SpecPreviewRequest = Body(...),
+    current_user: dict = Depends(require_permission_with_api_key("master_data.spec_registry.edit")),
+    db: Session = Depends(get_db),
+):
+    """Enqueue a catalogue-wide comparison of the draft rules against what is stored
+    (AC-B.2). Same in-process background-thread mechanism `reread-catalogue` already
+    runs on - a module-level job dict polled by `GET .../preview/{job_id}` - because
+    that is what it already proved out and a preview needs nothing more from it: no
+    new table, no queue, no worker restart.
+    """
+    try:
+        row = db.query(ProductSpecRegistry).filter_by(spec_key=spec_key).first()
+        if row is None:
+            raise handle_not_found("Spec key", spec_key)
+
+        cleaned = _validate_rules(
+            payload.rules or [],
+            allowed_values=_rule_allowed_values(row),
+            data_type=row.data_type,
+        )
+        job_id = product_spec_preview.start(spec_key, cleaned)
+        return {"jobId": job_id}
+    except Exception as e:
+        if type(e).__name__ in {"AppException", "HTTPException"}:
+            raise
+        raise handle_internal_error(str(e))
+
+
+@router.get("/{spec_key}/preview/{job_id}")
+async def get_spec_key_preview(
+    spec_key: str,
+    job_id: str,
+    current_user: dict = Depends(require_permission_with_api_key("master_data.spec_registry.view")),
+):
+    """`{"status": "pending"}`, the four counts and a sample once `done`, or `failed`."""
+    state = product_spec_preview.get(job_id)
+    if state is None:
+        raise handle_not_found("Preview job", job_id)
+    return state
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
