@@ -1,7 +1,7 @@
 # PLAN - Spec registry: every reader is a rule, rules read as sentences, try it on a real product
 
-**Status:** Approved 31 Aug 2026, pre-code. UAC: `spec-rules-readable-acceptance-criteria.md`.
-**Issue:** #425 (expanded). **Lane:** new worktree `spec-rules-readable` on :3090 after the
+**Status:** In progress 31 Aug 2026. S1 (#432) FE mock done 145e8a3fa; S2 (#433) engine done 096c81a76, golden parity 0 diffs over 2,000 codes, migration `450_spec_rules_readable`; S3 (#434) next. AC-A.1 amended to the measured order (see UAC). UAC: `spec-rules-readable-acceptance-criteria.md`.
+**Issue:** #425 (expanded). **Lane:** worktree `spec-rules-readable`, FE :3110 / BE :8110 (captain 31 Aug), after the
 flyer lanes finish; branch `feat/spec-rules-readable` from `origin/main`.
 **Queue:** flyer #422 -> family #428 -> value labels #423 -> THIS.
 

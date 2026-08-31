@@ -34,17 +34,26 @@ Decisions per rule: which sentence, its blanks, its position. Try-it and preview
 ## Group A - The engine has no hidden phase (S2)
 
 ### AC-A.1 [BE] Every hard-wired reader is a shipped rule row
-`shipped_rules()` returns, in this order, on these keys:
+`shipped_rules()` returns, in this order, on these keys (order as MEASURED for AC-A.2 parity,
+amended 31 Aug after S2; the pre-code draft had class/brand the other way round):
 - `dim_length` / `dim_width` / `dim_height`: `from_field column:dimensions_*`, then
-  `size_triple` capture 1/2/3 (applies when `shape` is not round/square), then for
-  `dim_length` only `number_before MM`.
-- `thickness`: `size_triple` capture 4.
-- `diameter`: `size_triple` capture 1 (applies when `shape` in round/square);
-  `dim_height` gets a second `size_triple` capture 2 row under the same condition.
-- `class`: `from_field category`, then `name_head` (the pre-bracket / pre-WITH text).
-- `brand`: `from_field brand`.
-Each row carries `builder` (its sentence form) and, where it is text-based, the compiled
-`pattern`. A test enumerates the list and pins it.
+  `size_triple` capture 1/2/3 (applies unless `shape` is round/square), then for
+  `dim_length` only the lone-size PATTERN row (`_SINGLE_DIM_RE`, 2-4 digits before MM, read
+  from `size_text` = description with the trap span blanked). It is a pattern row, not the
+  `number_before MM` sentence: that sentence compiles to `(\d+(?:\.\d+)?)` and reads
+  `CABANA GLASS SHELF 8MM` as an 8 mm long shelf (3 live codes).
+- `thickness`: `size_triple` capture 4 unless round/square; capture 3 when it is.
+- `diameter`: `size_triple` capture 1 when `shape` in round/square; `depth` (not
+  `dim_height`) gets `size_triple` capture 2 under the same condition, because that is what
+  the engine did.
+- `class`: the shipped `ends_with` noun rows, then `name_head` (an engine kind: class text +
+  the noun table, which no single regex expresses), then `from_field category` LAST. A
+  category row on top would re-class 20,697 of 23,063 live products.
+- `brand`: `from_field brand` as the only row, last (a text rule used to overwrite the field).
+Each row carries `builder` where a sentence exists and the compiled `pattern` where it is
+text-based. A test enumerates the list and pins it. The code-rule phase is gone: list order
+is the only order, and migration 450 moves stored code rows below their key's text rows
+(behaviour-identical under the old engine; downgrade does not undo the move).
 
 ### AC-A.2 [BE] Golden parity
 `derive_all` over the derivation test fixtures and over a 2,000-product sample of the
