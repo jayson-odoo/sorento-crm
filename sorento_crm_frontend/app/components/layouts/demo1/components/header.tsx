@@ -92,7 +92,7 @@ export function Header() {
                 shouldScaleBackground={false}
               >
                 <DrawerTrigger asChild>
-                  <Button variant="ghost" mode="icon">
+                  <Button variant="ghost" mode="icon" aria-label="Toggle sidebar">
                     <Menu className="text-muted-foreground/70" />
                   </Button>
                 </DrawerTrigger>
@@ -151,6 +151,7 @@ export function Header() {
                     variant="ghost"
                     mode="icon"
                     shape="circle"
+                    aria-label="Notifications"
                     className="size-9 hover:bg-primary/10 hover:[&_svg]:text-primary"
                   >
                     <Bell className="size-4.5!" />
@@ -164,6 +165,7 @@ export function Header() {
                       variant="ghost"
                       mode="icon"
                       shape="circle"
+                      aria-label="Switch layout"
                       className="size-9 hover:bg-primary/10 hover:[&_svg]:text-primary"
                     >
                       <LayoutGrid className="size-4.5!" />

@@ -617,6 +617,7 @@ export function PurchaseRequestDocumentEditCard({
                         className="h-8 w-8"
                         onClick={() => remove(index)}
                         disabled={fields.length <= 1}
+                        aria-label="Delete line"
                       >
                         <Trash2 className="size-4 text-destructive" />
                       </Button>

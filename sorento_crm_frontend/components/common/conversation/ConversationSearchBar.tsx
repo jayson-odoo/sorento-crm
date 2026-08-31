@@ -41,7 +41,7 @@ export default function ConversationSearchBar({
           aria-label="Search messages"
           value={controller.query}
           placeholder="Search messages"
-          className="min-w-0 flex-1 bg-transparent text-sm text-zinc-900 outline-none placeholder:text-zinc-500 dark:text-zinc-100"
+          className="min-w-0 flex-1 bg-transparent text-sm text-zinc-900 outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm placeholder:text-zinc-500 dark:text-zinc-100"
           onChange={(e) => controller.setQuery(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Escape') {

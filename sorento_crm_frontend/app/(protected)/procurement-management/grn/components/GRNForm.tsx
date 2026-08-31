@@ -570,6 +570,7 @@ export default function GRNForm({ grnId, onSuccess }: GRNFormProps) {
                       onClick={() => handleRemoveSingle(index)}
                       className="text-destructive"
                       disabled={serverApproved}
+                      aria-label="Delete line"
                     >
                       <Trash2 className="size-4" />
                     </Button>

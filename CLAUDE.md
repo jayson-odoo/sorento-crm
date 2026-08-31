@@ -146,9 +146,12 @@ contract.** Summary only, so the two cannot drift:
 - List = DataGrid + search/filters + Add. Create/edit = **modal by default**; dedicated page only
   for complex/multi-tab/file-centric flows. View = `/{module}/{id}` detail page rendering **every**
   section, with an explicit empty state + next-step CTA.
-- **Delete = hard delete + confirmation dialog** (`AlertDialog` / `ConfirmDeleteDialog`, never
-  `confirm()`). Confirm before every destructive OR detach action, Unlink included. A soft-delete
-  endpoint is called Archive, never "delete".
+- **Delete = hard delete, no confirmation dialog** (D7, Apple Alignment S6). A destructive or
+  detach action - Delete, Archive-as-delete, Unlink - is a server-deferred pending action: the
+  button becomes a countdown (10s hard delete / 5s reversible, both from System Settings) with a
+  Cancel, the server commits when the window lapses even if the tab is closed, and Escape does not
+  cancel it. Never `confirm()`; `ConfirmDeleteDialog` is retired - a new importer of it or of a
+  destructive `AlertDialog` is a defect. A soft-delete endpoint is called Archive, never "delete".
 - **View and Edit are the SAME layout** - same tabs in the same order, same fields in the same
   order; editing swaps a read-only value for an input in place. Read-only metadata lives in the
   page header, never in a tab body.
@@ -273,7 +276,7 @@ spawn a build "for handoff" on your own initiative.
 
 ## PR checklist
 
-`documentation/reference/PR-CHECKLIST.md` - verify CRUD pattern, delete confirmation + hard-delete semantics, empty states render, no duplication of `extractApiError` / `buildDataGridParams` / user-select helpers.
+`documentation/reference/PR-CHECKLIST.md` - verify CRUD pattern, deferred-action delete (no confirm dialog) + hard-delete semantics, empty states render, no duplication of `extractApiError` / `buildDataGridParams` / user-select helpers, and the Apple Alignment items (status pill via `Badge`, `rowHref`, `PageHeader`, line tabs, icon-button labels).
 
 ## Lessons learned
 

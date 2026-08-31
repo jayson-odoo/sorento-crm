@@ -205,6 +205,7 @@ export default function IntegrationLogsList() {
                 mode="icon"
                 variant="ghost"
                 size="sm"
+                aria-label="Retry"
                 onClick={(e) => {
                   e.stopPropagation();
                   retryMutation.mutate(row.original.id, {

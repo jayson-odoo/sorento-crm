@@ -45,7 +45,7 @@ const Demo7Layout = ({ children }: { children: ReactNode }) => {
       <div className="flex grow flex-col in-data-[sticky-header=on]:pt-(--header-height-default)">
         <Header />
 
-        <div className="grow" role="content">
+        <div className="grow">
           {!pathname.includes('/public-profile/') &&
             !pathname.includes('/user-management') &&
             !pathname.includes('/store-client') && (

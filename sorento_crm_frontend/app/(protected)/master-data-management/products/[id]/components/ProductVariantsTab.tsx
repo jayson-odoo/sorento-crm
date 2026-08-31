@@ -262,6 +262,7 @@ export default function ProductVariantsTab({
                     className="shrink-0"
                     title="Remove variant"
                     onClick={() => setChildToRemove(child)}
+                    aria-label="Remove variant"
                   >
                     <X className="size-4" />
                   </Button>

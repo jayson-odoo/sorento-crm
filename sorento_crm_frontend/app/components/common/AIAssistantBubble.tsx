@@ -463,7 +463,7 @@ export default function AIAssistantBubble() {
           ref={panelRef}
           tabIndex={-1}
           data-testid="ai-assistant-panel"
-          className="absolute bottom-0 end-3 flex flex-col overflow-hidden rounded-2xl border border-border/60 bg-gradient-to-b from-background to-muted/40 shadow-2xl backdrop-blur-sm outline-none origin-bottom-right"
+          className="absolute bottom-0 end-3 flex flex-col overflow-hidden rounded-2xl border border-border/60 bg-gradient-to-b from-background to-muted/40 shadow-2xl backdrop-blur-sm outline-none origin-bottom-right focus-visible:ring-2 focus-visible:ring-ring"
           style={{
             width: `${bubbleSize.width}px`,
             height: `${bubbleSize.height}px`,
@@ -566,7 +566,7 @@ export default function AIAssistantBubble() {
                         <button
                           type="button"
                           onClick={() => onPickConversation(c.id)}
-                          className="flex w-full flex-col items-start gap-0.5 rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-muted/60 focus:bg-muted/60 focus:outline-none"
+                          className="flex w-full flex-col items-start gap-0.5 rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-muted/60 focus:bg-muted/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                         >
                           <span className="line-clamp-1 font-medium text-foreground">
                             {c.title?.trim() || 'Untitled conversation'}
@@ -795,7 +795,13 @@ export default function AIAssistantBubble() {
                     placeholder="Ask the assistant..."
                     className="rounded-xl"
                   />
-                  <Button type="submit" size="icon" className="rounded-xl" disabled={!canSend}>
+                  <Button
+                    type="submit"
+                    size="icon"
+                    className="rounded-xl"
+                    disabled={!canSend}
+                    aria-label={isSending ? 'Sending' : 'Send message'}
+                  >
                     {isSending ? (
                       <Loader2 className="size-4 animate-spin" />
                     ) : (

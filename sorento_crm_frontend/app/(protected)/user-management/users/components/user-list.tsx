@@ -282,7 +282,7 @@ const UsersToolbar = ({
                         ]}
                       />
                     )}
-                    <Button type="button" mode="icon" variant="ghost" onClick={() => removeCondition(cond.id)}>
+                    <Button type="button" mode="icon" variant="ghost" onClick={() => removeCondition(cond.id)} aria-label="Remove filter condition">
                       <Trash2 className="size-4" />
                     </Button>
                   </div>

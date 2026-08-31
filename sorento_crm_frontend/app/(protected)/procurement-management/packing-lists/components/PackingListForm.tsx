@@ -468,7 +468,7 @@ export default function PackingListForm({
                       </FormItem>
                     )}
                   />
-                  <Button type="button" variant="ghost" size="icon" onClick={() => remove(index)} className="text-destructive">
+                  <Button type="button" variant="ghost" size="icon" onClick={() => remove(index)} className="text-destructive" aria-label="Delete line">
                     <Trash2 className="size-4" />
                   </Button>
                 </div>

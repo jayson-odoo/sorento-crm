@@ -248,7 +248,7 @@ const PermissionList = () => {
         cell: ({ row }) => (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button mode="icon" variant="ghost">
+              <Button mode="icon" variant="ghost" aria-label="More actions">
                 <Ellipsis />
               </Button>
             </DropdownMenuTrigger>

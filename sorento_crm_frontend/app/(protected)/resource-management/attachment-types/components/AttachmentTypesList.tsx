@@ -101,6 +101,7 @@ export default function AttachmentTypesList() {
                 mode="icon"
                 variant="ghost"
                 size="sm"
+                aria-label="Edit"
                 onClick={(e) => {
                   e.stopPropagation();
                   setSelectedTypeId(type.id);
@@ -113,6 +114,7 @@ export default function AttachmentTypesList() {
                 mode="icon"
                 variant="ghost"
                 size="sm"
+                aria-label="Delete attachment type"
                 onClick={(e) => {
                   e.stopPropagation();
                   setSelectedTypeForDelete(type);

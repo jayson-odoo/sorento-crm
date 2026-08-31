@@ -204,7 +204,7 @@ export default function EmailOutboxList() {
                 variant="ghost"
                 size="icon"
                 className="h-8 w-8"
-                title="View"
+                title="View" aria-label="View"
                 onClick={() => setDetailId(r.id)}
               >
                 <Eye className="size-4" />
@@ -213,7 +213,7 @@ export default function EmailOutboxList() {
                 variant="ghost"
                 size="icon"
                 className="h-8 w-8"
-                title="Retry"
+                title="Retry" aria-label="Retry"
                 disabled={!canRetry || retryMut.isPending}
                 onClick={() => retryMut.mutate(r.id)}
               >
@@ -223,7 +223,7 @@ export default function EmailOutboxList() {
                 variant="ghost"
                 size="icon"
                 className="h-8 w-8"
-                title="Cancel"
+                title="Cancel" aria-label="Cancel"
                 disabled={!canCancel}
                 onClick={() => setCancelRow(r)}
               >

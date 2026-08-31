@@ -9,7 +9,7 @@ export function Content({ children }: { children: ReactNode }) {
   const mobile = useIsMobile();
 
   return (
-    <div className="grow content pt-5" role="content">
+    <div className="grow content pt-5">
       {mobile && (
         <Container>
           <Breadcrumb />

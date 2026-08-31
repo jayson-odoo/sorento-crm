@@ -269,7 +269,7 @@ export default function TeamTree({
               </Button>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button className="size-8" mode="icon" variant="ghost" size="icon">
+                  <Button className="size-8" mode="icon" variant="ghost" size="icon" aria-label="More actions">
                     <Ellipsis />
                   </Button>
                 </DropdownMenuTrigger>

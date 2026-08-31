@@ -42,7 +42,7 @@ export function Demo8Layout({ children }: { children: ReactNode }) {
 
           <div className="flex flex-col grow rounded-xl bg-background border border-input lg:ms-(--sidebar-width) mt-0 m-4 lg:m-5">
             <div className="flex flex-col grow kt-scrollable-y-auto lg:[scrollbar-width:auto] pt-5">
-              <main className="grow" role="content">
+              <main className="grow">
                 {!pathname.includes('/user-management') && (
                   <Toolbar>
                     <ToolbarHeading />

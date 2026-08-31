@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { Check, Copy, TriangleAlert } from 'lucide-react';
+import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -19,10 +20,13 @@ import type { IssuedKey } from '../types/integration.types';
  * outside the caller's own configuration - the server stores a hash and cannot
  * return it again.
  *
- * The dialog therefore refuses to be dismissed casually: no click-outside, no
- * Escape. Losing the key means rotating again, which for a live integration
- * means editing every place it is configured. Making that a one-stray-click
- * mistake would be a poor trade for a slightly lighter dialog.
+ * The dialog therefore refuses to be dismissed casually before the key is
+ * copied: no click-outside, no Escape. Losing the key means rotating again,
+ * which for a live integration means editing every place it is configured.
+ * Making that a one-stray-click mistake would be a poor trade for a slightly
+ * lighter dialog. Once the key is copied (`acknowledged`), both guards stand
+ * down - Escape and click-outside close it like any other dialog, so the
+ * gate never becomes a permanent keyboard trap (S9-02).
  */
 export function IssuedKeyDialog({
   issued,
@@ -37,10 +41,18 @@ export function IssuedKeyDialog({
   if (!issued) return null;
 
   const copy = async () => {
-    await navigator.clipboard.writeText(issued.key);
-    setCopied(true);
-    setAcknowledged(true);
-    setTimeout(() => setCopied(false), 2000);
+    try {
+      await navigator.clipboard.writeText(issued.key);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Clipboard write can fail (permission denied, insecure context, etc).
+      // The key is still visible and selectable in the dialog, so let the
+      // user copy it by hand instead of trapping them behind the guard.
+      toast.error('Could not copy automatically. Select the key and copy it manually.');
+    } finally {
+      setAcknowledged(true);
+    }
   };
 
   const close = () => {
@@ -53,8 +65,12 @@ export function IssuedKeyDialog({
     <Dialog open onOpenChange={(open) => !open && acknowledged && close()}>
       <DialogContent
         className="max-h-[90vh] overflow-y-auto sm:max-w-lg"
-        onPointerDownOutside={(e) => e.preventDefault()}
-        onEscapeKeyDown={(e) => e.preventDefault()}
+        onPointerDownOutside={(e) => {
+          if (!acknowledged) e.preventDefault();
+        }}
+        onEscapeKeyDown={(e) => {
+          if (!acknowledged) e.preventDefault();
+        }}
         // Hidden until the key is copied. Browser verification caught the X
         // still rendering while the guard silently swallowed its click -- a
         // control that looks live and does nothing reads as a broken app, and

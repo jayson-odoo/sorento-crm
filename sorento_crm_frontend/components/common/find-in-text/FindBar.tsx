@@ -44,7 +44,7 @@ export function FindBar({ controller }: { controller: FindController }) {
           }
         }}
         placeholder="Find"
-        className="h-6 w-36 rounded bg-transparent px-1.5 text-xs outline-none placeholder:text-muted-foreground"
+        className="h-6 w-36 rounded bg-transparent px-1.5 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring placeholder:text-muted-foreground"
         data-testid="find-input"
       />
       <span

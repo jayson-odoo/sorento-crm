@@ -1028,6 +1028,7 @@ export default function PurchaseRequestDetail({
                       setCopied(true);
                       setTimeout(() => setCopied(false), 2000);
                     }}
+                    aria-label="Copy approval link"
                   >
                     {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
                   </Button>

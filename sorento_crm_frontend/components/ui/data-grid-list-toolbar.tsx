@@ -514,6 +514,7 @@ export function DataGridListToolbar<TData extends object>({
                 title="Refresh list"
                 onClick={() => void onRefresh()}
                 disabled={isRefreshing}
+                aria-label="Refresh list"
               >
                 <RefreshCw className={`size-4 ${isRefreshing ? 'animate-spin' : ''}`} />
               </Button>
