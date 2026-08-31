@@ -293,7 +293,10 @@ const UserProfile = ({
 
   // Edit opens from the record card's primary button (D6), not from the bottom
   // of the profile card.
-  return isLoading || !user ? <Loading /> : <Content />;
+  // Called, not mounted: `<Content />` would make the inline closure a new
+  // component type every render and React would remount the subtree (the
+  // user-hero bug). Neither helper holds hooks, so a plain call is safe.
+  return isLoading || !user ? Loading() : Content();
 };
 
 export default UserProfile;
