@@ -1,6 +1,6 @@
 # PLAN: Shared brand attachments and folders across companies + product-code prefix tier
 
-**Status:** Grilled 2026-08-31 (rounds 1-4, R1-R21), lavish-reviewed + apple-design pass (R22-R27) the same day, captain said proceed. Issues: S1 #435 (PR A), S2 #436 (FE mock), S3 #437 (BE core), S4 #438 (BE linkages + certs), S5 #439 (review + browser). S1 = PR #440 (review round 1 in progress: opt-in gate B1). S2 = draft PR #442 (FE mock, vitest 8990 green; agent-browser pass BLOCKED: :3100 held by the apple-preview lane's dev server, pid 51030). S3 coder spawned on `feat/shared-brand-S3-be-core`, stacked on S2 - tests landed (`773612a18`). S4 coder on `feat/shared-brand-S4-linkages-certs`, stacked on S3: `company` filter (AC-E1), linked-entity widening (AC-G1-G4), certificate follow (AC-H1-H6) DONE, migration 449 extended with a 4th piece (`certificates.company_id` NOT NULL drop/restore, missed at grill time - AC-H7 and this plan's migration bullet corrected in the same change), 26 new tests green (19 own + 7 fixed in the merged S3 test file).
+**Status:** Grilled 2026-08-31 (rounds 1-4, R1-R21), lavish-reviewed + apple-design pass (R22-R27) the same day, captain said proceed. Issues: S1 #435 (PR A), S2 #436 (FE mock), S3 #437 (BE core), S4 #438 (BE linkages + certs), S5 #439 (review + browser). S1 + S2 coders spawned 31 Aug. S1 (PR A, resolver prefix tier) implemented and tested 31 Aug, branch `feat/shared-brand-S1-resolver-prefix`.
 **UAC:** `shared-brand-attachments-acceptance-criteria.md` (alongside; journey at its top).
 **Domain:** multi-company / resources / certificates. Touches the ONE product-code resolver.
 **Lane:** this session's port pair is :3100/:8100 (:3090 belongs to the spec lane).
@@ -144,22 +144,23 @@ Rule:
 1. `head` = text left of the first ` - ` (spaces on both sides) if present; else the first
    whitespace-delimited token. Skip the tier when `head` normalises to the whole code.
 2. `head` qualifies when `len(normalize(head)) >= 4` (`PREFIX_MIN_HEAD = 4`).
-3. Query: `lower(replace(product_code, ' ', '')) LIKE '<normalized head>%'`, ordered by
-   `product_code`.
-4. `PREFIX_MAX_FANOUT = 200` DISTINCT normalised product codes (not rows: twin rows exist
-   in both companies, so under the all-companies scope 200 rows would be ~100 codes); more
-   = the code goes to `unmatched`, nothing linked. `%` and `_` in the head are escaped.
-   Ordering ends with `Product.id`.
+3. Query: `lower(replace(product_code, ' ', '')) LIKE '<escaped, normalized head>%'` (`%` and `_`
+   in the head are escaped so they match themselves, not the LIKE wildcard), ordered by
+   `product_code, id` (a tie-break the code column alone does not give: the same code exists as
+   a twin row per company).
+4. `PREFIX_MAX_FANOUT = 200`, counted over DISTINCT normalised codes, not rows: twin rows exist
+   in both companies, so under the all-companies scope 200 rows would only be ~100 codes. A
+   cheap `SELECT DISTINCT` runs first; only when it is within the cap does the row-loading
+   query run. Over the cap = the code goes to `unmatched`, nothing linked.
 5. `CodeMatch.via = "prefix"` (`VIA_PREFIX`), `requested_code` = the original string.
-6. `ProductAttachmentBulkLinkItem` gains `via: str` so the Integration tab shows how each
-   link was reached.
-7. **Opt-in (review finding B1 on PR #440).** The resolver has four callers. The tier runs
-   only when `resolve_codes_to_products(db, codes, allow_prefix=True)`, and only the
-   attachment link path passes it (`_link_attachment_to_products_bulk` and the certificate
-   adapter). The single-code `POST /external/product-attachments`, the packing-list ingest
-   (would write inbound-shipment lines at full quantity per family member) and promotions
-   (pricing links) stay on tiers 1-4; each has a test proving a family head still lands in
-   its skip / miss path. Trigger to widen: a real packing list or flyer that names a family.
+6. **OPT-IN, not automatic.** `resolve_codes_to_products` gains `allow_prefix: bool = False`;
+   tier 5 runs only when the caller passes `True`. Only the attachment-link path opts in
+   (`_link_attachment_to_products_bulk` and the certificate adapter `_resolve_product_codes` in
+   `app/api/v1/external/product_attachments.py`); the single-code `POST /` route there, packing
+   lists and promotions all keep the four-tier default, so a family head they cannot resolve
+   stays reported as missing (`skipped_product_codes` / `missing_codes` / a 400) rather than
+   being silently linked to a whole family. `ProductAttachmentBulkLinkItem` gains `via: str` so
+   the Integration tab shows how each link was reached.
 
 ### S2. `POST /resource-management/attachments/bulk-company` + the twin linker
 

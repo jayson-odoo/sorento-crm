@@ -182,21 +182,26 @@ def _log_certificate_not_created(
         )
 
 
-def _resolve_product_codes(db: Session, codes: list[str]) -> tuple[list[tuple[str, object]], list[str]]:
+def _resolve_product_codes(db: Session, codes: list[str]) -> tuple[list[tuple[str, object, str]], list[str]]:
     """Adapter over the ONE resolver, kept for this module's existing call shape.
 
-    Returns ``([(requested_code, product)], unmatched_codes)``. The tiers, the
-    substring behaviour and the product-set expansion all live in
+    Returns ``([(requested_code, product, via)], unmatched_codes)``. The tiers,
+    the substring behaviour and the product-set expansion all live in
     ``app.services.product_code_resolution`` so that this path and the promotion
     path cannot drift apart again - they used to, and the same flyer code could
     link a file here and fail to create a promotion there.
+
+    ``allow_prefix=True``: this is the certificate-linking leg of the
+    attachment-link path (PLAN-shared-brand-attachments.md S1), so a
+    certificate reading "SRTBV - BRASS BALL VALVE" resolves to the family it
+    names.
 
     Company isolation still comes from the session: the caller pinned it to the
     attachment's company, so a same-coded product or set in another company never
     resolves (SEC-1).
     """
-    resolved = _resolve_codes(db, codes)
-    matched = [(m.requested_code, m.product) for m in resolved.matches]
+    resolved = _resolve_codes(db, codes, allow_prefix=True)
+    matched = [(m.requested_code, m.product, m.via) for m in resolved.matches]
     return matched, list(resolved.unmatched)
 
 def _link_via_certificate(
@@ -221,7 +226,7 @@ def _link_via_certificate(
     """
     created_by = current_user["id"]
     matched, unmatched = _resolve_product_codes(db, codes)
-    matched_ids = [str(getattr(product, "id")) for _code, product in matched]
+    matched_ids = [str(getattr(product, "id")) for _code, product, _via in matched]
 
     service = CertificateService(db)
     existing = service.find_by_identity(payload.scheme, payload.certificate_number)
@@ -274,14 +279,16 @@ def _link_via_certificate(
 
     linked: list[ProductAttachmentBulkLinkItem] = []
     already_linked: list[str] = []
-    for code, product in matched:
+    for code, product, via in matched:
         product_code = str(getattr(product, "product_code", "") or "") or code
         if str(getattr(product, "id")) in covered_before:
             already_linked.append(product_code)
         else:
             linked.append(
                 ProductAttachmentBulkLinkItem(
-                    product_id=str(getattr(product, "id")), product_code=product_code
+                    product_id=str(getattr(product, "id")),
+                    product_code=product_code,
+                    via=via,
                 )
             )
 
@@ -289,7 +296,7 @@ def _link_via_certificate(
     # plain path: the certificate is already committed and must not be undone by
     # a downstream hiccup.
     field_link_service = AttachmentFieldLinkService(db)
-    for _code, product in matched:
+    for _code, product, _via in matched:
         try:
             field_link_service.apply_template_to_row(
                 attachment,
@@ -564,13 +571,17 @@ def _link_attachment_to_products_bulk(
         # ("WC7601" -> MWC7601-RL-S12, IBWC7601-RL-S10, ...). Every one of them
         # gets the file; taking the first left the siblings without it. Ordered,
         # so a repeated call reports the same list in the same order.
-        _resolution = _resolve_codes(db, [code])
-        products = [m.product for m in _resolution.matches]
-        if not products:
+        # allow_prefix=True: this is the attachment-link path
+        # (PLAN-shared-brand-attachments.md S1), the only caller opted into the
+        # family-head tier.
+        _resolution = _resolve_codes(db, [code], allow_prefix=True)
+        code_matches = _resolution.matches
+        if not code_matches:
             skipped_product_codes.append(code)
             continue
 
-        for product in products:
+        for match in code_matches:
+            product = match.product
             existing = db.query(ProductAttachment).filter(
                 ProductAttachment.attachment_id == attachment_id,
                 ProductAttachment.product_id == product.id,
@@ -585,7 +596,7 @@ def _link_attachment_to_products_bulk(
                 product_id=product_id,
                 attachment_id=attachment_id,
                 access_levels=access_levels,
-                linked_via_set_id=_resolution.product_set_id_for(product_code),
+                linked_via_set_id=match.product_set_id,
             )
             # Explicit, not scope-derived: under a SHARED attachment's
             # ALL-COMPANIES scope, the before_insert auto-stamp would
@@ -620,7 +631,9 @@ def _link_attachment_to_products_bulk(
                 )
             linked.append(
                 ProductAttachmentBulkLinkItem(
-                    product_id=product_id, product_code=product_code or code
+                    product_id=product_id,
+                    product_code=product_code or code,
+                    via=match.via,
                 )
             )
 

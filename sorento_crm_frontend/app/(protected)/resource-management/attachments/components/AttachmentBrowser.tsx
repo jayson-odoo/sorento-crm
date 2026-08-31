@@ -15,6 +15,7 @@ import {
   getPaginationRowModel,
 } from '@tanstack/react-table';
 import { Trash2, Plus, RefreshCw, RotateCcw, FileArchive, Tag, Building2 } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { RowActionsMenu } from '@/components/common/RowActionsMenu';
 import { useAttachmentActions } from '../actions';
@@ -30,7 +31,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useAttachments, useAttachmentTypesList, useBulkRestoreAttachments, useDirectoryTree } from '../hooks/useAttachments';
 import { resubmitAttachmentWebhook } from '../services/attachmentService';
 import { buildDetailSearch } from '@/lib/listNavQuery';
-import type { Attachment } from '../types/attachment.types';
+import { attachmentCompanyLabel, type Attachment } from '../types/attachment.types';
 import type { AttachmentDirectoryTreeNode } from '../services/directoryService';
 
 function flattenDirectoryTree(nodes: AttachmentDirectoryTreeNode[], prefix = ''): { id: string; label: string }[] {
@@ -44,7 +45,7 @@ import AttachmentUploadDialog from './AttachmentUploadDialog';
 import AttachmentBulkImportDialog from './AttachmentBulkImportDialog';
 import AttachmentBulkDeleteDialog from './AttachmentBulkDeleteDialog';
 import EditAttachmentTypeDialog from './EditAttachmentTypeDialog';
-import SetCompanyDialog from './SetCompanyDialog';
+import SetCompanyDialog, { SHARED_COMPANY_VALUE } from './SetCompanyDialog';
 import { useCompany } from '@/app/providers/CompanyProvider';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
@@ -288,6 +289,23 @@ export default function AttachmentBrowser() {
         meta: { headerTitle: 'Entity Name' },
       },
       {
+        id: 'company',
+        header: ({ column }) => <DataGridColumnHeader title="Company" column={column} />,
+        accessorFn: (row) => row.company_name ?? '',
+        enableSorting: false,
+        cell: ({ row }) => {
+          const label = attachmentCompanyLabel(row.original);
+          return (
+            <Badge appearance="light" size="sm" className="max-w-full truncate" title={label}>
+              {label}
+            </Badge>
+          );
+        },
+        size: 110,
+        minSize: 90,
+        meta: { headerTitle: 'Company', skeleton: <Skeleton className="h-4 w-16" /> },
+      },
+      {
         accessorKey: 'actions',
         header: () => <span className="sr-only">Actions</span>,
         // The row opens the record; everything else is one menu, the same one
@@ -493,7 +511,7 @@ export default function AttachmentBrowser() {
                         clearable
                         options={[
                           ...companyGrants.map((c) => ({ value: c.id, label: c.name })),
-                          { value: 'shared', label: 'Shared' },
+                          { value: SHARED_COMPANY_VALUE, label: 'Shared' },
                         ]}
                         placeholder="All companies"
                         triggerClassName="w-full"

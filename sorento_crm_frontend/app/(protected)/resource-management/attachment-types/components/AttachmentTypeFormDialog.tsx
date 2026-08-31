@@ -321,28 +321,6 @@ export default function AttachmentTypeFormDialog({
               )}
             />
 
-            <FormField
-              control={form.control}
-              name="is_shared"
-              render={({ field }) => (
-                <FormItem className="flex flex-row items-start gap-2 rounded-md border p-3">
-                  <FormControl>
-                    <Checkbox
-                      checked={!!field.value}
-                      onCheckedChange={(v) => field.onChange(v === true)}
-                    />
-                  </FormControl>
-                  <div className="space-y-0.5">
-                    <FormLabel className="cursor-pointer">Shared</FormLabel>
-                    <p className="text-xs text-muted-foreground">
-                      An upload of this type belongs to every company from the start - no
-                      separate step to share it later.
-                    </p>
-                  </div>
-                </FormItem>
-              )}
-            />
-
             {form.watch('is_certificate') && (
               <FormField
                 control={form.control}
@@ -371,6 +349,22 @@ export default function AttachmentTypeFormDialog({
                 )}
               />
             )}
+
+            <FormField
+              control={form.control}
+              name="is_shared"
+              render={({ field }) => (
+                <FormItem className="flex flex-row items-start gap-2 rounded-md border p-3">
+                  <FormControl>
+                    <Checkbox
+                      checked={!!field.value}
+                      onCheckedChange={(v) => field.onChange(v === true)}
+                    />
+                  </FormControl>
+                  <FormLabel className="cursor-pointer">Shared across companies</FormLabel>
+                </FormItem>
+              )}
+            />
 
             <DialogFooter>
               <Button
