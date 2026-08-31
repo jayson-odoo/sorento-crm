@@ -191,11 +191,16 @@ def _resolve_product_codes(db: Session, codes: list[str]) -> tuple[list[tuple[st
     path cannot drift apart again - they used to, and the same flyer code could
     link a file here and fail to create a promotion there.
 
+    ``allow_prefix=True``: this is the certificate-linking leg of the
+    attachment-link path (PLAN-shared-brand-attachments.md S1), so a
+    certificate reading "SRTBV - BRASS BALL VALVE" resolves to the family it
+    names.
+
     Company isolation still comes from the session: the caller pinned it to the
     attachment's company, so a same-coded product or set in another company never
     resolves (SEC-1).
     """
-    resolved = _resolve_codes(db, codes)
+    resolved = _resolve_codes(db, codes, allow_prefix=True)
     matched = [(m.requested_code, m.product, m.via) for m in resolved.matches]
     return matched, list(resolved.unmatched)
 
@@ -566,7 +571,10 @@ def _link_attachment_to_products_bulk(
         # ("WC7601" -> MWC7601-RL-S12, IBWC7601-RL-S10, ...). Every one of them
         # gets the file; taking the first left the siblings without it. Ordered,
         # so a repeated call reports the same list in the same order.
-        _resolution = _resolve_codes(db, [code])
+        # allow_prefix=True: this is the attachment-link path
+        # (PLAN-shared-brand-attachments.md S1), the only caller opted into the
+        # family-head tier.
+        _resolution = _resolve_codes(db, [code], allow_prefix=True)
         code_matches = _resolution.matches
         if not code_matches:
             skipped_product_codes.append(code)
@@ -588,7 +596,7 @@ def _link_attachment_to_products_bulk(
                 product_id=product_id,
                 attachment_id=attachment_id,
                 access_levels=access_levels,
-                linked_via_set_id=_resolution.product_set_id_for(product_code),
+                linked_via_set_id=match.product_set_id,
             )
             service.create_product_attachment(data, created_by=created_by)
             try:

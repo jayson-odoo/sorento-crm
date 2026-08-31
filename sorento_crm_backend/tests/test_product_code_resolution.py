@@ -25,10 +25,24 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from fastapi import HTTPException
+
+from app.api.v1.external.product_attachments import (
+    _link_attachment_to_products_bulk,
+    create_product_attachment,
+)
+from app.api.v1.external.promotions import create_promotion
 from app.database import SessionLocal, engine
 from app.models.company import Company
 from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.models.product_set import ProductSet, ProductSetMember
+from app.models.resources import Attachment
+from app.schemas.external.attachments import ProductAttachmentLinkRequestAny
+from app.schemas.external.marketing import (
+    PromotionHeader,
+    PromotionProductItem,
+    PromotionRequest,
+)
 from app.services.company_scope import company_scope, register_company_scope_listeners
 from app.services.product_code_resolution import resolve_codes_to_products
 
@@ -149,7 +163,7 @@ def _codes(result) -> set[str]:
     return {match.product.product_code for match in result.matches}
 
 
-def _resolve_in(db: Session, company, codes):
+def _resolve_in(db: Session, company, codes, allow_prefix: bool = False):
     """Resolve the way production does: inside exactly one company's scope.
 
     Both companies carry the same product codes - that is true of the real
@@ -158,9 +172,13 @@ def _resolve_in(db: Session, company, codes):
     paths are always scoped (the attachment pins the session to its own company),
     and these tests say so rather than asserting against an artificial
     all-companies read.
+
+    ``allow_prefix`` defaults to False, same as ``resolve_codes_to_products``
+    itself (tier 5 is OPT-IN): a caller exercising the prefix tier passes
+    ``True`` explicitly, the same way the attachment-link path does.
     """
     with company_scope(db, frozenset({str(company.id)})):
-        return resolve_codes_to_products(db, codes)
+        return resolve_codes_to_products(db, codes, allow_prefix=allow_prefix)
 
 
 # ------------------------------------------------------------------ the tiers
@@ -337,7 +355,9 @@ def srtbv(db: Session):
 
 def test_ac_a1_a_family_head_resolves_via_prefix(db: Session, srtbv):
     """AC-A1 - all 9 members, ordered by product_code, nothing unmatched."""
-    result = _resolve_in(db, srtbv["company"], ["ZZT-SRTBV - BRASS BALL VALVE"])
+    result = _resolve_in(
+        db, srtbv["company"], ["ZZT-SRTBV - BRASS BALL VALVE"], allow_prefix=True
+    )
 
     assert _codes(result) == srtbv["codes"]
     assert all(m.via == "prefix" for m in result.matches)
@@ -369,7 +389,7 @@ def test_ac_a2_a_code_containing_a_space_matches_exact_never_prefix(db: Session,
 def test_ac_a3_a_head_shorter_than_four_chars_is_unmatched(db: Session, srtbv):
     """AC-A3 - `ZZT` normalises to 3 chars, below PREFIX_MIN_HEAD."""
     code = "ZZT - SOMETHING"
-    result = _resolve_in(db, srtbv["company"], [code])
+    result = _resolve_in(db, srtbv["company"], [code], allow_prefix=True)
     assert result.matches == []
     assert result.unmatched == [code]
 
@@ -393,16 +413,13 @@ def test_ac_a4_a_fanout_over_the_cap_is_unmatched(db: Session, srtbv):
     db.flush()
 
     code = f"{head} - DESCRIPTION"
-    result = _resolve_in(db, srtbv["company"], [code])
+    result = _resolve_in(db, srtbv["company"], [code], allow_prefix=True)
     assert result.matches == []
     assert result.unmatched == [code]
 
 
 def test_ac_a6_link_products_route_reports_via_prefix(db: Session, srtbv):
     """AC-A6 - the /link-products caller surfaces `via` on every linked item."""
-    from app.api.v1.external.product_attachments import _link_attachment_to_products_bulk
-    from app.models.resources import Attachment
-
     attachment = Attachment(
         id=str(uuid.uuid4()),
         original_filename=_uid("cert") + ".pdf",
@@ -421,6 +438,7 @@ def test_ac_a6_link_products_route_reports_via_prefix(db: Session, srtbv):
     )
 
     assert response.skipped_product_codes == []
+    assert response.already_linked == []
     assert {item.product_code for item in response.linked} == srtbv["codes"]
     assert all(item.via == "prefix" for item in response.linked)
 
@@ -524,6 +542,89 @@ def test_ac_a6_link_products_http_route_reports_via_prefix_on_the_json_body(
     assert body["skipped_product_codes"] == []
     assert {item["product_code"] for item in body["linked"]} == srtbv["codes"]
     assert all(item["via"] == "prefix" for item in body["linked"])
+
+
+# ------------------- N4: a spaced non-code does not fan out on an unrelated head
+
+
+def test_a_spaced_code_missing_every_tier_does_not_fan_out_on_its_head(
+    db: Session, srtbv
+):
+    """N4 - `ZZT-CB 90024E2-2B` is not an exact product here (unlike AC-A2, no
+    such row exists), and its head (`ZZT-CB`, first whitespace token, >= 4
+    chars) has no family in this fixture. Even with the prefix tier explicitly
+    enabled, it must not fan out onto some unrelated family (`ZZT-SRTBV*`)."""
+    code = "ZZT-CB 90024E2-2B"
+    result = _resolve_in(db, srtbv["company"], [code], allow_prefix=True)
+    assert result.matches == []
+    assert result.unmatched == [code]
+
+
+# --------------------- opt-in: every OTHER caller stays four-tier (S1 fix round)
+
+
+def test_ac_a_packing_list_a_family_head_is_reported_missing_not_linked(
+    db: Session, srtbv
+):
+    """S1 ruling: packing lists never pass `allow_prefix=True`, so the same
+    family head AC-A1 resolves for the attachment-link path stays in
+    `skipped_product_codes` here - never silently linked to all 9 members."""
+    attachment = _attachment_for(db, srtbv["company"])
+
+    response = _create_packing_list(
+        db, attachment, [("ZZT-SRTBV - BRASS BALL VALVE", 5)]
+    )
+
+    assert response.skipped_product_codes == ["ZZT-SRTBV - BRASS BALL VALVE"]
+    assert (response.shipment.shipment_lines or []) == []
+
+
+def test_ac_a_promotion_a_family_head_is_reported_missing_not_linked(
+    db: Session, srtbv
+):
+    """S1 ruling: promotions never pass `allow_prefix=True` either, so the same
+    family head lands in `unknown_product_codes`, never silently linked."""
+    payload = PromotionRequest(
+        promotions=PromotionHeader(
+            description=_uid("promo"),
+            start_date="2026-09-01",
+            end_date="2026-09-30",
+        ),
+        promotion_products=[
+            PromotionProductItem(product_code="ZZT-SRTBV - BRASS BALL VALVE")
+        ],
+    )
+    with company_scope(db, frozenset({str(srtbv["company"].id)})):
+        response = create_promotion(
+            payload=payload, current_user={"id": str(uuid.uuid4())}, db=db
+        )
+
+    assert response.unknown_product_codes == ["ZZT-SRTBV - BRASS BALL VALVE"]
+
+
+def test_ac_a_single_code_create_still_400s_on_a_family_head(db: Session, srtbv):
+    """S1 ruling: the single-code `POST /` route keeps the four-tier default
+    too, so a family head only the prefix tier could answer still 400s exactly
+    as before - no accidental widening for this caller either."""
+    attachment = Attachment(
+        id=str(uuid.uuid4()),
+        original_filename=_uid("single") + ".pdf",
+        stored_filename=_uid("stored") + ".pdf",
+        file_path="zzt://single",
+        company_id=srtbv["company"].id,
+    )
+    db.add(attachment)
+    db.flush()
+
+    payload = ProductAttachmentLinkRequestAny(
+        attachment_id=attachment.id,
+        product_code="ZZT-SRTBV - BRASS BALL VALVE",
+    )
+    with pytest.raises(HTTPException) as exc_info:
+        create_product_attachment(
+            payload=payload, current_user={"id": str(uuid.uuid4())}, db=db
+        )
+    assert exc_info.value.status_code == 400
 
 
 # ------------------------------------------------------------------ isolation

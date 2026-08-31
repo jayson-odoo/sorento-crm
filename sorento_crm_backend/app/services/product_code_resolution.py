@@ -15,13 +15,20 @@ The tiers, in order, and the order is the design:
 4. **substring**, every match returned. Preserves what attachments did, and its
    reason: "WC7601" names MWC7601-RL-S12, IBWC7601-RL-S10 and everything else
    carrying it, and taking one arbitrarily left the rest silently uncovered.
-5. **prefix**, last resort: a code that is really a FAMILY description, e.g. a
-   certificate reading "SRTBV - BRASS BALL VALVE" names every `SRTBV...`
-   product, not one product literally coded that way. Only reached when tiers
-   1-4 all miss. Head-only (the text before the first ` - `, or the first
-   whitespace token), a minimum head length and a fan-out cap keep this from
-   matching generic description words or an unusably broad family. See
-   `PLAN-shared-brand-attachments.md` S1 for the measured guard rails.
+5. **prefix**, OPT-IN, last resort: a code that is really a FAMILY
+   description, e.g. a certificate reading "SRTBV - BRASS BALL VALVE" names
+   every `SRTBV...` product, not one product literally coded that way. Only
+   reached when tiers 1-4 all miss AND the caller passed `allow_prefix=True` -
+   the attachment-link path (bulk link and the certificate adapter) opts in;
+   packing lists and promotions keep the four-tier default, so a family head
+   they cannot resolve is reported the same way it always was
+   (`skipped_product_codes` / `missing_codes` / a 400 on the single-code
+   route), never silently linked. Head-only (the text before the first
+   ` - `, or the first whitespace token), a minimum head length and a fan-out
+   cap on DISTINCT normalised codes (not rows - the same code exists as a
+   twin row per company) keep this from matching generic description words
+   or an unusably broad family. See `PLAN-shared-brand-attachments.md` S1 for
+   the measured guard rails.
 
 Set expansion sits ABOVE substring on purpose. `SRTWC8608-RL` is a substring of
 `SRTWC8608-RL-200`, so a substring-first resolver would answer a set code with
@@ -118,13 +125,18 @@ def _plus_parts(code: str) -> list[str]:
 
 
 def resolve_codes_to_products(
-    db: Session, codes: Iterable[Optional[str]]
+    db: Session, codes: Iterable[Optional[str]], allow_prefix: bool = False
 ) -> ResolvedCodes:
     """Resolve each code through the tiers above. Unmatched codes are REPORTED.
 
     A code that names nothing comes back in ``unmatched`` rather than being
     dropped: "your code matched nothing" has to reach the customer, because a
     silent zero is the exact failure this feature exists to remove.
+
+    ``allow_prefix`` gates tier 5 (OPT-IN, defaults to False): only the
+    attachment-link path passes ``True``. Packing lists and promotions never
+    do, so a code they cannot resolve through tiers 1-4 stays unmatched
+    rather than being silently linked to a whole product family.
     """
     result = ResolvedCodes()
     seen: set[str] = set()
@@ -143,7 +155,7 @@ def resolve_codes_to_products(
             or _via_product_set(db, code, normalized)
             or _via_plus_split(db, code)
             or _substring(db, code, normalized)
-            or _via_prefix(db, code, normalized)
+            or (_via_prefix(db, code, normalized) if allow_prefix else [])
         )
         if matches:
             result.matches.extend(matches)
@@ -225,6 +237,7 @@ def _substring(db: Session, code: str, normalized: str) -> list[CodeMatch]:
 
 
 _DASH_SPLIT_RE = re.compile(r"\s+-\s+")
+_LIKE_ESCAPE = "\\"
 
 
 def _prefix_head(code: str) -> str:
@@ -237,8 +250,19 @@ def _prefix_head(code: str) -> str:
     return tokens[0] if tokens else ""
 
 
+def _escape_like(value: str) -> str:
+    """Escape LIKE wildcards so a head containing `%` or `_` matches itself
+    literally rather than as a pattern."""
+    return (
+        value.replace(_LIKE_ESCAPE, _LIKE_ESCAPE * 2)
+        .replace("%", _LIKE_ESCAPE + "%")
+        .replace("_", _LIKE_ESCAPE + "_")
+    )
+
+
 def _via_prefix(db: Session, code: str, normalized: str) -> list[CodeMatch]:
-    """Last resort: the code names a family by its head, not a real product.
+    """OPT-IN last resort (see ``allow_prefix``): the code names a family by
+    its head, not a real product.
 
     Only reached when tiers 1-4 all miss. A single-token code (no ` - `, no
     whitespace to split on) is skipped: its head IS the whole code, and that
@@ -251,15 +275,29 @@ def _via_prefix(db: Session, code: str, normalized: str) -> list[CodeMatch]:
     if len(head_normalized) < PREFIX_MIN_HEAD:
         return []
 
-    rows = (
-        db.query(Product)
-        .filter(_norm_col(Product.product_code).like(f"{head_normalized}%"))
-        .order_by(Product.product_code)
+    pattern = _escape_like(head_normalized) + "%"
+    prefix_filter = _norm_col(Product.product_code).like(pattern, escape=_LIKE_ESCAPE)
+
+    # The cap counts DISTINCT normalised codes, not rows: the same code exists
+    # as a twin row in every company, so under an all-companies scope a 200-row
+    # cap would really only cover ~100 families. Checked with a cheap
+    # DISTINCT-only query before loading any full row.
+    distinct_codes = (
+        db.query(_norm_col(Product.product_code))
+        .filter(prefix_filter)
+        .distinct()
         .limit(PREFIX_MAX_FANOUT + 1)
         .all()
     )
-    if len(rows) > PREFIX_MAX_FANOUT:
-        # More hits than a family can plausibly be: refuse rather than link a
-        # useless partial subset ("SRT" alone answers 9,655 products).
+    if len(distinct_codes) > PREFIX_MAX_FANOUT:
+        # More families than a family can plausibly be: refuse rather than
+        # link a useless partial subset ("SRT" alone answers 9,655 products).
         return []
+
+    rows = (
+        db.query(Product)
+        .filter(prefix_filter)
+        .order_by(Product.product_code, Product.id)
+        .all()
+    )
     return [CodeMatch(requested_code=code, product=row, via=VIA_PREFIX) for row in rows]
