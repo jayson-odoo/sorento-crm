@@ -103,17 +103,25 @@ class AttachmentDirectoryService:
         ``__company_shared__``, so the before_insert auto-stamp never runs for
         it - this has to set ``company_id`` itself, or every new folder would
         land NULL (shared) regardless of where it was created. A folder under
-        a shared parent is shared too (NULL company_id inherits as NULL); at
-        root it takes the one active company.
+        a shared parent is shared too (NULL company_id inherits as NULL,
+        no scope resolution needed - the parent already answered the
+        question). At ROOT there is no parent to inherit from, so this
+        resolves the write exactly as the retired auto-stamp did for every
+        other owned table: the one active company, ``DEFAULT_COMPANY_ID``
+        under an all-companies (``None``) scope, or a 400 under an ambiguous
+        one (``UNSET`` / several companies) - a root folder is never silently
+        shared by a guess.
         """
+        from app.services.company_scope import resolve_write_company_id
+
         parent = None
         if data.parent_id:
             parent = self.get_directory(data.parent_id, include_deleted=False)
         directory_dict = data.model_dump()
         directory_dict["company_id"] = (
-            parent.company_id if parent is not None else _single_active_company(
-                get_company_scope(self.db)
-            )
+            parent.company_id
+            if parent is not None
+            else resolve_write_company_id(get_company_scope(self.db))
         )
         d = AttachmentDirectory(**directory_dict)
         self.db.add(d)
@@ -1984,10 +1992,19 @@ class AttachmentService:
         self.db.commit()
         self.db.refresh(attachment)
 
-        if upload_type_is_shared and directory_id:
+        # A shared FORM attachment (complaint/PR/stock-inquiry) is NULL by the
+        # pre-existing form-sharing convention (AC-G3), not a `Set company…`
+        # decision - it must never pull a folder's ancestor chain along.
+        upload_entity_type = (attachment_dict.get("entity_type") or "").strip().lower()
+        if (
+            upload_type_is_shared
+            and directory_id
+            and upload_entity_type not in _SHARED_FORM_ENTITY_TYPES
+        ):
             from app.services.attachment_company_service import share_ancestor_chain
 
             share_ancestor_chain(self.db, directory_id)
+            self.db.commit()
 
         # Reload with relationship
         attachment = self.db.query(Attachment).options(
@@ -2034,11 +2051,14 @@ class AttachmentService:
         # own company - only `Set company…` (AttachmentCompanyService) does
         # that now. R19: moving a SHARED file into an owned folder instead
         # pulls that folder's ancestor chain to shared, so the path it now
-        # lives under still resolves from every company.
+        # lives under still resolves from every company. A shared FORM
+        # attachment's NULL is the pre-existing form-sharing convention
+        # (AC-G3), not a `Set company…` decision, so it is excluded here too.
         changed_fields = list(update_data.keys())
         if (
             update_data.get("directory_id")
             and attachment.company_id is None
+            and (attachment.entity_type or "").strip().lower() not in _SHARED_FORM_ENTITY_TYPES
         ):
             from app.services.attachment_company_service import share_ancestor_chain
 
@@ -2079,8 +2099,15 @@ class AttachmentService:
         # PLAN-shared-brand-attachments R10/R19: a move never re-stamps a
         # file's own company - only `Set company…` does that now. A SHARED
         # file among the movers instead pulls the destination folder's
-        # ancestor chain to shared, once for the whole batch.
-        if directory_id and any(row.company_id is None for row in rows):
+        # ancestor chain to shared, once for the whole batch - EXCLUDING a
+        # shared FORM attachment, whose NULL is the pre-existing form-sharing
+        # convention (AC-G3), not a `Set company…` decision.
+        def _is_set_company_shared(row: Attachment) -> bool:
+            return row.company_id is None and (
+                (row.entity_type or "").strip().lower() not in _SHARED_FORM_ENTITY_TYPES
+            )
+
+        if directory_id and any(_is_set_company_shared(row) for row in rows):
             from app.services.attachment_company_service import share_ancestor_chain
 
             share_ancestor_chain(self.db, directory_id)

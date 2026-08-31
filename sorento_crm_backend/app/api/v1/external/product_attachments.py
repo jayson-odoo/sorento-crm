@@ -586,18 +586,21 @@ def _link_attachment_to_products_bulk(
                 attachment_id=attachment_id,
                 access_levels=access_levels,
                 linked_via_set_id=_resolution.product_set_id_for(product_code),
-                # Explicit, not scope-derived: under a SHARED attachment's
-                # ALL-COMPANIES scope, the before_insert auto-stamp would
-                # otherwise land every row (including a Mocha twin's) on the
-                # incumbent company instead of the twin's own
-                # (PLAN-shared-brand-attachments S2, AC-B8).
-                company_id=(
-                    str(getattr(product, "company_id"))
-                    if getattr(product, "company_id", None)
-                    else None
-                ),
             )
-            service.create_product_attachment(data, created_by=created_by)
+            # Explicit, not scope-derived: under a SHARED attachment's
+            # ALL-COMPANIES scope, the before_insert auto-stamp would
+            # otherwise land every row (including a Mocha twin's) on the
+            # incumbent company instead of the twin's own
+            # (PLAN-shared-brand-attachments S2, AC-B8). A server-side
+            # keyword, never a schema field the client could set.
+            link_company_id = (
+                str(getattr(product, "company_id"))
+                if getattr(product, "company_id", None)
+                else None
+            )
+            service.create_product_attachment(
+                data, created_by=created_by, company_id=link_company_id
+            )
             try:
                 field_link_service.apply_template_to_row(
                     attachment_row or attachment_id,

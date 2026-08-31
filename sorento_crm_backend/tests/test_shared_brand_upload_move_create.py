@@ -189,6 +189,47 @@ def test_ac_d5_folder_created_at_root_takes_the_active_company(db):
 
 
 # --------------------------------------------------------------------------- #
+# Review fix S4 - a root folder is never silently shared by a guess. The
+# retired auto-stamp resolved an owned write the same way for every other
+# table: DEFAULT_COMPANY_ID under an all-companies (None) scope, a 400 under
+# an ambiguous one (UNSET / several companies). create_directory must do the
+# same for the ROOT case now that it stamps company_id itself.
+# --------------------------------------------------------------------------- #
+
+
+def test_root_folder_under_all_companies_scope_takes_the_incumbent_company(db):
+    """The import-task path: an X-API-Key call with no contact identity
+    resolves to scope None (all companies), and `get_or_create_directory`
+    (import flows building a folder path) must land the folder on the
+    incumbent company rather than silently sharing it."""
+    set_company_scope(db, None)
+
+    created = AttachmentDirectoryService(db).get_or_create_directory(
+        None, "ZZT-import-root"
+    )
+
+    assert created.company_id == SORENTO, (
+        "a root folder created under an all-companies scope must resolve to "
+        "the incumbent company, not be left NULL (shared)"
+    )
+
+
+def test_root_folder_under_an_ambiguous_scope_is_rejected(db):
+    from app.models.base import UNSET
+    from app.services.error_handler import AppException
+
+    for scope in (UNSET, frozenset({SORENTO, MOCHA})):
+        set_company_scope(db, scope)
+        with pytest.raises(AppException) as exc_info:
+            AttachmentDirectoryService(db).create_directory(
+                AttachmentDirectoryCreate(name=f"ZZT-ambiguous-{scope!r}")
+            )
+        assert exc_info.value.status_code == 400, (
+            f"scope {scope!r} must be rejected, not guessed at"
+        )
+
+
+# --------------------------------------------------------------------------- #
 # AC-D6 - flipping is_shared on a TYPE never touches an existing attachment
 # --------------------------------------------------------------------------- #
 

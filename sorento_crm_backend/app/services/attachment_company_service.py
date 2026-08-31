@@ -34,6 +34,7 @@ note in the plan).
 """
 from __future__ import annotations
 
+import logging
 from typing import Optional
 
 from sqlalchemy import delete, func, insert, select
@@ -50,6 +51,8 @@ from app.services.error_handler import (
     handle_not_found,
     handle_validation_error,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class AttachmentCompanyService:
@@ -97,7 +100,7 @@ class AttachmentCompanyService:
                 attachment.company_id = company_id
 
             links_added, links_removed = self._sync_product_links(
-                list(files.keys()), company_id, actor_id
+                files, company_id, actor_id
             )
             certificates_updated = self._apply_certificate_follow(
                 list(files.keys()), company_id, actor_id
@@ -141,10 +144,16 @@ class AttachmentCompanyService:
 
     def _require_all(self, model, ids: list[str], label: str) -> list:
         """Every id must resolve under the caller's CURRENT scope, or the whole
-        call is a 404 (AC-B5) - checked before the scope is ever widened."""
+        call is a 404 (AC-B5) - checked before the scope is ever widened. A
+        trashed row is a 404 too: it is on its way out, not a target for a
+        company decision."""
         if not ids:
             return []
-        rows = self.db.query(model).filter(model.id.in_(ids)).all()
+        rows = (
+            self.db.query(model)
+            .filter(model.id.in_(ids), model.is_deleted == False)  # noqa: E712
+            .all()
+        )
         found = {str(r.id) for r in rows}
         missing = next((i for i in ids if i not in found), None)
         if missing is not None:
@@ -209,27 +218,32 @@ class AttachmentCompanyService:
     # 4. Twin linker (R26) - set-based, one INSERT + one DELETE for the whole batch.
     # ------------------------------------------------------------------
     def _sync_product_links(
-        self, file_ids: list[str], company_id: Optional[str], actor_id: Optional[str]
+        self, files: dict[str, Attachment], company_id: Optional[str], actor_id: Optional[str]
     ) -> tuple[int, int]:
+        file_ids = list(files.keys())
         if not file_ids:
             return 0, 0
 
         if company_id is None:
-            targets = [r[0] for r in self.db.query(Company.id).all()]
+            targets = [
+                r[0]
+                for r in self.db.query(Company.id).filter(Company.is_active == True).all()  # noqa: E712
+            ]
         else:
             targets = [company_id]
         if not targets:
             return 0, 0
 
-        added = self._insert_twin_links(file_ids, targets, actor_id)
+        added = self._insert_twin_links(files, targets, actor_id)
         removed = self._delete_out_of_scope_links(file_ids, targets)
         return added, removed
 
     def _insert_twin_links(
-        self, file_ids: list[str], targets: list[str], actor_id: Optional[str]
+        self, files: dict[str, Attachment], targets: list[str], actor_id: Optional[str]
     ) -> int:
         from sqlalchemy.orm import aliased
 
+        file_ids = list(files.keys())
         source_product = aliased(Product)
         target_product = aliased(Product)
         existing = aliased(ProductAttachment)
@@ -243,6 +257,7 @@ class AttachmentCompanyService:
                 ProductAttachment.sort_order.label("sort_order"),
                 ProductAttachment.access_levels.label("access_levels"),
                 ProductAttachment.linked_via_set_id.label("linked_via_set_id"),
+                ProductAttachment.created_by.label("created_by"),
                 target_product.company_id.label("company_id"),
                 func.now().label("created_at"),
             )
@@ -281,6 +296,7 @@ class AttachmentCompanyService:
                     "sort_order",
                     "access_levels",
                     "linked_via_set_id",
+                    "created_by",
                     "company_id",
                     "created_at",
                 ],
@@ -298,17 +314,31 @@ class AttachmentCompanyService:
 
         field_link_service = AttachmentFieldLinkService(self.db)
         for row in inserted:
+            attachment = files.get(str(row.attachment_id))
+            # No template to fan out - skip the call outright rather than
+            # asking the service to no-op it, so a batch with no field-linked
+            # files pays no per-row statement at all (AC-B13).
+            if attachment is None or not attachment.target_field_keys:
+                continue
             try:
-                field_link_service.apply_template_to_row(
-                    str(row.attachment_id),
-                    "product",
-                    str(row.product_id),
-                    created_by=actor_id,
-                )
+                # A SAVEPOINT per row: one bad template must not abort the
+                # whole twin-link transaction, the way the n8n path's own
+                # per-row `db.commit()` (external/product_attachments.py)
+                # keeps a template mismatch from losing every other link.
+                with self.db.begin_nested():
+                    field_link_service.apply_template_to_row(
+                        attachment,
+                        "product",
+                        str(row.product_id),
+                        created_by=actor_id,
+                    )
             except Exception:
-                # Best-effort, exactly like the n8n path (external/product_attachments.py):
-                # a template mismatch must not turn a successful share into a 500.
-                pass
+                logger.warning(
+                    "Field-link fan-out failed for the twin link (attachment=%s, product=%s)",
+                    row.attachment_id,
+                    row.product_id,
+                    exc_info=True,
+                )
         return len(inserted)
 
     def _delete_out_of_scope_links(self, file_ids: list[str], targets: list[str]) -> int:
