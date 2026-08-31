@@ -1,5 +1,5 @@
 {
-"note": "Derivation output for a deterministic sample of the live catalogue, taken with the engine as it stood before the readable-rules change (AC-A.2). Regenerate only with a measured reason: a diff here is a catalogue-wide change to what every product is read as.",
+"note": "Derivation output for a deterministic sample of the live catalogue, taken with the engine as it stood before the readable-rules change (AC-A.2). Regenerate only with a measured reason: a diff here is a catalogue-wide change to what every product is read as. Amended 31 Aug 2026 (PLAN-flyer-family-proposals.md): the shipped `seat_material` list gained a `code_contains -UF` row at its END, and 24 of these codes now read `uf` where they read nothing. ONLY `seat_material` moved - the regeneration refused to write if any other key had. Why the row exists: #447 took the flyer out of `derive()`, and the two rules that read the word UF beside SEAT are scoped `source: flyer`, so a description saying WITH UF SEAT COVER is no longer read on a catalogue derivation at all. The code is the only fact left, and the family proposal pass needs it (AC-A.3) or a UF sibling gets offered the card's PP. Catalogue-wide effect measured on the dev copy: 143 water closets.",
 "owned_class_rules": [
 {
 "match": "code_contains",
@@ -68320,6 +68320,11 @@
 "evidence": "ONE PIECE",
 "source": "derived"
 },
+"seat_material": {
+"confidence": 1.0,
+"evidence": "-UF",
+"source": "derived"
+},
 "trap_length": {
 "confidence": 1.0,
 "evidence": "S-TRAP 250MM",
@@ -68346,6 +68351,9 @@
 },
 "product_type": {
 "value": "one_piece"
+},
+"seat_material": {
+"value": "uf"
 },
 "trap_length": {
 "unit": "mm",
@@ -68384,6 +68392,11 @@
 "evidence": "ONE PIECE",
 "source": "derived"
 },
+"seat_material": {
+"confidence": 1.0,
+"evidence": "-UF",
+"source": "derived"
+},
 "trap_length": {
 "confidence": 1.0,
 "evidence": "S-TRAP 250MM",
@@ -68410,6 +68423,9 @@
 },
 "product_type": {
 "value": "one_piece"
+},
+"seat_material": {
+"value": "uf"
 },
 "trap_length": {
 "unit": "mm",
@@ -72178,6 +72194,11 @@
 "evidence": "ONE PIECE",
 "source": "derived"
 },
+"seat_material": {
+"confidence": 1.0,
+"evidence": "-UF",
+"source": "derived"
+},
 "trap_length": {
 "confidence": 1.0,
 "evidence": "S-TRAP 250MM",
@@ -72204,6 +72225,9 @@
 },
 "product_type": {
 "value": "one_piece"
+},
+"seat_material": {
+"value": "uf"
 },
 "trap_length": {
 "unit": "mm",
@@ -72242,6 +72266,11 @@
 "evidence": "ONE PIECE",
 "source": "derived"
 },
+"seat_material": {
+"confidence": 1.0,
+"evidence": "-UF",
+"source": "derived"
+},
 "trap_length": {
 "confidence": 1.0,
 "evidence": "S-TRAP 250MM",
@@ -72268,6 +72297,9 @@
 },
 "product_type": {
 "value": "one_piece"
+},
+"seat_material": {
+"value": "uf"
 },
 "trap_length": {
 "unit": "mm",
@@ -72356,6 +72388,11 @@
 "confidence": 1.0,
 "evidence": "SEAT COVER",
 "source": "derived"
+},
+"seat_material": {
+"confidence": 1.0,
+"evidence": "-UF",
+"source": "derived"
 }
 },
 "values": {
@@ -72364,6 +72401,9 @@
 },
 "product_type": {
 "value": "toilet_seat"
+},
+"seat_material": {
+"value": "uf"
 }
 }
 },
@@ -72379,6 +72419,11 @@
 "confidence": 1.0,
 "evidence": "SEAT COVER",
 "source": "derived"
+},
+"seat_material": {
+"confidence": 1.0,
+"evidence": "-UF",
+"source": "derived"
 }
 },
 "values": {
@@ -72387,6 +72432,9 @@
 },
 "product_type": {
 "value": "toilet_seat"
+},
+"seat_material": {
+"value": "uf"
 }
 }
 }
@@ -145549,6 +145597,11 @@
 "confidence": 1.0,
 "evidence": "SRT-BA",
 "source": "category"
+},
+"seat_material": {
+"confidence": 1.0,
+"evidence": "-UF",
+"source": "derived"
 }
 },
 "values": {
@@ -145557,6 +145610,9 @@
 },
 "class": {
 "value": "Bathroom Accessory"
+},
+"seat_material": {
+"value": "uf"
 }
 }
 }
@@ -145951,6 +146007,11 @@
 "confidence": 1.0,
 "evidence": "SRT-BA",
 "source": "category"
+},
+"seat_material": {
+"confidence": 1.0,
+"evidence": "-UF",
+"source": "derived"
 }
 },
 "values": {
@@ -145959,6 +146020,9 @@
 },
 "class": {
 "value": "Bathroom Accessory"
+},
+"seat_material": {
+"value": "uf"
 }
 }
 }
@@ -146049,6 +146113,11 @@
 "confidence": 1.0,
 "evidence": "460X360MMX25MM",
 "source": "derived"
+},
+"seat_material": {
+"confidence": 1.0,
+"evidence": "-UF",
+"source": "derived"
 }
 },
 "values": {
@@ -146069,6 +146138,9 @@
 "dim_width": {
 "unit": "mm",
 "value": 360
+},
+"seat_material": {
+"value": "uf"
 }
 }
 }
@@ -163992,6 +164064,11 @@
 "evidence": "ONE PIECE",
 "source": "derived"
 },
+"seat_material": {
+"confidence": 1.0,
+"evidence": "-UF",
+"source": "derived"
+},
 "trap_length": {
 "confidence": 1.0,
 "evidence": "S-TRAP:150MM",
@@ -164012,6 +164089,9 @@
 },
 "product_type": {
 "value": "one_piece"
+},
+"seat_material": {
+"value": "uf"
 },
 "trap_length": {
 "unit": "mm",
@@ -164040,6 +164120,11 @@
 "evidence": "ONE PIECE",
 "source": "derived"
 },
+"seat_material": {
+"confidence": 1.0,
+"evidence": "-UF",
+"source": "derived"
+},
 "trap_length": {
 "confidence": 1.0,
 "evidence": "S-TRAP:150MM",
@@ -164060,6 +164145,9 @@
 },
 "product_type": {
 "value": "one_piece"
+},
+"seat_material": {
+"value": "uf"
 },
 "trap_length": {
 "unit": "mm",
@@ -164833,6 +164921,11 @@
 "evidence": "WALL HUNG",
 "source": "derived"
 },
+"seat_material": {
+"confidence": 1.0,
+"evidence": "-UF",
+"source": "derived"
+},
 "trap_length": {
 "confidence": 1.0,
 "evidence": "P-TRAP 180MM",
@@ -164856,6 +164949,9 @@
 },
 "mounting": {
 "value": "wall_hung"
+},
+"seat_material": {
+"value": "uf"
 },
 "trap_length": {
 "unit": "mm",
@@ -164889,6 +164985,11 @@
 "evidence": "WALL HUNG",
 "source": "derived"
 },
+"seat_material": {
+"confidence": 1.0,
+"evidence": "-UF",
+"source": "derived"
+},
 "trap_length": {
 "confidence": 1.0,
 "evidence": "P-TRAP 180MM",
@@ -164912,6 +165013,9 @@
 },
 "mounting": {
 "value": "wall_hung"
+},
+"seat_material": {
+"value": "uf"
 },
 "trap_length": {
 "unit": "mm",
@@ -165965,6 +166069,11 @@
 "evidence": "ONE PIECE",
 "source": "derived"
 },
+"seat_material": {
+"confidence": 1.0,
+"evidence": "-UF",
+"source": "derived"
+},
 "trap_length": {
 "confidence": 1.0,
 "evidence": "S-TRAP:250MM",
@@ -165988,6 +166097,9 @@
 },
 "product_type": {
 "value": "one_piece"
+},
+"seat_material": {
+"value": "uf"
 },
 "trap_length": {
 "unit": "mm",
@@ -166021,6 +166133,11 @@
 "evidence": "ONE PIECE",
 "source": "derived"
 },
+"seat_material": {
+"confidence": 1.0,
+"evidence": "-UF",
+"source": "derived"
+},
 "trap_length": {
 "confidence": 1.0,
 "evidence": "S-TRAP:250MM",
@@ -166044,6 +166161,9 @@
 },
 "product_type": {
 "value": "one_piece"
+},
+"seat_material": {
+"value": "uf"
 },
 "trap_length": {
 "unit": "mm",
@@ -166440,6 +166560,11 @@
 "evidence": "ONE PIECE",
 "source": "derived"
 },
+"seat_material": {
+"confidence": 1.0,
+"evidence": "-UF",
+"source": "derived"
+},
 "trap_length": {
 "confidence": 1.0,
 "evidence": "P-TRAP 180MM",
@@ -166466,6 +166591,9 @@
 },
 "product_type": {
 "value": "one_piece"
+},
+"seat_material": {
+"value": "uf"
 },
 "trap_length": {
 "unit": "mm",
@@ -166504,6 +166632,11 @@
 "evidence": "ONE PIECE",
 "source": "derived"
 },
+"seat_material": {
+"confidence": 1.0,
+"evidence": "-UF",
+"source": "derived"
+},
 "trap_length": {
 "confidence": 1.0,
 "evidence": "P-TRAP 180MM",
@@ -166530,6 +166663,9 @@
 },
 "product_type": {
 "value": "one_piece"
+},
+"seat_material": {
+"value": "uf"
 },
 "trap_length": {
 "unit": "mm",
@@ -167507,6 +167643,11 @@
 "evidence": "ONE PIECE",
 "source": "derived"
 },
+"seat_material": {
+"confidence": 1.0,
+"evidence": "-UF",
+"source": "derived"
+},
 "trap_length": {
 "confidence": 1.0,
 "evidence": "P-TRAP 180MM",
@@ -167530,6 +167671,9 @@
 },
 "product_type": {
 "value": "one_piece"
+},
+"seat_material": {
+"value": "uf"
 },
 "trap_length": {
 "unit": "mm",
@@ -167563,6 +167707,11 @@
 "evidence": "ONE PIECE",
 "source": "derived"
 },
+"seat_material": {
+"confidence": 1.0,
+"evidence": "-UF",
+"source": "derived"
+},
 "trap_length": {
 "confidence": 1.0,
 "evidence": "P-TRAP 180MM",
@@ -167586,6 +167735,9 @@
 },
 "product_type": {
 "value": "one_piece"
+},
+"seat_material": {
+"value": "uf"
 },
 "trap_length": {
 "unit": "mm",
@@ -167634,6 +167786,11 @@
 "evidence": "ONE PIECE",
 "source": "derived"
 },
+"seat_material": {
+"confidence": 1.0,
+"evidence": "-UF",
+"source": "derived"
+},
 "trap_length": {
 "confidence": 1.0,
 "evidence": "S-TRAP 150MM",
@@ -167660,6 +167817,9 @@
 },
 "product_type": {
 "value": "one_piece"
+},
+"seat_material": {
+"value": "uf"
 },
 "trap_length": {
 "unit": "mm",
@@ -167698,6 +167858,11 @@
 "evidence": "ONE PIECE",
 "source": "derived"
 },
+"seat_material": {
+"confidence": 1.0,
+"evidence": "-UF",
+"source": "derived"
+},
 "trap_length": {
 "confidence": 1.0,
 "evidence": "S-TRAP 150MM",
@@ -167724,6 +167889,9 @@
 },
 "product_type": {
 "value": "one_piece"
+},
+"seat_material": {
+"value": "uf"
 },
 "trap_length": {
 "unit": "mm",
@@ -167977,6 +168145,11 @@
 "evidence": "SEAT COVER",
 "source": "derived"
 },
+"seat_material": {
+"confidence": 1.0,
+"evidence": "-UF",
+"source": "derived"
+},
 "trap_length": {
 "confidence": 1.0,
 "evidence": "S-TRAP 250MM",
@@ -168000,6 +168173,9 @@
 },
 "product_type": {
 "value": "toilet_seat"
+},
+"seat_material": {
+"value": "uf"
 },
 "trap_length": {
 "unit": "mm",
@@ -168033,6 +168209,11 @@
 "evidence": "SEAT COVER",
 "source": "derived"
 },
+"seat_material": {
+"confidence": 1.0,
+"evidence": "-UF",
+"source": "derived"
+},
 "trap_length": {
 "confidence": 1.0,
 "evidence": "S-TRAP 250MM",
@@ -168056,6 +168237,9 @@
 },
 "product_type": {
 "value": "toilet_seat"
+},
+"seat_material": {
+"value": "uf"
 },
 "trap_length": {
 "unit": "mm",
@@ -168380,6 +168564,11 @@
 "evidence": "ONE PIECE",
 "source": "derived"
 },
+"seat_material": {
+"confidence": 1.0,
+"evidence": "-UF",
+"source": "derived"
+},
 "trap_length": {
 "confidence": 1.0,
 "evidence": "S-TRAP 250MM",
@@ -168406,6 +168595,9 @@
 },
 "product_type": {
 "value": "one_piece"
+},
+"seat_material": {
+"value": "uf"
 },
 "trap_length": {
 "unit": "mm",
@@ -168444,6 +168636,11 @@
 "evidence": "ONE PIECE",
 "source": "derived"
 },
+"seat_material": {
+"confidence": 1.0,
+"evidence": "-UF",
+"source": "derived"
+},
 "trap_length": {
 "confidence": 1.0,
 "evidence": "S-TRAP 250MM",
@@ -168470,6 +168667,9 @@
 },
 "product_type": {
 "value": "one_piece"
+},
+"seat_material": {
+"value": "uf"
 },
 "trap_length": {
 "unit": "mm",
@@ -168513,6 +168713,11 @@
 "evidence": "SEAT COVER",
 "source": "derived"
 },
+"seat_material": {
+"confidence": 1.0,
+"evidence": "-UF",
+"source": "derived"
+},
 "trap_length": {
 "confidence": 1.0,
 "evidence": "S-TRAP 250MM",
@@ -168536,6 +168741,9 @@
 },
 "product_type": {
 "value": "toilet_seat"
+},
+"seat_material": {
+"value": "uf"
 },
 "trap_length": {
 "unit": "mm",
@@ -168569,6 +168777,11 @@
 "evidence": "SEAT COVER",
 "source": "derived"
 },
+"seat_material": {
+"confidence": 1.0,
+"evidence": "-UF",
+"source": "derived"
+},
 "trap_length": {
 "confidence": 1.0,
 "evidence": "S-TRAP 250MM",
@@ -168592,6 +168805,9 @@
 },
 "product_type": {
 "value": "toilet_seat"
+},
+"seat_material": {
+"value": "uf"
 },
 "trap_length": {
 "unit": "mm",
@@ -168757,6 +168973,11 @@
 "evidence": "ONE PIECE",
 "source": "derived"
 },
+"seat_material": {
+"confidence": 1.0,
+"evidence": "-UF",
+"source": "derived"
+},
 "trap_length": {
 "confidence": 1.0,
 "evidence": "S-TRAP 200MM",
@@ -168780,6 +169001,9 @@
 },
 "product_type": {
 "value": "one_piece"
+},
+"seat_material": {
+"value": "uf"
 },
 "trap_length": {
 "unit": "mm",
@@ -168813,6 +169037,11 @@
 "evidence": "ONE PIECE",
 "source": "derived"
 },
+"seat_material": {
+"confidence": 1.0,
+"evidence": "-UF",
+"source": "derived"
+},
 "trap_length": {
 "confidence": 1.0,
 "evidence": "S-TRAP 200MM",
@@ -168836,6 +169065,9 @@
 },
 "product_type": {
 "value": "one_piece"
+},
+"seat_material": {
+"value": "uf"
 },
 "trap_length": {
 "unit": "mm",
@@ -169419,6 +169651,11 @@
 "evidence": "ONE PIECE",
 "source": "derived"
 },
+"seat_material": {
+"confidence": 1.0,
+"evidence": "-UF",
+"source": "derived"
+},
 "trap_type": {
 "confidence": 1.0,
 "evidence": "S-TRAP",
@@ -169437,6 +169674,9 @@
 },
 "product_type": {
 "value": "one_piece"
+},
+"seat_material": {
+"value": "uf"
 },
 "trap_type": {
 "value": "s_trap"
@@ -169466,6 +169706,11 @@
 "evidence": "ONE PIECE",
 "source": "derived"
 },
+"seat_material": {
+"confidence": 1.0,
+"evidence": "-UF",
+"source": "derived"
+},
 "trap_type": {
 "confidence": 1.0,
 "evidence": "S-TRAP",
@@ -169484,6 +169729,9 @@
 },
 "product_type": {
 "value": "one_piece"
+},
+"seat_material": {
+"value": "uf"
 },
 "trap_type": {
 "value": "s_trap"
@@ -188496,6 +188744,17 @@
 "match": "regex",
 "pattern": "DUROPLAST",
 "value": "duroplast"
+},
+{
+"_seed": true,
+"builder": {
+"kind": "code_contains",
+"value": "uf",
+"word": "-UF"
+},
+"match": "code_contains",
+"pattern": "-UF",
+"value": "uf"
 }
 ],
 "shape": [

@@ -478,13 +478,23 @@ def _rules_from_shipped_tables() -> dict[str, list[dict]]:
             size_triple(4, when_round=False),
             size_triple(3, when_round=True),
         ],
-        # What the seat cover is made of. Only the flyer says it ("*PP Seat Cover"),
-        # and it is a real buying decision: PP is the cheap one, UF the heavy one.
+        # What the seat cover is made of. Only the flyer says it in words ("*PP Seat
+        # Cover"), and it is a real buying decision: PP is the cheap one, UF the heavy
+        # one. Measured 31 Aug 2026 (PLAN-flyer-family-proposals.md S1): of the 179
+        # `-UF` coded products, 1 (`SRTWC8088-RL-UF`) carries no description at all, so
+        # nothing above can read it - the code is the only fact left.
+        #
+        # The code row sits LAST, which is where it runs. Order is the whole of
+        # priority now (#447): the engine no longer runs every text rule ahead of every
+        # code rule, and migration 450 moved the existing code rows below their key's
+        # text rows for exactly this reason - a list has to read as what it does. A word
+        # beats a code convention, and a code convention beats nothing.
         "seat_material": [
             {"match": "regex", "pattern": r"\bPP\b[^.]*SEAT", "value": "pp", "source": "flyer"},
             {"match": "regex", "pattern": r"\bUF\b[^.]*SEAT", "value": "uf", "source": "flyer"},
             {"match": "regex", "pattern": r"UREA[^.]*SEAT", "value": "uf"},
             {"match": "regex", "pattern": r"DUROPLAST", "value": "duroplast"},
+            {"match": "code_contains", "pattern": "-UF", "value": "uf"},
         ],
         "has_drainer": [{"match": "present", "pattern": "DRAINER", "value": True}],
         "has_overflow": [{"match": "present", "pattern": r"OVER\s*FLOW", "value": True}],

@@ -374,6 +374,11 @@ class ProductSpecFlyerBatch(Base, CompanyScopedMixin):
     suppressed_count = Column(Integer, nullable=False, server_default=text("0"))
     # How many rows of this batch have ever been written, over every apply.
     applied_count = Column(Integer, nullable=False, server_default=text("0"))
+    # How many of `product_count` are a sibling picked up via another product's
+    # card (PLAN-flyer-family-proposals.md R1) rather than their own printed code.
+    # Zero on a batch with no families, and on every batch proposed before this
+    # feature existed.
+    via_count = Column(Integer, nullable=False, server_default=text("0"))
 
     created_by = Column(UUID(as_uuid=False), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
@@ -427,6 +432,11 @@ class ProductSpecFlyerProposal(Base):
     # Which flyer pages the code was printed on, for ordering and for a reviewer
     # holding the paper.
     pages = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
+    # The printed code whose card filled THIS row's gaps (PLAN-flyer-family-
+    # proposals.md R1), when `product_code` was never itself printed on the
+    # flyer - e.g. `SRTWC8152-SH` on a row for `SRTWC8152-SH-UF-300`. NULL on a
+    # row proposed from the product's own card.
+    via_product_code = Column(String(100), nullable=True)
 
     spec_key = Column(String(100), nullable=False)
     # Scalar or list, exactly as `propose_from_text` returned it.

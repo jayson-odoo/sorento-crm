@@ -123,6 +123,7 @@ function batch(
     applied_at: null,
     created_by_name: 'Aisyah Rahman',
     applied_by_name: null,
+    viaCount: 0,
     groups: [],
     ...overrides,
   };
@@ -133,6 +134,7 @@ const MIXED_GROUP: FlyerSpecProductGroup = {
   product_code: 'SRTWC8066',
   product_name: 'Sorento Wall Hung Water Closet',
   pages: [3],
+  viaProductCode: null,
   proposals: [
     proposalRow({
       id: 'p-new',
@@ -188,6 +190,7 @@ const SECOND_GROUP: FlyerSpecProductGroup = {
   product_code: 'SRTBT1700',
   product_name: 'Sorento Freestanding Bathtub 1700',
   pages: [7, 11],
+  viaProductCode: null,
   proposals: [
     proposalRow({
       id: 'p-new-2',
@@ -570,6 +573,7 @@ describe('FlyerSpecReviewScreen, "Show more" keeps selection (AC-D.8)', () => {
       product_code: `SRT${String(i).padStart(4, '0')}`,
       product_name: `Product ${i}`,
       pages: [i + 1],
+      viaProductCode: null,
       proposals: [
         proposalRow({
           id: `p-new-${i}`,
@@ -881,6 +885,7 @@ describe('FlyerSpecReviewScreen, clearing the search (AC-G.5)', () => {
       product_code: `SRTP${String(i).padStart(4, '0')}`,
       product_name: `Paged product ${i}`,
       pages: [i + 1],
+      viaProductCode: null,
       proposals: [
         proposalRow({
           id: `paged-new-${i}`,
