@@ -104,15 +104,19 @@ contains / starts with / ends with, from field, size triple take Nth, name head.
 (the DRAFT rules, unsaved) returns `[{ index, value, evidence }]` for every row plus
 `winner_index`, computed with the same engine code path derivation uses, against that
 product's description, code and fields (or the pasted text, no fields). 404 unknown
-product, 422 malformed rule (names the row index). Requires `master_data.spec_registry.view`.
+product or key; a malformed rule is refused by the same validator PATCH uses (400
+`spec_registry_bad_rule` naming the row, 422 `spec_rule_builder_mismatch` for a sentence that
+disagrees with its pattern; amended 31 Aug to the shared validator's codes). `index` and
+`winner_index` are 0-based, matching the S1 frontend type. Requires
+`master_data.spec_registry.view`.
 
 ### AC-B.2 [BE] Preview endpoint
 `POST /master-data/spec-registry/{spec_key}/preview` body `{ rules }` enqueues a worker
 job that derives the key for every active product with the draft rules and returns
-`{ jobId }`; `GET .../preview/{jobId}` returns `pending` or `{ changed, added, removed,
-unchanged, sample: [{ code, before, after }] (20) }`. Hand-set values are never counted as
-changed (they are not derived). Requires `master_data.spec_registry.edit`. Job timeout and
-queue per `reread-catalogue`.
+`{ jobId }`; `GET .../preview/{jobId}` returns `{ status: "pending" }`, `{ status: "done", changed, added,
+removed, unchanged, sample: [{ code, before, after }] (20) }` or `{ status: "failed", error }`. Hand-set values are never counted as
+changed (they are not derived). Requires `master_data.spec_registry.edit`. Runs the way `reread-catalogue` does: an in-process background thread with a polled
+in-memory job record (measured 31 Aug; it was never an RQ job), all-companies scope.
 
 ### AC-B.3 [FE] Try-it panel
 Product search = `SearchableSelect` in `fetchOptions` mode over the products select
