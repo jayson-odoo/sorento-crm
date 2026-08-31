@@ -1,4 +1,7 @@
-import type { SpecDerivationRule } from '../types/productSpec.types';
+import type {
+  SpecDerivationRule,
+  SpecRuleBuilder,
+} from '../types/productSpec.types';
 
 /**
  * A derivation rule as a sentence a merchandiser can check.
@@ -74,9 +77,173 @@ export function ruleSentence(rule: SpecDerivationRule, label: string): string {
       return `If the product code starts with “${shown}”, ${label} is ${answer}.`;
     case 'code_suffix':
       return `If the product code ends in “${shown}”, ${label} is ${answer}.`;
-    case 'product_column':
-      return `${label} is taken straight from the product's own ${shown || 'record'}.`;
+    // The two readers that used to run before any rule did (#425): the product's own
+    // row rather than its text. A shipped row always carries a `builder`, so
+    // `builderSentence` below is what actually renders these in the editor - this is
+    // the fallback for the same row shown as a raw pattern (Advanced -> Edit pattern).
+    case 'from_field':
+      return `${fromFieldSentence(rule.pattern)}.`;
+    case 'name_head':
+      return `${label} comes from the product name head.`;
     default:
       return `${label}: ${rule.match} “${shown}”.`;
+  }
+}
+
+/**
+ * The sentence-builder layer.
+ *
+ * `ruleSentence` above reads an engine rule (match/pattern/capture/value) back as
+ * English - the one-way translation a pattern row still needs. A `builder` row runs the
+ * other direction: the kind menu picks a sentence FIRST, blanks get filled in, and
+ * `compileBuilder` turns that into the same engine fields. One compiler, so the
+ * pattern Advanced shows for a builder row is exactly what saving it sends.
+ *
+ * `from_field` and `name_head` read the product record, or run a multi-step text
+ * transform, rather than matching a regex - so they compile to kinds of their own and
+ * their `pattern` names what they read (`brand`, `column:dimensions_length`,
+ * `class_tail`). The server compiles the same fields from the same sentence and refuses
+ * a save where the two disagree, so nothing here may be illustrative.
+ */
+
+const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** Mirrors `_DIM_RE` in `product_spec_derivation.py`: 2-4 numbers separated by x/X/*,
+ *  each optionally labelled (L/W/H/D) and optionally carrying its own "mm". */
+const DIM_PART = '(?:[LWHDlwhd]\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM|mm)?';
+export const DIM_TRIPLE_PATTERN =
+  `${DIM_PART}\\s*[xX*]\\s*${DIM_PART}` +
+  `(?:\\s*[xX*]\\s*${DIM_PART})?` +
+  `(?:\\s*[xX*]\\s*${DIM_PART})?`;
+
+/** builder -> the engine fields it compiles to. What gets saved and what try-it runs. */
+export function compileBuilder(
+  builder: SpecRuleBuilder,
+): Pick<SpecDerivationRule, 'match' | 'pattern' | 'capture' | 'value'> {
+  const word = escapeRegex((builder.word ?? '').toUpperCase());
+  switch (builder.kind) {
+    case 'number_after':
+      return {
+        match: 'regex',
+        pattern: `\\b${word}\\s*(\\d+(?:\\.\\d+)?)`,
+        capture: 1,
+      };
+    case 'number_before':
+      return {
+        match: 'regex',
+        pattern: `(?<![A-Z0-9X])(\\d+(?:\\.\\d+)?)\\s*${word}\\b`,
+        capture: 1,
+      };
+    case 'number_between': {
+      const from = escapeRegex((builder.from ?? '').toUpperCase());
+      const to = escapeRegex((builder.to ?? '').toUpperCase());
+      return {
+        match: 'regex',
+        pattern: `${from}\\s*[:,]?\\s*(\\d+(?:\\.\\d+)?)\\s*${to}`,
+        capture: 1,
+      };
+    }
+    case 'text_contains':
+      return {
+        match: 'contains',
+        pattern: builder.word ?? '',
+        value: builder.value ?? '',
+      };
+    case 'text_ends_with':
+      return {
+        match: 'ends_with',
+        pattern: builder.word ?? '',
+        value: builder.value ?? '',
+      };
+    case 'word_present':
+      return { match: 'present', pattern: builder.word ?? '', value: true };
+    case 'code_contains':
+      return {
+        match: 'code_contains',
+        pattern: builder.word ?? '',
+        value: builder.value ?? '',
+      };
+    case 'code_starts_with':
+      return {
+        match: 'code_starts_with',
+        pattern: builder.word ?? '',
+        value: builder.value ?? '',
+      };
+    case 'code_ends_with':
+      // The engine's kind for this is `code_suffix` - it predates the sentence menu.
+      return {
+        match: 'code_suffix',
+        pattern: builder.word ?? '',
+        value: builder.value ?? '',
+      };
+    case 'from_field':
+      return { match: 'from_field', pattern: builder.field || 'category' };
+    case 'size_triple':
+      return {
+        match: 'regex',
+        pattern: DIM_TRIPLE_PATTERN,
+        capture: builder.position ?? 1,
+      };
+    case 'name_head':
+      // A kind of its own, not a regex: the engine strips the code, the size, the
+      // parenthetical and the "WITH"/"C/W"/"FOR" tail and then reads the trailing
+      // noun off what is left. `class_tail` is that text. The server compiles the
+      // same two fields and refuses a row where the two compilers disagree, so this
+      // has to be what it runs rather than something illustrative.
+      return { match: 'name_head', pattern: 'class_tail' };
+    default:
+      return { match: 'regex', pattern: '' };
+  }
+}
+
+function ordinal(n: number): string {
+  const suffixes = ['th', 'st', 'nd', 'rd'];
+  const v = n % 100;
+  return `${n}${suffixes[(v - 20) % 10] ?? suffixes[v] ?? suffixes[0]}`;
+}
+
+function fromFieldSentence(field?: string): string {
+  if (!field) return "From the product's own field";
+  if (field === 'category') return "From the product's category";
+  if (field === 'brand') return "From the product's brand field";
+  if (field.startsWith('column:'))
+    return `From the product's \`${field.slice(7)}\` column`;
+  return `From the product's ${field}`;
+}
+
+/** A builder as the sentence it reads, blanks filled in. What the row shows. */
+export function builderSentence(builder: SpecRuleBuilder): string {
+  const word = builder.word || '...';
+  const value =
+    builder.value === undefined || builder.value === ''
+      ? '...'
+      : String(builder.value);
+  switch (builder.kind) {
+    case 'number_after':
+      return `Number after the word \`${word}\``;
+    case 'number_before':
+      return `Number before \`${word}\``;
+    case 'number_between':
+      return `Number between \`${builder.from || '...'}\` and \`${builder.to || '...'}\``;
+    case 'text_contains':
+      return `Text contains \`${word}\` → ${value}`;
+    case 'text_ends_with':
+      return `Text ends with \`${word}\` → ${value}`;
+    case 'word_present':
+      return `Word \`${word}\` is present → yes`;
+    case 'code_contains':
+      return `Code contains \`${word}\` → ${value}`;
+    case 'code_starts_with':
+      return `Code starts with \`${word}\` → ${value}`;
+    case 'code_ends_with':
+      return `Code ends with \`${word}\` → ${value}`;
+    case 'from_field':
+      return fromFieldSentence(builder.field);
+    case 'size_triple':
+      return `Size from \`L x W x H\`, take the ${ordinal(builder.position ?? 1)} number`;
+    case 'name_head':
+      return 'Product name head (text before the first bracket or WITH)';
+    default:
+      return 'Unrecognised rule';
   }
 }

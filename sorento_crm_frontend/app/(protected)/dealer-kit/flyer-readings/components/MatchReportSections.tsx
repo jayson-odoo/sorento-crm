@@ -126,6 +126,14 @@ export interface MatchReportSectionsProps {
    * to say "read the flyer first" rather than offer a button that cannot work.
    */
   readingStatus?: FlyerReadingStatus;
+  /**
+   * When a code was last adopted or undone on this reading. Passed straight
+   * through to `SpecProposalSection`, which is the one place it is compared
+   * against a proposal batch's `created_at` (AC-C.4). Optional, default null,
+   * for the same reason `readingStatus` is - existing callers and tests pass
+   * no such prop.
+   */
+  codeOverridesChangedAt?: string | null;
 }
 
 export function MatchReportSections({
@@ -136,6 +144,7 @@ export function MatchReportSections({
   promotionLabel,
   headings,
   readingStatus = 'done',
+  codeOverridesChangedAt = null,
 }: MatchReportSectionsProps) {
   const canAdopt = useHasPermission(MASTER_DATA_EDIT);
 
@@ -574,7 +583,11 @@ export function MatchReportSections({
 
       {/* Beside the sizes, and for the same reason: both are the flyer telling
           the product master something it may not know. */}
-      <SpecProposalSection readingId={readingId} readingStatus={readingStatus} />
+      <SpecProposalSection
+        readingId={readingId}
+        readingStatus={readingStatus}
+        codeOverridesChangedAt={codeOverridesChangedAt}
+      />
 
       <Section
         id="duplicates"

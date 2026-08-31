@@ -87,6 +87,14 @@ class ProductSpecRegistry(Base):
     # split as rank_weight.
     match_tolerance = Column(Numeric(10, 3), nullable=False, server_default=text("0"))
     match_decay = Column(Numeric(10, 3), nullable=False, server_default=text("0"))
+    # The number above which a reading is a typo rather than a measurement. Seeded 5000
+    # on every millimetre key, blank everywhere else, and blank means no cap.
+    #
+    # It was `MAX_PLAUSIBLE_MM`, a constant in the derivation engine, which said the
+    # same thing about a 6 mm glass thickness and a 1.8 m bath and could be changed by
+    # nobody. The catalogue really does carry "540X440180MM" - a separator typo that
+    # parses as a 440-metre sink - so the cap has to exist; it just belongs to the key.
+    max_value = Column(Numeric(12, 3), nullable=True)
     # How many catalog codes carried this key when it was seeded. Recorded so a later
     # reviewer can see why a key is weighted low without redoing the measurement.
     measured_coverage = Column(Integer, nullable=True)

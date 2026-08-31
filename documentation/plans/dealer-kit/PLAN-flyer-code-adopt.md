@@ -1,6 +1,6 @@
 # PLAN - Flyer reading: adopt an unmatched printed code as an existing product
 
-**Status:** S1 built (adopt + undo, Groups A and B); S2 pending (`#422`). Undo revised to a
+**Status:** S1 merged (#429, in prod 31 Aug); S2 built, PR #446 (Group C). Undo revised to a
 deferred action in the S1 review pass, 31 Aug 2026 - see "Frontend" below and UAC AC-B.3.
 Approved 31 Aug 2026 (lavish markup: R5 added). Lane: `.claude/worktrees/flyer-code-adopt`.
 UAC: `flyer-code-adopt-acceptance-criteria.md`.

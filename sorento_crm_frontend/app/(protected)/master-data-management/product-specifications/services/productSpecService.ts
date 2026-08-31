@@ -59,7 +59,34 @@
  *     `user_values`, so sending a list rebuilt from a cached read deletes whatever
  *     somebody else added in between; this route never takes the list from a client.
  *   PATCH /api/v1/master-data/spec-registry/{specKey}         (the registry editor,
- *     which shows the whole list and submits the whole list)
+ *     which shows the whole list and submits the whole list). `max_value` rides this
+ *     PATCH too (AC-A.5, C.5) - null/absent clears the cap.
+ *
+ * TRY IT AND PREVIEW (AC-B.1, B.2)
+ *
+ *   POST /api/v1/master-data/spec-registry/{specKey}/try
+ *     body { productId?: string, text?: string, rules: SpecDerivationRule[] }
+ *       (exactly one of productId/text; `rules` is the DRAFT list, unsaved)
+ *     -> { description: string, reads: [{ index, value, evidence }], winner_index }
+ *        One `reads` entry per rule, same order; `evidence` is the exact text a match
+ *        was read from, null when the row read nothing. `winner_index` is the first row
+ *        with a value - what the engine would actually keep - or null when none matched.
+ *        404 unknown product, 422 malformed rule (names the row index).
+ *        Requires `master_data.spec_registry.view`.
+ *
+ *   POST /api/v1/master-data/spec-registry/{specKey}/preview   body { rules: SpecDerivationRule[] }
+ *     -> { jobId: string }
+ *        Starts an in-process background job (no worker, no queue - the same
+ *        mechanism `reread-catalogue` already runs on) that derives the key for
+ *        every active product with the draft rules. Requires
+ *        `master_data.spec_registry.edit`. 409 `spec_preview_running` while another
+ *        preview is already in flight, the running job's id in `detail`.
+ *   GET  /api/v1/master-data/spec-registry/{specKey}/preview/{jobId}
+ *     -> { status: 'pending' } | { status: 'done', changed, added, removed, unchanged,
+ *          sample: [{ code, before, after }] (20) } | { status: 'failed', error }
+ *        Hand-set values are never counted as changed - they are not derived. 404 an
+ *        unknown jobId, or a jobId that belongs to a DIFFERENT specKey. Requires
+ *        `master_data.spec_registry.edit` - the same grant that started the job.
  *
  * THE 422 THAT IS NOT AN ERROR ENVELOPE
  *
@@ -136,10 +163,16 @@
 import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
 import type { SimilarKeyMatch, SpecDataType } from '@/components/spec-table';
-import type { SpecProposal, SpecProposalValue } from '@/components/spec-proposals';
+import type {
+  SpecProposal,
+  SpecProposalValue,
+} from '@/components/spec-proposals';
+import type { SearchableSelectOption } from '@/components/common/SearchableSelect';
 import type {
   SpecDerivationRule,
+  SpecPreviewJobResult,
   SpecSearchPolicyRow,
+  SpecTryResult,
   ProductSpecDetail,
   ProductSpecRow,
   SpecException,
@@ -169,7 +202,9 @@ export async function getProductSpecs(params: {
     `/api/v1/master-data/product-specifications/?${search.toString()}`,
   );
   if (!response.ok) {
-    throw new Error(await extractApiError(response, 'Failed to load product specifications'));
+    throw new Error(
+      await extractApiError(response, 'Failed to load product specifications'),
+    );
   }
   return response.json();
 }
@@ -187,7 +222,9 @@ export async function getSpecExceptions(params: {
     `/api/v1/master-data/product-specifications/exceptions?${search.toString()}`,
   );
   if (!response.ok) {
-    throw new Error(await extractApiError(response, 'Failed to load spec exceptions'));
+    throw new Error(
+      await extractApiError(response, 'Failed to load spec exceptions'),
+    );
   }
   return response.json();
 }
@@ -196,12 +233,16 @@ export async function getSpecExceptions(params: {
  * One product's derived specs, or the reason there are none. Used by the
  * Specifications tab on the product record.
  */
-export async function getProductSpecDetail(productId: string): Promise<ProductSpecDetail> {
+export async function getProductSpecDetail(
+  productId: string,
+): Promise<ProductSpecDetail> {
   const response = await apiFetch(
     `/api/v1/master-data/product-specifications/by-product/${productId}`,
   );
   if (!response.ok) {
-    throw new Error(await extractApiError(response, 'Failed to load derived specifications'));
+    throw new Error(
+      await extractApiError(response, 'Failed to load derived specifications'),
+    );
   }
   return response.json();
 }
@@ -209,7 +250,9 @@ export async function getProductSpecDetail(productId: string): Promise<ProductSp
 export async function getSpecRegistry(): Promise<{ keys: SpecRegistryKey[] }> {
   const response = await apiFetch('/api/v1/master-data/spec-registry');
   if (!response.ok) {
-    throw new Error(await extractApiError(response, 'Failed to load the spec registry'));
+    throw new Error(
+      await extractApiError(response, 'Failed to load the spec registry'),
+    );
   }
   return response.json();
 }
@@ -227,13 +270,18 @@ export async function previewSpecSearch(body: {
   /** False to see the literal reading alone, for comparison. */
   understand?: boolean;
 }): Promise<SpecPreviewResult> {
-  const response = await apiFetch('/api/v1/master-data/product-specifications/preview-search', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
+  const response = await apiFetch(
+    '/api/v1/master-data/product-specifications/preview-search',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    },
+  );
   if (!response.ok) {
-    throw new Error(await extractApiError(response, 'Spec search preview failed'));
+    throw new Error(
+      await extractApiError(response, 'Spec search preview failed'),
+    );
   }
   return response.json();
 }
@@ -265,18 +313,24 @@ export async function getApplicableSpecKeys(
     `/api/v1/master-data/spec-registry/applicable-keys?code=${encodeURIComponent(productCode)}`,
   );
   if (!response.ok) {
-    throw new Error(await extractApiError(response, 'Failed to load the specifications'));
+    throw new Error(
+      await extractApiError(response, 'Failed to load the specifications'),
+    );
   }
   return response.json();
 }
 
 /** The existing key a proposed label already means, or null when it is genuinely new. */
-export async function getSimilarSpecKey(label: string): Promise<SimilarKeyMatch | null> {
+export async function getSimilarSpecKey(
+  label: string,
+): Promise<SimilarKeyMatch | null> {
   const response = await apiFetch(
     `/api/v1/master-data/spec-registry/similar?label=${encodeURIComponent(label)}`,
   );
   if (!response.ok) {
-    throw new Error(await extractApiError(response, 'Failed to check the name'));
+    throw new Error(
+      await extractApiError(response, 'Failed to check the name'),
+    );
   }
   return (await response.json()).match ?? null;
 }
@@ -302,7 +356,10 @@ export class SpecSimilarError extends Error {
  * body first ONLY for the 422 shape it cannot represent, because the sentence naming
  * the collision lives in `error` rather than in `detail`.
  */
-async function throwSpecWriteError(response: Response, fallback: string): Promise<never> {
+async function throwSpecWriteError(
+  response: Response,
+  fallback: string,
+): Promise<never> {
   if (response.status === 422) {
     let body: { error?: string; match?: Record<string, unknown> } | null = null;
     try {
@@ -353,11 +410,14 @@ export async function addValueToSpecKey(
   specKey: string,
   value: string,
 ): Promise<SpecRegistryKey> {
-  const response = await apiFetch(`/api/v1/master-data/spec-registry/${specKey}/values`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ value }),
-  });
+  const response = await apiFetch(
+    `/api/v1/master-data/spec-registry/${specKey}/values`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ value }),
+    },
+  );
   if (!response.ok) {
     await throwSpecWriteError(response, 'Failed to add the value');
   }
@@ -385,13 +445,18 @@ export async function updateSpecKey(
     suppressed_values?: string[];
     derivation_rules?: SpecDerivationRule[];
     applies_when?: Record<string, string[]>;
+    /** The plausibility cap (AC-A.5, C.5). null clears it; absent leaves it as stored. */
+    max_value?: number | null;
   },
 ): Promise<SpecRegistryKey> {
-  const response = await apiFetch(`/api/v1/master-data/spec-registry/${specKey}`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
+  const response = await apiFetch(
+    `/api/v1/master-data/spec-registry/${specKey}`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    },
+  );
   if (!response.ok) {
     await throwSpecWriteError(response, 'Failed to save the spec key');
   }
@@ -417,7 +482,9 @@ export async function getKeysForProduct(code: string): Promise<{
     `/api/v1/master-data/spec-registry/keys-for-product?code=${encodeURIComponent(code)}`,
   );
   if (!response.ok) {
-    throw new Error(await extractApiError(response, 'Failed to look up the product'));
+    throw new Error(
+      await extractApiError(response, 'Failed to look up the product'),
+    );
   }
   return response.json();
 }
@@ -444,10 +511,14 @@ export interface SpecKeyProducts {
 }
 
 /** How many products carry each key right now. Not `measured_coverage`. */
-export async function getSpecCoverage(): Promise<{ coverage: Record<string, number> }> {
+export async function getSpecCoverage(): Promise<{
+  coverage: Record<string, number>;
+}> {
   const response = await apiFetch('/api/v1/master-data/spec-registry/coverage');
   if (!response.ok) {
-    throw new Error(await extractApiError(response, 'Failed to load the coverage'));
+    throw new Error(
+      await extractApiError(response, 'Failed to load the coverage'),
+    );
   }
   return response.json();
 }
@@ -466,19 +537,25 @@ export async function getSpecKeyProducts(
     `/api/v1/master-data/spec-registry/${specKey}/products?${query.toString()}`,
   );
   if (!response.ok) {
-    throw new Error(await extractApiError(response, 'Failed to load the products'));
+    throw new Error(
+      await extractApiError(response, 'Failed to load the products'),
+    );
   }
   return response.json();
 }
 
 /** Read one product again with the rules that are live now. */
-export async function rederiveProduct(productId: string): Promise<{ written: number }> {
+export async function rederiveProduct(
+  productId: string,
+): Promise<{ written: number }> {
   const response = await apiFetch(
     `/api/v1/master-data/product-specifications/by-product/${productId}/rederive`,
     { method: 'POST' },
   );
   if (!response.ok) {
-    throw new Error(await extractApiError(response, 'Could not read this product again'));
+    throw new Error(
+      await extractApiError(response, 'Could not read this product again'),
+    );
   }
   return response.json();
 }
@@ -498,7 +575,9 @@ export async function setSpecValueByHand(
     },
   );
   if (!response.ok) {
-    throw new Error(await extractApiError(response, 'Could not save the value'));
+    throw new Error(
+      await extractApiError(response, 'Could not save the value'),
+    );
   }
 }
 
@@ -520,25 +599,35 @@ export async function clearSpecValueByHand(
     { method: 'DELETE' },
   );
   if (!response.ok) {
-    throw new Error(await extractApiError(response, 'Could not clear the value'));
+    throw new Error(
+      await extractApiError(response, 'Could not clear the value'),
+    );
   }
 }
 
 export async function deleteSpecKey(specKey: string): Promise<void> {
-  const response = await apiFetch(`/api/v1/master-data/spec-registry/${specKey}`, {
-    method: 'DELETE',
-  });
+  const response = await apiFetch(
+    `/api/v1/master-data/spec-registry/${specKey}`,
+    {
+      method: 'DELETE',
+    },
+  );
   if (!response.ok) {
-    throw new Error(await extractApiError(response, 'Failed to delete the spec key'));
+    throw new Error(
+      await extractApiError(response, 'Failed to delete the spec key'),
+    );
   }
 }
 
-
 /** Every scoring knob the ranker reads, with its shipped default alongside. */
-export async function getSearchPolicy(): Promise<{ policy: SpecSearchPolicyRow[] }> {
+export async function getSearchPolicy(): Promise<{
+  policy: SpecSearchPolicyRow[];
+}> {
   const response = await apiFetch('/api/v1/master-data/spec-registry/policy');
   if (!response.ok) {
-    throw new Error(await extractApiError(response, 'Failed to load the search settings'));
+    throw new Error(
+      await extractApiError(response, 'Failed to load the search settings'),
+    );
   }
   return response.json();
 }
@@ -547,17 +636,21 @@ export async function updateSearchPolicy(
   policyKey: string,
   value: number,
 ): Promise<{ policy_key: string; value: number }> {
-  const response = await apiFetch(`/api/v1/master-data/spec-registry/policy/${policyKey}`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ value }),
-  });
+  const response = await apiFetch(
+    `/api/v1/master-data/spec-registry/policy/${policyKey}`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ value }),
+    },
+  );
   if (!response.ok) {
-    throw new Error(await extractApiError(response, 'Failed to save the search setting'));
+    throw new Error(
+      await extractApiError(response, 'Failed to save the search setting'),
+    );
   }
   return response.json();
 }
-
 
 export interface CatalogueStatus {
   status: 'idle' | 'running' | 'done' | 'failed';
@@ -570,20 +663,29 @@ export interface CatalogueStatus {
 }
 
 export async function getCatalogueStatus(): Promise<CatalogueStatus> {
-  const response = await apiFetch('/api/v1/master-data/spec-registry/catalogue-status');
+  const response = await apiFetch(
+    '/api/v1/master-data/spec-registry/catalogue-status',
+  );
   if (!response.ok) {
-    throw new Error(await extractApiError(response, 'Failed to read the catalogue status'));
+    throw new Error(
+      await extractApiError(response, 'Failed to read the catalogue status'),
+    );
   }
   return response.json();
 }
 
 /** Re-read every product with the rules as they stand now. Runs in the background. */
 export async function rereadCatalogue(): Promise<{ status: string }> {
-  const response = await apiFetch('/api/v1/master-data/spec-registry/reread-catalogue', {
-    method: 'POST',
-  });
+  const response = await apiFetch(
+    '/api/v1/master-data/spec-registry/reread-catalogue',
+    {
+      method: 'POST',
+    },
+  );
   if (!response.ok) {
-    throw new Error(await extractApiError(response, 'Failed to start reading the catalogue'));
+    throw new Error(
+      await extractApiError(response, 'Failed to start reading the catalogue'),
+    );
   }
   return response.json();
 }
@@ -646,7 +748,9 @@ export async function extractSpecProposals(
     },
   );
   if (!response.ok) {
-    throw new Error(await extractApiError(response, 'Could not read this text'));
+    throw new Error(
+      await extractApiError(response, 'Could not read this text'),
+    );
   }
   return response.json();
 }
@@ -659,6 +763,107 @@ export async function extractSpecProposals(
  * the table half-applied. The server refuses the whole batch when any entry is bad,
  * which is why the caller can refetch once and trust what it reads.
  */
+// --- Try it and preview (AC-B.1, B.2) -------------------------------------------
+
+export type TrySpecRulesSource =
+  | { productId: string; text?: undefined }
+  | { text: string; productId?: undefined };
+
+/** Try the DRAFT rules against a real product or a pasted text, unsaved. */
+export async function trySpecRules(
+  specKey: string,
+  body: { rules: SpecDerivationRule[] } & TrySpecRulesSource,
+): Promise<SpecTryResult> {
+  const response = await apiFetch(
+    `/api/v1/master-data/spec-registry/${specKey}/try`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        rules: body.rules,
+        productId: body.productId,
+        text: body.text,
+      }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(
+      await extractApiError(response, 'Could not try these rules'),
+    );
+  }
+  return response.json();
+}
+
+/** Start an in-process background job (no worker, no queue) that derives the key for
+ *  every active product with the draft rules. Poll `getSpecPreview` for the result.
+ *  409 while another preview is already running - `extractApiError` reads that same
+ *  as any other failure, so the caller sees the sentence naming it, not a raw code. */
+export async function previewSpecRules(
+  specKey: string,
+  body: { rules: SpecDerivationRule[] },
+): Promise<{ jobId: string }> {
+  const response = await apiFetch(
+    `/api/v1/master-data/spec-registry/${specKey}/preview`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(
+      await extractApiError(response, 'Could not start the preview'),
+    );
+  }
+  return response.json();
+}
+
+export async function getSpecPreview(
+  specKey: string,
+  jobId: string,
+): Promise<SpecPreviewJobResult> {
+  const response = await apiFetch(
+    `/api/v1/master-data/spec-registry/${specKey}/preview/${jobId}`,
+  );
+  if (!response.ok) {
+    throw new Error(
+      await extractApiError(response, 'Could not read the preview'),
+    );
+  }
+  return response.json();
+}
+
+/**
+ * The try-it product picker, in `fetchOptions` mode over the whole product master
+ * (AC-B.3, R5 of flyer-code-adopt).
+ */
+export async function fetchProductPickerOptions(
+  query: string,
+  pageIndex: number,
+): Promise<SearchableSelectOption[]> {
+  const search = new URLSearchParams({
+    limit: '50',
+    offset: String(pageIndex * 50),
+    ...(query ? { query } : {}),
+  });
+  const response = await apiFetch(
+    `/api/v1/master-data/products/select?${search.toString()}`,
+  );
+  if (!response.ok) {
+    throw new Error(
+      await extractApiError(response, 'Could not search the products'),
+    );
+  }
+  const body = await response.json();
+  return (body.data ?? []).map(
+    (p: { id: string; product_code: string; product_name: string }) => ({
+      value: p.id,
+      label: `${p.product_code} - ${p.product_name}`,
+      searchText: `${p.product_code} ${p.product_name}`,
+    }),
+  );
+}
+
 export async function applySpecProposals(
   productId: string,
   entries: SpecProposalEntry[],
@@ -672,7 +877,9 @@ export async function applySpecProposals(
     },
   );
   if (!response.ok) {
-    throw new Error(await extractApiError(response, 'Could not save the specifications'));
+    throw new Error(
+      await extractApiError(response, 'Could not save the specifications'),
+    );
   }
   return response.json();
 }

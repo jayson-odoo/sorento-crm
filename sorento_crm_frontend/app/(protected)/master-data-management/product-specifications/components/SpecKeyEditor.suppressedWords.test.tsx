@@ -16,6 +16,14 @@ vi.mock('sonner', () => ({
 }));
 vi.mock('../services/productSpecService', () => ({
   updateSpecKey: vi.fn(),
+  // Rendered transitively by SpecTryItPanel / useSpecTryIt / useSpecPreview, which this
+  // suite does not exercise - stubs so the module mock still resolves their imports.
+  fetchProductPickerOptions: vi.fn().mockResolvedValue([]),
+  trySpecRules: vi
+    .fn()
+    .mockResolvedValue({ description: '', reads: [], winner_index: null }),
+  previewSpecRules: vi.fn().mockResolvedValue({ jobId: 'mock-job' }),
+  getSpecPreview: vi.fn().mockResolvedValue({ status: 'pending' }),
 }));
 
 import { updateSpecKey } from '../services/productSpecService';

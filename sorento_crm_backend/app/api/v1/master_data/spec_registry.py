@@ -32,7 +32,7 @@ from app.dependencies import (
     require_permission_with_api_key,
 )
 from app.models.product_spec import ProductSpecRegistry, ProductSpecSearchPolicy
-from app.services import product_spec_rederive
+from app.services import product_spec_preview, product_spec_rederive
 from app.services.error_handler import handle_internal_error, handle_not_found
 from app.services.product_spec_registry import (
     SEARCH_POLICY_SEED,
@@ -58,17 +58,13 @@ def _effective_rules(row) -> list[dict]:
     """
     from app.services.product_spec_derivation import shipped_rules
 
-    # Reading a column IS a rule, and hiding it behind "there are no rules to edit" was
-    # the screen refusing to explain the one key everybody asks about. Shown as a rule
-    # of its own kind so the derivation is legible end to end - it is not editable yet,
-    # but it is at least visible and named.
-    if row.spec_key in _FROM_PRODUCT_RECORD:
-        return [{"match": "product_column", "pattern": row.spec_key, "value": None}]
-
     stored = row.derivation_rules or []
     if stored:
         return stored
-    return list(shipped_rules().get(row.spec_key) or [])
+    # Tagged on the way OUT, never stored: a shipped row shows a small `shipped` tag and
+    # is otherwise an ordinary row - draggable, editable, removable (AC-C.3) - and the
+    # moment anybody saves the list it becomes theirs, tag and all dropped.
+    return [dict(rule, shipped=True) for rule in shipped_rules().get(row.spec_key) or []]
 
 
 def _serialise(row) -> dict:
@@ -104,18 +100,15 @@ def _serialise(row) -> dict:
         # Merged view: consumers see one vocabulary, not the seed/user split.
         "synonyms": merged_synonyms(row),
         "applies_when": row.applies_when or {},
-        # Whether rules are the thing that fills this key in. Brand comes off the
-        # product's own brand row and the dimensions are parsed out of the measurement
-        # block, so for those the rule editor was offering control it does not have -
-        # and saying "no rules yet, so nothing will ever fill this in" next to a key
-        # with thousands of values.
-        "read_from": (
-            "product_record"
-            if row.spec_key in _FROM_PRODUCT_RECORD
-            else "measurement_then_rules"
-            if row.spec_key in _MEASUREMENT_KEYS
-            else "rules"
-        ),
+        # Rules, for every key without exception (#425). Brand used to be read off the
+        # product's own row and the dimensions out of a measurement block, both outside
+        # the rule list, so this said which keys the editor could not actually control.
+        # Both are rows now - "From the product's brand field", "From the product's
+        # `dimensions_length` column" - so there is nothing left for it to except.
+        "read_from": "rules",
+        # The number above which a reading is a typo rather than a measurement. Blank
+        # means no cap.
+        "max_value": float(row.max_value) if row.max_value is not None else None,
         "rank_weight": float(row.rank_weight) if row.rank_weight is not None else None,
         "measured_coverage": row.measured_coverage,
         # Editing surface: which fields the UI may offer, and what it must not touch.
@@ -216,6 +209,11 @@ class SpecKeyUpdate(BaseModel):
     # Calibration rather than vocabulary - "bowl count is not only for kitchen sinks"
     # is a merchandising call - so it is editable and no longer seed-repaired.
     applies_when: Optional[dict[str, list[str]]] = None
+    # Ignore readings above this. Seeded 5000 on millimetre keys, because the catalogue
+    # carries "540X440180MM" - a separator typo that parses as a 440-metre sink. Blank
+    # is a real answer and means no cap, which is why it is `Optional` on a payload that
+    # only applies the fields it was sent.
+    max_value: Optional[float] = Field(default=None, ge=0)
 
 
 class SpecKeyCreate(BaseModel):
@@ -323,18 +321,6 @@ async def update_search_policy(
         raise handle_internal_error(str(e))
 
 
-# Keys no rule can produce. Only brand: it is read off the product's own brand row and
-# there is no text involved at any point.
-#
-# The dimensions are NOT here. Their primary source is the measurement block in the
-# description - an algorithm, not a token list - but rules do fill them in from the
-# flyer where the description states no size at all, which is 96 products. Listing them
-# here told people rules would do nothing, one screen away from a rule doing something.
-_FROM_PRODUCT_RECORD = {"brand"}
-
-# Keys whose PRIMARY source is the measurement block; rules fill the gap it leaves.
-_MEASUREMENT_KEYS = {"dim_length", "dim_width", "dim_height", "diameter", "depth", "thickness"}
-
 _RULE_KINDS = {
     "contains",
     "ends_with",
@@ -346,7 +332,16 @@ _RULE_KINDS = {
     # COVER" or nothing recognisable.
     "code_contains",
     "code_starts_with",
+    # Read the product ROW: its category, its brand field, or one of its own columns.
+    # These are the readers that used to run before any rule and appeared on no screen.
+    "from_field",
+    # What the product NAME says it is, once the code, the size, the parenthetical and
+    # everything it comes WITH are stripped off.
+    "name_head",
 }
+
+# Kinds that carry no value of their own: they read one off the product.
+_VALUELESS_KINDS = {"regex", "present", "from_field", "name_head"}
 
 
 def _validate_rules(
@@ -358,10 +353,61 @@ def _validate_rules(
     catalog deriving - which is right at 3am and wrong here, where the person is
     looking at the field and can fix it.
     """
+    from app.services.product_spec_registry import compile_builder
+
     cleaned: list[dict] = []
     for index, rule in enumerate(rules, start=1):
         if not isinstance(rule, dict):
             raise _reject(f"Rule {index} is not a rule.", "spec_registry_bad_rule")
+
+        # A row built from the sentence menu carries its `builder`, and the editor
+        # compiled it in the browser before sending. Compile it again here and hold the
+        # two to each other: the pattern the engine runs must be the one the sentence on
+        # screen says, or one of the two screens is lying about a live rule (AC-A.7).
+        builder = rule.get("builder")
+        if isinstance(builder, dict) and builder.get("kind"):
+            compiled = compile_builder(builder)
+            # Compared, and later STORED, only against the fields THIS compile
+            # produced (B2). Changing a rule's kind in the editor - Text contains to
+            # Number after a word, say - leaves the previous kind's `value` sitting
+            # on the row unless something clears it; comparing every one of the four
+            # fields regardless of what the new kind emits either 422s on a stale
+            # field nobody asked about, or (worse) lets it survive the merge below
+            # and get saved: a builder row that reads `\bL\s*(\d+...)` next to a
+            # `value` from the sentence it used to be.
+            compiled_fields = {"match", "pattern", "capture", "value"} & set(compiled)
+            sent = {
+                field: rule.get(field)
+                for field in compiled_fields
+                if rule.get(field) is not None
+            }
+            disagreed = [
+                field
+                for field, value in sent.items()
+                if str(compiled.get(field, "")) != str(value)
+            ]
+            if disagreed:
+                from app.services.error_handler import AppException
+
+                raise AppException(
+                    status_code=422,
+                    message=(
+                        f"Rule {index} does not match the sentence it was built from "
+                        f"({', '.join(disagreed)}). Re-open the rule and save it again."
+                    ),
+                    code="spec_rule_builder_mismatch",
+                )
+            # A full replacement of the four engine fields, not a patch: whatever the
+            # PREVIOUS kind left behind - a stale `value` or `capture` the new kind
+            # does not produce - is dropped here rather than carried through by the
+            # merge below.
+            rule = {
+                k: v
+                for k, v in rule.items()
+                if k not in {"match", "pattern", "capture", "value"}
+            }
+            rule = {**rule, **compiled}
+
         kind = str(rule.get("match") or "contains").lower()
         pattern = str(rule.get("pattern") or "").strip()
         if kind not in _RULE_KINDS:
@@ -380,7 +426,36 @@ def _validate_rules(
                     f"Rule {index}: that pattern is not valid ({exc}).",
                     "spec_registry_bad_rule",
                 )
+        if kind == "from_field":
+            # A `from_field column:<name>` naming a text column reads nothing today
+            # (the engine guards it), but it is a rule that can never fire and a typo
+            # that would go unnoticed forever (B3) - refused here, at the point
+            # someone can still fix it, rather than silently accepted and quietly
+            # useless.
+            from app.services.product_spec_registry import from_field_choices
+
+            allowed = from_field_choices()
+            if pattern not in allowed:
+                columns = ", ".join(
+                    sorted(c[len("column:"):] for c in allowed if c.startswith("column:"))
+                )
+                raise _reject(
+                    f"Rule {index}: '{pattern}' is not something a rule may read off "
+                    f"the product record. Use category, brand, or a numeric column "
+                    f"({columns}).",
+                    "spec_registry_bad_rule",
+                )
         entry: dict = {"match": kind, "pattern": pattern}
+        # The sentence travels with the rule, so the row still reads as prose the next
+        # time the page opens. `shipped` and `shipped_backfill` deliberately do NOT: a
+        # saved list is the business's own, and a tag saying otherwise would be a claim
+        # the database cannot back.
+        if isinstance(rule.get("builder"), dict) and rule["builder"].get("kind"):
+            entry["builder"] = {
+                field: value
+                for field, value in rule["builder"].items()
+                if field in {"kind", "word", "from", "to", "value", "position", "field"}
+            }
         if rule.get("value") is not None:
             entry["value"] = rule["value"]
         if rule.get("capture"):
@@ -394,7 +469,19 @@ def _validate_rules(
             entry["unit"] = str(rule["unit"])
         if rule.get("source") and str(rule["source"]).lower() != "any":
             entry["source"] = str(rule["source"]).lower()
-        if kind not in {"regex", "present"} and "value" not in entry:
+        # The per-rule condition and its negative, carried through for the same reason
+        # `scale` is: dropping it on save would quietly delete the round/square gate off
+        # the shipped size rows, and 407 would go back to being a length on every round
+        # basin the first time somebody edited the Length screen.
+        for gate in ("applies_when", "unless"):
+            condition = rule.get(gate)
+            if isinstance(condition, dict) and condition:
+                entry[gate] = {
+                    str(key).strip(): [str(v).strip() for v in (values or []) if str(v).strip()]
+                    for key, values in condition.items()
+                    if str(key).strip() and [v for v in (values or []) if str(v).strip()]
+                }
+        if kind not in _VALUELESS_KINDS and "value" not in entry:
             raise _reject(
                 f"Rule {index} needs the value it should produce.", "spec_registry_bad_rule"
             )
@@ -698,6 +785,178 @@ async def products_carrying_spec(
     }
 
 
+class SpecTryRequest(BaseModel):
+    """One rule list, tried against a real product or a paste (AC-B.1).
+
+    Exactly one of `productId`/`text` - a request naming both or neither is refused,
+    because there is no way to tell which one the rows should read.
+    """
+
+    productId: Optional[str] = None
+    text: Optional[str] = None
+    rules: list[dict] = Field(default_factory=list)
+
+
+class SpecPreviewRequest(BaseModel):
+    """The draft list a catalogue-wide preview runs against (AC-B.2)."""
+
+    rules: list[dict] = Field(default_factory=list)
+
+
+def _rule_allowed_values(row) -> list[str]:
+    """Suppressed values included, same as the PATCH: a rule pointed at a value this
+    business took away must not be refused as unknown, or removing the value would
+    also silently break the rule that used to read it."""
+    return [*merged_allowed_values(row), *[str(v) for v in (row.suppressed_values or [])]]
+
+
+@router.post("/{spec_key}/try")
+async def try_spec_key(
+    spec_key: str,
+    payload: SpecTryRequest = Body(...),
+    current_user: dict = Depends(require_permission_with_api_key("master_data.spec_registry.view")),
+    db: Session = Depends(get_db),
+):
+    """What the DRAFT rules would read from one real product, row by row (AC-B.1).
+
+    Unsaved: the rules travel in the request body and are never stored. Every OTHER
+    key still reads with its own configured rules, because a row on this key can be
+    gated on one of them (`shape`, for the round/square rows) and that gate has to be
+    answered for real, draft or not.
+    """
+    try:
+        from app.models.product import Product, ProductCategory
+        from app.services.product_spec_derivation import (
+            configured_max_values,
+            configured_rules,
+            configured_scopes,
+            try_read,
+        )
+
+        row = db.query(ProductSpecRegistry).filter_by(spec_key=spec_key).first()
+        if row is None:
+            raise handle_not_found("Spec key", spec_key)
+
+        has_product = bool((payload.productId or "").strip())
+        has_text = bool((payload.text or "").strip())
+        if has_product == has_text:
+            raise _reject(
+                "Try it on either a product or pasted text, not both and not neither.",
+                "spec_registry_try_ambiguous_source",
+            )
+
+        cleaned = _validate_rules(
+            payload.rules or [],
+            allowed_values=_rule_allowed_values(row),
+            data_type=row.data_type,
+        )
+
+        rules_by_key = configured_rules(db)
+        scopes_by_key = configured_scopes(db)
+        max_values = configured_max_values(db)
+
+        if has_product:
+            import uuid as _uuid
+
+            try:
+                _uuid.UUID(str(payload.productId))
+            except ValueError:
+                # A non-UUID `productId` reached the database driver unparsed and
+                # raised `InvalidTextRepresentation` - a 500, for a typo in a URL a
+                # human never sees (S5). Same answer an unknown-but-valid id gets:
+                # there is no such product either way.
+                raise handle_not_found("Product", payload.productId)
+
+            found = (
+                db.query(Product, ProductCategory)
+                .outerjoin(ProductCategory, ProductCategory.id == Product.category_id)
+                .filter(Product.id == payload.productId)
+                .first()
+            )
+            if found is None:
+                raise handle_not_found("Product", payload.productId)
+            product, category = found
+            result = try_read(
+                spec_key,
+                cleaned,
+                product=product,
+                category=category,
+                rules_by_key=rules_by_key,
+                scopes_by_key=scopes_by_key,
+                max_values=max_values,
+            )
+            description = product.description or product.product_name or ""
+        else:
+            result = try_read(
+                spec_key,
+                cleaned,
+                text=payload.text,
+                rules_by_key=rules_by_key,
+                scopes_by_key=scopes_by_key,
+                max_values=max_values,
+            )
+            description = payload.text or ""
+
+        return {
+            "description": description,
+            "reads": result["reads"],
+            "winner_index": result["winner_index"],
+        }
+    except Exception as e:
+        if type(e).__name__ in {"AppException", "HTTPException"}:
+            raise
+        raise handle_internal_error(str(e))
+
+
+@router.post("/{spec_key}/preview")
+async def preview_spec_key(
+    spec_key: str,
+    payload: SpecPreviewRequest = Body(...),
+    current_user: dict = Depends(require_permission_with_api_key("master_data.spec_registry.edit")),
+    db: Session = Depends(get_db),
+):
+    """Enqueue a catalogue-wide comparison of the draft rules against what is stored
+    (AC-B.2). Same in-process background-thread mechanism `reread-catalogue` already
+    runs on - a module-level job dict polled by `GET .../preview/{job_id}` - because
+    that is what it already proved out and a preview needs nothing more from it: no
+    new table, no queue, no worker restart.
+    """
+    try:
+        row = db.query(ProductSpecRegistry).filter_by(spec_key=spec_key).first()
+        if row is None:
+            raise handle_not_found("Spec key", spec_key)
+
+        cleaned = _validate_rules(
+            payload.rules or [],
+            allowed_values=_rule_allowed_values(row),
+            data_type=row.data_type,
+        )
+        job_id = product_spec_preview.start(spec_key, cleaned)
+        return {"jobId": job_id}
+    except Exception as e:
+        if type(e).__name__ in {"AppException", "HTTPException"}:
+            raise
+        raise handle_internal_error(str(e))
+
+
+@router.get("/{spec_key}/preview/{job_id}")
+async def get_spec_key_preview(
+    spec_key: str,
+    job_id: str,
+    # `edit`, matching the POST that started the job (UAC AC-B.2) - a preview is
+    # advice for the person about to save a draft, not a general registry read.
+    current_user: dict = Depends(require_permission_with_api_key("master_data.spec_registry.edit")),
+):
+    """`{"status": "pending"}`, the four counts and a sample once `done`, or `failed`."""
+    state = product_spec_preview.get(job_id)
+    # A job started against a DIFFERENT key 404s the same as an unknown one: the id
+    # is a random 12-char token, and a caller free to poll any job under any key
+    # could just as well have not checked which key the run was for.
+    if state is None or state.get("spec_key") != spec_key:
+        raise handle_not_found("Preview job", job_id)
+    return {k: v for k, v in state.items() if k != "spec_key"}
+
+
 @router.post("", status_code=status.HTTP_201_CREATED)
 @router.post("/", status_code=status.HTTP_201_CREATED)
 async def create_spec_key(
@@ -926,6 +1185,12 @@ def update_spec_key(
         for field in ("label", "rank_weight", "is_active", "match_tolerance", "match_decay"):
             if field in fields and fields[field] is not None:
                 setattr(row, field, fields[field])
+
+        # Cleared ON PURPOSE is a real answer here ("stop dropping numbers on this
+        # key"), so this one applies a None it was actually sent rather than skipping it
+        # with the block above.
+        if "max_value" in fields:
+            row.max_value = fields["max_value"]
 
         # A value nobody can say is unsearchable, and a newly added one has no words
         # yet. Rather than refusing the save, give it the obvious word - its own name,

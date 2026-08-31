@@ -19,6 +19,7 @@ why a key is weighted the way it is without redoing the work.
 """
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -143,9 +144,125 @@ SEARCH_POLICY_SEED: list[dict] = [
 
 SEED_RULE_MARKER = "_seed"
 
+# No sanitaryware product is five metres in any direction, and the catalogue carries
+# separator typos ("540X440180MM" parses as 540 x 440180). Seeded onto every millimetre
+# key as `max_value`, where it is editable and can be looked at - it was a module
+# constant in the derivation engine, which said the same thing about a 6 mm thickness
+# and a 1.8 m bath and could be changed by nobody (AC-A.5).
+DEFAULT_MM_MAX_VALUE = 5000
+
 
 def _rule_identity(rule: dict) -> tuple:
     return (str(rule.get("match")), str(rule.get("pattern")), str(rule.get("value")))
+
+
+# --------------------------------------------------------------------------- #
+# a rule as the sentence it reads (AC-A.7, AC-A.8)
+#
+# The editor picks a SENTENCE from a menu ("Number before `MM`"), fills its blanks, and
+# compiles it to the engine's own `match`/`pattern`/`capture`/`value` before it saves.
+# This is that compiler, server side. Both halves must produce the same fields for the
+# same sentence or the save is refused, so the pattern the engine runs is never
+# something the screen did not say.
+#
+# Ported line for line from `lib/ruleSentence.ts::compileBuilder`, escaping included:
+# Python's own `re.escape` also escapes `-`, `&`, `~`, `#` and whitespace, so using it
+# here would compile `Number between S-TRAP and MM` to a pattern the browser never
+# produces and refuse the save as a mismatch.
+# --------------------------------------------------------------------------- #
+_JS_REGEX_SPECIALS = re.compile(r"[.*+?^${}()|[\]\\]")
+
+
+def _escape(raw: str) -> str:
+    return _JS_REGEX_SPECIALS.sub(lambda match: "\\" + match.group(0), raw or "")
+
+
+def compile_builder(builder: dict) -> dict:
+    """The engine fields one sentence compiles to. Never raises on an odd sentence."""
+    kind = str((builder or {}).get("kind") or "")
+    word = _escape(str((builder or {}).get("word") or "").upper())
+    value = (builder or {}).get("value")
+    raw_word = str((builder or {}).get("word") or "")
+
+    if kind == "number_after":
+        return {"match": "regex", "pattern": rf"\b{word}\s*(\d+(?:\.\d+)?)", "capture": 1}
+    if kind == "number_before":
+        return {
+            "match": "regex",
+            "pattern": rf"(?<![A-Z0-9X])(\d+(?:\.\d+)?)\s*{word}\b",
+            "capture": 1,
+        }
+    if kind == "number_between":
+        start = _escape(str((builder or {}).get("from") or "").upper())
+        end = _escape(str((builder or {}).get("to") or "").upper())
+        return {
+            "match": "regex",
+            "pattern": rf"{start}\s*[:,]?\s*(\d+(?:\.\d+)?)\s*{end}",
+            "capture": 1,
+        }
+    if kind == "text_contains":
+        return {"match": "contains", "pattern": raw_word, "value": value if value is not None else ""}
+    if kind == "text_ends_with":
+        return {
+            "match": "ends_with",
+            "pattern": raw_word,
+            "value": value if value is not None else "",
+        }
+    if kind == "word_present":
+        return {"match": "present", "pattern": raw_word, "value": True}
+    if kind in {"code_contains", "code_starts_with"}:
+        return {"match": kind, "pattern": raw_word, "value": value if value is not None else ""}
+    if kind == "code_ends_with":
+        # The engine's kind for this is `code_suffix` - it predates the sentence menu.
+        return {
+            "match": "code_suffix",
+            "pattern": raw_word,
+            "value": value if value is not None else "",
+        }
+    if kind == "from_field":
+        return {"match": "from_field", "pattern": str((builder or {}).get("field") or "category")}
+    if kind == "size_triple":
+        from app.services import product_spec_derivation as d
+
+        position = (builder or {}).get("position")
+        return {
+            "match": "regex",
+            "pattern": d._DIM_RE.pattern,
+            "capture": int(position) if position else 1,
+        }
+    if kind == "name_head":
+        # Not a regex: the name head is the description with the code, the dimensions,
+        # the parenthetical and everything the product comes WITH removed, read for its
+        # trailing noun. `class_tail` is that text, and naming it here is what makes the
+        # row say which text it reads.
+        return {"match": "name_head", "pattern": "class_tail"}
+    return {"match": "regex", "pattern": ""}
+
+
+def _sentence_for(rule: dict) -> dict | None:
+    """The sentence a shipped rule reads as, where it has one.
+
+    A pattern whose text is not something a person would recognise as a phrase - a
+    regular expression with `\\s*` and character classes in it - has no sentence, and
+    inventing one would put a wrong plain-English reading on a live rule. Those rows
+    stay pattern rows and say so.
+    """
+    kind = str(rule.get("match") or "")
+    pattern = str(rule.get("pattern") or "")
+    speakable = bool(pattern) and bool(re.fullmatch(r"[A-Za-z0-9 &/'.\-]+", pattern))
+    if not speakable:
+        return None
+    if kind == "contains":
+        return {"kind": "text_contains", "word": pattern, "value": rule.get("value")}
+    if kind == "ends_with":
+        return {"kind": "text_ends_with", "word": pattern, "value": rule.get("value")}
+    if kind == "present":
+        return {"kind": "word_present", "word": pattern}
+    if kind == "code_suffix":
+        return {"kind": "code_ends_with", "word": pattern, "value": rule.get("value")}
+    if kind in {"code_contains", "code_starts_with"}:
+        return {"kind": kind, "word": pattern, "value": rule.get("value")}
+    return None
 
 
 def _rules_from_shipped_tables() -> dict[str, list[dict]]:
@@ -162,6 +279,35 @@ def _rules_from_shipped_tables() -> dict[str, list[dict]]:
 
     def contains(table) -> list[dict]:
         return [{"match": "contains", "pattern": token, "value": value} for token, value in table]
+
+    # A round or square product's stored columns are MIS-KEYED, not merely different:
+    # `CONCRETE ROUND BASIN (407X120X10MM)` has 407 in `length` and it is a diameter.
+    # So the rows that read a length say "unless the shape is one of these" and the
+    # diameter row says "when it is" - the hardcoded `if shape in (...)` gate, as a
+    # condition on the rows it used to govern (AC-A.1).
+    round_or_square = {"shape": ["round", "square"]}
+
+    def column(spec_key: str, name: str) -> dict:
+        return {
+            "match": "from_field",
+            "pattern": f"column:{name}",
+            "unless": round_or_square,
+            "builder": {"kind": "from_field", "field": f"column:{name}"},
+        }
+
+    def size_triple(position: int, *, when_round: bool) -> dict:
+        row = {
+            "match": "regex",
+            "pattern": d._DIM_RE.pattern,
+            "capture": position,
+            # The product master's own text. Scoped, so the size block never reads a
+            # pasted flyer card - the flyer states its size in its own labelled rows,
+            # which are the `source: "flyer"` rules at the bottom of these lists.
+            "source": "description",
+            "builder": {"kind": "size_triple", "position": position},
+        }
+        row["applies_when" if when_round else "unless"] = round_or_square
+        return row
 
     rules: dict[str, list[dict]] = {
         "material": contains(d.MATERIAL_TOKENS),
@@ -233,9 +379,31 @@ def _rules_from_shipped_tables() -> dict[str, list[dict]]:
         "trap_type": contains(d.TRAP_TOKENS),
         "flush_type": contains(d.FLUSH_TOKENS),
         "shape": contains(d.SHAPE_TOKENS),
+        # The nouns, then the two readers that used to run underneath them and appear
+        # on no screen. UNDER, not over: 20,697 of 23,063 live products sit in a
+        # category that carries a class, so a category row on top would re-class the
+        # catalogue on the strength of a filing code (#425, AC-A.1).
         "class": [
             {"match": "ends_with", "pattern": token, "value": value}
             for token, value in d.CLASS_TAIL_TOKENS
+        ] + [
+            {"match": "name_head", "pattern": "class_tail", "builder": {"kind": "name_head"}},
+            {
+                "match": "from_field",
+                "pattern": "category",
+                "builder": {"kind": "from_field", "field": "category"},
+            },
+        ],
+        # Off the product's own brand row, and nowhere else. The category prefix
+        # (`SRT-KS` -> Sorento) is a decode of a code and got 1,934 rows wrong - every
+        # INFINITY, OTHERS and NO LOGO product was relabelled - so it is not a fallback
+        # here either. No brand is a better answer than a guessed one.
+        "brand": [
+            {
+                "match": "from_field",
+                "pattern": "brand",
+                "builder": {"kind": "from_field", "field": "brand"},
+            }
         ],
         # Finish was code-suffix ONLY, which meant a product whose code carries no
         # suffix had no finish at all. The flyer prints it in words on 500+ cards
@@ -270,17 +438,45 @@ def _rules_from_shipped_tables() -> dict[str, list[dict]]:
         # measurement block, which also cross-checks the stored columns and flags a
         # round product whose length is really a diameter. These fill the gap; they do
         # not compete with it.
+        # R5, and the order the engine has always run: the product master's own column,
+        # then the size in its description, then a lone stated size, then the flyer.
         "dim_length": [
+            column("dim_length", "dimensions_length"),
+            size_triple(1, when_round=False),
+            # The one size a row states when it does not state three: "MARBLE TOP BASIN
+            # (800MM)". A pattern row rather than the `number before MM` sentence,
+            # deliberately: that sentence compiles to `(\d+(?:\.\d+)?)`, which reads
+            # `CABANA GLASS SHELF 8MM` as an 8 mm long shelf - three live codes - so the
+            # shipped row keeps the two-to-four digit form the reader has always had.
+            {
+                "match": "regex",
+                "pattern": d._SINGLE_DIM_RE.pattern,
+                "capture": 1,
+                "source": "size_text",
+                "unless": round_or_square,
+            },
             {"match": "regex", "pattern": r"L\s*(\d+(?:\.\d+)?)\s*[xX*]", "capture": 1,
-             "source": "flyer"}
+             "source": "flyer"},
         ],
         "dim_width": [
+            column("dim_width", "dimensions_width"),
+            size_triple(2, when_round=False),
             {"match": "regex", "pattern": r"W\s*(\d+(?:\.\d+)?)\s*[xX*]", "capture": 1,
-             "source": "flyer"}
+             "source": "flyer"},
         ],
         "dim_height": [
+            column("dim_height", "dimensions_height"),
+            size_triple(3, when_round=False),
             {"match": "regex", "pattern": r"H\s*(\d+(?:\.\d+)?)\s*(?:MM|mm)?", "capture": 1,
-             "source": "flyer"}
+             "source": "flyer"},
+        ],
+        # Round and square products only, where the same three numbers mean something
+        # else entirely: 407 across, 120 deep, 10 thick.
+        "diameter": [size_triple(1, when_round=True)],
+        "depth": [size_triple(2, when_round=True)],
+        "thickness": [
+            size_triple(4, when_round=False),
+            size_triple(3, when_round=True),
         ],
         # What the seat cover is made of. Only the flyer says it in words ("*PP Seat
         # Cover"), and it is a real buying decision: PP is the cheap one, UF the heavy
@@ -306,9 +502,18 @@ def _rules_from_shipped_tables() -> dict[str, list[dict]]:
     }
     # Stamped here, at the one place shipped rules are built, so every seeded rule is
     # marked and a human's edit - which never passes through here - never is.
+    #
+    # The sentence is stamped in the same pass: a shipped row reads as prose on the
+    # screen exactly as a row somebody builds from the menu does, because it carries the
+    # same `builder`. A row whose pattern is a regular expression has no honest
+    # sentence and stays a pattern row.
     for rows in rules.values():
         for rule in rows:
             rule[SEED_RULE_MARKER] = True
+            if "builder" not in rule:
+                sentence = _sentence_for(rule)
+                if sentence is not None:
+                    rule["builder"] = sentence
     return rules
 
 
@@ -1148,6 +1353,14 @@ def seed_spec_registry(db: Session, *, commit: bool = False) -> dict:
                     rank_weight=entry.get("rank_weight", 1.0),
                     excluded_values=entry.get("excluded_values", []),
                     is_active=entry.get("is_active", True),
+                    # Same bargain as the match window: set from the unit at creation,
+                    # then owned by whoever tunes it. A millimetre key gets the cap that
+                    # used to be a constant in the engine; everything else gets none,
+                    # because a bowl count and a horsepower have no such number.
+                    max_value=entry.get(
+                        "max_value",
+                        DEFAULT_MM_MAX_VALUE if entry.get("unit") == "mm" else None,
+                    ),
                     match_tolerance=entry.get("match_tolerance", tolerance),
                     match_decay=entry.get("match_decay", decay),
                     **values,
@@ -1360,6 +1573,64 @@ def shipped_scopes() -> dict[str, dict]:
         for entry in SPEC_REGISTRY_SEED
         if entry.get("applies_when")
     }
+
+
+def shipped_max_values() -> dict[str, float]:
+    """The plausibility cap each key ships with, for a caller with no database.
+
+    Millimetres only. A count, a capacity in litres and a horsepower have no such
+    number, and inventing one for them would drop real values.
+    """
+    return {
+        entry["spec_key"]: float(DEFAULT_MM_MAX_VALUE)
+        for entry in SPEC_REGISTRY_SEED
+        if entry.get("unit") == "mm"
+    }
+
+
+def numeric_product_columns() -> set[str]:
+    """The `Product` columns a `from_field column:<name>` rule may legally name.
+
+    Computed from the model rather than hand-listed (B3): `from_field
+    column:currency` crashed derivation for the whole catalogue because nothing
+    checked the column existed, let alone that it held a number - `_number(str(raw))`
+    is an unguarded `float()`. A column added to `Product` later is reachable the
+    moment it exists, with no second list to remember to update.
+    """
+    from sqlalchemy import Float, Integer, Numeric
+
+    from app.models.product import Product
+
+    return {
+        column.name
+        for column in Product.__table__.columns
+        if isinstance(column.type, (Numeric, Integer, Float))
+    }
+
+
+def from_field_choices() -> set[str]:
+    """Every pattern a `from_field` rule may carry: `category`, `brand`, or a numeric
+    `column:<name>`. `_validate_rules` refuses anything else at save time (B3); the
+    frontend's `FROM_FIELD_OPTIONS` offers the same set rather than a free-text box."""
+    return {"category", "brand"} | {
+        f"column:{name}" for name in numeric_product_columns()
+    }
+
+
+def configured_max_values(db: Session) -> dict[str, float]:
+    """Each key's cap as configured. Blank on a row means NO cap, and says so.
+
+    A row that exists answers for itself: someone who cleared the field meant "stop
+    dropping numbers on this key", and falling through to the shipped 5000 would ignore
+    them. Only a key with no row at all takes the shipped value.
+    """
+    caps = shipped_max_values()
+    for row in db.query(ProductSpecRegistry).all():
+        if row.max_value is None:
+            caps.pop(row.spec_key, None)
+        else:
+            caps[row.spec_key] = float(row.max_value)
+    return caps
 
 
 def configured_scopes(db: Session) -> dict[str, dict]:
