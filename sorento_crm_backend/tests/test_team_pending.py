@@ -173,3 +173,94 @@ def test_includes_form_and_conversation_rows(db):
     forms = [r for r in out["data"] if r["is_form_sla"]]
     convs = [r for r in out["data"] if not r["is_form_sla"]]
     assert len(forms) == 1 and len(convs) == 1
+
+
+def test_ticket_row_carries_the_same_shape_my_pending_emits(db):
+    """A team row for an intervention ticket must carry EVERY field the widget
+    needs to open the drawer instead of falling through to the SLA detail page -
+    the row used to be built independently of /my-pending and silently dropped
+    all of these (list_team_pending / list_my_pending now share one row
+    builder, `ConversationSLATrackingService._pending_row`)."""
+    pid = _policy(db)
+    me = _user(db, "me")
+    peer = _user(db, "peer")
+    team = _team(db, "T")
+    _member(db, team, me)
+    _member(db, team, peer)
+    c = RespondContact(
+        id=str(uuid.uuid4()),
+        phone_number="+60123999001",
+        name="Aisyah",
+        respond_io_id="10099001",
+        session_vars={},
+    )
+    db.add(c)
+    db.commit()
+    db.add(
+        ConversationSLATracking(
+            id=str(uuid.uuid4()),
+            policy_id=pid,
+            current_tier=1,
+            assigned_to_id=peer,
+            due_at=datetime(2026, 6, 1) + timedelta(hours=2),
+            is_resolved=False,
+            source_entity_type=None,
+            respond_contact_id=c.id,
+            source_message_id="wamid.team-1",
+            source_message_text="Please help with my order.",
+        )
+    )
+    db.commit()
+
+    out = ConversationSLATrackingService(db).list_team_pending(me)
+    assert out["total"] == 1
+    row = out["data"][0]
+    assert row["is_intervention_ticket"] is True
+    assert row["contact_name"] == "Aisyah"
+    assert row["contact_phone"] == "+60123999001"
+    assert row["enquiry_snippet"] == "Please help with my order."
+    assert row["respond_io_id"] == "10099001"
+    # Team-only fields still there, unaffected by the shared row builder.
+    assert row["assignee_id"] == peer
+    assert row["team_label"] == "T"
+
+
+def test_non_ticket_conversation_row_still_carries_respond_io_id(db):
+    """A legacy (pre-migration) conversation row is not a ticket, but the My
+    Team row should still deep-link to the Respond inbox like My Pending -
+    the team-pending serializer used to omit respond_io_id entirely."""
+    pid = _policy(db)
+    me = _user(db, "me")
+    peer = _user(db, "peer")
+    team = _team(db, "T2")
+    _member(db, team, me)
+    _member(db, team, peer)
+    c = RespondContact(
+        id=str(uuid.uuid4()),
+        phone_number="+60123999002",
+        name="Legacy Contact",
+        respond_io_id="10099002",
+        session_vars={},
+    )
+    db.add(c)
+    db.commit()
+    db.add(
+        ConversationSLATracking(
+            id=str(uuid.uuid4()),
+            policy_id=pid,
+            current_tier=1,
+            assigned_to_id=peer,
+            due_at=datetime(2026, 6, 1) + timedelta(hours=2),
+            is_resolved=False,
+            source_entity_type=None,
+            respond_contact_id=c.id,
+            # No source_message_id -> legacy row, never a ticket.
+        )
+    )
+    db.commit()
+
+    out = ConversationSLATrackingService(db).list_team_pending(me)
+    assert out["total"] == 1
+    row = out["data"][0]
+    assert "is_intervention_ticket" not in row
+    assert row["respond_io_id"] == "10099002"

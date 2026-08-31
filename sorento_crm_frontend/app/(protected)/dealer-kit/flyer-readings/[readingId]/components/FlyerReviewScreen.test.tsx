@@ -87,6 +87,7 @@ const READING: FlyerReading = {
         productCode: 'SRTWC286-SH',
         productName: 'One Piece Water Closet',
         pages: [1],
+        adopted: false,
       },
     ],
     unmatched: [{ code: 'SRTKS7850', pages: [2], suggestion: null }],
@@ -95,6 +96,7 @@ const READING: FlyerReading = {
     duplicates: {},
     promotionId: null,
   },
+  codeOverridesChangedAt: null,
 };
 
 /** A row that exists but has not been read yet - the queued-job state (AC-FE.4). */
@@ -117,6 +119,7 @@ const PROCESSING_READING: FlyerReading = {
     duplicates: {},
     promotionId: null,
   },
+  codeOverridesChangedAt: null,
 };
 
 /** A row whose job ran and refused the file, in the request's own words. */
@@ -139,6 +142,7 @@ const FAILED_READING: FlyerReading = {
     duplicates: {},
     promotionId: null,
   },
+  codeOverridesChangedAt: null,
 };
 
 function renderScreen() {

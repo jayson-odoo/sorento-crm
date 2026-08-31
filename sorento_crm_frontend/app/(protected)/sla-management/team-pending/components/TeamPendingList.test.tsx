@@ -47,6 +47,7 @@ const row: TeamPendingItem = {
   source_entity_id: 'cmp-1',
   is_form_sla: true,
   reference: 'CMP-0001',
+  respond_io_id: null,
   due_at: new Date(Date.now() + 3600_000).toISOString(),
   is_responded: false,
   current_tier: 2,

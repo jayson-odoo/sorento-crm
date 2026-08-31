@@ -150,6 +150,8 @@ function ticket(over: Partial<InterventionTicketDetail> = {}): InterventionTicke
     resolved_at: null,
     can_send: true,
     can_resolve: true,
+    is_assignee: true,
+    assignee_team_id: 'team-1',
     send_capabilities: ['text', 'attachment'],
     window: { open: true, expires_at: null },
     chat_template: null,

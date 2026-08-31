@@ -51,8 +51,10 @@ vi.mock('@/hooks/usePermissions', () => ({
 }));
 
 const reassignMutate = vi.fn();
+const takeoverMutate = vi.fn();
 vi.mock('../hooks/useTeamPendingSLA', () => ({
   useReassignSLATracking: () => ({ mutate: reassignMutate, isPending: false }),
+  useTakeoverSLATracking: () => ({ mutate: takeoverMutate, isPending: false }),
 }));
 
 // The extend dialog is exercised on its own (ExtendDueDialog.test.tsx); here we
@@ -237,6 +239,8 @@ function makeTicket(over: Partial<InterventionTicketDetail> = {}): InterventionT
     resolved_at: null,
     can_send: true,
     can_resolve: true,
+    is_assignee: true,
+    assignee_team_id: 'team-1',
     send_capabilities: ['text', 'attachment'],
     window: { open: true, expires_at: null },
     chat_template: null,
@@ -284,6 +288,7 @@ beforeEach(() => {
   useCreateTicketComment.mockReset();
   useDraftInterventionTicketReply.mockReset();
   reassignMutate.mockReset();
+  takeoverMutate.mockReset();
   hasPermission.mockReturnValue(true);
   invalidateQueries.mockReset();
   conversationEvents.mockReset();
@@ -931,5 +936,114 @@ describe('InterventionTicketDrawer extend (AC-B4)', () => {
 
     await screen.findByTestId('ticket-header-actions');
     expect(screen.queryByTestId('ticket-overflow')).not.toBeInTheDocument();
+  });
+});
+
+// My Team can open this drawer for a teammate's ticket (is_assignee: false).
+// Resolve must read as disabled-with-a-reason, and Takeover must be reachable
+// from the SAME confirm pattern the worklist row uses.
+describe('InterventionTicketDrawer My Team (not the assignee)', () => {
+  function press(el: Element) {
+    fireEvent.pointerDown(el, { bubbles: true, button: 0, pointerType: 'mouse' });
+    fireEvent.click(el, { bubbles: true, button: 0 });
+  }
+
+  beforeEach(() => {
+    takeoverMutate.mockReset();
+  });
+
+  it('Resolve is disabled with a tooltip naming the actual assignee', async () => {
+    useInterventionTicket.mockReturnValue(
+      mockQuery(
+        makeTicket({ is_assignee: false, can_resolve: false, assignee_name: 'Charissa' }),
+      ),
+    );
+    renderDrawer();
+
+    const resolve = await screen.findByRole('button', { name: /Resolve ticket/i });
+    expect(resolve).toBeDisabled();
+    expect(resolve).toHaveAttribute('title', 'Assigned to Charissa');
+  });
+
+  it('the gear offers Takeover even with no resolution deadline (independent of Extend)', async () => {
+    useInterventionTicket.mockReturnValue(
+      mockQuery(
+        makeTicket({ is_assignee: false, can_resolve: false, assignee_team_id: 'team-9', due_at_resolution: null }),
+      ),
+    );
+    renderDrawer();
+
+    press(await screen.findByTestId('ticket-overflow'));
+    expect(screen.getByTestId('ticket-takeover')).toBeInTheDocument();
+    expect(screen.queryByTestId('ticket-extend')).not.toBeInTheDocument();
+  });
+
+  it('Takeover opens a confirm naming the current assignee, then calls the mutation with the assignee_team_id and refetches on success', async () => {
+    const query = mockQuery(
+      makeTicket({
+        is_assignee: false,
+        can_resolve: false,
+        assignee_name: 'Charissa',
+        assignee_team_id: 'team-9',
+      }),
+    );
+    useInterventionTicket.mockReturnValue(query);
+    takeoverMutate.mockImplementation(
+      (_vars: unknown, opts?: { onSuccess?: () => void }) => opts?.onSuccess?.(),
+    );
+    const { onOpenChange } = renderDrawer();
+
+    press(await screen.findByTestId('ticket-overflow'));
+    fireEvent.click(await screen.findByTestId('ticket-takeover'));
+
+    expect(await screen.findByText(/Take over this enquiry\?/i)).toBeInTheDocument();
+    expect(screen.getByText(/Currently with Charissa/i)).toBeInTheDocument();
+    query.refetch.mockClear();
+
+    fireEvent.click(screen.getByRole('button', { name: /^Take over$/i }));
+
+    expect(takeoverMutate).toHaveBeenCalledWith(
+      { id: 't1', teamId: 'team-9' },
+      expect.any(Object),
+    );
+    expect(query.refetch).toHaveBeenCalled();
+    // Confirming a takeover must not close the drawer - the assignee just
+    // changed to the viewer, the enquiry stays open in front of them.
+    expect(onOpenChange).not.toHaveBeenCalled();
+  });
+
+  it('no Takeover item for the assignee themselves', async () => {
+    useInterventionTicket.mockReturnValue(mockQuery(makeTicket({ is_assignee: true })));
+    renderDrawer();
+
+    press(await screen.findByTestId('ticket-overflow'));
+    expect(screen.queryByTestId('ticket-takeover')).not.toBeInTheDocument();
+  });
+
+  it('no Takeover item without the takeover permission', async () => {
+    hasPermission.mockImplementation(
+      (slug?: string) => slug !== 'sla_management.conversation_sla_tracking.takeover',
+    );
+    useInterventionTicket.mockReturnValue(
+      mockQuery(makeTicket({ is_assignee: false, can_resolve: false, assignee_team_id: 'team-9' })),
+    );
+    renderDrawer();
+
+    // Extend still qualifies (own-task gate does not apply here), so the gear
+    // itself stays up - only the Takeover item must be gone.
+    press(await screen.findByTestId('ticket-overflow'));
+    expect(screen.queryByTestId('ticket-takeover')).not.toBeInTheDocument();
+  });
+
+  it('no Takeover item when the assignee has no team the viewer can resolve', async () => {
+    useInterventionTicket.mockReturnValue(
+      mockQuery(
+        makeTicket({ is_assignee: false, can_resolve: false, assignee_team_id: null }),
+      ),
+    );
+    renderDrawer();
+
+    press(await screen.findByTestId('ticket-overflow'));
+    expect(screen.queryByTestId('ticket-takeover')).not.toBeInTheDocument();
   });
 });

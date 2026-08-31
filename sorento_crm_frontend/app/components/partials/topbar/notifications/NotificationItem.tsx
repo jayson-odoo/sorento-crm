@@ -41,6 +41,88 @@ function formatTime(createdAt: string): string {
   return d.toLocaleDateString();
 }
 
+const URL_RE = /https?:\/\/[^\s<>"']+/g;
+
+/** Sentence punctuation glued to the end of a pasted URL is not part of it. */
+function trimUrl(raw: string): string {
+  return raw.replace(/[.,;:)\]!?]+$/, '');
+}
+
+/** App-relative path for a link this SPA can route to, null for external URLs. */
+export function toInternalPath(raw: string): string | null {
+  if (raw.startsWith('/')) return raw;
+  try {
+    const u = new URL(raw);
+    if (typeof window !== 'undefined' && u.origin === window.location.origin) {
+      return `${u.pathname}${u.search}${u.hash}`;
+    }
+  } catch {
+    // not a URL
+  }
+  return null;
+}
+
+/** Every link the notification carries: data.link / data.url first, then body URLs. */
+export function collectLinks(item: NotificationItemType): string[] {
+  const out: string[] = [];
+  const data = item.data as Record<string, unknown> | undefined;
+  for (const key of ['link', 'url']) {
+    const v = data?.[key];
+    if (typeof v === 'string' && v.trim()) out.push(v.trim());
+  }
+  for (const m of item.body?.match(URL_RE) ?? []) out.push(trimUrl(m));
+  return out;
+}
+
+/** The row's open target: an in-app link wins over an external one. */
+export function primaryLink(item: NotificationItemType): string | null {
+  const links = collectLinks(item);
+  return links.find((l) => toInternalPath(l) !== null) ?? links[0] ?? null;
+}
+
+function LinkifiedBody({
+  text,
+  onNavigate,
+}: {
+  text: string;
+  onNavigate: (path: string) => void;
+}) {
+  const parts = text.split(URL_RE);
+  const urls = text.match(URL_RE) ?? [];
+  return (
+    <>
+      {parts.map((part, i) => {
+        const raw = urls[i];
+        if (!raw) return <span key={i}>{part}</span>;
+        const url = trimUrl(raw);
+        const trailing = raw.slice(url.length);
+        const internal = toInternalPath(url);
+        return (
+          <span key={i}>
+            {part}
+            <a
+              href={url}
+              target={internal ? undefined : '_blank'}
+              rel={internal ? undefined : 'noopener noreferrer'}
+              className="text-primary underline underline-offset-2 break-all hover:no-underline"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (internal) {
+                  e.preventDefault();
+                  onNavigate(internal);
+                }
+              }}
+            >
+              {url}
+            </a>
+            {trailing}
+          </span>
+        );
+      })}
+    </>
+  );
+}
+
 interface Props {
   item: NotificationItemType;
   onMarkRead: (id: string) => void;
@@ -96,9 +178,13 @@ export default function NotificationItem({
       onMarkRead(item.id);
       onInvalidate();
     }
-    const link = (item.data as Record<string, unknown> | undefined)?.link;
-    if (typeof link === 'string' && link.startsWith('/')) {
-      router.push(link);
+    const target = primaryLink(item);
+    if (!target) return;
+    const internal = toInternalPath(target);
+    if (internal) {
+      router.push(internal);
+    } else {
+      window.open(target, '_blank', 'noopener,noreferrer');
     }
   };
   const handleClear = (e: React.MouseEvent) => {
@@ -146,7 +232,16 @@ export default function NotificationItem({
               ref={bodyRef}
               className={expanded ? '' : 'line-clamp-2'}
             >
-              {item.body}
+              <LinkifiedBody
+                text={item.body}
+                onNavigate={(path) => {
+                  if (isUnread) {
+                    onMarkRead(item.id);
+                    onInvalidate();
+                  }
+                  router.push(path);
+                }}
+              />
             </div>
             {hasOverflow && (
               <button

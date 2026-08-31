@@ -14,9 +14,9 @@
  * - the section still renders when it is empty, and says so as a good result
  */
 import React from 'react';
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // The shared DataGrid reads the route to key column preferences on it.
 vi.mock('next/navigation', () => ({
@@ -30,13 +30,40 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
 }));
 
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), custom: vi.fn() } }));
+// `dismiss` too: Undo now parks a deferred action, and the countdown toast is
+// dismissed from an effect when the row settles - a stub without it throws out
+// of an effect no assertion here can catch.
+vi.mock('sonner', () => ({
+  toast: { success: vi.fn(), error: vi.fn(), custom: vi.fn(), dismiss: vi.fn() },
+}));
+
+// Undo goes through the deferred-action mechanism (D7): mocked at the network
+// boundary, same convention `FlyerReadingsList.test.tsx` uses, so the real
+// `useDeferredRowAction` hook runs and this file proves what it PARKS rather
+// than re-testing the countdown machinery itself.
+const { createPendingAction } = vi.hoisted(() => ({
+  createPendingAction: vi.fn().mockResolvedValue({
+    id: 'pa-1',
+    action_key: 'flyer_code_adoption.undo',
+    entity_type: 'flyer_code_adoption',
+    entity_id: 'r-1:SRTBT1835',
+    commit_at: '2026-08-31T00:00:05',
+    window_seconds: 5,
+  }),
+}));
+vi.mock('@/services/pendingActionService', () => ({
+  createPendingAction: (...args: unknown[]) => createPendingAction(...args),
+  cancelPendingAction: vi.fn(),
+  getCurrentPendingAction: vi.fn().mockResolvedValue({ pending: null, last_outcome: null }),
+}));
 
 // The sizes section can write to the product master now (S7.6), so it asks
-// whether this user may. Granted here: what this file pins is the report, and a
-// hidden control would make the assertions below vacuous.
+// whether this user may - as does the adopt/undo action column below. A single
+// controllable flag, so the permission-gating tests can flip it per test
+// without a hidden control making every other assertion in this file vacuous.
+const { hasPermission } = vi.hoisted(() => ({ hasPermission: { value: true } }));
 vi.mock('@/hooks/usePermissions', () => ({
-  useHasPermission: () => true,
+  useHasPermission: () => hasPermission.value,
   useHasAnyPermission: () => true,
   usePermissions: () => ({ permissions: [], permissionSet: new Set(), isLoading: false }),
 }));
@@ -56,8 +83,8 @@ const EMPTY: MatchReport = {
 /** Modelled on the real flyer: the codes and misreads below are its own. */
 const FULL: MatchReport = {
   matched: [
-    { code: 'SRTWC286-SH', productId: 'p-1', productCode: 'SRTWC286-SH', productName: 'One Piece Water Closet', pages: [1] },
-    { code: 'SRTBF11620', productId: 'p-2', productCode: 'SRTBF11620', productName: 'Basin Faucet', pages: [2] },
+    { code: 'SRTWC286-SH', productId: 'p-1', productCode: 'SRTWC286-SH', productName: 'One Piece Water Closet', pages: [1], adopted: false },
+    { code: 'SRTBF11620', productId: 'p-2', productCode: 'SRTBF11620', productName: 'Basin Faucet', pages: [2], adopted: false },
   ],
   unmatched: [
     {
@@ -73,7 +100,7 @@ const FULL: MatchReport = {
     { code: 'FG-CW13', pages: [3], suggestion: null },
   ],
   notPromoted: [
-    { code: 'SRTBF11620', productId: 'p-2', productCode: 'SRTBF11620', productName: 'Basin Faucet', pages: [2] },
+    { code: 'SRTBF11620', productId: 'p-2', productCode: 'SRTBF11620', productName: 'Basin Faucet', pages: [2], adopted: false },
   ],
   dimensionCandidates: [
     {
@@ -112,6 +139,26 @@ const HEADINGS: PageHeading[] = [
   { page: 3, text: 'WATER CLOSET' },
 ];
 
+/**
+ * FULL, plus one adopted code printed on page 1 - EARLIER than both of FULL's
+ * own unmatched rows (pages 2 and 3) - so a page-order assertion has to reach
+ * past the report's own array boundary to pass.
+ */
+const WITH_ADOPTED: MatchReport = {
+  ...FULL,
+  matched: [
+    {
+      code: 'SRTBT1835',
+      productId: 'p-9',
+      productCode: 'SRTBT1835-16',
+      productName: 'Corner Bathtub 1835',
+      pages: [1],
+      adopted: true,
+    },
+    ...FULL.matched,
+  ],
+};
+
 function renderReport(
   report: MatchReport,
   promotionLabel: string | null = null,
@@ -131,6 +178,11 @@ function renderReport(
     </QueryClientProvider>,
   );
 }
+
+beforeEach(() => {
+  hasPermission.value = true;
+  createPendingAction.mockClear();
+});
 
 describe('MatchReportSections, the counts', () => {
   it('counts what was read, matched, missed and printed twice', () => {
@@ -378,5 +430,79 @@ describe('MatchReportSections, a product named after its own code', () => {
     // name happens to be its code. Half the live catalogue is named this way.
     expect(within(grid).getAllByText('SRTWC8066')).toHaveLength(1);
     expect(within(grid).getByText('91% alike')).toBeInTheDocument();
+  });
+});
+
+describe('MatchReportSections, an adopted row (AC-A.9)', () => {
+  it('lists the adopted code in the SAME grid as the unmatched ones, in page order', () => {
+    renderReport(WITH_ADOPTED, 'A3 Flyer 2026');
+
+    const grid = screen.getByTestId('dk-fr-unmatched-grid');
+    expect(within(grid).getByText('SRTBT1835-16')).toBeInTheDocument();
+    expect(within(grid).getByText('Adopted')).toBeInTheDocument();
+
+    // Page 1 (the adopted row) comes before page 2 and page 3 (the still
+    // unmatched rows) - one grid, printed order, not two separate lists.
+    const text = grid.textContent ?? '';
+    expect(text.indexOf('SRTBT1835')).toBeGreaterThan(-1);
+    expect(text.indexOf('SRTBT1835')).toBeLessThan(text.indexOf('SRTKS7850'));
+    expect(text.indexOf('SRTKS7850')).toBeLessThan(text.indexOf('FG-CW13'));
+  });
+
+  it('counts codes and how many are adopted in the section header', () => {
+    renderReport(WITH_ADOPTED, 'A3 Flyer 2026');
+
+    // 2 still-unmatched + 1 adopted = 3 rows in the grid, 1 of them adopted.
+    expect(screen.getByTestId('dk-fr-unmatched-counts')).toHaveTextContent('3 codes, 1 adopted');
+  });
+});
+
+describe('MatchReportSections, action buttons follow the edit permission', () => {
+  it('hides This is... and Undo without the permission, but keeps the adopted state visible', () => {
+    hasPermission.value = false;
+    renderReport(WITH_ADOPTED, 'A3 Flyer 2026');
+
+    expect(screen.queryByTestId('dk-fr-adopt')).toBeNull();
+    expect(screen.queryByTestId('dk-fr-undo')).toBeNull();
+    // The row itself - "Adopted as ..." - is not behind the permission.
+    expect(screen.getByText('SRTBT1835-16')).toBeInTheDocument();
+    expect(screen.getByText('Adopted')).toBeInTheDocument();
+  });
+
+  it('shows This is... on unmatched rows and Undo on the adopted one, with the permission', () => {
+    hasPermission.value = true;
+    renderReport(WITH_ADOPTED, 'A3 Flyer 2026');
+
+    expect(screen.getAllByTestId('dk-fr-adopt').length).toBe(2);
+    expect(screen.getByTestId('dk-fr-undo')).toBeInTheDocument();
+  });
+});
+
+describe('MatchReportSections, undo is a deferred action (D7, not a confirmation dialog)', () => {
+  it('parks the undo on the server rather than deleting on the click', async () => {
+    renderReport(WITH_ADOPTED, 'A3 Flyer 2026');
+
+    fireEvent.click(screen.getByTestId('dk-fr-undo'));
+
+    // No payload of its own: the entity id (`<reading id>:<printed code>`) is
+    // everything the handler needs, derived rather than carried separately.
+    await waitFor(() =>
+      expect(createPendingAction).toHaveBeenCalledWith({
+        actionKey: 'flyer_code_adoption.undo',
+        entityType: 'flyer_code_adoption',
+        entityId: 'r-1:SRTBT1835',
+        payload: undefined,
+      }),
+    );
+    // No confirmation dialog stands between the click and the park.
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+  });
+
+  it('disables Undo while its own countdown is counting down', async () => {
+    renderReport(WITH_ADOPTED, 'A3 Flyer 2026');
+
+    fireEvent.click(screen.getByTestId('dk-fr-undo'));
+
+    await waitFor(() => expect(screen.getByTestId('dk-fr-undo')).toBeDisabled());
   });
 });

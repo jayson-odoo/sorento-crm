@@ -67,6 +67,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.dealer_kit import FlyerReadingRecord
+from app.models.product import Product
 from app.services.dealer_kit import asset_service
 from app.services.dealer_kit.flyer_extraction import (
     UNCROPPED,
@@ -1223,5 +1224,134 @@ def report_for(
     has been deleted reports every matched product as not promoted, which is how
     a reviewer discovers the brochure points at something that is gone - a 404
     here would just look like a broken screen.
+
+    ``record.code_overrides`` travels straight through: what a reviewer has
+    adopted on this reading (PLAN-flyer-code-adopt.md) resolves everywhere the
+    report is read from, exactly like a real match.
     """
-    return match_reading(db, to_reading(record), promotion_id=promotion_id)
+    return match_reading(
+        db,
+        to_reading(record),
+        promotion_id=promotion_id,
+        overrides=record.code_overrides,
+    )
+
+
+def _printed_on(pages: tuple[int, ...]) -> str:
+    """"p. 3" / "p. 3, 11" - the same words the frontend's own helper uses.
+
+    A reviewer reading a refusal is holding the flyer; a page range beside the
+    other product's code is the whole reason AC-A.5's target-taken message is
+    actionable rather than merely accurate.
+    """
+    if not pages:
+        return "another page"
+    return "p. " + ", ".join(str(page) for page in pages)
+
+
+def adopt_code(
+    db: Session,
+    record: FlyerReadingRecord,
+    *,
+    printed_code: str,
+    product_id: str,
+) -> FlyerReadingRecord:
+    """"This printed code IS that product" (PLAN-flyer-code-adopt.md, R4).
+
+    The suggestion offered in the dialog is a default the FRONTEND applies;
+    the server has no opinion and accepts any product in this company's scope.
+
+    The report is recomputed WITHOUT this code's own override (so re-adopting
+    - AC-A.4 - compares against the master and every OTHER adoption, never
+    against the choice being replaced) and used for two refusals that would
+    otherwise need their own queries:
+
+    * the code already resolves on its own -> 409 (nothing to adopt);
+    * the product is what another printed code on this reading already
+      resolves to, itself or by an earlier adoption -> 409, naming that code
+      and page (R1 - one product, one card).
+    """
+    assert_read(record)
+
+    current = dict(record.code_overrides or {})
+    others = {code: pid for code, pid in current.items() if code != printed_code}
+    report = match_reading(db, to_reading(record), overrides=others)
+
+    printed_codes = {entry.code for entry in report.matched} | {
+        entry.code for entry in report.unmatched
+    }
+    if printed_code not in printed_codes:
+        raise AppException(
+            status_code=404,
+            message=f"{printed_code} is not printed on this reading.",
+            code="flyer_code_not_printed",
+        )
+
+    matched_by_code = {entry.code: entry for entry in report.matched}
+    if printed_code in matched_by_code:
+        raise AppException(
+            status_code=409,
+            message=f"{printed_code} is already a product; nothing to adopt.",
+            code="flyer_code_already_matched",
+        )
+
+    product = db.query(Product).filter(Product.id == product_id).one_or_none()
+    if product is None:
+        raise AppException(
+            status_code=404,
+            message="That product was not found.",
+            code="flyer_adopt_product_not_found",
+        )
+
+    taken = next(
+        (entry for entry in report.matched if entry.product_id == product_id), None
+    )
+    if taken is not None:
+        raise AppException(
+            status_code=409,
+            message=(
+                f"{taken.code} on {_printed_on(taken.pages)} is already this product."
+            ),
+            code="flyer_adopt_target_taken",
+        )
+
+    current[printed_code] = product_id
+    # REASSIGN, never mutate: SQLAlchemy does not see an in-place change to a
+    # plain JSONB column.
+    record.code_overrides = current
+    record.code_overrides_changed_at = _now()
+    db.add(record)
+    db.commit()
+    db.refresh(record)
+    return record
+
+
+def unadopt_code(
+    db: Session,
+    record: FlyerReadingRecord,
+    *,
+    printed_code: str,
+) -> FlyerReadingRecord:
+    """Undo an adoption (R2: never touches a spec proposal batch, or the product).
+
+    Specs already applied to the product from an adopted card stay applied -
+    applying was its own deliberate act, and this only says the code is no
+    longer being read as that product going forward.
+    """
+    assert_read(record)
+
+    current = dict(record.code_overrides or {})
+    if printed_code not in current:
+        raise AppException(
+            status_code=404,
+            message=f"{printed_code} has not been adopted.",
+            code="flyer_code_not_adopted",
+        )
+
+    del current[printed_code]
+    record.code_overrides = current
+    record.code_overrides_changed_at = _now()
+    db.add(record)
+    db.commit()
+    db.refresh(record)
+    return record
