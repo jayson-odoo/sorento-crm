@@ -781,3 +781,226 @@ def test_renaming_a_value_in_one_save_is_not_refused_as_its_own_synonym(api):
     assert "free_standing" in body["user_values"]
     assert "floor_standing" not in body["allowed_values"]
     assert body["synonyms"]["free_standing"] == ["floor standing", "free standing"]
+
+
+# --------------------------------------------------------------------------- #
+# AC-A.7 - a rule built from a sentence round trips through the save
+#
+# The editor compiles the sentence to `match`/`pattern`/`capture` in the browser and
+# sends both halves. The server compiles it again and refuses a disagreement, so the
+# pattern the engine runs is never something the screen did not say.
+# --------------------------------------------------------------------------- #
+def test_a_sentence_rule_is_compiled_server_side(api):
+    db, _as = api
+    _as(_REGISTRY_ADMIN)
+    client = TestClient(app)
+    _key(db, "zzt_length", label="Length", data_type="numeric", unit="mm")
+
+    response = client.patch(
+        f"{_BASE}/zzt_length",
+        json={"derivation_rules": [{"builder": {"kind": "number_after", "word": "L"}}]},
+    )
+
+    assert response.status_code == 200, response.text
+    rule = response.json()["derivation_rules"][0]
+    assert rule["match"] == "regex"
+    assert rule["pattern"] == r"\bL\s*(\d+(?:\.\d+)?)"
+    assert rule["capture"] == 1
+    assert rule["builder"] == {"kind": "number_after", "word": "L"}
+
+
+def test_a_pattern_rule_without_a_sentence_stays_a_pattern_rule(api):
+    db, _as = api
+    _as(_REGISTRY_ADMIN)
+    client = TestClient(app)
+    _key(db, "zzt_length2", label="Length", data_type="numeric", unit="mm")
+
+    response = client.patch(
+        f"{_BASE}/zzt_length2",
+        json={
+            "derivation_rules": [
+                {"match": "regex", "pattern": r"(\d+)\s*MM", "capture": 1}
+            ]
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    rule = response.json()["derivation_rules"][0]
+    assert rule["pattern"] == r"(\d+)\s*MM"
+    assert "builder" not in rule
+
+
+def test_a_sentence_that_disagrees_with_its_pattern_is_refused(api):
+    """The two compilers must agree or the row is a lie on one of the two screens."""
+    db, _as = api
+    _as(_REGISTRY_ADMIN)
+    client = TestClient(app)
+    _key(db, "zzt_length3", label="Length", data_type="numeric", unit="mm")
+
+    response = client.patch(
+        f"{_BASE}/zzt_length3",
+        json={
+            "derivation_rules": [
+                {
+                    "match": "regex",
+                    "pattern": r"\bW\s*(\d+)",
+                    "capture": 1,
+                    "builder": {"kind": "number_after", "word": "L"},
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 422, response.text
+    assert response.json()["code"] == "spec_rule_builder_mismatch"
+
+
+def test_a_stale_value_from_a_previous_kind_does_not_survive_a_kind_change(api):
+    """B2: changing a rule's sentence kind - Text contains to Number after a word -
+    used to leave the old kind's `value` sitting on the row, because only the FIELDS
+    the sender happened to include were compared/merged. A save carrying `value` from
+    the row's previous life, alongside a `number_after` builder that produces none,
+    is accepted and the stale field is dropped rather than stored."""
+    db, _as = api
+    _as(_REGISTRY_ADMIN)
+    client = TestClient(app)
+    _key(db, "zzt_length5", label="Length", data_type="numeric", unit="mm")
+
+    response = client.patch(
+        f"{_BASE}/zzt_length5",
+        json={
+            "derivation_rules": [
+                {
+                    "builder": {"kind": "number_after", "word": "L"},
+                    "match": "regex",
+                    "pattern": r"\bL\s*(\d+(?:\.\d+)?)",
+                    "capture": 1,
+                    # Left over from when this row was `text_contains` - the compare
+                    # must not 422 on it, and the merge must not keep it.
+                    "value": "PP",
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    rule = response.json()["derivation_rules"][0]
+    assert rule["match"] == "regex"
+    assert rule["pattern"] == r"\bL\s*(\d+(?:\.\d+)?)"
+    assert rule["capture"] == 1
+    assert "value" not in rule
+
+
+# --------------------------------------------------------------------------- #
+# B3 - `from_field column:<name>` is refused off a text column
+# --------------------------------------------------------------------------- #
+def test_a_from_field_rule_naming_a_text_column_is_refused(api):
+    db, _as = api
+    _as(_REGISTRY_ADMIN)
+    client = TestClient(app)
+    _key(db, "zzt_length6", label="Length", data_type="numeric", unit="mm")
+
+    response = client.patch(
+        f"{_BASE}/zzt_length6",
+        json={
+            "derivation_rules": [
+                {"match": "from_field", "pattern": "column:currency"}
+            ]
+        },
+    )
+
+    assert response.status_code == 400, response.text
+    assert "Rule 1" in response.json()["message"]
+
+
+def test_a_from_field_rule_naming_a_numeric_column_is_accepted(api):
+    db, _as = api
+    _as(_REGISTRY_ADMIN)
+    client = TestClient(app)
+    _key(db, "zzt_length7", label="Length", data_type="numeric", unit="mm")
+
+    response = client.patch(
+        f"{_BASE}/zzt_length7",
+        json={
+            "derivation_rules": [
+                {"match": "from_field", "pattern": "column:weight"}
+            ]
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["derivation_rules"][0]["pattern"] == "column:weight"
+
+
+def test_the_ignore_above_value_round_trips(api):
+    """AC-A.5 - `max_value` is editable, and blank means no cap."""
+    db, _as = api
+    _as(_REGISTRY_ADMIN)
+    client = TestClient(app)
+    _key(db, "zzt_length4", label="Length", data_type="numeric", unit="mm")
+
+    response = client.patch(f"{_BASE}/zzt_length4", json={"max_value": 5000})
+    assert response.status_code == 200, response.text
+    assert response.json()["max_value"] == 5000.0
+
+    # The list read is the product page's, so it runs on `master_data.products.view`.
+    # A new column has to reach it too: `response_model` drops what it does not declare,
+    # and a field the FE never sees is a field nobody can edit.
+    _as(_MERCHANDISER)
+    listed = client.get(_BASE).json()["keys"]
+    assert {"zzt_length4": 5000.0}.items() <= {
+        key["spec_key"]: key["max_value"] for key in listed
+    }.items()
+    _as(_REGISTRY_ADMIN)
+
+    response = client.patch(f"{_BASE}/zzt_length4", json={"max_value": None})
+    assert response.status_code == 200, response.text
+    assert response.json()["max_value"] is None
+
+
+def test_a_shipped_row_says_so_on_the_way_out(api):
+    """The rows that ship carry a tag; the stored column never does."""
+    db, _as = api
+    _as(_MERCHANDISER)
+    client = TestClient(app)
+    _key(db, "dim_length", label="Length", data_type="numeric", unit="mm")
+
+    listed = {key["spec_key"]: key for key in client.get(_BASE).json()["keys"]}
+    effective = listed["dim_length"]["effective_rules"]
+
+    assert effective, "the shipped rules are what this key actually runs"
+    assert all(rule.get("shipped") is True for rule in effective)
+    assert effective[0]["builder"] == {
+        "kind": "from_field",
+        "field": "column:dimensions_length",
+    }
+    assert listed["dim_length"]["derivation_rules"] == []
+
+
+def test_saving_the_shipped_list_back_keeps_every_field_the_engine_reads(api):
+    """Open Length, press Save, change nothing: the list must still read the same.
+
+    The save path rebuilds each rule from the fields it knows, so a field it does not
+    know is silently deleted. That is how the round/square condition would disappear off
+    the size rows - and 407 would go back to being a length on every round basin - by
+    somebody opening the screen and saving it untouched.
+    """
+    from app.services.product_spec_derivation import shipped_rules
+
+    db, _as = api
+    _as(_REGISTRY_ADMIN)
+    client = TestClient(app)
+    _key(db, "dim_length", label="Length", data_type="numeric", unit="mm")
+
+    effective = [dict(rule, shipped=True) for rule in shipped_rules()["dim_length"]]
+    response = client.patch(f"{_BASE}/dim_length", json={"derivation_rules": effective})
+
+    assert response.status_code == 200, response.text
+    saved = response.json()["derivation_rules"]
+    assert len(saved) == len(effective)
+    for stored, shipped in zip(saved, effective):
+        for field in ("match", "pattern", "capture", "source", "applies_when", "unless"):
+            assert stored.get(field) == shipped.get(field), field
+        assert stored.get("builder") == shipped.get("builder")
+        # The tag is the API's, not the database's: a saved list belongs to the business.
+        assert "shipped" not in stored

@@ -6,12 +6,22 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { updateSpecKey } from '../services/productSpecService';
+import SpecPreviewPanel from './SpecPreviewPanel';
 import SpecRuleEditor from './SpecRuleEditor';
+import SpecTryItPanel from './SpecTryItPanel';
 import TokenInput from './TokenInput';
 import { readable } from '@/lib/spec-readable';
-import { ruleSentence } from '../lib/ruleSentence';
-import { seedValuesFor, seedWordsFor, valuePayload, wordPayload } from '../lib/vocabularyEdit';
-import type { SpecDerivationRule, SpecRegistryKey } from '../types/productSpec.types';
+import {
+  seedValuesFor,
+  seedWordsFor,
+  valuePayload,
+  wordPayload,
+} from '../lib/vocabularyEdit';
+import { useSpecTryIt, type TryItSource } from '../hooks/useSpecTryIt';
+import type {
+  SpecDerivationRule,
+  SpecRegistryKey,
+} from '../types/productSpec.types';
 
 /**
  * Edit one spec key.
@@ -57,37 +67,54 @@ export default function SpecKeyEditor({
   onSaved: (updated: SpecRegistryKey) => void;
   onCancel: () => void;
 }) {
-
-
   // What the SEED ships, reconstructed: the live list minus what staff added, plus the
   // shipped values currently taken away. Every "is this mine or theirs" decision below
   // reads this rather than `allowed_values`, which is the merged view and would count a
   // staff-added value as shipped the moment it was saved.
   const seedValues = seedValuesFor(specKey);
-  const isOpenVocabulary = specKey.data_type === 'enum' && seedValues.length === 0;
+  const isOpenVocabulary =
+    specKey.data_type === 'enum' && seedValues.length === 0;
   const isBoolean = specKey.data_type === 'boolean';
 
   const [label, setLabel] = useState(specKey.label);
   const [weight, setWeight] = useState(String(specKey.rank_weight ?? 1));
-  const [tolerance, setTolerance] = useState(String(specKey.match_tolerance ?? 0));
+  const [tolerance, setTolerance] = useState(
+    String(specKey.match_tolerance ?? 0),
+  );
   const [decay, setDecay] = useState(String(specKey.match_decay ?? 0));
   const [active, setActive] = useState(specKey.is_active);
-  const [excluded, setExcluded] = useState<string[]>(specKey.excluded_values ?? []);
+  const [excluded, setExcluded] = useState<string[]>(
+    specKey.excluded_values ?? [],
+  );
+  const [maxValue, setMaxValue] = useState(
+    specKey.max_value === null || specKey.max_value === undefined
+      ? ''
+      : String(specKey.max_value),
+  );
   // Seeded from the rules that ACTUALLY run, not from the stored column. A key that has
   // never been edited runs the shipped set, and showing the empty column instead told
   // people nothing would ever fill in a key that was already filled in on 74 products.
   // Saving writes them down, which is how an inherited default becomes yours.
   // Given an identity on the way in so dragging moves a RULE, not a position.
-  const [rules, setRules] = useState<SpecDerivationRule[]>(() =>
-    (specKey.effective_rules ?? specKey.derivation_rules ?? []).map((rule, index) => ({
-      ...rule,
-      _uid: `r${index}`,
-    })),
-  );
+  const [rules, setRules] = useState<SpecDerivationRule[]>(() => {
+    const stored = specKey.effective_rules ?? specKey.derivation_rules ?? [];
+    return stored.map((rule, index) => ({ ...rule, _uid: `r${index}` }));
+  });
+
+  // Try it on (AC-B.3): sits above the rule list; reads render INTO the rows below via
+  // `readResult`, so the source and its hook live here, one level above both.
+  const [trySource, setTrySource] = useState<TryItSource | null>(null);
+  const {
+    result: tryResult,
+    loading: tryLoading,
+    error: tryError,
+  } = useSpecTryIt(specKey.spec_key, rules, trySource);
   // {other_key: [permitted values]}. Only the class gate is edited here, because it is
   // the only one anybody has needed and a generic key/value grid for the rest would be
   // a lot of screen for a case that has not come up.
-  const [classScope, setClassScope] = useState<string[]>(specKey.applies_when?.class ?? []);
+  const [classScope, setClassScope] = useState<string[]>(
+    specKey.applies_when?.class ?? [],
+  );
   const [preferences, setPreferences] = useState(
     Object.entries(specKey.value_weights ?? {})
       .map(([value, bonus]) => `${value} = ${bonus}`)
@@ -97,7 +124,9 @@ export default function SpecKeyEditor({
   // The values in use, and the shipped ones taken away, as two lists rather than one
   // list plus a set of locks: removing a value has to be able to mean different things
   // depending on who owns it, and a lock cannot express that.
-  const [liveValues, setLiveValues] = useState<string[]>(specKey.allowed_values);
+  const [liveValues, setLiveValues] = useState<string[]>(
+    specKey.allowed_values,
+  );
   const [droppedValues, setDroppedValues] = useState<string[]>(
     specKey.suppressed_values ?? [],
   );
@@ -128,14 +157,21 @@ export default function SpecKeyEditor({
     Object.fromEntries(
       dedupe([...wordedValues]).map((v) => [
         v,
-        dedupe([...(specKey.synonyms?.[v] ?? []), ...(specKey.user_synonyms?.[v] ?? [])]),
+        dedupe([
+          ...(specKey.synonyms?.[v] ?? []),
+          ...(specKey.user_synonyms?.[v] ?? []),
+        ]),
       ]),
     ),
   );
-  const [droppedWords, setDroppedWords] = useState<Record<string, string[]>>(() =>
-    Object.fromEntries(
-      Object.entries(specKey.suppressed_synonyms ?? {}).map(([v, w]) => [v, [...w]]),
-    ),
+  const [droppedWords, setDroppedWords] = useState<Record<string, string[]>>(
+    () =>
+      Object.fromEntries(
+        Object.entries(specKey.suppressed_synonyms ?? {}).map(([v, w]) => [
+          v,
+          [...w],
+        ]),
+      ),
   );
   const [saving, setSaving] = useState(false);
 
@@ -155,7 +191,8 @@ export default function SpecKeyEditor({
     setLiveValues((current) => current.filter((v) => v !== value));
     // A staff-added value is simply deleted. Only a shipped one leaves a tombstone,
     // because only a shipped one comes back on the next deploy.
-    if (seedValues.includes(value)) setDroppedValues((current) => dedupe([...current, value]));
+    if (seedValues.includes(value))
+      setDroppedValues((current) => dedupe([...current, value]));
   };
 
   const restoreValue = (value: string) => {
@@ -187,7 +224,10 @@ export default function SpecKeyEditor({
     const seed = seedWords(value);
     setWords((current) => ({ ...current, [value]: [] }));
     if (seed.length > 0) {
-      setDroppedWords((current) => ({ ...current, [value]: dedupe([...seed]) }));
+      setDroppedWords((current) => ({
+        ...current,
+        [value]: dedupe([...seed]),
+      }));
     } else {
       setExtraWordRows((current) => current.filter((v) => v !== value));
       setWords((current) => {
@@ -203,7 +243,10 @@ export default function SpecKeyEditor({
       ...current,
       [value]: (current[value] ?? []).filter((w) => w !== word),
     }));
-    setWords((current) => ({ ...current, [value]: dedupe([...(current[value] ?? []), word]) }));
+    setWords((current) => ({
+      ...current,
+      [value]: dedupe([...(current[value] ?? []), word]),
+    }));
   };
 
   const save = async () => {
@@ -220,6 +263,19 @@ export default function SpecKeyEditor({
         liveValues,
         droppedValues,
       );
+      // Blank clears the cap (AC-C.5): `null`. A typed number rides as itself. Any
+      // other stray text - `Number('abc')` is `NaN` - is omitted from the request
+      // entirely rather than sent as `NaN` (which used to serialise to `null` and
+      // silently clear the cap the same as an intentional blank).
+      const maxValueTrimmed = maxValue.trim();
+      const maxValueNumber =
+        maxValueTrimmed === '' ? null : Number(maxValueTrimmed);
+      const maxValuePayload =
+        maxValueTrimmed === ''
+          ? { max_value: null }
+          : Number.isFinite(maxValueNumber)
+            ? { max_value: maxValueNumber }
+            : {};
       const updated = await updateSpecKey(specKey.spec_key, {
         label,
         rank_weight: Number(weight),
@@ -230,6 +286,7 @@ export default function SpecKeyEditor({
         suppressed_synonyms,
         excluded_values: excluded,
         derivation_rules: rules,
+        ...maxValuePayload,
         // An empty list means "every class". Sent as an absent key rather than an
         // empty array so the stored gate is removed, not stored as a gate that
         // permits nothing.
@@ -240,7 +297,10 @@ export default function SpecKeyEditor({
           preferences
             .split('\n')
             .map((line) => line.split('='))
-            .filter((parts) => parts.length === 2 && parts[0].trim() && Number(parts[1]))
+            .filter(
+              (parts) =>
+                parts.length === 2 && parts[0].trim() && Number(parts[1]),
+            )
             .map((parts) => [parts[0].trim(), Number(parts[1])]),
         ),
       });
@@ -248,14 +308,18 @@ export default function SpecKeyEditor({
       // visible. Without this, a successful save and a silent failure look identical.
       toast.success(`${specKey.label} saved`, {
         description:
-          rules.length > 0 ? 'Read the catalogue again to apply it to products.' : undefined,
+          rules.length > 0
+            ? 'Read the catalogue again to apply it to products.'
+            : undefined,
       });
       onSaved(updated);
     } catch (e) {
       // A toast, not an alert at the top of the form: by the time you press Save you
       // have scrolled past the top, and a message you cannot see is a message that did
       // not happen.
-      toast.error(e instanceof Error ? e.message : 'Failed to save', { duration: 10_000 });
+      toast.error(e instanceof Error ? e.message : 'Failed to save', {
+        duration: 10_000,
+      });
     } finally {
       setSaving(false);
     }
@@ -308,10 +372,27 @@ export default function SpecKeyEditor({
                 onChange={(e) => setDecay(e.target.value)}
               />
             </div>
+            <div className="w-36">
+              <label className="text-xs uppercase tracking-wide text-muted-foreground mb-1 block">
+                Ignore values above{specKey.unit ? ` (${specKey.unit})` : ''}
+              </label>
+              <Input
+                type="number"
+                step="1"
+                min="0"
+                placeholder="no cap"
+                value={maxValue}
+                onChange={(e) => setMaxValue(e.target.value)}
+              />
+            </div>
           </>
         )}
         <label className="flex items-center gap-2 text-sm pb-2">
-          <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} />
+          <input
+            type="checkbox"
+            checked={active}
+            onChange={(e) => setActive(e.target.checked)}
+          />
           In use
         </label>
       </div>
@@ -363,49 +444,33 @@ export default function SpecKeyEditor({
         <TokenInput
           values={classScope}
           onChange={setClassScope}
-          placeholder={classScope.length === 0 ? 'every class' : 'limit to a class'}
+          placeholder={
+            classScope.length === 0 ? 'every class' : 'limit to a class'
+          }
           ariaLabel="Applies to"
         />
       </Field>
 
-      {specKey.read_from === 'product_record' ? (
-        <div className="flex flex-col gap-1.5">
-          <div className="text-xs uppercase tracking-wide text-muted-foreground">
-            How this is read from a product
-          </div>
-          {/* Reading a column is a rule too. Saying "there are no rules" about the one
-              key everybody asks about left the derivation unexplained. */}
-          <div className="rounded-md border bg-background p-2 text-sm">
-            {ruleSentence(
-              { match: 'product_column', pattern: specKey.spec_key },
-              specKey.label || specKey.spec_key,
-            )}
-          </div>
-          <span className="text-xs text-muted-foreground">
-            Curated data outranks anything parsed out of text, so this rule cannot be
-            reordered or switched off here.
-          </span>
-        </div>
-      ) : (
-        <div className="flex flex-col gap-2">
-          {specKey.rules_are_default && rules.length > 0 && (
-            <p className="text-xs text-muted-foreground">
-              These {rules.length} rules ship with the product and are what this key is
-              read with today. Change one and they become yours - this key stops taking
-              future updates to the shipped set.
-            </p>
-          )}
-          {specKey.read_from === 'measurement_then_rules' && (
-            <p className="text-xs text-muted-foreground">
-              The size written in the product description is read first and always wins.
-              These rules fill the gap when it states none - which is how a flyer&apos;s
-              &quot;L680xW375xH770mm&quot; gets in. Set a rule&apos;s source to
-              &quot;Flyer only&quot; to keep it out of the description.
-            </p>
-          )}
-          <SpecRuleEditor rules={rules} specKey={specKey.spec_key} onChange={setRules} />
-        </div>
-      )}
+      {/* Every key reads through the rule list now, brand and the dimension columns
+          included (#425) - `read_from` is always `'rules'`, so there is no longer a
+          second branch here for a key that reads the product record directly. */}
+      <div className="flex flex-col gap-2">
+        <SpecTryItPanel
+          source={trySource}
+          onSourceChange={setTrySource}
+          description={tryResult?.description ?? null}
+          loading={tryLoading}
+          error={tryError}
+        />
+        <SpecRuleEditor
+          rules={rules}
+          specKey={specKey.spec_key}
+          onChange={setRules}
+          reads={tryResult?.reads}
+          winnerIndex={tryResult?.winner_index}
+        />
+        <SpecPreviewPanel specKey={specKey.spec_key} rules={rules} />
+      </div>
 
       <Field
         label="Prefer these values"
@@ -423,9 +488,9 @@ export default function SpecKeyEditor({
             returned Sorento sinks with no bowl count over real double-bowl sinks. */}
         {heaviestPreference > CLASS_MATCH_WORTH && (
           <p className="text-xs text-warning">
-            {heaviestPreference} is more than a matching product class is worth (
-            {CLASS_MATCH_WORTH}), so this preference outranks what the customer asked
-            for. Below {CLASS_MATCH_WORTH} it breaks ties instead.
+            {heaviestPreference} is more than a matching product class is worth
+            ({CLASS_MATCH_WORTH}), so this preference outranks what the customer
+            asked for. Below {CLASS_MATCH_WORTH} it breaks ties instead.
           </p>
         )}
       </Field>
@@ -453,7 +518,9 @@ export default function SpecKeyEditor({
                       : 'truncate'
                   }
                 >
-                  {value === 'true' && isBoolean ? 'When true' : readable(value)}
+                  {value === 'true' && isBoolean
+                    ? 'When true'
+                    : readable(value)}
                 </span>
                 {/* Clearing a row is the only way to retire a value on a key with no
                     value list of its own - a numeric key's values exist ONLY as these
@@ -475,13 +542,20 @@ export default function SpecKeyEditor({
                   suppressed={droppedWords[value] ?? []}
                   onRestore={(word) => restoreWord(value, word)}
                   onChange={(next) => {
-                    const removed = (words[value] ?? []).find((w) => !next.includes(w));
+                    const removed = (words[value] ?? []).find(
+                      (w) => !next.includes(w),
+                    );
                     if (removed) {
                       removeWord(value, removed);
                       return;
                     }
-                    const addedWord = next.find((w) => !(words[value] ?? []).includes(w));
-                    if (addedWord && (droppedWords[value] ?? []).includes(addedWord)) {
+                    const addedWord = next.find(
+                      (w) => !(words[value] ?? []).includes(w),
+                    );
+                    if (
+                      addedWord &&
+                      (droppedWords[value] ?? []).includes(addedWord)
+                    ) {
                       restoreWord(value, addedWord);
                       return;
                     }
@@ -499,7 +573,11 @@ export default function SpecKeyEditor({
               <Input
                 className="w-52"
                 value={newWordRow}
-                placeholder={specKey.data_type === 'numeric' ? 'a value, e.g. 4' : 'a value, e.g. SORENTO'}
+                placeholder={
+                  specKey.data_type === 'numeric'
+                    ? 'a value, e.g. 4'
+                    : 'a value, e.g. SORENTO'
+                }
                 onChange={(e) => setNewWordRow(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key !== 'Enter') return;

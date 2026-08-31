@@ -55,6 +55,7 @@ from app.services.dealer_kit.dimension_apply_service import (
 )
 from app.services.error_handler import AppException
 from app.services.product_spec_derivation import (
+    configured_max_values,
     configured_rules,
     configured_scopes,
     propose_from_text,
@@ -1138,6 +1139,7 @@ def apply_batch(
     # transaction, for a flyer that can name two hundred of them.
     rules_by_key = configured_rules(db)
     scopes_by_key = configured_scopes(db)
+    max_values = configured_max_values(db)
 
     per_product: dict[str, list[ProductSpecFlyerProposal]] = {}
     for row in rows:
@@ -1233,6 +1235,7 @@ def apply_batch(
                 commit=False,
                 rules_by_key=rules_by_key,
                 scopes_by_key=scopes_by_key,
+                max_values=max_values,
             )
         except AppException as exc:
             # One product's write failing is not the request failing. Its rows are

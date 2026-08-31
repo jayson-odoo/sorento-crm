@@ -22,7 +22,9 @@ describe('a rule as a sentence', () => {
         { match: 'contains', pattern: 'S/STEEL 304', value: '304' },
         'Steel grade',
       ),
-    ).toBe('If the description or flyer contains “S/STEEL 304”, Steel grade is 304.');
+    ).toBe(
+      'If the description or flyer contains “S/STEEL 304”, Steel grade is 304.',
+    );
   });
 
   it('names the flyer when the rule is scoped to it', () => {
@@ -35,22 +37,42 @@ describe('a rule as a sentence', () => {
   });
 
   it('reads a flag as yes', () => {
-    expect(ruleSentence({ match: 'present', pattern: '\\bRIMLESS\\b', value: true }, 'Rimless')).toBe(
+    expect(
+      ruleSentence(
+        { match: 'present', pattern: '\\bRIMLESS\\b', value: true },
+        'Rimless',
+      ),
+    ).toBe(
       'If “RIMLESS” appears in the description or flyer at all, Rimless is yes.',
     );
   });
 
-  it('explains a column read, which has no pattern to show', () => {
+  it('explains a field read, which has no pattern to show', () => {
     expect(
-      ruleSentence({ match: 'product_column', pattern: 'brand' }, 'Brand'),
-    ).toBe("Brand is taken straight from the product's own brand.");
+      ruleSentence({ match: 'from_field', pattern: 'brand' }, 'Brand'),
+    ).toBe("From the product's brand field.");
+    expect(
+      ruleSentence(
+        { match: 'from_field', pattern: 'column:dimensions_length' },
+        'Length',
+      ),
+    ).toBe("From the product's `dimensions_length` column.");
+  });
+
+  it('explains a name-head read', () => {
+    expect(
+      ruleSentence({ match: 'name_head', pattern: 'class_tail' }, 'Class'),
+    ).toBe('Class comes from the product name head.');
   });
 });
 
 describe('a pattern rule does two different jobs', () => {
   it('reads a number out of the text when it captures one', () => {
     expect(
-      ruleSentence({ match: 'regex', pattern: '(\\d+)MM S-TRAP', capture: 1 }, 'Trap outlet length'),
+      ruleSentence(
+        { match: 'regex', pattern: '(\\d+)MM S-TRAP', capture: 1 },
+        'Trap outlet length',
+      ),
     ).toContain('Read Trap outlet length out of');
   });
 
@@ -58,7 +80,12 @@ describe('a pattern rule does two different jobs', () => {
     // bowl_count's word forms are regex rules with a value, not captures. Describing
     // them as "read the number out of SINGLE BOWL(S)" names something that never happens.
     expect(
-      ruleSentence({ match: 'regex', pattern: '\\bSINGLE\\s+BOWLS?\\b', value: 1 }, 'Number of bowls'),
-    ).toBe('If the description or flyer matches “SINGLE BOWL(S)”, Number of bowls is 1.');
+      ruleSentence(
+        { match: 'regex', pattern: '\\bSINGLE\\s+BOWLS?\\b', value: 1 },
+        'Number of bowls',
+      ),
+    ).toBe(
+      'If the description or flyer matches “SINGLE BOWL(S)”, Number of bowls is 1.',
+    );
   });
 });

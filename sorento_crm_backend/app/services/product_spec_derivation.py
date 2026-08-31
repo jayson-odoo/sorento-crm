@@ -550,7 +550,12 @@ _SMART_WC_RE = re.compile(r"INTELLIGENT|AUTO\s*INDUCTION|SMART\s*(?:TOILET|WC)")
 # separator typos ("540X440180MM" parses as 540 x 440180), and a dimension that absurd
 # would otherwise be indexed and ranked on. Out-of-range values are dropped and flagged
 # rather than silently stored.
-MAX_PLAUSIBLE_MM = 5000
+#
+# It is `product_spec_registry.max_value` now, per key and editable (AC-A.5), seeded
+# 5000 on every millimetre key. One module constant said the same thing about a
+# thickness and a bath, and could not be looked at, let alone changed. The number
+# itself lives with the seed that plants it:
+# `product_spec_registry.DEFAULT_MM_MAX_VALUE`.
 
 # 2 to 4 numbers separated by x / X / *, with optional spaces and an optional unit.
 # Each number may be LABELLED and may carry its own unit, because the flyer writes
@@ -669,24 +674,41 @@ class _Derivation:
 # this change derives identically. Everything after that is edited in the UI.
 #
 # A rule is `{match, pattern, value}` and the first one to match wins, so the order of
-# the list is its priority. Five kinds, which is what the shipped tables between them
-# needed and no more:
+# the list is its priority. The kinds, which is what the readers between them need and
+# no more:
 #
 #   contains     the pattern appears as whole words       "S/STEEL 304" -> stainless_steel
 #   ends_with    the pattern is the TRAILING noun        "SQUATTING PAN" -> Squatting Pan
 #   present      a regex matches; the value is a flag    "OVER\s*FLOW" -> true
 #   regex        a regex matches; capture a number       "(\d+)MM S-TRAP" -> 150
 #   code_suffix  the product code's last segment         "-BL" -> black
+#   from_field   the PRODUCT ROW, not its text           "column:dimensions_length" -> 800
+#   name_head    what the product name says it IS        "MIXER TAP WITH ..." -> Tap
 #
-# `source` limits a rule to one text: "description", "flyer", or "any" (the default).
-# A rule that should only ever fire on marketing copy can say so.
+# The last two are the readers that used to run before any rule did (#425). They read
+# the product record rather than a string, which is why they are kinds of their own
+# rather than patterns - and they are ordinary rows in the same ordered list, so the
+# screen that lists "how this is read" is now the whole truth about it.
+#
+# `source` limits a rule to one text: "description", "flyer", "size_text",
+# "class_tail", or "any" (the default). A rule that should only ever fire on marketing
+# copy can say so.
 _WORD_BOUNDED = {"present"}
+
+# Rules that read the product row itself. They take no text and never fire on pasted
+# marketing copy, where there is no product to read.
+_RECORD_KINDS = {"from_field", "name_head"}
+
+# A CODE rule belongs at the BOTTOM of a key's list - a code suffix is a convention, not
+# a statement, and a card saying "Golden Yellow" outranks `-GY` mapping to grey - but
+# that is the list's own order now rather than a phase behind it, and migration 450
+# moved the rows that sat above their text rules down to where they always ran.
 
 
 def _rule_matches(
-    rule: dict, texts: dict[str, str], code: str, default_scope: str = "any", only_text: str | None = None
+    rule: dict, texts: dict[str, str], code: str, default_scope: str = "any"
 ):
-    """(value, evidence) for the first rule that fires, or None.
+    """(value, evidence, which_text) for a rule that fires, or None.
 
     Never raises on a bad rule. These are edited by hand in a form, and one malformed
     regex must not stop the catalog deriving - it is skipped and the next rule is tried.
@@ -702,7 +724,7 @@ def _rule_matches(
             return None
         if code.rsplit("-", 1)[1] != pattern.upper():
             return None
-        return rule.get("value"), f"-{pattern.upper()}"
+        return rule.get("value"), f"-{pattern.upper()}", "code"
     # The code is the only place some facts are written down. `SRTSC` names a seat cover
     # in every code that carries it, while the descriptions say "SEAT COVER", "COVER",
     # or nothing recognisable - and there was no way to say so. `code_suffix` reads the
@@ -713,21 +735,15 @@ def _rule_matches(
     if kind in {"code_contains", "code_starts_with"}:
         needle = pattern.upper()
         hit = code.startswith(needle) if kind == "code_starts_with" else needle in code
-        return (rule.get("value"), needle) if hit else None
+        return (rule.get("value"), needle, "code") if hit else None
 
-    # ONE text per call. The caller runs every rule against the description before it
-    # runs any rule against the flyer, so a low-priority rule matching marketing copy
-    # cannot beat a high-priority rule matching the product master.
-    if only_text is not None:
-        # A rule that names its own text only ever runs against that text.
-        if scope in texts and scope != only_text:
-            return None
-        haystacks = [texts.get(only_text, "")]
-    else:
-        haystacks = (
-            [texts.get(scope, "")] if scope in texts else [texts["description"], texts["flyer"]]
-        )
-    for haystack in haystacks:
+    # Each rule reads ITS OWN text: the one it names, or the description and the flyer
+    # when it names none. Only one of those two ever holds anything - derivation reads a
+    # product and `propose_from_text` reads pasted copy - so a rule cannot silently
+    # answer from the wrong document, and the list stays a plain priority list.
+    names = [scope] if scope in texts else ["description", "flyer"]
+    for name in names:
+        haystack = texts.get(name, "")
         if not haystack:
             continue
         try:
@@ -739,20 +755,26 @@ def _rule_matches(
                 # behaviour, and derivation must not change because its rules moved
                 # into a table.
                 if re.search(rf"(?<![A-Z]){re.escape(pattern.upper())}(?![A-Z])", haystack):
-                    return rule.get("value"), pattern.upper()
+                    return rule.get("value"), pattern.upper(), name
             elif kind == "ends_with":
                 token = pattern.upper()
                 if haystack == token or haystack.endswith(" " + token):
-                    return rule.get("value"), token
+                    return rule.get("value"), token, name
             elif kind == "present":
                 match = re.search(rf"(?<![A-Z]){pattern}(?![A-Z])", haystack)
                 if match:
-                    return rule.get("value", True), match.group(0)
+                    return rule.get("value", True), match.group(0), name
             elif kind == "regex":
                 match = re.search(pattern, haystack)
                 if match:
                     group = int(rule.get("capture") or 0)
                     raw = match.group(group) if group else match.group(0)
+                    # An OPTIONAL group that did not participate is not a reading. The
+                    # size triple's third and fourth numbers are optional - a two-number
+                    # size has no height - and taking the group anyway asked `float`
+                    # to read None.
+                    if group and raw is None:
+                        continue
                     value = _number(raw) if group else rule.get("value", True)
                     # `scale` converts the captured number into the unit the catalog
                     # stores. The flyer prints a hose as "1.2m" while every length here
@@ -765,9 +787,70 @@ def _rule_matches(
                         value = value * float(scale)
                         if float(value).is_integer():
                             value = int(value)
-                    return value, match.group(0)
+                    return value, match.group(0), name
         except re.error:
             continue
+    return None
+
+
+def _record_read(rule: dict, product, category, spec_key: str):
+    """(value, evidence, origin) for a rule that reads the PRODUCT, not a string.
+
+    These are the readers `derive()` used to run before it looked at any rule, and each
+    one is a row now (#425, AC-A.1):
+
+      * `from_field` `category` - the class the category is filed under. The weakest
+        class signal there is (a decode of a filing code), so it is marked `category`
+        rather than `derived`, and `_apply_scope` refuses to delete a spec on its say-so.
+      * `from_field` `brand` - the product's own brand row. 22,771 of 22,805 products
+        carry one, and reading the brand off the category prefix instead got 1,934 wrong.
+      * `from_field` `column:<column>` - a number in the product master. Curated data,
+        which is why the shipped lists put it above the text.
+      * `name_head` - what the product NAME says it is: the description with the code,
+        the dimensions, the parenthetical and everything the product comes WITH removed,
+        read for its trailing noun. `MIXER TAP WITH PULL OUT SHOWER` is a tap.
+
+    `None` whenever there is no product to read - the pasted-text pass has none, and a
+    rule that reads the record must simply not fire there.
+    """
+    if product is None:
+        return None
+    kind = str(rule.get("match") or "").lower()
+    pattern = str(rule.get("pattern") or "")
+
+    if kind == "name_head":
+        named = _class_from_description(
+            product.description or "", (product.product_code or "").upper()
+        )
+        return (named[0], named[1], "field") if named else None
+
+    if pattern == "category":
+        label = getattr(category, "class_label", None) if category is not None else None
+        if not label:
+            return None
+        return label, (getattr(category, "category_code", "") or ""), "category"
+
+    if pattern == "brand":
+        name = (getattr(getattr(product, "brand", None), "brand_name", None) or "").strip()
+        return (name, f"brand={name}", "field") if name else None
+
+    if pattern.startswith("column:"):
+        # Named on the rule, so the row reads as the sentence it is ("from the product's
+        # `dimensions_length` column") and a key can be pointed at a different column
+        # without a deploy. Anything the products table does not have reads as nothing.
+        raw = getattr(product, pattern.split(":", 1)[1], None)
+        if raw is None:
+            return None
+        try:
+            return _number(str(raw)), f"{spec_key}={raw}", "field"
+        except (TypeError, ValueError):
+            # `_validate_rules` refuses a `column:` pattern outside the numeric
+            # whitelist at save time (B3), but a row written before that guard
+            # existed still has to derive without crashing the whole catalogue - a
+            # text column ("column:currency" -> "MYR") must read as nothing, not
+            # raise `float()` out of `derive()`.
+            return None
+
     return None
 
 
@@ -777,67 +860,219 @@ def _rule_matches(
 _DEFAULT_SCOPE_BY_KEY = {"class": "class_tail"}
 
 
-def apply_rules(rules_by_key: dict[str, list[dict]], texts: dict[str, str], code: str) -> dict:
-    """{spec_key: (value, evidence, which_text)} for every key whose rules fire.
+def _gate_passes(rule: dict, held: dict) -> bool:
+    """Whether this rule applies to a product the derivation has read this far.
 
-    SOURCE-MAJOR, RULE-MINOR: description, then flyer, then the code. Every rule is
-    tried against one source before any rule is tried against the next, so the rule
-    list is a priority list only WITHIN a source. Two things were wrong without it.
+    `applies_when` and its negative `unless`, both `{spec_key: [values]}`, compared
+    against what the SAME derivation has already produced. This is the round/square gate
+    (#425, AC-A.1): a round basin's stored columns are mis-keyed, so 407 is a diameter
+    and not a length, and the rows that read a length say `unless shape is round or
+    square` while the diameter row says `applies when` it is.
 
-    Rule order beat source order. `SRTWC7614-RL` says "S-TRAP:250MM" in its own
-    description and "P-Trap: Horizontal Outlet" on its flyer card; the P-TRAP rule sits
-    above the S-TRAP rule, so it matched the flyer first and the product was stored as
-    a P-trap, contradicting its own description.
-
-    And the CODE beat both. A code suffix is a convention, not a statement: `-GY` is
-    mapped to grey, but the flyer for `SRTWB1516-GY` says "Golden Yellow" in words.
-    Words a human wrote outrank a letter pair, which is what the shipped `finish` rules
-    always intended - "the words go first and the suffix stays as the fallback" - and
-    could not express while one loop ran them together.
+    A gate the derivation cannot answer - no shape read at all, which is most of the
+    catalogue - leaves `unless` satisfied and `applies_when` unmet, which is exactly how
+    the hardcoded `if shape in ("round", "square")` behaved.
     """
-    code_kinds = {"code_suffix", "code_contains", "code_starts_with"}
-    # Keys a product may legitimately hold more than one of. SRTWT9605-RG is "Rose Gold
-    # + Matt Black" - both true, and a customer asking for either is right. First-match
-    # -wins had to discard one of them, and which one it discarded depended on rule
-    # order, so the answer was arbitrary rather than merely incomplete.
-    multi = MULTI_VALUE_KEYS
-    found: dict[str, tuple] = {}
-    for key, rules in (rules_by_key or {}).items():
+    for field, wanted in (("applies_when", True), ("unless", False)):
+        gate = rule.get(field)
+        if not gate:
+            continue
+        for gate_key, permitted in gate.items():
+            value = held.get(gate_key)
+            allowed = {str(v).strip().lower() for v in (permitted or [])}
+            hit = value is not None and str(value).strip().lower() in allowed
+            if hit is not wanted:
+                return False
+    return True
+
+
+def _gate_keys(rules_by_key: dict[str, list[dict]]) -> set[str]:
+    """Keys some rule's gate reads, so they are derived before the rules that need them."""
+    keys: set[str] = set()
+    for rules in (rules_by_key or {}).values():
+        for rule in rules or []:
+            keys |= set(rule.get("applies_when") or {})
+            keys |= set(rule.get("unless") or {})
+    return keys
+
+
+def apply_rules(
+    rules_by_key: dict[str, list[dict]],
+    texts: dict[str, str],
+    code: str,
+    *,
+    product=None,
+    category=None,
+    max_values: dict | None = None,
+    explain_key: str | None = None,
+) -> dict:
+    """What each key reads, and what else its own list had to say about it.
+
+    `explain_key`, when given, makes the found entry for THAT ONE key carry
+    `explain` - one `{index, value, evidence}` per row of its list, in order (index
+    0-based, aligned to `rules[index]`), with `value`/`evidence` null where the row
+    does not fire - and `explain_winner_index`, the row that actually won. Try-it
+    (AC-B.1) is this and nothing else: the
+    same loop below, run once with a draft list substituted for one key, reading every
+    row instead of stopping at the first match. It changes nothing for a caller that
+    does not pass it - every added branch below is `and not is_explain`, so a normal
+    derive/derive_all run takes the same first-match path it always has.
+
+    `{spec_key: {value, evidence, origin, column, text, flags}}`. `column` and `text` are
+    the readings a `from_field column:` row and the first text row made, kept whether or
+    not they won: a disagreement between the two is the `column_conflict` exception, and
+    it has to be raised whichever of them is on top (AC-A.4).
+
+    ORDER IS PRIORITY, across every kind, with no phase behind it. The engine used to
+    run every text rule before any code rule wherever the rows sat, so a list could not
+    be read as what it does: `class` held "code contains SRTSC -> Seat Cover" on top of
+    32 rules that all outranked it. That order is real - a code suffix is a convention,
+    not a statement, and `-GY` maps to grey while a card says "Golden Yellow" in words -
+    so migration 450 MOVES those rows to where they ran instead of keeping the phase
+    that made the screen wrong.
+
+    A number above the key's `max_value` is dropped and flagged rather than stored, and
+    it stops the key: "540X440180MM" is a separator typo, and reading the next rule
+    instead would answer a question the typo already answered wrongly. The cap judges
+    TEXT only - a number a person typed into the product master is data, and four live
+    products legitimately carry a column above it.
+    """
+    max_values = max_values or {}
+    found: dict[str, dict] = {}
+    values: dict[str, object] = {}
+
+    # A gate reads another key's value, so that key is derived first. `shape` decides
+    # whether 407 is a diameter or a length, and reading the dimensions before it would
+    # answer with whichever the dict happened to hold.
+    gates = _gate_keys(rules_by_key)
+    ordered = [key for key in (rules_by_key or {}) if key in gates]
+    ordered += [key for key in (rules_by_key or {}) if key not in gates]
+
+    for key in ordered:
+        rules = rules_by_key.get(key) or []
         default_scope = _DEFAULT_SCOPE_BY_KEY.get(key, "any")
-        # The key's own primary text, the flyer as gap-filler, the code as last resort.
-        primary = default_scope if default_scope in texts else "description"
-        for source in (primary, "flyer", "code"):
-            if key in found:
-                break
-            collected: list = []
-            evidences: list[str] = []
-            for rule in rules or []:
-                is_code_rule = str(rule.get("match")) in code_kinds
-                if is_code_rule != (source == "code"):
-                    continue
-                hit = _rule_matches(
-                    rule, texts, code, default_scope, only_text=None if is_code_rule else source
+        is_explain = explain_key is not None and key == explain_key
+        read: dict = {
+            "value": None,
+            "evidence": "",
+            "origin": "description",
+            "column": None,
+            "text": None,
+            "flags": [],
+        }
+        # Only a key with a column row can disagree with its column, and only that case
+        # needs the whole list read after a winner is found. Everything else stops at
+        # the first match, as it always has. Try-it (`is_explain`) is the other case
+        # that needs every row read, and it needs it for every rule kind.
+        wants_conflict = any(
+            str(rule.get("match")) == "from_field"
+            and str(rule.get("pattern") or "").startswith("column:")
+            for rule in rules
+        )
+        # Keys a product may legitimately hold more than one of. SRTWT9605-RG is "Rose
+        # Gold + Matt Black" - both true, and a customer asking for either is right.
+        collected: list = []
+        evidences: list[str] = []
+        explain_rows: list[dict] = []
+        explain_winner_index: int | None = None
+
+        # 0-based: this `index` aligns to `rules[index]`, which is how the frontend's
+        # `SpecRuleEditor` maps a read back onto its row (`reads[index]`). Unrelated to
+        # `_validate_rules`'s 1-based "Rule N" wording, which names a row in an error
+        # sentence rather than indexing into an array.
+        for index, rule in enumerate(rules):
+            explain_row = None
+            if is_explain:
+                explain_row = {"index": index, "value": None, "evidence": None}
+                explain_rows.append(explain_row)
+
+            kind = str(rule.get("match") or "contains").lower()
+            if not _gate_passes(rule, values):
+                continue
+
+            is_column = kind == "from_field" and str(
+                rule.get("pattern") or ""
+            ).startswith("column:")
+            if kind in _RECORD_KINDS:
+                hit = _record_read(rule, product, category, key)
+            else:
+                hit = _rule_matches(rule, texts, code, default_scope)
+            if hit is None or hit[0] is None:
+                continue
+            value, evidence, origin = hit
+            if explain_row is not None:
+                explain_row["value"] = value
+                explain_row["evidence"] = evidence
+
+            cap = max_values.get(key)
+            if (
+                cap is not None
+                and not is_column
+                and isinstance(value, (int, float))
+                and not isinstance(value, bool)
+                and value > cap
+            ):
+                read["flags"].append(
+                    {
+                        "spec_key": key,
+                        "reason": "implausible_dimension",
+                        "proposed": {"value": value, "evidence": evidence},
+                        "stored": None,
+                    }
                 )
-                if hit is None:
+                if explain_row is not None:
+                    # An honest try-it row: the cap dropped this reading, so the
+                    # engine does not keep it. Leaving the raw number in `value`
+                    # told the person pressing Save this row won when it did not -
+                    # `evidence` still says what it found and why it was ignored.
+                    explain_row["value"] = None
+                    explain_row["evidence"] = f"{value} from {evidence} (above {cap}, ignored)"
+                if not is_explain:
+                    break
+                continue
+
+            if is_column:
+                if read["column"] is None:
+                    read["column"] = (value, evidence)
+            elif read["text"] is None:
+                read["text"] = (value, evidence)
+
+            if key in MULTI_VALUE_KEYS:
+                # Every tone THIS source states, and then no more: a two-tone tap is
+                # "Rose Gold + Matt Black" and a customer asking for either is right,
+                # but a code suffix must not add a third to what the words already
+                # answered.
+                if collected and origin != read["origin"]:
+                    if not is_explain:
+                        break
                     continue
-                value, evidence = hit
-                if value is None:
-                    continue
-                if key in multi:
-                    # Keep every distinct tone this source states, then stop: a later
-                    # source must not add to what a better one already answered.
-                    if value not in collected:
-                        collected.append(value)
-                        evidences.append(evidence)
-                    continue
-                found[key] = (value, evidence, "flyer" if source == "flyer" else source)
-                break
-            if collected:
-                found[key] = (
-                    collected[0] if len(collected) == 1 else collected,
-                    " + ".join(evidences),
-                    "flyer" if source == "flyer" else source,
-                )
+                if value not in collected:
+                    if not collected:
+                        read["origin"] = origin
+                        if is_explain:
+                            explain_winner_index = index
+                    collected.append(value)
+                    evidences.append(evidence)
+                continue
+            if read["value"] is None:
+                read["value"] = value
+                read["evidence"] = evidence
+                read["origin"] = origin
+                if is_explain:
+                    explain_winner_index = index
+                if not wants_conflict and not is_explain:
+                    break
+
+        if collected:
+            read["value"] = collected[0] if len(collected) == 1 else collected
+            read["evidence"] = " + ".join(evidences)
+        if is_explain:
+            read["explain"] = explain_rows
+            read["explain_winner_index"] = explain_winner_index
+        if read["value"] is not None or read["flags"] or is_explain:
+            found[key] = read
+            if read["value"] is not None:
+                values[key] = read["value"]
     return found
 
 
@@ -857,18 +1092,44 @@ _MM_KEYS = {
     "hose_length",
 }
 
-# Keys the DESCRIPTION owns. A rule may fill one in, but only where the description had
-# nothing to say - the product master is the business's own record and the flyer is a
-# leaflet, which is the same precedence every other key already follows. Without this a
-# flyer's rounded "L680xW375xH770" would overwrite an exact size the master states.
-_DESCRIPTION_FIRST_KEYS = {
-    "dim_length",
-    "dim_width",
-    "dim_height",
-    "diameter",
-    "depth",
-    "thickness",
-}
+# Texts that are the PRODUCT'S OWN account of itself. A rule reading one of these has
+# read the business's own record; a rule reading the flyer has read a leaflet.
+_OWN_TEXTS = {"description", "class_tail", "size_text"}
+
+
+def description_first_keys(rules_by_key: dict[str, list[dict]] | None = None) -> frozenset[str]:
+    """Keys the product itself already answers, so a flyer only ever fills the gap.
+
+    This was a hand-written list of six keys. It is computed now, because the readers it
+    was describing are rules: a key is description-first when something in its list reads
+    the product's own record or its own description, so removing that row removes the
+    precedence with it rather than leaving a constant asserting a reader that no longer
+    runs. Same meaning, one place, and it moves when the rules move.
+
+    Class and brand join the six sizes, and that is the correction the list was hiding:
+    both are read off the product record, so a flyer that disagrees is a conflict for a
+    person to settle, not a value to apply silently.
+    """
+    if rules_by_key is None:
+        # Cached: `classify_spec_proposal` asks this per proposal, and a flyer batch is
+        # hundreds of them against every rule in the registry.
+        global _SHIPPED_DESCRIPTION_FIRST
+        if _SHIPPED_DESCRIPTION_FIRST is None:
+            _SHIPPED_DESCRIPTION_FIRST = description_first_keys(shipped_rules())
+        return _SHIPPED_DESCRIPTION_FIRST
+    return frozenset(
+        key
+        for key, rules in (rules_by_key or {}).items()
+        if any(
+            str(rule.get("match")) in _RECORD_KINDS
+            or str(rule.get("source") or "") in _OWN_TEXTS
+            for rule in rules or []
+        )
+    )
+
+
+_SHIPPED_DESCRIPTION_FIRST: frozenset[str] | None = None
+
 
 # The shipped rules, used when a caller has not loaded the configured ones. Built lazily
 # from the seed so there is exactly one definition of "what ships".
@@ -896,12 +1157,25 @@ def configured_scopes(db: Session) -> dict[str, dict]:
     return _scopes(db)
 
 
+def shipped_max_values() -> dict[str, float]:
+    from app.services.product_spec_registry import shipped_max_values as _caps
+
+    return _caps()
+
+
+def configured_max_values(db: Session) -> dict[str, float]:
+    from app.services.product_spec_registry import configured_max_values as _caps
+
+    return _caps(db)
+
+
 def derive(
     product: Product,
     category: ProductCategory | None,
     *,
     rules_by_key: dict[str, list[dict]] | None = None,
     scopes_by_key: dict[str, dict] | None = None,
+    max_values: dict[str, float] | None = None,
 ) -> _Derivation:
     """Everything readable about one product. Pure: no session, no writes.
 
@@ -911,6 +1185,9 @@ def derive(
 
     `scopes_by_key` is each key's `applies_when`: which products may carry it at all.
     Same fallback, same reason.
+
+    `max_values` is each key's `max_value`: the number above which a reading is a typo
+    rather than a measurement. Same fallback again.
 
     THE FLYER IS NO LONGER AN INPUT (AC-B.18). It used to arrive as `flyer_text` and act
     as a gap-filler under the description; a flyer now reaches specs only as reviewed
@@ -927,90 +1204,89 @@ def derive(
         # What the product IS, with the code, dimensions, parentheticals and
         # accompaniments removed. Only class rules read this by default.
         "class_tail": class_text(product.description or "", code),
+        # The description with the trap span blanked out. A trap outlet is not a size:
+        # "ONE PIECE TWISTER FLUSH WC (P-TRAP 180MM)" states where the waste leaves and
+        # nothing else, and reading its 180 as the length put a wrong Length on 889
+        # water closets. The lone-size row reads this text; `trap_length` reads the span
+        # itself from the description, where it still is.
+        "size_text": _TRAP_LENGTH_RE.sub(" ", description),
     }
 
     if rules_by_key is None:
         rules_by_key = shipped_rules()
     if scopes_by_key is None:
         scopes_by_key = shipped_scopes()
-    applies_when = scopes_by_key
-    fired = apply_rules(rules_by_key, texts, code)
+    if max_values is None:
+        max_values = shipped_max_values()
 
-    # 1. class off the category; brand off the PRODUCT'S OWN brand field.
-    #
-    # The category prefix (`SRT-KS` -> Sorento) is a decode of a code, and the product
-    # carries the real answer in `brand_id`: 22,771 of 22,805 products have one, across
-    # 12 brands. Trusting the prefix got 1,934 rows wrong - every INFINITY (532), OTHERS
-    # (403) and NO LOGO (601) product was relabelled as Sorento or Cabana, and four
-    # brands the prefix cannot express at all were unreachable. Curated data outranks a
-    # decoded code, exactly as it does for dimensions below.
-    #
-    # The prefix is NOT kept as a fallback for the 34 products carrying no brand. It is
-    # the same wrong mechanism at smaller scale, and it spells the brand its own way
-    # ("Sorento" vs the brands table's "SORENTO"), which would put both spellings into
-    # an open vocabulary and split the ranker's evidence between them. Rule 5 applies:
-    # no brand is a better answer than a guessed one.
-    # Class precedence: a configured rule, then the trailing noun, then the category.
-    #
-    # The configured rule used to be computed and then dropped on the floor - `fired`
-    # held it and the loop below skipped the key - so every class rule anyone wrote in
-    # the registry did nothing. "Product code contains SRTSC -> Seat Cover" saved,
-    # re-read the catalogue, and changed no product, with no way to tell why.
-    #
-    # A rule someone wrote is an explicit statement and outranks a heuristic reading of
-    # the last word, which is why it goes first. The trailing noun stays underneath it:
-    # it reads a CLEANED tail (code, dimensions, parentheticals and everything the
-    # product comes WITH removed), which is work the raw-text rule engine does not do.
-    class_rule = fired.get("class")
-    if class_rule is not None and class_rule[0] is not None:
-        out.set("class", class_rule[0], class_rule[1])
-    else:
-        named = _class_from_description(product.description or "", code)
-        if named is not None:
-            out.set("class", named[0], named[1])
-        elif category is not None and category.class_label:
-            # Marked `category`, not `derived`. It is the weakest class signal in the
-            # module - a decode of a filing code, not a reading of the product - and
+    # ONE ordered list per key, and nothing outside it. The class off the category, the
+    # brand off the product's own field, the `L x W x H` block and the plausibility cap
+    # were four readers that ran BEFORE any rule and appeared on no screen, so
+    # `SRTWC8354-SH-P` showed "the rules now read 180 mm" beside a rule list that could
+    # not have read it. They are rows now (#425, AC-A.1), in the order they always ran:
+    # the column, then the size in the text, then the lone size, then whatever anybody
+    # adds; the name head and the category UNDER a human's own class rules.
+    fired = apply_rules(
+        rules_by_key,
+        texts,
+        code,
+        product=product,
+        category=category,
+        max_values=max_values,
+    )
+
+    for key, read in fired.items():
+        for flagged in read["flags"]:
+            out.flag(
+                flagged["spec_key"], flagged["reason"], flagged["proposed"], flagged["stored"]
+            )
+        if read["value"] is None:
+            continue
+        origin = read["origin"]
+        out.set(
+            key,
+            read["value"],
+            read["evidence"],
+            unit="mm" if key in _MM_KEYS else None,
+            # A class inherited from the CATEGORY is marked as such and not as derived:
+            # it is a decode of a filing code rather than a reading of the product, and
             # `_apply_scope` refuses to delete a spec on the strength of it.
-            out.set("class", category.class_label, category.category_code, source="category")
+            source=(
+                "category"
+                if origin == "category"
+                else "flyer"
+                if origin == "flyer"
+                else "derived"
+            ),
+        )
 
-    brand_name = (getattr(product.brand, "brand_name", None) or "").strip()
-    if brand_name:
-        out.set("brand", brand_name, f"brand={brand_name}")
+    # Curated data is never SILENTLY outranked. Where a key holds both a column reading
+    # and a text reading and the two disagree, the disagreement is flagged whichever of
+    # them is on top - the column above the text (its shipped order) or a text row a
+    # merchandiser moved above it (AC-A.4).
+    for key, read in fired.items():
+        column, from_text = read["column"], read["text"]
+        if column and from_text and column[0] != from_text[0]:
+            out.flag(
+                key,
+                "column_conflict",
+                proposed={"value": from_text[0], "evidence": from_text[1]},
+                stored={"value": float(column[0])},
+            )
 
-
-    # 3. shape. Never defaulted: "unstated" and "rectangular" are different, and the
-    #    dimension rules below turn on which one it is.
-    #
-    #    Read from the CONFIGURED rules, like every other key. It used to read the
-    #    hardcoded token table here and the configured rules separately below, so the
-    #    two could disagree: editing the shape rules changed the stored value but not
-    #    the gate that decides whether 407 is a diameter or a length.
-    shape = None
-    fired_shape = fired.get("shape")
-    if fired_shape is not None and fired_shape[0] is not None:
-        shape = str(fired_shape[0])
-        out.set("shape", shape, fired_shape[1])
-
-    # 4. dimensions, gated on shape
-    parsed = _dimensions(description)
+    # SHAPE GATING's other half, which is not a reading and so is not a rule: a round or
+    # square product whose columns hold anything at all has them MIS-KEYED (407 is a
+    # diameter, not a length), and a rectangular one whose length equals its width is
+    # the same defect showing up without the description saying so. Both are questions
+    # for a person, and neither produces a value.
     stored = {
         "dim_length": product.dimensions_length,
         "dim_width": product.dimensions_width,
         "dim_height": product.dimensions_height,
     }
-    has_stored = any(v is not None for v in stored.values())
-
+    shape = (out.values.get("shape") or {}).get("value")
     if shape in ("round", "square"):
-        # The stored columns are mis-keyed for these: 407 is a diameter, not a length.
-        if parsed:
-            numbers, evidence = parsed
-            out.set("diameter", numbers[0], evidence, unit="mm")
-            if len(numbers) > 1:
-                out.set("depth", numbers[1], evidence, unit="mm")
-            if len(numbers) > 2:
-                out.set("thickness", numbers[2], evidence, unit="mm")
-        if has_stored:
+        if any(value is not None for value in stored.values()):
             out.flag(
                 "diameter",
                 "shape_mismatch",
@@ -1018,38 +1294,6 @@ def derive(
                 stored={k: float(v) for k, v in stored.items() if v is not None},
             )
     else:
-        described: dict[str, float | int] = {}
-        evidence = ""
-        if parsed:
-            numbers, evidence = parsed
-            for key, number in zip(("dim_length", "dim_width", "dim_height"), numbers):
-                if number > MAX_PLAUSIBLE_MM:
-                    out.flag(key, "implausible_dimension", proposed={"value": number, "evidence": evidence})
-                    continue
-                described[key] = number
-            if len(numbers) > 3:
-                out.set("thickness", numbers[3], evidence, unit="mm")
-        else:
-            lone = _single_dimension(description)
-            if lone and lone[0] <= MAX_PLAUSIBLE_MM:
-                described["dim_length"], evidence = lone
-
-        for key, column_value in stored.items():
-            if column_value is not None:
-                # Curated data outranks parsed text.
-                out.set(key, _number(str(column_value)), f"{key}={column_value}", unit="mm")
-                if key in described and described[key] != _number(str(column_value)):
-                    out.flag(
-                        key,
-                        "column_conflict",
-                        proposed={"value": described[key], "evidence": evidence},
-                        stored={"value": float(column_value)},
-                    )
-            elif key in described:
-                out.set(key, described[key], evidence, unit="mm")
-
-        # length == width is the fingerprint of a round or square product forced into
-        # rectangular columns, even when the description never says so.
         length, width = stored["dim_length"], stored["dim_width"]
         if length is not None and width is not None and length == width:
             out.flag(
@@ -1059,20 +1303,7 @@ def derive(
                 stored={"dim_length": float(length), "dim_width": float(width)},
             )
 
-    # 5. everything the CONFIGURED RULES produce: material, mounting, finish, the
-    #    feature flags, the trailing-noun class, every key someone adds later.
-    #
-    #    A drainer, an overflow or a fixing screw is asserted only where the text says
-    #    so. Absence of the word is never evidence of absence.
-    for key, (value, evidence, origin) in fired.items():
-        if key == "class":
-            continue  # handled above, where the category fallback lives
-        if key in _DESCRIPTION_FIRST_KEYS and key in out.values:
-            continue  # the description already said it; a rule only fills the gap
-        unit = "mm" if key in _MM_KEYS else None
-        out.set(key, value, evidence, unit=unit, source="flyer" if origin == "flyer" else "derived")
-
-    # 6. drop anything the key does not apply to.
+    # Drop anything the key does not apply to.
     #
     # `applies_when` was a hint to the understanding model and nothing else: it shaped
     # what the model was allowed to EXTRACT from a customer sentence, but nothing
@@ -1080,9 +1311,74 @@ def derive(
     # whose flyer says DRAINER was stored as having a drainer board, and `has_drainer`
     # ended up on 74 products outside Kitchen Sink against 32 inside it - the majority
     # of the key's own data contradicting the scope printed next to it on screen.
-    _apply_scope(out, applies_when)
+    _apply_scope(out, scopes_by_key)
 
     return out
+
+
+def try_read(
+    spec_key: str,
+    rules: list[dict],
+    *,
+    product: Product | None = None,
+    category: ProductCategory | None = None,
+    text: str | None = None,
+    rules_by_key: dict[str, list[dict]] | None = None,
+    scopes_by_key: dict[str, dict] | None = None,
+    max_values: dict[str, float] | None = None,
+) -> dict:
+    """What a DRAFT rule list (unsaved) would read for one key, row by row (AC-B.1).
+
+    The one thing `derive()` and `propose_from_text()` do not offer: they report the
+    winner, not every row that was tried. This calls the same `apply_rules` they call,
+    with `rules_by_key[spec_key]` swapped for the draft and `explain_key=spec_key`, so
+    every other key still reads with its OWN configured rules - a size row gated on
+    `shape` still needs `shape` derived first, draft or not.
+
+    Exactly one of `product`/`text` is expected: a product reads its own description,
+    code and fields; pasted text has none of those, so a `from_field` or `name_head`
+    row reads nothing from it - it plays the same role a flyer card does in
+    `propose_from_text`, not the product's own description.
+
+    Returns `{"reads": [{"index", "value", "evidence"}, ...], "winner_index": int | None}`.
+    """
+    if rules_by_key is None:
+        rules_by_key = dict(shipped_rules())
+    else:
+        rules_by_key = dict(rules_by_key)
+    rules_by_key[spec_key] = rules
+    if scopes_by_key is None:
+        scopes_by_key = shipped_scopes()
+    if max_values is None:
+        max_values = shipped_max_values()
+
+    if product is not None:
+        description = (product.description or "").upper()
+        code = (product.product_code or "").upper()
+        texts = {
+            "description": description,
+            "flyer": "",
+            "class_tail": class_text(product.description or "", code),
+            "size_text": _TRAP_LENGTH_RE.sub(" ", description),
+        }
+    else:
+        code = ""
+        texts = {"description": "", "flyer": (text or "").upper(), "class_tail": "", "size_text": ""}
+
+    fired = apply_rules(
+        rules_by_key,
+        texts,
+        code,
+        product=product,
+        category=category,
+        max_values=max_values,
+        explain_key=spec_key,
+    )
+    read = fired.get(spec_key) or {}
+    return {
+        "reads": read.get("explain") or [],
+        "winner_index": read.get("explain_winner_index"),
+    }
 
 
 def _apply_scope(out: "_Derivation", applies_when: dict[str, dict]) -> None:
@@ -1129,12 +1425,13 @@ def propose_from_text(
     *,
     rules_by_key: dict[str, list[dict]] | None = None,
     scopes_by_key: dict[str, dict] | None = None,
+    max_values: dict[str, float] | None = None,
 ) -> list[dict]:
     """What a piece of marketing copy SAYS about one code. Proposals, never writes.
 
     This is the flyer text pass that used to run inside `derive()`, lifted whole
-    (captain, 2026-08-14): the source-major order, the `source: "flyer"` rule scope,
-    the millimetre units and the `applies_when` gate all behave exactly as they did,
+    (captain, 2026-08-14): the rule order, the `source: "flyer"` rule scope, the
+    millimetre units and the `applies_when` gate all behave exactly as they did,
     because the knowledge in them was tuned against the real flyer document and is
     the thing the bulk flyer-ingestion slice inherits.
 
@@ -1151,28 +1448,38 @@ def propose_from_text(
         rules_by_key = shipped_rules()
     if scopes_by_key is None:
         scopes_by_key = shipped_scopes()
+    if max_values is None:
+        max_values = shipped_max_values()
 
     code = (code or "").upper()
     texts = {
         # There is no description here, and that is the point: a rule scoped to the
-        # product master must not fire on a leaflet somebody pasted.
+        # product master must not fire on a leaflet somebody pasted. The same goes for
+        # the two texts derived FROM a description - a class tail and a trap-blanked
+        # size text - which is what keeps the size readers off a pasted card.
         "description": "",
         "flyer": (text or "").upper(),
         "class_tail": "",
+        "size_text": "",
     }
-    fired = apply_rules(rules_by_key, texts, code)
+    # No product row, so the rules that read one (`from_field`, `name_head`) do not
+    # fire here at all: a leaflet says nothing about the product master's own columns.
+    fired = apply_rules(rules_by_key, texts, code, max_values=max_values)
 
     # Accumulated into the same shape `derive()` builds, so the SAME `_apply_scope`
     # runs over it - a second copy of the gate rules would drift the first time
     # somebody edited `applies_when`.
     out = _Derivation()
     origins: dict[str, str] = {}
-    for key, (value, evidence, origin) in fired.items():
+    for key, read in fired.items():
+        if read["value"] is None:
+            continue
         unit = "mm" if key in _MM_KEYS else None
-        out.set(key, value, evidence, unit=unit, source="derived")
-        origins[key] = "flyer" if origin == "flyer" else "code"
+        out.set(key, read["value"], read["evidence"], unit=unit, source="derived")
+        origins[key] = "flyer" if read["origin"] == "flyer" else "code"
     _apply_scope(out, scopes_by_key)
 
+    owned = description_first_keys(rules_by_key)
     return [
         {
             "spec_key": key,
@@ -1180,7 +1487,11 @@ def propose_from_text(
             "unit": entry.get("unit"),
             "evidence": (out.provenance.get(key) or {}).get("evidence") or "",
             "origin": origins.get(key, "flyer"),
-            "description_first": key in _DESCRIPTION_FIRST_KEYS,
+            # The one piece of precedence the pass owes the description: where the
+            # product's own record already answers this key, a card that disagrees is a
+            # conflict for a person to settle. Computed from the rules rather than a
+            # hand-written list, so removing the row removes the precedence with it.
+            "description_first": key in owned,
         }
         for key, entry in out.values.items()
     ]
@@ -1274,6 +1585,7 @@ def derive_for_code(
     commit: bool = False,
     rules_by_key: dict[str, list[dict]] | None = None,
     scopes_by_key: dict[str, dict] | None = None,
+    max_values: dict[str, float] | None = None,
 ) -> dict:
     """Derive one code and fan the result out to every row that shares it.
 
@@ -1287,6 +1599,8 @@ def derive_for_code(
         rules_by_key = configured_rules(db)
     if scopes_by_key is None:
         scopes_by_key = configured_scopes(db)
+    if max_values is None:
+        max_values = configured_max_values(db)
 
     # The same lock the authored write and the verify guard take, before anything is
     # read: a code with no spec row yet has no row to lock FOR UPDATE, so two writers
@@ -1329,7 +1643,12 @@ def derive_for_code(
         # Scopes are half of what a rule produces, so an `applies_when` edit has to
         # move the hash exactly as a rule edit does. Without it, narrowing a key
         # reports "skipped" for every product and leaves the old values in place.
-        _rules_fingerprint({"rules": rules_by_key, "scopes": scopes_by_key}),
+        # The cap is half of what a rule produces too: raising `max_value` on a key
+        # must re-read the products it was dropping, or the run reports "skipped" and
+        # leaves them empty.
+        _rules_fingerprint(
+            {"rules": rules_by_key, "scopes": scopes_by_key, "max_values": max_values}
+        ),
     )
 
     existing = {
@@ -1350,7 +1669,11 @@ def derive_for_code(
     # two ways depending on which button produced it. Extraction already passes
     # both (`product_spec_extract`), so this is derivation catching up with it.
     result = derive(
-        product, category, rules_by_key=rules_by_key, scopes_by_key=scopes_by_key
+        product,
+        category,
+        rules_by_key=rules_by_key,
+        scopes_by_key=scopes_by_key,
+        max_values=max_values,
     )
 
     # Brand is the one spec that lives on the ROW while derivation is keyed on the CODE.
@@ -1489,6 +1812,7 @@ def derive_all(
     # answer that cannot change mid-run.
     rules_by_key = configured_rules(db)
     scopes_by_key = configured_scopes(db)
+    max_values = configured_max_values(db)
 
     totals = {"codes": 0, "written": 0, "skipped": 0, "exceptions": 0}
     for index in range(0, len(codes), chunk_size):
@@ -1498,6 +1822,7 @@ def derive_all(
                 code,
                 rules_by_key=rules_by_key,
                 scopes_by_key=scopes_by_key,
+                max_values=max_values,
             )
             totals["codes"] += 1
             for key in ("written", "skipped", "exceptions"):
