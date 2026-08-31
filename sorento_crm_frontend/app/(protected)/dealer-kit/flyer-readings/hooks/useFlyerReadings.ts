@@ -10,7 +10,6 @@ import {
   getFlyerReading,
   listFlyerReadings,
   seedFromFlyerReading,
-  undoAdoptCode,
   uploadFlyerReading,
   type DimensionApplyInput,
   type DimensionApplyResult,
@@ -198,25 +197,40 @@ export function useSeedFromFlyerReading(readingId: string) {
 }
 
 /**
- * Write every cache holding this reading, regardless of which promotion it
- * was read against.
+ * Write ONLY the cache entry for the promotion the response was computed
+ * against, and invalidate the reading's other promotion-keyed entries so a
+ * screen showing a different promotion refetches rather than displaying an
+ * answer computed for one it is not looking at.
  *
  * The query is keyed `[FLYER_READINGS_QUERY_KEY, readingId, promotionId ?? '']`
- * (`useFlyerReadingQuery`), so `setQueryData` on a two-element key would write
- * a cache entry nothing reads from. `setQueriesData` matches every key that
- * STARTS WITH the filter, so the one report on screen - whichever promotion
- * it is showing prices from - is replaced with the response directly: no
- * refetch, no flash back to a stale row before the new one lands.
+ * (`useFlyerReadingQuery`). `setQueryData` on the exact key writes only the
+ * entry the response matches; `invalidateQueries` with a predicate excluding
+ * that key marks every other promotion's copy stale without a blind
+ * write-through that would show one promotion's report under another's key.
+ *
+ * Only `useAdoptCode` below calls this. Undo is a detach action (D7) and goes
+ * through the deferred pending-action mechanism instead
+ * (`flyer_reading.undo_code_adopt`, `useDeferredRowAction` in
+ * `MatchReportSections`): the commit runs on the server on its own schedule and
+ * answers with a generic outcome, not a `FlyerReading`, so there is nothing to
+ * write through - the reading's cache is invalidated (`invalidateKeys`) instead.
  */
 function replaceReadingCache(
   queryClient: QueryClient,
   readingId: string,
+  promotionId: string | null,
   reading: FlyerReading,
 ) {
-  queryClient.setQueriesData<FlyerReading>(
-    { queryKey: [FLYER_READINGS_QUERY_KEY, readingId] },
-    () => reading,
-  );
+  const exactKey = [FLYER_READINGS_QUERY_KEY, readingId, promotionId ?? ''];
+  queryClient.setQueryData<FlyerReading>(exactKey, reading);
+  queryClient.invalidateQueries({
+    queryKey: [FLYER_READINGS_QUERY_KEY, readingId],
+    predicate: (query) => !isSameKey(query.queryKey, exactKey),
+  });
+}
+
+function isSameKey(a: readonly unknown[], b: readonly unknown[]): boolean {
+  return a.length === b.length && a.every((value, index) => value === b[index]);
 }
 
 /**
@@ -224,13 +238,14 @@ function replaceReadingCache(
  * response is the reading with the code already moved into `matched`, so the
  * row flips in place rather than waiting on a second round trip.
  */
-export function useAdoptCode(readingId: string) {
+export function useAdoptCode(readingId: string, promotionId: string | null) {
   const queryClient = useQueryClient();
 
   return useMutation<FlyerReading, Error, { printedCode: string; productId: string }>({
-    mutationFn: ({ printedCode, productId }) => adoptCode(readingId, printedCode, productId),
+    mutationFn: ({ printedCode, productId }) =>
+      adoptCode(readingId, printedCode, productId, promotionId),
     onSuccess: (reading, { printedCode }) => {
-      replaceReadingCache(queryClient, readingId, reading);
+      replaceReadingCache(queryClient, readingId, promotionId, reading);
       const adopted = reading.report.matched.find((entry) => entry.code === printedCode);
       toast.success(`${printedCode} adopted as ${adopted?.productCode ?? 'the chosen product'}`);
     },
@@ -238,25 +253,6 @@ export function useAdoptCode(readingId: string) {
       // The 409 naming the code and page this product is already adopted as
       // (R1) is the one message the reviewer needs, so it is passed through.
       toast.error(error.message || 'Could not adopt this code');
-    },
-  });
-}
-
-/**
- * Undo an adoption. Specs already applied from the card stay applied - the
- * confirmation on screen says so, this hook does not touch them (R2).
- */
-export function useUndoAdoptCode(readingId: string) {
-  const queryClient = useQueryClient();
-
-  return useMutation<FlyerReading, Error, { printedCode: string }>({
-    mutationFn: ({ printedCode }) => undoAdoptCode(readingId, printedCode),
-    onSuccess: (reading, { printedCode }) => {
-      replaceReadingCache(queryClient, readingId, reading);
-      toast.success(`${printedCode} is unmatched again`);
-    },
-    onError: (error) => {
-      toast.error(error.message || 'Could not undo this adoption');
     },
   });
 }

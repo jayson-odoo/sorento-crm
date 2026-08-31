@@ -32,6 +32,7 @@ vi.mock('../../services/flyerReadingService', () => ({
 
 import { toast } from 'sonner';
 import {
+  adoptCode,
   createFlyerReadingFromAttachment,
   getFlyerReading,
   listFlyerReadings,
@@ -42,6 +43,7 @@ import {
 } from '../../services/flyerReadingService';
 import {
   FLYER_READINGS_QUERY_KEY,
+  useAdoptCode,
   useCreateFlyerReadingFromAttachment,
   useFlyerReadingQuery,
   useFlyerReadingsQuery,
@@ -54,6 +56,7 @@ const mockGet = vi.mocked(getFlyerReading);
 const mockUpload = vi.mocked(uploadFlyerReading);
 const mockFromAttachment = vi.mocked(createFlyerReadingFromAttachment);
 const mockSeed = vi.mocked(seedFromFlyerReading);
+const mockAdopt = vi.mocked(adoptCode);
 
 const READING: FlyerReading = {
   id: 'r-1',
@@ -450,5 +453,70 @@ describe('useSeedFromFlyerReading', () => {
     expect(invalidate).not.toHaveBeenCalledWith(
       expect.objectContaining({ queryKey: [FLYER_READINGS_QUERY_KEY] }),
     );
+  });
+});
+
+describe('useAdoptCode', () => {
+  const ADOPTED: FlyerReading = {
+    ...READING,
+    report: {
+      ...READING.report,
+      matched: [
+        {
+          code: 'SRTBT1835',
+          productId: 'p-9',
+          productCode: 'SRTBT1835-16',
+          productName: 'Corner Bathtub 1835',
+          pages: [11],
+          adopted: true,
+        },
+      ],
+    },
+  };
+
+  it('writes ONLY the promotion-keyed cache entry the response was computed against, and toasts', async () => {
+    mockAdopt.mockResolvedValue(ADOPTED);
+    const client = freshClient();
+    // A DIFFERENT promotion's cached report for the same reading - the write
+    // below must leave it exactly as it is, not overwrite it with an answer
+    // computed for promo-7 (AC-A.11, the promotion-blind bug this fixes).
+    const otherPromotion: FlyerReading = { ...READING, report: { ...READING.report, promotionId: 'promo-1' } };
+    client.setQueryData([FLYER_READINGS_QUERY_KEY, 'r-1', 'promo-1'], otherPromotion);
+
+    const { result } = renderHook(() => useAdoptCode('r-1', 'promo-7'), {
+      wrapper: wrapperWith(client),
+    });
+
+    result.current.mutate({ printedCode: 'SRTBT1835', productId: 'p-9' });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(mockAdopt).toHaveBeenCalledWith('r-1', 'SRTBT1835', 'p-9', 'promo-7');
+    expect(client.getQueryData([FLYER_READINGS_QUERY_KEY, 'r-1', 'promo-7'])).toEqual(ADOPTED);
+    // The other promotion's entry is untouched, only marked stale so the next
+    // read of it refetches rather than showing a computed-elsewhere answer.
+    expect(client.getQueryData([FLYER_READINGS_QUERY_KEY, 'r-1', 'promo-1'])).toEqual(otherPromotion);
+    expect(client.getQueryState([FLYER_READINGS_QUERY_KEY, 'r-1', 'promo-1'])?.isInvalidated).toBe(
+      true,
+    );
+    expect(vi.mocked(toast.success)).toHaveBeenCalledWith('SRTBT1835 adopted as SRTBT1835-16');
+  });
+
+  it('toasts the extracted message on a refusal, and writes nothing', async () => {
+    mockAdopt.mockRejectedValue(
+      new Error('SRTBT1830 on p. 4 is already this product.'),
+    );
+    const client = freshClient();
+
+    const { result } = renderHook(() => useAdoptCode('r-1', null), {
+      wrapper: wrapperWith(client),
+    });
+
+    result.current.mutate({ printedCode: 'SRTBT1835', productId: 'p-9' });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
+      'SRTBT1830 on p. 4 is already this product.',
+    );
+    expect(client.getQueryData([FLYER_READINGS_QUERY_KEY, 'r-1', ''])).toBeUndefined();
   });
 });

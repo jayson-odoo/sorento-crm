@@ -818,6 +818,46 @@ class TestOverrides:
 
         assert report.matched[0].adopted is False
 
+    def test_a_second_override_pointing_at_an_already_claimed_product_is_ignored(
+        self, db
+    ) -> None:
+        # R1 guard against drift: `adopt_code` refuses to create two codes
+        # adopted onto one product at WRITE time, but this is the read-time
+        # backstop in case `code_overrides` ends up holding two entries that
+        # both name the same product anyway. The first (by iteration order)
+        # wins; the second stays unmatched rather than writing two spec sets
+        # for one product.
+        product = _product(db, "ZZTBT1835-16")
+        reading = _printed("ZZTBT1835", "ZZTBT1836")
+
+        report = match_reading(
+            db,
+            reading,
+            overrides={"ZZTBT1835": product.id, "ZZTBT1836": product.id},
+        )
+
+        matched_codes = {entry.code for entry in report.matched}
+        assert "ZZTBT1835" in matched_codes
+        assert "ZZTBT1836" not in matched_codes
+        assert "ZZTBT1836" in [entry.code for entry in report.unmatched]
+
+    def test_an_override_is_ignored_when_its_product_already_matches_directly(
+        self, db
+    ) -> None:
+        # Same guard, the other direction: the product an override names is
+        # ALSO what a different printed code on this reading resolves to on
+        # its own. That pairing cannot be adopted today either (the write-time
+        # check refuses it), so this is drift protection, not a live path.
+        product = _product(db, "ZZTBT1835-16")
+        reading = _printed("ZZTBT1835-16", "ZZTBT1836")
+
+        report = match_reading(db, reading, overrides={"ZZTBT1836": product.id})
+
+        matched_codes = {entry.code: entry for entry in report.matched}
+        assert matched_codes["ZZTBT1835-16"].adopted is False
+        assert "ZZTBT1836" not in matched_codes
+        assert "ZZTBT1836" in [entry.code for entry in report.unmatched]
+
     def test_only_one_extra_query_for_every_adopted_code(self, db) -> None:
         product = _product(db, "ZZTBT1835-16")
         reading = _printed("ZZTBT1835", "ZZTOTHER1", "ZZTOTHER2")

@@ -1255,7 +1255,6 @@ def adopt_code(
     *,
     printed_code: str,
     product_id: str,
-    user_id: Optional[str] = None,
 ) -> FlyerReadingRecord:
     """"This printed code IS that product" (PLAN-flyer-code-adopt.md, R4).
 
@@ -1271,11 +1270,6 @@ def adopt_code(
     * the product is what another printed code on this reading already
       resolves to, itself or by an earlier adoption -> 409, naming that code
       and page (R1 - one product, one card).
-
-    ``user_id`` is accepted and not yet written anywhere: no audit trail was
-    asked for in the plan, and a parameter unused today costs nothing a
-    caller has to work around, unlike a route that has to change shape to add
-    one later.
     """
     assert_read(record)
 

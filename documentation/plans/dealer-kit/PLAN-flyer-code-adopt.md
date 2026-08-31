@@ -1,6 +1,9 @@
 # PLAN - Flyer reading: adopt an unmatched printed code as an existing product
 
-**Status:** Approved 31 Aug 2026 (lavish markup: R5 added), pre-code. Lane: `.claude/worktrees/flyer-code-adopt`. UAC: `flyer-code-adopt-acceptance-criteria.md`.
+**Status:** S1 built (adopt + undo, Groups A and B); S2 pending (`#422`). Undo revised to a
+deferred action in the S1 review pass, 31 Aug 2026 - see "Frontend" below and UAC AC-B.3.
+Approved 31 Aug 2026 (lavish markup: R5 added). Lane: `.claude/worktrees/flyer-code-adopt`.
+UAC: `flyer-code-adopt-acceptance-criteria.md`.
 **Branch:** `feat/flyer-code-adopt` (worktree lane). **Domain:** dealer-kit.
 
 ## Why
@@ -113,11 +116,14 @@ Files (all under `app/(protected)/dealer-kit/`):
 
 - `services/flyerReadingService.ts`: `MatchedCode.adopted: boolean`,
   `FlyerReading.codeOverridesChangedAt: string | null`, `adoptCode(readingId, printedCode,
-  productId): Promise<FlyerReading>`, `undoAdoptCode(readingId, printedCode)`. Contract
-  block at the top of the file. Errors through `extractApiError`.
-- `flyer-readings/hooks/useFlyerReadings.ts`: `useAdoptCode(readingId)`,
-  `useUndoAdoptCode(readingId)`. On success `queryClient.setQueryData([KEY, readingId], data)`
-  (the response IS the new detail; no refetch flash) + toast. On error extracted message + toast.
+  productId, promotionId): Promise<FlyerReading>`, `undoAdoptCode(readingId, printedCode,
+  promotionId)` (both carry `promotionId` the same way the GET does, so the response the
+  caller gets back is computed against the promotion on screen). Contract block at the
+  top of the file. Errors through `extractApiError`.
+- `flyer-readings/hooks/useFlyerReadings.ts`: `useAdoptCode(readingId, promotionId)`. On
+  success `queryClient.setQueryData([KEY, readingId, promotionId ?? ''], data)` (the
+  response IS the new detail for THAT promotion; no refetch flash) + `invalidateQueries`
+  the reading's other promotion-keyed entries, + toast. On error extracted message + toast.
 - `flyer-readings/components/MatchReportSections.tsx`: the unmatched grid's rows become
   `unmatched ∪ matched.filter(adopted)` sorted by first page then code. Column
   "Nearest existing code" renders the adopted state for adopted rows. New trailing column
@@ -126,7 +132,17 @@ Files (all under `app/(protected)/dealer-kit/`):
 - `flyer-readings/components/AdoptCodeDialog.tsx` (new): `Dialog`, `SearchableSelect` in
   server mode (`fetchOptions` -> `listPickerProducts` from `services/productPickerService.ts`,
   `pageSize` 50), initial option injected from the suggestion, `clearable`, one Confirm.
-- Undo: `AlertDialog` inline in `MatchReportSections` (pattern from `DimensionReviewSection`).
+- **Undo (revised in the S1 review pass, 31 Aug 2026 - see UAC AC-B.3):** NOT an
+  `AlertDialog`. PRINCIPLES.md "Design mandates" / ADR-PRODUCT-STANDARDS govern: a detach
+  action is a server-deferred pending action, never a confirmation dialog. Undo parks
+  `flyer_reading.undo_code_adopt` (`app/services/record_actions.py`, `entity_types =
+  ("flyer_code_adoption",)`, a synthetic `<reading id>:<printed code>` entity id since the
+  thing being detached is a key inside `code_overrides`, not a row of its own) through
+  `useDeferredRowAction` / `DeferredActionButton` - the button becomes a countdown toast,
+  and the server calls the SAME `unadopt_code` the DELETE route always did when the window
+  lapses. Registered permission is `master_data.products.edit` only (the generic
+  `/pending-actions` route checks one slug; the direct DELETE route still requires BOTH
+  that and `dealer_kit.page.view` for a caller that reaches it directly).
 - `flyer-readings/components/SpecProposalSection.tsx`: the hint line (AC-C.4).
 
 Layering: UI -> hook -> service -> `lib/api-client`. No `URLSearchParams` by hand, no

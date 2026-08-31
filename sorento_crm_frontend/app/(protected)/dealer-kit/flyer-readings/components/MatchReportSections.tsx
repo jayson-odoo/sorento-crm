@@ -1,22 +1,13 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { AlertTriangle, Copy, Heading, SearchX, Tag } from 'lucide-react';
 import type { ColumnDef } from '@tanstack/react-table';
 
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
 import { useHasPermission } from '@/hooks/usePermissions';
 
 import type {
@@ -26,7 +17,7 @@ import type {
   MatchedCode,
   PageHeading,
 } from '../../services/flyerReadingService';
-import { useUndoAdoptCode } from '../hooks/useFlyerReadings';
+import { FLYER_READINGS_QUERY_KEY } from '../hooks/useFlyerReadings';
 import { AdoptCodeDialog } from './AdoptCodeDialog';
 import { DimensionReviewSection } from './DimensionReviewSection';
 import { SpecProposalSection } from './SpecProposalSection';
@@ -109,6 +100,13 @@ function Figure({
 export interface MatchReportSectionsProps {
   /** The reading these candidates came off, for the one section that acts. */
   readingId: string;
+  /**
+   * The promotion the report on screen was computed against. Threaded through
+   * to the adopt dialog and the undo mutation so the response they get back
+   * writes the SAME cache entry the screen is reading (no promotion-blind
+   * flash - see `useFlyerReadings`).
+   */
+  promotionId?: string | null;
   report: MatchReport;
   /** How many codes were printed at all, from the reading rather than the report. */
   codeCount: number;
@@ -132,6 +130,7 @@ export interface MatchReportSectionsProps {
 
 export function MatchReportSections({
   readingId,
+  promotionId = null,
   report,
   codeCount,
   promotionLabel,
@@ -139,18 +138,30 @@ export function MatchReportSections({
   readingStatus = 'done',
 }: MatchReportSectionsProps) {
   const canAdopt = useHasPermission(MASTER_DATA_EDIT);
-  const undo = useUndoAdoptCode(readingId);
 
-  // What the dialogs are open ON. Null closes them - there is no separate
-  // `open` boolean to fall out of sync with `null`.
+  // Undo is a detach action (D7 / PRINCIPLES "Design mandates"): no
+  // confirmation dialog. The button starts a countdown toast, the server
+  // commits the same DELETE the route always did when the window lapses, and
+  // Cancel is the only way back. `id` is synthetic - there is no row of its
+  // own to key a pending action on, only a printed code inside this reading's
+  // map - so it is the reading plus the code, which is also what keeps it
+  // unique across every OTHER reading's adoptions.
+  const undo = useDeferredRowAction({
+    actionKey: 'flyer_reading.undo_code_adopt',
+    entityType: 'flyer_code_adoption',
+    verb: 'Undoing',
+    successMessage: 'Code unmatched again',
+    invalidateKeys: [[FLYER_READINGS_QUERY_KEY, readingId]],
+  });
+  const undoRowId = useCallback((code: string) => `${readingId}:${code}`, [readingId]);
+
+  // What the dialog is open ON. Null closes it - there is no separate `open`
+  // boolean to fall out of sync with `null`.
   const [adoptTarget, setAdoptTarget] = useState<{
     code: string;
     pages: number[];
     suggestion: CodeSuggestion | null;
   } | null>(null);
-  const [undoTarget, setUndoTarget] = useState<{ code: string; productCode: string } | null>(
-    null,
-  );
 
   const duplicateRows = useMemo(
     () =>
@@ -290,18 +301,27 @@ export function MatchReportSections({
       header: 'Action',
       cell: ({ row }) => {
         const original = row.original;
-        return original.kind === 'adopted' ? (
-          <Button
-            size="sm"
-            variant="outline"
-            data-testid="dk-fr-undo"
-            onClick={() =>
-              setUndoTarget({ code: original.code, productCode: original.productCode })
-            }
-          >
-            Undo
-          </Button>
-        ) : (
+        if (original.kind === 'adopted') {
+          const isUndoing = undo.targetId === undoRowId(original.code) && undo.isPending;
+          return (
+            <Button
+              size="sm"
+              variant="outline"
+              data-testid="dk-fr-undo"
+              disabled={isUndoing}
+              onClick={() =>
+                undo.run({
+                  id: undoRowId(original.code),
+                  subject: original.code,
+                  payload: { reading_id: readingId, printed_code: original.code },
+                })
+              }
+            >
+              {isUndoing ? 'Undoing' : 'Undo'}
+            </Button>
+          );
+        }
+        return (
           <Button
             size="sm"
             variant="outline"
@@ -323,7 +343,7 @@ export function MatchReportSections({
       meta: { headerTitle: 'Action' },
     };
     return [...base, actionColumn];
-  }, [canAdopt]);
+  }, [canAdopt, readingId, undo, undoRowId]);
 
   const notPromotedColumns = useMemo<ColumnDef<MatchedCode>[]>(
     () => [
@@ -499,6 +519,7 @@ export function MatchReportSections({
 
       <AdoptCodeDialog
         readingId={readingId}
+        promotionId={promotionId}
         open={adoptTarget !== null}
         onOpenChange={(open) => {
           if (!open) setAdoptTarget(null);
@@ -507,38 +528,6 @@ export function MatchReportSections({
         pages={adoptTarget?.pages ?? []}
         suggestion={adoptTarget?.suggestion ?? null}
       />
-
-      <AlertDialog
-        open={undoTarget !== null}
-        onOpenChange={(open) => {
-          if (!open) setUndoTarget(null);
-        }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Undo this adoption?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {undoTarget && (
-                <>
-                  {undoTarget.code} goes back to unmatched. Anything already applied to{' '}
-                  {undoTarget.productCode} stays.
-                </>
-              )}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              data-testid="dk-fr-undo-confirm"
-              onClick={() => {
-                if (undoTarget) undo.mutate({ printedCode: undoTarget.code });
-              }}
-            >
-              Undo
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
 
       <Section
         id="not-promoted"

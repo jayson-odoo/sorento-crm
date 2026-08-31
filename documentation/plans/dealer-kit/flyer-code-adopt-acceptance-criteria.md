@@ -1,7 +1,9 @@
 # UAC - Flyer reading: adopt an unmatched printed code as an existing product
 
 **Companion to:** `PLAN-flyer-code-adopt.md`
-**Status:** Pre-code. Approved in session 31 Aug 2026 (captain rulings R1-R5 in the plan).
+**Status:** S1 built (adopt + undo, Groups A and B). S2 (proposals follow, Group C) pending
+- see `#422`. Undo revised to a deferred action, not an `AlertDialog`, in the S1 review pass
+(31 Aug 2026) - see AC-B.3. Approved in session 31 Aug 2026 (captain rulings R1-R5 in the plan).
 **Legend:** `[BE]` backend/pytest · `[FE]` frontend/vitest · `[E2E]` real FE->BE->DB via agent-browser · `[MIG]` migration · `[T]` CI guard.
 
 Convention: **Given / When / Then**. An AC passes only when the Then is observed against the
@@ -31,9 +33,9 @@ real stack for the side marked.
    them.* Nothing in the current batch was touched. When they press **Propose again**, rows
    for `SRTBT1835-16` appear, badged `Flyer`, with values read from the card printed under
    `SRTBT1835`.
-5. **Undo** on an adopted row asks once, then returns the row to unmatched. Specs already
-   applied to the product are not reverted (applying was its own deliberate act), and the
-   dialog says so.
+5. **Undo** on an adopted row starts a countdown (no confirmation dialog - see AC-B.3); the
+   button carries a Cancel, and when the window lapses the row returns to unmatched. Specs
+   already applied to the product are not reverted (applying was its own deliberate act).
 
 A viewer without the edit permission sees adopted rows and the badge, and no buttons.
 
@@ -150,10 +152,23 @@ Given specs were applied to `P` from a proposal batch,
 When `X` is undone,
 Then `product_specifications` for `P` is unchanged and the batch rows are unchanged.
 
-### AC-B.3 [FE] Confirm, then undo
-Pressing **Undo** opens an `AlertDialog`: "`X` goes back to unmatched. Anything already
-applied to `CODE` stays." Confirm calls the DELETE; success replaces the reading query and
-toasts "`X` is unmatched again".
+### AC-B.3 [FE] Undo is a deferred action, not a confirmation dialog
+Captain ruling, S1 review (31 Aug): PRINCIPLES.md "Design mandates" / ADR-PRODUCT-STANDARDS
+govern over this plan's original `AlertDialog` text - a detach action is a
+server-deferred pending action with a countdown, never a confirm dialog. Pressing
+**Undo** parks `flyer_reading.undo_code_adopt` (`useDeferredRowAction` /
+`DeferredActionButton`, the same mechanism every other detach in the app uses) and the
+button becomes a countdown with Cancel; nothing is asked up front. When the window
+lapses the server runs the same `unadopt_code` the DELETE route always did (R2 holds:
+specs already applied to `CODE` are never touched, either way the window resolves).
+Cancel aborts before it commits. The control is disabled while its own action is
+counting down.
+
+Permission narrowing, reviewed and accepted: the direct DELETE route enforces
+`dealer_kit.page.view` AND `master_data.products.edit`; the generic
+`/pending-actions` route checks exactly one slug, so the deferred path is registered
+against `master_data.products.edit` only - the permission that actually authorises
+the write. `dealer_kit.page.view` still gates reaching the screen the button is on.
 
 ### AC-B.4 [E2E] Undo round trip
 Continue from AC-A.12: undo the same code. Row is back to unmatched with the suggestion;

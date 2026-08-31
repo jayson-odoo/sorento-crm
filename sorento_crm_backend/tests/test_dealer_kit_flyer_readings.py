@@ -1105,6 +1105,32 @@ class TestAdoptCode:
             row["productId"] for row in body["report"]["notPromoted"]
         ]
 
+    def test_the_put_itself_answers_against_the_promotion_asked_for(self, api) -> None:
+        # BLOCKER 1 (S1 review): the PUT accepts `promotionId` exactly like
+        # the GET, so the ONE response the frontend swaps into its cache is
+        # already computed against the promotion on screen - not a
+        # promotion-blind one that a second round trip would have to correct.
+        db, _as, _scope = api
+        adopted_product = _product(db, "ZZTFRADOPT3C")
+        elsewhere = _product(db, "ZZTFRADOPT3D")
+        promotion_id = _promotion(db, elsewhere)
+
+        with TestClient(app) as c:
+            reading_id = _read_id(c)
+            _as(_CURATOR_ID)
+            res = c.put(
+                f"/api/v1/dealer-kit/flyer-readings/{reading_id}/code-overrides/{UNMATCHED_A}",
+                params={"promotionId": promotion_id},
+                json={"productId": adopted_product.id},
+            )
+
+        assert res.status_code == 200, res.text
+        body = res.json()
+        assert body["report"]["promotionId"] == promotion_id
+        assert adopted_product.id in [
+            row["productId"] for row in body["report"]["notPromoted"]
+        ]
+
     def test_any_product_may_be_chosen_not_only_a_suggestion(self, api) -> None:
         # AC-A.3. The server has no notion of "the suggestion" at all - any
         # product in company scope is accepted.
@@ -1285,6 +1311,26 @@ class TestUndoAdoptCode:
         assert UNMATCHED_A in _unmatched_codes(body)
         assert body["codeOverridesChangedAt"] is not None
 
+    def test_the_delete_itself_answers_against_the_promotion_asked_for(self, api) -> None:
+        # Same fix as the PUT, so the response the frontend swaps in after an
+        # Undo is computed against the promotion it was already looking at.
+        db, _as, _scope = api
+        product = _product(db, "ZZTFRADOPT13B")
+        elsewhere = _product(db, "ZZTFRADOPT13C")
+        promotion_id = _promotion(db, elsewhere)
+
+        with TestClient(app) as c:
+            reading_id = _read_id(c)
+            _as(_CURATOR_ID)
+            _adopt(c, reading_id, UNMATCHED_A, product.id)
+            res = c.delete(
+                f"/api/v1/dealer-kit/flyer-readings/{reading_id}/code-overrides/{UNMATCHED_A}",
+                params={"promotionId": promotion_id},
+            )
+
+        assert res.status_code == 200, res.text
+        assert res.json()["report"]["promotionId"] == promotion_id
+
     def test_undoing_a_code_never_adopted_is_404(self, api) -> None:
         db, _as, _scope = api
 
@@ -1297,11 +1343,24 @@ class TestUndoAdoptCode:
         assert res.json()["code"] == "flyer_code_not_adopted"
 
     def test_undo_does_not_touch_the_product(self, api) -> None:
-        # AC-B.2. Nothing about the product row changes; the guarantee this
-        # test pins is narrower and simpler than a spec-proposal batch (S2's
-        # concern) - the product itself is untouched by adopt OR undo.
+        # AC-B.2. Nothing about the product row, or a spec a human already set
+        # on it, changes - the guarantee this test pins is narrower than a
+        # spec-proposal BATCH's rows (S2's concern, #422): this is only the
+        # product and its `product_specifications` row, untouched by adopt OR
+        # undo either way.
         db, _as, _scope = api
         product = _product(db, "ZZTFRADOPT14")
+
+        from app.models.product_spec import ProductSpecifications
+
+        spec = ProductSpecifications(
+            id=str(uuid.uuid4()),
+            product_id=product.id,
+            values={"material": {"value": "ceramic"}},
+            provenance={"material": {"source": "human"}},
+        )
+        db.add(spec)
+        db.commit()
 
         with TestClient(app) as c:
             reading_id = _read_id(c)
@@ -1315,3 +1374,11 @@ class TestUndoAdoptCode:
         fresh = db.query(Product).filter(Product.id == product.id).one()
         assert fresh.product_name == product.product_name
         assert fresh.product_code == product.product_code
+
+        fresh_spec = (
+            db.query(ProductSpecifications)
+            .filter(ProductSpecifications.product_id == product.id)
+            .one()
+        )
+        assert fresh_spec.values == {"material": {"value": "ceramic"}}
+        assert fresh_spec.provenance == {"material": {"source": "human"}}

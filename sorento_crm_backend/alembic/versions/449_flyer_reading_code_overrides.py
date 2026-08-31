@@ -22,10 +22,7 @@ have been applied there by hand.
 Chains onto `448_merge_s6b_ptag`, the single head on `main` after PR #427
 joins the price-tag chain's head with the S6b reference-data head - not the
 `444_notify_email_on_mention` the plan named before three merge revisions
-landed ahead of it. `448_merge_s6b_ptag_heads.py` and
-`s6b_reference_data_manage_perm.py` are vendored into this branch verbatim
-(the `359_flyer_read_background_job` reasoning) so the graph resolves on a
-branch-only checkout too.
+landed ahead of it.
 
 Revision ID: 449_flyer_reading_code_overrides
 Revises: 448_merge_s6b_ptag

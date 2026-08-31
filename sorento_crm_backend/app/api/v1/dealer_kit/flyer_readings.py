@@ -520,9 +520,10 @@ def adopt_flyer_code(
     reading_id: str,
     printed_code: str,
     payload: CodeOverrideIn,
+    promotion_id: Optional[UUID] = _PROMOTION_ID,
     db: Session = Depends(get_db),
     _reader: dict = Depends(_READ_THE_FLYER),
-    user: dict = Depends(_WRITE_THE_MASTER),
+    _writer: dict = Depends(_WRITE_THE_MASTER),
 ):
     """"This printed code IS that product" (PLAN-flyer-code-adopt.md, R1-R4).
 
@@ -534,6 +535,11 @@ def adopt_flyer_code(
     200 with the full detail, not 204: the report changed, and the frontend
     replaces its cache with this response rather than refetching (no flash
     back to the stale row before the new one lands).
+
+    ``promotionId`` travels the same way it does on the GET: the frontend is
+    looking at one promotion's report and the response it swaps in must stay
+    computed against it, or an adopted row that the promotion does not carry
+    would read as promoted for one frame.
     """
     record = svc.get_reading(db, reading_id)
     updated = svc.adopt_code(
@@ -541,9 +547,8 @@ def adopt_flyer_code(
         record,
         printed_code=printed_code,
         product_id=str(payload.product_id),
-        user_id=_user_id(user),
     )
-    return _detail(db, updated, None)
+    return _detail(db, updated, promotion_id)
 
 
 @router.delete(
@@ -553,6 +558,7 @@ def adopt_flyer_code(
 def undo_flyer_code_adoption(
     reading_id: str,
     printed_code: str,
+    promotion_id: Optional[UUID] = _PROMOTION_ID,
     db: Session = Depends(get_db),
     _reader: dict = Depends(_READ_THE_FLYER),
     _writer: dict = Depends(_WRITE_THE_MASTER),
@@ -561,11 +567,11 @@ def undo_flyer_code_adoption(
 
     200 with the detail, for the same reason the PUT above answers 200: the
     code returns to `unmatched`, and the frontend replaces its cache with this
-    response.
+    response. ``promotionId`` travels the same way it does on the PUT above.
     """
     record = svc.get_reading(db, reading_id)
     updated = svc.unadopt_code(db, record, printed_code=printed_code)
-    return _detail(db, updated, None)
+    return _detail(db, updated, promotion_id)
 
 
 @router.delete("/flyer-readings/{reading_id}", status_code=status.HTTP_204_NO_CONTENT)

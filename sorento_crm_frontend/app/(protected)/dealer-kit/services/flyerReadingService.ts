@@ -47,7 +47,8 @@
  *          The ONE route here that writes outside the Kit. It needs
  *          `dealer_kit.page.view` AND `master_data.products.edit`, both: see
  *          `applyDimensions` below.
- * PUT    /flyer-readings/{id}/code-overrides/{printedCode}  {productId}
+ * PUT    /flyer-readings/{id}/code-overrides/{printedCode}?promotionId=
+ *          {productId}
  *          -> 200 FlyerReading. "This printed code IS that product"
  *          (PLAN-flyer-code-adopt.md): the code moves out of `unmatched` and
  *          into `matched` with `adopted: true`, everywhere the report is read
@@ -56,8 +57,10 @@
  *          on this reading already resolves to the same product (R1 - one
  *          product, one card); 404 when the code was not printed here or the
  *          product does not exist in this company. `printedCode` is a path
- *          segment - always `encodeURIComponent`d.
- * DELETE /flyer-readings/{id}/code-overrides/{printedCode}
+ *          segment - always `encodeURIComponent`d. `promotionId` travels the
+ *          same as the GET, so the response is computed against the
+ *          promotion the caller is looking at.
+ * DELETE /flyer-readings/{id}/code-overrides/{printedCode}?promotionId=
  *          -> 200 FlyerReading. Undoes an adoption; the code returns to
  *          `unmatched` with its suggestion. 404 when the code was never
  *          adopted. Never touches a spec proposal batch (R2) or the product
@@ -532,14 +535,22 @@ export async function seedFromFlyerReading(
  * `unmatched` and into `matched` with `adopted: true`, everywhere the report
  * is read from - the suggestion was never applied on its own (D8), this
  * click is what applies it.
+ *
+ * `promotionId` travels the same way it does on the GET: the response is the
+ * report computed against the promotion on screen, so the caller can replace
+ * exactly that cache entry rather than guessing which one changed.
  */
 export async function adoptCode(
   readingId: string,
   printedCode: string,
   productId: string,
+  promotionId: string | null,
 ): Promise<FlyerReading> {
   const response = await apiFetch(
-    `${BASE}/${encodeURIComponent(readingId)}/code-overrides/${encodeURIComponent(printedCode)}`,
+    withPromotion(
+      `${BASE}/${encodeURIComponent(readingId)}/code-overrides/${encodeURIComponent(printedCode)}`,
+      promotionId,
+    ),
     {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -556,9 +567,13 @@ export async function adoptCode(
 export async function undoAdoptCode(
   readingId: string,
   printedCode: string,
+  promotionId: string | null,
 ): Promise<FlyerReading> {
   const response = await apiFetch(
-    `${BASE}/${encodeURIComponent(readingId)}/code-overrides/${encodeURIComponent(printedCode)}`,
+    withPromotion(
+      `${BASE}/${encodeURIComponent(readingId)}/code-overrides/${encodeURIComponent(printedCode)}`,
+      promotionId,
+    ),
     { method: 'DELETE' },
   );
   if (!response.ok) {

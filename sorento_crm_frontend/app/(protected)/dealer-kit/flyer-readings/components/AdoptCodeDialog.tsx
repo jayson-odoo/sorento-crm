@@ -35,6 +35,8 @@ import { printedOn } from './ReportSection';
 
 export interface AdoptCodeDialogProps {
   readingId: string;
+  /** The promotion the report on screen is computed against. See `useAdoptCode`. */
+  promotionId?: string | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   /** The printed code this dialog is finding a product for. Null while closed. */
@@ -45,6 +47,7 @@ export interface AdoptCodeDialogProps {
 
 export function AdoptCodeDialog({
   readingId,
+  promotionId = null,
   open,
   onOpenChange,
   code,
@@ -54,7 +57,7 @@ export function AdoptCodeDialog({
   const [productId, setProductId] = useState('');
   const [selected, setSelected] = useState<SearchableSelectOption | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
-  const adopt = useAdoptCode(readingId);
+  const adopt = useAdoptCode(readingId, promotionId);
 
   // Reset to the suggestion (or nothing) every time a different code opens -
   // a choice left over from the last row would be one keystroke away from
@@ -95,11 +98,9 @@ export function AdoptCodeDialog({
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>{code ? `${code} is which product?` : 'Which product?'}</DialogTitle>
-          <DialogDescription>
-            {pages.length > 0
-              ? `Printed on ${printedOn(pages)}. Search any product - the suggestion is only a starting point.`
-              : 'Search any product - the suggestion is only a starting point.'}
-          </DialogDescription>
+          {pages.length > 0 && (
+            <DialogDescription>Printed on {printedOn(pages)}.</DialogDescription>
+          )}
         </DialogHeader>
 
         <DialogBody className="flex flex-col gap-2">

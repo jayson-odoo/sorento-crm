@@ -325,6 +325,14 @@ def _apply_overrides(
     scope - deleted, or never existed) is silently absent from the result:
     the caller leaves the code unmatched with its suggestion, and nothing is
     written on a read (AC-A.6).
+
+    R1 guard: a product id already claimed under another printed code in
+    ``products`` (a real match, or an earlier override in this same pass) is
+    also skipped. ``adopt_code`` refuses to create this on write, so this is
+    a read-time backstop against drift - a code renamed after adoption, or
+    stale rows written before the write-time guard existed - never a case
+    this codebase exercises today; nothing this route does is expected to
+    reach it.
     """
     if not overrides:
         return set()
@@ -343,13 +351,17 @@ def _apply_overrides(
         .all()
     )
     by_id = {product.id: product for product in rows}
+    claimed = {product.id for product in products.values()}
 
     adopted: set[str] = set()
     for code, product_id in candidates.items():
+        if product_id in claimed:
+            continue
         product = by_id.get(product_id)
         if product is None:
             continue
         products[code] = product
+        claimed.add(product_id)
         adopted.add(code)
     return adopted
 

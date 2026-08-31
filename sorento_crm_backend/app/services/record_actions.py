@@ -846,6 +846,53 @@ for _key, _entity, _fn, _label in (
     )
 
 
+def _undo_flyer_code_adopt(db: Session, payload: dict):
+    """"This printed code is NOT that product" - undoing an adoption (D7, S1).
+
+    There is no row of its own to key a pending action on: the thing being
+    detached is one entry inside a reading's `code_overrides` JSONB map, not a
+    record with an id. So `reading_id` and `printed_code` travel as their own
+    payload fields (the frontend's `entity_id` is a synthetic
+    `<reading id>:<printed code>`, only there to make the pending-action row
+    unique across every other reading's adoptions) and this reads them back
+    directly rather than trying to split the id apart.
+
+    Same service call the DELETE route makes (`flyer_reading_service.
+    unadopt_code`) - the deferred path changes WHEN this runs, never what it
+    does.
+    """
+    from app.services.dealer_kit import flyer_reading_service
+
+    record = flyer_reading_service.get_reading(db, str(payload["reading_id"]))
+    return flyer_reading_service.unadopt_code(
+        db, record, printed_code=str(payload["printed_code"])
+    )
+
+
+register(
+    FormAction(
+        key="flyer_reading.undo_code_adopt",
+        entity_types=("flyer_code_adoption",),
+        execute=_undo_flyer_code_adopt,
+        # Reversible, not destructive: re-adopting the same code afterwards
+        # writes the same key back (AC-A.4), and nothing already applied to
+        # the product is touched either way the window resolves (R2).
+        window=WINDOW_REVERSIBLE,
+        # `master_data.products.edit` only - the direct DELETE route also
+        # requires `dealer_kit.page.view`, and this generic route checks ONE
+        # slug. Narrowing that pair to its write half is a deliberate,
+        # reviewed call for this action: `products.edit` is the permission
+        # that actually authorises the write (which product a code means),
+        # `page.view` scopes which readings a caller may look at, and this
+        # path is reached from the button on a reading the caller is already
+        # looking at, gated by the page's own view permission before the
+        # button ever renders.
+        permission="master_data.products.edit",
+        label="Undo code adoption",
+    )
+)
+
+
 # ----- SCM ------------------------------------------------------------------------------
 
 
