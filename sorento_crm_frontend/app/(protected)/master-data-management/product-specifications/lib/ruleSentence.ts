@@ -93,10 +93,11 @@ export function ruleSentence(rule: SpecDerivationRule, label: string): string {
  * `compileBuilder` turns that into the same engine fields. One compiler, so the
  * pattern Advanced shows for a builder row is exactly what saving it sends.
  *
- * Deliberately partial the same way `plainPattern` is: `from_field` and `name_head`
- * read the product record or run a multi-step text transform the engine does natively,
- * not a single regex, so their compiled `pattern` here is for the Advanced pane only -
- * illustrative, not what S2's engine will actually execute for those two kinds.
+ * `from_field` and `name_head` read the product record, or run a multi-step text
+ * transform, rather than matching a regex - so they compile to kinds of their own and
+ * their `pattern` names what they read (`brand`, `column:dimensions_length`,
+ * `class_tail`). The server compiles the same fields from the same sentence and refuses
+ * a save where the two disagree, so nothing here may be illustrative.
  */
 
 const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -108,11 +109,6 @@ export const DIM_TRIPLE_PATTERN =
   `${DIM_PART}\\s*[xX*]\\s*${DIM_PART}` +
   `(?:\\s*[xX*]\\s*${DIM_PART})?` +
   `(?:\\s*[xX*]\\s*${DIM_PART})?`;
-
-/** Illustrative only (see banner above) - the real engine strips the parenthetical,
- *  the "WITH"/"C/W"/"FOR"/"W/" tail and the dimensions rather than matching one regex. */
-const NAME_HEAD_PATTERN =
-  '^(.*?)(?:\\(|\\bWITH\\b|\\bC/W\\b|\\bFOR\\b|\\bW/\\b|$)';
 
 /** builder -> the engine fields it compiles to. What gets saved and what try-it runs. */
 export function compileBuilder(
@@ -183,7 +179,12 @@ export function compileBuilder(
         capture: builder.position ?? 1,
       };
     case 'name_head':
-      return { match: 'regex', pattern: NAME_HEAD_PATTERN, capture: 1 };
+      // A kind of its own, not a regex: the engine strips the code, the size, the
+      // parenthetical and the "WITH"/"C/W"/"FOR" tail and then reads the trailing
+      // noun off what is left. `class_tail` is that text. The server compiles the
+      // same two fields and refuses a row where the two compilers disagree, so this
+      // has to be what it runs rather than something illustrative.
+      return { match: 'name_head', pattern: 'class_tail' };
     default:
       return { match: 'regex', pattern: '' };
   }

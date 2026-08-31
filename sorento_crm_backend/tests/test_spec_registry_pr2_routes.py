@@ -866,10 +866,15 @@ def test_the_ignore_above_value_round_trips(api):
     assert response.status_code == 200, response.text
     assert response.json()["max_value"] == 5000.0
 
+    # The list read is the product page's, so it runs on `master_data.products.view`.
+    # A new column has to reach it too: `response_model` drops what it does not declare,
+    # and a field the FE never sees is a field nobody can edit.
+    _as(_MERCHANDISER)
     listed = client.get(_BASE).json()["keys"]
     assert {"zzt_length4": 5000.0}.items() <= {
         key["spec_key"]: key["max_value"] for key in listed
     }.items()
+    _as(_REGISTRY_ADMIN)
 
     response = client.patch(f"{_BASE}/zzt_length4", json={"max_value": None})
     assert response.status_code == 200, response.text
@@ -879,7 +884,7 @@ def test_the_ignore_above_value_round_trips(api):
 def test_a_shipped_row_says_so_on_the_way_out(api):
     """The rows that ship carry a tag; the stored column never does."""
     db, _as = api
-    _as(_REGISTRY_ADMIN)
+    _as(_MERCHANDISER)
     client = TestClient(app)
     _key(db, "dim_length", label="Length", data_type="numeric", unit="mm")
 
@@ -893,3 +898,32 @@ def test_a_shipped_row_says_so_on_the_way_out(api):
         "field": "column:dimensions_length",
     }
     assert listed["dim_length"]["derivation_rules"] == []
+
+
+def test_saving_the_shipped_list_back_keeps_every_field_the_engine_reads(api):
+    """Open Length, press Save, change nothing: the list must still read the same.
+
+    The save path rebuilds each rule from the fields it knows, so a field it does not
+    know is silently deleted. That is how the round/square condition would disappear off
+    the size rows - and 407 would go back to being a length on every round basin - by
+    somebody opening the screen and saving it untouched.
+    """
+    from app.services.product_spec_derivation import shipped_rules
+
+    db, _as = api
+    _as(_REGISTRY_ADMIN)
+    client = TestClient(app)
+    _key(db, "dim_length", label="Length", data_type="numeric", unit="mm")
+
+    effective = [dict(rule, shipped=True) for rule in shipped_rules()["dim_length"]]
+    response = client.patch(f"{_BASE}/dim_length", json={"derivation_rules": effective})
+
+    assert response.status_code == 200, response.text
+    saved = response.json()["derivation_rules"]
+    assert len(saved) == len(effective)
+    for stored, shipped in zip(saved, effective):
+        for field in ("match", "pattern", "capture", "source", "applies_when", "unless"):
+            assert stored.get(field) == shipped.get(field), field
+        assert stored.get("builder") == shipped.get("builder")
+        # The tag is the API's, not the database's: a saved list belongs to the business.
+        assert "shipped" not in stored

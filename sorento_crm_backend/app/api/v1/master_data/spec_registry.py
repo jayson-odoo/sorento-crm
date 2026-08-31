@@ -58,17 +58,13 @@ def _effective_rules(row) -> list[dict]:
     """
     from app.services.product_spec_derivation import shipped_rules
 
-    # Reading a column IS a rule, and hiding it behind "there are no rules to edit" was
-    # the screen refusing to explain the one key everybody asks about. Shown as a rule
-    # of its own kind so the derivation is legible end to end - it is not editable yet,
-    # but it is at least visible and named.
-    if row.spec_key in _FROM_PRODUCT_RECORD:
-        return [{"match": "product_column", "pattern": row.spec_key, "value": None}]
-
     stored = row.derivation_rules or []
     if stored:
         return stored
-    return list(shipped_rules().get(row.spec_key) or [])
+    # Tagged on the way OUT, never stored: a shipped row shows a small `shipped` tag and
+    # is otherwise an ordinary row - draggable, editable, removable (AC-C.3) - and the
+    # moment anybody saves the list it becomes theirs, tag and all dropped.
+    return [dict(rule, shipped=True) for rule in shipped_rules().get(row.spec_key) or []]
 
 
 def _serialise(row) -> dict:
@@ -104,18 +100,15 @@ def _serialise(row) -> dict:
         # Merged view: consumers see one vocabulary, not the seed/user split.
         "synonyms": merged_synonyms(row),
         "applies_when": row.applies_when or {},
-        # Whether rules are the thing that fills this key in. Brand comes off the
-        # product's own brand row and the dimensions are parsed out of the measurement
-        # block, so for those the rule editor was offering control it does not have -
-        # and saying "no rules yet, so nothing will ever fill this in" next to a key
-        # with thousands of values.
-        "read_from": (
-            "product_record"
-            if row.spec_key in _FROM_PRODUCT_RECORD
-            else "measurement_then_rules"
-            if row.spec_key in _MEASUREMENT_KEYS
-            else "rules"
-        ),
+        # Rules, for every key without exception (#425). Brand used to be read off the
+        # product's own row and the dimensions out of a measurement block, both outside
+        # the rule list, so this said which keys the editor could not actually control.
+        # Both are rows now - "From the product's brand field", "From the product's
+        # `dimensions_length` column" - so there is nothing left for it to except.
+        "read_from": "rules",
+        # The number above which a reading is a typo rather than a measurement. Blank
+        # means no cap.
+        "max_value": float(row.max_value) if row.max_value is not None else None,
         "rank_weight": float(row.rank_weight) if row.rank_weight is not None else None,
         "measured_coverage": row.measured_coverage,
         # Editing surface: which fields the UI may offer, and what it must not touch.
@@ -216,6 +209,11 @@ class SpecKeyUpdate(BaseModel):
     # Calibration rather than vocabulary - "bowl count is not only for kitchen sinks"
     # is a merchandising call - so it is editable and no longer seed-repaired.
     applies_when: Optional[dict[str, list[str]]] = None
+    # Ignore readings above this. Seeded 5000 on millimetre keys, because the catalogue
+    # carries "540X440180MM" - a separator typo that parses as a 440-metre sink. Blank
+    # is a real answer and means no cap, which is why it is `Optional` on a payload that
+    # only applies the fields it was sent.
+    max_value: Optional[float] = Field(default=None, ge=0)
 
 
 class SpecKeyCreate(BaseModel):
@@ -323,18 +321,6 @@ async def update_search_policy(
         raise handle_internal_error(str(e))
 
 
-# Keys no rule can produce. Only brand: it is read off the product's own brand row and
-# there is no text involved at any point.
-#
-# The dimensions are NOT here. Their primary source is the measurement block in the
-# description - an algorithm, not a token list - but rules do fill them in from the
-# flyer where the description states no size at all, which is 96 products. Listing them
-# here told people rules would do nothing, one screen away from a rule doing something.
-_FROM_PRODUCT_RECORD = {"brand"}
-
-# Keys whose PRIMARY source is the measurement block; rules fill the gap it leaves.
-_MEASUREMENT_KEYS = {"dim_length", "dim_width", "dim_height", "diameter", "depth", "thickness"}
-
 _RULE_KINDS = {
     "contains",
     "ends_with",
@@ -346,7 +332,16 @@ _RULE_KINDS = {
     # COVER" or nothing recognisable.
     "code_contains",
     "code_starts_with",
+    # Read the product ROW: its category, its brand field, or one of its own columns.
+    # These are the readers that used to run before any rule and appeared on no screen.
+    "from_field",
+    # What the product NAME says it is, once the code, the size, the parenthetical and
+    # everything it comes WITH are stripped off.
+    "name_head",
 }
+
+# Kinds that carry no value of their own: they read one off the product.
+_VALUELESS_KINDS = {"regex", "present", "from_field", "name_head"}
 
 
 def _validate_rules(
@@ -358,10 +353,43 @@ def _validate_rules(
     catalog deriving - which is right at 3am and wrong here, where the person is
     looking at the field and can fix it.
     """
+    from app.services.product_spec_registry import compile_builder
+
     cleaned: list[dict] = []
     for index, rule in enumerate(rules, start=1):
         if not isinstance(rule, dict):
             raise _reject(f"Rule {index} is not a rule.", "spec_registry_bad_rule")
+
+        # A row built from the sentence menu carries its `builder`, and the editor
+        # compiled it in the browser before sending. Compile it again here and hold the
+        # two to each other: the pattern the engine runs must be the one the sentence on
+        # screen says, or one of the two screens is lying about a live rule (AC-A.7).
+        builder = rule.get("builder")
+        if isinstance(builder, dict) and builder.get("kind"):
+            compiled = compile_builder(builder)
+            sent = {
+                field: rule.get(field)
+                for field in ("match", "pattern", "capture", "value")
+                if rule.get(field) is not None
+            }
+            disagreed = [
+                field
+                for field, value in sent.items()
+                if str(compiled.get(field, "")) != str(value)
+            ]
+            if disagreed:
+                from app.services.error_handler import AppException
+
+                raise AppException(
+                    status_code=422,
+                    message=(
+                        f"Rule {index} does not match the sentence it was built from "
+                        f"({', '.join(disagreed)}). Re-open the rule and save it again."
+                    ),
+                    code="spec_rule_builder_mismatch",
+                )
+            rule = {**rule, **compiled}
+
         kind = str(rule.get("match") or "contains").lower()
         pattern = str(rule.get("pattern") or "").strip()
         if kind not in _RULE_KINDS:
@@ -381,6 +409,16 @@ def _validate_rules(
                     "spec_registry_bad_rule",
                 )
         entry: dict = {"match": kind, "pattern": pattern}
+        # The sentence travels with the rule, so the row still reads as prose the next
+        # time the page opens. `shipped` and `shipped_backfill` deliberately do NOT: a
+        # saved list is the business's own, and a tag saying otherwise would be a claim
+        # the database cannot back.
+        if isinstance(rule.get("builder"), dict) and rule["builder"].get("kind"):
+            entry["builder"] = {
+                field: value
+                for field, value in rule["builder"].items()
+                if field in {"kind", "word", "from", "to", "value", "position", "field"}
+            }
         if rule.get("value") is not None:
             entry["value"] = rule["value"]
         if rule.get("capture"):
@@ -394,7 +432,19 @@ def _validate_rules(
             entry["unit"] = str(rule["unit"])
         if rule.get("source") and str(rule["source"]).lower() != "any":
             entry["source"] = str(rule["source"]).lower()
-        if kind not in {"regex", "present"} and "value" not in entry:
+        # The per-rule condition and its negative, carried through for the same reason
+        # `scale` is: dropping it on save would quietly delete the round/square gate off
+        # the shipped size rows, and 407 would go back to being a length on every round
+        # basin the first time somebody edited the Length screen.
+        for gate in ("applies_when", "unless"):
+            condition = rule.get(gate)
+            if isinstance(condition, dict) and condition:
+                entry[gate] = {
+                    str(key).strip(): [str(v).strip() for v in (values or []) if str(v).strip()]
+                    for key, values in condition.items()
+                    if str(key).strip() and [v for v in (values or []) if str(v).strip()]
+                }
+        if kind not in _VALUELESS_KINDS and "value" not in entry:
             raise _reject(
                 f"Rule {index} needs the value it should produce.", "spec_registry_bad_rule"
             )
@@ -926,6 +976,12 @@ def update_spec_key(
         for field in ("label", "rank_weight", "is_active", "match_tolerance", "match_decay"):
             if field in fields and fields[field] is not None:
                 setattr(row, field, fields[field])
+
+        # Cleared ON PURPOSE is a real answer here ("stop dropping numbers on this
+        # key"), so this one applies a None it was actually sent rather than skipping it
+        # with the block above.
+        if "max_value" in fields:
+            row.max_value = fields["max_value"]
 
         # A value nobody can say is unsearchable, and a newly added one has no words
         # yet. Rather than refusing the save, give it the obvious word - its own name,
