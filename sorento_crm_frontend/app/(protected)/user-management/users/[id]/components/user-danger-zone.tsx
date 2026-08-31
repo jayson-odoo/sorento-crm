@@ -158,13 +158,14 @@ const UserDangerZone = ({
   );
 
   // Render loading if still fetching or if user is null.
-  return isLoading || !user ? (
-    <Loading />
-  ) : user.isTrashed ? (
-    <RestoreContent />
-  ) : (
-    <DeleteContent />
-  );
+  // Called, not mounted: `<Loading />`/`<RestoreContent />`/`<DeleteContent />`
+  // would make each inline closure a new component type every render, so React
+  // would remount the subtree on any parent re-render (the user-hero bug) -
+  // silently closing the uncontrolled "Sign out everywhere" AlertDialog and
+  // resetting the restore/permanent-delete dialogs. None of these helpers
+  // holds hooks, so a plain call is safe.
+  if (isLoading || !user) return Loading();
+  return user.isTrashed ? RestoreContent() : DeleteContent();
 };
 
 export default UserDangerZone;
