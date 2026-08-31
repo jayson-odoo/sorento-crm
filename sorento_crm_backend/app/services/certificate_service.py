@@ -194,6 +194,20 @@ def _months_between(start: date, end: date) -> int:
     return months
 
 
+def _single_active_company(scope: Any) -> Optional[str]:
+    """The one company a new row may be stamped with, or None.
+
+    Only an unambiguous single-company scope counts; UNSET / all-companies /
+    multi-company stay None rather than guess - a wrong guess is worse than a
+    company-less (shared) row. Mirrors ``resources_service._single_active_company``;
+    kept local rather than imported to avoid coupling the two service modules
+    over a three-line helper.
+    """
+    if isinstance(scope, frozenset) and len(scope) == 1:
+        return next(iter(scope))
+    return None
+
+
 class CertificateService:
     """Every write to the certificate register goes through here.
 
@@ -408,6 +422,7 @@ class CertificateService:
             attachment_type_id=_clean(payload.attachment_type_id),
             status=payload.status or CERTIFICATE_STATUS_ACTIVE,
             created_by=created_by,
+            company_id=self._resolve_new_certificate_company_id(_clean(payload.attachment_id)),
             possible_duplicate_of_certificate_id=(
                 str(duplicate_of.id) if duplicate_of is not None else None
             ),
@@ -597,6 +612,11 @@ class CertificateService:
                 attachment_type_id=attachment_type_id,
                 status=CERTIFICATE_STATUS_ACTIVE,
                 created_by=created_by,
+                # The certificate follows the FILING attachment's company (S6,
+                # R5) - a shared file (company_id NULL) makes a shared
+                # certificate, not one guessed from the caller's own scope
+                # (which is `None`/all-companies for the n8n path here).
+                company_id=self._resolve_new_certificate_company_id(attachment_id),
                 possible_duplicate_of_certificate_id=(
                     str(duplicate_of.id) if duplicate_of is not None else None
                 ),
@@ -959,7 +979,26 @@ class CertificateService:
                 row.access_levels = access_levels
                 counters["updated"] += 1
 
-        for product_id in sorted(wanted - seen):
+        missing = sorted(wanted - seen)
+        # Stamp from the COVERED PRODUCT's own company, not the certificate's:
+        # a shared certificate (company_id NULL) covers twins in DIFFERENT
+        # companies, so there is no one company to fall back to, and leaning on
+        # the session scope would auto-stamp every row into the incumbent
+        # company when this runs under company_scope(db, None) (the
+        # bulk-company follow hook's widened scope, S6) - the same latent bug
+        # S2 fixed for the twin linker. Gives an identical result for a
+        # single-company certificate, since its wanted products are all in
+        # that one company anyway.
+        product_company_ids: dict[str, str] = {}
+        if missing:
+            product_company_ids = {
+                str(pid): str(cid)
+                for pid, cid in self.db.query(Product.id, Product.company_id)
+                .filter(Product.id.in_(missing))
+                .all()
+                if cid is not None
+            }
+        for product_id in missing:
             row = ProductAttachment(
                 id=str(uuid.uuid4()),
                 product_id=product_id,
@@ -967,10 +1006,9 @@ class CertificateService:
                 access_levels=access_levels,
                 created_by=certificate.created_by,
             )
-            # The certificate owns the company; stamp it rather than leaning on
-            # the session scope, which may be the all-companies system principal.
-            if certificate.company_id is not None:
-                row.company_id = certificate.company_id
+            stamp = product_company_ids.get(product_id) or certificate.company_id
+            if stamp is not None:
+                row.company_id = stamp
             self.db.add(row)
             counters["inserted"] += 1
 
@@ -1289,6 +1327,7 @@ class CertificateService:
         attachment_type_id: Optional[str],
         status: str,
         created_by: Optional[str],
+        company_id: Optional[str],
         possible_duplicate_of_certificate_id: Optional[str] = None,
     ) -> Certificate:
         if status not in CERTIFICATE_STATUSES:
@@ -1306,6 +1345,9 @@ class CertificateService:
             status=status,
             possible_duplicate_of_certificate_id=possible_duplicate_of_certificate_id,
             created_by=str(created_by) if created_by else None,
+            # Explicit - Certificate is __company_shared__, so the before_insert
+            # auto-stamp leaves this untouched (see _resolve_new_certificate_company_id).
+            company_id=company_id,
         )
         self.db.add(cert)
         self.db.flush()
@@ -1463,6 +1505,31 @@ class CertificateService:
             self.db.query(Attachment).filter(Attachment.id == attachment_id).first()
         )
         return str(attachment.attachment_type_id) if attachment is not None and attachment.attachment_type_id else None
+
+    def _resolve_new_certificate_company_id(self, attachment_id: Optional[str]) -> Optional[str]:
+        """The company to stamp on a BRAND NEW certificate (S6, R5).
+
+        A certificate follows its filing attachment's company: a shared file
+        (``company_id`` NULL) makes a shared certificate; a single-company
+        file makes a certificate in that same company. ``Certificate`` is now
+        ``__company_shared__`` (see the model), so the ``before_insert``
+        auto-stamp skips it entirely - every create path has to decide this
+        explicitly or the row silently lands company-less.
+
+        No attachment bound yet (a manual create with the file to follow) has
+        nothing to inherit from, so it falls back to the caller's own single
+        active company - the same value the auto-stamp would have chosen
+        before this table became shareable.
+        """
+        if attachment_id:
+            attachment: Any = (
+                self.db.query(Attachment).filter(Attachment.id == attachment_id).first()
+            )
+            if attachment is not None:
+                return str(attachment.company_id) if attachment.company_id else None
+        from app.models.base import get_company_scope
+
+        return _single_active_company(get_company_scope(self.db))
 
     def _max_validity_months(self, attachment_type_id: Any) -> Optional[int]:
         if not attachment_type_id:

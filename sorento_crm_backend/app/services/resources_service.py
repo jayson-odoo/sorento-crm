@@ -549,6 +549,7 @@ class AttachmentService:
         attachment_ids: Optional[list[str]] = None,
         direct_access_only: Optional[bool] = None,
         visible_attachment_type_ids: Optional[set[str]] = None,
+        company: Optional[str] = None,
     ):
         """List attachments. Filter by directory_id when provided. Search by filename when query is provided. is_deleted=True returns trash.
 
@@ -565,6 +566,11 @@ class AttachmentService:
         convention and filter on the FILE's own type, which is a different
         question from ``attachment_type_id`` (a document class: catalogue,
         certificate, ...). A picker that can only read PDFs asks this one.
+
+        ``company``: ``"shared"`` narrows to ``company_id IS NULL`` only; a
+        company UUID narrows to that company only (excludes shared rows);
+        omitted keeps today's default (the session scope predicate: shared +
+        the caller's own companies) (AC-E1).
         """
         from app.services.entity_filter_helpers import (
             attach_echo,
@@ -597,6 +603,7 @@ class AttachmentService:
             attachment_ids=attachment_ids,
             direct_access_only=direct_access_only,
             visible_attachment_type_ids=visible_attachment_type_ids,
+            company=company,
             with_joinedload=True,
         )
         if q is None:
@@ -634,6 +641,16 @@ class AttachmentService:
             for att in (attachments or [])
             if getattr(att, "company_id", None)
         }
+        return self.company_name_map_for_ids(ids)
+
+    def company_name_map_for_ids(self, company_ids) -> dict:
+        """``company_id`` -> company name for an arbitrary set of ids.
+
+        Same batched-lookup shape as ``company_name_map``, for callers (the
+        linked-entity builder, S5) that already hold the ids rather than a
+        page of attachment rows.
+        """
+        ids = {str(cid) for cid in (company_ids or []) if cid}
         if not ids:
             return {}
         try:
@@ -646,7 +663,7 @@ class AttachmentService:
                 .all()
             }
         except Exception:  # noqa: BLE001 - attribution is additive, never fatal
-            logger.warning("Could not resolve company names for attachments", exc_info=True)
+            logger.warning("Could not resolve company names for ids", exc_info=True)
             return {}
 
     def _resolve_attachment_type_code(self, code: str) -> Optional[str]:
@@ -709,6 +726,7 @@ class AttachmentService:
         attachment_ids: Optional[list[str]] = None,
         direct_access_only: Optional[bool] = None,
         visible_attachment_type_ids: Optional[set[str]] = None,
+        company: Optional[str] = None,
         with_joinedload: bool = False,
     ):
         """Build the filtered + sorted attachments query shared by ``list_attachments``
@@ -747,6 +765,13 @@ class AttachmentService:
             q = q.filter(Attachment.is_deleted == is_deleted)
         else:
             q = q.filter(Attachment.is_deleted == False)
+
+        company_norm = (str(company).strip() if company else None)
+        if company_norm:
+            if company_norm.lower() == "shared":
+                q = q.filter(Attachment.company_id.is_(None))
+            else:
+                q = q.filter(Attachment.company_id == company_norm)
 
         if storage_status and str(storage_status).strip():
             q = q.filter(Attachment.storage_status == str(storage_status).strip())
@@ -994,6 +1019,7 @@ class AttachmentService:
         storage_status: Optional[str] = None,
         direct_access_only: Optional[bool] = None,
         visible_attachment_type_ids: Optional[set[str]] = None,
+        company: Optional[str] = None,
     ) -> dict:
         """Unified Drive listing: discriminated folder + file rows in ONE
         server-sorted, server-paginated stream.
@@ -1013,6 +1039,9 @@ class AttachmentService:
         column/direction (UAC C2). Pagination is computed over the combined (UNION) count
         so it is correct at any folder size with no duplicate/missing rows across
         pages (UAC C6).
+
+        ``company`` applies to BOTH sides of the stream (folders and files),
+        same values as ``list_attachments`` (AC-E1).
         """
         from sqlalchemy import literal, func as _sa_func
         from app.schemas.common import PaginationResponse
@@ -1062,6 +1091,7 @@ class AttachmentService:
             storage_status=storage_status,
             direct_access_only=direct_access_only,
             visible_attachment_type_ids=visible_attachment_type_ids,
+            company=company,
         )
         if recursive:
             if normalized_dir:
@@ -1100,6 +1130,12 @@ class AttachmentService:
                 folder_q = folder_q.filter(
                     AttachmentDirectory.name.ilike(f"%{query.strip()}%")
                 )
+            company_norm = (str(company).strip() if company else None)
+            if company_norm:
+                if company_norm.lower() == "shared":
+                    folder_q = folder_q.filter(AttachmentDirectory.company_id.is_(None))
+                else:
+                    folder_q = folder_q.filter(AttachmentDirectory.company_id == company_norm)
             folders = folder_q.all()
             folder_ids = [str(f.id) for f in folders]
             folder_rows = {str(f.id): f for f in folders}
@@ -1280,33 +1316,99 @@ class AttachmentService:
         """Get an attachment by ID (active or archived)."""
         return self._get_attachment_any(attachment_id)
 
-    def get_linked_entities(self, attachment_id: str) -> dict:
+    def _active_scope_company_id(self) -> Optional[str]:
+        """The caller's single active company, or None (multi/all-companies scope)."""
+        from app.models.base import get_company_scope
+
+        scope = get_company_scope(self.db)
+        if isinstance(scope, frozenset) and len(scope) == 1:
+            return next(iter(scope))
+        return None
+
+    def get_linked_entities(self, attachment_id: str, actor_id: Optional[str] = None) -> dict:
         """
         Resolve linked product(s), promotion(s), and form from product_attachments,
         promotion_attachments, and forms.attachment_id.
         Returns dict with linked_products, linked_promotions, linked_form.
+
+        On a SHARED attachment (``company_id`` NULL), the product/certificate
+        link queries run under the CALLER's own granted companies rather than
+        just their single active company, so a shared file's popup shows both
+        twins (PLAN-shared-brand-attachments.md S5, UAC group G). Only kicks in
+        when ``actor_id`` is passed - callers that don't (upload-activity's
+        summary builder) keep today's single-scope result. A single-company
+        attachment is never widened, so its payload is unchanged (AC-G3).
         """
         from app.models.product import ProductAttachment, Product
         from app.models.marketing import PromotionAttachment, Promotion
         from app.models.forms import Form
+        from app.models.base import company_scope
+
+        active_company_id = self._active_scope_company_id()
+
+        att_row = (
+            self.db.query(Attachment.company_id)
+            .filter(Attachment.id == attachment_id)
+            .first()
+        )
+        is_shared = bool(att_row) and att_row[0] is None
+
+        widen_scope: Optional[frozenset] = None
+        if is_shared and actor_id:
+            from app.services.company_scope_resolver import resolve_user_grant_ids
+
+            grants = {str(g) for g in resolve_user_grant_ids(self.db, actor_id)}
+            if grants:
+                widen_scope = frozenset(grants)
+
+        def _widened(fn):
+            if widen_scope:
+                with company_scope(self.db, widen_scope):
+                    return fn()
+            return fn()
+
+        def _query_products():
+            return (
+                self.db.query(
+                    Product.id,
+                    Product.product_name,
+                    Product.description,
+                    Product.company_id,
+                    ProductAttachment.id.label("link_id"),
+                )
+                .join(ProductAttachment, ProductAttachment.product_id == Product.id)
+                .filter(ProductAttachment.attachment_id == attachment_id)
+                .order_by(Product.company_id, Product.product_name)
+                .all()
+            )
+
+        product_rows = _widened(_query_products)
+
+        # Company names for whatever companies actually showed up, in ONE
+        # query - never per row.
+        company_ids_seen = {
+            str(row.company_id) for row in product_rows if row.company_id
+        }
+
+        def _in_scope(company_id: Optional[str]) -> bool:
+            # No company on the row, or the caller's scope can't name a single
+            # active company (admin/API-key): never mark it out-of-scope.
+            return (
+                company_id is None
+                or active_company_id is None
+                or company_id == active_company_id
+            )
 
         linked_products = []
-        q = (
-            self.db.query(
-                Product.id,
-                Product.product_name,
-                Product.description,
-                ProductAttachment.id.label("link_id"),
-            )
-            .join(ProductAttachment, ProductAttachment.product_id == Product.id)
-            .filter(ProductAttachment.attachment_id == attachment_id)
-        )
-        for row in q.all():
+        for row in product_rows:
+            cid = str(row.company_id) if row.company_id else None
             linked_products.append({
                 "id": str(row.id),
                 "name": row.product_name or str(row.id),
                 "description": (row.description or "").strip() or None,
                 "link_id": str(row.link_id),
+                "company_id": cid,
+                "in_scope": _in_scope(cid),
             })
 
         linked_promotions = []
@@ -1415,23 +1517,37 @@ class AttachmentService:
         # identities (PPS and SPAN both issue against one document).
         from app.models.certificate import Certificate, CertificateRevision
 
-        linked_certificates = []
-        q = (
-            self.db.query(
-                Certificate.id,
-                Certificate.scheme,
-                Certificate.certificate_number,
-                Certificate.certifying_body,
-                Certificate.title,
-                CertificateRevision.id.label("link_id"),
-                CertificateRevision.revision_no,
-                CertificateRevision.is_current,
+        def _query_certificates():
+            return (
+                self.db.query(
+                    Certificate.id,
+                    Certificate.scheme,
+                    Certificate.certificate_number,
+                    Certificate.certifying_body,
+                    Certificate.title,
+                    Certificate.company_id,
+                    CertificateRevision.id.label("link_id"),
+                    CertificateRevision.revision_no,
+                    CertificateRevision.is_current,
+                )
+                .join(CertificateRevision, CertificateRevision.certificate_id == Certificate.id)
+                .filter(CertificateRevision.attachment_id == attachment_id)
+                .order_by(CertificateRevision.revision_no.desc())
+                .all()
             )
-            .join(CertificateRevision, CertificateRevision.certificate_id == Certificate.id)
-            .filter(CertificateRevision.attachment_id == attachment_id)
-            .order_by(CertificateRevision.revision_no.desc())
-        )
-        for row in q.all():
+
+        certificate_rows = _widened(_query_certificates)
+        company_ids_seen |= {
+            str(row.company_id) for row in certificate_rows if row.company_id
+        }
+
+        company_names = self.company_name_map_for_ids(company_ids_seen)
+        for product in linked_products:
+            cid = product["company_id"]
+            product["company_name"] = company_names.get(cid) if cid else None
+
+        linked_certificates = []
+        for row in certificate_rows:
             name = " ".join(p for p in (row.scheme, row.certificate_number) if p).strip()
             # Say WHICH issue this file is, so a superseded document is not
             # mistaken for the live certificate when read from the attachment.
@@ -1439,11 +1555,15 @@ class AttachmentService:
             if not row.is_current:
                 issue += " (superseded)"
             subject = (row.title or "").strip() or (row.certifying_body or "").strip()
+            cid = str(row.company_id) if row.company_id else None
             linked_certificates.append({
                 "id": str(row.id),
                 "name": name or str(row.id),
                 "description": " - ".join(p for p in (subject, issue) if p) or None,
                 "link_id": str(row.link_id),
+                "company_id": cid,
+                "company_name": company_names.get(cid) if cid else None,
+                "in_scope": _in_scope(cid),
             })
 
         return {

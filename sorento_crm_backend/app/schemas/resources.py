@@ -301,6 +301,14 @@ class LinkedEntityRef(BaseModel):
     name: str
     description: Optional[str] = None
     link_id: Optional[str] = None  # ProductAttachment/PromotionAttachment id for unlink; forms use id as form_id
+    # Populated for linked_products / linked_certificates on a SHARED
+    # attachment (PLAN-shared-brand-attachments.md S5, UAC group G): the
+    # entity's own company and whether it is the viewer's ACTIVE company.
+    # Left at the defaults (None / None / True) for every other linked list,
+    # so a single-company attachment's payload is unchanged (AC-G3).
+    company_id: Optional[str] = None
+    company_name: Optional[str] = None
+    in_scope: bool = True
 
 
 class AttachmentResponse(AttachmentBase):

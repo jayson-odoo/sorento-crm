@@ -287,6 +287,10 @@ async def get_attachments(
         description="Respond.io workspace space_id. Disambiguates contact_id when the same respond_io_id exists in two workspaces.",
     ),
     resolve_signed_urls: bool = Query(False, description="When false, return stored file_path without CloudFront signing."),
+    company: Optional[str] = Query(
+        None,
+        description="'shared' for company_id IS NULL only; a company UUID for that company only; omitted keeps the default (shared + the caller's own companies).",
+    ),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
@@ -326,6 +330,7 @@ async def get_attachments(
             attachment_ids=parse_uuid_list(attachment_ids, param_name="attachment_ids"),
             direct_access_only=direct_access_only,
             visible_attachment_type_ids=visible_type_ids(db, contact_id, space_id),
+            company=company,
         )
         # Enrich each attachment with uploaded_by_user for display.
         # Batch-resolve users in ONE query to avoid N+1 (was a per-row SELECT).
@@ -408,6 +413,10 @@ async def get_drive_contents(
     link_status: Optional[str] = Query(None),
     storage_status: Optional[str] = Query(None),
     direct_access_only: bool = Query(False),
+    company: Optional[str] = Query(
+        None,
+        description="'shared' for company_id IS NULL only (folders and files); a company UUID for that company only; omitted keeps the default.",
+    ),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
@@ -438,6 +447,7 @@ async def get_drive_contents(
             access_levels=access_levels,
             access_levels_match=access_levels_match,
             link_status=link_status,
+            company=company,
             storage_status=storage_status,
             direct_access_only=direct_access_only,
         )
@@ -527,7 +537,7 @@ async def get_current_stock_list(
     if not attachment:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No Stock List file has been uploaded yet")
     service = AttachmentService(db)
-    data = _attachment_response_with_linked_entities(service, attachment)
+    data = _attachment_response_with_linked_entities(service, attachment, current_user)
     user_info = _enrich_uploaded_by_user(db, attachment)
     if user_info:
         data["uploaded_by_user"] = user_info
@@ -551,7 +561,9 @@ def _resolve_attachment_file_path(
     return resolve_signed_url(file_path, provider=provider)
 
 
-def _attachment_response_with_linked_entities(service: AttachmentService, attachment) -> dict:
+def _attachment_response_with_linked_entities(
+    service: AttachmentService, attachment, current_user: Optional[dict] = None
+) -> dict:
     """Build attachment response dict including linked entities from product_attachments, promotion_attachments, forms."""
     from app.schemas.resources import AttachmentResponse, LinkedEntityRef
 
@@ -563,7 +575,8 @@ def _attachment_response_with_linked_entities(service: AttachmentService, attach
         data.get("file_path"),
         provider=getattr(attachment, "storage_provider", None),
     )
-    linked = service.get_linked_entities(attachment_id)
+    actor_id = (current_user or {}).get("id")
+    linked = service.get_linked_entities(attachment_id, actor_id=actor_id)
     data["linked_products"] = [LinkedEntityRef.model_validate(p).model_dump() for p in linked["linked_products"]]
     data["linked_promotions"] = [LinkedEntityRef.model_validate(p).model_dump() for p in linked["linked_promotions"]]
     data["linked_form"] = LinkedEntityRef.model_validate(linked["linked_form"]).model_dump() if linked["linked_form"] else None
@@ -622,7 +635,7 @@ async def get_attachment(
         validate_uuid_path(attachment_id, resource="Attachment")
         service = AttachmentService(db)
         attachment = service.get_attachment(attachment_id)
-        return _attachment_response_with_linked_entities(service, attachment)
+        return _attachment_response_with_linked_entities(service, attachment, current_user)
     except HTTPException:
         raise
     except Exception as e:
@@ -1440,7 +1453,7 @@ async def get_attachment_metadata(
         validate_uuid_path(attachment_id, resource="Attachment")
         service = AttachmentService(db)
         attachment = service.get_attachment(attachment_id)
-        return _attachment_response_with_linked_entities(service, attachment)
+        return _attachment_response_with_linked_entities(service, attachment, current_user)
     except HTTPException:
         raise
     except Exception as e:

@@ -56,9 +56,19 @@ CERTIFICATE_SOURCES = (CERTIFICATE_SOURCE_AI, CERTIFICATE_SOURCE_MANUAL)
 
 
 class Certificate(Base, CompanyScopedMixin):
-    """One certification identity, owned by a company."""
+    """One certification identity, owned by a company - or by none.
+
+    A certificate FOLLOWS its filed attachment's company (R5,
+    PLAN-shared-brand-attachments.md S6): a NULL ``company_id`` is a
+    deliberate shared certificate (one document, one expiry alert, both
+    companies' twins covered), not a legacy/unstamped row. Every write path
+    stamps ``company_id`` explicitly (``CertificateService._new_certificate``
+    / the ``bulk-company`` follow hook) rather than leaning on the
+    ``before_insert`` auto-stamp, which skips shared models entirely.
+    """
 
     __tablename__ = "certificates"
+    __company_shared__ = True
     __audit_track__ = True
     __audit_entity_type__ = "certificate"
     # Identity and lifecycle only. Notification watermarks churn on every

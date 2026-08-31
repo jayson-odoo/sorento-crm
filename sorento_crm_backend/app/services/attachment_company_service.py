@@ -90,6 +90,9 @@ class AttachmentCompanyService:
             links_added, links_removed = self._sync_product_links(
                 list(files.keys()), company_id, actor_id
             )
+            certificates_updated = self._apply_certificate_follow(
+                list(files.keys()), company_id, actor_id
+            )
 
             self.db.commit()
 
@@ -99,8 +102,7 @@ class AttachmentCompanyService:
             "company_id": company_id,
             "links_added": links_added,
             "links_removed": links_removed,
-            # Certificate follow (S6) is wired in a later slice.
-            "certificates_updated": 0,
+            "certificates_updated": certificates_updated,
         }
 
     # ------------------------------------------------------------------
@@ -313,6 +315,88 @@ class AttachmentCompanyService:
         )
         removed = self.db.execute(delete_stmt).fetchall()
         return len(removed)
+
+    # ------------------------------------------------------------------
+    # 5. Certificate follow (S6, R5) - a filed certificate's revision
+    # attachment carries the company decision with it.
+    # ------------------------------------------------------------------
+    def _apply_certificate_follow(
+        self, file_ids: list[str], company_id: Optional[str], actor_id: Optional[str]
+    ) -> int:
+        """Every collected file that is the CURRENT filed revision of a
+        certificate takes that certificate with it: ``certificate.company_id``
+        moves to the same target, coverage is rewritten with the SAME
+        expand/shrink/move rule the twin linker uses (over product codes), and
+        ``reconcile_certificate`` re-projects ``product_attachments`` so it
+        never drifts from coverage. A superseded revision's certificate is
+        left alone - only the live document decides.
+
+        Runs inside the caller's ``company_scope(db, None)`` (set by
+        ``apply()``), so every company's rows are visible while this executes.
+        """
+        if not file_ids:
+            return 0
+        from app.services.certificate_service import CertificateService
+
+        cert_service = CertificateService(self.db)
+        targets = (
+            [r[0] for r in self.db.query(Company.id).all()]
+            if company_id is None
+            else [company_id]
+        )
+
+        touched: dict[str, object] = {}
+        for attachment_id in file_ids:
+            certificate, is_current = cert_service.find_by_revision_attachment(attachment_id)
+            if certificate is not None and is_current:
+                touched[str(certificate.id)] = certificate
+
+        for certificate in touched.values():
+            certificate.company_id = company_id
+            self._rewrite_certificate_coverage(cert_service, certificate, targets, actor_id)
+
+        return len(touched)
+
+    def _rewrite_certificate_coverage(
+        self, cert_service, certificate, targets: list[str], actor_id: Optional[str]
+    ) -> None:
+        """Coverage follows the same expand/shrink/move rule as the twin
+        linker, over product CODES rather than a caller-supplied set: every
+        currently-covered product's code is looked up, then coverage is
+        replaced with every product (in ``targets``) sharing one of those
+        codes. Sharing (``targets`` = every company) adds the twin; moving to
+        one company (``targets`` = ``[company_id]``) drops the others.
+        """
+        from app.models.certificate import CertificateProduct
+
+        existing_ids = {
+            str(row.product_id)
+            for row in self.db.query(CertificateProduct.product_id)
+            .filter(CertificateProduct.certificate_id == certificate.id)
+            .all()
+        }
+        if not existing_ids:
+            return
+        codes = {
+            code
+            for (code,) in self.db.query(Product.product_code)
+            .filter(Product.id.in_(existing_ids))
+            .all()
+            if code
+        }
+        new_ids = (
+            [
+                str(pid)
+                for (pid,) in self.db.query(Product.id)
+                .filter(Product.product_code.in_(codes), Product.company_id.in_(targets))
+                .all()
+            ]
+            if codes
+            else []
+        )
+        cert_service.set_coverage(
+            str(certificate.id), new_ids, created_by=actor_id, commit=False
+        )
 
 
 # --------------------------------------------------------------------------------------

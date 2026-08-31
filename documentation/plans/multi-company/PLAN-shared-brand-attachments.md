@@ -1,6 +1,6 @@
 # PLAN: Shared brand attachments and folders across companies + product-code prefix tier
 
-**Status:** Grilled 2026-08-31 (rounds 1-4, R1-R21), lavish-reviewed + apple-design pass (R22-R27) the same day, captain said proceed. Issues: S1 #435 (PR A), S2 #436 (FE mock), S3 #437 (BE core), S4 #438 (BE linkages + certs), S5 #439 (review + browser). S1 = PR #440 (review round 1 in progress: opt-in gate B1). S2 = draft PR #442 (FE mock, vitest 8990 green; agent-browser pass BLOCKED: :3100 held by the apple-preview lane's dev server, pid 51030). S3 coder spawned on `feat/shared-brand-S3-be-core`, stacked on S2.
+**Status:** Grilled 2026-08-31 (rounds 1-4, R1-R21), lavish-reviewed + apple-design pass (R22-R27) the same day, captain said proceed. Issues: S1 #435 (PR A), S2 #436 (FE mock), S3 #437 (BE core), S4 #438 (BE linkages + certs), S5 #439 (review + browser). S1 = PR #440 (review round 1 in progress: opt-in gate B1). S2 = draft PR #442 (FE mock, vitest 8990 green; agent-browser pass BLOCKED: :3100 held by the apple-preview lane's dev server, pid 51030). S3 coder spawned on `feat/shared-brand-S3-be-core`, stacked on S2 - tests landed (`773612a18`). S4 coder on `feat/shared-brand-S4-linkages-certs`, stacked on S3: `company` filter (AC-E1), linked-entity widening (AC-G1-G4), certificate follow (AC-H1-H6) DONE, migration 449 extended with a 4th piece (`certificates.company_id` NOT NULL drop/restore, missed at grill time - AC-H7 and this plan's migration bullet corrected in the same change), 26 new tests green (19 own + 7 fixed in the merged S3 test file).
 **UAC:** `shared-brand-attachments-acceptance-criteria.md` (alongside; journey at its top).
 **Domain:** multi-company / resources / certificates. Touches the ONE product-code resolver.
 **Lane:** this session's port pair is :3100/:8100 (:3090 belongs to the spec lane).
@@ -333,7 +333,10 @@ Two PRs so the tiny one ships first:
 
 Backend
 - alembic migration (one): `attachment_types.is_shared`; `attachment_directories.company_id`
-  nullable, default dropped; certificate identity index rebuilt. `down_revision` = the main
+  nullable, default dropped; certificate identity index rebuilt; `certificates.company_id`
+  nullable too (S4 correction: migration 312 gave it NOT NULL, missed when this plan was
+  written - `Certificate.__company_shared__` needs the same DROP NOT NULL / restore-with-
+  stamp pair `attachment_directories.company_id` gets). `down_revision` = the main
   head at branch time, id <= 32 chars, `alembic heads` = one.
 - `app/models/resources.py` (`AttachmentDirectory.__company_shared__`, `AttachmentType.is_shared`),
   `app/models/certificate.py` (`__company_shared__`).

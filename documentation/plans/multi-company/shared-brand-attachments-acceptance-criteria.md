@@ -201,7 +201,10 @@ tester seeds its own `ZZT-` twin products and `ZZT-` folders, never reads existi
 - **AC-H7** `[BE]` Alembic: id <= 32 chars, `down_revision` = the main head at branch time,
   one head after upgrade; downgrade restores NOT NULL on `attachment_directories.company_id`
   (after stamping NULL rows with the incumbent company), drops `is_shared`, restores the old
-  index.
+  index. (S4 correction: `certificates.company_id` also had a NOT NULL from migration 312,
+  missed when this AC was written - `Certificate.__company_shared__` needs it dropped in
+  `upgrade()` the same way, and downgrade restores it the same way, stamping any NULL
+  (shared) certificate to Sorento first.)
 
 ## Group I - End to end (agent-browser, sidebar navigation, one dev server)
 
