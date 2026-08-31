@@ -92,6 +92,10 @@ read as sentences too (a table test pins each).
 - `_DESCRIPTION_FIRST_KEYS` goes: with one ordered list there is no "description phase".
   The flyer ingest's `description_first` flag is computed instead as "a higher-priority
   row already read this key from the product's own text/fields", same meaning.
+- `description_first` now also covers `class` and `brand` (S7, Phase 3 review): both
+  are read off the product's own record now (`from_field category`/`brand`), so a
+  flyer proposing a different class or brand arrives as `conflict`, not a silent
+  `change`, the same precedence the six size keys already had.
 
 ### Registry (`spec_registry.py`, model)
 

@@ -58,8 +58,17 @@ is the only order, and migration 450 moves stored code rows below their key's te
 ### AC-A.2 [BE] Golden parity
 `derive_all` over the derivation test fixtures and over a 2,000-product sample of the
 dev DB (codes listed in the test) yields identical `values` and `provenance` before and
-after the change, except: trap-only descriptions (already fixed in #424) and nothing else.
-Any difference fails the test with the code and key named.
+after the change, except: trap-only descriptions (already fixed in #424), and values
+above the per-key cap, which are now dropped + flagged on every firing row rather than
+only on the rectangular length/width/height triple (S1, Phase 3 review, 31 Aug - main
+capped only that triple; a round product's diameter/depth/thickness and a rectangular
+product's 4th number (thickness) were stored uncapped, and an over-cap LONE size was
+silently dropped with no flag at all). Measured read-only against the dev DB's 23,063
+active products on 31 Aug: 0 cross this delta - main already capped every over-cap case
+the live catalogue currently has (a mis-parsed separator landing in length or width, both
+already checked by the old triple cap). The three shapes of row main let through
+uncapped are pinned directly in `tests/test_product_spec_derivation.py` rather than by a
+live code. Any other difference fails the test with the code and key named.
 
 ### AC-A.3 [BE] Removing a shipped row removes the reader
 Given `dim_length` rules stored WITHOUT the `number_before MM` row,
