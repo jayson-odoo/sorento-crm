@@ -113,21 +113,99 @@ export interface SpecPreviewResult {
   unmet: UnmetSpec[];
 }
 
+/**
+ * A rule row's sentence form. The engine never reads this - it is compiled to
+ * `match` / `pattern` / `capture` / `value` (see `compileBuilder` in `lib/ruleSentence.ts`)
+ * and that compiled form is what actually runs. Present only on rows built from the
+ * kind menu; a row edited into a pattern (Advanced -> Edit pattern) drops it.
+ */
+export type SpecRuleBuilderKind =
+  | 'number_after'
+  | 'number_before'
+  | 'number_between'
+  | 'text_contains'
+  | 'text_ends_with'
+  | 'word_present'
+  | 'code_contains'
+  | 'code_starts_with'
+  | 'code_ends_with'
+  | 'from_field'
+  | 'size_triple'
+  | 'name_head';
+
+export interface SpecRuleBuilder {
+  kind: SpecRuleBuilderKind;
+  /** number_after / number_before: the word. text_contains / text_ends_with / word_present
+   *  / code_*: the phrase or token. */
+  word?: string;
+  /** number_between only: the two phrases it reads between. */
+  from?: string;
+  to?: string;
+  /** text_contains / text_ends_with / code_*: what the key is set to when it matches. */
+  value?: string | number | boolean;
+  /** size_triple only: 1 = length, 2 = width, 3 = height, 4 = thickness. */
+  position?: number;
+  /** from_field only: category | brand | column:<products column>. */
+  field?: string;
+}
+
 /** One way of reading a value out of a product's text. */
 export interface SpecDerivationRule {
-  /** contains | ends_with | present | regex | code_contains | code_starts_with | code_suffix */
+  /** contains | ends_with | present | regex | code_contains | code_starts_with | code_suffix
+   *  | from_field. The compiled form - always kept in sync with `builder` when one is set. */
   match: string;
   pattern: string;
   value?: string | number | boolean;
   capture?: number;
   /** Limit the rule to one text: description | flyer. Absent means both. */
   source?: string;
+  /** The sentence this row was built from, when it was built that way. */
+  builder?: SpecRuleBuilder;
+  /** This row ships with the product; a small tag says so. Still an ordinary row -
+   *  draggable, editable, removable. */
+  shipped?: boolean;
+  /** A shipped row a migration prepended so an owned key kept the reader it used to
+   *  run silently. Renders the same `shipped` tag as `shipped`. */
+  shipped_backfill?: boolean;
   /**
    * Browser-only identity, so dragging a rule moves THAT RULE rather than that
    * position. Not persisted: the API builds each stored rule from the fields it knows
    * and drops everything else.
    */
   _uid?: string;
+}
+
+/** One row's try-it read, aligned to `rules` by index. */
+export interface SpecTryRuleRead {
+  index: number;
+  value: string | number | boolean | null;
+  /** The exact text the value was read from, or null when nothing matched. */
+  evidence: string | null;
+}
+
+/** What trying the draft rules against one product or one pasted text answers. */
+export interface SpecTryResult {
+  description: string;
+  reads: SpecTryRuleRead[];
+  /** The first row with a value, i.e. the one the engine would keep. Null when none matched. */
+  winner_index: number | null;
+}
+
+/** One row of the preview's before/after sample. */
+export interface SpecPreviewSampleRow {
+  code: string;
+  before: string | number | boolean | null;
+  after: string | number | boolean | null;
+}
+
+/** What `GET .../preview/{jobId}` answers, pending or done. */
+export interface SpecPreviewJobResult {
+  status: 'pending' | 'done';
+  changed?: number;
+  added?: number;
+  removed?: number;
+  unchanged?: number;
+  sample?: SpecPreviewSampleRow[];
 }
 
 export interface SpecRegistryKey {
@@ -148,7 +226,7 @@ export interface SpecRegistryKey {
   /** Shipped values this business has taken away. Already subtracted from `allowed_values`. */
   suppressed_values: string[];
   /**
-   * A standing preference for particular values of this key ({ SORENTO: 1.5 }) - 
+   * A standing preference for particular values of this key ({ SORENTO: 1.5 }) -
    * applied to any product carrying the value, except when the customer named the key
    * themselves.
    */
@@ -187,6 +265,9 @@ export interface SpecRegistryKey {
   match_tolerance: number;
   match_decay: number;
   is_active: boolean;
+  /** A number above this is dropped as implausible rather than stored. Null/absent
+   *  means no cap. Seeded 5000 on mm keys; editable per key. */
+  max_value?: number | null;
 }
 
 /** One tunable number in the ranker's scoring. */
