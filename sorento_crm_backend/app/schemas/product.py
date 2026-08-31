@@ -405,6 +405,14 @@ class ProductAttachmentBase(BaseModel):
     #: Set only when a PRODUCT SET code fanned this link out. NULL means a person
     #: or an exact product code made it.
     linked_via_set_id: Optional[str] = None
+    #: Explicit owning company for this LINK row, taken from the linked
+    #: product. Omitted (None) keeps today's behaviour - the before_insert
+    #: auto-stamp fills it from the session scope. A caller resolving a
+    #: product under an ALL-COMPANIES scope (a shared attachment's n8n link,
+    #: PLAN-shared-brand-attachments S2) must pass this explicitly, or every
+    #: row - including a Mocha twin's - lands stamped to the incumbent
+    #: company instead of the product's own.
+    company_id: Optional[str] = None
 
 
 class ProductAttachmentCreate(ProductAttachmentBase):

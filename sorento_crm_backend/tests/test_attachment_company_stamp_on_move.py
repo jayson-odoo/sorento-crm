@@ -1,25 +1,21 @@
-"""Filing an old root file into a folder must give it that folder's company.
+"""A move never re-stamps a file's company (PLAN-shared-brand-attachments R10).
 
-The upload-side fix (test_attachment_company_stamp_on_upload.py) is create-only:
-it stamps the active company at the moment the file is written. Every file that
-already sat at the root of All files from before that fix still carries
-``company_id`` NULL, and for attachments NULL is not neutral, it means SHARED
-(the predicate is ``company_id IS NULL OR company_id IN (scope)``). Dragging one
-of those into Purchasing used to touch ``directory_id`` and
-``full_directory_path`` only, so the file looked filed but stayed readable from
-every company, and ``scope_to_attachment_company`` still resolved None off it.
+This file used to test the OPPOSITE rule: that filing a company-less (shared)
+root file into an owned folder gave it that folder's company, the same way an
+upload does. R10 retires that inheritance - "Company is decided ONCE at
+upload... and afterwards only by the `Set company…` action. A move never
+re-stamps a company." - because a shared/company-less attachment is now a
+DELIBERATE state (R11: an `is_shared` attachment TYPE writes it on purpose),
+not just a legacy hole to fill in on the first folder that comes along.
 
-``AttachmentDirectory`` is strictly owned - its ``company_id`` is always set - so
-the folder the user picked is an exact source for the missing company, no scope
-guessing needed. The rule: on a move INTO a folder, a NULL attachment inherits
-the folder's company, unless it is one of the shared form entity types
-(complaint, purchase_request, stock_inquiry) which stay NULL on purpose (AC-G3).
-An existing company is never overwritten, and a move to root stamps nothing.
-
-The one folder that cannot answer the question is a folder whose own company_id
-is NULL (it reads as invisible under a single-company scope, since owned rows are
-filtered ``company_id IN (ids)``). There the move falls back to the active scope
-exactly as an upload does: a single active company, or nothing.
+What a move does instead when the file being moved is shared and the
+destination folder is owned: pull that folder's ANCESTOR CHAIN to shared
+(R19), so the folder tree the file lives under still resolves from every
+company (`AttachmentCompanyService.share_ancestor_chain`, AC-D3/AC-D4 -
+UAC coverage for that lands separately). This file only pins the FILE's own
+`company_id` never changing on a move, plus the pre-existing "an existing
+company is never overwritten" / "a move to root stamps nothing" / "shared
+form attachments stay shared" invariants, none of which R10 touches.
 """
 from __future__ import annotations
 
@@ -69,10 +65,11 @@ def _company_less_folder(db) -> str:
     return folder_id
 
 
-# --- the defect ------------------------------------------------------------- #
+# --- R10: a move never re-stamps a file's own company ----------------------- #
 
-def test_bulk_move_into_a_folder_stamps_a_company_less_file(db):
-    """The reported case: an old root file dragged into a Purchasing folder."""
+def test_bulk_move_into_a_folder_no_longer_stamps_a_shared_file(db):
+    """A shared root file dragged into an owned folder STAYS shared (R10) - the
+    old inheritance this file used to pin is retired."""
     set_company_scope(db, None)  # ambiguous at upload time -> lands NULL
     attachment = _upload(db, _payload(db))
     assert attachment.company_id is None, "fixture precondition: the file is shared"
@@ -83,13 +80,13 @@ def test_bulk_move_into_a_folder_stamps_a_company_less_file(db):
     moved = AttachmentService(db).bulk_move([attachment.id], folder_id)
 
     assert moved == 1
-    assert _company_id(db, attachment.id) == MOCHA_ID, (
-        "a file filed into an owned folder stayed company-less, so it is still "
-        "shared across every company"
+    assert _company_id(db, attachment.id) is None, (
+        "a move re-stamped a shared file's own company, which R10 retires - "
+        "only `Set company…` may do that now"
     )
 
 
-def test_update_attachment_directory_stamps_a_company_less_file(db):
+def test_update_attachment_directory_no_longer_stamps_a_shared_file(db):
     """Same rule down the single-row edit path, not just bulk move."""
     set_company_scope(db, None)
     attachment = _upload(db, _payload(db))
@@ -102,8 +99,8 @@ def test_update_attachment_directory_stamps_a_company_less_file(db):
         attachment.id, AttachmentUpdate(directory_id=folder_id)
     )
 
-    assert _company_id(db, attachment.id) == MOCHA_ID, (
-        "editing directory_id filed the file without giving it the folder's company"
+    assert _company_id(db, attachment.id) is None, (
+        "editing directory_id re-stamped a shared file's own company (R10)"
     )
 
 
@@ -160,11 +157,11 @@ def test_form_attachment_stays_shared_after_a_move(db):
     )
 
 
-# --- the folder that cannot answer ------------------------------------------ #
+# --- a company-less folder no longer answers anything (R10) ----------------- #
 
-def test_a_company_less_folder_falls_back_to_the_active_company(db):
-    """No company to copy off the folder, so the move stamps the one company the
-    user is actually working in - the same rule an upload uses."""
+def test_a_company_less_folder_no_longer_stamps_a_file_moved_into_it(db):
+    """R10: a move never consults the destination folder for a company to
+    copy, company-less or not - the file stays exactly as shared as it was."""
     set_company_scope(db, None)
     attachment = _upload(db, _payload(db))
     assert attachment.company_id is None
@@ -174,15 +171,14 @@ def test_a_company_less_folder_falls_back_to_the_active_company(db):
     set_company_scope(db, frozenset({MOCHA_ID}))
     AttachmentService(db).bulk_move([attachment.id], folder_id)
 
-    assert _company_id(db, attachment.id) == MOCHA_ID, (
-        "a file filed into a company-less folder stayed shared even though exactly "
-        "one company was active"
+    assert _company_id(db, attachment.id) is None, (
+        "a move re-stamped a file off a company-less folder, which R10 retires"
     )
 
 
 def test_a_company_less_folder_under_an_ambiguous_scope_stamps_nothing(db):
-    """Nothing exact to copy AND no single active company: a wrong guess is worse
-    than shared, so the file stays NULL."""
+    """Same outcome under an ambiguous (all-companies) scope: still nothing to
+    guess, since a move stamps nothing regardless (R10)."""
     set_company_scope(db, None)
     attachment = _upload(db, _payload(db))
     assert attachment.company_id is None

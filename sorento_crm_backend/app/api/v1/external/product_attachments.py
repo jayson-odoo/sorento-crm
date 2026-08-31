@@ -586,6 +586,16 @@ def _link_attachment_to_products_bulk(
                 attachment_id=attachment_id,
                 access_levels=access_levels,
                 linked_via_set_id=_resolution.product_set_id_for(product_code),
+                # Explicit, not scope-derived: under a SHARED attachment's
+                # ALL-COMPANIES scope, the before_insert auto-stamp would
+                # otherwise land every row (including a Mocha twin's) on the
+                # incumbent company instead of the twin's own
+                # (PLAN-shared-brand-attachments S2, AC-B8).
+                company_id=(
+                    str(getattr(product, "company_id"))
+                    if getattr(product, "company_id", None)
+                    else None
+                ),
             )
             service.create_product_attachment(data, created_by=created_by)
             try:
