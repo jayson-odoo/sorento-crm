@@ -22,6 +22,7 @@ import uuid
 from decimal import Decimal
 
 import pytest
+from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.database import SessionLocal, engine
@@ -422,6 +423,107 @@ def test_ac_a6_link_products_route_reports_via_prefix(db: Session, srtbv):
     assert response.skipped_product_codes == []
     assert {item.product_code for item in response.linked} == srtbv["codes"]
     assert all(item.via == "prefix" for item in response.linked)
+
+
+def test_ac_a6_link_products_http_route_reports_via_prefix_on_the_json_body(
+    db: Session, srtbv
+):
+    """AC-A6, over real HTTP.
+
+    The test above calls ``_link_attachment_to_products_bulk`` directly, so it
+    only proves the ``via`` attribute exists on the Python object -- FastAPI's
+    ``response_model=ProductAttachmentBulkLinkResponse`` on the actual route can
+    still drop an undeclared/mis-serialized field on the way out to JSON
+    (LESSONS-LEARNT: "`response_model` silently drops undeclared fields.
+    Assert the field in a test."). This drives the real mounted route,
+    ``POST /api/v1/external/product-attachments/link-products``, through
+    ``TestClient`` with a real ``X-API-Key`` header, and asserts ``via`` on the
+    decoded JSON body rather than the ORM/pydantic object.
+
+    Authorization itself is out of scope here (covered by
+    ``test_external_permission_guard.py``), so the permission check is granted
+    via the sanctioned ``tests._external_auth.external_permissions_granted``
+    helper -- the key still resolves to a real, freshly seeded integration
+    principal, so the request genuinely authenticates via ``X-API-Key``.
+    """
+    from app.main import app  # imported here, not at module top: app.main must
+    # load after app.modules.runtime.guards has a chance to resolve its own
+    # circular import, exactly as tests/test_certificate_api.py does.
+    from app.database import get_db
+    from app.models.integration import Integration
+    from app.models.resources import Attachment
+    from app.models.user import User
+    from app.services.company_scope import set_company_scope
+    from app.services.company_scope_resolver import apply_company_scope
+    from app.services.integration_key_service import IntegrationKeyService
+    from tests._external_auth import external_permissions_granted
+
+    attachment = Attachment(
+        id=str(uuid.uuid4()),
+        original_filename=_uid("cert-http") + ".pdf",
+        stored_filename=_uid("stored-http") + ".pdf",
+        file_path="zzt://cert-http",
+        company_id=srtbv["company"].id,
+    )
+    db.add(attachment)
+    db.flush()
+
+    # A real integration principal, seeded fresh in this test's own
+    # savepoint-scoped transaction -- never an existing/borrowed row.
+    api_user = User(
+        id=str(uuid.uuid4()),
+        email=f"{_uid('integration').lower()}@zzt.test",
+        name="ZZT link-products integration",
+        status="ACTIVE",
+    )
+    db.add(api_user)
+    db.flush()
+    integration = Integration(
+        id=str(uuid.uuid4()),
+        name=_uid("integration"),
+        type="zzt_test",
+        act_as_user_id=api_user.id,
+        is_active=True,
+    )
+    db.add(integration)
+    db.flush()
+    api_key = IntegrationKeyService(db).issue_key(integration)
+
+    def _override_get_db():
+        yield db
+
+    # The company-scope resolver's X-API-Key branch only recognizes the legacy
+    # shared `EXTERNAL_API_KEY` env value (a separate mechanism from the
+    # per-integration keys `IntegrationKeyService` issues), so a freshly minted
+    # key here resolves to `UNSET` (fail-closed, 0 rows) rather than "all
+    # companies" -- the same override `tests/test_certificate_api.py` uses to
+    # pin scope explicitly rather than depending on that legacy path.
+    def _override_company_scope():
+        set_company_scope(db, frozenset({str(srtbv["company"].id)}))
+        return frozenset({str(srtbv["company"].id)})
+
+    app.dependency_overrides[get_db] = _override_get_db
+    app.dependency_overrides[apply_company_scope] = _override_company_scope
+    try:
+        with external_permissions_granted():
+            with TestClient(app) as client:
+                response = client.post(
+                    "/api/v1/external/product-attachments/link-products",
+                    json={
+                        "attachment_id": attachment.id,
+                        "products": ["ZZT-SRTBV - BRASS BALL VALVE"],
+                    },
+                    headers={"X-API-Key": api_key},
+                )
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+        app.dependency_overrides.pop(apply_company_scope, None)
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["skipped_product_codes"] == []
+    assert {item["product_code"] for item in body["linked"]} == srtbv["codes"]
+    assert all(item["via"] == "prefix" for item in body["linked"])
 
 
 # ------------------------------------------------------------------ isolation
