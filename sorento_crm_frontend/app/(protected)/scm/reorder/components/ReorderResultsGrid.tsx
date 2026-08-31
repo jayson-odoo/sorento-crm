@@ -34,7 +34,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { cn } from '@/lib/utils';
 import { ConfidenceBadge } from '../../components/HealthIndicators';
-import { EM_DASH, fmtDoc, fmtInt, fmtMoney, fmtSigned, fmtSupplierCost } from '../../lib/format';
+import { EM_DASH, fmtDoc, fmtInt, fmtSigned, fmtSupplierCost } from '../../lib/format';
 import { useReorderRecommendations } from '../hooks/useReorderRun';
 import type {
   AllocationLine,
