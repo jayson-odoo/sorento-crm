@@ -25,7 +25,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import uuid
-from typing import Iterable, NamedTuple, Optional
+from typing import Iterable, Iterator, NamedTuple, Optional
 
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
@@ -53,8 +53,39 @@ logger = logging.getLogger(__name__)
 STORAGE_ENTITY_TYPE = "dealer_kit_asset"
 
 DECORATIVE = "decorative"
+FONT = "font"
 
-_EXTENSIONS = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
+#: What a library asset can BE. `font` (S3b, D29) is a file the editor and the
+#: print page load through `@font-face`; everything else is artwork. Kept as a
+#: plain set rather than a lookup table because it is a vocabulary, not data
+#: somebody administers.
+KINDS = frozenset({DECORATIVE, "badge", "icon", "diagram", "logo", FONT})
+
+_EXTENSIONS = {
+    "image/jpeg": "jpg",
+    "image/png": "png",
+    "image/webp": "webp",
+    "image/svg+xml": "svg",
+    "font/woff2": "woff2",
+    "font/ttf": "ttf",
+    "font/otf": "otf",
+}
+
+#: Which file extensions each kind accepts, and the mime each implies.
+#:
+#: Validated on the EXTENSION rather than the browser's content type, because a
+#: browser sends `application/octet-stream` for a woff2 as often as not - and
+#: because the failure this guards is silent: a JPEG accepted as a font reaches
+#: the print page as a broken `@font-face`, Chromium falls back to a system font
+#: without complaining, and the tag prints in the wrong typeface.
+FONT_EXTENSIONS = {"woff2": "font/woff2", "ttf": "font/ttf", "otf": "font/otf"}
+IMAGE_EXTENSIONS = {
+    "jpg": "image/jpeg",
+    "jpeg": "image/jpeg",
+    "png": "image/png",
+    "webp": "image/webp",
+    "svg": "image/svg+xml",
+}
 
 
 def create_from_bytes(
@@ -226,6 +257,134 @@ def urls_for(
     return urls
 
 
+def mime_for_upload(filename: str, kind: str) -> str:
+    """The mime a library upload is stored under, or a refusal.
+
+    Raises ``ValueError`` naming what WOULD have been accepted: an upload
+    rejected with "invalid file" sends the person back to the file picker with
+    nothing to change.
+    """
+    if kind not in KINDS:
+        raise ValueError(
+            f"Unknown asset kind '{kind}'. Choose one of: "
+            + ", ".join(sorted(KINDS))
+            + "."
+        )
+
+    extension = (filename or "").rsplit(".", 1)[-1].lower() if "." in (filename or "") else ""
+
+    if kind == FONT:
+        mime = FONT_EXTENSIONS.get(extension)
+        if not mime:
+            raise ValueError(
+                "A font must be a .woff2, .ttf or .otf file."
+            )
+        return mime
+
+    mime = IMAGE_EXTENSIONS.get(extension)
+    if not mime:
+        raise ValueError(
+            "Artwork must be a .png, .jpg, .webp or .svg file."
+        )
+    return mime
+
+
+def list_assets(
+    db: Session,
+    *,
+    kind: Optional[str] = None,
+    tag: Optional[str] = None,
+    query: Optional[str] = None,
+    limit: int = 100,
+) -> list[tuple[Asset, Attachment]]:
+    """The library, narrowed the three ways a picker narrows it.
+
+    Company-scoped by the ordinary ORM filter (``Asset`` is owned), and joined to
+    the attachment so a caller can sign every row without a second query per
+    thumbnail.
+    """
+    statement = (
+        db.query(Asset, Attachment)
+        .join(Attachment, Attachment.id == Asset.attachment_id)
+        .filter(Attachment.is_deleted.is_(False))
+    )
+
+    if kind:
+        statement = statement.filter(Asset.kind == kind)
+    if tag:
+        statement = statement.filter(Asset.tags.any(tag))
+    if query and query.strip():
+        statement = statement.filter(Asset.name.ilike(f"%{query.strip()}%"))
+
+    return statement.order_by(Asset.name).limit(limit).all()
+
+
+def font_assets(db: Session, *, expires_in: int = 3600) -> list[dict]:
+    """Every brand font this company can print with, signed.
+
+    ALL of them, not just the ones a document names: a text layer carries a font
+    FAMILY, never an asset id, so nothing can tell which fonts a page needs until
+    the browser lays the text out. The list is small (a brand has a handful of
+    faces), and a missing one is a tag printed in the wrong typeface.
+    """
+    rows = list_assets(db, kind=FONT, limit=100)
+
+    fonts: list[dict] = []
+    for asset, attachment in rows:
+        signed = resolve_signed_url(
+            attachment.file_path,
+            provider=attachment.storage_provider,
+            expires_in=expires_in,
+            strict=True,
+        )
+        if not signed:
+            continue
+        # The family IS the asset name. The inspector lists names, a text layer
+        # stores the one that was picked, and `@font-face` declares the same
+        # string - so the three cannot disagree about what "ZZT Brand" means.
+        fonts.append({"name": asset.name, "family": asset.name, "url": signed})
+    return fonts
+
+
+def tag_sheet_asset_ids(doc: Optional[dict]) -> set[str]:
+    """Every library asset a tag sheet or tag template document names.
+
+    The tag-shaped counterpart of ``background_asset_ids``: layers rather than
+    section styles. Both an ``image`` layer whose source is an asset and a
+    ``badge`` layer count, and an ``image`` layer saved before S3b - which
+    carried a bare ``assetId`` - counts too, so a template nobody has reopened
+    still prints its artwork.
+
+    A product photo is deliberately NOT here: it is a ``product_attachments``
+    row behind the access gate, signed by ``product_images``, not a library
+    asset.
+    """
+    ids: set[str] = set()
+    if not doc:
+        return ids
+
+    for sheet in doc.get("sheets", []) or []:
+        for tag in (sheet or {}).get("tags", []) or []:
+            ids |= _layer_asset_ids((tag or {}).get("layers", []) or [])
+
+    # A tag TEMPLATE document is layers all the way down, with no sheets.
+    ids |= _layer_asset_ids(doc.get("layers", []) or [])
+    return ids
+
+
+def _layer_asset_ids(layers) -> set[str]:
+    ids: set[str] = set()
+    for layer in layers or []:
+        props = (layer or {}).get("props") or {}
+        source = props.get("source")
+        if isinstance(source, dict) and source.get("type") == "asset":
+            if source.get("assetId"):
+                ids.add(source["assetId"])
+        elif props.get("assetId"):
+            ids.add(props["assetId"])
+    return ids
+
+
 def background_asset_ids(doc: Optional[dict]) -> set[str]:
     """Every asset a document uses as a section background.
 
@@ -286,10 +445,27 @@ class StoredObject(NamedTuple):
     key: str
 
 
+def _tag_layer_shapes(value: str) -> Iterator[dict]:
+    """The jsonb containment shapes that mean "a tag layer names this asset".
+
+    Two per document shape, because a layer carries its asset id in one of two
+    places and both are live: a ``badge`` layer (and an ``image`` layer saved
+    before S3b) puts it straight on ``props.assetId``, while an ``image`` layer
+    saved since puts it under ``props.source``. Missing either would fail the
+    guard OPEN - see the docstring below for why that is the direction that
+    costs artwork.
+    """
+    for holder in ({"assetId": value}, {"source": {"type": "asset", "assetId": value}}):
+        # A tag TEMPLATE is layers all the way down; a tag SHEET wraps the same
+        # layers in sheets and placed tags.
+        yield {"layers": [{"props": holder}]}
+        yield {"sheets": [{"tags": [{"layers": [{"props": holder}]}]}]}
+
+
 def referenced_asset_ids(db: Session, asset_ids: Iterable[str]) -> set[str]:
     """Of these assets, the ones something can still show.
 
-    Two things name an asset:
+    Four things name an asset:
 
     * a ``page_version.doc`` binding it as ``style.backgroundAssetId`` - ANY
       version, published, staging or an unlabelled draft. Rollback is a label
@@ -299,6 +475,12 @@ def referenced_asset_ids(db: Session, asset_ids: Iterable[str]) -> set[str]:
     * a ``flyer_reading.reading_json`` still claiming it as a page banner, which
       is what lets a brochure be deleted before its reading without stranding
       the artwork.
+    * a ``tag_template.doc`` drawing it as a badge or an image layer. The eight
+      starter templates are almost nothing BUT badge layers, so for every badge
+      the seed uploads this is the ONLY thing that names it.
+    * a ``page_version.doc`` holding a TAG SHEET - the same layers, wrapped in
+      ``sheets -> tags``, which the background containment test above cannot see
+      because it is a different document shape entirely.
 
     A jsonb containment test per candidate, OR'd into ONE statement, so the
     database hands back only documents that really name one of them; which ids
@@ -328,7 +510,7 @@ def referenced_asset_ids(db: Session, asset_ids: Iterable[str]) -> set[str]:
     if not ids:
         return set()
 
-    from app.models.dealer_kit import FlyerReadingRecord, PageVersion
+    from app.models.dealer_kit import FlyerReadingRecord, PageVersion, TagTemplate
 
     # Local: ``flyer_reading_service`` imports this module, and the reading's
     # JSON shape belongs to it rather than to the library.
@@ -336,8 +518,11 @@ def referenced_asset_ids(db: Session, asset_ids: Iterable[str]) -> set[str]:
 
     referenced: set[str] = set()
 
+    tag_shapes = [shape for value in ids for shape in _tag_layer_shapes(value)]
+
     # None = every company. See the docstring: scoping this read is what turns
-    # a fail-closed guard into a fail-open one.
+    # a fail-closed guard into a fail-open one. ``TagTemplate`` is scoped, so it
+    # needs this as much as the reading does.
     with company_scope(db, None):
         docs = (
             db.query(PageVersion.doc)
@@ -348,13 +533,25 @@ def referenced_asset_ids(db: Session, asset_ids: Iterable[str]) -> set[str]:
                             {"sections": [{"style": {"backgroundAssetId": value}}]}
                         )
                         for value in ids
-                    ]
+                    ],
+                    *[PageVersion.doc.contains(shape) for shape in tag_shapes],
                 )
             )
             .all()
         )
         for (doc,) in docs:
-            referenced |= background_asset_ids(doc) & ids
+            # Both readers, on every hit: one page_version row is a sectioned
+            # page OR a tag sheet, and asking which it is would be a third
+            # answer to a question these two already answer.
+            referenced |= (background_asset_ids(doc) | tag_sheet_asset_ids(doc)) & ids
+
+        templates = (
+            db.query(TagTemplate.doc)
+            .filter(or_(*[TagTemplate.doc.contains(shape) for shape in tag_shapes]))
+            .all()
+        )
+        for (doc,) in templates:
+            referenced |= tag_sheet_asset_ids(doc) & ids
 
         readings = (
             db.query(FlyerReadingRecord.reading_json)
@@ -451,12 +648,20 @@ def purge_objects(objects: Iterable[StoredObject]) -> None:
 
 __all__ = [
     "DECORATIVE",
+    "FONT",
+    "IMAGE_EXTENSIONS",
+    "FONT_EXTENSIONS",
+    "KINDS",
     "STORAGE_ENTITY_TYPE",
     "StoredObject",
     "background_asset_ids",
     "background_urls",
     "create_from_bytes",
     "delete_unreferenced",
+    "font_assets",
+    "list_assets",
+    "mime_for_upload",
+    "tag_sheet_asset_ids",
     "purge_objects",
     "referenced_asset_ids",
     "urls_for",

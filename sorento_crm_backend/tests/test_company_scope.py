@@ -468,7 +468,17 @@ def test_every_company_id_table_is_registered():
     # company whose goods moved.
     # 123 since scm.supplier_product_code_alias (R16, the supplier's own spelling of a
     # product code, remembered per company).
-    expected_owned = 123
+    #
+    # PLAN-price-tag-request.md adds 2 more. `price_tag_requests` is a salesperson's
+    # request for printed tags naming ONE company's products at ONE company's prices -
+    # loaded by id on claim, design and every status transition, and its doc number
+    # (`PT-YYYYMM-NNNN`) is unique per company the same way an SO/PO number is.
+    # `price_tag_request_lines` stays unscoped: it is reachable only through its
+    # request, which already carries the partition (the `selection_line` rule).
+    # `dealer_kit.tag_template` is owned for the same reason `dealer_kit.page` is:
+    # a reusable tag layout is one company's own catalogue asset, loaded by id when a
+    # request line is dropped onto the designer.
+    expected_owned = 125
     assert len(owned) == expected_owned, (
         f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
     )

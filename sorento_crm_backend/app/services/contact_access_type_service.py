@@ -61,6 +61,26 @@ def _clean_keywords(value) -> list[str]:
     return out
 
 
+def _clean_portal_form_types(value) -> list[str]:
+    """Coerce the admin-supplied portal form kinds to a clean, order-preserving list.
+
+    Membership is already checked by the schema (unknown kind = 422); this only
+    strips blanks and duplicates so the stored array is exactly what the admin
+    picked, once each.
+    """
+    if not value:
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for v in value:
+        s = str(v or "").strip()
+        if not s or s in seen:
+            continue
+        seen.add(s)
+        out.append(s)
+    return out
+
+
 def _tokenize_access_label(value: str) -> set[str]:
     """Token set with naive plural strip (drop trailing 's' for tokens >3 chars not ending 'ss')."""
     tokens: set[str] = set()
@@ -196,6 +216,7 @@ class ContactAccessTypeService:
             is_active=data.get("is_active", True),
             sort_order=data.get("sort_order"),
             keywords=_clean_keywords(data.get("keywords")),
+            portal_form_types=_clean_portal_form_types(data.get("portal_form_types")),
         )
         self.db.add(row)
         self.db.commit()
@@ -217,6 +238,8 @@ class ContactAccessTypeService:
             row.sort_order = data["sort_order"]
         if "keywords" in data:
             row.keywords = _clean_keywords(data["keywords"])
+        if "portal_form_types" in data:
+            row.portal_form_types = _clean_portal_form_types(data["portal_form_types"])
         self.db.commit()
         self.db.refresh(row)
         return row

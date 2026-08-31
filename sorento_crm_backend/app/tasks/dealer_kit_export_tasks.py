@@ -43,6 +43,20 @@ def _print_url(download_id: str) -> str:
     return f"{base}/c/print/{download_id}?token={token}"
 
 
+def _tag_sheet_print_url(
+    download_id: str,
+    sheet_ids: list[str] | None = None,
+) -> str:
+    """Build the print URL for a tag sheet page."""
+    base = os.environ.get(PRINT_BASE_ENV, DEFAULT_PRINT_BASE).rstrip("/")
+    token = render_token.issue(download_id)
+    url = f"{base}/c/print/tag-sheet/{download_id}?token={token}"
+    if sheet_ids:
+        for sid in sheet_ids:
+            url += f"&sheet={sid}"
+    return url
+
+
 def _render_pdf(url: str, *, landscape: bool, paper: str) -> bytes:
     """Render in a freshly SPAWNED subprocess, never in this process.
 
@@ -146,6 +160,69 @@ def generate_catalogue_pdf(download_id: str) -> dict:
         except Exception:
             logger.exception(
                 "generate_catalogue_pdf: could not mark download %s failed", download_id
+            )
+        return {"download_id": download_id, "status": "failed", "error": str(exc)}
+    finally:
+        db.close()
+
+
+def generate_tag_sheet_pdf(
+    download_id: str,
+    sheet_ids: list[str] | None = None,
+) -> dict:
+    """Render a tag sheet behind ``download_id`` to PDF and store it.
+
+    Same flow as ``generate_catalogue_pdf`` but points Chromium at the tag-sheet
+    print page instead. Tag sheets are always portrait A4.
+    """
+    db = SessionLocal()
+    svc = DownloadService(db)
+    try:
+        svc.mark_processing(download_id)
+
+        # Validate the export request exists.
+        export_service.get_request(db, download_id)
+
+        pdf_bytes = _render_pdf(
+            _tag_sheet_print_url(download_id, sheet_ids),
+            landscape=False,
+            paper="A4",
+        )
+
+        download = svc.get(download_id)
+        filename = (
+            (download.filename if download else None)
+            or f"tag-sheet-{download_id}.pdf"
+        )
+
+        provider = default_provider()
+        backend = get_backend(provider)
+        stored_key, _signed = backend.upload_file(
+            file_content=pdf_bytes,
+            file_path=f"exports/dealer-kit-tag-sheet/{download_id}/{filename}",
+            content_type="application/pdf",
+        )
+
+        svc.mark_ready(
+            download_id,
+            storage_provider=provider,
+            storage_key=stored_key,
+            filename=filename,
+        )
+        logger.info(
+            "generate_tag_sheet_pdf: download %s ready (%d bytes)",
+            download_id,
+            len(pdf_bytes),
+        )
+        return {"download_id": download_id, "status": "ready", "bytes": len(pdf_bytes)}
+    except Exception as exc:  # noqa: BLE001 - mark failed, never poison the queue
+        logger.exception("generate_tag_sheet_pdf failed for download %s", download_id)
+        try:
+            svc.mark_failed(download_id, str(exc))
+        except Exception:
+            logger.exception(
+                "generate_tag_sheet_pdf: could not mark download %s failed",
+                download_id,
             )
         return {"download_id": download_id, "status": "failed", "error": str(exc)}
     finally:

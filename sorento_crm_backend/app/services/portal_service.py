@@ -66,7 +66,21 @@ OTP_MAX_ATTEMPTS = 5
 # Hard daily cap per contact - the slug URL is bookmarkable/shareable, so an
 # attacker with a leaked slug could otherwise spam the contact with OTP sends.
 OTP_DAILY_CAP = 10
+# The kinds the GENERIC portal machinery serves: the submission CRUD below, the
+# neighbours, the revision policy rows, the attachment linkage. A price tag
+# request is served by NONE of them - it has its own routes, its own service and
+# no revision policy - so it is deliberately absent. It was added here once, and
+# that made the generic listing answer `200 []` for it instead of refusing, put a
+# revision-config row on screen that configures nothing, and left the router
+# include ORDER as the only thing keeping the generic handler off the real price
+# tag writes.
 SUPPORTED_TYPES = ("complaint", "stock_inquiry", "purchase_request", "sponsorship_form")
+
+# The kinds an ADMIN may grant on a contact access type, which is a different
+# question: it is about what the portal LANDING offers a contact, and the price
+# tag request has a landing card like the rest. `portal_form_types` is validated
+# against this one.
+GRANTABLE_PORTAL_FORM_TYPES = SUPPORTED_TYPES + ("price_tag_request",)
 PORTAL_ATTACHMENT_TYPE_CODE = "portal_submission"
 
 # Crockford base32 alphabet - excludes I, L, O, U to eliminate look-alike

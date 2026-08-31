@@ -10,14 +10,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import {
-  AlertCircle,
-  Filter,
-  FileText,
-  LogOut,
-  Plus,
-  Star,
-} from 'lucide-react';
+import { AlertCircle, Filter, FileText, LogOut, Plus, Star } from 'lucide-react';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -41,20 +34,24 @@ import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
 import {
+  GATED_LANDING_KINDS,
+  LANDING_LABELS,
   PortalContact,
+  PortalLandingKind,
   PortalSubmissionKind,
   PortalSubmissionSummary,
   PortalUnauthorizedError,
   SUBMISSION_KINDS,
-  SUBMISSION_LABELS,
   clearPortalToken,
   fetchMeWithGrace,
   fetchSubmissions,
+  isLandingKind,
   isSubmissionKind,
   portalLogout,
   readPortalToken,
   statusLabel,
 } from '../lib/portal-client';
+import { listRequestsAsSummaries } from '../lib/price-tag-request-service';
 import {
   complaintStatusLabel,
   complaintStatusPillClass,
@@ -75,6 +72,27 @@ const TYPES: PortalSubmissionKind[] = [
   'stock_inquiry',
   ...SUBMISSION_KINDS.filter((k) => k !== 'stock_inquiry'),
 ];
+
+/**
+ * The dropdown's option list for THIS contact (D45): the four ungated kinds,
+ * then every gated form the contact's access types (or an override) grant.
+ * The server enforces the same rule on every route regardless, so this only
+ * decides what is offered, never what is allowed.
+ */
+function landingKindsFor(contact: PortalContact | null): PortalLandingKind[] {
+  const granted = GATED_LANDING_KINDS.filter((k) =>
+    contact?.visible_form_types?.includes(k),
+  );
+  return [...TYPES, ...granted];
+}
+
+const EMPTY_LISTS: Record<PortalLandingKind, PortalSubmissionSummary[]> = {
+  complaint: [],
+  stock_inquiry: [],
+  purchase_request: [],
+  sponsorship_form: [],
+  price_tag_request: [],
+};
 
 type StatusFilter = 'all' | 'draft' | 'submitted' | 'rejected';
 
@@ -157,6 +175,9 @@ function pickCardMeta(row: PortalSubmissionSummary): {
       customer: row.project_customer ?? undefined,
     };
   }
+  if (row.kind === 'price_tag_request') {
+    return { customer: row.customer_name ?? undefined };
+  }
   return {
     project: row.project_title ?? row.sponsor_subject ?? undefined,
     customer: row.customer_name ?? undefined,
@@ -167,24 +188,18 @@ export function PortalLanding({ slug }: { slug?: string }) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [contact, setContact] = useState<PortalContact | null>(null);
-  const [submissions, setSubmissions] = useState<
-    Record<PortalSubmissionKind, PortalSubmissionSummary[]>
-  >({
-    complaint: [],
-    stock_inquiry: [],
-    purchase_request: [],
-    sponsorship_form: [],
-  });
+  const [submissions, setSubmissions] =
+    useState<Record<PortalLandingKind, PortalSubmissionSummary[]>>(EMPTY_LISTS);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const initialTabFromUrl = (() => {
     const t = searchParams?.get('type');
-    return isSubmissionKind(t) ? t : 'stock_inquiry';
+    return isLandingKind(t) ? t : 'stock_inquiry';
   })();
   const [activeTab, setActiveTab] =
-    useState<PortalSubmissionKind>(initialTabFromUrl);
+    useState<PortalLandingKind>(initialTabFromUrl);
   const userPickedTabRef = useRef<boolean>(Boolean(searchParams?.get('type')));
   // Mirror current URL `?type=` so loadAll's expired-token redirect can read it
   // without depending on `searchParams` (which would re-create loadAll and
@@ -193,6 +208,18 @@ export function PortalLanding({ slug }: { slug?: string }) {
   useEffect(() => {
     typeQueryRef.current = searchParams?.get('type') ?? null;
   }, [searchParams]);
+
+  const landingKinds = useMemo(() => landingKindsFor(contact), [contact]);
+
+  // A `?type=` deep link, or a starred default, can name a gated kind this
+  // contact does not hold - a link forwarded by a colleague, or a grant since
+  // withdrawn. Fall back to the first ungated kind rather than showing an
+  // option whose list the server would refuse (D45).
+  useEffect(() => {
+    if (!contact) return;
+    if (landingKinds.includes(activeTab)) return;
+    setActiveTab('stock_inquiry');
+  }, [contact, landingKinds, activeTab]);
 
   // Once the contact is known (and the URL has no `?type=` deep-link, and the
   // user hasn't manually switched tabs in this session), apply any default
@@ -205,11 +232,13 @@ export function PortalLanding({ slug }: { slug?: string }) {
     const stored = window.localStorage.getItem(
       `sorento.portalDefaultTab.${contact.contact_id}`,
     );
-    if (isSubmissionKind(stored)) setActiveTab(stored);
+    if (isLandingKind(stored) && landingKinds.includes(stored)) {
+      setActiveTab(stored);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [contact?.contact_id]);
+  }, [contact?.contact_id, landingKinds]);
 
-  const handleTabChange = useCallback((next: PortalSubmissionKind) => {
+  const handleTabChange = useCallback((next: PortalLandingKind) => {
     userPickedTabRef.current = true;
     setActiveTab(next);
   }, []);
@@ -220,21 +249,21 @@ export function PortalLanding({ slug }: { slug?: string }) {
   }, [contact?.contact_id]);
 
   const [savedDefaultTab, setSavedDefaultTab] =
-    useState<PortalSubmissionKind | null>(null);
+    useState<PortalLandingKind | null>(null);
   useEffect(() => {
     if (!defaultTabKey || typeof window === 'undefined') {
       setSavedDefaultTab(null);
       return;
     }
     const stored = window.localStorage.getItem(defaultTabKey);
-    setSavedDefaultTab(isSubmissionKind(stored) ? stored : null);
+    setSavedDefaultTab(isLandingKind(stored) ? stored : null);
   }, [defaultTabKey]);
 
   const handleSetDefaultTab = useCallback(() => {
     if (!defaultTabKey || typeof window === 'undefined') return;
     window.localStorage.setItem(defaultTabKey, activeTab);
     setSavedDefaultTab(activeTab);
-    toast.success(`${SUBMISSION_LABELS[activeTab]} is now your default tab.`);
+    toast.success(`${LANDING_LABELS[activeTab]} is now your default tab.`);
   }, [activeTab, defaultTabKey]);
 
   // Track whether the very first load has finished. Subsequent search
@@ -245,7 +274,7 @@ export function PortalLanding({ slug }: { slug?: string }) {
   // Keep tab in sync if the user navigates back with a different ?type=.
   useEffect(() => {
     const t = searchParams?.get('type');
-    if (isSubmissionKind(t) && t !== activeTab) setActiveTab(t);
+    if (isLandingKind(t) && t !== activeTab) setActiveTab(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
@@ -263,14 +292,43 @@ export function PortalLanding({ slug }: { slug?: string }) {
         // (fresh token transiently 401s) before bouncing back to verify.
         const me = await fetchMeWithGrace();
         setContact(me);
-        const lists = await Promise.all(
-          TYPES.map((t) => fetchSubmissions(t, q)),
+        // The gated kinds answer their own endpoints in their own shapes, so
+        // each brings its own adapter (D45) and is only asked for when the
+        // contact holds the grant.
+        const wantsPriceTags = Boolean(
+          me.visible_form_types?.includes('price_tag_request'),
         );
+        // allSettled, not all: the legs are independent lists and one of them
+        // answering 403 or 500 used to reject the whole load, so the landing
+        // showed its error screen and the four kinds that answered perfectly
+        // well were unreachable. A leg that fails is that kind empty.
+        const legs = await Promise.allSettled([
+          ...TYPES.map((t) => fetchSubmissions(t, q)),
+          wantsPriceTags ? listRequestsAsSummaries(q) : Promise.resolve([]),
+        ]);
+
+        // An expired token is not one kind failing - every leg would fail and
+        // the answer is to re-verify - so it is rethrown to the handler below.
+        const dead = legs.find(
+          (leg) =>
+            leg.status === 'rejected' &&
+            leg.reason instanceof PortalUnauthorizedError,
+        );
+        if (dead && dead.status === 'rejected') throw dead.reason;
+
+        const rowsOf = (index: number): PortalSubmissionSummary[] => {
+          const leg = legs[index];
+          if (leg.status === 'fulfilled') return leg.value;
+          console.warn('Portal landing: one list failed to load', leg.reason);
+          return [];
+        };
+
         setSubmissions({
-          stock_inquiry: lists[0],
-          complaint: lists[1],
-          purchase_request: lists[2],
-          sponsorship_form: lists[3],
+          stock_inquiry: rowsOf(0),
+          complaint: rowsOf(1),
+          purchase_request: rowsOf(2),
+          sponsorship_form: rowsOf(3),
+          price_tag_request: rowsOf(4),
         });
         setError(null);
         // Token validated - clear the freshness stamp so subsequent transient
@@ -322,15 +380,16 @@ export function PortalLanding({ slug }: { slug?: string }) {
   }, [search]);
 
   const totals = useMemo(() => {
-    const out: Record<PortalSubmissionKind, number> = {
+    const out: Record<PortalLandingKind, number> = {
       complaint: 0,
       stock_inquiry: 0,
       purchase_request: 0,
       sponsorship_form: 0,
+      price_tag_request: 0,
     };
-    for (const t of TYPES) out[t] = submissions[t]?.length ?? 0;
+    for (const t of landingKinds) out[t] = submissions[t]?.length ?? 0;
     return out;
-  }, [submissions]);
+  }, [submissions, landingKinds]);
 
   const handleLogout = useCallback(async () => {
     const t = readPortalToken();
@@ -455,18 +514,18 @@ export function PortalLanding({ slug }: { slug?: string }) {
       <div className="flex items-stretch gap-2">
         <SearchableSelect
           value={activeTab}
-          onChange={(v) => handleTabChange(v as PortalSubmissionKind)}
-          options={TYPES.map((t) => ({
+          onChange={(v) => handleTabChange(v as PortalLandingKind)}
+          options={landingKinds.map((t) => ({
             value: t,
-            label: SUBMISSION_LABELS[t],
+            label: LANDING_LABELS[t],
           }))}
           size="lg"
           triggerClassName="flex-1 min-h-12 text-base"
           renderTriggerLabel={(opt) => {
-            const t = opt.value as PortalSubmissionKind;
+            const t = opt.value as PortalLandingKind;
             return (
               <span className="flex items-center gap-2">
-                {SUBMISSION_LABELS[t]}
+                {LANDING_LABELS[t]}
                 <Badge variant="secondary" className="px-1.5 py-0 text-xs">
                   {totals[t]}
                 </Badge>
@@ -480,10 +539,10 @@ export function PortalLanding({ slug }: { slug?: string }) {
             );
           }}
           renderOption={(opt) => {
-            const t = opt.value as PortalSubmissionKind;
+            const t = opt.value as PortalLandingKind;
             return (
               <span className="flex items-center gap-2">
-                {SUBMISSION_LABELS[t]}
+                {LANDING_LABELS[t]}
                 <Badge variant="secondary" className="px-1.5 py-0 text-xs">
                   {totals[t]}
                 </Badge>
@@ -504,8 +563,8 @@ export function PortalLanding({ slug }: { slug?: string }) {
           disabled={!contact || savedDefaultTab === activeTab}
           aria-label={
             savedDefaultTab === activeTab
-              ? `${SUBMISSION_LABELS[activeTab]} is your default tab`
-              : `Set ${SUBMISSION_LABELS[activeTab]} as default tab`
+              ? `${LANDING_LABELS[activeTab]} is your default tab`
+              : `Set ${LANDING_LABELS[activeTab]} as default tab`
           }
           title={
             savedDefaultTab === activeTab
@@ -540,7 +599,7 @@ function SubmissionList({
   statusFilter,
   slug,
 }: {
-  kind: PortalSubmissionKind;
+  kind: PortalLandingKind;
   items: PortalSubmissionSummary[];
   statusFilter: StatusFilter;
   slug?: string;
@@ -562,7 +621,7 @@ function SubmissionList({
         <Button asChild className="h-10">
           <Link href={portalNewPath(kind, slug)}>
             <Plus className="h-4 w-4 mr-2" />
-            New {SUBMISSION_LABELS[kind]}
+            New {LANDING_LABELS[kind]}
           </Link>
         </Button>
       </div>
@@ -571,7 +630,7 @@ function SubmissionList({
           <CardContent className="py-8 text-center text-sm text-muted-foreground space-y-2">
             <FileText className="h-8 w-8 mx-auto" />
             {items.length === 0 ? (
-              <p>No {SUBMISSION_LABELS[kind].toLowerCase()} submissions yet.</p>
+              <p>No {LANDING_LABELS[kind].toLowerCase()} submissions yet.</p>
             ) : (
               <p>No submissions match your filters.</p>
             )}
@@ -609,7 +668,7 @@ function SubmissionCard({
   onLongPress,
 }: {
   row: PortalSubmissionSummary;
-  kind: PortalSubmissionKind;
+  kind: PortalLandingKind;
   slug?: string;
   onLongPress: () => void;
 }) {
@@ -734,6 +793,12 @@ function SubmissionCard({
             {meta.customer}
           </p>
         )}
+        {row.needed_by_date && (
+          <p className="text-sm text-foreground/80">
+            <span className="text-muted-foreground">Needed by: </span>
+            {row.needed_by_date}
+          </p>
+        )}
         {row.last_revised_at ? (
           <p className="text-xs text-muted-foreground">
             Revised{' '}
@@ -767,14 +832,19 @@ function SubmissionPreviewDialog({
   onOpenChange,
 }: {
   row: PortalSubmissionSummary | null;
-  kind: PortalSubmissionKind;
+  kind: PortalLandingKind;
   slug?: string;
   onOpenChange: (open: boolean) => void;
 }) {
   const router = useRouter();
   // The list carries no policy block, so the card reads the same `revision`
   // block the detail page renders from. One GET, opened on long press only.
-  const { policy } = useRevisionPolicy(kind, row?.id ?? null);
+  // Revisions are a submission-kind mechanism: a gated kind has no such
+  // endpoint, so it is asked for nothing rather than 404ing on every preview.
+  const { policy } = useRevisionPolicy(
+    isSubmissionKind(kind) ? kind : 'stock_inquiry',
+    isSubmissionKind(kind) ? (row?.id ?? null) : null,
+  );
   const meta = row
     ? pickCardMeta(row)
     : { product: undefined, project: undefined, customer: undefined };
