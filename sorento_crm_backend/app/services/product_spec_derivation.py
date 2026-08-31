@@ -623,8 +623,14 @@ def _single_dimension(description: str) -> tuple[float | int, str] | None:
 
     Only consulted when the LxWxH form found nothing, so a compound size is never
     reduced to its first number.
+
+    A trap length is not a size. "ONE PIECE TWISTER FLUSH WC (P-TRAP 180MM)" states the
+    trap outlet and nothing else, and reading its 180 as the length put a wrong Length on
+    889 water closets (843 spec rows carried 180 / 250 / 300 from this span) and made
+    every hand-entered length on them read as a conflict. The trap span is blanked
+    before the lone size is looked for; ``trap_length`` reads it separately.
     """
-    match = _SINGLE_DIM_RE.search(description or "")
+    match = _SINGLE_DIM_RE.search(_TRAP_LENGTH_RE.sub(" ", description or ""))
     if not match:
         return None
     return _number(match.group(1)), match.group(0)
