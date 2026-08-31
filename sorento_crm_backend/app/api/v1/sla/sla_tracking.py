@@ -1375,6 +1375,13 @@ async def resolve_sla_tracking(
         raise handle_not_found("Conversation SLA tracking", str(tracking_id))
     if not service.can_user_act_on_tracking(current_user["id"], tracking):
         raise handle_not_found("Conversation SLA tracking", str(tracking_id))
+    if not service.can_user_resolve_tracking(current_user["id"], tracking):
+        # The row is visible (My Team), just not resolvable by this viewer -
+        # a "not found" here would be a lie, so this is the validation error
+        # sibling reassign already uses for its own out-of-scope case.
+        raise handle_validation_error(
+            "This task is assigned to someone else, so you cannot resolve it."
+        )
     updated = service.update_tracking(
         str(tracking_id), ConversationSLATrackingUpdate(is_resolved=True)
     )

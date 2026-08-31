@@ -10,6 +10,7 @@ import {
   MessageSquareQuote,
   Settings,
   UserRoundCog,
+  UserRoundPlus,
   Users,
 } from 'lucide-react';
 
@@ -47,7 +48,7 @@ import {
   useInterventionTicket,
   useResolveInterventionTicket,
 } from '../hooks/useInterventionTickets';
-import { useReassignSLATracking } from '../hooks/useTeamPendingSLA';
+import { useReassignSLATracking, useTakeoverSLATracking } from '../hooks/useTeamPendingSLA';
 import { contactHistoryHref } from '../lib/historyLinks';
 import ExtendDueDialog from './ExtendDueDialog';
 import ReassignDialog from './ReassignDialog';
@@ -73,6 +74,12 @@ interface InterventionTicketDrawerProps {
    * reason `onSent` exists.
    */
   onReassigned?: () => void;
+  /**
+   * Called after a takeover (My Team's viewer claims a teammate's ticket from
+   * inside the drawer). Same imperative-reload need as `onReassigned` - it
+   * just moved into My Pending instead of out of it.
+   */
+  onTakenOver?: () => void;
 }
 
 /**
@@ -88,17 +95,22 @@ export default function InterventionTicketDrawer({
   onResolved,
   onSent,
   onReassigned,
+  onTakenOver,
 }: InterventionTicketDrawerProps) {
   const [confirmResolve, setConfirmResolve] = useState(false);
   const [reassignOpen, setReassignOpen] = useState(false);
   const [extendOpen, setExtendOpen] = useState(false);
+  const [confirmTakeover, setConfirmTakeover] = useState(false);
   // Same slug the worklist row's Reassign is gated on (AC-B3 / AC-N7).
   const canReassign = useHasPermission(
     'sla_management.conversation_sla_tracking.reassign',
   );
   // Same slug the worklist row's Extend is gated on (AC-B4).
   const canExtend = useHasPermission('sla_management.conversation_sla_tracking.extend');
+  // Same slug the worklist row's Takeover is gated on (My Team).
+  const canTakeover = useHasPermission('sla_management.conversation_sla_tracking.takeover');
   const reassignMutation = useReassignSLATracking();
+  const takeoverMutation = useTakeoverSLATracking();
   /** Asks the panel's thread to scroll to the enquiry message (AC-N6). */
   const [jumpRequest, setJumpRequest] = useState<TicketJumpRequest | null>(null);
 
@@ -124,8 +136,30 @@ export default function InterventionTicketDrawer({
     });
   };
 
+  const handleTakeover = () => {
+    if (!ticketId || !ticket?.assignee_team_id) return;
+    takeoverMutation.mutate(
+      { id: ticketId, teamId: ticket.assignee_team_id },
+      {
+        onSuccess: () => {
+          setConfirmTakeover(false);
+          // The viewer just became the assignee: can_resolve/is_assignee flip,
+          // so re-read exactly like a reassign does.
+          void ticketQuery.refetch();
+          onTakenOver?.();
+        },
+      },
+    );
+  };
+
   const isResolved = !!ticket?.is_resolved;
   const historyHref = contactHistoryHref(ticket?.respond_io_id ?? ticket?.contact_phone);
+  // My Team can open this drawer for a teammate's ticket (reading is wider
+  // than resolving/taking over) - both gates need the SAME "is this actually
+  // mine" signal the backend already computed, not a re-derived one.
+  const showExtend = canExtend && !isResolved && !!ticket?.due_at_resolution;
+  const showTakeover =
+    canTakeover && !isResolved && ticket?.is_assignee === false && !!ticket?.assignee_team_id;
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -193,6 +227,13 @@ export default function InterventionTicketDrawer({
             variant="outline"
             size="sm"
             disabled={!ticket?.can_resolve || isResolved}
+            title={
+              // Obviously cannot resolve a ticket that is not assigned to you
+              // - say whose it is rather than leaving a dead button unexplained.
+              !isResolved && ticket && !ticket.can_resolve
+                ? `Assigned to ${ticket.assignee_name ?? 'someone else'}`
+                : undefined
+            }
             onClick={() => setConfirmResolve(true)}
           >
             <CheckCircle2 className="size-4" />
@@ -200,10 +241,11 @@ export default function InterventionTicketDrawer({
           </Button>
           {/* Overflow. Extend lives here rather than as a fourth header button:
               the header is already at its width on a phone, and every further
-              ticket action belongs in this menu instead of beside it. Gated on
-              the same slug + resolution-deadline rule as the worklist row's
-              Extend (AC-B4), so the menu is absent when it would hold nothing. */}
-          {canExtend && !isResolved && ticket?.due_at_resolution && (
+              ticket action belongs in this menu instead of beside it. Gated so
+              the menu is absent when it would hold nothing - Extend (AC-B4,
+              own task only) and Takeover (My Team, not-mine only) never both
+              apply to the same viewer, but showing whichever does is right. */}
+          {(showExtend || showTakeover) && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button
@@ -216,13 +258,24 @@ export default function InterventionTicketDrawer({
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                <DropdownMenuItem
-                  data-testid="ticket-extend"
-                  onSelect={() => setExtendOpen(true)}
-                >
-                  <CalendarPlus className="size-4 mr-2" />
-                  Extend
-                </DropdownMenuItem>
+                {showExtend && (
+                  <DropdownMenuItem
+                    data-testid="ticket-extend"
+                    onSelect={() => setExtendOpen(true)}
+                  >
+                    <CalendarPlus className="size-4 mr-2" />
+                    Extend
+                  </DropdownMenuItem>
+                )}
+                {showTakeover && (
+                  <DropdownMenuItem
+                    data-testid="ticket-takeover"
+                    onSelect={() => setConfirmTakeover(true)}
+                  >
+                    <UserRoundPlus className="size-4 mr-2" />
+                    Takeover
+                  </DropdownMenuItem>
+                )}
               </DropdownMenuContent>
             </DropdownMenu>
           )}
@@ -396,6 +449,33 @@ export default function InterventionTicketDrawer({
                 disabled={resolveMutation.isPending}
               >
                 {resolveMutation.isPending ? 'Resolving…' : 'Confirm'}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        {/* The SAME confirm pattern the worklist row's Takeover uses (AC-B on
+            My Team), never a fork - and inside the Sheet for the Radix reason
+            above. */}
+        <AlertDialog open={confirmTakeover} onOpenChange={setConfirmTakeover}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Take over this enquiry?</AlertDialogTitle>
+              <AlertDialogDescription>
+                Currently with {ticket?.assignee_name ?? 'a teammate'}. It will move to your
+                pending tasks at your tier. The SLA clock is not reset.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={takeoverMutation.isPending}>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={(e) => {
+                  e.preventDefault();
+                  handleTakeover();
+                }}
+                disabled={takeoverMutation.isPending}
+              >
+                {takeoverMutation.isPending ? 'Taking over…' : 'Take over'}
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>

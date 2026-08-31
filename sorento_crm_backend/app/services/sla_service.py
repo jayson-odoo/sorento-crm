@@ -1196,6 +1196,120 @@ class ConversationSLATrackingService:
             .first()
         )
 
+    def _pending_row(
+        self,
+        r: ConversationSLATracking,
+        *,
+        reference: Optional[str],
+        next_action: Optional[str],
+        respond_io_id: Optional[str],
+        contact_name: Optional[str],
+        contact_phone: Optional[str],
+    ) -> dict:
+        """One row's contract SHARED by /my-pending and /team-pending, so a
+        field that reaches one worklist reaches both - My Team fell behind My
+        Pending (no `is_intervention_ticket`, no enquiry snippet) exactly
+        because these used to be two independent builders that drifted.
+        Team-only fields (assignee_id/name, team_id/label) and any caller-
+        specific extra are layered on by each list_* method after this call.
+        """
+        from app.services.form_sla_service import FORM_SLA_TYPES
+
+        is_form_sla = r.source_entity_type in FORM_SLA_TYPES
+        # UAC B: a conversation row is an intervention TICKET only once it
+        # carries the enquiry identity this feature introduced
+        # (source_message_id, migration 321/S2a) - a pre-migration row with no
+        # trigger message keeps its old worklist behaviour (Respond inbox deep
+        # link, inline Escalate/Resolve) rather than opening a drawer with no
+        # enquiry to show.
+        is_ticket = (not is_form_sla) and bool(getattr(r, "source_message_id", None))
+        row: dict = {
+            "id": str(r.id),
+            "source_entity_type": r.source_entity_type,
+            "source_entity_id": r.source_entity_id,
+            # Authoritative form-vs-conversation flag (single source of truth so
+            # the widget never re-derives it and drifts - e.g. 'ticket' is a form
+            # type the FE route map doesn't know). Conversation rows = false.
+            "is_form_sla": is_form_sla,
+            "reference": reference,
+            "respond_io_id": respond_io_id,
+            "due_at": r.due_at.isoformat() if r.due_at else None,
+            # Resolution deadline - the Extend action targets this. Emitted so the
+            # widget can gate the Extend button client-side (hidden when null) and
+            # the dialog can show "Current due" without a preview round-trip.
+            "due_at_resolution": (
+                r.due_at_resolution.isoformat() if r.due_at_resolution else None
+            ),
+            # The deadline the assignee is actually racing: BEFORE responding it's
+            # the response due; AFTER responding it's the resolution due (the one
+            # Extend moves). Keyed purely on is_responded.
+            "active_due_at": self._active_due_iso(r, bool(r.is_responded)),
+            # Which clock the active deadline is, so the FE labels the badge:
+            # "Respond by" until responded, "Resolve by" after.
+            "due_kind": "resolve" if bool(r.is_responded) else "respond",
+            "is_responded": bool(r.is_responded),
+            "current_tier": r.current_tier,
+            # How many times the resolution deadline has been moved. The
+            # widget marks an extended row so a deadline somebody pushed out
+            # (and then forgot for a week) is visible before it breaches -
+            # the counter is already maintained by the extend service.
+            "extension_count": int(getattr(r, "extension_count", 0) or 0),
+            "policy_name": r.policy.name if r.policy else None,
+            # SLA-config-driven next action for form rows (e.g. "Send for
+            # approval", "Approve", "Mark resolved"); None for conversation rows.
+            "next_action": next_action,
+        }
+        if is_ticket:
+            # UAC AC-B1: never re-derived by the widget - explicit backend flag.
+            row["is_intervention_ticket"] = True
+            row["contact_name"] = contact_name
+            row["contact_phone"] = contact_phone
+            snippet = (getattr(r, "source_message_text", None) or "").strip()
+            row["enquiry_snippet"] = (snippet[:140] or None) if snippet else None
+            row["source_message_id"] = r.source_message_id
+            row["initiated_at"] = (
+                r.initiated_at.isoformat() if r.initiated_at else None
+            )
+            row["escalated_at"] = (
+                r.escalated_at.isoformat() if r.escalated_at else None
+            )
+        return row
+
+    def _contact_lookup_for_rows(
+        self, rows: list[ConversationSLATracking]
+    ) -> tuple[dict, dict, dict]:
+        """Batched respond_io_id / name / phone lookup, keyed by
+        `respond_contact_id`, for conversation rows on a worklist page.
+        Shared by /my-pending and /team-pending so this query is written once.
+        """
+        respond_io_by_contact: dict[str, Optional[str]] = {}
+        contact_name_by_contact: dict[str, Optional[str]] = {}
+        contact_phone_by_contact: dict[str, Optional[str]] = {}
+        contact_ids = {
+            str(r.respond_contact_id)
+            for r in rows
+            if getattr(r, "respond_contact_id", None)
+        }
+        if not contact_ids:
+            return respond_io_by_contact, contact_name_by_contact, contact_phone_by_contact
+        try:
+            for cid, rio, name, phone in (
+                self.db.query(
+                    RespondContact.id,
+                    RespondContact.respond_io_id,
+                    RespondContact.name,
+                    RespondContact.phone_number,
+                )
+                .filter(RespondContact.id.in_(contact_ids))
+                .all()
+            ):
+                respond_io_by_contact[str(cid)] = str(rio) if rio else None
+                contact_name_by_contact[str(cid)] = name
+                contact_phone_by_contact[str(cid)] = phone
+        except Exception:  # noqa: BLE001
+            self.db.rollback()
+        return respond_io_by_contact, contact_name_by_contact, contact_phone_by_contact
+
     def list_my_pending(self, user_id: str, limit: int = 1000) -> list[dict]:
         """ALL unresolved SLA trackers assigned to ``user_id``, soonest-due first.
 
@@ -1212,7 +1326,6 @@ class ConversationSLATrackingService:
         of row count), so returning the whole set stays cheap.
         """
         from sqlalchemy.orm import joinedload
-        from app.services.form_sla_service import FORM_SLA_TYPES  # noqa: F401 (used below)
 
         rows = (
             self.db.query(ConversationSLATracking)
@@ -1228,110 +1341,38 @@ class ConversationSLATrackingService:
         )
         reference_by_row = self._resolve_my_pending_references(rows)
         action_by_row = self._form_next_actions(rows)
-
-        # Conversation rows (no source entity) need the contact's respond_io_id,
-        # name and phone: the inbox deep link (legacy rows) plus the ticket header
-        # (contact_name / contact_phone). Batched once.
-        respond_io_by_contact: dict[str, Optional[str]] = {}
-        contact_name_by_contact: dict[str, Optional[str]] = {}
-        contact_phone_by_contact: dict[str, Optional[str]] = {}
-        contact_ids = {
-            str(r.respond_contact_id)
-            for r in rows
-            if getattr(r, "respond_contact_id", None)
-        }
-        if contact_ids:
-            try:
-                for cid, rio, name, phone in (
-                    self.db.query(
-                        RespondContact.id,
-                        RespondContact.respond_io_id,
-                        RespondContact.name,
-                        RespondContact.phone_number,
-                    )
-                    .filter(RespondContact.id.in_(contact_ids))
-                    .all()
-                ):
-                    respond_io_by_contact[str(cid)] = str(rio) if rio else None
-                    contact_name_by_contact[str(cid)] = name
-                    contact_phone_by_contact[str(cid)] = phone
-            except Exception:  # noqa: BLE001
-                self.db.rollback()
-
+        respond_io_by_contact, contact_name_by_contact, contact_phone_by_contact = (
+            self._contact_lookup_for_rows(rows)
+        )
+        # Ticket-only: the ROUTING team (agent_id/team_set_code/tier), distinct
+        # from Team Tasks' assignee-context team_label layered on in
+        # list_team_pending - unused by the widget list today, kept for the
+        # drawer/detail surfaces that do read a ticket's own team.
         team_label_by_row = self._ticket_team_labels(rows)
 
         result = []
         for r in rows:
-            is_form_sla = r.source_entity_type in FORM_SLA_TYPES
             contact_key = (
                 str(r.respond_contact_id)
                 if getattr(r, "respond_contact_id", None)
                 else None
             )
-            # UAC B: a conversation row is an intervention TICKET only once it
-            # carries the enquiry identity this feature introduced
-            # (source_message_id, migration 321/S2a) - a pre-migration row with
-            # no trigger message keeps its old widget behaviour (Respond inbox
-            # deep link, inline Escalate/Resolve) rather than opening a drawer
-            # with no enquiry to show.
-            is_ticket = (not is_form_sla) and bool(getattr(r, "source_message_id", None))
-            row = {
-                "id": str(r.id),
-                "source_entity_type": r.source_entity_type,
-                "source_entity_id": r.source_entity_id,
-                # Authoritative form-vs-conversation flag (single source of truth so
-                # the widget never re-derives it and drifts - e.g. 'ticket' is a form
-                # type the FE route map doesn't know). Conversation rows = false.
-                "is_form_sla": is_form_sla,
-                "reference": reference_by_row.get(str(r.id)),
-                "respond_io_id": (
+            row = self._pending_row(
+                r,
+                reference=reference_by_row.get(str(r.id)),
+                next_action=action_by_row.get(str(r.id)),
+                respond_io_id=(
                     respond_io_by_contact.get(contact_key) if contact_key else None
                 ),
-                "due_at": r.due_at.isoformat() if r.due_at else None,
-                # Resolution deadline - the Extend action targets this. Emitted so the
-                # widget can gate the Extend button client-side (hidden when null) and
-                # the dialog can show "Current due" without a preview round-trip.
-                "due_at_resolution": (
-                    r.due_at_resolution.isoformat() if r.due_at_resolution else None
-                ),
-                # The deadline the assignee is actually racing: BEFORE responding it's
-                # the response due; AFTER responding it's the resolution due (the one
-                # Extend moves). Keyed purely on is_responded.
-                "active_due_at": self._active_due_iso(r, bool(r.is_responded)),
-                # Which clock the active deadline is, so the FE labels the badge:
-                # "Respond by" until responded, "Resolve by" after.
-                "due_kind": "resolve" if bool(r.is_responded) else "respond",
-                "is_responded": bool(r.is_responded),
-                "current_tier": r.current_tier,
-                # How many times the resolution deadline has been moved. The
-                # widget marks an extended row so a deadline somebody pushed out
-                # (and then forgot for a week) is visible before it breaches -
-                # the counter is already maintained by the extend service.
-                "extension_count": int(getattr(r, "extension_count", 0) or 0),
-                "policy_name": r.policy.name if r.policy else None,
-                # SLA-config-driven next action for form rows (e.g. "Send for
-                # approval", "Approve", "Mark resolved"); None for conversation rows.
-                "next_action": action_by_row.get(str(r.id)),
-            }
-            if is_ticket:
-                # UAC AC-B1: never re-derived by the widget - explicit backend flag.
-                row["is_intervention_ticket"] = True
-                row["contact_name"] = (
+                contact_name=(
                     contact_name_by_contact.get(contact_key) if contact_key else None
-                )
-                row["contact_phone"] = (
+                ),
+                contact_phone=(
                     contact_phone_by_contact.get(contact_key) if contact_key else None
-                )
-                snippet = (getattr(r, "source_message_text", None) or "").strip()
-                row["enquiry_snippet"] = (snippet[:140] or None) if snippet else None
-                row["source_message_id"] = r.source_message_id
+                ),
+            )
+            if row.get("is_intervention_ticket"):
                 row["team_label"] = team_label_by_row.get(str(r.id))
-                row["initiated_at"] = (
-                    r.initiated_at.isoformat() if r.initiated_at else None
-                )
-                row["escalated_at"] = (
-                    r.escalated_at.isoformat() if r.escalated_at else None
-                )
             result.append(row)
         return result
 
@@ -1476,6 +1517,24 @@ class ConversationSLATrackingService:
         members = self._members_of_teams(self._visible_team_ids(user_id))
         return str(assignee) in members
 
+    def can_user_resolve_tracking(
+        self, user_id: str, tracking: ConversationSLATracking
+    ) -> bool:
+        """Only the current assignee (or an admin) may resolve a task.
+
+        `can_user_act_on_tracking` is deliberately wider - it grants a whole
+        team READ access to a teammate's task (My Team). Resolving it is a
+        stricter, narrower gate: a viewer who merely has visibility into the
+        task must not be able to close someone else's clock. Drives both
+        `get_ticket_detail`'s `can_resolve` field and the resolve route's
+        enforcement, so the drawer's disabled button and the 403 it would get
+        anyway always agree.
+        """
+        if self._is_admin(user_id):
+            return True
+        assignee = getattr(tracking, "assigned_to_id", None)
+        return assignee is not None and str(assignee) == str(user_id)
+
     def _picker_rows(self, member_ids: set) -> list[dict]:
         """Serialize a picker's user set. ONE builder for both branches below,
         so a field added for the picker cannot land on only one of them.
@@ -1542,7 +1601,6 @@ class ConversationSLATrackingService:
         Returns {"data": [...], "total": int, "page": int, "limit": int}.
         """
         from sqlalchemy.orm import joinedload
-        from app.services.form_sla_service import FORM_SLA_TYPES
         from app.models.user import User
 
         visible_team_ids = self._visible_team_ids(user_id)
@@ -1599,36 +1657,43 @@ class ConversationSLATrackingService:
             for u in self.db.query(User).filter(User.id.in_(row_assignee_ids)).all():
                 name_by_id[str(u.id)] = (u.name or u.email or "").strip() or None
         team_by_member = self._team_label_by_member(visible_team_ids, row_assignee_ids)
+        respond_io_by_contact, contact_name_by_contact, contact_phone_by_contact = (
+            self._contact_lookup_for_rows(rows)
+        )
 
         data = []
         for r in rows:
             aid = str(r.assigned_to_id) if getattr(r, "assigned_to_id", None) else None
             team_ctx = team_by_member.get(aid) if aid else None
-            data.append(
-                {
-                    "id": str(r.id),
-                    "assignee_id": aid,
-                    "assignee_name": name_by_id.get(aid) if aid else None,
-                    "team_id": team_ctx[0] if team_ctx else None,
-                    "team_label": team_ctx[1] if team_ctx else None,
-                    "source_entity_type": r.source_entity_type,
-                    "source_entity_id": r.source_entity_id,
-                    "is_form_sla": r.source_entity_type in FORM_SLA_TYPES,
-                    "reference": reference_by_row.get(str(r.id)),
-                    "due_at": r.due_at.isoformat() if r.due_at else None,
-                    "due_at_resolution": (
-                        r.due_at_resolution.isoformat() if r.due_at_resolution else None
-                    ),
-                    "active_due_at": self._active_due_iso(r, bool(r.is_responded)),
-                    "due_kind": "resolve" if bool(r.is_responded) else "respond",
-                    "is_responded": bool(r.is_responded),
-                    "current_tier": r.current_tier,
-                    # Same "someone moved this deadline" marker My Pending shows.
-                    "extension_count": int(getattr(r, "extension_count", 0) or 0),
-                    "policy_name": r.policy.name if r.policy else None,
-                    "next_action": action_by_row.get(str(r.id)),
-                }
+            contact_key = (
+                str(r.respond_contact_id)
+                if getattr(r, "respond_contact_id", None)
+                else None
             )
+            # SAME row contract as /my-pending (is_intervention_ticket,
+            # enquiry_snippet, respond_io_id, ...) - My Team used to be a
+            # thinner, independently-built row and a ticket row there fell
+            # through to the SLA detail page instead of opening the drawer.
+            # Team-only fields (assignee/team context) are layered on after.
+            row = self._pending_row(
+                r,
+                reference=reference_by_row.get(str(r.id)),
+                next_action=action_by_row.get(str(r.id)),
+                respond_io_id=(
+                    respond_io_by_contact.get(contact_key) if contact_key else None
+                ),
+                contact_name=(
+                    contact_name_by_contact.get(contact_key) if contact_key else None
+                ),
+                contact_phone=(
+                    contact_phone_by_contact.get(contact_key) if contact_key else None
+                ),
+            )
+            row["assignee_id"] = aid
+            row["assignee_name"] = name_by_id.get(aid) if aid else None
+            row["team_id"] = team_ctx[0] if team_ctx else None
+            row["team_label"] = team_ctx[1] if team_ctx else None
+            data.append(row)
 
         if q:
             def _hay(d: dict) -> str:
@@ -6397,6 +6462,19 @@ class ConversationSLATrackingService:
         assigned_user = getattr(tracking, "assigned_user", None)
         team_label = (self._ticket_team_labels([tracking]) or {}).get(str(tracking.id))
 
+        assignee_id = str(assigned_user.id) if assigned_user else None
+        is_assignee = assignee_id is not None and assignee_id == str(viewer_user_id)
+        # Queue team id for the Takeover call (same value My Team's row passes,
+        # `TeamPendingItem.team_id`) - resolved from the VIEWER's own visible
+        # teams, since that is the scope Takeover checks against.
+        assignee_team_ctx = (
+            self._team_label_by_member(self._visible_team_ids(viewer_user_id), [assignee_id]).get(
+                assignee_id
+            )
+            if assignee_id
+            else None
+        )
+
         composer = self._window_and_template(
             identifier=identifier,
             respond_contact_id=respond_contact_id,
@@ -6407,7 +6485,12 @@ class ConversationSLATrackingService:
         chat_template = composer["chat_template"]
 
         can_send = bool(identifier) and not is_resolved
-        can_resolve = not is_resolved
+        # Reading the drawer is wider than resolving it (My Team can open a
+        # teammate's ticket) - can_resolve narrows to assignee-or-admin so the
+        # button is honest about who may act, not just who may look.
+        can_resolve = not is_resolved and self.can_user_resolve_tracking(
+            viewer_user_id, tracking
+        )
 
         return {
             "id": str(tracking.id),
@@ -6425,6 +6508,15 @@ class ConversationSLATrackingService:
             "assignee_name": (
                 (assigned_user.name or assigned_user.email) if assigned_user else None
             ),
+            # Viewer-relative, same rule as can_resolve: drives the drawer's
+            # Takeover affordance (My Team opened it, so the viewer often is
+            # NOT the assignee) without a second RBAC-permission round trip.
+            "is_assignee": is_assignee,
+            # The assignee's queue team id, resolved from the viewer's OWN
+            # visible teams - the same value My Team's row Takeover passes.
+            # None when the assignee is outside the viewer's visible teams
+            # (an admin acting outside their own team hierarchy).
+            "assignee_team_id": assignee_team_ctx[0] if assignee_team_ctx else None,
             "policy_name": tracking.policy.name if tracking.policy else None,
             "initiated_at": (
                 tracking.initiated_at.isoformat() if tracking.initiated_at else None

@@ -210,11 +210,25 @@ const teamItem: TeamPendingItem = {
   source_entity_id: null,
   is_form_sla: false,
   reference: '+60123456789',
+  respond_io_id: '999888',
   due_at: new Date(Date.now() + 3600_000).toISOString(),
   is_responded: false,
   current_tier: 1,
   policy_name: 'Default',
   next_action: null,
+};
+
+// A team ticket row: the SAME shape /my-pending emits for a ticket (see
+// ticketOne above), plus the team-only assignee/team context. Team ticket
+// rows now use the exact ticketOne fields (row builder is shared) - this
+// mirrors that fixture rather than re-declaring the ticket-only fields.
+const teamTicketItem: TeamPendingItem & Record<string, unknown> = {
+  ...ticketOne,
+  id: 'team-ticket-1',
+  assignee_id: 'u-charissa',
+  assignee_name: 'Charissa',
+  team_id: 'team-1',
+  team_label: 'Marketing - Product',
 };
 
 describe('MyPendingSLAWidget clickable rows', () => {
@@ -737,6 +751,59 @@ describe('MyPendingSLAWidget clickable rows', () => {
       'ticket-2',
     );
     await waitFor(() => expect(replace).toHaveBeenCalledWith('/', { scroll: false }));
+  });
+
+  // ---- My Team ticket rows: the backend row shape is shared with My
+  // Pending (ConversationSLATrackingService._pending_row), so a team row for
+  // an intervention ticket must behave the same way a My Pending one does -
+  // it used to fall through to the SLA detail page because team-pending
+  // never carried `is_intervention_ticket`.
+
+  it('My Team: a ticket row shows the enquiry snippet + who it belongs to, and clicking it opens the drawer', async () => {
+    getMyPendingSLA.mockResolvedValue([]);
+    getTeamPendingSLA.mockResolvedValue({
+      data: [teamTicketItem],
+      total: 1,
+      page: 1,
+      limit: 50,
+      empty: false,
+    });
+    renderWidget();
+
+    await waitFor(() => expect(screen.getByText(/you're all caught up/i)).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: /My Team/i }));
+
+    // Subline is the enquiry snippet, exactly like My Pending - and the
+    // team's one deliberate difference (who it belongs to) sits right
+    // under it rather than replacing it.
+    const snippet = await screen.findByText('Yes, please connect me to a person.');
+    expect(snippet).toBeInTheDocument();
+    expect(screen.getByText('Charissa · Marketing - Product')).toBeInTheDocument();
+
+    fireEvent.click(snippet);
+    expect(await screen.findByTestId('ticket-drawer')).toHaveAttribute(
+      'data-ticket-id',
+      'team-ticket-1',
+    );
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it('My Team: a ticket row keeps Takeover but drops Escalate/Resolve', async () => {
+    getMyPendingSLA.mockResolvedValue([]);
+    getTeamPendingSLA.mockResolvedValue({
+      data: [teamTicketItem],
+      total: 1,
+      page: 1,
+      limit: 50,
+      empty: false,
+    });
+    renderWidget();
+
+    fireEvent.click(screen.getByRole('button', { name: /My Team/i }));
+
+    await waitFor(() => expect(getActionButton(/Takeover/i)).toBeInTheDocument());
+    expect(hasActionButton(/Escalate/i)).toBe(false);
+    expect(hasActionButton(/Resolve/i)).toBe(false);
   });
 });
 

@@ -20,7 +20,7 @@ import uuid
 import pytest
 from sqlalchemy import text
 
-from app.models.access import AccessAgent, AgentTeam, RespondContact, Team
+from app.models.access import AccessAgent, AgentTeam, RespondContact, Team, TeamMember
 from app.models.sla import SLAPolicy, SLAPolicyTier
 from app.models.user import User
 from app.schemas.sla import ConversationSLATrackingCreate
@@ -196,6 +196,74 @@ def test_no_linked_contact_falls_back_to_a_safe_no_contact_state(db):
     assert detail["can_send"] is False
     assert detail["window"] == {"open": False, "expires_at": None}
     assert detail["chat_template"] == {"configured": False, "reason": "no_contact"}
+
+
+def _add_teammate(db, seed) -> str:
+    """A second user on the SAME visibility team as the assignee (TeamMember,
+    the table can_user_act_on_tracking/_visible_team_ids read - distinct from
+    AgentTeam, which only routes the ticket itself). My Team can now open the
+    drawer for a task like this one, so can_resolve/is_assignee/
+    assignee_team_id must all say "visible, not mine"."""
+    teammate_id = str(uuid.uuid4())
+    db.add(User(id=teammate_id, email="teammate@test.com", name="Team Mate"))
+    db.commit()
+    team_id = (
+        db.query(AgentTeam).filter(AgentTeam.code == seed["team_set_code"]).first().team_id
+    )
+    db.add(TeamMember(id=str(uuid.uuid4()), team_id=team_id, user_id=teammate_id))
+    db.add(TeamMember(id=str(uuid.uuid4()), team_id=team_id, user_id=seed["assignee_id"]))
+    db.commit()
+    return teammate_id
+
+
+def test_can_resolve_and_is_assignee_are_false_for_a_visible_non_assignee_teammate(db):
+    seed = _seed(db)
+    tracking = _create_ticket(db, seed)
+    teammate_id = _add_teammate(db, seed)
+    service = ConversationSLATrackingService(db)
+
+    detail = service.get_ticket_detail(
+        str(tracking.id), viewer_user_id=teammate_id, sender_name="Team Mate"
+    )
+
+    # Visible (My Team can open the drawer via can_user_act_on_tracking), but
+    # neither resolvable nor "mine" - reading is wider than acting.
+    assert detail["can_resolve"] is False
+    assert detail["is_assignee"] is False
+    assert detail["assignee_name"] == "Agent One"
+
+
+def test_is_assignee_is_true_for_the_assignee_themselves(db):
+    seed = _seed(db)
+    tracking = _create_ticket(db, seed)
+    service = ConversationSLATrackingService(db)
+
+    detail = service.get_ticket_detail(
+        str(tracking.id), viewer_user_id=seed["assignee_id"], sender_name="Agent One"
+    )
+
+    assert detail["is_assignee"] is True
+    assert detail["can_resolve"] is True
+
+
+def test_assignee_team_id_resolves_from_the_viewers_own_visible_teams(db):
+    """The Takeover call needs the assignee's queue team id (the same value
+    My Team's row already passes as `TeamPendingItem.team_id`) - resolved
+    from the VIEWER's own visible teams, since that is the scope Takeover
+    checks against."""
+    seed = _seed(db)
+    tracking = _create_ticket(db, seed)
+    teammate_id = _add_teammate(db, seed)
+    team_id = str(
+        db.query(AgentTeam).filter(AgentTeam.code == seed["team_set_code"]).first().team_id
+    )
+    service = ConversationSLATrackingService(db)
+
+    detail = service.get_ticket_detail(
+        str(tracking.id), viewer_user_id=teammate_id, sender_name="Team Mate"
+    )
+
+    assert detail["assignee_team_id"] == team_id
 
 
 def test_a_viewer_outside_the_ticket_scope_gets_not_found_not_a_leak(db):

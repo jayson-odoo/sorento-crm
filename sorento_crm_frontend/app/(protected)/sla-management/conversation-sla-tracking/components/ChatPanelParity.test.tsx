@@ -52,6 +52,7 @@ vi.mock('../hooks/useInterventionTickets', () => ({
 
 vi.mock('../hooks/useTeamPendingSLA', () => ({
   useReassignSLATracking: () => ({ mutate: vi.fn(), isPending: false }),
+  useTakeoverSLATracking: () => ({ mutate: vi.fn(), isPending: false }),
   useVisibleUsers: () => ({ data: [], isLoading: false, error: null }),
 }));
 
@@ -109,6 +110,8 @@ const TICKET: InterventionTicketDetail = {
   resolved_at: null,
   can_send: true,
   can_resolve: true,
+  is_assignee: true,
+  assignee_team_id: 'team-1',
   send_capabilities: ['text', 'attachment'],
   window: { open: true, expires_at: null },
   chat_template: null,

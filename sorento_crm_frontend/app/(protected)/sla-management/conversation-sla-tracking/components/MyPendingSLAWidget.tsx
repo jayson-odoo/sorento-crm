@@ -508,14 +508,19 @@ export default function MyPendingSLAWidget() {
     const teamItem = item as TeamPendingItem;
     const mineItem = item as MyPendingSLAItem;
     const tk = pendingTakeover(item);
-    const ticket = isTeam ? null : asTicket(item);
-    const subline = isTeam
-      ? `${teamItem.assignee_name ?? '-'} · ${teamItem.team_label ?? '-'} · Tier ${item.current_tier}`
-      : ticket
-        ? // AC-E7: a snippet the n8n spine never mapped arrives blank or as
-          // whitespace, not null - trim before falling back so the row always
-          // says something.
-          ticket.enquiry_snippet?.trim() || 'Enquiry from this contact'
+    // The backend row shape is now the SAME on both tabs (one shared row
+    // builder, see ConversationSLATrackingService._pending_row) - a team
+    // row is a ticket exactly when a My Pending row would be, so this is
+    // no longer gated on `isTeam`.
+    const ticket = asTicket(item);
+    const assigneeAndTeam = `${teamItem.assignee_name ?? '-'} · ${teamItem.team_label ?? '-'}`;
+    const subline = ticket
+      ? // AC-E7: a snippet the n8n spine never mapped arrives blank or as
+        // whitespace, not null - trim before falling back so the row always
+        // says something.
+        ticket.enquiry_snippet?.trim() || 'Enquiry from this contact'
+      : isTeam
+        ? `${assigneeAndTeam} · Tier ${item.current_tier}`
         : `Tier ${item.current_tier} · ${form ? mineItem.next_action ?? 'Action required' : 'Reply'}`;
     const atMaxTier = item.current_tier >= MAX_TIER;
     const highlighted = !!highlightId && item.id === highlightId;
@@ -557,6 +562,14 @@ export default function MyPendingSLAWidget() {
               <p className="truncate text-xs text-muted-foreground" title={subline}>
                 {subline}
               </p>
+              {/* My Team's one deliberate difference from My Pending: a ticket
+                  row's subline is taken by the enquiry snippet, so whose task
+                  it is moves to its own line right under it. */}
+              {isTeam && ticket && (
+                <p className="truncate text-[11px] text-muted-foreground/80" title={assigneeAndTeam}>
+                  {assigneeAndTeam}
+                </p>
+              )}
               {/* A ticket races two clocks at once, so both are shown inline
                   rather than only the active one. */}
               {ticket && (
@@ -653,14 +666,14 @@ export default function MyPendingSLAWidget() {
               </div>
             )}
 
-            {/* An intervention ticket is answered and resolved in its drawer, so
-                the row offers no Escalate/Resolve. Reassign and Extend are a
-                different matter: they are worklist decisions ("this is not mine"
-                / "this needs longer"), and making someone open a chat drawer to
-                hand a ticket over is the wrong place to ask. Both endpoints are
-                already entity-agnostic. */}
+            {/* Takeover is a worklist decision ("this is not mine yet"), not a
+                chat action, so it stays available on a ticket row exactly
+                like a non-ticket one. Escalate/Resolve are the opposite: an
+                intervention ticket is answered and resolved in its drawer, so
+                a My Pending ticket row offers neither. Reassign and Extend are
+                unconditional below - both endpoints are entity-agnostic. */}
             <div className="flex flex-wrap items-center gap-2">
-              {ticket ? null : isTeam ? (
+              {isTeam ? (
                 !tk && canTakeover && (
                   <Button
                     size="sm"
@@ -677,7 +690,7 @@ export default function MyPendingSLAWidget() {
                     Takeover
                   </Button>
                 )
-              ) : (
+              ) : ticket ? null : (
                 !form && (
                   <>
                     {canEscalate && (
@@ -1090,6 +1103,10 @@ export default function MyPendingSLAWidget() {
         // A reassign hands the enquiry to someone else: this list is no longer
         // the owner's, so it has to re-read for the same reason a send does.
         onReassigned={() => void Promise.all([load(), loadTeam()])}
+        // A takeover from the drawer (My Team) is the same "both lists moved"
+        // event as a reassign, just in the other direction: it just left
+        // team-pending and landed in my-pending.
+        onTakenOver={() => void Promise.all([load(), loadTeam()])}
         // This list is loaded imperatively, so a react-query invalidation in
         // the send mutation would refresh nothing here: a reply must reload it
         // explicitly or the row keeps its pre-reply countdown chips.
