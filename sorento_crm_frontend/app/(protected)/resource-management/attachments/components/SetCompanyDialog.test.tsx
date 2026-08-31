@@ -191,6 +191,39 @@ describe('SetCompanyDialog', () => {
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
+  it('AC-F4: re-picking inside the popover does not apply the OLD value (review defect on PR #442)', async () => {
+    // cmdk's own Command.Input also renders role="combobox" (parity with Radix's
+    // SelectTrigger), so a guard keyed on role alone matches the search input
+    // too: reopening the picker after a first pick, narrowing by typing, and
+    // pressing Enter ran handleApply() with the STALE pre-typing value instead
+    // of reaching cmdk's own Enter handling.
+    renderDialog({ fileIds: ['f-1'], folderIds: [] });
+    await pick('Sorento');
+
+    fireEvent.click(trigger());
+    const searchInput = await screen.findByPlaceholderText('Search...');
+    fireEvent.change(searchInput, { target: { value: 'Mocha' } });
+    await screen.findByRole('option', { name: 'Mocha' });
+
+    // Enter inside the open popover reaches cmdk's own handling (it picks the
+    // highlighted "Mocha" row and closes) - it must NOT also run our Apply
+    // with the value from before the popover reopened.
+    fireEvent.keyDown(searchInput, { key: 'Enter' });
+    await waitFor(() => expect(document.querySelector('[role="listbox"]')).toBeNull());
+    expect(createPendingAction).not.toHaveBeenCalled();
+
+    // Radix returns focus to the (now closed) trigger on close - the same
+    // Enter-applies affordance from the first test, now carrying the value
+    // just picked by typing.
+    await waitFor(() => expect(document.activeElement).toBe(trigger()));
+    fireEvent.keyDown(trigger(), { key: 'Enter' });
+
+    await waitFor(() => expect(createPendingAction).toHaveBeenCalledTimes(1));
+    expect(createPendingAction).toHaveBeenCalledWith(
+      expect.objectContaining({ payload: { company_id: 'company-m' } }),
+    );
+  });
+
   it('AC-F4b: the pending toast names the selection and commit reads "Company set: …"', async () => {
     // Parked with the window already behind them, so the store's reconcile
     // asks the server straight away rather than the test waiting out five

@@ -145,7 +145,8 @@ export default function SetCompanyDialog({
           if (
             e.key === 'Enter' &&
             companyValue &&
-            target.getAttribute('role') === 'combobox'
+            target.id === triggerId &&
+            target.getAttribute('aria-expanded') === 'false'
           ) {
             e.preventDefault();
             handleApply();

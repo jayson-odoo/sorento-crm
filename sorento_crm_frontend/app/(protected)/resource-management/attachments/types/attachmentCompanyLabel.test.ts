@@ -16,9 +16,12 @@ describe('attachmentCompanyLabel', () => {
   });
 
   it('reads Shared the same way whether the key is explicitly null or simply absent', () => {
-    // A folder row from the drive listing (DriveFolderItem) can arrive with no
-    // company_id/company_name KEY at all, not just a null value - the two must
-    // read identically or an owned folder and a shared one look the same.
+    // Both keys are guaranteed present by the response model (AttachmentResponse
+    // declares company_id/company_name, so pydantic always serializes the key,
+    // null value or not) - an absent key never actually reaches this function.
+    // The FE type marks them optional only so a caller building a partial
+    // object (a test fixture, an in-flight draft) doesn't have to fake both;
+    // this covers that defensive branch, not a real response shape.
     const absent: Record<string, never> = {};
     const explicitNull = { company_id: null, company_name: null };
     expect(attachmentCompanyLabel(absent)).toBe(attachmentCompanyLabel(explicitNull));
