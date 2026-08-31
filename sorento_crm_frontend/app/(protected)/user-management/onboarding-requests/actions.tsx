@@ -14,6 +14,7 @@
  */
 
 import { Copy, KeyRound, Link2Off, Trash2 } from 'lucide-react';
+import { toast } from 'sonner';
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard';
 
 import { useDeferredAction } from '@/hooks/useDeferredAction';
@@ -76,7 +77,15 @@ export function useOnboardingRequestActions(
       label: 'Copy link',
       icon: Copy,
       disabled: !linkLive,
-      run: () => copyToClipboard(request.intake_url as string),
+      // The tick + "Copied" label on this item IS the confirmation (S7-05); a
+      // refusal is the only thing that still needs a toast, same as everywhere
+      // else `useCopyToClipboard` is called.
+      confirmLabel: 'Copied',
+      run: async () => {
+        const ok = await copyToClipboard(request.intake_url as string);
+        if (!ok) toast.error('Press Ctrl/Cmd+C to copy');
+        return ok;
+      },
     });
   }
 

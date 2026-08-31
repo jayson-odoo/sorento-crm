@@ -1,6 +1,6 @@
 'use client';
 
-import { Children, isValidElement, ReactNode } from 'react';
+import { Children, isValidElement, ReactNode, useState } from 'react';
 import { Cog, MoreHorizontal } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -82,13 +82,16 @@ export function DetailActionsMenu({
 }: DetailActionsMenuProps) {
   const TriggerIcon = trigger === 'ellipsis' ? MoreHorizontal : Cog;
   const items = actions ? null : orderChildren(children);
+  // Controlled so a confirmable item (Copy link's tick) can hold the menu open
+  // through its own click and close it again once the confirmation has shown.
+  const [open, setOpen] = useState(false);
 
   // Nothing to show is not an empty menu, it is no menu at all: an entity whose
   // actions are all permission-filtered away must not leave a dead button behind.
   if (actions && actions.length === 0 && !children) return null;
 
   return (
-    <DropdownMenu>
+    <DropdownMenu open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger asChild>
         <Button
           type="button"
@@ -102,7 +105,11 @@ export function DetailActionsMenu({
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
-        {actions ? <RecordActionMenuItems actions={actions} /> : items}
+        {actions ? (
+          <RecordActionMenuItems actions={actions} onRequestClose={() => setOpen(false)} />
+        ) : (
+          items
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   );
