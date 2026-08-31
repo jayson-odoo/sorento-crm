@@ -707,5 +707,128 @@ class TestAgainstTheRealFlyer:
         assert len(statements) <= 3, statements
 
 
-def report_of(db, *codes: str):
-    return match_reading(db, _printed(*codes))
+class TestOverrides:
+    """"This printed code IS that product" (PLAN-flyer-code-adopt.md, S1).
+
+    ``overrides`` is what ``flyer_reading_service.adopt_code`` writes onto the
+    reading row (``{printed code: product id}``). This is the read side: given
+    one, an otherwise-unmatched code resolves everywhere the report is read
+    from, exactly like a real match.
+    """
+
+    def test_an_adopted_code_is_matched(self, db) -> None:
+        product = _product(db, "ZZTBT1835-16")
+
+        report = match_reading(
+            db, _printed("ZZTBT1835"), overrides={"ZZTBT1835": product.id}
+        )
+
+        assert report.unmatched == []
+        entry = report.matched[0]
+        assert entry.code == "ZZTBT1835"
+        assert entry.product_id == product.id
+        assert entry.product_code == "ZZTBT1835-16"
+        assert entry.adopted is True
+
+    def test_a_real_match_is_not_flagged_adopted(self, db) -> None:
+        _product(db, "ZZTBT1835")
+
+        report = match_reading(db, _printed("ZZTBT1835"))
+
+        assert report.matched[0].adopted is False
+
+    def test_pages_come_from_the_printed_card_not_the_override(self, db) -> None:
+        product = _product(db, "ZZTBT1835-16")
+        reading = _reading(_page(2, _card("ZZTBT1835")), _page(9, _card("ZZTBT1835")))
+
+        report = match_reading(db, reading, overrides={"ZZTBT1835": product.id})
+
+        assert report.matched[0].pages == (2, 9)
+
+    def test_an_adopted_code_becomes_a_dimension_candidate(self, db) -> None:
+        # AC-A.2. Nothing about dimension review changes for an adopted code:
+        # it sits in `products` under the printed code exactly like a real
+        # match, so the existing candidate builder needs no special case.
+        product = _product(db, "ZZTBT1835-16")
+        reading = _reading(_page(1, _card("ZZTBT1835", dims=(1700, 850, 600))))
+
+        candidates = match_reading(
+            db, reading, overrides={"ZZTBT1835": product.id}
+        ).dimension_candidates
+
+        assert len(candidates) == 1
+        assert candidates[0].product_id == product.id
+        assert candidates[0].printed_length_mm == Decimal("1700")
+
+    def test_an_adopted_product_can_be_reported_not_promoted(self, db) -> None:
+        # AC-A.2. `_not_promoted` reads `matched`, and an adopted entry is a
+        # matched entry.
+        product = _product(db, "ZZTBT1835-16")
+        promotion_id = _promotion(db)
+
+        report = match_reading(
+            db,
+            _printed("ZZTBT1835"),
+            promotion_id=promotion_id,
+            overrides={"ZZTBT1835": product.id},
+        )
+
+        assert [entry.product_id for entry in report.not_promoted] == [product.id]
+
+    def test_a_code_that_already_matches_ignores_its_override(self, db) -> None:
+        # An override is only ever consulted for a code the master itself did
+        # not resolve; adopt_code refuses to create one in the first place.
+        direct = _product(db, "ZZTBT1835")
+        other = _product(db, "ZZTBT1835-16")
+
+        report = match_reading(
+            db, _printed("ZZTBT1835"), overrides={"ZZTBT1835": other.id}
+        )
+
+        assert len(report.matched) == 1
+        assert report.matched[0].product_id == direct.id
+        assert report.matched[0].adopted is False
+
+    def test_a_stale_override_is_ignored_not_an_error(self, db) -> None:
+        # AC-A.6. The product the override named no longer resolves (deleted,
+        # or another company) - the code stays unmatched with its suggestion,
+        # and the read does not raise.
+        missing_product_id = str(uuid.uuid4())
+
+        report = match_reading(
+            db, _printed("ZZTBT1835"), overrides={"ZZTBT1835": missing_product_id}
+        )
+
+        assert report.matched == []
+        assert [entry.code for entry in report.unmatched] == ["ZZTBT1835"]
+
+    def test_an_override_for_a_code_not_on_this_reading_is_ignored(self, db) -> None:
+        product = _product(db, "ZZTBT1835-16")
+
+        report = match_reading(
+            db, _printed("ZZTOTHER"), overrides={"ZZTBT1835": product.id}
+        )
+
+        assert [entry.code for entry in report.unmatched] == ["ZZTOTHER"]
+
+    def test_no_overrides_behaves_exactly_as_before(self, db) -> None:
+        _product(db, "ZZTBT1835")
+
+        report = match_reading(db, _printed("ZZTBT1835"), overrides=None)
+
+        assert report.matched[0].adopted is False
+
+    def test_only_one_extra_query_for_every_adopted_code(self, db) -> None:
+        product = _product(db, "ZZTBT1835-16")
+        reading = _printed("ZZTBT1835", "ZZTOTHER1", "ZZTOTHER2")
+
+        with _selects(db) as statements:
+            match_reading(db, reading, overrides={"ZZTBT1835": product.id})
+
+        # Products, the override lookup, the suggestions for what is still
+        # unmatched: a handful regardless of how many codes were adopted.
+        assert len(statements) <= 3, statements
+
+
+def report_of(db, *codes: str, overrides=None):
+    return match_reading(db, _printed(*codes), overrides=overrides)

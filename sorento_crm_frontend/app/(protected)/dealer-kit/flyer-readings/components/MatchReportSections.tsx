@@ -1,24 +1,58 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { AlertTriangle, Copy, Heading, SearchX, Tag } from 'lucide-react';
 import type { ColumnDef } from '@tanstack/react-table';
 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { useHasPermission } from '@/hooks/usePermissions';
 
 import type {
+  CodeSuggestion,
   FlyerReadingStatus,
   MatchReport,
   MatchedCode,
   PageHeading,
-  UnmatchedCode,
 } from '../../services/flyerReadingService';
+import { useUndoAdoptCode } from '../hooks/useFlyerReadings';
+import { AdoptCodeDialog } from './AdoptCodeDialog';
 import { DimensionReviewSection } from './DimensionReviewSection';
 import { SpecProposalSection } from './SpecProposalSection';
 import { Empty, Section, printedOn } from './ReportSection';
 import { ReportGrid } from './ReportGrid';
+
+/** The slug that authorises adopting a code, everywhere on this screen. */
+const MASTER_DATA_EDIT = 'master_data.products.edit';
+
+/**
+ * One row of the "codes the master does not have" grid: either still
+ * unmatched, or adopted (a `matched` entry with `adopted: true`). The two
+ * live in ONE grid, in printed-page order, because an adopted row is the
+ * before-and-after of an unmatched one rather than a different kind of thing
+ * (AC-A.9).
+ */
+type AdoptionRow =
+  | { kind: 'unmatched'; code: string; pages: number[]; suggestion: CodeSuggestion | null }
+  | {
+      kind: 'adopted';
+      code: string;
+      pages: number[];
+      productId: string;
+      productCode: string;
+      productName: string;
+    };
 
 /**
  * What the system read, said plainly.
@@ -104,6 +138,20 @@ export function MatchReportSections({
   headings,
   readingStatus = 'done',
 }: MatchReportSectionsProps) {
+  const canAdopt = useHasPermission(MASTER_DATA_EDIT);
+  const undo = useUndoAdoptCode(readingId);
+
+  // What the dialogs are open ON. Null closes them - there is no separate
+  // `open` boolean to fall out of sync with `null`.
+  const [adoptTarget, setAdoptTarget] = useState<{
+    code: string;
+    pages: number[];
+    suggestion: CodeSuggestion | null;
+  } | null>(null);
+  const [undoTarget, setUndoTarget] = useState<{ code: string; productCode: string } | null>(
+    null,
+  );
+
   const duplicateRows = useMemo(
     () =>
       Object.entries(report.duplicates).map(([code, pages]) => ({
@@ -113,8 +161,44 @@ export function MatchReportSections({
     [report.duplicates],
   );
 
-  const unmatchedColumns = useMemo<ColumnDef<UnmatchedCode>[]>(
-    () => [
+  // An adopted row is the AFTER of an unmatched one, not a different kind of
+  // row, so both live in one grid rather than the adopted ones vanishing into
+  // the "matched" figure with nothing to undo from (AC-A.9). Sorted by first
+  // printed page, the order a reviewer holding the paper works through it.
+  const adoptedRows = useMemo(
+    () => report.matched.filter((entry) => entry.adopted),
+    [report.matched],
+  );
+  const adoptionRows = useMemo<AdoptionRow[]>(() => {
+    const rows: AdoptionRow[] = [
+      ...report.unmatched.map(
+        (entry): AdoptionRow => ({
+          kind: 'unmatched',
+          code: entry.code,
+          pages: entry.pages,
+          suggestion: entry.suggestion,
+        }),
+      ),
+      ...adoptedRows.map(
+        (entry): AdoptionRow => ({
+          kind: 'adopted',
+          code: entry.code,
+          pages: entry.pages,
+          productId: entry.productId,
+          productCode: entry.productCode,
+          productName: entry.productName,
+        }),
+      ),
+    ];
+    return rows.sort((left, right) => {
+      const leftPage = left.pages[0] ?? Number.MAX_SAFE_INTEGER;
+      const rightPage = right.pages[0] ?? Number.MAX_SAFE_INTEGER;
+      return leftPage !== rightPage ? leftPage - rightPage : left.code.localeCompare(right.code);
+    });
+  }, [report.unmatched, adoptedRows]);
+
+  const unmatchedColumns = useMemo<ColumnDef<AdoptionRow>[]>(() => {
+    const base: ColumnDef<AdoptionRow>[] = [
       {
         accessorKey: 'code',
         header: 'Printed code',
@@ -141,6 +225,28 @@ export function MatchReportSections({
         id: 'suggestion',
         header: 'Nearest existing code',
         cell: ({ row }) => {
+          if (row.original.kind === 'adopted') {
+            const named =
+              row.original.productName.trim() &&
+              row.original.productName.trim() !== row.original.productCode.trim()
+                ? row.original.productName.trim()
+                : null;
+            return (
+              <div className="flex min-w-0 items-center gap-2" data-testid="dk-fr-adopted-row">
+                <Badge variant="outline" className="shrink-0 border-green-300 font-normal text-green-700">
+                  Adopted
+                </Badge>
+                <span
+                  className="truncate text-sm"
+                  title={named ? `${row.original.productCode} - ${named}` : row.original.productCode}
+                >
+                  Adopted as <span className="font-mono">{row.original.productCode}</span>
+                  {named && <span className="text-muted-foreground"> {named}</span>}
+                </span>
+              </div>
+            );
+          }
+
           const suggestion = row.original.suggestion;
           if (!suggestion) {
             return (
@@ -174,9 +280,50 @@ export function MatchReportSections({
         minSize: 200,
         meta: { headerTitle: 'Nearest existing code' },
       },
-    ],
-    [],
-  );
+    ];
+
+    // No permission, no buttons - the adopted state is still visible above.
+    if (!canAdopt) return base;
+
+    const actionColumn: ColumnDef<AdoptionRow> = {
+      id: 'action',
+      header: 'Action',
+      cell: ({ row }) => {
+        const original = row.original;
+        return original.kind === 'adopted' ? (
+          <Button
+            size="sm"
+            variant="outline"
+            data-testid="dk-fr-undo"
+            onClick={() =>
+              setUndoTarget({ code: original.code, productCode: original.productCode })
+            }
+          >
+            Undo
+          </Button>
+        ) : (
+          <Button
+            size="sm"
+            variant="outline"
+            data-testid="dk-fr-adopt"
+            onClick={() =>
+              setAdoptTarget({
+                code: original.code,
+                pages: original.pages,
+                suggestion: original.suggestion,
+              })
+            }
+          >
+            This is...
+          </Button>
+        );
+      },
+      size: 130,
+      minSize: 110,
+      meta: { headerTitle: 'Action' },
+    };
+    return [...base, actionColumn];
+  }, [canAdopt]);
 
   const notPromotedColumns = useMemo<ColumnDef<MatchedCode>[]>(
     () => [
@@ -326,12 +473,21 @@ export function MatchReportSections({
         id="unmatched"
         icon={<SearchX className="size-4" />}
         title="Codes the product master does not have"
-        description="These will not be in the brochure. Suggestions are never applied for you."
+        description={
+          <>
+            <span data-testid="dk-fr-unmatched-counts">
+              {adoptionRows.length} code{adoptionRows.length === 1 ? '' : 's'},{' '}
+              {adoptedRows.length} adopted
+            </span>
+            {' - these will not be in the brochure until adopted. Suggestions are never applied'}
+            {' for you.'}
+          </>
+        }
       >
         <ReportGrid
           data-testid="dk-fr-unmatched-grid"
           columns={unmatchedColumns}
-          rows={report.unmatched}
+          rows={adoptionRows}
           getRowId={(row) => row.code}
           emptyMessage={
             <Empty title="Every printed code resolved to a product">
@@ -340,6 +496,49 @@ export function MatchReportSections({
           }
         />
       </Section>
+
+      <AdoptCodeDialog
+        readingId={readingId}
+        open={adoptTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setAdoptTarget(null);
+        }}
+        code={adoptTarget?.code ?? null}
+        pages={adoptTarget?.pages ?? []}
+        suggestion={adoptTarget?.suggestion ?? null}
+      />
+
+      <AlertDialog
+        open={undoTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setUndoTarget(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Undo this adoption?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {undoTarget && (
+                <>
+                  {undoTarget.code} goes back to unmatched. Anything already applied to{' '}
+                  {undoTarget.productCode} stays.
+                </>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              data-testid="dk-fr-undo-confirm"
+              onClick={() => {
+                if (undoTarget) undo.mutate({ printedCode: undoTarget.code });
+              }}
+            >
+              Undo
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <Section
         id="not-promoted"

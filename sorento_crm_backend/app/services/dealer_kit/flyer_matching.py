@@ -31,7 +31,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from decimal import Decimal
-from typing import Optional
+from typing import Mapping, Optional
 
 from sqlalchemy import String, cast, column, func
 from sqlalchemy.dialects.postgresql import ARRAY
@@ -95,6 +95,12 @@ class MatchedCode:
     product_code: str
     product_name: str
     pages: tuple[int, ...]
+    # True when this entry exists because a reviewer said "this is that
+    # product" (`adopt_code`) rather than the master already agreeing on its
+    # own (PLAN-flyer-code-adopt.md). Defaulted so every existing call site -
+    # a real match, `not_promoted`, a dimension candidate's product - reads as
+    # a firm "no" without having to say so.
+    adopted: bool = False
 
 
 @dataclass(frozen=True)
@@ -168,6 +174,7 @@ def match_reading(
     db: Session,
     reading: FlyerReading,
     promotion_id: Optional[str] = None,
+    overrides: Optional[Mapping[str, str]] = None,
 ) -> MatchReport:
     """Turn a reading into the report the seed is reviewed from.
 
@@ -181,6 +188,15 @@ def match_reading(
     every matched product. Loud on purpose: "998 of 998 not promoted" is how a
     reviewer finds out the brochure points at a promotion somebody deleted,
     where silence would read as a healthy flyer.
+
+    ``overrides`` is ``{printed code: product id}`` for codes a reviewer has
+    adopted (`flyer_reading_service.adopt_code`, PLAN-flyer-code-adopt.md). A
+    code the override names resolves exactly as a matched code everywhere
+    below - the seed places it, its printed size becomes a dimension
+    candidate, `not_promoted` reports it - because it is inserted into
+    ``products`` under the PRINTED code before either is computed. A STALE
+    override (the product was deleted since) is silently skipped: the code
+    stays unmatched with its suggestion, and nothing is written on a read.
     """
     printed = _printed_codes(reading)
     if not printed:
@@ -189,6 +205,7 @@ def match_reading(
         return MatchReport(promotion_id=promotion_id)
 
     products = _products_by_code(db, list(printed))
+    adopted_codes = _apply_overrides(db, products, printed, overrides)
 
     matched: list[MatchedCode] = []
     unmatched_codes: list[str] = []
@@ -204,6 +221,7 @@ def match_reading(
                 product_code=product.product_code,
                 product_name=product.product_name,
                 pages=where.pages,
+                adopted=code in adopted_codes,
             )
         )
 
@@ -286,6 +304,54 @@ def _products_by_code(db: Session, codes: list[str]) -> dict[str, Product]:
     for product in rows:
         resolved.setdefault(product.product_code, product)
     return resolved
+
+
+def _apply_overrides(
+    db: Session,
+    products: dict[str, Product],
+    printed: dict[str, "_Printed"],
+    overrides: Optional[Mapping[str, str]],
+) -> set[str]:
+    """Resolve every adopted code the master itself did not, in ONE query.
+
+    Only codes the master left unmatched are candidates: an override on a code
+    that already resolves has nothing to add (adopt_code refuses to create one
+    in the first place - AC-A.5). Mutates ``products`` in place, inserting the
+    adopted product under the PRINTED code, so every reader below -
+    ``_not_promoted``, ``_dimension_candidates``, the seed's ``product_by_code``
+    - sees it exactly as a real match without a second code path.
+
+    A STALE override (the product id no longer resolves in this company's
+    scope - deleted, or never existed) is silently absent from the result:
+    the caller leaves the code unmatched with its suggestion, and nothing is
+    written on a read (AC-A.6).
+    """
+    if not overrides:
+        return set()
+
+    candidates = {
+        code: overrides[code]
+        for code in printed
+        if code not in products and code in overrides
+    }
+    if not candidates:
+        return set()
+
+    rows = (
+        db.query(Product)
+        .filter(Product.id.in_(set(candidates.values())))
+        .all()
+    )
+    by_id = {product.id: product for product in rows}
+
+    adopted: set[str] = set()
+    for code, product_id in candidates.items():
+        product = by_id.get(product_id)
+        if product is None:
+            continue
+        products[code] = product
+        adopted.add(code)
+    return adopted
 
 
 def _suggestions(db: Session, codes: list[str]) -> dict[str, CodeSuggestion]:

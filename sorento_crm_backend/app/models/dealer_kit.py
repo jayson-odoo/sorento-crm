@@ -482,6 +482,19 @@ class FlyerReadingRecord(Base, CompanyScopedMixin):
     source_attachment_id = Column(UUID(as_uuid=False), nullable=True)
     # The RQ job, for an operator asking where a read went.
     job_id = Column(String(64), nullable=True)
+    # ``{"<printed code>": "<product id>"}`` - "this printed code IS that
+    # product" (PLAN-flyer-code-adopt.md). Per READING, not a master-level
+    # alias: half the rows on the real flyer are real variants and a global
+    # alias would merge them. A write REASSIGNS this dict
+    # (``record.code_overrides = {**old, code: pid}``); SQLAlchemy does not
+    # see in-place mutation of a plain JSONB column.
+    code_overrides = Column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb"), default=dict
+    )
+    # Bumped on every adopt and undo. Compared against a spec proposal batch's
+    # ``created_at`` to show the "propose again" hint (AC-C.4, S2). Undo
+    # removes the key from the map above, so this cannot live inside it.
+    code_overrides_changed_at = Column(DateTime(timezone=False), nullable=True)
 
 
 class Selection(Base, CompanyScopedMixin):

@@ -26,6 +26,8 @@ vi.mock('../../services/flyerReadingService', () => ({
   seedFromFlyerReading: vi.fn(),
   deleteFlyerReading: vi.fn(),
   applyDimensions: vi.fn(),
+  adoptCode: vi.fn(),
+  undoAdoptCode: vi.fn(),
 }));
 
 import { toast } from 'sonner';
@@ -72,6 +74,7 @@ const READING: FlyerReading = {
     duplicates: {},
     promotionId: null,
   },
+  codeOverridesChangedAt: null,
 };
 
 /** What a create hook resolves with now: the row, in processing, no report. */

@@ -47,6 +47,22 @@
  *          The ONE route here that writes outside the Kit. It needs
  *          `dealer_kit.page.view` AND `master_data.products.edit`, both: see
  *          `applyDimensions` below.
+ * PUT    /flyer-readings/{id}/code-overrides/{printedCode}  {productId}
+ *          -> 200 FlyerReading. "This printed code IS that product"
+ *          (PLAN-flyer-code-adopt.md): the code moves out of `unmatched` and
+ *          into `matched` with `adopted: true`, everywhere the report is read
+ *          from. Same two permissions as the dimensions apply above. 409 when
+ *          the code already resolves by itself, or when another printed code
+ *          on this reading already resolves to the same product (R1 - one
+ *          product, one card); 404 when the code was not printed here or the
+ *          product does not exist in this company. `printedCode` is a path
+ *          segment - always `encodeURIComponent`d.
+ * DELETE /flyer-readings/{id}/code-overrides/{printedCode}
+ *          -> 200 FlyerReading. Undoes an adoption; the code returns to
+ *          `unmatched` with its suggestion. 404 when the code was never
+ *          adopted. Never touches a spec proposal batch (R2) or the product
+ *          itself - specs already applied from an adopted card are not
+ *          reverted.
  * DELETE /flyer-readings/{id}                -> 204, hard
  *
  * ## What the report is, and what it is not
@@ -102,6 +118,12 @@ export interface MatchedCode {
   productName: string;
   /** Every page it was printed on. A reviewer is holding the paper. */
   pages: number[];
+  /**
+   * True when this entry exists because a reviewer said "this is that
+   * product" (`adoptCode`) rather than the master already agreeing on its
+   * own.
+   */
+  adopted: boolean;
 }
 
 export interface UnmatchedCode {
@@ -167,6 +189,13 @@ export interface FlyerReading extends FlyerReadingSummary {
   report: MatchReport;
   /** Every page, in printed order, so the list reads beside the paper. */
   headings: PageHeading[];
+  /**
+   * When a code was last adopted or undone on this reading. Null until the
+   * first adoption. Compared against a spec proposal batch's `createdAt` to
+   * show the "propose again" hint (AC-C.4, S2) - which is the only reason it
+   * has to be a timestamp rather than a boolean.
+   */
+  codeOverridesChangedAt: string | null;
 }
 
 /** Why a named code was not written. Each one sends a reviewer somewhere else. */
@@ -239,12 +268,30 @@ export interface FlyerSeedResult {
   skipped: UnmatchedCode[];
 }
 
+/**
+ * `adopted` defaulted to `false` here, not left `undefined`: the row it feeds
+ * is a boolean check (`entry.adopted`), and a matched entry the backend sent
+ * before this feature existed - or the not-promoted list, which is never
+ * adopted - must read as a firm "no" rather than an absent field that happens
+ * to be falsy.
+ */
+function toMatchedCode(wire: Partial<MatchedCode>): MatchedCode {
+  return {
+    code: wire.code ?? '',
+    productId: wire.productId ?? '',
+    productCode: wire.productCode ?? '',
+    productName: wire.productName ?? '',
+    pages: wire.pages ?? [],
+    adopted: Boolean(wire.adopted),
+  };
+}
+
 /** An absent list is an empty one; an absent report would hide the whole answer. */
 function toReport(wire: Partial<MatchReport> | undefined): MatchReport {
   return {
-    matched: wire?.matched ?? [],
+    matched: (wire?.matched ?? []).map(toMatchedCode),
     unmatched: wire?.unmatched ?? [],
-    notPromoted: wire?.notPromoted ?? [],
+    notPromoted: (wire?.notPromoted ?? []).map(toMatchedCode),
     dimensionCandidates: wire?.dimensionCandidates ?? [],
     duplicates: wire?.duplicates ?? {},
     promotionId: wire?.promotionId ?? null,
@@ -293,6 +340,7 @@ function toReading(wire: Partial<FlyerReading>): FlyerReading {
     // so an empty list, and the section renders its own empty state rather than
     // every caller guarding the same field.
     headings: wire.headings ?? [],
+    codeOverridesChangedAt: wire.codeOverridesChangedAt ?? null,
   };
 }
 
@@ -477,4 +525,44 @@ export async function seedFromFlyerReading(
     // dropped", which is the one thing the seed must not be able to imply.
     skipped: wire.skipped ?? [],
   };
+}
+
+/**
+ * "This printed code IS that product." Moves `printedCode` out of
+ * `unmatched` and into `matched` with `adopted: true`, everywhere the report
+ * is read from - the suggestion was never applied on its own (D8), this
+ * click is what applies it.
+ */
+export async function adoptCode(
+  readingId: string,
+  printedCode: string,
+  productId: string,
+): Promise<FlyerReading> {
+  const response = await apiFetch(
+    `${BASE}/${encodeURIComponent(readingId)}/code-overrides/${encodeURIComponent(printedCode)}`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ productId }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, `Could not adopt ${printedCode}`));
+  }
+  return toReading(await response.json());
+}
+
+/** Undoes an adoption. Specs already applied from the adopted card stay applied (R2). */
+export async function undoAdoptCode(
+  readingId: string,
+  printedCode: string,
+): Promise<FlyerReading> {
+  const response = await apiFetch(
+    `${BASE}/${encodeURIComponent(readingId)}/code-overrides/${encodeURIComponent(printedCode)}`,
+    { method: 'DELETE' },
+  );
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, `Could not undo the adoption of ${printedCode}`));
+  }
+  return toReading(await response.json());
 }

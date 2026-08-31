@@ -55,6 +55,7 @@ from app.database import get_db
 from app.dependencies import require_permission, require_permission_with_api_key
 from app.schemas.dealer_kit import (
     AppliedDimensionOut,
+    CodeOverrideIn,
     CodeSuggestionOut,
     DimensionApplyIn,
     DimensionApplyOut,
@@ -134,6 +135,7 @@ def _matched_out(entry) -> MatchedCodeOut:
         product_code=entry.product_code,
         product_name=entry.product_name,
         pages=list(entry.pages),
+        adopted=entry.adopted,
     )
 
 
@@ -225,6 +227,7 @@ def _detail(db: Session, record, promotion_id: Optional[UUID]) -> FlyerReadingOu
             PageHeadingOut(page=number, text=text)
             for number, text in svc.headings(record)
         ],
+        code_overrides_changed_at=getattr(record, "code_overrides_changed_at", None),
     )
 
 
@@ -507,6 +510,62 @@ def apply_flyer_dimensions(
         applied_count=len(result.applied),
         refused_count=len(result.refused),
     )
+
+
+@router.put(
+    "/flyer-readings/{reading_id}/code-overrides/{printed_code}",
+    response_model=FlyerReadingOut,
+)
+def adopt_flyer_code(
+    reading_id: str,
+    printed_code: str,
+    payload: CodeOverrideIn,
+    db: Session = Depends(get_db),
+    _reader: dict = Depends(_READ_THE_FLYER),
+    user: dict = Depends(_WRITE_THE_MASTER),
+):
+    """"This printed code IS that product" (PLAN-flyer-code-adopt.md, R1-R4).
+
+    Same two permissions as applying a printed size, and for the same reason:
+    this writes something a designer's dealer-kit authority alone does not
+    cover - here, which product a card on the flyer means - so
+    ``master_data.products.edit`` is required alongside ``dealer_kit.page.view``.
+
+    200 with the full detail, not 204: the report changed, and the frontend
+    replaces its cache with this response rather than refetching (no flash
+    back to the stale row before the new one lands).
+    """
+    record = svc.get_reading(db, reading_id)
+    updated = svc.adopt_code(
+        db,
+        record,
+        printed_code=printed_code,
+        product_id=str(payload.product_id),
+        user_id=_user_id(user),
+    )
+    return _detail(db, updated, None)
+
+
+@router.delete(
+    "/flyer-readings/{reading_id}/code-overrides/{printed_code}",
+    response_model=FlyerReadingOut,
+)
+def undo_flyer_code_adoption(
+    reading_id: str,
+    printed_code: str,
+    db: Session = Depends(get_db),
+    _reader: dict = Depends(_READ_THE_FLYER),
+    _writer: dict = Depends(_WRITE_THE_MASTER),
+):
+    """Undo an adoption. Specs already applied to the product stay applied (R2).
+
+    200 with the detail, for the same reason the PUT above answers 200: the
+    code returns to `unmatched`, and the frontend replaces its cache with this
+    response.
+    """
+    record = svc.get_reading(db, reading_id)
+    updated = svc.unadopt_code(db, record, printed_code=printed_code)
+    return _detail(db, updated, None)
 
 
 @router.delete("/flyer-readings/{reading_id}", status_code=status.HTTP_204_NO_CONTENT)

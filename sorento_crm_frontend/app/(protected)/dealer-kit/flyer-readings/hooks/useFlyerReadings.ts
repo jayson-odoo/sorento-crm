@@ -4,14 +4,17 @@ import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tansta
 import { toast } from 'sonner';
 
 import {
+  adoptCode,
   applyDimensions,
   createFlyerReadingFromAttachment,
   getFlyerReading,
   listFlyerReadings,
   seedFromFlyerReading,
+  undoAdoptCode,
   uploadFlyerReading,
   type DimensionApplyInput,
   type DimensionApplyResult,
+  type FlyerReading,
   type FlyerReadingSummary,
   type FlyerSeedInput,
   type FlyerSeedResult,
@@ -190,6 +193,70 @@ export function useSeedFromFlyerReading(readingId: string) {
     },
     onError: (error) => {
       toast.error(error.message || 'Could not create the draft brochure');
+    },
+  });
+}
+
+/**
+ * Write every cache holding this reading, regardless of which promotion it
+ * was read against.
+ *
+ * The query is keyed `[FLYER_READINGS_QUERY_KEY, readingId, promotionId ?? '']`
+ * (`useFlyerReadingQuery`), so `setQueryData` on a two-element key would write
+ * a cache entry nothing reads from. `setQueriesData` matches every key that
+ * STARTS WITH the filter, so the one report on screen - whichever promotion
+ * it is showing prices from - is replaced with the response directly: no
+ * refetch, no flash back to a stale row before the new one lands.
+ */
+function replaceReadingCache(
+  queryClient: QueryClient,
+  readingId: string,
+  reading: FlyerReading,
+) {
+  queryClient.setQueriesData<FlyerReading>(
+    { queryKey: [FLYER_READINGS_QUERY_KEY, readingId] },
+    () => reading,
+  );
+}
+
+/**
+ * "This printed code IS that product" (PLAN-flyer-code-adopt.md). The
+ * response is the reading with the code already moved into `matched`, so the
+ * row flips in place rather than waiting on a second round trip.
+ */
+export function useAdoptCode(readingId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation<FlyerReading, Error, { printedCode: string; productId: string }>({
+    mutationFn: ({ printedCode, productId }) => adoptCode(readingId, printedCode, productId),
+    onSuccess: (reading, { printedCode }) => {
+      replaceReadingCache(queryClient, readingId, reading);
+      const adopted = reading.report.matched.find((entry) => entry.code === printedCode);
+      toast.success(`${printedCode} adopted as ${adopted?.productCode ?? 'the chosen product'}`);
+    },
+    onError: (error) => {
+      // The 409 naming the code and page this product is already adopted as
+      // (R1) is the one message the reviewer needs, so it is passed through.
+      toast.error(error.message || 'Could not adopt this code');
+    },
+  });
+}
+
+/**
+ * Undo an adoption. Specs already applied from the card stay applied - the
+ * confirmation on screen says so, this hook does not touch them (R2).
+ */
+export function useUndoAdoptCode(readingId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation<FlyerReading, Error, { printedCode: string }>({
+    mutationFn: ({ printedCode }) => undoAdoptCode(readingId, printedCode),
+    onSuccess: (reading, { printedCode }) => {
+      replaceReadingCache(queryClient, readingId, reading);
+      toast.success(`${printedCode} is unmatched again`);
+    },
+    onError: (error) => {
+      toast.error(error.message || 'Could not undo this adoption');
     },
   });
 }

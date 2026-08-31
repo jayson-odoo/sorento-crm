@@ -56,8 +56,8 @@ const EMPTY: MatchReport = {
 /** Modelled on the real flyer: the codes and misreads below are its own. */
 const FULL: MatchReport = {
   matched: [
-    { code: 'SRTWC286-SH', productId: 'p-1', productCode: 'SRTWC286-SH', productName: 'One Piece Water Closet', pages: [1] },
-    { code: 'SRTBF11620', productId: 'p-2', productCode: 'SRTBF11620', productName: 'Basin Faucet', pages: [2] },
+    { code: 'SRTWC286-SH', productId: 'p-1', productCode: 'SRTWC286-SH', productName: 'One Piece Water Closet', pages: [1], adopted: false },
+    { code: 'SRTBF11620', productId: 'p-2', productCode: 'SRTBF11620', productName: 'Basin Faucet', pages: [2], adopted: false },
   ],
   unmatched: [
     {
@@ -73,7 +73,7 @@ const FULL: MatchReport = {
     { code: 'FG-CW13', pages: [3], suggestion: null },
   ],
   notPromoted: [
-    { code: 'SRTBF11620', productId: 'p-2', productCode: 'SRTBF11620', productName: 'Basin Faucet', pages: [2] },
+    { code: 'SRTBF11620', productId: 'p-2', productCode: 'SRTBF11620', productName: 'Basin Faucet', pages: [2], adopted: false },
   ],
   dimensionCandidates: [
     {
