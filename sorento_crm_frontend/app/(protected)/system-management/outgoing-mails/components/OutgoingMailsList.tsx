@@ -152,7 +152,6 @@ export default function OutgoingMailsList() {
                   size="icon"
                   className="shrink-0 h-8 w-8"
                   aria-label="View full content"
-                  title="View full content"
                   onClick={(e) => {
                     e.stopPropagation();
                     setContentMail(mail);
