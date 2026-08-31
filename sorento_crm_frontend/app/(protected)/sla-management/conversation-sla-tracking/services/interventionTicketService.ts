@@ -204,7 +204,18 @@ export interface InterventionTicketDetail {
   extension_count?: number;
   /** Viewer-relative gates, server-computed (assignee / RBAC). */
   can_send: boolean;
+  /** Assignee-or-admin only - My Team can open this drawer without being able
+   *  to resolve it (reading is wider than acting). */
   can_resolve: boolean;
+  /** True when the viewer IS the assignee. Drives the drawer's Takeover
+   *  affordance: offered only when this is false (My Team opened it) and the
+   *  viewer holds the takeover permission. */
+  is_assignee: boolean;
+  /** The assignee's queue team id, resolved from the VIEWER's own visible
+   *  teams - the same id My Team's row already passes to Takeover
+   *  (`TeamPendingItem.team_id`). Null when the assignee is outside the
+   *  viewer's visible teams (e.g. an admin acting outside their hierarchy). */
+  assignee_team_id: string | null;
   /** What the composer may offer. Anything absent here is absent from the UI. */
   send_capabilities: TicketSendCapability[];
   window: TicketWindowState;

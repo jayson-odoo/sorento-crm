@@ -421,31 +421,19 @@ export async function fetchSlaTrackingMedia(
 // My Team Tasks / Takeover / Reassign (team coverage & reassignment)
 // ---------------------------------------------------------------------------
 
-/** One visible-team pending SLA task. Names are resolved server-side (no UUIDs in UI). */
-export interface TeamPendingItem {
-  id: string;
+/**
+ * One visible-team pending SLA task. Names are resolved server-side (no UUIDs
+ * in UI). Extends `MyPendingSLAItem` rather than duplicating its field list -
+ * the backend row builder (`ConversationSLATrackingService._pending_row`) is
+ * now shared by `/my-pending` and `/team-pending`, so a team row carries the
+ * exact same base contract (including `is_intervention_ticket`,
+ * `enquiry_snippet`, `respond_io_id`, ...) plus the team-only context below.
+ */
+export interface TeamPendingItem extends MyPendingSLAItem {
   assignee_id: string;
   assignee_name: string;
   team_id: string;
   team_label: string;
-  source_entity_type: string | null;
-  source_entity_id: string | null;
-  is_form_sla: boolean;
-  reference: string | null;
-  due_at: string | null;
-  due_at_resolution?: string | null;
-  /** Governing deadline for this row's next action (see MyPendingSLAItem.active_due_at). */
-  active_due_at?: string | null;
-  due_kind?: 'respond' | 'resolve';
-  responded_at?: string | null;
-  is_responded: boolean;
-  current_tier: number;
-  /** Times the resolution deadline has been extended (see MyPendingSLAItem). */
-  extension_count?: number;
-  policy_name: string | null;
-  next_action: string | null;
-  /** Pending takeover on this row (running bar / observer-locked state). */
-  takeover?: TakeoverInfo | null;
 }
 
 export interface TeamPendingResponse {
