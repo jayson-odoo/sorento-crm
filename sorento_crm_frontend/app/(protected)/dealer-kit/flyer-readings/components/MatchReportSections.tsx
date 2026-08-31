@@ -147,7 +147,7 @@ export function MatchReportSections({
   // map - so it is the reading plus the code, which is also what keeps it
   // unique across every OTHER reading's adoptions.
   const undo = useDeferredRowAction({
-    actionKey: 'flyer_reading.undo_code_adopt',
+    actionKey: 'flyer_code_adoption.undo',
     entityType: 'flyer_code_adoption',
     verb: 'Undoing',
     successMessage: 'Code unmatched again',
@@ -313,7 +313,6 @@ export function MatchReportSections({
                 undo.run({
                   id: undoRowId(original.code),
                   subject: original.code,
-                  payload: { reading_id: readingId, printed_code: original.code },
                 })
               }
             >

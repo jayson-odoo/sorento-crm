@@ -44,7 +44,7 @@ vi.mock('sonner', () => ({
 const { createPendingAction } = vi.hoisted(() => ({
   createPendingAction: vi.fn().mockResolvedValue({
     id: 'pa-1',
-    action_key: 'flyer_reading.undo_code_adopt',
+    action_key: 'flyer_code_adoption.undo',
     entity_type: 'flyer_code_adoption',
     entity_id: 'r-1:SRTBT1835',
     commit_at: '2026-08-31T00:00:05',
@@ -484,12 +484,14 @@ describe('MatchReportSections, undo is a deferred action (D7, not a confirmation
 
     fireEvent.click(screen.getByTestId('dk-fr-undo'));
 
+    // No payload of its own: the entity id (`<reading id>:<printed code>`) is
+    // everything the handler needs, derived rather than carried separately.
     await waitFor(() =>
       expect(createPendingAction).toHaveBeenCalledWith({
-        actionKey: 'flyer_reading.undo_code_adopt',
+        actionKey: 'flyer_code_adoption.undo',
         entityType: 'flyer_code_adoption',
         entityId: 'r-1:SRTBT1835',
-        payload: { reading_id: 'r-1', printed_code: 'SRTBT1835' },
+        payload: undefined,
       }),
     );
     // No confirmation dialog stands between the click and the park.

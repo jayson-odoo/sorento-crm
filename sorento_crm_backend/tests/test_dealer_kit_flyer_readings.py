@@ -1382,3 +1382,121 @@ class TestUndoAdoptCode:
         )
         assert fresh_spec.values == {"material": {"value": "ceramic"}}
         assert fresh_spec.provenance == {"material": {"source": "human"}}
+
+
+def _park_undo(c: TestClient, reading_id: str, code: str):
+    """The generic pending-actions POST, exactly as the Undo button sends it."""
+    return c.post(
+        "/api/v1/pending-actions",
+        json={
+            "action_key": "flyer_code_adoption.undo",
+            "entity_type": "flyer_code_adoption",
+            "entity_id": f"{reading_id}:{code}",
+            "payload": {},
+        },
+    )
+
+
+def _lapse_and_poll(c: TestClient, db, reading_id: str, code: str, action_id: str):
+    """Move the window into the past and let the lazy commit on GET apply it -
+    the same round trip a countdown toast's own poll makes (`pending_actions.py`)."""
+    from datetime import datetime, timedelta
+
+    from app.models.sla import SlaFormAction
+
+    db.query(SlaFormAction).filter(SlaFormAction.id == action_id).update(
+        {"commit_at": datetime.utcnow() - timedelta(seconds=1)},
+        synchronize_session=False,
+    )
+    db.commit()
+    return c.get(
+        "/api/v1/pending-actions/current",
+        params={"entity_type": "flyer_code_adoption", "entity_id": f"{reading_id}:{code}"},
+    )
+
+
+class TestUndoAdoptCodeDeferredAction:
+    """The deferred path (AC-B.3), through `/pending-actions` rather than the
+    direct DELETE `TestUndoAdoptCode` above already covers - the countdown
+    button's own round trip, over `record_actions._undo_flyer_code_adopt`.
+
+    S1 review, 31 Aug: this handler used to read `reading_id`/`printed_code`
+    straight off the payload rather than off the entity id (defect 2), which
+    the registry contract test (`test_record_actions_s6b.py`) catches with an
+    empty payload. This exercises it with the FULL, real payload instead - the
+    one the button actually sends - and drives TWO adopt/undo cycles on the
+    same code, because a reviewer's browser run found the second undo landing
+    as `committed` with no error yet leaving the code adopted.
+    """
+
+    def test_the_deferred_undo_clears_the_code_when_its_window_lapses(self, api) -> None:
+        db, _as, _scope = api
+        product = _product(db, "ZZTFRADOPTD1")
+
+        with TestClient(app) as c:
+            reading_id = _read_id(c)
+            _as(_CURATOR_ID)
+            assert _adopt(c, reading_id, UNMATCHED_A, product.id).status_code == 200
+
+            parked = _park_undo(c, reading_id, UNMATCHED_A)
+            assert parked.status_code == 202, parked.text
+
+            polled = _lapse_and_poll(c, db, reading_id, UNMATCHED_A, parked.json()["id"])
+            outcome = polled.json()["last_outcome"]
+            assert outcome["status"] == "committed", outcome
+            assert outcome["error_text"] is None
+
+            body = c.get(f"/api/v1/dealer-kit/flyer-readings/{reading_id}").json()
+
+        assert _matched_entry(body, UNMATCHED_A) is None
+        assert UNMATCHED_A in _unmatched_codes(body)
+
+    def test_a_second_cycle_on_the_same_code_also_clears_it(self, api) -> None:
+        """The exact sequence from the browser run: adopt, undo (deferred),
+        re-adopt the SAME code to the SAME product, undo (deferred) again."""
+        db, _as, _scope = api
+        product = _product(db, "ZZTFRADOPTD2")
+
+        with TestClient(app) as c:
+            reading_id = _read_id(c)
+            _as(_CURATOR_ID)
+
+            assert _adopt(c, reading_id, UNMATCHED_A, product.id).status_code == 200
+            parked1 = _park_undo(c, reading_id, UNMATCHED_A)
+            assert parked1.status_code == 202, parked1.text
+            outcome1 = _lapse_and_poll(
+                c, db, reading_id, UNMATCHED_A, parked1.json()["id"]
+            ).json()["last_outcome"]
+            assert outcome1["status"] == "committed", outcome1
+
+            from app.models.dealer_kit import FlyerReadingRecord
+
+            db.expire_all()
+            record = (
+                db.query(FlyerReadingRecord).filter(FlyerReadingRecord.id == reading_id).one()
+            )
+            assert UNMATCHED_A not in (record.code_overrides or {})
+            changed_after_undo_1 = record.code_overrides_changed_at
+
+            assert _adopt(c, reading_id, UNMATCHED_A, product.id).status_code == 200
+            parked2 = _park_undo(c, reading_id, UNMATCHED_A)
+            assert parked2.status_code == 202, parked2.text
+            assert parked2.json()["id"] != parked1.json()["id"]
+
+            outcome2 = _lapse_and_poll(
+                c, db, reading_id, UNMATCHED_A, parked2.json()["id"]
+            ).json()["last_outcome"]
+            assert outcome2["status"] == "committed", outcome2
+            assert outcome2["error_text"] is None
+            assert outcome2["id"] == parked2.json()["id"]
+
+            body = c.get(f"/api/v1/dealer-kit/flyer-readings/{reading_id}").json()
+
+        db.expire_all()
+        record = db.query(FlyerReadingRecord).filter(FlyerReadingRecord.id == reading_id).one()
+        assert UNMATCHED_A not in (record.code_overrides or {})
+        assert record.code_overrides_changed_at != changed_after_undo_1
+
+        assert _matched_entry(body, UNMATCHED_A) is None
+        assert UNMATCHED_A in _unmatched_codes(body)
+        assert body["codeOverridesChangedAt"] is not None
