@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { ArrowLeft, ExternalLink, Link2, Save } from 'lucide-react';
+import { ArrowLeft, Check, ExternalLink, Link2, Save } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -260,6 +260,9 @@ export function WorkflowSubmissionDetail({ submissionId }: { submissionId: strin
   const [transitionOpen, setTransitionOpen] = useState(false);
   const [pickedTransition, setPickedTransition] = useState<{ id: string; label: string } | null>(null);
   const [remark, setRemark] = useState('');
+  // Which link item is showing its tick. The menu stays open on select so the
+  // confirmation can be read where it was asked for (S7-05).
+  const [copiedLink, setCopiedLink] = useState<string | null>(null);
 
   const schema = useMemo((): WorkflowFormSchema | null => {
     const fs = sub?.form_schema;
@@ -327,7 +330,8 @@ export function WorkflowSubmissionDetail({ submissionId }: { submissionId: strin
   const copyLink = async (url: string, label: string) => {
     try {
       await navigator.clipboard.writeText(url);
-      toast.success(`${label} copied`);
+      setCopiedLink(label);
+      window.setTimeout(() => setCopiedLink(null), 2000);
     } catch {
       toast.error('Could not copy link');
     }
@@ -372,17 +376,23 @@ export function WorkflowSubmissionDetail({ submissionId }: { submissionId: strin
           ) : null}
           <DetailActionsMenu ariaLabel="Work links (sign-in required)">
             <DropdownMenuItem
-              onClick={() => {
+              onSelect={(event) => {
+                event.preventDefault();
                 const o = getOrigin();
                 if (!o) return;
                 void copyLink(workflowSubmissionUrl(o, submissionId), 'Work link');
               }}
             >
-              <Link2 className="size-4 mr-2" />
-              Copy work link
+              {copiedLink === 'Work link' ? (
+                <Check className="size-4 mr-2" />
+              ) : (
+                <Link2 className="size-4 mr-2" />
+              )}
+              {copiedLink === 'Work link' ? 'Copied' : 'Copy work link'}
             </DropdownMenuItem>
             <DropdownMenuItem
-              onClick={() => {
+              onSelect={(event) => {
+                event.preventDefault();
                 const o = getOrigin();
                 if (!o) return;
                 void copyLink(
@@ -391,8 +401,14 @@ export function WorkflowSubmissionDetail({ submissionId }: { submissionId: strin
                 );
               }}
             >
-              <Link2 className="size-4 mr-2" />
-              Copy link: new from this
+              {copiedLink === 'Prefilled new submission link' ? (
+                <Check className="size-4 mr-2" />
+              ) : (
+                <Link2 className="size-4 mr-2" />
+              )}
+              {copiedLink === 'Prefilled new submission link'
+                ? 'Copied'
+                : 'Copy link: new from this'}
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem

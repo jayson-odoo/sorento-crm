@@ -19,8 +19,6 @@ import {
   BadgeX,
   ChevronRight,
   LoaderCircleIcon,
-  Search,
-  X,
 } from 'lucide-react';
 import {
   AlertDialog,
@@ -48,12 +46,13 @@ import {
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { usePermissions } from '@/hooks/usePermissions';
+import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { readable, readableEntry } from '@/lib/spec-readable';
 import { statusPillClass, STATUS_PILL_BASE } from '@/lib/status-pill';
@@ -220,12 +219,13 @@ export default function SpecVerificationList() {
       ? [{ id: sort, desc: searchParams.get('dir') === 'desc' }]
       : [];
   });
-  const [searchQuery, setSearchQuery] = useState(
-    () => searchParams.get('query') ?? '',
-  );
-  const [searchInput, setSearchInput] = useState(
-    () => searchParams.get('query') ?? '',
-  );
+  const {
+    value: searchInputValue,
+    setValue: setSearchInputValue,
+    debouncedValue: searchQuery,
+    isSettling: searchSettling,
+    reset: resetSearchQuery,
+  } = useDebouncedSearch(searchParams.get('query') ?? '');
   const [stateFilter, setStateFilter] = useState(
     () => searchParams.get('state') ?? '',
   );
@@ -339,8 +339,7 @@ export default function SpecVerificationList() {
   );
 
   const clearFilters = () => {
-    setSearchQuery('');
-    setSearchInput('');
+    resetSearchQuery('');
     setStateFilter('');
     setClassFilter('');
     setIncludeDiscontinued(false);
@@ -707,10 +706,12 @@ export default function SpecVerificationList() {
     );
   };
 
-  const applySearch = () => {
-    setSearchQuery(searchInput);
+  // Every other filter on this list resets the page from its own onChange; the
+  // search box settles on its own schedule (the debounce), so it gets the same
+  // reset from an effect instead.
+  useEffect(() => {
     setPagination((prev) => ({ ...prev, pageIndex: 0 }));
-  };
+  }, [searchQuery]);
 
   if (isError) {
     return (
@@ -813,32 +814,13 @@ export default function SpecVerificationList() {
             <DataGridListToolbar
               table={table}
               searchSlot={
-                <div className="relative">
-                  <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
-                  <Input
-                    placeholder="Search code or name"
-                    value={searchInput}
-                    onChange={(e) => setSearchInput(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && applySearch()}
-                    disabled={isLoading}
-                    className="ps-9 w-full sm:w-40 md:w-64"
-                  />
-                  {searchQuery.length > 0 && (
-                    <Button
-                      mode="icon"
-                      variant="dim"
-                      className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
-                      onClick={() => {
-                        setSearchInput('');
-                        setSearchQuery('');
-                        setPagination((prev) => ({ ...prev, pageIndex: 0 }));
-                      }}
-                      aria-label="Clear search"
-                    >
-                      <X />
-                    </Button>
-                  )}
-                </div>
+                <ListSearchInput
+                  value={searchInputValue}
+                  onChange={setSearchInputValue}
+                  isSettling={isSearchInFlight(searchSettling, isFetching, searchQuery)}
+                  placeholder="Search code or name"
+                  className="w-full sm:w-40 md:w-64"
+                />
               }
               filters={{
                 kind: 'custom',

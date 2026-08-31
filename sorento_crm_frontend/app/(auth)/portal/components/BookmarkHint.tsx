@@ -50,8 +50,9 @@ export function BookmarkHint() {
   const handleCopy = async () => {
     try {
       await navigator.clipboard.writeText(stableUrl());
+      // The button already says Copied; a toast on top of it is the app telling
+      // the reader what they just did (S7-05).
       setCopied(true);
-      toast.success('Portal link copied - save it anywhere.');
       window.setTimeout(() => setCopied(false), 2000);
     } catch {
       toast.error('Could not copy. Long-press the address bar to copy the link.');

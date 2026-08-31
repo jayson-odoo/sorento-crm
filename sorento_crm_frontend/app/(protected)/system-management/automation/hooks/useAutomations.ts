@@ -1,6 +1,7 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useEntityMutation } from '@/hooks/useEntityMutation';
 import {
   createAutomation,
   getAutomation,
@@ -12,6 +13,7 @@ import {
   updateAutomation,
 } from '../services/automationService';
 import type {
+  Automation,
   AutomationCreateBody,
   AutomationUpdateBody,
 } from '../types/automation.types';
@@ -59,14 +61,17 @@ export function useUpdateAutomation(id: string) {
   });
 }
 
+/**
+ * The row switch. Optimistic (S7-01): the switch moves on press and goes back
+ * only if the server refuses, rather than sitting disabled through a round trip.
+ */
 export function useToggleAutomation(id: string) {
-  const qc = useQueryClient();
-  return useMutation({
+  return useEntityMutation<boolean, Automation>({
     mutationFn: (enabled: boolean) => toggleAutomation(id, enabled),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['automations'] });
-      qc.invalidateQueries({ queryKey: ['automation', id] });
-    },
+    keys: [['automations'], ['automation', id]],
+    matchRow: (row) => row.id === id,
+    patchRow: (enabled) => ({ enabled }),
+    errorMessage: 'Could not change the automation',
   });
 }
 

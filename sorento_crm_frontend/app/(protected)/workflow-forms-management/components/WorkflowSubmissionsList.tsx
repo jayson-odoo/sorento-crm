@@ -13,7 +13,7 @@ import {
   getPaginationRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { Plus, Search, SlidersHorizontal, X } from 'lucide-react';
+import { Plus, SlidersHorizontal } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -23,6 +23,8 @@ import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
+import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { Label } from '@/components/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
@@ -51,7 +53,12 @@ export default function WorkflowSubmissionsList({
 
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 25 });
   const [sorting, setSorting] = useState<SortingState>([{ id: 'updated_at', desc: true }]);
-  const [searchQuery, setSearchQuery] = useState('');
+  const {
+    value: searchInput,
+    setValue: setSearchInput,
+    debouncedValue: searchQuery,
+    isSettling: searchSettling,
+  } = useDebouncedSearch();
   const [advancedFilter, setAdvancedFilter] = useState<ListQueryFilterGroup | null>(null);
   const [scopeDefinitionId, setScopeDefinitionId] = useState<string>(fixedDefinitionId ?? '__all');
   const [quickStateCode, setQuickStateCode] = useState('');
@@ -251,26 +258,13 @@ export default function WorkflowSubmissionsList({
                       triggerClassName="w-[220px]"
                     />
                   )}
-                  <div className="relative">
-                    <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
-                    <Input
-                      placeholder="Search form, code, state…"
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      className="ps-9 w-56 max-w-full"
-                    />
-                    {searchQuery ? (
-                      <Button
-                        mode="icon"
-                        variant="dim"
-                        className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
-                        onClick={() => setSearchQuery('')}
-                        aria-label="Clear search"
-                      >
-                        <X />
-                      </Button>
-                    ) : null}
-                  </div>
+                  <ListSearchInput
+                    value={searchInput}
+                    onChange={setSearchInput}
+                    isSettling={isSearchInFlight(searchSettling, isFetching, searchQuery)}
+                    placeholder="Search form, code, state…"
+                    className="w-56 max-w-full"
+                  />
                   {listQueryToolsEnabled ? (
                     <Popover>
                       <PopoverTrigger asChild>

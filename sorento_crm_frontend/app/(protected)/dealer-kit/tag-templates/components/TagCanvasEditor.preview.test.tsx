@@ -264,6 +264,9 @@ describe('TagCanvasEditor preview per block (D53)', () => {
     await waitFor(() =>
       expect(screen.getByTestId('layer-main-code')).toHaveTextContent('CBF3612'),
     );
+    // The Apply dialog's exit animation keeps it (and its aria-hidden on the
+    // rest of the page) mounted a tick after the state update lands.
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
 
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
@@ -286,6 +289,9 @@ describe('TagCanvasEditor preview per block (D53)', () => {
     await waitFor(() =>
       expect(screen.getByTestId('layer-main-code')).toHaveTextContent('CBF3612'),
     );
+    // The Apply dialog's exit animation keeps it (and its aria-hidden on the
+    // rest of the page) mounted a tick after the state update lands.
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
 
     fireEvent.click(screen.getByRole('button', { name: 'Stop previewing' }));
 

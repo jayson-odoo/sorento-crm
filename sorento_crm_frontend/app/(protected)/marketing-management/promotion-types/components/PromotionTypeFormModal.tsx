@@ -65,7 +65,7 @@ export default function PromotionTypeFormModal({
   const form = useForm<PromotionTypeSchemaType>({
     resolver: zodResolver(PromotionTypeSchema),
     defaultValues: EMPTY,
-    mode: 'onSubmit',
+    mode: 'onTouched',
   });
 
   useEffect(() => {

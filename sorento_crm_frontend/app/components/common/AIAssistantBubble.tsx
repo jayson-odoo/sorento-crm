@@ -5,6 +5,8 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { AnimatePresence, motion } from 'motion/react';
+import { surfaceTransition, useReducedMotion } from '@/lib/motion';
 import {
   Bot,
   ChevronsRight,
@@ -105,6 +107,8 @@ export default function AIAssistantBubble() {
   const deepLinkMsgId = searchParams?.get('ai_message') ?? null;
   const handledDeepLinkRef = useRef<string | null>(null);
   const canSend = input.trim().length > 0 && !isSending;
+  const prefersReducedMotion = useReducedMotion();
+  const transition = surfaceTransition(prefersReducedMotion);
 
   const sortedMessages = useMemo(
     () => [...messages].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()),
@@ -244,10 +248,17 @@ export default function AIAssistantBubble() {
     }
   }, []);
 
+  // Pointer Events + setPointerCapture (S8-05), not mouse events: a mouse-only
+  // drag never fires for touch, so resizing the panel was desktop-only. Capture
+  // keeps the move/up pair routed to this handle even once the finger/pointer
+  // has left it - the resize tracks 1:1 the whole way, not just while directly
+  // over a 6px strip.
   const startResize = useCallback(
-    (axis: 'top' | 'left' | 'corner') => (e: React.MouseEvent) => {
+    (axis: 'top' | 'left' | 'corner') => (e: React.PointerEvent<HTMLDivElement>) => {
       e.preventDefault();
       e.stopPropagation();
+      const handle = e.currentTarget;
+      handle.setPointerCapture(e.pointerId);
       const startX = e.clientX;
       const startY = e.clientY;
       const startW = bubbleSize.width;
@@ -255,7 +266,7 @@ export default function AIAssistantBubble() {
       const prevUserSelect = document.body.style.userSelect;
       document.body.style.userSelect = 'none';
 
-      const onMove = (ev: MouseEvent) => {
+      const onMove = (ev: PointerEvent) => {
         // Dragging up (decreasing Y) increases height; left (decreasing X) increases width.
         const dx = startX - ev.clientX;
         const dy = startY - ev.clientY;
@@ -265,9 +276,10 @@ export default function AIAssistantBubble() {
         if (axis === 'top' || axis === 'corner') nextH = startH + dy;
         setBubbleSize(clampSize({ width: nextW, height: nextH }));
       };
-      const onUp = () => {
-        document.removeEventListener('mousemove', onMove);
-        document.removeEventListener('mouseup', onUp);
+      const onUp = (ev: PointerEvent) => {
+        handle.releasePointerCapture(ev.pointerId);
+        handle.removeEventListener('pointermove', onMove);
+        handle.removeEventListener('pointerup', onUp);
         document.body.style.userSelect = prevUserSelect;
         setBubbleSize((prev) => {
           const clamped = clampSize(prev);
@@ -275,8 +287,8 @@ export default function AIAssistantBubble() {
           return clamped;
         });
       };
-      document.addEventListener('mousemove', onMove);
-      document.addEventListener('mouseup', onUp);
+      handle.addEventListener('pointermove', onMove);
+      handle.addEventListener('pointerup', onUp);
     },
     [bubbleSize.height, bubbleSize.width, persistSize],
   );
@@ -445,33 +457,42 @@ export default function AIAssistantBubble() {
         </button>
       )}
 
-      {open ? (
-        <div
+      <AnimatePresence>
+        {open && (
+        <motion.div
           ref={panelRef}
           tabIndex={-1}
           data-testid="ai-assistant-panel"
-          className="absolute bottom-0 end-3 flex flex-col overflow-hidden rounded-2xl border border-border/60 bg-gradient-to-b from-background to-muted/40 shadow-2xl backdrop-blur-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="absolute bottom-0 end-3 flex flex-col overflow-hidden rounded-2xl border border-border/60 bg-gradient-to-b from-background to-muted/40 shadow-2xl backdrop-blur-sm outline-none origin-bottom-right focus-visible:ring-2 focus-visible:ring-ring"
           style={{
             width: `${bubbleSize.width}px`,
             height: `${bubbleSize.height}px`,
             maxWidth: 'calc(100vw - 3rem)',
             maxHeight: 'calc(100vh - 6rem)',
           }}
+          // Materialises from the bottom-right (S8-05): scale + blur + opacity
+          // together, not a plain fade, so the panel reads as a real surface
+          // arriving rather than content popping into existence (apple-design
+          // skill, "Materialize, don't just fade").
+          initial={prefersReducedMotion ? { opacity: 0 } : { opacity: 0, scale: 0.92, filter: 'blur(8px)' }}
+          animate={prefersReducedMotion ? { opacity: 1 } : { opacity: 1, scale: 1, filter: 'blur(0px)' }}
+          exit={prefersReducedMotion ? { opacity: 0 } : { opacity: 0, scale: 0.92, filter: 'blur(8px)' }}
+          transition={transition}
         >
-          {/* Resize handles */}
+          {/* Resize handles - Pointer Events + setPointerCapture (S8-05), touch included. */}
           <div
-            onMouseDown={startResize('top')}
-            className="absolute left-0 right-0 top-0 z-10 h-[6px] cursor-ns-resize hover:bg-primary/20"
+            onPointerDown={startResize('top')}
+            className="absolute left-0 right-0 top-0 z-10 h-[6px] touch-none cursor-ns-resize hover:bg-primary/20"
             aria-hidden="true"
           />
           <div
-            onMouseDown={startResize('left')}
-            className="absolute bottom-0 left-0 top-0 z-10 w-[6px] cursor-ew-resize hover:bg-primary/20"
+            onPointerDown={startResize('left')}
+            className="absolute bottom-0 left-0 top-0 z-10 w-[6px] touch-none cursor-ew-resize hover:bg-primary/20"
             aria-hidden="true"
           />
           <div
-            onMouseDown={startResize('corner')}
-            className="absolute left-0 top-0 z-20 h-[12px] w-[12px] cursor-nwse-resize hover:bg-primary/30"
+            onPointerDown={startResize('corner')}
+            className="absolute left-0 top-0 z-20 h-[12px] w-[12px] touch-none cursor-nwse-resize hover:bg-primary/30"
             aria-hidden="true"
           />
 
@@ -791,8 +812,9 @@ export default function AIAssistantBubble() {
               </form>
             </>
           )}
-        </div>
-      ) : null}
+        </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

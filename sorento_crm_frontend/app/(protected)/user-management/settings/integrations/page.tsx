@@ -36,6 +36,7 @@ export default function IntegrationsSettingsPage() {
 
   const form = useForm<IntegrationsForm>({
     resolver: zodResolver(IntegrationsSchema),
+    mode: 'onTouched',
     defaultValues: {
       n8nAttachmentWebhookUrl: settings.n8nAttachmentWebhookUrl ?? '',
       n8nCrmChatOutboundWebhookUrl: settings.n8nCrmChatOutboundWebhookUrl ?? '',

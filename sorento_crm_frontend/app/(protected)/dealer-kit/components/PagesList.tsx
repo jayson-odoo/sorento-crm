@@ -12,7 +12,7 @@ import {
   type PaginationState,
   type SortingState,
 } from '@tanstack/react-table';
-import { AlertCircle, FileText, Plus, Search, Trash2 } from 'lucide-react';
+import { AlertCircle, FileText, Plus, Trash2 } from 'lucide-react';
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -22,12 +22,13 @@ import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { Input } from '@/components/ui/input';
 import {
   useDeferredRowAction,
   useRowPending,
 } from '@/hooks/useDeferredRowAction';
 import { Skeleton } from '@/components/ui/skeleton';
+import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { listPages } from '../services/dealerKitService';
 import { NewPageDialog } from './NewPageDialog';
@@ -35,7 +36,11 @@ import type { PageSummary } from '@/lib/dealer-kit/types';
 
 export function PagesList() {
   const router = useRouter();
-  const [search, setSearch] = useState('');
+  const {
+    value: searchInput,
+    setValue: setSearchInput,
+    debouncedValue: search,
+  } = useDebouncedSearch();
   const [newOpen, setNewOpen] = useState(false);
   // Delete asks nothing (D7): the row dims and a toast counts down with Cancel.
   const deletion = useDeferredRowAction({
@@ -222,16 +227,13 @@ export function PagesList() {
       <Card>
         <CardHeader className="block py-5">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="relative w-full sm:max-w-xs">
-              <Search className="absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                className="ps-9"
-                placeholder="Search pages"
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                aria-label="Search pages"
-              />
-            </div>
+            <ListSearchInput
+              value={searchInput}
+              onChange={setSearchInput}
+              placeholder="Search pages"
+              aria-label="Search pages"
+              className="w-full sm:max-w-xs"
+            />
             <Button size="sm" className="shrink-0" onClick={() => setNewOpen(true)}>
               <Plus className="size-4" />
               New page

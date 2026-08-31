@@ -9,10 +9,11 @@ import {
   getCoreRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Search, UserRoundCog, UserRoundPlus, UserRoundCheck } from 'lucide-react';
+import { UserRoundCog, UserRoundPlus, UserRoundCheck } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
+import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
@@ -41,16 +42,14 @@ export default function TeamPendingList() {
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [assigneeFilter, setAssigneeFilter] = useState(ALL);
   const [teamFilter, setTeamFilter] = useState(ALL);
-  const [searchInput, setSearchInput] = useState('');
-  const [search, setSearch] = useState('');
+  const {
+    value: searchInput,
+    setValue: setSearchInput,
+    debouncedValue: search,
+    isSettling: searchSettling,
+  } = useDebouncedSearch();
   const [reassignTarget, setReassignTarget] = useState<{ id: string; label: string } | null>(null);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
-
-  // Debounce the search box so we don't refetch on every keystroke.
-  useEffect(() => {
-    const t = setTimeout(() => setSearch(searchInput.trim()), 300);
-    return () => clearTimeout(t);
-  }, [searchInput]);
 
   useEffect(() => {
     setPagination((prev) => ({ ...prev, pageIndex: 0 }));
@@ -272,15 +271,13 @@ export default function TeamPendingList() {
             <DataGridListToolbar
               table={table}
               searchSlot={
-                <div className="relative w-full max-w-xs">
-                  <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    value={searchInput}
-                    onChange={(e) => setSearchInput(e.target.value)}
-                    placeholder="Search number, contact, assignee…"
-                    className="pl-9"
-                  />
-                </div>
+                <ListSearchInput
+                  value={searchInput}
+                  onChange={setSearchInput}
+                  isSettling={isSearchInFlight(searchSettling, isFetching, search)}
+                  placeholder="Search number, contact, assignee…"
+                  className="w-full max-w-xs"
+                />
               }
               filters={{
                 kind: 'custom',

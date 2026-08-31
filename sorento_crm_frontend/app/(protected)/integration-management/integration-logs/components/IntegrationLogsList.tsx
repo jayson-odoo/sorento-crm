@@ -12,7 +12,7 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { ChevronRight, RefreshCw, Search, X } from 'lucide-react';
+import { ChevronRight, RefreshCw } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -32,6 +32,8 @@ import { toast } from 'sonner';
 import { formatDateTimeInMalaysia, parseDateTimeAsUTC } from '@/lib/helpers';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
+import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 
 export default function IntegrationLogsList() {
   const router = useRouter();
@@ -39,7 +41,13 @@ export default function IntegrationLogsList() {
   const searchParams = useSearchParams();
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [sorting, setSorting] = useState<SortingState>([{ id: 'created_at', desc: true }]);
-  const [searchQuery, setSearchQuery] = useState('');
+  const {
+    value: searchInput,
+    setValue: setSearchInput,
+    debouncedValue: searchQuery,
+    isSettling: searchSettling,
+    reset: resetSearchQuery,
+  } = useDebouncedSearch();
   // Seed filters from the URL so a System Health drill-down (channel + failed +
   // last-24h) lands here pre-filtered.
   const [statusFilter, setStatusFilter] = useState<string>(
@@ -61,7 +69,7 @@ export default function IntegrationLogsList() {
   useListStateFromUrl((state) => {
     setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
     setSorting(state.sorting);
-    setSearchQuery(state.searchQuery);
+    resetSearchQuery(state.searchQuery);
     setStatusFilter(state.filters.status ?? 'all');
     setChannelFilter(state.filters.integration_channel ?? 'all');
     setTableFilter(state.filters.business_table ?? 'all');
@@ -80,7 +88,7 @@ export default function IntegrationLogsList() {
   );
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
-  const { data, isLoading, refetch, isRefetching } = useIntegrationLogs({
+  const { data, isLoading, isFetching, refetch, isRefetching } = useIntegrationLogs({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -197,6 +205,7 @@ export default function IntegrationLogsList() {
                 mode="icon"
                 variant="ghost"
                 size="sm"
+                aria-label="Retry"
                 onClick={(e) => {
                   e.stopPropagation();
                   retryMutation.mutate(row.original.id, {
@@ -210,7 +219,6 @@ export default function IntegrationLogsList() {
                   });
                 }}
                 disabled={retryMutation.isPending}
-                aria-label="Retry"
               >
                 <RefreshCw className="size-4" />
               </Button>
@@ -345,26 +353,13 @@ export default function IntegrationLogsList() {
           <DataGridListToolbar
             table={table}
             searchSlot={
-              <div className="relative w-full max-w-xs">
-                <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
-                <Input
-                  placeholder="Search logs..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="ps-9"
-                />
-                {searchQuery && (
-                  <Button
-                    mode="icon"
-                    variant="dim"
-                    className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
-                    onClick={() => setSearchQuery('')}
-                    aria-label="Clear search"
-                  >
-                    <X />
-                  </Button>
-                )}
-              </div>
+              <ListSearchInput
+                value={searchInput}
+                onChange={setSearchInput}
+                isSettling={isSearchInFlight(searchSettling, isFetching, searchQuery)}
+                placeholder="Search logs..."
+                className="w-full max-w-xs"
+              />
             }
             filters={{
               kind: 'custom',

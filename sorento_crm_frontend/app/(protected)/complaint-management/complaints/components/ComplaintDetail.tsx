@@ -4,7 +4,7 @@ import { useState, useCallback } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Edit, Send, Link2, ExternalLink, MessageSquare, CheckCircle2, XCircle, BadgeCheck, ArrowUpCircle, Ban, UserRoundCog, Undo2, Printer } from 'lucide-react';
+import { Check, Edit, Send, Link2, ExternalLink, MessageSquare, CheckCircle2, XCircle, BadgeCheck, ArrowUpCircle, Ban, UserRoundCog, Undo2, Printer } from 'lucide-react';
 import { getFormSLATrackers, escalateFormTracking } from '@/app/(protected)/sla-management/_shared/formSLAService';
 import { SlaActiveTrackerControls } from '@/app/(protected)/sla-management/_shared/SlaActiveTrackerControls';
 import { SlaExtendMenuItem, SlaExtendDialog } from '@/app/(protected)/sla-management/_shared/SlaExtendAction';
@@ -216,6 +216,8 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
     queryKeysToInvalidate: [['complaint', complaintId]],
   });
   const [viewLinkCopying, setViewLinkCopying] = useState(false);
+  // The item ticks in place and the menu stays open to be read (S7-05).
+  const [viewLinkCopied, setViewLinkCopied] = useState(false);
   const publicViewLinksEnabled = usePublicViewLinksEnabled();
   const [editTechnicalResponseOpen, setEditTechnicalResponseOpen] = useState(false);
   const [editTechnicalResponseValue, setEditTechnicalResponseValue] = useState('');
@@ -476,13 +478,15 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
               {publicViewLinksEnabled && (
                 <DropdownMenuItem
                   disabled={viewLinkCopying}
-                  onClick={async () => {
+                  onSelect={async (event) => {
+                    event.preventDefault();
                     try {
                       setViewLinkCopying(true);
                       const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
                       const { view_url } = await getOrCreateComplaintViewLink(complaintId, baseUrl);
                       await navigator.clipboard.writeText(view_url);
-                      toast.success('View link copied to clipboard');
+                      setViewLinkCopied(true);
+                      window.setTimeout(() => setViewLinkCopied(false), 2000);
                     } catch {
                       toast.error('Failed to copy view link');
                     } finally {
@@ -490,8 +494,8 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
                     }
                   }}
                 >
-                  <Link2 className="size-4" />
-                  {viewLinkCopying ? 'Copying…' : 'Copy view link'}
+                  {viewLinkCopied ? <Check className="size-4" /> : <Link2 className="size-4" />}
+                  {viewLinkCopying ? 'Copying…' : viewLinkCopied ? 'Copied' : 'Copy view link'}
                 </DropdownMenuItem>
               )}
               {publicViewLinksEnabled && (

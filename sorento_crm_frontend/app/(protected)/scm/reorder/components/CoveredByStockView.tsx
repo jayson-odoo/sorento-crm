@@ -11,7 +11,7 @@ import {
   useReactTable,
 } from '@tanstack/react-table';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Check, Loader2, Search, X } from 'lucide-react';
+import { Check, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -20,7 +20,6 @@ import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { cn } from '@/lib/utils';
@@ -29,6 +28,8 @@ import { decideCoveredRow } from '../services/reorderRunService';
 import { todayRunKey } from '../hooks/useReorderRun';
 import { PlanDemandPopover } from './PlanDemandPopover';
 import type { ReorderRecommendation } from '../types/reorder.types';
+import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 
 /**
  * Demand the location's own stock already covers.
@@ -81,7 +82,11 @@ export function CoveredByStockView({
   runId?: string | null;
 }) {
   const qc = useQueryClient();
-  const [searchQuery, setSearchQuery] = useState('');
+  const {
+    value: searchInput,
+    setValue: setSearchInput,
+    debouncedValue: searchQuery,
+  } = useDebouncedSearch();
   const [sorting, setSorting] = useState<SortingState>([]);
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 25 });
   // Which row is mid-flight. Its controls disable together, so a second click cannot send
@@ -285,7 +290,6 @@ export function CoveredByStockView({
     state: { pagination, sorting, globalFilter: searchQuery },
     onPaginationChange: setPagination,
     onSortingChange: setSorting,
-    onGlobalFilterChange: setSearchQuery,
     getCoreRowModel: getCoreRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
@@ -349,25 +353,12 @@ export function CoveredByStockView({
               {fmtInt(undecided)} still to decide of {fmtInt(rows.length)}
             </span>
           </h3>
-          <div className="relative w-full sm:w-72">
-            <Search className="absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              className="ps-9 pe-9"
-              placeholder="Search SKU, product, or location..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-            />
-            {searchQuery ? (
-              <button
-                type="button"
-                aria-label="Clear search"
-                className="absolute end-2 top-1/2 -translate-y-1/2 rounded-sm p-1 text-muted-foreground hover:text-foreground"
-                onClick={() => setSearchQuery('')}
-              >
-                <X className="size-3.5" />
-              </button>
-            ) : null}
-          </div>
+          <ListSearchInput
+            value={searchInput}
+            onChange={setSearchInput}
+            placeholder="Search SKU, product, or location..."
+            className="w-full sm:w-72"
+          />
         </CardHeader>
         <CardTable>
           <DataGridTable />

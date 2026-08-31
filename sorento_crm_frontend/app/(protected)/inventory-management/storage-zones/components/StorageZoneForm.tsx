@@ -63,6 +63,7 @@ export default function StorageZoneForm({ open, onOpenChange, zoneId }: StorageZ
 
   const form = useForm<StorageZoneFormData>({
     resolver: zodResolver(StorageZoneSchema),
+    mode: 'onTouched',
     defaultValues: {
       warehouse_id: '',
       zone_code: '',

@@ -1,8 +1,8 @@
 'use client';
 
 import * as React from 'react';
-import { Search } from 'lucide-react';
-import { Input } from '@/components/ui/input';
+import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { getProductsForLineSelect } from '@/app/(protected)/master-data-management/products/services/productService';
 import {
   InlineLineTable,
@@ -37,7 +37,11 @@ export function SeriesProductsTable({ seriesId }: { seriesId: string }) {
   const rows = useSeriesProductRows(seriesId);
   const { setPricing, remove } = useSeriesProductRowMutations(seriesId);
   const { importCodes } = useSeriesProductMutations();
-  const [search, setSearch] = React.useState('');
+  const {
+    value: searchInput,
+    setValue: setSearchInput,
+    debouncedValue: search,
+  } = useDebouncedSearch();
 
   const fetchProducts = React.useCallback(async (query: string) => {
     const products = await getProductsForLineSelect(query || undefined);
@@ -173,19 +177,13 @@ export function SeriesProductsTable({ seriesId }: { seriesId: string }) {
   return (
     <div className="space-y-3">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div className="relative w-full sm:max-w-xs">
-          <Search
-            className="pointer-events-none absolute inset-y-0 start-0 my-auto size-4 translate-x-2.5 text-muted-foreground"
-            aria-hidden
-          />
-          <Input
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Search products"
-            aria-label="Search products in this series"
-            className="ps-9"
-          />
-        </div>
+        <ListSearchInput
+          value={searchInput}
+          onChange={setSearchInput}
+          placeholder="Search products"
+          aria-label="Search products in this series"
+          className="w-full sm:max-w-xs"
+        />
         <p className="text-xs text-muted-foreground" role="status">
           {search.trim()
             ? `${visible.length} of ${all.length} products`

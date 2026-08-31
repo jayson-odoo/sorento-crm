@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   ColumnDef,
@@ -9,7 +9,7 @@ import {
   getPaginationRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { Plus, Pencil, Trash2, ChevronRight, Search, X } from 'lucide-react';
+import { Plus, Pencil, Trash2, ChevronRight } from 'lucide-react';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
@@ -20,7 +20,6 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import {
   useDeferredRowAction,
   useRowPending,
@@ -31,14 +30,31 @@ import {
 } from '../hooks/useEmailTemplates';
 import type { EmailTemplate } from '../types/emailTemplate.types';
 import EmailTemplateForm from './EmailTemplateForm';
+import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 
 export default function EmailTemplatesList() {
   const router = useRouter();
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 50 });
-  const [query, setQuery] = useState('');
+  const {
+    value: queryInput,
+    setValue: setQueryInput,
+    debouncedValue: query,
+    isSettling: querySettling,
+  } = useDebouncedSearch();
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<EmailTemplate | null>(null);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
+
+  // A search brings the reader back to page 0 to see the matches.
+  const searchMounted = useRef(false);
+  useEffect(() => {
+    if (!searchMounted.current) {
+      searchMounted.current = true;
+      return;
+    }
+    setPagination((p) => ({ ...p, pageIndex: 0 }));
+  }, [query]);
 
   const params = useMemo(
     () => ({
@@ -217,29 +233,13 @@ export default function EmailTemplatesList() {
           <DataGridListToolbar
             table={table}
             searchSlot={
-              <div className="relative">
-                <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
-                <Input
-                  placeholder="Search by code, name, subject"
-                  value={query}
-                  onChange={(e) => {
-                    setPagination((p) => ({ ...p, pageIndex: 0 }));
-                    setQuery(e.target.value);
-                  }}
-                  className="ps-9 w-64"
-                />
-                {query && (
-                  <Button
-                    mode="icon"
-                    variant="dim"
-                    className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
-                    onClick={() => setQuery('')}
-                    aria-label="Clear search"
-                  >
-                    <X />
-                  </Button>
-                )}
-              </div>
+              <ListSearchInput
+                value={queryInput}
+                onChange={setQueryInput}
+                isSettling={isSearchInFlight(querySettling, isFetching, query)}
+                placeholder="Search by code, name, subject"
+                className="w-64"
+              />
             }
             exportConfig={{ filename: 'email_templates_export.xlsx' }}
             onRefresh={() => void refetch()}

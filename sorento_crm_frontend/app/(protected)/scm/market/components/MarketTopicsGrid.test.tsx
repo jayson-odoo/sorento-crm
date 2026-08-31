@@ -25,7 +25,7 @@ vi.mock('@/services/pendingActionService', () => ({
   getCurrentPendingAction: vi.fn().mockResolvedValue({ pending: null, last_outcome: null }),
 }));
 
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 // jsdom polyfills for ScrollArea / DataGrid.
@@ -136,14 +136,14 @@ describe('MarketTopicsGrid', () => {
     expect(screen.getByText('No research topics configured yet.')).toBeInTheDocument();
   });
 
-  it('filters rows by the search box', () => {
+  it('filters rows by the search box', async () => {
     mockList({ data: [COPPER, STEEL] });
     renderGrid();
     fireEvent.change(screen.getByPlaceholderText('Search topics...'), {
       target: { value: 'steel' },
     });
+    await waitFor(() => expect(screen.queryByText('Copper price index')).not.toBeInTheDocument());
     expect(screen.getByText('Steel rebar')).toBeInTheDocument();
-    expect(screen.queryByText('Copper price index')).not.toBeInTheDocument();
   });
 
   it('parks the delete on the row that was pressed, with no dialog in the way (S6-10)', async () => {

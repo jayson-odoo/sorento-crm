@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from 'react';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SEARCH_DEBOUNCE_MS } from '@/hooks/useDebouncedSearch';
 
 interface ProductOption {
   id: string;
@@ -41,12 +42,12 @@ export function ProductCombobox({
     if (debounceRef.current) clearTimeout(debounceRef.current);
   }, []);
 
-  // 300ms balances responsiveness against backend hit rate while typing - the standard
-  // component reports every keystroke, so the debounce lives here.
+  // The standard component reports every keystroke, so the debounce lives here -
+  // on the one window every search in the app waits (S7-02).
   const handleSearch = (query: string) => {
     if (!onSearch) return;
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => onSearch(query), 300);
+    debounceRef.current = setTimeout(() => onSearch(query), SEARCH_DEBOUNCE_MS);
   };
 
   const options = [

@@ -17,9 +17,7 @@ import {
   Plus,
   RefreshCw,
   RotateCcw,
-  Search,
   Upload,
-  X,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -36,7 +34,6 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -75,6 +72,8 @@ import { SalesOrderFormModal } from './SalesOrderFormModal';
 import { OutstandingUploadDialog } from '../../reorder/components/OutstandingUploadDialog';
 import { runHistoryKey, todayRunKey } from '../../reorder/hooks/useReorderRun';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
+import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 
 /**
  * THE sales-order table. One component, two places: the Sales Orders list (`SalesOrdersList`,
@@ -242,7 +241,13 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
   const rowPending = useRowPending<SalesOrder>('scm_sales_order');
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 25 });
   const [sorting, setSorting] = useState<SortingState>([]);
-  const [searchQuery, setSearchQuery] = useState('');
+  const {
+    value: searchInput,
+    setValue: setSearchInput,
+    debouncedValue: searchQuery,
+    isSettling: searchSettling,
+    reset: resetSearchQuery,
+  } = useDebouncedSearch();
   const [statusFilter, setStatusFilter] = useState('');
   const [priorityFilter, setPriorityFilter] = useState('');
   // "Show me the orders the Order Inquiry sheet created" is a filter on this list rather
@@ -265,7 +270,7 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
   useListStateFromUrl((state) => {
     setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
     setSorting(state.sorting);
-    setSearchQuery(state.searchQuery);
+    resetSearchQuery(state.searchQuery);
     setStatusFilter(state.filters.status ?? '');
     setPriorityFilter(state.filters.priority ?? '');
     setSourceFilter(state.filters.source ?? '');
@@ -295,7 +300,7 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
   // A pinned agent wins over the filter, which is not offered while it is pinned.
   const effectiveAgentId = salesAgentId ?? (agentFilter || null);
 
-  const { data, isLoading, refetch } = useSalesOrders({
+  const { data, isLoading, isFetching, refetch } = useSalesOrders({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -818,30 +823,17 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
             <DataGridListToolbar
               table={table}
               searchSlot={
-                <div className="relative">
-                  <Search className="absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    // Four things, because those are the four a person holds when they come
-                    // looking: the document number, who it is for, what is on it, and who
-                    // sold it. The backend's `query` matches all four (`sales_order_service
-                    // .list`), so the placeholder is not a promise the search cannot keep.
-                    placeholder="Search SO, customer, product or agent..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-64 ps-9"
-                  />
-                  {searchQuery ? (
-                    <Button
-                      mode="icon"
-                      variant="dim"
-                      className="absolute end-1.5 top-1/2 h-6 w-6 -translate-y-1/2"
-                      onClick={() => setSearchQuery('')}
-                      aria-label="Clear search"
-                    >
-                      <X />
-                    </Button>
-                  ) : null}
-                </div>
+                <ListSearchInput
+                  value={searchInput}
+                  onChange={setSearchInput}
+                  isSettling={isSearchInFlight(searchSettling, isFetching, searchQuery)}
+                  // Four things, because those are the four a person holds when they come
+                  // looking: the document number, who it is for, what is on it, and who
+                  // sold it. The backend's `query` matches all four (`sales_order_service
+                  // .list`), so the placeholder is not a promise the search cannot keep.
+                  placeholder="Search SO, customer, product or agent..."
+                  className="w-64"
+                />
               }
               filters={{
                 kind: 'custom',

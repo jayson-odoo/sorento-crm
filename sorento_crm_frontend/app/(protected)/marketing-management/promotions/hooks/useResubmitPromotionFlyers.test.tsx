@@ -26,11 +26,9 @@ vi.mock('../services/promotionService', () => ({
   bulkUpdateAccessLevels: vi.fn(),
   getPromotionProducts: vi.fn(),
   addPromotionProduct: vi.fn(),
-  removePromotionProduct: vi.fn(),
   updatePromotionProductPrice: vi.fn(),
   createPromotionGroup: vi.fn(),
   updatePromotionGroup: vi.fn(),
-  deletePromotionGroup: vi.fn(),
   compilePromotionsPdf: vi.fn(),
 }));
 

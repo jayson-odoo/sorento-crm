@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { Filter, KanbanSquare, Plus, Search, Table2, X } from 'lucide-react';
+import { Filter, KanbanSquare, Plus, Table2 } from 'lucide-react';
 import type { PaginationState, SortingState } from '@tanstack/react-table';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -10,7 +10,6 @@ import {
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
@@ -27,6 +26,8 @@ import { ProjectsGrid } from '../../_shared/components/ProjectsGrid';
 import { EmptyState, PipelineBoard } from './PipelineBoard';
 import { RegisterProjectDialog } from './RegisterProjectDialog';
 import { PageHeader } from '@/components/common/PageHeader';
+import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 
 const VIEW_STORAGE_KEY = 'project-sales.pipeline.view';
 
@@ -46,8 +47,13 @@ type PipelineView = 'board' | 'grid';
 export function PipelineClient() {
   const [view, setView] = React.useState<PipelineView>('board');
   const [registerOpen, setRegisterOpen] = React.useState(false);
-  const [search, setSearch] = React.useState('');
-  const [debouncedSearch, setDebouncedSearch] = React.useState('');
+  const {
+    value: search,
+    setValue: setSearch,
+    debouncedValue: debouncedSearch,
+    isSettling: debouncedSearchSettling,
+    reset: resetSearch,
+  } = useDebouncedSearch();
   const [ownerFilter, setOwnerFilter] = React.useState('');
   const [developerFilter, setDeveloperFilter] = React.useState('');
   const [typeFilter, setTypeFilter] = React.useState('');
@@ -66,8 +72,7 @@ export function PipelineClient() {
   useListStateFromUrl((urlState) => {
     setPagination({ pageIndex: urlState.pageIndex, pageSize: urlState.pageSize });
     setSorting(urlState.sorting);
-    setSearch(urlState.searchQuery);
-    setDebouncedSearch(urlState.searchQuery);
+    resetSearch(urlState.searchQuery);
     setDeveloperFilter(urlState.filters.developer_party_id ?? '');
     setOwnerFilter(urlState.filters.owner_user_id ?? '');
     setTypeFilter(urlState.filters.type_id ?? '');
@@ -78,11 +83,6 @@ export function PipelineClient() {
     const stored = window.localStorage.getItem(VIEW_STORAGE_KEY);
     if (stored === 'board' || stored === 'grid') setView(stored);
   }, []);
-
-  React.useEffect(() => {
-    const timer = window.setTimeout(() => setDebouncedSearch(search.trim()), 300);
-    return () => window.clearTimeout(timer);
-  }, [search]);
 
   // Narrowing the set changes which rows exist, so page 3 of the old set is a page of
   // nothing in the new one. Now that the filters live in the grid toolbar, landing on a
@@ -175,30 +175,14 @@ export function PipelineClient() {
   }
 
   const searchSlot = (
-    <div className="relative">
-      <Search
-        className="absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
-        aria-hidden
-      />
-      <Input
-        placeholder="Search title or code…"
-        value={search}
-        onChange={(event) => setSearch(event.target.value)}
-        className="w-full ps-9 sm:w-64"
-        aria-label="Search projects"
-      />
-      {search && (
-        <Button
-          mode="icon"
-          variant="dim"
-          className="absolute end-1.5 top-1/2 h-6 w-6 -translate-y-1/2"
-          onClick={() => setSearch('')}
-          aria-label="Clear search"
-        >
-          <X />
-        </Button>
-      )}
-    </div>
+    <ListSearchInput
+      value={search}
+      onChange={setSearch}
+      isSettling={isSearchInFlight(debouncedSearchSettling, projects.isFetching, debouncedSearch)}
+      placeholder="Search title or code…"
+      aria-label="Search projects"
+      className="w-full"
+    />
   );
 
   const activeFilterCount =

@@ -1,10 +1,9 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { LoaderCircleIcon, Save } from 'lucide-react';
-import { apiFetch } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -65,9 +64,36 @@ export default function ContactAgentAccessDialog({
   const isEditMode = !!contactAccess;
   const createMutation = useCreateContactAgentAccess();
   const updateMutation = useUpdateContactAgentAccess();
-  const [formInitialized, setFormInitialized] = useState(false);
-  const [isLookingUp, setIsLookingUp] = useState(false);
   const [agentSearchQuery, setAgentSearchQuery] = useState('');
+
+  // What the dialog opens on, fed through `values` rather than a reset scheduled
+  // in an effect behind a `formInitialized` flag (S7-03). Both branches are the
+  // ones the effect had: the grant being edited, or the blank seeded with the
+  // contact and agent the caller already knows. Undefined while closed, so the
+  // defaults stand and reopening is not showing the last row.
+  const openValues = useMemo<ContactAgentAccessSchemaType | undefined>(() => {
+    if (!open) return undefined;
+    if (contactAccess && isEditMode) {
+      return {
+        respond_contact_phone: contactAccess.respond_contact_phone,
+        respond_contact_name: contactAccess.respond_contact_name || '',
+        agent_id: contactAccess.agent_id,
+        agent_ids: [],
+        is_allowed: contactAccess.is_allowed,
+        valid_from: contactAccess.valid_from ? new Date(contactAccess.valid_from) : undefined,
+        valid_to: contactAccess.valid_to ? new Date(contactAccess.valid_to) : undefined,
+      };
+    }
+    return {
+      respond_contact_phone: defaultContactPhone || '',
+      respond_contact_name: '',
+      agent_id: accessAgentId || '',
+      agent_ids: [],
+      is_allowed: true,
+      valid_from: undefined,
+      valid_to: undefined,
+    };
+  }, [open, contactAccess, isEditMode, accessAgentId, defaultContactPhone]);
 
   const form = useForm<ContactAgentAccessSchemaType>({
     resolver: zodResolver(ContactAgentAccessSchema),
@@ -80,46 +106,10 @@ export default function ContactAgentAccessDialog({
       valid_from: undefined,
       valid_to: undefined,
     },
-    mode: 'onSubmit',
+    values: openValues,
+    // A field answers when the reader leaves it, not on submit.
+    mode: 'onTouched',
   });
-
-  // Load contact access data when editing
-  useEffect(() => {
-    if (contactAccess && isEditMode && !formInitialized && open) {
-      const timeoutId = setTimeout(() => {
-        form.reset({
-          respond_contact_phone: contactAccess.respond_contact_phone,
-          respond_contact_name: contactAccess.respond_contact_name || '',
-          agent_id: contactAccess.agent_id,
-          agent_ids: [],
-          is_allowed: contactAccess.is_allowed,
-          valid_from: contactAccess.valid_from ? new Date(contactAccess.valid_from) : undefined,
-          valid_to: contactAccess.valid_to ? new Date(contactAccess.valid_to) : undefined,
-        });
-        setFormInitialized(true);
-      }, 0);
-
-      return () => clearTimeout(timeoutId);
-    } else if (!isEditMode && open) {
-form.reset({
-          respond_contact_phone: defaultContactPhone || '',
-          respond_contact_name: '',
-          agent_id: accessAgentId || '',
-          agent_ids: [],
-          is_allowed: true,
-          valid_from: undefined,
-          valid_to: undefined,
-        });
-      setFormInitialized(true);
-    }
-  }, [contactAccess, isEditMode, form, open, accessAgentId, formInitialized, defaultContactPhone]);
-
-  // Reset formInitialized when dialog closes
-  useEffect(() => {
-    if (!open) {
-      setFormInitialized(false);
-    }
-  }, [open]);
 
   const onSubmit = async (data: ContactAgentAccessSchemaType) => {
     try {
@@ -166,14 +156,12 @@ form.reset({
         queryClient.invalidateQueries({ queryKey: ['contact-access-agents', contactId] });
       }
       onOpenChange(false);
-    } catch (error: any) {
+    } catch (error) {
       // Error is handled by the mutation hook, but we can add additional handling here if needed
       console.error('Contact access agent form submission error:', error);
       // The mutation hook will show the error toast
     }
   };
-
-  // Removed lookup function as respond_contact_name doesn't exist in database
 
   const isLoading = createMutation.isPending || updateMutation.isPending;
 

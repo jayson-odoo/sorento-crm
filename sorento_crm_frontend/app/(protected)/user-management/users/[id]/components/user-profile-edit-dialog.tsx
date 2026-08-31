@@ -137,7 +137,7 @@ const UserProfileEditDialog = ({
       notify_email_on_product_discontinued: Boolean(user?.notifyEmailOnProductDiscontinued),
       notify_whatsapp_on_product_discontinued: Boolean(user?.notifyWhatsappOnProductDiscontinued),
     },
-    mode: 'onSubmit',
+    mode: 'onTouched',
   });
 
   const lastResetRef = useRef<{ userId: string } | null>(null);

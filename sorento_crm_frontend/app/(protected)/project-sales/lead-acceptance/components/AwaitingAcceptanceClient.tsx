@@ -9,7 +9,7 @@ import {
   getPaginationRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { BellRing, Search, UserPlus } from 'lucide-react';
+import { BellRing, UserPlus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
@@ -17,7 +17,8 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { Input } from '@/components/ui/input';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
+import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -54,19 +55,18 @@ export function AwaitingAcceptanceClient() {
     pageIndex: 0,
     pageSize: 25,
   });
-  const [searchInput, setSearchInput] = React.useState('');
-  const [search, setSearch] = React.useState('');
+  const {
+    value: searchInput,
+    setValue: setSearchInput,
+    debouncedValue: search,
+    isSettling: searchSettling,
+  } = useDebouncedSearch();
   const [ownerFilter, setOwnerFilter] = React.useState(ANY_OWNER);
   const [minHours, setMinHours] = React.useState('');
   const [assignTarget, setAssignTarget] = React.useState<AwaitingAcceptanceRow | null>(
     null,
   );
   const [nudgeTarget, setNudgeTarget] = React.useState<AwaitingAcceptanceRow | null>(null);
-
-  React.useEffect(() => {
-    const timer = window.setTimeout(() => setSearch(searchInput.trim()), 300);
-    return () => window.clearTimeout(timer);
-  }, [searchInput]);
 
   React.useEffect(() => {
     setPagination((previous) => ({ ...previous, pageIndex: 0 }));
@@ -307,19 +307,14 @@ export function AwaitingAcceptanceClient() {
               <DataGridListToolbar
                 table={table}
                 searchSlot={
-                  <div className="relative w-full max-w-xs">
-                    <Search
-                      className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
-                      aria-hidden
-                    />
-                    <Input
-                      value={searchInput}
-                      onChange={(event) => setSearchInput(event.target.value)}
-                      placeholder="Search title or lead code…"
-                      className="pl-9"
-                      aria-label="Search leads awaiting acceptance"
-                    />
-                  </div>
+                  <ListSearchInput
+                    value={searchInput}
+                    onChange={setSearchInput}
+                    isSettling={isSearchInFlight(searchSettling, query.isFetching, search)}
+                    placeholder="Search title or lead code…"
+                    aria-label="Search leads awaiting acceptance"
+                    className="w-full max-w-xs"
+                  />
                 }
                 filters={{
                   kind: 'custom',

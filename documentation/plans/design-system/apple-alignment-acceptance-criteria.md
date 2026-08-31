@@ -138,16 +138,116 @@ Added 2026-08-30 from the user's run on the built S6 (the window works; what hap
 ## S7 Feedback [FE]
 
 - **S7-01** A shared `useEntityMutation` factory gives optimistic updates with rollback to boolean and status toggles in expanded rows; the toggle flips before the request resolves. [FE][T]
+  Reconciled against the tree on 31 Aug: **five** row toggles were sitting disabled through their
+  round trip and all five move onto the factory (automation enabled, email event config enabled,
+  team round-robin, Respond outbound across three grids, and the users list's daily conversation
+  summary). The last of those also reached `apiFetch` from inside the component; the write moved to
+  `userService` on the way past. The BULK outbound write stays non-optimistic: it is one write over
+  a selection, with nothing to roll back per row.
 - **S7-02** Search inputs use one `useDebouncedSearch` (200ms) and show a settling indicator; the four mock-latency constants and the `lookupSetService` sleep are gone. [FE][T]
+  Reconciled against the tree on 31 Aug: 24 boxes migrated. Three 300ms timers remain and are
+  deliberate: `SearchableSelect`, `SearchableMultiSelect` and the two product comboboxes are option
+  PICKERS rather than list searches, so they keep their own shape and read `SEARCH_DEBOUNCE_MS`
+  instead of a literal. Also untouched: the portal's own pickers under `app/(auth)` (outside the
+  sidebar's world, as in S5) and the mention autocomplete in the internal comment composer, which
+  is not a search box. `ConversationListPane`'s existing debounce test was re-timed from 300 to the
+  shared 200.
+
+  **Second sweep, reconciled against the tree on 31 Aug (same day, later pass):** the first pass's
+  24 covered the boxes already using a two-state pattern; a full grep for
+  `placeholder="Search` outside `ListSearchInput` found 151 hand-rolled boxes across `app/` and
+  `components/` (a wider grep than the first pass's, which is why the count differs from the 144
+  an earlier draft of this note gave). This pass (worked concurrently by more than one coder
+  against the same tree, hence the jump in one sitting) brings the total using `ListSearchInput`
+  to **122**; **54** remain (53 real UI + the one test-fixture file below), all classified below
+  rather than silently skipped:
+
+  - **Unreachable demo/legacy scaffolding (24, untouched):** `account/invite-a-friend`,
+    `account/members/*` (4), `account/security/*` (4), `components/demo1/light-sidebar/teams`,
+    `network/user-table/*` (6), `store-admin/*` (3), `store-client/*` (2),
+    `components/layouts/demo1|demo6|demo9` (3). Verified against `config/menu.config.tsx`: every
+    one of these routes is commented out of the real `MENU_SIDEBAR` (lines 64-1190) and only
+    reachable from `MENU_SIDEBAR_COMPACT` / `MENU_MEGA*`, which back the Metronic demo layouts
+    (`demo2`-`demo10`), not the app shell `PageHeader` actually renders from. Same standing
+    exemption as the demo layouts already carried.
+  - **In-dialog or in-form pickers (22, untouched):** the `placeholder="Search..."` sits on a
+    `SearchableSelect`/`SearchableMultiSelect` field or inside a `<Dialog>`, not a list toolbar -
+    `ComplaintForm`, `RoomDesigner` (canvas "add product" picker), `PromotionAttachmentsTab`
+    (`LinkAttachmentDialog`), `LinkAttachmentBrowserDialog` (both copies -
+    `components/common/` and `master-data-management/products/components/` are two separate
+    files with the same name), `ProductForm` (category/brand fields), `GRNForm`,
+    `PurchaseRequestForm`, `StakeholdersPanel` (party field), `PriceFloorDialog`,
+    `QualifyLeadDialog`, `RegisterProjectDialog`, `MatchToProductDialog`,
+    `UnmatchedSupplierCodesPanel` (per-row match picker), `ProformaInvoiceDetail` (add-line
+    picker), `ContactAgentAccessDialog`, `CopyAccessAgentsFromContactDialog`,
+    `BulkCopySettingsFromContactDialog`, `SendTemplateDialog` (browse-and-pick-one, same shape
+    as `LinkAttachmentBrowserDialog`), `AddSpecificationDialog` (a `SearchableSelect` field), and
+    the two picker building blocks themselves, `components/common/SearchableSelect.tsx` /
+    `SearchableMultiSelect.tsx` (carried over from the first S7-02 pass note above, not a second
+    finding - migrating the block that every OTHER picker on this list is built from would change
+    all of them at once).
+  - **Explicitly named exempt (5, untouched):** `ChatTranscript` and
+    `components/common/conversation/ConversationSearchBar.tsx` (both find-within-a-page /
+    find-within-a-thread bars with match navigation, not a list search),
+    `AIAssistantSettingsForm` (a tool checklist, not a list), `AIAssistantBubble`, and the command
+    palette `search-dialog.tsx` (fuzzy nav, not a list). `ActivityTimeline` was in this bucket in
+    the count above when this note was first written; it migrated in the same sitting (a second
+    coder's commit landed after this paragraph was drafted) and is corrected out of it here.
+  - **Not real UI (1, excluded from every count above):** `components/ui/data-grid-list-toolbar.test.tsx`
+    is a Vitest fixture asserting the toolbar's own layout, not a page a user reaches - the grep
+    this note is built from does not distinguish test files from app code.
+  - **Portal design conflict (1, untouched):** `(auth)/portal/components/PortalLanding.tsx` uses
+    `Input variant="lg"` at `h-12` for a touch-friendly target on an unauthenticated, largely
+    mobile customer surface; `ListSearchInput` has no size variant and migrating it today would
+    shrink that target. Flagged as a follow-up for whenever `ListSearchInput` grows one, not
+    silently dropped.
+  - **Deliberately deferred, not exempt (1):** `FlyerSpecReviewScreen.tsx` filters an
+    already-loaded batch client-side and would be a same-shape migration, but its own test file
+    (`FlyerSpecReviewScreen.test.tsx`) asserts the filtered rows synchronously right after
+    `fireEvent.change`, with no `waitFor` - a dozen assertions across that file would need
+    rewriting to tolerate the 200ms debounce. Left for a pass that owns that test file rather than
+    changed as a side effect of this sweep.
+
+  Migrated boxes that were server-searching pick up `isSettling={isSearchInFlight(...)}` wired to
+  the list's own `isFetching`; boxes that filter rows already in memory (client-side) migrate
+  without `isSettling` - there is nothing to wait for. One exception is deliberate:
+  `scm/components/ScmFilterBar.tsx` takes lifted filter state via `{ filters, onChange }` props
+  from `ScmDashboard` rather than owning local state, so the debounce now lives INSIDE the bar (it
+  syncs its raw value from `filters.productSearch` when that changes from outside - the bar's own
+  Clear button, or the scope chip - and pushes its own debounced value up via `onChange` otherwise)
+  and the bar takes a new optional `isFetching` prop the dashboard threads through from its rollup
+  query, rather than the bar reading a query hook itself.
 - **S7-03** Forms validate `onTouched`; the eight `setTimeout(form.reset)` are replaced by `defaultValues` / `values`. [FE][T]
+  Reconciled against the tree on 31 Aug: **43** forms carried `mode: 'onSubmit'` or no mode at all
+  and now validate `onTouched`. Two exceptions: `user-restore-dialog` keeps `onChange`, because its
+  button unlocks on `formState.isValid` as the confirmation is typed, and the Metronic store-client
+  demo pages are out of scope as they are everywhere else. Forms with no resolver have nothing to
+  validate and were left alone. The six converted forms that are edit PAGES also carry
+  `resetOptions: { keepDirtyValues: true }`: `values` re-applies whenever the record changes, and
+  without it a background refetch mid-edit would discard what was being typed. The two converted
+  DIALOGS name their create values as well as their edit ones, because the component stays mounted
+  between openings.
 - **S7-04** The ten busiest list routes have `loading.tsx` skeletons; `LayoutLoadingFallback` keeps the shell and skeletons only the content pane. [FE][E2E]
+  "Busiest" measured on 31 Aug, not guessed: `user_list_column_configs` records who has personalised
+  which listing, and the ten with the most distinct users are Users (28), Complaints (16), Products
+  (14), Forms (14), Attachment directories (13), Contact access agents (12), Import jobs (11),
+  Orders (10), SPO allocations (10), Promotions (9). One shared `ListPageSkeleton` serves all ten;
+  a Next route boundary also covers the segment's CHILDREN, so a record page under one of these
+  lists is held by the same shape.
 - **S7-05** Copy-to-clipboard actions show the inline checkmark only, no toast. [FE]
+  Reconciled against the tree on 31 Aug: 11 copy actions had a success toast, three of them on top
+  of a "Copied" the button was already showing. Six live in a dropdown and now keep their menu open
+  (`onSelect` + `preventDefault`), because an item that closes the menu has nowhere to put a tick,
+  which is why they had reached for a toast. FAILURE keeps its toast and its fallbacks: the
+  clipboard is refused over plain HTTP and nothing else on screen would say so. Left alone: the two
+  create-then-copy toasts (Complaint, Stock inquiry), which report that the RECORD was created and
+  mention the copy in passing.
 
 ## S8 Motion [FE]
 
 - **S8-01** Dialog, Sheet, Popover and DropdownMenu animate with the shared critically damped spring from `lib/motion.ts`; re-opening mid-close continues from the current value (no jump). [FE][T]
 - **S8-02** Popover, dropdown and tooltip scale from the trigger (`origin-(--radix-popper-content-transform-origin)`). [FE]
-- **S8-03** The sidebar collapse animates `transform` only; wrapper and header do not transition layout properties; `layout-initialized` is set on the next frame. [FE]
+- **S8-03** ~~The sidebar collapse animates `transform` only; wrapper and header do not transition layout properties~~ - dropped 31 Aug 2026: the `scaleX` + counter-scaled `.sidebar-rail` trick distorted both end states (squished icons, content overlapping the page past the collapsed rail) once its clip had to move off `.sidebar` for the toggle-button fix, and a second element (the toggle itself) needed position tracking without shape distortion, which the same transform could not give both at once. The collapse animates `width` again (wrapper/header transition `padding-inline-start`/`inset-inline-start` in lockstep, as before S8); `layout-initialized` is kept, set on the next frame via `requestAnimationFrame` rather than the old 1s timeout. [FE]
 - **S8-04** The mobile nav drawer is a `vaul` drawer: it tracks the finger, dismisses on swipe with velocity, and is inert to input during no phase. [FE][E2E]
 - **S8-05** The AI bubble panel materialises (scale + blur + opacity) from the bottom-right and resizes with pointer capture, touch included. [FE]
 - **S8-06** Row drag-and-drop has an activation distance and a drop animation. [FE]

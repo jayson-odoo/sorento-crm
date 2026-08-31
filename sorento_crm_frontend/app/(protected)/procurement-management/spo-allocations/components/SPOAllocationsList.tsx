@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import {
   ColumnDef,
@@ -9,16 +9,17 @@ import {
   useReactTable,
   getCoreRowModel,
 } from '@tanstack/react-table';
-import { ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, Link as LinkIcon, Plus, Search, Trash2, Upload, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, Link as LinkIcon, Plus, Trash2, Upload } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
+import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Input } from '@/components/ui/input';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { GroupBySelect } from '@/components/ui/group-by-select';
@@ -53,7 +54,12 @@ export default function SPOAllocationsList() {
   ]);
   // A link from the reorder plan's SPO column lands here narrowed to its product.
   const searchParams = useSearchParams();
-  const [searchQuery, setSearchQuery] = useState(searchParams.get('query') ?? '');
+  const {
+    value: searchInput,
+    setValue: setSearchInput,
+    debouncedValue: searchQuery,
+    isSettling: searchSettling,
+  } = useDebouncedSearch(searchParams.get('query') ?? '');
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [selectedAllocationIds, setSelectedAllocationIds] = useState<Set<string>>(new Set());
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
@@ -77,8 +83,18 @@ export default function SPOAllocationsList() {
   });
 
   const isGrouped = viewMode === 'spo_number';
-  const { data: groupedDataRaw, isLoading: isLoadingGrouped } = groupedQuery;
-  const { data: flatDataRaw, isLoading: isLoadingFlat } = flatQuery;
+  const { data: groupedDataRaw, isLoading: isLoadingGrouped, isFetching: isFetchingGrouped } = groupedQuery;
+  const { data: flatDataRaw, isLoading: isLoadingFlat, isFetching: isFetchingFlat } = flatQuery;
+
+  // A search brings the reader back to page 0 to see the matches.
+  const searchMounted = useRef(false);
+  useEffect(() => {
+    if (!searchMounted.current) {
+      searchMounted.current = true;
+      return;
+    }
+    setPagination((p) => ({ ...p, pageIndex: 0 }));
+  }, [searchQuery]);
 
   const groupedData = groupedDataRaw?.data ?? [];
   const flatData = flatDataRaw?.data ?? [];
@@ -87,6 +103,7 @@ export default function SPOAllocationsList() {
     : (flatDataRaw?.pagination?.total ?? 0);
   const pageCount = Math.ceil(totalSPOs / pagination.pageSize);
   const isLoading = isGrouped ? isLoadingGrouped : isLoadingFlat;
+  const isFetching = isGrouped ? isFetchingGrouped : isFetchingFlat;
 
   const toggleGroup = (spoNumber: string) => {
     setExpandedGroups((prev) => {
@@ -382,26 +399,13 @@ export default function SPOAllocationsList() {
             table={table}
             searchSlot={
               <div className="flex items-center gap-2 min-w-0 shrink">
-                <div className="relative shrink-0 w-40 sm:w-44">
-                  <Search className="size-4 text-muted-foreground absolute start-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-                  <Input
-                    placeholder="Search..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="ps-8 h-8 text-sm"
-                  />
-                  {searchQuery && (
-                    <Button
-                      mode="icon"
-                      variant="dim"
-                      className="absolute end-1 top-1/2 -translate-y-1/2 h-6 w-6"
-                      onClick={() => setSearchQuery('')}
-                      aria-label="Clear search"
-                    >
-                      <X className="size-3.5" />
-                    </Button>
-                  )}
-                </div>
+                <ListSearchInput
+                  value={searchInput}
+                  onChange={setSearchInput}
+                  isSettling={isSearchInFlight(searchSettling, isFetching, searchQuery)}
+                  placeholder="Search..."
+                  className="shrink-0 w-40 sm:w-44"
+                />
                 <GroupBySelect<ViewMode>
                   value={viewMode}
                   options={GROUP_BY_OPTIONS}

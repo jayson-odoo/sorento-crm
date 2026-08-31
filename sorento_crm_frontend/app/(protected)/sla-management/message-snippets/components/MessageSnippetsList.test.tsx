@@ -56,7 +56,6 @@ const hooks = vi.hoisted(() => ({
   useMessageSnippets: vi.fn(),
   useCreateMessageSnippet: vi.fn(),
   useUpdateMessageSnippet: vi.fn(),
-  useDeleteMessageSnippet: vi.fn(),
 }));
 vi.mock('../hooks/useMessageSnippets', () => hooks);
 
@@ -92,16 +91,13 @@ function mockList(
 
 let createAsync: ReturnType<typeof vi.fn>;
 let updateAsync: ReturnType<typeof vi.fn>;
-let deleteAsync: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   vi.clearAllMocks();
   createAsync = vi.fn().mockResolvedValue(snippet());
   updateAsync = vi.fn().mockResolvedValue(snippet());
-  deleteAsync = vi.fn().mockResolvedValue(undefined);
   hooks.useCreateMessageSnippet.mockReturnValue({ mutateAsync: createAsync, isPending: false });
   hooks.useUpdateMessageSnippet.mockReturnValue({ mutateAsync: updateAsync, isPending: false });
-  hooks.useDeleteMessageSnippet.mockReturnValue({ mutateAsync: deleteAsync, isPending: false });
   mockList([snippet()]);
 });
 
@@ -244,7 +240,6 @@ describe('MessageSnippetsList', () => {
         }),
       ),
     );
-    expect(deleteAsync).not.toHaveBeenCalled();
     expect(screen.queryByText('Confirm delete')).not.toBeInTheDocument();
   });
 });

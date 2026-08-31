@@ -2,6 +2,8 @@
 
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
+import { useEntityMutation } from '@/hooks/useEntityMutation';
+import type { RespondContactOutboundRow } from '@/app/(protected)/system-management/respond-contacts/types/respondContactOutbound.types';
 import {
   setBulkOutbound,
   setContactOutbound,
@@ -39,19 +41,28 @@ export function useRespondContactOutboundMutations() {
     }
   };
 
-  const setOne = useMutation({
-    mutationFn: ({ contactId, enabled }: { contactId: string; enabled: boolean }) =>
-      setContactOutbound(contactId, enabled),
-    onSuccess: (row) => {
-      invalidate();
+  /**
+   * Optimistic (S7-01). The switch is read on three grids and on one of them a
+   * contact owns several rows, so the patch matches by CONTACT id however the row
+   * spells it and every one of that contact's rows flips together. A refusal puts
+   * all of them back.
+   */
+  const setOne = useEntityMutation<
+    { contactId: string; enabled: boolean },
+    RespondContactOutboundRow
+  >({
+    mutationFn: ({ contactId, enabled }) => setContactOutbound(contactId, enabled),
+    keys: OUTBOUND_LIST_KEYS.map((key) => [key]),
+    matchRow: (row, variables) =>
+      row.id === variables.contactId || row.respond_contact_id === variables.contactId,
+    patchRow: ({ enabled }) => ({ outbound_enabled: enabled }),
+    successMessage: (row) => {
       const who = row.name || row.phone_number || 'Contact';
-      toast.success(
-        row.outbound_enabled
-          ? `${who} can be messaged again.`
-          : `${who} will receive no WhatsApp messages.`,
-      );
+      return row.outbound_enabled
+        ? `${who} can be messaged again.`
+        : `${who} will receive no WhatsApp messages.`;
     },
-    onError: (error: Error) => toast.error(error.message),
+    errorMessage: 'Could not change outbound messaging',
   });
 
   const setBulk = useMutation({

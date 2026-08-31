@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useMemo } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { useRouter } from 'next/navigation';
@@ -35,6 +35,19 @@ export default function SLAPolicyForm({ slaPolicyId, onSuccess }: SLAPolicyFormP
   const createMutation = useCreateSLAPolicy();
   const updateMutation = useUpdateSLAPolicy();
 
+  const editValues = useMemo<SLAPolicySchemaType | undefined>(
+    () =>
+      slaPolicy && isEditMode
+        ? {
+            code: slaPolicy.code,
+            name: slaPolicy.name,
+            description: slaPolicy.description || '',
+            is_active: slaPolicy.is_active,
+          }
+        : undefined,
+    [slaPolicy, isEditMode],
+  );
+
   const form = useForm<SLAPolicySchemaType>({
     resolver: zodResolver(SLAPolicySchema),
     defaultValues: {
@@ -43,34 +56,17 @@ export default function SLAPolicyForm({ slaPolicyId, onSuccess }: SLAPolicyFormP
       description: '',
       is_active: true,
     },
-    mode: 'onSubmit',
+    // The record fills the form through `values`, not a reset scheduled in an
+    // effect behind a `formInitialized` flag (S7-03): the flag meant a refetched
+    // record never reached the inputs. Undefined in create mode, so defaults stand.
+    values: editValues,
+    // A refetch arriving mid-edit updates the fields nobody has touched and
+    // leaves the ones being typed in alone.
+    resetOptions: { keepDirtyValues: true },
+    // A field answers when the reader leaves it, not on submit and not on every
+    // keystroke.
+    mode: 'onTouched',
   });
-
-  // Track if form has been initialized to prevent multiple resets
-  const [formInitialized, setFormInitialized] = useState(false);
-
-  // Load SLA policy data when editing
-  useEffect(() => {
-    if (slaPolicy && isEditMode && !formInitialized) {
-      // Use setTimeout to ensure form fields are ready
-      const timeoutId = setTimeout(() => {
-        form.reset({
-          code: slaPolicy.code,
-          name: slaPolicy.name,
-          description: slaPolicy.description || '',
-          is_active: slaPolicy.is_active,
-        });
-        setFormInitialized(true);
-      }, 0);
-
-      return () => clearTimeout(timeoutId);
-    }
-  }, [slaPolicy, isEditMode, form, formInitialized]);
-
-  // Reset formInitialized when slaPolicyId changes
-  useEffect(() => {
-    setFormInitialized(false);
-  }, [slaPolicyId]);
 
   const onSubmit = async (data: SLAPolicySchemaType) => {
     try {

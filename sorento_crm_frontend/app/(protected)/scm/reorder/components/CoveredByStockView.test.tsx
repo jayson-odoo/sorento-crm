@@ -53,7 +53,7 @@ describe('CoveredByStockView', () => {
     expect(screen.getByText(/5 available in this pool covers 1 committed/)).toBeInTheDocument();
   });
 
-  it('can be searched, like every other listing', () => {
+  it('can be searched, like every other listing', async () => {
     render(
       <CoveredByStockView
         rows={[row(), row({ id: 'rec-2', sku: 'CB110' })]}
@@ -65,8 +65,8 @@ describe('CoveredByStockView', () => {
       target: { value: 'CB110' },
     });
 
+    await waitFor(() => expect(screen.queryByText('MWC7624-RL-S10')).not.toBeInTheDocument());
     expect(screen.getByText('CB110')).toBeInTheDocument();
-    expect(screen.queryByText('MWC7624-RL-S10')).not.toBeInTheDocument();
   });
 
   it('prices buying anyway, so both sides of the choice are on screen', () => {

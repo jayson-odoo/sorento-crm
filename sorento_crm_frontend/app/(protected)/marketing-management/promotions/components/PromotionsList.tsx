@@ -12,7 +12,7 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Eye, FileText, Filter, Plus, RefreshCw, Search, Trash2, Users, X } from 'lucide-react';
+import { Eye, FileText, Filter, Plus, RefreshCw, Trash2, Users } from 'lucide-react';
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -22,7 +22,6 @@ import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { buildSelectColumn, selectedRowIds } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { Input } from '@/components/ui/input';
 import {
   Popover,
   PopoverContent,
@@ -45,6 +44,8 @@ import PromotionBulkResubmitDialog from './PromotionBulkResubmitDialog';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { useContactAccessTypes } from '@/app/(protected)/user-management/contact-access-types/hooks/useContactAccessTypes';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
+import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 
 export default function PromotionsList() {
   const router = useRouter();
@@ -66,7 +67,13 @@ export default function PromotionsList() {
   }, [accessTypeOptions]);
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [sorting, setSorting] = useState<SortingState>([{ id: 'created_at', desc: true }]);
-  const [searchQuery, setSearchQuery] = useState('');
+  const {
+    value: searchInput,
+    setValue: setSearchInput,
+    debouncedValue: searchQuery,
+    isSettling: searchSettling,
+    reset: resetSearch,
+  } = useDebouncedSearch();
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
   const [bulkAccessLevelsDialogOpen, setBulkAccessLevelsDialogOpen] = useState(false);
@@ -83,7 +90,7 @@ export default function PromotionsList() {
   useListStateFromUrl((state) => {
     setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
     setSorting(state.sorting);
-    setSearchQuery(state.searchQuery);
+    resetSearch(state.searchQuery);
     setFilterStatus(state.filters.status ?? 'all');
     setFilterAccessLevel(state.filters.user_type ?? 'all');
     setFilterAttachmentState(
@@ -125,7 +132,7 @@ export default function PromotionsList() {
       return;
     }
     setPagination((p) => ({ ...p, pageIndex: 0 }));
-  }, [advancedFilter, filterStatus, filterAccessLevel, filterAttachmentState, expiryNotifyBatchId]);
+  }, [advancedFilter, filterStatus, filterAccessLevel, filterAttachmentState, expiryNotifyBatchId, searchQuery]);
 
   const columns = useMemo<ColumnDef<Promotion>[]>(
     () => [
@@ -172,7 +179,7 @@ export default function PromotionsList() {
                   <span>{a.original_filename}</span>
                   <button
                     type="button"
-                    className="text-muted-foreground hover:text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
+                    className="text-muted-foreground hover:text-primary focus:outline-none"
                     onClick={(e) => handleOpenDetail(e, a.id)}
                     title="View attachment details"
                     aria-label={`View details of ${a.original_filename}`}
@@ -390,26 +397,13 @@ export default function PromotionsList() {
             table={table}
             searchSlot={
               <div className="flex items-center gap-2">
-                <div className="relative">
-                  <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
-                  <Input
-                    placeholder="Search promotions..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="ps-9 w-64"
-                  />
-                  {searchQuery && (
-                    <Button
-                      mode="icon"
-                      variant="dim"
-                      className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
-                      onClick={() => setSearchQuery('')}
-                      aria-label="Clear search"
-                    >
-                      <X />
-                    </Button>
-                  )}
-                </div>
+                <ListSearchInput
+                  value={searchInput}
+                  onChange={setSearchInput}
+                  isSettling={isSearchInFlight(searchSettling, isFetching, searchQuery)}
+                  placeholder="Search promotions..."
+                  className="w-64"
+                />
                 <Popover>
                   <PopoverTrigger asChild>
                     <Button

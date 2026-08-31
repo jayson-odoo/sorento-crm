@@ -13,8 +13,6 @@ import {
   Trash2,
   MoreHorizontal,
   Shield,
-  Search,
-  X,
   PanelLeftClose,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -44,6 +42,8 @@ import {
 } from '../../attachments/hooks/useAttachments';
 import { useQuickAccess, useAddQuickAccess, useRemoveQuickAccess } from '@/hooks/useQuickAccess';
 import { Star, StarOff } from 'lucide-react';
+import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 
 interface DirectoryTreeSidebarProps {
   selectedId: string | null;
@@ -430,7 +430,11 @@ export default function DirectoryTreeSidebar({
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
 
-  const [searchQuery, setSearchQuery] = useState('');
+  const {
+    value: searchInput,
+    setValue: setSearchInput,
+    debouncedValue: searchQuery,
+  } = useDebouncedSearch();
   const { filtered: filteredTree, matchedAncestors } = useMemo(
     () => filterTreeBySearch(tree, searchQuery),
     [tree, searchQuery]
@@ -581,24 +585,12 @@ export default function DirectoryTreeSidebar({
         </div>
         <div className="p-2 border-b">
           <div className="relative">
-            <Search className="absolute left-2 top-1/2 -translate-y-1/2 size-4 text-muted-foreground pointer-events-none" />
-            <Input
-              type="text"
+            <ListSearchInput
+              value={searchInput}
+              onChange={setSearchInput}
               placeholder="Search folders..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-8 pr-8 h-8 text-sm"
+              className="w-full"
             />
-            {searchQuery && (
-              <button
-                type="button"
-                onClick={() => setSearchQuery('')}
-                className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 rounded hover:bg-muted"
-                aria-label="Clear search"
-              >
-                <X className="size-3.5 text-muted-foreground" />
-              </button>
-            )}
           </div>
         </div>
         <ScrollAreaZag className="flex-1">

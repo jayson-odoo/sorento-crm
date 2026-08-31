@@ -89,7 +89,7 @@ export default function AccessAgentFormModal({
       is_active: true,
       assign_to_new_internal_contacts: false,
     },
-    mode: 'onSubmit',
+    mode: 'onTouched',
   });
 
   const [formInitialized, setFormInitialized] = useState(false);

@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Check, ChevronDown, ChevronRight, ImageOff, Minus, Package, Search, X } from 'lucide-react';
+import { useMemo, useRef, useState } from 'react';
+import { Check, ChevronDown, ChevronRight, ImageOff, Minus, Package, X } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -13,7 +13,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { RuleBuilder } from '@/components/rule-builder/RuleBuilder';
@@ -21,6 +20,8 @@ import type { RuleGroup } from '@/components/rule-builder/types';
 import { cn } from '@/lib/utils';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { Skeleton } from '@/components/ui/skeleton';
+import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 import {
   PICKER_PAGE_SIZE,
   listPickerCategories,
@@ -149,7 +150,12 @@ export function ProductPickerDialog({
   onSave: (selection: ProductSelection) => void;
 }) {
   const [draft, setDraft] = useState<ProductSelection>(value);
-  const [search, setSearch] = useState('');
+  const {
+    value: search,
+    setValue: setSearch,
+    debouncedValue: debounced,
+    isSettling: debouncedSettling,
+  } = useDebouncedSearch();
 
   // Remount-on-open keeps the draft honest when the dialog is reopened after a
   // cancel; without it the previous edit would silently persist.
@@ -174,12 +180,6 @@ export function ProductPickerDialog({
     enabled: open,
     staleTime: 5 * 60 * 1000,
   });
-
-  const [debounced, setDebounced] = useState('');
-  useEffect(() => {
-    const timer = window.setTimeout(() => setDebounced(search), 300);
-    return () => window.clearTimeout(timer);
-  }, [search]);
 
   const {
     data: pages,
@@ -339,16 +339,13 @@ export function ProductPickerDialog({
           </TabsContent>
 
           <TabsContent value="manual" className="pt-3">
-            <div className="relative mb-3">
-              <Search className="absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                className="ps-9"
-                placeholder="Search products"
-                aria-label="Search products"
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-              />
-            </div>
+            <ListSearchInput
+              value={search}
+              onChange={setSearch}
+              isSettling={isSearchInFlight(debouncedSettling, isFetching, debounced)}
+              placeholder="Search products"
+              aria-label="Search products"
+            />
 
             {/* Browse by category alongside the search box. Chips scroll rather
                 than wrap into a wall: there are hundreds of categories, and a

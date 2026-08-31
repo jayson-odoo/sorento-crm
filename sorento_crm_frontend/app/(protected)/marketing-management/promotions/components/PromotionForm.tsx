@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { useRouter } from 'next/navigation';
@@ -51,9 +51,31 @@ export default function PromotionForm({ promotionId, onSuccess }: PromotionFormP
     value: type.id,
     label: type.type_name,
   }));
-  const defaultAccessLevels = accessTypeOptions.length > 0 ? accessTypeOptions.map((o) => o.code) : ['dealer', 'end_user'];
+  const defaultAccessLevels = useMemo(
+    () => (accessTypeOptions.length > 0 ? accessTypeOptions.map((o) => o.code) : ['dealer', 'end_user']),
+    [accessTypeOptions],
+  );
 
   const todayYmd = useMemo(() => todayMalaysiaYyyyMmDd(), []);
+
+  // The promotion fills the form through `values`, not a reset scheduled in an
+  // effect (S7-03). The old shape waited a tick "so the SelectContent items are
+  // rendered", which a controlled select never needed, and its `formInitialized`
+  // flag meant a refetched promotion never reached the inputs.
+  const editValues = useMemo<PromotionSchemaType | undefined>(() => {
+    if (!promotion || !isEditMode) return undefined;
+    return {
+      description: promotion.description || '',
+      start_date: malaysiaCivilYyyyMmDdFromApi(promotion.start_date) ?? todayYmd,
+      end_date: malaysiaCivilYyyyMmDdFromApi(promotion.end_date) ?? todayYmd,
+      is_active: promotion.is_active,
+      promotion_type_id: promotion.promotion_type_id || '',
+      access_levels:
+        promotion.access_levels && promotion.access_levels.length > 0
+          ? promotion.access_levels
+          : defaultAccessLevels,
+    };
+  }, [promotion, isEditMode, todayYmd, defaultAccessLevels]);
 
   const form = useForm<PromotionSchemaType>({
     resolver: zodResolver(PromotionSchema),
@@ -65,42 +87,13 @@ export default function PromotionForm({ promotionId, onSuccess }: PromotionFormP
       promotion_type_id: '',
       access_levels: defaultAccessLevels,
     },
-    mode: 'onSubmit',
+    values: editValues,
+    // A refetch arriving mid-edit updates the fields nobody has touched and
+    // leaves the ones being typed in alone.
+    resetOptions: { keepDirtyValues: true },
+    // A field answers when the reader leaves it, not on submit.
+    mode: 'onTouched',
   });
-
-  // Track if form has been initialized to prevent multiple resets
-  const [formInitialized, setFormInitialized] = useState(false);
-
-  // Load promotion data when editing
-  useEffect(() => {
-    if (promotion && isEditMode && !formInitialized) {
-      // Use setTimeout to ensure SelectContent items are rendered before form reset
-      // This is especially important when navigating from list view
-      const timeoutId = setTimeout(() => {
-        const startYmd = malaysiaCivilYyyyMmDdFromApi(promotion.start_date) ?? todayYmd;
-        const endYmd = malaysiaCivilYyyyMmDdFromApi(promotion.end_date) ?? todayYmd;
-        form.reset({
-          description: promotion.description || '',
-          start_date: startYmd,
-          end_date: endYmd,
-          is_active: promotion.is_active,
-          promotion_type_id: promotion.promotion_type_id || '',
-          access_levels:
-            promotion.access_levels && promotion.access_levels.length > 0
-              ? promotion.access_levels
-              : defaultAccessLevels,
-        });
-        setFormInitialized(true);
-      }, 0);
-
-      return () => clearTimeout(timeoutId);
-    }
-  }, [promotion, isEditMode, form, formInitialized, todayYmd]);
-
-  // Reset formInitialized when promotionId changes
-  useEffect(() => {
-    setFormInitialized(false);
-  }, [promotionId]);
 
   const onSubmit = async (data: PromotionSchemaType) => {
     try {

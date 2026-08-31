@@ -3,7 +3,7 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Download, Link2, PenLine, SquarePen, Trash2 } from 'lucide-react';
+import { Check, Download, Link2, PenLine, SquarePen, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -123,6 +123,8 @@ export function QuotationDocumentClient({
   const [confirmDelete, setConfirmDelete] = React.useState(false);
   const [signing, setSigning] = React.useState(false);
   const [linkToShow, setLinkToShow] = React.useState<string | null>(null);
+  // The item ticks in place and the menu stays open to be read (S7-05).
+  const [signLinkCopied, setSignLinkCopied] = React.useState(false);
   const [revisePrompt, setRevisePrompt] = React.useState(false);
   const [confirmRemovals, setConfirmRemovals] = React.useState(false);
   const [isSaving, setIsSaving] = React.useState(false);
@@ -432,7 +434,8 @@ export function QuotationDocumentClient({
       const url = `${window.location.origin}${link.path}`;
       try {
         await navigator.clipboard.writeText(url);
-        toast.success('Counter-sign link copied');
+        setSignLinkCopied(true);
+        window.setTimeout(() => setSignLinkCopied(false), 2000);
       } catch {
         // Clipboard access refused (plain HTTP, or a browser policy). Show the link instead of
         // stranding the user with a failure and no way to get at it.
@@ -558,11 +561,18 @@ export function QuotationDocumentClient({
                 {canEdit && (
                   <DropdownMenuItem
                     disabled={!record.is_issued || mutations.signLink.isPending}
-                    onSelect={() => void copyCounterSignLink()}
+                    onSelect={(event) => {
+                      event.preventDefault();
+                      void copyCounterSignLink();
+                    }}
                   >
-                    <Link2 className="size-4" aria-hidden />
+                    {signLinkCopied ? (
+                      <Check className="size-4" aria-hidden />
+                    ) : (
+                      <Link2 className="size-4" aria-hidden />
+                    )}
                     <span className="min-w-0">
-                      Copy counter-sign link
+                      {signLinkCopied ? 'Copied' : 'Copy counter-sign link'}
                       {!record.is_issued && (
                         <span className="block text-xs text-muted-foreground">
                           Issue it first

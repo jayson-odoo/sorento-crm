@@ -19,11 +19,9 @@ import {
   bulkUpdateAccessLevels,
   getPromotionProducts,
   addPromotionProduct,
-  removePromotionProduct,
   updatePromotionProductPrice,
   createPromotionGroup,
   updatePromotionGroup,
-  deletePromotionGroup,
   compilePromotionsPdf,
   type PromotionsListParams,
 } from '../services/promotionService';
@@ -316,26 +314,6 @@ export function useUpdatePromotionGroup() {
   });
 }
 
-export function useDeletePromotionGroup() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({ promotionId, groupId }: { promotionId: string; groupId: string }) =>
-      deletePromotionGroup(promotionId, groupId),
-    onSuccess: (result, v) => {
-      queryClient.invalidateQueries({ queryKey: ['promotion', v.promotionId] });
-      queryClient.invalidateQueries({ queryKey: ['promotion-products', v.promotionId] });
-      queryClient.invalidateQueries({ queryKey: ['promotions'] });
-      const n = result?.deleted_product_lines;
-      toast.success(
-        typeof n === 'number' && n > 0
-          ? `Group deleted (${n} product line(s) removed)`
-          : 'Promotion group deleted',
-      );
-    },
-    onError: (error: Error) => toast.error(error.message || 'Failed to delete group'),
-  });
-}
-
 export function useAddPromotionProduct() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -359,20 +337,6 @@ export function useAddPromotionProduct() {
       toast.success('Product added to promotion successfully');
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to add product to promotion'),
-  });
-}
-
-export function useRemovePromotionProduct() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({ promotionId, lineId }: { promotionId: string; lineId: string }) =>
-      removePromotionProduct(promotionId, lineId),
-    onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: ['promotion-products', variables.promotionId] });
-      queryClient.invalidateQueries({ queryKey: ['promotion', variables.promotionId] });
-      toast.success('Product removed from promotion successfully');
-    },
-    onError: (error: Error) => toast.error(error.message || 'Failed to remove product from promotion'),
   });
 }
 

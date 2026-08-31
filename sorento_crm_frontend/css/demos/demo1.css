@@ -131,6 +131,12 @@
     }
   }
 
+  /*
+   * `layout-initialized` (set one requestAnimationFrame after mount, app/
+   * components/layouts/demo1/layout.tsx) exists so the very first paint -
+   * which already reflects a persisted collapsed/expanded setting - does not
+   * itself animate a `width`/`padding`/`inset` transition across the page.
+   */
   .demo1.layout-initialized .wrapper {
     transition: padding-inline-start var(--sidebar-transition-duration)
       var(--sidebar-transition-timing);

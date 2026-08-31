@@ -25,6 +25,20 @@ export const OVERLAY_CLASS =
   '[@media(prefers-reduced-transparency:reduce)]:bg-black/72';
 
 /**
+ * The same scrim, minus the CSS fade-in/out (S8-01).
+ *
+ * Dialog and Sheet drive their overlay's opacity with the shared spring from
+ * `lib/motion.ts` instead of `animate-in`/`animate-out` - a still-running CSS
+ * keyframe animation on `opacity` wins the cascade over a concurrent
+ * JS-driven inline style on the same property, so the two would fight rather
+ * than agree on a final value. Alert dialog keeps `OVERLAY_CLASS` as-is.
+ */
+export const OVERLAY_CLASS_STATIC =
+  'fixed inset-0 z-50 bg-black/50 backdrop-blur-md ' +
+  '[@media(prefers-reduced-transparency:reduce)]:backdrop-blur-none ' +
+  '[@media(prefers-reduced-transparency:reduce)]:bg-black/72';
+
+/**
  * Pressed feedback: the control answers on pointer DOWN, not on release.
  *
  * A 3% shrink is enough to read as a physical press at every control size, and

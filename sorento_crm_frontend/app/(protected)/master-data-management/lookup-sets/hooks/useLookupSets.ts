@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 import {
-  listLookupSets, getLookupSet, createLookupSet, updateLookupSet, deleteLookupSet,
+  listLookupSets, getLookupSet, createLookupSet, updateLookupSet,
   listOptions, createOption, updateOption, deleteOption,
   listBindings, addBinding, removeBinding, setBindingDefaultValue,
   listEligibility, resolveLookup,
@@ -43,15 +43,6 @@ export function useUpdateLookupSet() {
     onError: (e: Error) => toast.error(e.message),
   });
 }
-export function useDeleteLookupSet() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => deleteLookupSet(id),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: [KEY] }); toast.success('Deleted'); },
-    onError: (e: Error) => toast.error(e.message),
-  });
-}
-
 // Options
 export function useOptions(setId: string | null) {
   return useQuery({

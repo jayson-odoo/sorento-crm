@@ -11,7 +11,7 @@ import {
   getPaginationRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { PackageSearch, Search, X } from 'lucide-react';
+import { PackageSearch } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
@@ -29,6 +29,8 @@ import { planBoardHref, planRowHref } from '../../_shared/lib/fulfilmentPlanning
 import { PLAN_SORT_FIELDS, type PlanRow, type PlanState } from '../../_shared/types/fulfilmentPlanning.types';
 import { InfoHint } from '../../[projectId]/components/InfoHint';
 import { PageHeader } from '@/components/common/PageHeader';
+import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 
 /** Soft-pastel per state, kept local: `challenged` deserves amber (something moved under a
  * confirmed decision) and `superseded` a neutral slate, neither of which the shared status
@@ -70,8 +72,12 @@ export function PlansClient() {
   const searchParams = useSearchParams();
   const [planState, setPlanState] = React.useState<PlanState>('active');
   const [agentCode, setAgentCode] = React.useState('');
-  const [search, setSearch] = React.useState('');
-  const [debounced, setDebounced] = React.useState('');
+  const {
+    value: search,
+    setValue: setSearch,
+    debouncedValue: debounced,
+    isSettling: debouncedSettling,
+  } = useDebouncedSearch();
   const [pagination, setPagination] = React.useState<PaginationState>({
     pageIndex: 0,
     pageSize: 25,
@@ -81,11 +87,6 @@ export function PlansClient() {
     if (!field || !SORTABLE_COLUMNS.has(field)) return DEFAULT_SORTING;
     return [{ id: field, desc: searchParams.get('dir') !== 'asc' }];
   });
-
-  React.useEffect(() => {
-    const timer = window.setTimeout(() => setDebounced(search.trim()), 300);
-    return () => window.clearTimeout(timer);
-  }, [search]);
 
   React.useEffect(() => {
     setPagination((current) => ({ ...current, pageIndex: 0 }));
@@ -338,29 +339,13 @@ export function PlansClient() {
               table={table}
               exportConfig={false}
               searchSlot={
-                <div className="relative">
-                  <Search
-                    className="absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
-                    aria-hidden
-                  />
-                  <Input
-                    placeholder="Search sales order, customer or agent"
-                    value={search}
-                    onChange={(event) => setSearch(event.target.value)}
-                    className="w-full ps-9 sm:w-72"
-                  />
-                  {search.length > 0 && (
-                    <Button
-                      mode="icon"
-                      variant="dim"
-                      aria-label="Clear the search"
-                      className="absolute end-1.5 top-1/2 h-6 w-6 -translate-y-1/2"
-                      onClick={() => setSearch('')}
-                    >
-                      <X />
-                    </Button>
-                  )}
-                </div>
+                <ListSearchInput
+                  value={search}
+                  onChange={setSearch}
+                  isSettling={isSearchInFlight(debouncedSettling, plans.isFetching, debounced)}
+                  placeholder="Search sales order, customer or agent"
+                  className="w-full"
+                />
               }
               filters={{
                 kind: 'custom',

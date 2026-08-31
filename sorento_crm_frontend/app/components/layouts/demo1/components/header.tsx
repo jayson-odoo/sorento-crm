@@ -19,13 +19,13 @@ import { useIsMobile } from '@/hooks/use-mobile';
 import { useScrollPosition } from '@/hooks/use-scroll-position';
 import { Button } from '@/components/ui/button';
 import {
-  Sheet,
-  SheetBody,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-  SheetTrigger,
-} from '@/components/ui/sheet';
+  Drawer,
+  DrawerBody,
+  DrawerContent,
+  DrawerHeader,
+  DrawerTitle,
+  DrawerTrigger,
+} from '@/components/ui/drawer';
 import { Container } from '@/components/common/container';
 import { StoreClientTopbar } from '@/app/(protected)/store-client/components/common/topbar';
 import { SidebarMenu } from './sidebar-menu';
@@ -82,27 +82,28 @@ export function Header() {
           </Link>
           <div className="flex items-center">
             {mobileMode && (
-              <Sheet
+              // Vaul, not Sheet (S8-04): the mobile nav tracks the finger 1:1
+              // while dragging and dismisses on swipe velocity rather than a
+              // fixed-duration slide, and never goes inert to input mid-drag.
+              <Drawer
                 open={isSidebarSheetOpen}
                 onOpenChange={setIsSidebarSheetOpen}
+                direction="left"
+                shouldScaleBackground={false}
               >
-                <SheetTrigger asChild>
+                <DrawerTrigger asChild>
                   <Button variant="ghost" mode="icon" aria-label="Toggle sidebar">
                     <Menu className="text-muted-foreground/70" />
                   </Button>
-                </SheetTrigger>
-                <SheetContent
-                  className="p-0 gap-0 w-[275px]"
-                  side="left"
-                  close={false}
-                >
-                  <SheetTitle className="sr-only">Navigation menu</SheetTitle>
-                  <SheetHeader className="p-0 space-y-0" />
-                  <SheetBody className="p-0 overflow-y-auto">
+                </DrawerTrigger>
+                <DrawerContent className="p-0 gap-0 w-[275px]">
+                  <DrawerTitle className="sr-only">Navigation menu</DrawerTitle>
+                  <DrawerHeader className="p-0 space-y-0" />
+                  <DrawerBody className="p-0">
                     <SidebarMenu />
-                  </SheetBody>
-                </SheetContent>
-              </Sheet>
+                  </DrawerBody>
+                </DrawerContent>
+              </Drawer>
             )}
           </div>
         </div>
@@ -150,8 +151,8 @@ export function Header() {
                     variant="ghost"
                     mode="icon"
                     shape="circle"
-                    className="size-9 hover:bg-primary/10 hover:[&_svg]:text-primary"
                     aria-label="Notifications"
+                    className="size-9 hover:bg-primary/10 hover:[&_svg]:text-primary"
                   >
                     <Bell className="size-4.5!" />
                   </Button>
@@ -164,8 +165,8 @@ export function Header() {
                       variant="ghost"
                       mode="icon"
                       shape="circle"
-                      className="size-9 hover:bg-primary/10 hover:[&_svg]:text-primary"
                       aria-label="Switch layout"
+                      className="size-9 hover:bg-primary/10 hover:[&_svg]:text-primary"
                     >
                       <LayoutGrid className="size-4.5!" />
                     </Button>

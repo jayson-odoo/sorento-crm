@@ -7,6 +7,7 @@ import {
   ArrowLeft,
   Ban,
   CalendarDays,
+  Check,
   Download,
   Eye,
   FileText,
@@ -125,6 +126,10 @@ export function LoadingPlanView({ planId }: { planId: string }) {
   const [cutOffDropOpen, setCutOffDropOpen] = useState(false);
   const [refreshOpen, setRefreshOpen] = useState(false);
   const [leaveOpen, setLeaveOpen] = useState(false);
+  // The gear's copy confirms itself in place (S7-05), so the menu has to stay
+  // open long enough to be read: an item that closes the menu has nowhere to
+  // put a tick.
+  const [linkCopied, setLinkCopied] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
 
   const save = useSaveLoadingPlanEdits(planId);
@@ -400,10 +405,17 @@ export function LoadingPlanView({ planId }: { planId: string }) {
                 <DropdownMenuItem
                   disabled={!liveLinkNotice}
                   title={liveLinkNotice ? undefined : 'No link sent yet'}
-                  onSelect={() => void copyPublicLink(liveLinkNotice?.public_url)}
+                  onSelect={(event) => {
+                    event.preventDefault();
+                    void copyPublicLink(liveLinkNotice?.public_url).then((copied) => {
+                      if (!copied) return;
+                      setLinkCopied(true);
+                      window.setTimeout(() => setLinkCopied(false), 2000);
+                    });
+                  }}
                 >
-                  <Link2 className="size-4" />
-                  Copy link
+                  {linkCopied ? <Check className="size-4" /> : <Link2 className="size-4" />}
+                  {linkCopied ? 'Copied' : 'Copy link'}
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   disabled={lines.length === 0 || download.isPending}

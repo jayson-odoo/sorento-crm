@@ -68,7 +68,7 @@ export default function AccountDetails() {
   const form = useForm<AccountProfileSchemaType>({
     resolver: zodResolver(AccountProfileSchema),
     defaultValues: transformedProfile,
-    mode: 'onSubmit',
+    mode: 'onTouched',
   });
 
   const mutation = useMutation({

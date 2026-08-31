@@ -11,7 +11,7 @@ import {
   getSortedRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { AlertCircle, ArrowLeft, CheckCircle2, ClipboardList, Search, X } from 'lucide-react';
+import { AlertCircle, ArrowLeft, CheckCircle2, ClipboardList } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -19,10 +19,11 @@ import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import { EM_DASH, fmtInt } from '../../lib/format';
+import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { computedAtLabel, dayLabel } from '../lib/coverageTimeline';
 import { decisionLockReason, isLegacyRun, planGrainLabel } from '../lib/planGrain';
 import { decimalPlacesOf, fmtQty } from '../lib/qtyPrecision';
@@ -139,7 +140,11 @@ export function SummaryOrderReportView({ runId = null, onBack }: SummaryOrderRep
 
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 25 });
   const [sorting, setSorting] = useState<SortingState>([]);
-  const [searchQuery, setSearchQuery] = useState('');
+  const {
+    value: searchInput,
+    setValue: setSearchInput,
+    debouncedValue: searchQuery,
+  } = useDebouncedSearch();
   const [deciding, setDeciding] = useState<OrderSummaryRow | null>(null);
   /** The server's refusal, rendered IN the sheet rather than only toasted away. */
   const [decisionError, setDecisionError] = useState<string | null>(null);
@@ -505,7 +510,6 @@ export function SummaryOrderReportView({ runId = null, onBack }: SummaryOrderRep
     state: { pagination, sorting, globalFilter: searchQuery },
     onPaginationChange: setPagination,
     onSortingChange: setSorting,
-    onGlobalFilterChange: setSearchQuery,
     globalFilterFn: (row, _columnId, filterValue) => {
       const q = String(filterValue).toLowerCase().trim();
       if (!q) return true;
@@ -647,27 +651,13 @@ export function SummaryOrderReportView({ runId = null, onBack }: SummaryOrderRep
       >
         <Card>
           <CardHeader className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="relative">
-              <Search className="absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                placeholder="Search product or supplier..."
-                aria-label="Search product or supplier"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full ps-9 sm:w-64"
-              />
-              {searchQuery ? (
-                <Button
-                  mode="icon"
-                  variant="dim"
-                  className="absolute end-1.5 top-1/2 h-6 w-6 -translate-y-1/2"
-                  onClick={() => setSearchQuery('')}
-                  aria-label="Clear search"
-                >
-                  <X />
-                </Button>
-              ) : null}
-            </div>
+            <ListSearchInput
+              value={searchInput}
+              onChange={setSearchInput}
+              placeholder="Search product or supplier..."
+              aria-label="Search product or supplier"
+              className="w-full sm:w-64"
+            />
           </CardHeader>
           <CardTable>
             {/* The report is wide by nature - eleven figures per product - so it

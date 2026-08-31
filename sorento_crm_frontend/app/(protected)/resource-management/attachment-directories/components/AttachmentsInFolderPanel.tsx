@@ -14,8 +14,6 @@ import {
   getFilteredRowModel,
 } from '@tanstack/react-table';
 import {
-  Search,
-  X,
   Download,
   Trash2,
   Plus,
@@ -97,6 +95,8 @@ import {
 import type { Attachment } from '../../attachments/types/attachment.types';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { useIsMobile } from '@/hooks/use-mobile';
+import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 import AttachmentUploadDialog from '../../attachments/components/AttachmentUploadDialog';
 import AttachmentBulkImportDialog from '../../attachments/components/AttachmentBulkImportDialog';
 import AttachmentDeleteDialog from '../../attachments/components/attachment-delete-dialog';
@@ -135,7 +135,20 @@ export default function AttachmentsInFolderPanel({
   const [viewMode, setViewMode] = useDriveViewMode();
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [sorting, setSorting] = useState<SortingState>([{ id: 'name', desc: false }]);
-  const [searchQuery, setSearchQuery] = useState('');
+  const {
+    value: searchInput,
+    setValue: setSearchInputRaw,
+    debouncedValue: searchQuery,
+    isSettling: searchSettling,
+    reset: resetSearchQuery,
+  } = useDebouncedSearch();
+  // The debounce handles the fetch; the page-0 reset stays inline with every
+  // other filter's onChange rather than an effect keyed off the debounced value,
+  // so it fires with the keystroke instead of ~200ms behind it.
+  const setSearchInput = (next: string) => {
+    setSearchInputRaw(next);
+    setPagination((p) => ({ ...p, pageIndex: 0 }));
+  };
   const [thisFolderOnly, setThisFolderOnly] = useState(false);
   const [accessLevelFilters, setAccessLevelFilters] = useState<string[]>([]);
   const [accessLevelsMatch, setAccessLevelsMatch] = useState<'any' | 'all' | 'exact'>('any');
@@ -232,7 +245,7 @@ export default function AttachmentsInFolderPanel({
   const isSearching = searchQuery.trim().length > 0;
   const recursive = (isSearching || hasActiveFilter) && !thisFolderOnly;
 
-  const { data, isLoading } = useDriveContents({
+  const { data, isLoading, isFetching } = useDriveContents({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -397,7 +410,7 @@ export default function AttachmentsInFolderPanel({
   const navigateToFolder = useCallback(
     (folderId: string | null) => {
       // Drilling into a folder clears the active search (B7) and resets paging.
-      setSearchQuery('');
+      resetSearchQuery('');
       setThisFolderOnly(false);
       setPagination((p) => ({ ...p, pageIndex: 0 }));
       clearSelection();
@@ -969,29 +982,13 @@ export default function AttachmentsInFolderPanel({
               table={table}
               searchSlot={
                 <div className="flex items-center gap-2">
-                  <div className="relative">
-                    <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
-                    <Input
-                      placeholder="Search files & folders..."
-                      value={searchQuery}
-                      onChange={(e) => {
-                        setSearchQuery(e.target.value);
-                        setPagination((p) => ({ ...p, pageIndex: 0 }));
-                      }}
-                      className="ps-9 w-64"
-                    />
-                    {searchQuery && (
-                      <Button
-                        mode="icon"
-                        variant="dim"
-                        className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
-                        onClick={() => setSearchQuery('')}
-                        aria-label="Clear search"
-                      >
-                        <X />
-                      </Button>
-                    )}
-                  </div>
+                  <ListSearchInput
+                    value={searchInput}
+                    onChange={setSearchInput}
+                    isSettling={isSearchInFlight(searchSettling, isFetching, searchQuery)}
+                    placeholder="Search files & folders..."
+                    className="w-64"
+                  />
                   {isSearching && (
                     <label className="flex items-center gap-1.5 text-xs text-muted-foreground whitespace-nowrap">
                       <Checkbox

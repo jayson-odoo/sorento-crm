@@ -12,7 +12,7 @@ import {
   useReactTable,
 } from '@tanstack/react-table';
 import { toast } from 'sonner';
-import { LoaderCircle, RefreshCw, Search, Upload, X } from 'lucide-react';
+import { LoaderCircle, RefreshCw, Upload } from 'lucide-react';
 import {
   AlertDialog,
   AlertDialogContent,
@@ -50,6 +50,8 @@ import {
 } from '../../lib/purchaseOrderStatus';
 import type { PurchaseOrder } from '../../types/scm.types';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
+import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 
 /** All / Outstanding / Completed - the buyer's "at a glance" read (the captain, 20 Aug: "how
  *  do i know the open PO / outstanding PO"). Maps straight onto the list's `outstanding`
@@ -88,7 +90,13 @@ const isDraft = isDraftPurchaseOrder;
 export default function PurchaseOrdersList() {
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 25 });
   const [sorting, setSorting] = useState<SortingState>([]);
-  const [searchQuery, setSearchQuery] = useState('');
+  const {
+    value: searchInput,
+    setValue: setSearchInput,
+    debouncedValue: searchQuery,
+    isSettling: searchSettling,
+    reset: resetSearchQuery,
+  } = useDebouncedSearch();
   const [statusFilter, setStatusFilter] = useState('');
   // Default Outstanding: the buyer's "at a glance" question, answered without opening
   // the advanced Filters popover.
@@ -102,7 +110,7 @@ export default function PurchaseOrdersList() {
   useListStateFromUrl((state) => {
     setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
     setSorting(state.sorting);
-    setSearchQuery(state.searchQuery);
+    resetSearchQuery(state.searchQuery);
     setStatusFilter(state.filters.status ?? '');
     setProductFilter(state.filters.product_code ?? '');
     setOutstandingFilter(
@@ -136,7 +144,7 @@ export default function PurchaseOrdersList() {
   // it, until AutoCount is integrated.
   const [uploadOpen, setUploadOpen] = useState(false);
 
-  const { data, isLoading, refetch } = usePurchaseOrders({
+  const { data, isLoading, isFetching, refetch } = usePurchaseOrders({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -488,26 +496,13 @@ export default function PurchaseOrdersList() {
               table={table}
               searchSlot={
                 <>
-                  <div className="relative">
-                    <Search className="absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                    <Input
-                      placeholder="Search PO or supplier..."
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      className="w-64 ps-9"
-                    />
-                    {searchQuery ? (
-                      <Button
-                        mode="icon"
-                        variant="dim"
-                        className="absolute end-1.5 top-1/2 h-6 w-6 -translate-y-1/2"
-                        onClick={() => setSearchQuery('')}
-                        aria-label="Clear search"
-                      >
-                        <X />
-                      </Button>
-                    ) : null}
-                  </div>
+                  <ListSearchInput
+                    value={searchInput}
+                    onChange={setSearchInput}
+                    isSettling={isSearchInFlight(searchSettling, isFetching, searchQuery)}
+                    placeholder="Search PO or supplier..."
+                    className="w-64"
+                  />
                   {/* "How do i know the open PO / outstanding PO" (the captain, 20 Aug) -
                       a glance-able control, not buried inside the Filters popover. */}
                   <ToggleGroup

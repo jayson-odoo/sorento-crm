@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { Edit, Trash2, Plus, ExternalLink, Search, X, Layers, ChevronDown } from 'lucide-react';
+import { Edit, Trash2, Plus, ExternalLink, Layers, ChevronDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useBackToListHref, useHrefWithListState } from '@/components/common/BackToList';
 import { Badge, BadgeDot } from '@/components/ui/badge';
@@ -40,6 +40,8 @@ import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
 import { promotionsPagerQuery } from '../hooks/usePromotions';
 import type { PromotionProduct, PromotionGroup } from '../types/promotion.types';
 import { useContactAccessTypes } from '@/app/(protected)/user-management/contact-access-types/hooks/useContactAccessTypes';
+import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 
 type FocTierRow = { purchase: string; foc: string };
 
@@ -145,13 +147,11 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
   // silently capped the picker at the first 1000 SKUs - anything past that (e.g.
   // SRTWC*) was unreachable, showing "No results" for a real product. Drive the
   // catalog search server-side, debounced, like the attachment link picker.
-  const [productSearch, setProductSearch] = useState('');
-  const [debouncedProductSearch, setDebouncedProductSearch] = useState('');
+  const {
+    setValue: setProductSearch,
+    debouncedValue: debouncedProductSearch,
+  } = useDebouncedSearch();
   const [pickedProductLabel, setPickedProductLabel] = useState<string | null>(null);
-  useEffect(() => {
-    const t = setTimeout(() => setDebouncedProductSearch(productSearch.trim()), 250);
-    return () => clearTimeout(t);
-  }, [productSearch]);
   useEffect(() => {
     if (!selectedProductId) setPickedProductLabel(null);
   }, [selectedProductId]);
@@ -664,28 +664,14 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
         <CardContent>
           {promotion.products && promotion.products.length > 0 ? (
             <div className="space-y-4">
-              <div className="relative max-w-sm">
-                <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
-                <Input
-                  placeholder="Search by product code..."
-                  value={productCodeSearch}
-                  onChange={(e) => setProductCodeSearch(e.target.value)}
-                  className="ps-9"
-                  aria-label="Filter products by product code"
-                />
-                {productCodeSearch ? (
-                  <Button
-                    type="button"
-                    mode="icon"
-                    variant="dim"
-                    className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
-                    onClick={() => setProductCodeSearch('')}
-                    aria-label="Clear search"
-                  >
-                    <X className="size-4" />
-                  </Button>
-                ) : null}
-              </div>
+              {/* Filters the groups already on screen, so there is nothing to settle. */}
+              <ListSearchInput
+                value={productCodeSearch}
+                onChange={setProductCodeSearch}
+                placeholder="Search by product code..."
+                aria-label="Filter products by product code"
+                className="max-w-sm"
+              />
               {filteredPromotionGroups.length > 0 ? (
                 <div className="space-y-8">
                   {filteredPromotionGroups.map((group) => {

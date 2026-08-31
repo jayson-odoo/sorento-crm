@@ -7,7 +7,6 @@ import {
   ChevronDown,
   ChevronRight,
   Layers,
-  Search,
   Sparkles,
 } from 'lucide-react';
 import {
@@ -24,7 +23,8 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Input } from '@/components/ui/input';
+import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   useApplyProductSetProposals,
@@ -177,7 +177,11 @@ export default function ProductSetProposals() {
   const apply = useApplyProductSetProposals();
 
   const [ticked, setTicked] = useState<Set<string>>(new Set());
-  const [search, setSearch] = useState('');
+  const {
+    value: searchInput,
+    setValue: setSearchInput,
+    debouncedValue: search,
+  } = useDebouncedSearch();
   const [confirmingScan, setConfirmingScan] = useState(false);
 
   const proposals = batch?.proposals ?? [];
@@ -300,15 +304,12 @@ export default function ProductSetProposals() {
           {batch.company_name ? ` for ${batch.company_name}` : ''}.
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <div className="relative">
-            <Search className="absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search code or member"
-              className="w-56 ps-9"
-            />
-          </div>
+          <ListSearchInput
+            value={searchInput}
+            onChange={setSearchInput}
+            placeholder="Search code or member"
+            className="w-56"
+          />
           <Button
             variant="outline"
             onClick={() => setConfirmingScan(true)}

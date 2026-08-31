@@ -51,7 +51,7 @@ const PermissionEditDialog = ({
   const form = useForm<PermissionSchemaType>({
     resolver: zodResolver(PermissionSchema),
     defaultValues: { name: '', slug: '', description: '' },
-    mode: 'onSubmit',
+    mode: 'onTouched',
   });
 
   // Reset form values when dialog is opened

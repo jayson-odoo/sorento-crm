@@ -28,6 +28,8 @@ export interface ConversationSlaActionTarget {
   id: string;
   respond_io_id?: string | null;
   contact?: { respond_io_id?: string | null } | null;
+  contact_name?: string | null;
+  contact_phone?: string | null;
 }
 
 export interface UseConversationSlaActionsOptions {
@@ -46,6 +48,11 @@ export function useConversationSlaActions(
 ): RecordActionSet {
   const syncAssignee = useSyncAssigneeFromRespond();
 
+  // The reader's identifier for the record: the contact's name, falling back to
+  // their phone number, and only "this tracking record" when Respond.io has
+  // resolved neither (a bare id would violate the no-UUIDs-in-UI rule).
+  const subject = tracking?.contact_name || tracking?.contact_phone || 'this tracking record';
+
   // Delete asks nothing (D7). It parks the deletion for ten seconds; the record
   // page shows the countdown where its primary button stood, a list row leaves
   // it to the toast, and Cancel is the way back either way.
@@ -54,7 +61,7 @@ export function useConversationSlaActions(
     entityType: 'sla_tracking',
     entityId: tracking?.id,
     verb: 'Deleting',
-    subject: 'this tracking record',
+    subject,
     surface,
     watchFromMount: surface === 'inline',
     successMessage: 'Tracking deleted',
@@ -84,7 +91,9 @@ export function useConversationSlaActions(
       key: 'conversation_sla.open_conversation',
       label: 'Open conversation',
       icon: ExternalLink,
-      run: () => window.open(inboxUrl, '_blank', 'noopener,noreferrer'),
+      run: () => {
+        window.open(inboxUrl, '_blank', 'noopener,noreferrer');
+      },
     });
   }
 
