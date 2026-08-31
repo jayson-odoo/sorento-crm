@@ -75,6 +75,13 @@ describe('ContactAgentAccessDialog reopens clean in create mode (S7-03)', () => 
       </QueryClientProvider>,
     );
 
+    // Wait for the close to actually leave the DOM: with the motion exit
+    // animation (S8) the old content stays mounted for a beat, and asserting
+    // against a half-closed dialog reads its stale inputs.
+    await waitFor(() => {
+      expect(screen.queryByRole('switch')).not.toBeInTheDocument();
+    });
+
     // Reopen in create mode ("Add").
     rerender(
       <QueryClientProvider client={queryClient}>
