@@ -46,6 +46,9 @@ export interface DriveFolderItem {
   created_at?: string | null;
   /** Parent path of this folder (its Location). Null/empty at root. */
   directory_path?: string | null;
+  /** Owning company. Null means the folder is shared across every company. */
+  company_id?: string | null;
+  company_name?: string | null;
 }
 
 export interface DriveFileItem extends AttachmentResponse {
@@ -98,6 +101,8 @@ export interface DriveListParams {
   link_status?: 'linked' | 'unlinked';
   storage_status?: 'accessible' | 'missing' | 'unchecked';
   direct_access_only?: boolean;
+  /** A company id, `shared`, or omitted for today's `IS NULL OR IN (scope)` result. */
+  company?: string;
 }
 
 export async function getDriveContents(params: DriveListParams): Promise<DriveListResponse> {
@@ -127,6 +132,7 @@ export async function getDriveContents(params: DriveListParams): Promise<DriveLi
       link_status: params.link_status,
       storage_status: params.storage_status,
       direct_access_only: params.direct_access_only ? 'true' : undefined,
+      company: params.company,
     }
   );
   if (params.access_levels && params.access_levels.length > 0) {

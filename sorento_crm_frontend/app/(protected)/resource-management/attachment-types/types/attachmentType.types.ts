@@ -15,4 +15,6 @@ export interface AttachmentTypeFormData {
   is_certificate?: boolean;
   /** Plausibility ceiling for a certificate's validity span; null = no limit. */
   max_validity_months?: number | null;
+  /** An upload of this type is written with company_id = NULL (visible to every company). */
+  is_shared?: boolean;
 }

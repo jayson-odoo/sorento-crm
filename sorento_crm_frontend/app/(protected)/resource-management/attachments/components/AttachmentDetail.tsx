@@ -34,7 +34,8 @@ import {
 } from '../hooks/useAttachments';
 import { AccessLevelsMultiSelect } from './AccessLevelsMultiSelect';
 import { getAttachmentMetadata } from '../services/attachmentService';
-import { attachmentCompanyLabel, type Attachment } from '../types/attachment.types';
+import { attachmentCompanyLabel, type Attachment, type LinkedEntityRef } from '../types/attachment.types';
+import SetCompanyDialog from './SetCompanyDialog';
 import { useAttachmentActions } from '../actions';
 import { useContactAccessTypes } from '@/app/(protected)/user-management/contact-access-types/hooks/useContactAccessTypes';
 
@@ -74,7 +75,7 @@ function LinkagesTable({
   emptyMessage,
 }: {
   type: keyof typeof ENTITY_ROUTES;
-  items: Array<{ id: string; name: string; description?: string | null }>;
+  items: LinkedEntityRef[];
   emptyMessage: string;
 }) {
   if (items.length === 0) {
@@ -90,25 +91,48 @@ function LinkagesTable({
         </TableRow>
       </TableHeader>
       <TableBody>
-        {items.map((item) => (
-          <TableRow key={item.id}>
-            <TableCell className="font-medium">{item.name}</TableCell>
-            <TableCell className="text-muted-foreground max-w-md line-clamp-2" title={item.description ?? undefined}>
-              {item.description ?? '-'}
-            </TableCell>
-            <TableCell>
-              <Link
-                href={`${ENTITY_ROUTES[type].path}/${item.id}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-primary hover:underline inline-flex items-center gap-1 text-sm"
-              >
-                View
-                <ExternalLink className="size-3.5 shrink-0" />
-              </Link>
-            </TableCell>
-          </TableRow>
-        ))}
+        {items.map((item) => {
+          // Only a SHARED attachment's rows carry a company (R3, S5): a
+          // single-company attachment's items have no company_name and render
+          // exactly as before, no badges anywhere in the row.
+          const outOfScope = item.in_scope === false;
+          return (
+            <TableRow key={item.id}>
+              <TableCell className="font-medium">
+                <span className="inline-flex items-center gap-1.5">
+                  {outOfScope ? (
+                    <span className="text-muted-foreground">{item.name}</span>
+                  ) : (
+                    item.name
+                  )}
+                  {item.company_name && (
+                    <Badge appearance="light" size="sm">
+                      {item.company_name}
+                    </Badge>
+                  )}
+                </span>
+              </TableCell>
+              <TableCell className="text-muted-foreground max-w-md line-clamp-2" title={item.description ?? undefined}>
+                {item.description ?? '-'}
+              </TableCell>
+              <TableCell>
+                {outOfScope ? (
+                  <span className="text-xs text-muted-foreground">-</span>
+                ) : (
+                  <Link
+                    href={`${ENTITY_ROUTES[type].path}/${item.id}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-primary hover:underline inline-flex items-center gap-1 text-sm"
+                  >
+                    View
+                    <ExternalLink className="size-3.5 shrink-0" />
+                  </Link>
+                )}
+              </TableCell>
+            </TableRow>
+          );
+        })}
       </TableBody>
     </Table>
   );
@@ -209,6 +233,7 @@ export default function AttachmentDetail({
   const [previewOpen, setPreviewOpen] = useState(false);
   const [descriptionEdit, setDescriptionEdit] = useState<string | null>(null);
   const [accessLevelsEdit, setAccessLevelsEdit] = useState<string[] | null>(null);
+  const [companyDialogOpen, setCompanyDialogOpen] = useState(false);
   const { data: accessTypeOptions = [] } = useContactAccessTypes();
   const defaultAccessLevels = accessTypeOptions.length > 0 ? accessTypeOptions.map((o) => o.code) : ['dealer', 'end_user'];
   const codeToName = Object.fromEntries(accessTypeOptions.map((o) => [o.code, o.name || o.code]));
@@ -347,9 +372,19 @@ export default function AttachmentDetail({
             </div>
             <div>
               <p className="text-sm text-muted-foreground">Company</p>
-              <p className="font-medium">
-                {attachmentCompanyLabel(attachment)}
-              </p>
+              <div className="flex items-center justify-between gap-2">
+                <p className="font-medium">
+                  {attachmentCompanyLabel(attachment)}
+                </p>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setCompanyDialogOpen(true)}
+                  data-testid="attachment-company-edit"
+                >
+                  Edit
+                </Button>
+              </div>
             </div>
             <div>
               <p className="text-sm text-muted-foreground">Status</p>
@@ -475,6 +510,15 @@ export default function AttachmentDetail({
         onOpenChange={setPreviewOpen}
         items={previewItems}
       />
+
+      {companyDialogOpen && (
+        <SetCompanyDialog
+          open={companyDialogOpen}
+          onOpenChange={setCompanyDialogOpen}
+          fileIds={[attachment.id]}
+          folderIds={[]}
+        />
+      )}
     </div>
   );
 }

@@ -12,6 +12,7 @@ import {
   FolderInput,
   FolderOpen,
   CornerUpLeft,
+  Building2,
 } from 'lucide-react';
 import { ContextMenuItem, ContextMenuSeparator } from '@/components/ui/context-menu';
 import {
@@ -27,6 +28,8 @@ export interface DriveRowActionHandlers {
   onRevealInFolder: (item: DriveItem) => void;
   onRename: (item: DriveItem) => void;
   onMove: (item: DriveItem) => void;
+  /** Files AND folders (R17): opens SetCompanyDialog for this one item. */
+  onSetCompany: (item: DriveItem) => void;
   onResubmit: (attachmentId: string) => void;
   onRestore: (attachmentId: string) => void;
   onDelete: (item: DriveItem) => void;
@@ -76,6 +79,10 @@ export default function DriveRowActions({
               <FolderInput className="size-4" />
               Move to…
             </ContextMenuItem>
+            <ContextMenuItem onClick={() => handlers.onSetCompany(item)}>
+              <Building2 className="size-4" />
+              Set company…
+            </ContextMenuItem>
             <ContextMenuSeparator />
             <ContextMenuItem variant="destructive" onClick={() => handlers.onDeleteFolder(item)}>
               <Trash2 className="size-4" />
@@ -119,6 +126,10 @@ export default function DriveRowActions({
           <ContextMenuItem onClick={() => handlers.onMove(item)}>
             <FolderInput className="size-4" />
             Move to…
+          </ContextMenuItem>
+          <ContextMenuItem onClick={() => handlers.onSetCompany(item)}>
+            <Building2 className="size-4" />
+            Set company…
           </ContextMenuItem>
           <ContextMenuItem
             disabled={resubmitting}

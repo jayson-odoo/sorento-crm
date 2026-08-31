@@ -38,12 +38,22 @@ export interface DeferredBulkTarget {
   id: string;
   /** Whatever the handler needs at commit time beyond the id. */
   payload?: Record<string, unknown>;
+  /**
+   * Overrides the hook's `actionKey` for this one target. A selection can mix
+   * two entity kinds behind ONE countdown - e.g. `Set company` running
+   * `attachment.set_company` on the files it touches and
+   * `attachment_directory.set_company` on the folders, both parked by the same
+   * `run()` call. Omitted, the target uses the hook's own `actionKey`.
+   */
+  actionKey?: string;
+  /** Overrides the hook's `entityType` for this one target, same reasoning. */
+  entityType?: string;
 }
 
 export interface UseDeferredBulkActionInput {
-  /** `<entity>.<verb>`, e.g. `product.delete`. */
+  /** `<entity>.<verb>`, e.g. `product.delete`. Default for a target with no override. */
   actionKey: string;
-  /** The registry's entity type, e.g. `product`. */
+  /** The registry's entity type, e.g. `product`. Default for a target with no override. */
   entityType: string;
   /** Verb-first copy for the countdown: "Deleting" reads as "Deleting in 8s". */
   verb?: string;
@@ -55,6 +65,17 @@ export interface UseDeferredBulkActionInput {
   invalidateKeys?: readonly (readonly unknown[])[];
   /** Called once the batch is parked - where a list drops its selection. */
   onStarted?: () => void;
+  /**
+   * Overrides the three closing sentences instead of the default
+   * "`${describe(count)} ${pastVerb}.`" template - for copy that reads
+   * verb-first ("Company set: 3 folders, 12 files") rather than noun-first
+   * ("12 products deleted.").
+   */
+  finishText?: {
+    allCommitted: (count: number) => string;
+    allFailed: (count: number) => string;
+    partial: (committed: number, failed: number) => string;
+  };
 }
 
 export interface UseDeferredBulkActionResult {
@@ -75,6 +96,7 @@ export function useDeferredBulkAction(
     describe,
     invalidateKeys,
     onStarted,
+    finishText,
   } = input;
 
   const queryClient = useQueryClient();
@@ -93,8 +115,8 @@ export function useDeferredBulkAction(
         const results = await Promise.allSettled(
           targets.map((target) =>
             createPendingAction({
-              actionKey,
-              entityType,
+              actionKey: target.actionKey ?? actionKey,
+              entityType: target.entityType ?? entityType,
               entityId: target.id,
               payload: target.payload,
             }),
@@ -131,6 +153,12 @@ export function useDeferredBulkAction(
 
         const finish = () => {
           dismissDeferredToast(toastId);
+          if (finishText) {
+            if (failed === 0) toast.success(finishText.allCommitted(committed));
+            else if (committed === 0) toast.error(finishText.allFailed(failed));
+            else toast.error(finishText.partial(committed, failed));
+            return;
+          }
           if (failed === 0) {
             toast.success(`${describe(committed)} ${pastVerb}.`);
           } else if (committed === 0) {
@@ -145,9 +173,12 @@ export function useDeferredBulkAction(
         for (const action of parked) {
           pendingEntityStore.track({
             id: action.id,
-            entityType,
+            // The parked action echoes back whichever entityType/actionKey it
+            // was created with, per-target override included, so a mixed
+            // batch dims the right kind of row for each id.
+            entityType: action.entity_type,
             entityId: action.entity_id,
-            actionKey,
+            actionKey: action.action_key,
             commitAt: action.commit_at,
             // The batch says one thing at the end; a row saying its own would be
             // twelve toasts for one gesture.
@@ -200,6 +231,7 @@ export function useDeferredBulkAction(
       actionKey,
       describe,
       entityType,
+      finishText,
       invalidateKeys,
       isStarting,
       onStarted,

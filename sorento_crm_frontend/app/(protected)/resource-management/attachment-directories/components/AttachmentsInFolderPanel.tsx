@@ -27,6 +27,7 @@ import {
   ChevronDown,
   List,
   LayoutGrid,
+  Building2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -70,6 +71,7 @@ import {
   useDeleteDirectory,
 } from '../../attachments/hooks/useAttachments';
 import { useAttachmentTypes } from '../../attachment-types/hooks/useAttachmentTypes';
+import { useCompany } from '@/app/providers/CompanyProvider';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Calendar } from '@/components/ui/calendar';
 import { getUsersSelect, type UserSelectItem } from '@/services/userSelectService';
@@ -103,6 +105,9 @@ import AttachmentDeleteDialog from '../../attachments/components/attachment-dele
 import AttachmentBulkDeleteDialog from '../../attachments/components/AttachmentBulkDeleteDialog';
 import AttachmentDetailModal from '../../attachments/components/AttachmentDetailModal';
 import EditAttachmentTypeDialog from '../../attachments/components/EditAttachmentTypeDialog';
+import SetCompanyDialog, { SHARED_COMPANY_VALUE } from '../../attachments/components/SetCompanyDialog';
+import { attachmentCompanyLabel } from '../../attachments/types/attachment.types';
+import { Badge } from '@/components/ui/badge';
 import { TRASH_VIEW_ID, TRASH_FOLDER_PREFIX, FOLDER_ALL_ID } from '../constants';
 
 interface AttachmentsInFolderPanelProps {
@@ -155,6 +160,7 @@ export default function AttachmentsInFolderPanel({
   const [attachmentTypeId, setAttachmentTypeId] = useState<string>('__all__');
   const [linkStatus, setLinkStatus] = useState<'__all__' | 'linked' | 'unlinked'>('__all__');
   const [storageStatus, setStorageStatus] = useState<'__all__' | 'accessible' | 'missing' | 'unchecked'>('__all__');
+  const [companyFilter, setCompanyFilter] = useState<string>('');
   const [uploadedBy, setUploadedBy] = useState<string>('__all__');
   const [uploadedRange, setUploadedRange] = useState<DateRange | undefined>();
   const uploadedAtFrom = uploadedRange?.from ? format(uploadedRange.from, 'yyyy-MM-dd') : '';
@@ -175,10 +181,12 @@ export default function AttachmentsInFolderPanel({
   const { data: accessTypes = [] } = useContactAccessTypes();
   const { data: tree = [] } = useDirectoryTree();
 
+  const { grants: companyGrants } = useCompany();
   const extraFilterCount =
     (attachmentTypeId !== '__all__' ? 1 : 0) +
     (linkStatus !== '__all__' ? 1 : 0) +
     (storageStatus !== '__all__' ? 1 : 0) +
+    (companyFilter ? 1 : 0) +
     (uploadedBy !== '__all__' ? 1 : 0) +
     (uploadedAtFrom || uploadedAtTo ? 1 : 0);
   const totalFilterCount = accessLevelFilters.length + extraFilterCount;
@@ -201,6 +209,7 @@ export default function AttachmentsInFolderPanel({
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
   const [bulkEditTypeOpen, setBulkEditTypeOpen] = useState(false);
+  const [setCompanyDialogOpen, setSetCompanyDialogOpen] = useState(false);
   const [moveDialogOpen, setMoveDialogOpen] = useState(false);
   const [viewModalOpen, setViewModalOpen] = useState(false);
   const [viewAttachmentId, setViewAttachmentId] = useState<string | null>(null);
@@ -258,6 +267,7 @@ export default function AttachmentsInFolderPanel({
     attachment_type_id: attachmentTypeId !== '__all__' ? attachmentTypeId : undefined,
     link_status: linkStatus !== '__all__' ? linkStatus : undefined,
     storage_status: storageStatus !== '__all__' ? storageStatus : undefined,
+    company: companyFilter || undefined,
     uploaded_by: uploadedBy !== '__all__' ? uploadedBy : undefined,
     uploaded_at_from: uploadedAtFrom || undefined,
     uploaded_at_to: uploadedAtTo || undefined,
@@ -628,6 +638,24 @@ export default function AttachmentsInFolderPanel({
         },
         size: 180,
         meta: { headerTitle: 'Modified' },
+      },
+      {
+        id: 'company',
+        header: ({ column }) => <DataGridColumnHeader title="Company" column={column} />,
+        accessorFn: (row) => row.company_name ?? '',
+        enableSorting: false,
+        cell: ({ row }) => {
+          const item = row.original;
+          const label = attachmentCompanyLabel(item);
+          return (
+            <Badge appearance="light" size="sm" className="max-w-full truncate" title={label}>
+              {label}
+            </Badge>
+          );
+        },
+        size: 110,
+        minSize: 90,
+        meta: { headerTitle: 'Company', skeleton: <Skeleton className="h-4 w-16" /> },
       }
     );
 
@@ -661,6 +689,7 @@ export default function AttachmentsInFolderPanel({
     'bulk-export': Download,
     'bulk-access-levels': Shield,
     'bulk-attachment-type': Tag,
+    'bulk-company': Building2,
     'bulk-resubmit': RefreshCw,
     'bulk-delete': Trash2,
   };
@@ -681,6 +710,10 @@ export default function AttachmentsInFolderPanel({
         onExport: openExport,
         onSetAccessLevels: () => onBulkAdjustAccessLevels?.(selectedDeletableFileIds),
         onSetAttachmentType: () => setBulkEditTypeOpen(true),
+        onSetCompany: () => {
+          setSetCompanyContextItem(null);
+          setSetCompanyDialogOpen(true);
+        },
         onResubmit: handleBulkResubmit,
         onDelete: () => setBulkDeleteDialogOpen(true),
         onRestore: () =>
@@ -768,6 +801,21 @@ export default function AttachmentsInFolderPanel({
   const openMoveForItem = useCallback((item: DriveItem) => {
     setMoveContextItem(item);
     setMoveDialogOpen(true);
+  }, []);
+
+  // Set company serves the same two callers as Move (bulk strip + per-row
+  // context menu). `setCompanyContextItem` set => single-item.
+  const [setCompanyContextItem, setSetCompanyContextItem] = useState<DriveItem | null>(null);
+  const setCompanySelection = setCompanyContextItem
+    ? {
+        fileIds: isFileItem(setCompanyContextItem) ? [setCompanyContextItem.id] : [],
+        folderIds: isFolderItem(setCompanyContextItem) ? [setCompanyContextItem.id] : [],
+      }
+    : { fileIds: selectedFileIds, folderIds: selectedFolderIds };
+
+  const openSetCompanyForItem = useCallback((item: DriveItem) => {
+    setSetCompanyContextItem(item);
+    setSetCompanyDialogOpen(true);
   }, []);
 
   const performMove = useCallback(
@@ -893,6 +941,7 @@ export default function AttachmentsInFolderPanel({
             if (isFileItem(it)) openRename(it);
           },
           onMove: openMoveForItem,
+          onSetCompany: openSetCompanyForItem,
           onResubmit: handleResubmit,
           onRestore: (id) => restoreMutation.mutate(id),
           onDelete: (it) => {
@@ -917,6 +966,7 @@ export default function AttachmentsInFolderPanel({
       revealInFolder,
       openRename,
       openMoveForItem,
+      openSetCompanyForItem,
       handleResubmit,
       restoreMutation,
       openFolderRename,
@@ -1022,6 +1072,7 @@ export default function AttachmentsInFolderPanel({
                             setAttachmentTypeId('__all__');
                             setLinkStatus('__all__');
                             setStorageStatus('__all__');
+                            setCompanyFilter('');
                             setUploadedBy('__all__');
                             setUploadedRange(undefined);
                             setPagination((p) => ({ ...p, pageIndex: 0 }));
@@ -1082,6 +1133,23 @@ export default function AttachmentsInFolderPanel({
                           { value: 'unchecked', label: 'Unchecked' },
                         ]}
                         placeholder="All files"
+                        triggerClassName="w-full"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <p className="text-xs font-medium">Company</p>
+                      <SearchableSelect
+                        value={companyFilter}
+                        onChange={(v) => {
+                          setCompanyFilter(v);
+                          setPagination((p) => ({ ...p, pageIndex: 0 }));
+                        }}
+                        clearable
+                        options={[
+                          ...companyGrants.map((c) => ({ value: c.id, label: c.name })),
+                          { value: SHARED_COMPANY_VALUE, label: 'Shared' },
+                        ]}
+                        placeholder="All companies"
                         triggerClassName="w-full"
                       />
                     </div>
@@ -1330,6 +1398,19 @@ export default function AttachmentsInFolderPanel({
         onOpenChange={setBulkEditTypeOpen}
         attachmentIds={selectedDeletableFileIds}
         onSaved={clearSelection}
+      />
+
+      <SetCompanyDialog
+        open={setCompanyDialogOpen}
+        onOpenChange={(open) => {
+          setSetCompanyDialogOpen(open);
+          if (!open) setSetCompanyContextItem(null);
+        }}
+        fileIds={setCompanySelection.fileIds}
+        folderIds={setCompanySelection.folderIds}
+        onApplied={() => {
+          if (!setCompanyContextItem) clearSelection();
+        }}
       />
 
       <MoveToDialog

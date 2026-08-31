@@ -41,6 +41,9 @@ export const AttachmentTypeSchema = z.object({
     .max(600, { message: 'Maximum validity must not exceed 600 months.' })
     .nullable()
     .optional(),
+  // An upload of this type is written with company_id = NULL (visible to every
+  // company). Flipping this later never touches an existing row.
+  is_shared: z.boolean().optional(),
 });
 
 export type AttachmentTypeSchemaType = z.infer<typeof AttachmentTypeSchema>;

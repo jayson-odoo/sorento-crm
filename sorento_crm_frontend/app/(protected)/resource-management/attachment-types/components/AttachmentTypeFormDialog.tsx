@@ -61,6 +61,7 @@ export default function AttachmentTypeFormDialog({
       triggers_n8n_webhook: true,
       is_certificate: false,
       max_validity_months: null,
+      is_shared: false,
     },
     mode: 'onTouched',
   });
@@ -79,6 +80,7 @@ export default function AttachmentTypeFormDialog({
           triggers_n8n_webhook: attachmentType.triggers_n8n_webhook ?? true,
           is_certificate: attachmentType.is_certificate ?? false,
           max_validity_months: attachmentType.max_validity_months ?? null,
+          is_shared: attachmentType.is_shared ?? false,
         });
       } else {
         form.reset({
@@ -91,6 +93,7 @@ export default function AttachmentTypeFormDialog({
           triggers_n8n_webhook: true,
           is_certificate: false,
           max_validity_months: null,
+          is_shared: false,
         });
       }
     }
@@ -111,6 +114,7 @@ export default function AttachmentTypeFormDialog({
             triggers_n8n_webhook: data.triggers_n8n_webhook ?? true,
             is_certificate: data.is_certificate ?? false,
             max_validity_months: data.max_validity_months ?? null,
+            is_shared: data.is_shared ?? false,
           },
         });
       } else {
@@ -124,6 +128,7 @@ export default function AttachmentTypeFormDialog({
           triggers_n8n_webhook: data.triggers_n8n_webhook ?? true,
           is_certificate: data.is_certificate ?? false,
           max_validity_months: data.max_validity_months ?? null,
+          is_shared: data.is_shared ?? false,
         });
       }
       onOpenChange(false);
@@ -344,6 +349,22 @@ export default function AttachmentTypeFormDialog({
                 )}
               />
             )}
+
+            <FormField
+              control={form.control}
+              name="is_shared"
+              render={({ field }) => (
+                <FormItem className="flex flex-row items-start gap-2 rounded-md border p-3">
+                  <FormControl>
+                    <Checkbox
+                      checked={!!field.value}
+                      onCheckedChange={(v) => field.onChange(v === true)}
+                    />
+                  </FormControl>
+                  <FormLabel className="cursor-pointer">Shared across companies</FormLabel>
+                </FormItem>
+              )}
+            />
 
             <DialogFooter>
               <Button

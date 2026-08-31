@@ -54,6 +54,7 @@ import AttachmentPreviewModal, {
 } from '@/components/common/AttachmentPreviewModal';
 import ManageFieldLinksDialog from './ManageFieldLinksDialog';
 import EditAttachmentTypeDialog from './EditAttachmentTypeDialog';
+import SetCompanyDialog from './SetCompanyDialog';
 import {
   IntegrationPanel,
   IntegrationStatusChip,
@@ -121,50 +122,73 @@ function LinkagesTable({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {items.map((item) => (
-              <TableRow key={item.id}>
-                <TableCell className="font-medium">{item.name}</TableCell>
-                <TableCell className="text-muted-foreground max-w-md line-clamp-2" title={item.description ?? undefined}>
-                  {item.description ?? '-'}
-                </TableCell>
-                <TableCell>
-                  <div className="flex items-center gap-2">
-                    <Link
-                      href={`${ENTITY_ROUTES[type].path}/${item.id}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-primary hover:underline inline-flex items-center gap-1 text-sm"
-                    >
-                      View
-                      <ExternalLink className="size-3.5 shrink-0" />
-                    </Link>
-                    {type === 'product' && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => setManageFieldLinksFor(item.id)}
-                        title="Manage field links"
-                        data-testid={`linkages-manage-field-links-${item.id}`}
-                      >
-                        <SlidersHorizontal className="size-3.5" />
-                        Fields
-                      </Button>
+            {items.map((item) => {
+              // Only a SHARED attachment's rows carry a company (R3, S5): a
+              // single-company attachment's items have no company_name and
+              // render exactly as before, no badges anywhere in the row.
+              const outOfScope = item.in_scope === false;
+              return (
+                <TableRow key={item.id}>
+                  <TableCell className="font-medium">
+                    <span className="inline-flex items-center gap-1.5">
+                      {outOfScope ? (
+                        <span className="text-muted-foreground">{item.name}</span>
+                      ) : (
+                        item.name
+                      )}
+                      {item.company_name && (
+                        <Badge appearance="light" size="sm">
+                          {item.company_name}
+                        </Badge>
+                      )}
+                    </span>
+                  </TableCell>
+                  <TableCell className="text-muted-foreground max-w-md line-clamp-2" title={item.description ?? undefined}>
+                    {item.description ?? '-'}
+                  </TableCell>
+                  <TableCell>
+                    {outOfScope ? (
+                      <span className="text-xs text-muted-foreground">-</span>
+                    ) : (
+                      <div className="flex items-center gap-2">
+                        <Link
+                          href={`${ENTITY_ROUTES[type].path}/${item.id}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-primary hover:underline inline-flex items-center gap-1 text-sm"
+                        >
+                          View
+                          <ExternalLink className="size-3.5 shrink-0" />
+                        </Link>
+                        {type === 'product' && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setManageFieldLinksFor(item.id)}
+                            title="Manage field links"
+                            data-testid={`linkages-manage-field-links-${item.id}`}
+                          >
+                            <SlidersHorizontal className="size-3.5" />
+                            Fields
+                          </Button>
+                        )}
+                        {onUnlink && (type === 'packing_list' ? canUnlinkPackingList : canUnlink(item)) && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-destructive hover:text-destructive"
+                            onClick={() => onUnlink(item)}
+                          >
+                            <Unlink className="size-3.5" />
+                            Unlink
+                          </Button>
+                        )}
+                      </div>
                     )}
-                    {onUnlink && (type === 'packing_list' ? canUnlinkPackingList : canUnlink(item)) && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="text-destructive hover:text-destructive"
-                        onClick={() => onUnlink(item)}
-                      >
-                        <Unlink className="size-3.5" />
-                        Unlink
-                      </Button>
-                    )}
-                  </div>
-                </TableCell>
-              </TableRow>
-            ))}
+                  </TableCell>
+                </TableRow>
+              );
+            })}
           </TableBody>
         </Table>
       )}
@@ -768,6 +792,7 @@ export default function AttachmentDetailModal({
   const [descriptionEdit, setDescriptionEdit] = useState<string | null>(null);
   const [accessLevelsEdit, setAccessLevelsEdit] = useState<string[] | null>(null);
   const [editAttachmentTypeOpen, setEditAttachmentTypeOpen] = useState(false);
+  const [setCompanyOpen, setSetCompanyOpen] = useState(false);
   // Tab inside the top card - Attachment Details vs. Integration. Default
   // to "details" since that's the primary surface for the modal.
   const [detailsTab, setDetailsTab] = useState<'details' | 'integration'>(
@@ -1008,7 +1033,18 @@ export default function AttachmentDetailModal({
                       </div>
                       <div>
                         <p className="text-sm text-muted-foreground">Company</p>
-                        <p className="font-medium">{attachmentCompanyLabel(attachment)}</p>
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="font-medium">{attachmentCompanyLabel(attachment)}</p>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-primary"
+                            onClick={() => setSetCompanyOpen(true)}
+                            data-testid="attachment-company-edit"
+                          >
+                            Edit
+                          </Button>
+                        </div>
                       </div>
                       <div>
                         <p className="text-sm text-muted-foreground">Uploaded</p>
@@ -1167,6 +1203,14 @@ export default function AttachmentDetailModal({
             queryClient.invalidateQueries({ queryKey: ['attachment-metadata', attachment.id] });
             queryClient.invalidateQueries({ queryKey: ['attachments'] });
           }}
+        />
+      )}
+      {attachment && setCompanyOpen && (
+        <SetCompanyDialog
+          open={setCompanyOpen}
+          onOpenChange={setSetCompanyOpen}
+          fileIds={[attachment.id]}
+          folderIds={[]}
         />
       )}
     </>

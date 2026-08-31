@@ -1,4 +1,5 @@
 import { apiFetch } from '@/lib/api';
+import { buildDataGridParams } from '@/lib/api-client';
 import type { Attachment } from '../types/attachment.types';
 import type { DataGridApiFetchParams, DataGridApiResponse } from '@/components/ui/data-grid';
 
@@ -28,31 +29,31 @@ export type AttachmentsListParams = DataGridApiFetchParams & {
   mime_type?: string;
   /** Several mime types. Unions with `mime_type`, the same way `attachment_type_ids` does. */
   mime_types?: string[];
+  /** A company id, `shared`, or omitted for today's `IS NULL OR IN (scope)` result. */
+  company?: string;
 };
 
 
 export async function getAttachments(params: AttachmentsListParams): Promise<DataGridApiResponse<Attachment>> {
-  const { pageIndex, pageSize, sorting, searchQuery, entity_type, file_type, attachment_type_id, upload_date_from, upload_date_to, uploaded_at_from, uploaded_at_to, uploaded_by, is_deleted, virus_status, directory_id, link_status, storage_status, resolve_signed_urls, access_levels, access_levels_match, mime_type, mime_types } = params;
-  const sortField = sorting?.[0]?.id || '';
-  const sortDirection = sorting?.[0]?.desc ? 'desc' : 'asc';
-  const queryParams = new URLSearchParams({
-    page: String(pageIndex + 1),
-    limit: String(pageSize),
-    ...(sortField ? { sort: sortField, dir: sortDirection } : {}),
-    ...(searchQuery ? { query: searchQuery } : {}),
-    ...(entity_type ? { entity_type } : {}),
-    ...(attachment_type_id || file_type ? { attachment_type_id: attachment_type_id || file_type } : {}),
-    ...(uploaded_by ? { uploaded_by } : {}),
-    ...(uploaded_at_from || upload_date_from ? { uploaded_at_from: uploaded_at_from || upload_date_from } : {}),
-    ...(uploaded_at_to || upload_date_to ? { uploaded_at_to: uploaded_at_to || upload_date_to } : {}),
-    ...(is_deleted !== undefined ? { is_deleted: String(is_deleted) } : {}),
-    ...(virus_status ? { virus_status } : {}),
-    ...(directory_id != null && directory_id !== '' ? { directory_id } : {}),
-    ...(link_status ? { link_status } : {}),
-    ...(storage_status ? { storage_status } : {}),
-    ...(resolve_signed_urls !== undefined ? { resolve_signed_urls: String(resolve_signed_urls) } : {}),
-    ...(mime_type ? { mime_type } : {}),
-  });
+  const { pageIndex, pageSize, sorting, searchQuery, entity_type, file_type, attachment_type_id, upload_date_from, upload_date_to, uploaded_at_from, uploaded_at_to, uploaded_by, is_deleted, virus_status, directory_id, link_status, storage_status, resolve_signed_urls, access_levels, access_levels_match, mime_type, mime_types, company } = params;
+  const queryParams = buildDataGridParams(
+    { pageIndex, pageSize, sorting, searchQuery },
+    {
+      entity_type,
+      attachment_type_id: attachment_type_id || file_type,
+      uploaded_by,
+      uploaded_at_from: uploaded_at_from || upload_date_from,
+      uploaded_at_to: uploaded_at_to || upload_date_to,
+      is_deleted: is_deleted !== undefined ? String(is_deleted) : undefined,
+      virus_status,
+      directory_id: directory_id != null && directory_id !== '' ? directory_id : undefined,
+      link_status,
+      storage_status,
+      resolve_signed_urls: resolve_signed_urls !== undefined ? String(resolve_signed_urls) : undefined,
+      mime_type,
+      company,
+    },
+  );
   // Repeated params, like access_levels: the backend unions `mime_types` with
   // `mime_type`. Absent means every type, which is what every caller that does
   // not ask for a filter must keep getting.

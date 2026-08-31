@@ -14,7 +14,8 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Trash2, Plus, RefreshCw, RotateCcw, FileArchive, Tag } from 'lucide-react';
+import { Trash2, Plus, RefreshCw, RotateCcw, FileArchive, Tag, Building2 } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { RowActionsMenu } from '@/components/common/RowActionsMenu';
 import { useAttachmentActions } from '../actions';
@@ -30,7 +31,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useAttachments, useAttachmentTypesList, useBulkRestoreAttachments, useDirectoryTree } from '../hooks/useAttachments';
 import { resubmitAttachmentWebhook } from '../services/attachmentService';
 import { buildDetailSearch } from '@/lib/listNavQuery';
-import type { Attachment } from '../types/attachment.types';
+import { attachmentCompanyLabel, type Attachment } from '../types/attachment.types';
 import type { AttachmentDirectoryTreeNode } from '../services/directoryService';
 
 function flattenDirectoryTree(nodes: AttachmentDirectoryTreeNode[], prefix = ''): { id: string; label: string }[] {
@@ -44,6 +45,8 @@ import AttachmentUploadDialog from './AttachmentUploadDialog';
 import AttachmentBulkImportDialog from './AttachmentBulkImportDialog';
 import AttachmentBulkDeleteDialog from './AttachmentBulkDeleteDialog';
 import EditAttachmentTypeDialog from './EditAttachmentTypeDialog';
+import SetCompanyDialog, { SHARED_COMPANY_VALUE } from './SetCompanyDialog';
+import { useCompany } from '@/app/providers/CompanyProvider';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
@@ -76,10 +79,12 @@ export default function AttachmentBrowser() {
   const [bulkImportDialogOpen, setBulkImportDialogOpen] = useState(false);
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
   const [bulkEditTypeOpen, setBulkEditTypeOpen] = useState(false);
+  const [setCompanyDialogOpen, setSetCompanyDialogOpen] = useState(false);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [directoryId, setDirectoryId] = useState<string | null>(null);
   const [attachmentTypeId, setAttachmentTypeId] = useState<string>('__all__');
   const [linkStatus, setLinkStatus] = useState<'__all__' | 'linked' | 'unlinked'>('__all__');
+  const [companyFilter, setCompanyFilter] = useState('');
   const [uploadedBy, setUploadedBy] = useState('');
   const [uploadedAtFrom, setUploadedAtFrom] = useState('');
   const [uploadedAtTo, setUploadedAtTo] = useState('');
@@ -95,6 +100,7 @@ export default function AttachmentBrowser() {
     setLinkStatus(
       (state.filters.link_status as 'linked' | 'unlinked') ?? '__all__',
     );
+    setCompanyFilter(state.filters.company ?? '');
     setUploadedBy(state.filters.uploaded_by ?? '');
     setUploadedAtFrom(state.filters.uploaded_at_from ?? '');
     setUploadedAtTo(state.filters.uploaded_at_to ?? '');
@@ -103,6 +109,7 @@ export default function AttachmentBrowser() {
   const queryClient = useQueryClient();
   const { data: directoryTree = [] } = useDirectoryTree();
   const { data: attachmentTypes = [] } = useAttachmentTypesList();
+  const { grants: companyGrants } = useCompany();
   const isTrashView = directoryId === '__trash__';
 
   const { data, isLoading, isFetching } = useAttachments({
@@ -114,6 +121,7 @@ export default function AttachmentBrowser() {
     is_deleted: isTrashView ? true : undefined,
     attachment_type_id: attachmentTypeId !== '__all__' ? attachmentTypeId : undefined,
     link_status: linkStatus !== '__all__' ? linkStatus : undefined,
+    company: companyFilter || undefined,
     uploaded_by: uploadedBy.trim() || undefined,
     uploaded_at_from: uploadedAtFrom || undefined,
     uploaded_at_to: uploadedAtTo || undefined,
@@ -137,6 +145,7 @@ export default function AttachmentBrowser() {
           attachment_type_id:
             attachmentTypeId !== '__all__' ? attachmentTypeId : undefined,
           link_status: linkStatus !== '__all__' ? linkStatus : undefined,
+          company: companyFilter || undefined,
           uploaded_by: uploadedBy.trim() || undefined,
           uploaded_at_from: uploadedAtFrom || undefined,
           uploaded_at_to: uploadedAtTo || undefined,
@@ -151,6 +160,7 @@ export default function AttachmentBrowser() {
       directoryId,
       attachmentTypeId,
       linkStatus,
+      companyFilter,
       uploadedBy,
       uploadedAtFrom,
       uploadedAtTo,
@@ -279,6 +289,23 @@ export default function AttachmentBrowser() {
         meta: { headerTitle: 'Entity Name' },
       },
       {
+        id: 'company',
+        header: ({ column }) => <DataGridColumnHeader title="Company" column={column} />,
+        accessorFn: (row) => row.company_name ?? '',
+        enableSorting: false,
+        cell: ({ row }) => {
+          const label = attachmentCompanyLabel(row.original);
+          return (
+            <Badge appearance="light" size="sm" className="max-w-full truncate" title={label}>
+              {label}
+            </Badge>
+          );
+        },
+        size: 110,
+        minSize: 90,
+        meta: { headerTitle: 'Company', skeleton: <Skeleton className="h-4 w-16" /> },
+      },
+      {
         accessorKey: 'actions',
         header: () => <span className="sr-only">Actions</span>,
         // The row opens the record; everything else is one menu, the same one
@@ -346,6 +373,12 @@ export default function AttachmentBrowser() {
       onClick: () => setBulkEditTypeOpen(true),
     });
     bulkActions.push({
+      key: 'bulk-company',
+      label: `Set company (${selectedDeletableIds.length})`,
+      icon: Building2,
+      onClick: () => setSetCompanyDialogOpen(true),
+    });
+    bulkActions.push({
       key: 'bulk-resubmit',
       label: `Resubmit selected (${selectedDeletableIds.length})`,
       icon: RefreshCw,
@@ -378,6 +411,7 @@ export default function AttachmentBrowser() {
     (directoryId !== null ? 1 : 0) +
     (attachmentTypeId !== '__all__' ? 1 : 0) +
     (linkStatus !== '__all__' ? 1 : 0) +
+    (companyFilter ? 1 : 0) +
     (uploadedBy.trim() ? 1 : 0) +
     (uploadedAtFrom || uploadedAtTo ? 1 : 0);
 
@@ -463,6 +497,23 @@ export default function AttachmentBrowser() {
                           { value: 'unlinked', label: 'Not linked' },
                         ]}
                         placeholder="Link status"
+                        triggerClassName="w-full"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <p className="text-xs font-medium">Company</p>
+                      <SearchableSelect
+                        value={companyFilter}
+                        onChange={(value) => {
+                          setCompanyFilter(value);
+                          setPagination((prev) => ({ ...prev, pageIndex: 0 }));
+                        }}
+                        clearable
+                        options={[
+                          ...companyGrants.map((c) => ({ value: c.id, label: c.name })),
+                          { value: SHARED_COMPANY_VALUE, label: 'Shared' },
+                        ]}
+                        placeholder="All companies"
                         triggerClassName="w-full"
                       />
                     </div>
@@ -558,6 +609,14 @@ export default function AttachmentBrowser() {
       onOpenChange={setBulkEditTypeOpen}
       attachmentIds={selectedDeletableIds}
       onSaved={() => setRowSelection({})}
+    />
+
+    <SetCompanyDialog
+      open={setCompanyDialogOpen}
+      onOpenChange={setSetCompanyDialogOpen}
+      fileIds={selectedDeletableIds}
+      folderIds={[]}
+      onApplied={() => setRowSelection({})}
     />
 
     </>

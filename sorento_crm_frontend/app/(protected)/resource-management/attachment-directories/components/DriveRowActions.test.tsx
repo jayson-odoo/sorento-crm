@@ -34,6 +34,7 @@ const noopHandlers: DriveRowActionHandlers = {
   onRevealInFolder: vi.fn(),
   onRename: vi.fn(),
   onMove: vi.fn(),
+  onSetCompany: vi.fn(),
   onResubmit: vi.fn(),
   onRestore: vi.fn(),
   onDelete: vi.fn(),
@@ -129,5 +130,33 @@ describe('DriveRowActions', () => {
     expect(screen.getByText('Open')).toBeInTheDocument();
     expect(screen.queryByText('New subfolder')).not.toBeInTheDocument();
     expect(screen.queryByText('Delete')).not.toBeInTheDocument();
+  });
+
+  it('AC-F2: a file row carries "Set company…" after "Move to…"', () => {
+    renderActions({ item: fileItem });
+    const labels = screen.getAllByRole('menuitem').map((el) => el.textContent?.trim());
+    const moveIndex = labels.findIndex((l) => l === 'Move to…');
+    const setCompanyIndex = labels.findIndex((l) => l === 'Set company…');
+    expect(moveIndex).toBeGreaterThanOrEqual(0);
+    expect(setCompanyIndex).toBe(moveIndex + 1);
+  });
+
+  it('AC-F2: a folder row carries "Set company…" after "Move to…"', () => {
+    renderActions({ item: folderItem });
+    const labels = screen.getAllByRole('menuitem').map((el) => el.textContent?.trim());
+    const moveIndex = labels.findIndex((l) => l === 'Move to…');
+    const setCompanyIndex = labels.findIndex((l) => l === 'Set company…');
+    expect(moveIndex).toBeGreaterThanOrEqual(0);
+    expect(setCompanyIndex).toBe(moveIndex + 1);
+  });
+
+  it('AC-F2: "Set company…" is absent from a file row in trash', () => {
+    renderActions({ item: fileItem, isTrashView: true });
+    expect(screen.queryByText('Set company…')).not.toBeInTheDocument();
+  });
+
+  it('AC-F2: "Set company…" is absent from a folder row in trash', () => {
+    renderActions({ item: folderItem, isTrashView: true });
+    expect(screen.queryByText('Set company…')).not.toBeInTheDocument();
   });
 });
