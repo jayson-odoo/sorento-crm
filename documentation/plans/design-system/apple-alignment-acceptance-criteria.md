@@ -155,10 +155,12 @@ Added 2026-08-30 from the user's run on the built S6 (the window works; what hap
 
   **Second sweep, reconciled against the tree on 31 Aug (same day, later pass):** the first pass's
   24 covered the boxes already using a two-state pattern; a full grep for
-  `placeholder="Search` outside `ListSearchInput` still found **144** hand-rolled boxes across
-  `app/`. This pass (worked concurrently by more than one coder against the same tree, hence the
-  jump in one sitting) brings the total using `ListSearchInput` to **122**; **48** remain, all
-  classified below rather than silently skipped:
+  `placeholder="Search` outside `ListSearchInput` found 151 hand-rolled boxes across `app/` and
+  `components/` (a wider grep than the first pass's, which is why the count differs from the 144
+  an earlier draft of this note gave). This pass (worked concurrently by more than one coder
+  against the same tree, hence the jump in one sitting) brings the total using `ListSearchInput`
+  to **122**; **54** remain (53 real UI + the one test-fixture file below), all classified below
+  rather than silently skipped:
 
   - **Unreachable demo/legacy scaffolding (24, untouched):** `account/invite-a-friend`,
     `account/members/*` (4), `account/security/*` (4), `components/demo1/light-sidebar/teams`,
@@ -168,18 +170,32 @@ Added 2026-08-30 from the user's run on the built S6 (the window works; what hap
     reachable from `MENU_SIDEBAR_COMPACT` / `MENU_MEGA*`, which back the Metronic demo layouts
     (`demo2`-`demo10`), not the app shell `PageHeader` actually renders from. Same standing
     exemption as the demo layouts already carried.
-  - **In-dialog or in-form pickers (17, untouched):** the `placeholder="Search..."` sits on a
+  - **In-dialog or in-form pickers (22, untouched):** the `placeholder="Search..."` sits on a
     `SearchableSelect`/`SearchableMultiSelect` field or inside a `<Dialog>`, not a list toolbar -
     `ComplaintForm`, `RoomDesigner` (canvas "add product" picker), `PromotionAttachmentsTab`
-    (`LinkAttachmentDialog`), `LinkAttachmentBrowserDialog`, `ProductForm` (category/brand
-    fields), `GRNForm`, `PurchaseRequestForm`, `StakeholdersPanel` (party field),
-    `PriceFloorDialog`, `QualifyLeadDialog`, `RegisterProjectDialog`, `MatchToProductDialog`,
+    (`LinkAttachmentDialog`), `LinkAttachmentBrowserDialog` (both copies -
+    `components/common/` and `master-data-management/products/components/` are two separate
+    files with the same name), `ProductForm` (category/brand fields), `GRNForm`,
+    `PurchaseRequestForm`, `StakeholdersPanel` (party field), `PriceFloorDialog`,
+    `QualifyLeadDialog`, `RegisterProjectDialog`, `MatchToProductDialog`,
     `UnmatchedSupplierCodesPanel` (per-row match picker), `ProformaInvoiceDetail` (add-line
     picker), `ContactAgentAccessDialog`, `CopyAccessAgentsFromContactDialog`,
-    `BulkCopySettingsFromContactDialog`.
-  - **Explicitly named exempt (5, untouched):** `ActivityTimeline`, `ChatTranscript` (find-within-
-    a-page, not a list search), `AIAssistantSettingsForm` (a tool checklist, not a list),
-    `AIAssistantBubble`, and the command palette `search-dialog.tsx` (fuzzy nav, not a list).
+    `BulkCopySettingsFromContactDialog`, `SendTemplateDialog` (browse-and-pick-one, same shape
+    as `LinkAttachmentBrowserDialog`), `AddSpecificationDialog` (a `SearchableSelect` field), and
+    the two picker building blocks themselves, `components/common/SearchableSelect.tsx` /
+    `SearchableMultiSelect.tsx` (carried over from the first S7-02 pass note above, not a second
+    finding - migrating the block that every OTHER picker on this list is built from would change
+    all of them at once).
+  - **Explicitly named exempt (5, untouched):** `ChatTranscript` and
+    `components/common/conversation/ConversationSearchBar.tsx` (both find-within-a-page /
+    find-within-a-thread bars with match navigation, not a list search),
+    `AIAssistantSettingsForm` (a tool checklist, not a list), `AIAssistantBubble`, and the command
+    palette `search-dialog.tsx` (fuzzy nav, not a list). `ActivityTimeline` was in this bucket in
+    the count above when this note was first written; it migrated in the same sitting (a second
+    coder's commit landed after this paragraph was drafted) and is corrected out of it here.
+  - **Not real UI (1, excluded from every count above):** `components/ui/data-grid-list-toolbar.test.tsx`
+    is a Vitest fixture asserting the toolbar's own layout, not a page a user reaches - the grep
+    this note is built from does not distinguish test files from app code.
   - **Portal design conflict (1, untouched):** `(auth)/portal/components/PortalLanding.tsx` uses
     `Input variant="lg"` at `h-12` for a touch-friendly target on an unauthenticated, largely
     mobile customer surface; `ListSearchInput` has no size variant and migrating it today would
