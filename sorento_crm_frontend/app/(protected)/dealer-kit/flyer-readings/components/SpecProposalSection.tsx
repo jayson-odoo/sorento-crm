@@ -38,11 +38,20 @@ export interface SpecProposalSectionProps {
   readingId: string;
   /** The reading's own status: nothing can be read off a flyer nobody read. */
   readingStatus: FlyerReadingStatus;
+  /**
+   * When a code was last adopted or undone on this reading (PLAN-flyer-code-
+   * adopt.md AC-C.4). Compared against the batch's own `created_at` to say
+   * "propose again" when the flyer's codes moved since the last pass. Null
+   * until the first adoption, and optional so existing callers need not know
+   * about it.
+   */
+  codeOverridesChangedAt?: string | null;
 }
 
 export function SpecProposalSection({
   readingId,
   readingStatus,
+  codeOverridesChangedAt = null,
 }: SpecProposalSectionProps) {
   const canWriteMaster = useHasPermission(MASTER_DATA_EDIT);
   const { isLoading: permissionsLoading } = usePermissions();
@@ -63,6 +72,20 @@ export function SpecProposalSection({
   const status = data?.status;
   const settled = !isLoading && !isError && data !== undefined;
   const busy = propose.isPending || status === 'proposing';
+  // A batch exists and has stopped moving (`proposed` or `failed`; `none` is
+  // no batch and `proposing` is still running - neither is "this proposal is
+  // stale"), and a code moved after the pass that made it. The hint asks for
+  // Propose again; it does not say why, because it is a status line, not an
+  // explanation of the feature.
+  const showAdoptionHint =
+    canWriteMaster &&
+    settled &&
+    data !== undefined &&
+    (status === 'proposed' || status === 'failed') &&
+    Boolean(data.created_at) &&
+    Boolean(codeOverridesChangedAt) &&
+    new Date(codeOverridesChangedAt as string).getTime() >
+      new Date(data.created_at as string).getTime();
 
   const action = canWriteMaster ? (
     <Button
@@ -153,6 +176,19 @@ export function SpecProposalSection({
           Reading it proposes values for the products it names. You review them
           before anything is written.
         </Empty>
+      )}
+
+      {showAdoptionHint && (
+        <div
+          className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200"
+          data-testid="dk-fr-spec-adoption-hint"
+        >
+          <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+          <p>
+            Codes were adopted or undone after this proposal. Propose again to
+            reflect them.
+          </p>
+        </div>
       )}
 
       {canWriteMaster && !isError && status === 'proposing' && (

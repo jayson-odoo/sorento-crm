@@ -198,6 +198,7 @@ export function FlyerReviewScreen({ readingId }: { readingId: string }) {
             promotionLabel={promotionLabel}
             headings={data.headings}
             readingStatus={data.status}
+            codeOverridesChangedAt={data.codeOverridesChangedAt}
           />
 
           <SeedPanel
