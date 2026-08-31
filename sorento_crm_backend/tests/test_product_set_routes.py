@@ -505,3 +505,27 @@ def test_a_malformed_id_is_a_404_not_a_500(client):
 def test_the_delete_route_answers_204(client, db, world):
     created = _create(db, world)
     assert client.delete(f"{BASE}/{created.id}").status_code == 204
+
+
+def test_an_override_stamp_survives_the_audit_listener(db: Session, world):
+    """`product_sets` is audit-tracked, and the listener snapshots the row into
+    `audit_logs.new_values` as JSON at flush. The stamp used to be assigned as the SQL
+    expression `func.now()`, which is not a value until the database evaluates it, so
+    the snapshot failed with "Object of type now is not JSON serializable" whenever the
+    listeners were registered in the same process - true in the app, and in CI when a
+    sibling test registered them first. The stamp has to be a real datetime.
+    """
+    from app.services.audit_service import register_audit_listeners
+
+    register_audit_listeners()
+    created = _create(db, world)
+    actor = str(uuid.uuid4())
+    with company_scope(db, frozenset({str(world["company"].id)})):
+        service = _service(db, world["company"])
+        service.update(created.id, {"list_price_override": Decimal("1150.00")}, updated_by=actor)
+        after = service.get(created.id)
+
+    assert after.override_set_by == actor
+    db.expire_all()
+    row = db.get(ProductSet, created.id)
+    assert row is not None and row.override_set_at is not None
