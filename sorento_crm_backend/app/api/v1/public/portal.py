@@ -37,6 +37,7 @@ from app.models.entity_attachment import EntityAttachmentLink
 from app.models.portal import PortalToken
 from app.models.resources import Attachment, AttachmentType
 from app.services.entity_attachment_service import EntityAttachmentService
+from app.services.portal_form_visibility_service import resolve_visible_form_types
 from app.services.error_handler import (
     AppException,
     handle_not_found,
@@ -253,6 +254,10 @@ class PortalMeResponse(BaseModel):
     # project picker is mandatory; the server enforces it regardless.
     requires_registered_project: bool = False
     impersonation: Optional[PortalImpersonationInfo] = None
+    # Portal form types this contact may see (access-type union + per-contact
+    # overrides). The landing reads it to decide which entry points to show;
+    # every form route still enforces the same rule server-side.
+    visible_form_types: list[str] = []
 
 
 @router.get("/me", response_model=PortalMeResponse)
@@ -306,6 +311,9 @@ def portal_me(
             getattr(contact, "requires_registered_project", False)
         ),
         impersonation=impersonation_info,
+        visible_form_types=sorted(
+            resolve_visible_form_types(db, token.contact_id)
+        ),
     )
 
 

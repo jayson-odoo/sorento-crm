@@ -19,9 +19,23 @@ export interface SalesAgent {
   /** Which warehouse-suffix ownership group this agent's stock lives in (e.g. `BB` for
    *  BRW-BB/MWH-BB/DC1-BB). Null = nobody has decided yet. */
   location_group: string | null;
+  /** The portal contact this agent IS. It decides which debtors that salesperson may
+   *  pick from on the price tag request form. Null = nobody has linked it yet. */
+  contact_id: string | null;
+  /** Read-only, resolved by the backend: the person behind `contact_id`, so no screen
+   *  ever has to print the id. */
+  contact_name: string | null;
   source: 'autocount' | 'manual' | 'import';
   created_at: string;
   updated_at: string | null;
+}
+
+/** One row of the "Linked portal contact" picker. Name plus a masked phone, never an
+ *  id: the id is the value, and the value is never what a person reads. */
+export interface ContactSelectOption {
+  id: string;
+  name: string;
+  masked_phone: string | null;
 }
 
 /**
@@ -39,6 +53,7 @@ export interface MirrorAnnotationPayload {
   location_group?: string | null;
   internal_note?: string | null;
   follow_up?: boolean;
+  contact_id?: string | null;
   /** Whether the code is still sold under. Sales-agent only (the other mirror entities'
    *  PATCH does not accept it): a retired code has to leave the Agent pickers, and until
    *  the record page carried this switch there was no way to retire one at all. */

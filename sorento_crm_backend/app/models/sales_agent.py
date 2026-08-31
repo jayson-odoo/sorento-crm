@@ -26,6 +26,7 @@ from sqlalchemy import (
     Text,
 )
 from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func, text
 
 from app.database import Base
@@ -82,11 +83,37 @@ class SalesAgent(Base):
     # as `demand_class`. Stored upper/trim-normalised by `sales_agent_service.annotate` so a
     # typed `bb` still matches the group the warehouse suffix carries.
     location_group = Column(String(16), nullable=True)
+    # Portal contact linked to this agent. Allows the portal to scope the debtor
+    # dropdown and show price_tag_request to contacts whose linked agent exists.
+    # Text, not UUID, because respond_contacts.id is Text.
+    contact_id = Column(
+        Text,
+        ForeignKey("respond_contacts.id", ondelete="SET NULL"),
+        nullable=True,
+    )
 
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(
         DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
     )
+
+    # The person behind `contact_id`, so no screen ever has to print the id. Eager,
+    # because the master list draws every row and a lazy load would be one query per
+    # agent for a single name.
+    contact = relationship("RespondContact", lazy="joined")
+
+    @property
+    def contact_name(self):
+        """Who the linked portal contact is, in the words a human would use.
+
+        A contact can exist with no name (a phone number Respond.io has never had a
+        profile for), and a picker showing a blank row is a picker nobody can use, so
+        the number stands in. Read by `SalesAgentResponse`.
+        """
+        contact = self.contact
+        if contact is None:
+            return None
+        return contact.name or contact.phone_number
 
     __table_args__ = (
         CheckConstraint(check_constraint_sql(), name="ck_sales_agents_demand_class"),

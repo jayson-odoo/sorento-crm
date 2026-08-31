@@ -355,6 +355,10 @@ def test_me_returns_portal_slug(client, db, cleanup):
     db.refresh(contact)
     assert body["portal_slug"] == contact.portal_slug
     assert body["whatsapp_number"] == "60123456789"
+    # The landing gates its entry points on this list; response_model would
+    # silently drop an undeclared field, so its presence is asserted here.
+    # A contact with no access types resolves to nothing (fail-closed).
+    assert body["visible_form_types"] == []
 
 
 def test_token_info_returns_slug_and_mask(client, db, cleanup):

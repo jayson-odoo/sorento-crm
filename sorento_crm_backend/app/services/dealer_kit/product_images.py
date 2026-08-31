@@ -113,3 +113,59 @@ def primary_image_urls(
             urls[link.product_id] = signed
 
     return urls
+
+
+def gallery_images(
+    db: Session,
+    product: Product,
+    viewer: ViewerContext,
+    expires_in: int = 3600,
+) -> list[dict]:
+    """EVERY photo of one product this viewer may see, primary first.
+
+    ``primary_image_urls`` answers "the photo for this tile" for a whole page.
+    A price tag is the other shape of the same question: the designer picks
+    which of a product's photos goes on the tag - the accessory shot, the
+    cutaway, the inside view - so they need the list, for one product.
+
+    Same gate, same ordering, same strict signing, deliberately in this module
+    rather than beside the tag code: ``_may_see`` decides who sees trade imagery
+    and a second copy of that rule would drift the first time either was
+    touched. An unsignable photo is ABSENT, exactly as it is for a tile.
+    """
+    rows = (
+        db.query(ProductAttachment, Attachment)
+        .join(Attachment, Attachment.id == ProductAttachment.attachment_id)
+        .filter(ProductAttachment.product_id == product.id)
+        .filter(Attachment.mime_type.ilike("image/%"))
+        .filter(Attachment.is_deleted.is_(False))
+        .order_by(
+            (ProductAttachment.is_primary.is_(True)).desc(),
+            ProductAttachment.sort_order.nullslast(),
+            ProductAttachment.created_at,
+        )
+        .all()
+    )
+
+    images: list[dict] = []
+    for link, attachment in rows:
+        if not _may_see(link.access_levels, viewer):
+            continue
+        # The FULL image, not the thumbnail: this one is going on a printed tag
+        # at 300dpi, where a 320px thumbnail is a smear.
+        signed = resolve_signed_url(
+            attachment.file_path,
+            provider=attachment.storage_provider,
+            expires_in=expires_in,
+            strict=True,
+        )
+        if not signed:
+            continue
+        images.append(
+            {
+                "attachment_id": attachment.id,
+                "url": signed,
+                "is_primary": bool(link.is_primary),
+            }
+        )
+    return images

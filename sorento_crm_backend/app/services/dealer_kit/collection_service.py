@@ -388,11 +388,16 @@ def _tile(product: Product, price, image_url: Optional[str]) -> dict:
 
 
 def _dimensions(product: Product) -> Optional[str]:
-    parts = [
+    """One formatting rule, shared with the price tag block.
+
+    Delegated rather than duplicated: a tile and a tag print the same product,
+    and two copies of "800 x 500 x 220 mm" would drift the first time either was
+    touched.
+    """
+    from app.services.dealer_kit.tag_data_service import format_dimensions_mm
+
+    return format_dimensions_mm(
         product.dimensions_length,
         product.dimensions_width,
         product.dimensions_height,
-    ]
-    if not any(part is not None for part in parts):
-        return None
-    return " x ".join("-" if part is None else f"{Decimal(part):g}" for part in parts) + " mm"
+    )

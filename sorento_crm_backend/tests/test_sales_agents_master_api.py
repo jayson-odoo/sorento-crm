@@ -30,6 +30,7 @@ import uuid
 import pytest
 from fastapi.testclient import TestClient
 
+from app.models.access import RespondContact
 from app.models.sales_agent import SalesAgent
 from app.services.scm.demand_class import DEFAULT_DEMAND_CLASS, PROJECT
 from tests._pg_fixture import blank_session, unique_code
@@ -54,6 +55,8 @@ RESPONSE_KEYS = {
     "person_label",
     "demand_class",
     "location_group",
+    "contact_id",
+    "contact_name",
     "source",
     "created_at",
     "updated_at",
@@ -536,3 +539,77 @@ def test_the_class_lands_on_the_clicked_row_not_a_namesake(client, db):
     db.expire_all()
     assert db.query(SalesAgent).filter(SalesAgent.id == owned.id).one().demand_class == PROJECT
     assert db.query(SalesAgent).filter(SalesAgent.id == shared.id).one().demand_class is None
+
+
+# --------------------------------------------------------------------------- #
+# Linked portal contact (D46b)
+#
+# `sales_agents.contact_id` decides which debtors a portal salesperson may pick
+# from. The column shipped with the price tag feature and was never writable, so
+# every salesperson's debtor dropdown was empty with nothing said about why.
+# These pin the write, its clear, and - the failure that looks like success -
+# that the link AND the person's name both survive the response schema.
+# --------------------------------------------------------------------------- #
+def _seed_contact(db, *, name: str) -> RespondContact:
+    c = RespondContact(
+        id=str(uuid.uuid4()),
+        phone_number=f"+60{uuid.uuid4().hex[:9]}",
+        name=name,
+    )
+    db.add(c)
+    db.commit()
+    return c
+
+
+def test_annotation_links_a_portal_contact_and_answers_with_the_name(client, db):
+    agent = _seed(db, sales_agent="ZZT LINKME")
+    contact = _seed_contact(db, name="ZZT Johnson")
+
+    res = client.patch(f"{BASE}/{agent.id}/annotation", json={"contact_id": contact.id})
+    assert res.status_code == 200, res.text
+
+    body = res.json()
+    assert body["contact_id"] == contact.id
+    # Never an id on the screen: the modal re-opens on the person, not a uuid.
+    assert body["contact_name"] == "ZZT Johnson"
+    assert set(body) == RESPONSE_KEYS
+
+    db.expire_all()
+    stored = db.query(SalesAgent).filter(SalesAgent.id == agent.id).one()
+    assert stored.contact_id == contact.id
+
+
+def test_annotation_clears_the_linked_contact(client, db):
+    contact = _seed_contact(db, name="ZZT Unlink Me")
+    agent = _seed(db, sales_agent="ZZT UNLINKME", contact_id=contact.id)
+
+    res = client.patch(f"{BASE}/{agent.id}/annotation", json={"contact_id": None})
+    assert res.status_code == 200, res.text
+    assert res.json()["contact_id"] is None
+    assert res.json()["contact_name"] is None
+
+    db.expire_all()
+    assert db.query(SalesAgent).filter(SalesAgent.id == agent.id).one().contact_id is None
+
+
+def test_a_save_that_omits_the_contact_leaves_the_link_alone(client, db):
+    """The modal sends only what it edited, so a save of the class alone must not
+    unlink the person. That is the shape the `write_*` flags exist for."""
+    contact = _seed_contact(db, name="ZZT Keep Linked")
+    agent = _seed(db, sales_agent="ZZT KEEPLINK", contact_id=contact.id)
+
+    res = client.patch(f"{BASE}/{agent.id}/annotation", json={"demand_class": PROJECT})
+    assert res.status_code == 200, res.text
+    assert res.json()["contact_id"] == contact.id
+
+    db.expire_all()
+    assert db.query(SalesAgent).filter(SalesAgent.id == agent.id).one().contact_id == contact.id
+
+
+def test_an_unlinked_agent_answers_a_null_name(client, db):
+    _seed(db, sales_agent="ZZT NOLINK")
+
+    row = client.get(BASE, params={"query": "ZZT NOLINK"}).json()["data"][0]
+    assert row["contact_id"] is None
+    assert row["contact_name"] is None
+    assert set(row) == RESPONSE_KEYS

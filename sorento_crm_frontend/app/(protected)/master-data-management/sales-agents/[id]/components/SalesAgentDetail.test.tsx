@@ -65,23 +65,56 @@ vi.mock('@/hooks/usePermissions', () => ({
 
 // `id` is forwarded so a real `<label htmlFor>` resolves and the field is reachable by its
 // own name, the same stand-in the list's suite uses.
+// The contact field is server-searched, so the stub carries one findable person
+// for it: picking is the whole point of the field and a static-options stub can
+// never do it.
+const CONTACT_OPTIONS = [{ value: 'contact-9', label: 'ZZT Chosen Person' }];
+
 vi.mock('@/components/common/SearchableSelect', () => ({
   SearchableSelect: (props: {
     id?: string;
     value: string;
     onChange: (v: string) => void;
+    onOptionChange?: (o: { value: string; label: string } | null) => void;
     options?: { value: string; label: string }[];
+    selectedOption?: { value: string; label: string };
     placeholder?: string;
-  }) => (
-    <select id={props.id} value={props.value} onChange={(e) => props.onChange(e.target.value)}>
-      <option value="">{props.placeholder ?? 'Not set'}</option>
-      {(props.options ?? []).map((o) => (
-        <option key={o.value} value={o.value}>
-          {o.label}
-        </option>
-      ))}
-    </select>
-  ),
+  }) => {
+    const choices = [
+      ...(props.options ?? []),
+      ...(props.id === 'sa-edit-contact' ? CONTACT_OPTIONS : []),
+      ...(props.selectedOption ? [props.selectedOption] : []),
+    ].filter(
+      (option, index, all) =>
+        all.findIndex((other) => other.value === option.value) === index,
+    );
+    return (
+      <span>
+        {/* What the real trigger prints: the chosen option's label, or the
+            placeholder when nothing is chosen. */}
+        <span data-testid={`${props.id ?? 'select'}-label`}>
+          {props.selectedOption?.label ?? props.placeholder ?? 'Not set'}
+        </span>
+        <select
+          id={props.id}
+          value={props.value}
+          onChange={(e) => {
+            props.onChange(e.target.value);
+            props.onOptionChange?.(
+              choices.find((o) => o.value === e.target.value) ?? null,
+            );
+          }}
+        >
+          <option value="">{props.placeholder ?? 'Not set'}</option>
+          {choices.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+      </span>
+    );
+  },
 }));
 
 vi.mock('@/components/ui/date-range-picker', () => ({
@@ -152,6 +185,8 @@ function agent(over: Partial<SalesAgent> = {}): SalesAgent {
     person_label: 'Sean',
     demand_class: 'project',
     location_group: 'BB',
+    contact_id: null,
+    contact_name: null,
     source: 'import',
     created_at: '2026-08-01T00:00:00',
     updated_at: null,
@@ -345,6 +380,7 @@ describe('SalesAgentDetail - view and edit are the same layout', () => {
       'Person',
       'Demand class',
       'Location group',
+      'Linked portal contact',
       'Source',
       'Active',
       'Follow up',
@@ -403,6 +439,9 @@ describe('SalesAgentDetail - saving', () => {
           is_active: true,
           follow_up: false,
           internal_note: 'Watch this one',
+          // Nobody is linked yet, and an unlinked agent has to SAY so rather than
+          // leaving the field out: the PATCH treats an omitted key as "leave it alone".
+          contact_id: null,
         },
       }),
     );
@@ -438,6 +477,44 @@ describe('SalesAgentDetail - saving', () => {
           data: expect.objectContaining({ demand_class: null, person_label: null }),
         }),
       ),
+    );
+  });
+
+  it('shows the person just picked, never "Not linked" while the pick is unsaved', async () => {
+    // The trigger read its label off the AGENT row, and only when the row's own
+    // contact id still matched what was picked. So the moment somebody chose
+    // somebody else the field said "Not linked" while a real person was
+    // selected, which reads as the pick having been thrown away.
+    withAgent(agent());
+    renderDetail();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    fireEvent.change(screen.getByLabelText('Linked portal contact'), {
+      target: { value: 'contact-9' },
+    });
+
+    expect(screen.getByTestId('sa-edit-contact-label')).toHaveTextContent(
+      'ZZT Chosen Person',
+    );
+    expect(screen.getByTestId('sa-edit-contact-label')).not.toHaveTextContent(
+      'Not linked',
+    );
+  });
+
+  it('says "Not linked" again when the pick is cleared', () => {
+    withAgent(agent());
+    renderDetail();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    fireEvent.change(screen.getByLabelText('Linked portal contact'), {
+      target: { value: 'contact-9' },
+    });
+    fireEvent.change(screen.getByLabelText('Linked portal contact'), {
+      target: { value: '' },
+    });
+
+    expect(screen.getByTestId('sa-edit-contact-label')).toHaveTextContent(
+      'Not linked',
     );
   });
 

@@ -6,16 +6,21 @@ Mounted at ``/api/v1/dealer-kit`` behind
 from fastapi import APIRouter
 
 from app.api.v1.dealer_kit import (
+    assets,
     catalogue,
     editions,
     flyer_readings,
     flyer_spec_proposals,
     pages,
+    price_tag_requests,
     selections,
+    tag_data,
+    tag_templates,
 )
 
 router = APIRouter()
 router.include_router(pages.router)
+router.include_router(assets.router)
 router.include_router(catalogue.router)
 router.include_router(selections.router)
 # BEFORE the readings router, and that order is load-bearing: `GET
@@ -26,3 +31,6 @@ router.include_router(selections.router)
 router.include_router(flyer_spec_proposals.router)
 router.include_router(flyer_readings.router)
 router.include_router(editions.router)
+router.include_router(price_tag_requests.router)
+router.include_router(tag_templates.router)
+router.include_router(tag_data.router)
