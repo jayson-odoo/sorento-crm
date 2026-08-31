@@ -495,7 +495,7 @@ function SortableRule({
           <div className="font-mono text-xs text-muted-foreground break-all">
             {compiled.pattern || '(nothing yet)'}
             {compiled.capture !== undefined
-              ? ` — capture ${compiled.capture}`
+              ? ` - capture ${compiled.capture}`
               : ''}
           </div>
           {rule.builder && (
