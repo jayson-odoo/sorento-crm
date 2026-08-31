@@ -245,6 +245,8 @@ def annotate(
     write_demand_class: bool = False,
     location_group: Optional[str] = None,
     write_location_group: bool = False,
+    contact_id: Optional[str] = None,
+    write_contact_id: bool = False,
 ) -> SalesAgent:
     """Apply the master screen's annotations to an already-resolved agent.
 
@@ -276,6 +278,12 @@ def annotate(
         agent.person_label = cleaned or None
     if write_location_group:
         agent.location_group = normalize_location_group(location_group)
+    if write_contact_id:
+        # No vocabulary to check and no normalising to do: it is a foreign key, so an
+        # id that names nobody is refused by Postgres on the flush rather than stored
+        # and read back as a broken link. An empty string is an unlink, not an id.
+        cleaned = (contact_id or "").strip()
+        agent.contact_id = cleaned or None
     db.flush()
     return agent
 

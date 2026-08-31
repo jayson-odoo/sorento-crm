@@ -647,6 +647,7 @@ _FORM_SLA_TYPES = (
     "complaint",
     "ticket",
     "workflow_submission",
+    "price_tag_request",
 )
 
 

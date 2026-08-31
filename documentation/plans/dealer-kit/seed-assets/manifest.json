@@ -1,0 +1,291 @@
+[
+  {
+    "file": "badge_25yr_warranty.png",
+    "name": "Badge 25Yr Warranty",
+    "kind": "badge",
+    "tags": [
+      "badge",
+      "kitchen"
+    ]
+  },
+  {
+    "file": "badge_2yr_seat_cover.png",
+    "name": "Badge 2Yr Seat Cover",
+    "kind": "badge",
+    "tags": [
+      "badge",
+      "wc"
+    ]
+  },
+  {
+    "file": "badge_5yr_flush_fittings.png",
+    "name": "Badge 5Yr Flush Fittings",
+    "kind": "badge",
+    "tags": [
+      "badge",
+      "wc"
+    ]
+  },
+  {
+    "file": "badge_anti_bacteria.png",
+    "name": "Badge Anti Bacteria",
+    "kind": "badge",
+    "tags": [
+      "badge",
+      "kitchen"
+    ]
+  },
+  {
+    "file": "badge_lifetime_ceramic.png",
+    "name": "Badge Lifetime Ceramic",
+    "kind": "badge",
+    "tags": [
+      "badge",
+      "wc"
+    ]
+  },
+  {
+    "file": "badge_stainless_steel_body.png",
+    "name": "Badge Stainless Steel Body",
+    "kind": "badge",
+    "tags": [
+      "badge",
+      "shower"
+    ]
+  },
+  {
+    "file": "badge_sus304.png",
+    "name": "Badge Sus304",
+    "kind": "badge",
+    "tags": [
+      "badge",
+      "kitchen"
+    ]
+  },
+  {
+    "file": "badge_trap_10in.png",
+    "name": "Badge Trap 10In",
+    "kind": "badge",
+    "tags": [
+      "badge",
+      "wc",
+      "trap"
+    ]
+  },
+  {
+    "file": "badge_trap_6in.png",
+    "name": "Badge Trap 6In",
+    "kind": "badge",
+    "tags": [
+      "badge",
+      "wc",
+      "trap"
+    ]
+  },
+  {
+    "file": "badge_trap_8in.png",
+    "name": "Badge Trap 8In",
+    "kind": "badge",
+    "tags": [
+      "badge",
+      "wc",
+      "trap"
+    ]
+  },
+  {
+    "file": "badge_trap_p.png",
+    "name": "Badge Trap P",
+    "kind": "badge",
+    "tags": [
+      "badge",
+      "wc",
+      "trap"
+    ]
+  },
+  {
+    "file": "badge_uf_seat_cover.png",
+    "name": "Badge Uf Seat Cover",
+    "kind": "badge",
+    "tags": [
+      "badge",
+      "wc",
+      "trap"
+    ]
+  },
+  {
+    "file": "badge_ultrasonic_nano.png",
+    "name": "Badge Ultrasonic Nano",
+    "kind": "badge",
+    "tags": [
+      "badge",
+      "kitchen"
+    ]
+  },
+  {
+    "file": "brand_header_band_sample.png",
+    "name": "Brand Header Band Sample",
+    "kind": "decorative",
+    "tags": [
+      "reference",
+      "brand"
+    ]
+  },
+  {
+    "file": "diagram_remote_control.png",
+    "name": "Diagram Remote Control",
+    "kind": "diagram",
+    "tags": [
+      "diagram",
+      "wc",
+      "smart"
+    ]
+  },
+  {
+    "file": "diagram_water_inlet_outlet.png",
+    "name": "Diagram Water Inlet Outlet",
+    "kind": "diagram",
+    "tags": [
+      "diagram",
+      "shower"
+    ]
+  },
+  {
+    "file": "icon_built_in_nozzle.png",
+    "name": "Icon Built In Nozzle",
+    "kind": "icon",
+    "tags": [
+      "icon",
+      "wc",
+      "smart"
+    ]
+  },
+  {
+    "file": "icon_flush_1.png",
+    "name": "Icon Flush 1",
+    "kind": "icon",
+    "tags": [
+      "icon",
+      "wc"
+    ]
+  },
+  {
+    "file": "icon_flush_2.png",
+    "name": "Icon Flush 2",
+    "kind": "icon",
+    "tags": [
+      "icon",
+      "wc"
+    ]
+  },
+  {
+    "file": "icon_flush_3.png",
+    "name": "Icon Flush 3",
+    "kind": "icon",
+    "tags": [
+      "icon",
+      "wc"
+    ]
+  },
+  {
+    "file": "icon_flush_3l_6l.png",
+    "name": "Icon Flush 3L 6L",
+    "kind": "icon",
+    "tags": [
+      "icon",
+      "wc"
+    ]
+  },
+  {
+    "file": "icon_foot_flush_button.png",
+    "name": "Icon Foot Flush Button",
+    "kind": "icon",
+    "tags": [
+      "icon",
+      "wc",
+      "smart"
+    ]
+  },
+  {
+    "file": "icon_plus_connector.png",
+    "name": "Icon Plus Connector",
+    "kind": "icon",
+    "tags": [
+      "icon",
+      "connector"
+    ]
+  },
+  {
+    "file": "icon_seat_auto_close.png",
+    "name": "Icon Seat Auto Close",
+    "kind": "icon",
+    "tags": [
+      "icon",
+      "wc",
+      "smart"
+    ]
+  },
+  {
+    "file": "icon_smart_flushing.png",
+    "name": "Icon Smart Flushing",
+    "kind": "icon",
+    "tags": [
+      "icon",
+      "wc",
+      "smart"
+    ]
+  },
+  {
+    "file": "icon_uv_light.png",
+    "name": "Icon Uv Light",
+    "kind": "icon",
+    "tags": [
+      "icon",
+      "wc",
+      "smart"
+    ]
+  },
+  {
+    "file": "icon_warm_air_dryer.png",
+    "name": "Icon Warm Air Dryer",
+    "kind": "icon",
+    "tags": [
+      "icon",
+      "wc",
+      "smart"
+    ]
+  },
+  {
+    "file": "label_pull_out.png",
+    "name": "Label Pull Out",
+    "kind": "icon",
+    "tags": [
+      "icon",
+      "furniture"
+    ]
+  },
+  {
+    "file": "logo_twister_flush.png",
+    "name": "Logo Twister Flush",
+    "kind": "logo",
+    "tags": [
+      "logo",
+      "wc"
+    ]
+  },
+  {
+    "file": "reference_list_price_badge.png",
+    "name": "Reference List Price Badge",
+    "kind": "decorative",
+    "tags": [
+      "reference"
+    ]
+  },
+  {
+    "file": "reference_sp_badge.png",
+    "name": "Reference Sp Badge",
+    "kind": "decorative",
+    "tags": [
+      "reference"
+    ]
+  }
+]

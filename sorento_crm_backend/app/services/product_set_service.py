@@ -22,6 +22,7 @@ name.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal
 from typing import Any, Optional
 
@@ -242,7 +243,10 @@ class ProductSetService:
             # an override attributed to someone who has since removed it is worse
             # than no attribution at all.
             product_set.override_set_by = updated_by if override is not None else None
-            product_set.override_set_at = func.now() if override is not None else None
+            # A real datetime, not `func.now()`: the audit listener snapshots this row
+            # to JSON at flush, and a SQL expression is not a value until the
+            # database has evaluated it.
+            product_set.override_set_at = datetime.utcnow() if override is not None else None
 
         # Omitted leaves membership alone; `[]` empties it. The FE relies on the
         # difference: renaming a set must not silently drop its members.

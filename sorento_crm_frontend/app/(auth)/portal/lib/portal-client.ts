@@ -12,28 +12,33 @@
  * active impersonation takes precedence in its tab.
  */
 import { extractApiError } from '@/lib/api-client';
+import type {
+  PortalLandingKind,
+  PortalSubmissionKind,
+} from '@/lib/portal-form-kinds';
 
 const TOKEN_KEY = 'sorento.portalToken';
 
-export type PortalSubmissionKind =
-  | 'complaint'
-  | 'stock_inquiry'
-  | 'purchase_request'
-  | 'sponsorship_form';
-
-/** Canonical kind list - single source for route guards, tab lists, labels. */
-export const SUBMISSION_KINDS: readonly PortalSubmissionKind[] = [
-  'complaint',
-  'stock_inquiry',
-  'purchase_request',
-  'sponsorship_form',
-] as const;
-
-export function isSubmissionKind(
-  value: string | null | undefined,
-): value is PortalSubmissionKind {
-  return (SUBMISSION_KINDS as readonly string[]).includes(value ?? '');
-}
+// The kind lists and their labels live in `lib/portal-form-kinds.ts` so the CRM's
+// Contact Access Types screen can offer the same five kinds with the same labels
+// (D61b) without importing this module's token storage. Re-exported here, so
+// every existing `from '.../portal-client'` import keeps working.
+export {
+  SUBMISSION_KINDS,
+  GATED_LANDING_KINDS,
+  LANDING_KINDS,
+  SUBMISSION_LABELS,
+  LANDING_LABELS,
+  isSubmissionKind,
+  isGatedLandingKind,
+  isLandingKind,
+  portalFormKindLabel,
+} from '@/lib/portal-form-kinds';
+export type {
+  PortalSubmissionKind,
+  PortalGatedKind,
+  PortalLandingKind,
+} from '@/lib/portal-form-kinds';
 
 export interface PortalImpersonationInfo {
   session_id: string;
@@ -61,11 +66,15 @@ export interface PortalContact {
    */
   requires_registered_project?: boolean;
   impersonation?: PortalImpersonationInfo | null;
+  /** Portal form types this contact may see (access-type union + overrides). */
+  visible_form_types?: string[];
 }
 
 export interface PortalSubmissionSummary {
   id: string;
-  kind: PortalSubmissionKind;
+  /** Widened for D45: a gated kind is listed on the same landing, in the same
+   *  card, and is adapted into this shape by its own feature service. */
+  kind: PortalLandingKind;
   title: string;
   document_number?: string | null;
   reference: string | null;
@@ -96,6 +105,9 @@ export interface PortalSubmissionSummary {
   item_description?: string | null;
   sponsor_subject?: string | null;
   purpose?: string | null;
+  /** Price tag request: the date the tags are wanted for. The card shows it,
+   *  because a deadline is the one thing a salesperson scans this list for. */
+  needed_by_date?: string | null;
 }
 
 export type PortalAttachmentUploaderKind = 'user' | 'contact' | 'system' | null;
@@ -341,7 +353,7 @@ function absoluteApiUrl(path: string): string {
   return path;
 }
 
-async function portalFetch(
+export async function portalFetch(
   input: string,
   init: RequestInit = {},
 ): Promise<Response> {
@@ -383,7 +395,7 @@ async function portalMultipartFetch(
   return res;
 }
 
-async function unwrap<T>(res: Response, fallback: string): Promise<T> {
+export async function unwrap<T>(res: Response, fallback: string): Promise<T> {
   if (!res.ok) {
     const message = await extractApiError(res, fallback);
     throw new Error(message);
@@ -791,13 +803,6 @@ export async function fetchTokenInfo(token: string): Promise<PortalTokenInfo> {
   return unwrap(res, 'Could not look up portal token.');
 }
 
-export const SUBMISSION_LABELS: Record<PortalSubmissionKind, string> = {
-  complaint: 'Complaint',
-  stock_inquiry: 'Stock Inquiry',
-  purchase_request: 'Purchase Request',
-  sponsorship_form: 'Sponsorship Form',
-};
-
 // Friendly labels for backend status / approval_status values surfaced in the
 // portal. Falls back to the raw value when not in this map.
 export const SUBMISSION_STATUS_LABELS: Record<string, string> = {
@@ -815,6 +820,12 @@ export const SUBMISSION_STATUS_LABELS: Record<string, string> = {
   closed: 'Closed',
   completed: 'Completed',
   updated: 'Updated',
+  // Price tag request statuses
+  designing: 'Designing',
+  proof_ready: 'Proof Ready',
+  changes_requested: 'Changes Requested',
+  ready: 'Ready',
+  void: 'Void',
 };
 
 export function statusLabel(status: string | null | undefined): string {

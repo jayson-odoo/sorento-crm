@@ -23,6 +23,8 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridTable } from '@/components/ui/data-grid-table';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { LANDING_KINDS, portalFormKindLabel } from '@/lib/portal-form-kinds';
 import {
   getCoreRowModel,
   useReactTable,
@@ -37,6 +39,12 @@ import {
   deleteContactAccessType,
   type ContactAccessTypeAdmin,
 } from '../services/contactAccessTypeService';
+
+/** The five kinds an access type may be granted, labelled as the portal labels them. */
+const PORTAL_FORM_OPTIONS = LANDING_KINDS.map((kind) => ({
+  value: kind,
+  label: portalFormKindLabel(kind),
+}));
 
 export default function ContactAccessTypesAdmin() {
   const queryClient = useQueryClient();
@@ -97,6 +105,7 @@ export default function ContactAccessTypesAdmin() {
     is_active: true,
     sort_order: '' as string | number,
     keywords: '',
+    portal_form_types: [] as string[],
   });
 
   function resetTypeForm() {
@@ -107,6 +116,7 @@ export default function ContactAccessTypesAdmin() {
       is_active: true,
       sort_order: '',
       keywords: '',
+      portal_form_types: [],
     });
     setEditingType(null);
   }
@@ -125,6 +135,7 @@ export default function ContactAccessTypesAdmin() {
       is_active: row.is_active,
       sort_order: row.sort_order ?? '',
       keywords: (row.keywords ?? []).join(', '),
+      portal_form_types: row.portal_form_types ?? [],
     });
     setTypeDialogOpen(true);
   }
@@ -153,6 +164,7 @@ export default function ContactAccessTypesAdmin() {
           is_active: typeForm.is_active,
           sort_order: sort,
           keywords,
+          portal_form_types: typeForm.portal_form_types,
         },
       });
     } else {
@@ -169,6 +181,7 @@ export default function ContactAccessTypesAdmin() {
         is_active: typeForm.is_active,
         sort_order: sort ?? null,
         keywords,
+        portal_form_types: typeForm.portal_form_types,
       });
     }
   }
@@ -219,6 +232,30 @@ export default function ContactAccessTypesAdmin() {
             <span className="max-w-[200px] truncate" title={joined || undefined}>
               {kw.length ? joined : '-'}
             </span>
+          );
+        },
+      },
+      {
+        id: 'portal_form_types',
+        accessorFn: (row) => (row.portal_form_types ?? []).join(', '),
+        header: ({ column }) => <DataGridColumnHeader title="Portal forms" column={column} />,
+        size: 260,
+        enableSorting: false,
+        meta: { headerTitle: 'Portal forms', skeleton: <Skeleton className="h-6 w-36" /> },
+        cell: ({ row }) => {
+          const kinds = row.original.portal_form_types ?? [];
+          if (!kinds.length) return <span className="text-muted-foreground">-</span>;
+          return (
+            <div
+              className="flex flex-wrap gap-1"
+              title={kinds.map(portalFormKindLabel).join(', ')}
+            >
+              {kinds.map((kind) => (
+                <Badge key={kind} variant="secondary" size="sm">
+                  {portalFormKindLabel(kind)}
+                </Badge>
+              ))}
+            </div>
           );
         },
       },
@@ -377,6 +414,17 @@ export default function ContactAccessTypesAdmin() {
                 Comma-separated synonyms used by the AI matcher to resolve free-text phrasing
                 (e.g. &quot;customer&quot; → this access level). Case-insensitive.
               </p>
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="type-portal-forms">Portal forms</Label>
+              <SearchableMultiSelect
+                id="type-portal-forms"
+                value={typeForm.portal_form_types}
+                onChange={(v) => setTypeForm((f) => ({ ...f, portal_form_types: v }))}
+                options={PORTAL_FORM_OPTIONS}
+                placeholder="No portal forms"
+                emptyMessage="No portal forms"
+              />
             </div>
             <div className="grid gap-2">
               <Label htmlFor="type-sort">Sort order (optional)</Label>

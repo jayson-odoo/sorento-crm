@@ -747,3 +747,37 @@ def test_adding_a_word_to_an_unknown_key_is_a_404(api):
 
     response = client.post(f"{_BASE}/zzt_no_such_key/values", json={"value": "chrome"})
     assert response.status_code == 404, response.text
+
+
+def test_renaming_a_value_in_one_save_is_not_refused_as_its_own_synonym(api):
+    """Take `floor_standing` away and add `free_standing` in the SAME save. `free standing`
+    ships as a WORD for `floor_standing`, so the near-duplicate guard, run against the
+    row as it was before the save, refused the rename as already meaning the value being
+    removed. The guard has to see the suppressions the same payload carries.
+    """
+    db, _as = api
+    _as(_REGISTRY_ADMIN)
+    client = TestClient(app)
+    _key(
+        db,
+        "zzt_mounting",
+        label="Mounting",
+        allowed_values=["floor_standing", "wall_hung"],
+        synonyms={"floor_standing": ["floor standing", "free standing"]},
+        source="seed",
+    )
+
+    response = client.patch(
+        f"{_BASE}/zzt_mounting",
+        json={
+            "user_values": ["free_standing"],
+            "suppressed_values": ["floor_standing"],
+            "suppressed_synonyms": {"floor_standing": ["floor standing", "free standing"]},
+            "user_synonyms": {"free_standing": ["floor standing", "free standing"]},
+        },
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert "free_standing" in body["user_values"]
+    assert "floor_standing" not in body["allowed_values"]
+    assert body["synonyms"]["free_standing"] == ["floor standing", "free standing"]

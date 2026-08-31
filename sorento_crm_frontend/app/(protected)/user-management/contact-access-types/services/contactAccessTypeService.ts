@@ -17,6 +17,8 @@ export interface ContactAccessTypeAdmin {
   is_active: boolean;
   sort_order: number | null;
   keywords: string[];
+  /** Portal forms a contact holding this type may see. Empty = none (D61). */
+  portal_form_types: string[];
   created_at: string;
   updated_at: string;
 }
@@ -57,7 +59,12 @@ export async function createContactAccessType(
 
 export async function updateContactAccessType(
   code: string,
-  body: Partial<Pick<ContactAccessTypeAdmin, 'name' | 'description' | 'is_active' | 'sort_order' | 'keywords'>>
+  body: Partial<
+    Pick<
+      ContactAccessTypeAdmin,
+      'name' | 'description' | 'is_active' | 'sort_order' | 'keywords' | 'portal_form_types'
+    >
+  >
 ): Promise<ContactAccessTypeAdmin> {
   const response = await apiFetch(`${base}/${encodeURIComponent(code)}`, {
     method: 'PUT',
