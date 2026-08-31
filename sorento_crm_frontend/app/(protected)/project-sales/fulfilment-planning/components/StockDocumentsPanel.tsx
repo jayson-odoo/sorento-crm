@@ -252,28 +252,67 @@ export function StockDocumentsPanel({
   // `CellStockTable` and only the one holding a match does anything - the alternative is
   // addressing a jump to a panel that has not been told it is the one that matters, which
   // this component cannot know from outside the query it owns.
+  //
+  // WAITS FOR THE ROW'S OWN NODE, not merely for `visibleRows` to hold data (AC-3.1 auto-land
+  // fix, S3 bug-fix round). `PanelDataGrid` carries its OWN async gate - the shared listing's
+  // column-preference fetch - so the tick where `detail.isLoading` turns false and this data
+  // exists is NOT the tick the `<tr>` actually lands in `panelRef`'s subtree; measured live,
+  // the auto-land on a cell's OWN mount fired against zero rows in the DOM (`rowCount: 113`
+  // in this hook, `hasAnchor: false` in the grid) while the identical jump from the "My line"
+  // button - pressed after that second render had already happened - found it immediately.
+  // A `MutationObserver` reacts to the node actually arriving rather than to a timer or to
+  // one extra assumed tick, so it is correct regardless of how many renders the grid needs.
   React.useEffect(() => {
     if (!jumpTarget || detail.isLoading) return;
+    const panel = panelRef.current;
+    if (!panel) return;
     const testId =
       jumpTarget.kind === 'this-line'
         ? 'stock-document-this-line'
         : jumpTarget.kind === 'donor'
           ? 'stock-document-donor'
           : 'stock-document-this-document';
-    const anchor = panelRef.current?.querySelector(`[data-testid="${testId}"]`);
-    const row = anchor?.closest('tr');
-    if (!row) return;
-    if (typeof row.scrollIntoView === 'function')
-      row.scrollIntoView({ block: 'center' });
-    // A single fading pulse, never a persistent second selection colour (AC-3.11) - the CSS
-    // class collapses to a flat, briefer highlight under `prefers-reduced-motion` (styles.css).
-    row.classList.add('jump-flash');
-    const timer = window.setTimeout(
-      () => row.classList.remove('jump-flash'),
-      1500,
-    );
-    return () => window.clearTimeout(timer);
-    // `visibleRows` re-runs the jump once the row it targets actually lands.
+
+    let flashTimer: number | undefined;
+
+    const land = (row: HTMLElement) => {
+      if (typeof row.scrollIntoView === 'function')
+        row.scrollIntoView({ block: 'center' });
+      // A single fading pulse, never a persistent second selection colour (AC-3.11) - the
+      // CSS class collapses to a flat, briefer highlight under `prefers-reduced-motion`
+      // (styles.css).
+      row.classList.add('jump-flash');
+      flashTimer = window.setTimeout(
+        () => row.classList.remove('jump-flash'),
+        1500,
+      );
+    };
+
+    const findRow = (): HTMLElement | null => {
+      const anchor = panel.querySelector(`[data-testid="${testId}"]`);
+      return anchor?.closest('tr') ?? null;
+    };
+
+    const already = findRow();
+    if (already) {
+      land(already);
+      return () => window.clearTimeout(flashTimer);
+    }
+
+    // Not there yet - the grid's own render has not caught up with `visibleRows`. Watch for
+    // it to land rather than guessing a delay.
+    const observer = new MutationObserver(() => {
+      const row = findRow();
+      if (!row) return;
+      observer.disconnect();
+      land(row);
+    });
+    observer.observe(panel, { childList: true, subtree: true });
+    return () => {
+      observer.disconnect();
+      window.clearTimeout(flashTimer);
+    };
+    // `visibleRows` re-arms the watch once the row it targets actually exists in the data.
   }, [jumpTarget, detail.isLoading, visibleRows]);
 
   const columns = React.useMemo<ColumnDef<StockDetailRow>[]>(() => {

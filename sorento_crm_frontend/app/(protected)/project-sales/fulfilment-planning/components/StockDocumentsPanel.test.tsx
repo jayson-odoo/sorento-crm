@@ -15,11 +15,28 @@
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+/**
+ * The shared grid's OWN async gate (`data-grid.tsx`: `isLoading: props.isLoading ||
+ * isColumnPreferencesLoading`), controllable per test. Every other test in this file leaves
+ * `columnPrefsGate.delayMs` at 0, which is the ORIGINAL always-`isLoading:false` mock every
+ * other suite in the repo uses - only the regression test below sets it, to reproduce the
+ * real second async gate that made the row land a tick after the stock query resolved.
+ */
+const columnPrefsGate = vi.hoisted(() => ({ delayMs: 0 }));
+
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
-  useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
+  useListingColumnPreferences: () => {
+    const [isLoading, setIsLoading] = React.useState(columnPrefsGate.delayMs > 0);
+    React.useEffect(() => {
+      if (columnPrefsGate.delayMs <= 0) return;
+      const timer = setTimeout(() => setIsLoading(false), columnPrefsGate.delayMs);
+      return () => clearTimeout(timer);
+    }, []);
+    return { resetToDefaults: vi.fn(), isLoading };
+  },
 }));
 
 const getStockDetail = vi.fn();
@@ -97,6 +114,7 @@ function renderPanel(
 
 beforeEach(() => {
   vi.clearAllMocks();
+  columnPrefsGate.delayMs = 0;
 });
 
 describe('StockDocumentsPanel', () => {
@@ -552,6 +570,48 @@ describe('StockDocumentsPanel: the S3 badges, search and jump', () => {
     );
   });
 
+  /**
+   * AC-3.3/3.13: an on-hand borrow's donor jump, with real assertions (scroll + flash), not
+   * only the badge - the badge-only tests above (and `CellStockTable`'s own "jumpToDonor
+   * opens the SECTION" tests, which deliberately leave `getStockDetail` unresolved) never
+   * exercised the actual landing. `SO324265` (line-b) is chosen over `SO391698` (line-a)
+   * deliberately - line-a is ALSO "This line" in `captainsPosition`, so a donor jump that
+   * accidentally matched the wrong test id would still pass against it. AC-3.13 shares this
+   * exact mechanism: a Borrow-incoming's donor is still an `S/O` row matched the same way,
+   * whether or not that same source also carries a `supply_document` (asserted separately,
+   * at the sentence level, in `BoardCellBreakdownDialog.test.tsx`'s "AC-3.4/3.13" case).
+   */
+  it('AC-3.3/3.13: a donor jump scrolls to and flashes the donor row, distinct from "This line"', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    Element.prototype.scrollIntoView = vi.fn();
+    getStockDetail.mockResolvedValue(captainsPosition());
+
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <StockDocumentsPanel
+          productId="prod-1"
+          warehouseId="wh-1"
+          lineIds={['line-a']}
+          donor={{ soNumber: 'SO324265', lineId: 'line-b' }}
+          jumpTarget={{ kind: 'donor', nonce: 1 }}
+        />
+      </QueryClientProvider>,
+    );
+
+    const donorRow = (await screen.findByTestId('stock-document-donor')).closest('tr');
+    expect(donorRow?.textContent).toContain('SO324265');
+    expect(donorRow?.className).toContain('jump-flash');
+    expect(donorRow?.scrollIntoView).toHaveBeenCalled();
+    // The OTHER row ("This line", SO391698) never flashes - the jump targets its own kind.
+    const thisLineRow = screen.getByTestId('stock-document-this-line').closest('tr');
+    expect(thisLineRow?.className).not.toContain('jump-flash');
+
+    vi.useRealTimers();
+  });
+
   it('AC-3.4: badges the SPO row, normalising the "SPO " prefix either side', async () => {
     getStockDetail.mockResolvedValue(
       captainsPosition({
@@ -572,6 +632,52 @@ describe('StockDocumentsPanel: the S3 badges, search and jump', () => {
 
     const table = await screen.findByRole('table');
     expect(within(table).getByTestId('stock-document-this-document')).toBeInTheDocument();
+  });
+
+  /**
+   * AC-3.4: the document jump, with real assertions - the badge-only test above (and
+   * `CellStockTable`'s "jumpToDocument opens the SECTION" test, which deliberately leaves
+   * `getStockDetail` unresolved) never proved the row actually lands and highlights.
+   */
+  it('AC-3.4: a document jump scrolls to and flashes the SPO row', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    Element.prototype.scrollIntoView = vi.fn();
+    getStockDetail.mockResolvedValue(
+      captainsPosition({
+        incoming: [
+          {
+            spo_number: '202609-0041',
+            supplier_name: 'FOSHAN WORKS',
+            expected_date: '2026-10-20',
+            spo_qty: '30',
+          },
+        ],
+      }),
+    );
+
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <StockDocumentsPanel
+          productId="prod-1"
+          warehouseId="wh-1"
+          lineIds={['line-a']}
+          documentInfo={{ spoNumber: 'SPO 202609-0041' }}
+          jumpTarget={{ kind: 'document', nonce: 1 }}
+        />
+      </QueryClientProvider>,
+    );
+
+    const documentRow = (
+      await screen.findByTestId('stock-document-this-document')
+    ).closest('tr');
+    expect(documentRow?.textContent).toContain('202609-0041');
+    expect(documentRow?.className).toContain('jump-flash');
+    expect(documentRow?.scrollIntoView).toHaveBeenCalled();
+
+    vi.useRealTimers();
   });
 
   it('AC-3.5: search filters by SO number, customer or agent, case-insensitively', async () => {
@@ -656,6 +762,59 @@ describe('StockDocumentsPanel: the S3 badges, search and jump', () => {
     // The pulse fades - never a persistent second selection colour (AC-3.11).
     vi.advanceTimersByTime(1600);
     expect(row?.className).not.toContain('jump-flash');
+
+    vi.useRealTimers();
+  });
+
+  /**
+   * AC-3.1 bug-fix round (S3, 31 Aug 2026 browser evidence): the auto-land on a cell's OWN
+   * mount fired against ZERO rows in the DOM even though the stock query had already
+   * resolved with the matching line inside it. The test above never caught it, because it
+   * always let the table paint FIRST (`await screen.findByRole('table')`) and only THEN
+   * flipped `jumpTarget` - so the row's node already existed the moment the jump effect ran,
+   * which is the one case that never needed a fix.
+   *
+   * The real gap is the shared grid's OWN second async gate - `data-grid.tsx` combines
+   * `isLoading: props.isLoading || isColumnPreferencesLoading` - so the stock query can
+   * resolve (`detail.isLoading` false, `visibleRows` populated) a full render BEFORE the
+   * grid's column-preference fetch clears and the `<tr>` actually lands. `columnPrefsGate`
+   * (this file's own stateful mock of that hook, module doc above) reproduces exactly that
+   * extra tick: `jumpTarget` is set from the FIRST render, the stock query resolves
+   * immediately, and the grid still holds its loading state for `columnPrefsGate.delayMs`
+   * after that.
+   */
+  it('AC-3.1: lands the jump even when the grid paints the row a tick after jumpTarget is already set', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    Element.prototype.scrollIntoView = vi.fn();
+    getStockDetail.mockResolvedValue(captainsPosition());
+    columnPrefsGate.delayMs = 20;
+
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <StockDocumentsPanel
+          productId="prod-1"
+          warehouseId="wh-1"
+          lineIds={['line-a']}
+          jumpTarget={{ kind: 'this-line', nonce: 1 }}
+        />
+      </QueryClientProvider>,
+    );
+
+    // The exact defect: the stock detail is back, but the grid has not painted a row yet.
+    await waitFor(() => expect(getStockDetail).toHaveBeenCalled());
+    expect(screen.queryByTestId('stock-document-this-line')).not.toBeInTheDocument();
+
+    // The grid's own gate clears - nothing re-fires `jumpTarget` or `visibleRows` from here.
+    await act(async () => {
+      vi.advanceTimersByTime(20);
+    });
+
+    const row = await screen.findByTestId('stock-document-this-line');
+    expect(row.closest('tr')?.className).toContain('jump-flash');
+    expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
 
     vi.useRealTimers();
   });
