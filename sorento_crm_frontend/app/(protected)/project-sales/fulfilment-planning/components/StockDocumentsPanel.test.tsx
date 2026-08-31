@@ -15,8 +15,8 @@
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * The shared grid's OWN async gate (`data-grid.tsx`: `isLoading: props.isLoading ||
@@ -112,9 +112,22 @@ function renderPanel(
   );
 }
 
+/**
+ * jsdom implements no layout, so it has no `scrollIntoView` at all - several tests below
+ * assign `Element.prototype.scrollIntoView = vi.fn()` to give it one, and none of them ever
+ * put it back (review round, S3), so a mock from one test could still be sitting on the
+ * prototype for the next. Captured once, restored after every test, regardless of which one
+ * assigned it.
+ */
+const ORIGINAL_SCROLL_INTO_VIEW = Element.prototype.scrollIntoView;
+
 beforeEach(() => {
   vi.clearAllMocks();
   columnPrefsGate.delayMs = 0;
+});
+
+afterEach(() => {
+  Element.prototype.scrollIntoView = ORIGINAL_SCROLL_INTO_VIEW;
 });
 
 describe('StockDocumentsPanel', () => {
@@ -460,7 +473,12 @@ describe('StockDocumentsPanel: the group reading', () => {
     expect(short.className).toContain('text-destructive');
   });
 
-  it('marks our own line and jumps to it', async () => {
+  // NO LOCAL "My line" BUTTON HERE ANYMORE (retired, review round S3): it duplicated the
+  // sticky toolbar's own "My line" (`BoardCellBreakdownDialog`), which already reaches this
+  // exact row through `jumpTarget` and lands it WITH the flash this local button never had -
+  // see `StockDocumentsPanel: the S3 badges, search and jump` below for that jump's own
+  // coverage. What is still this component's own job is marking the row in the first place.
+  it('marks our own line', async () => {
     getStockDetail.mockResolvedValue(groupPosition());
 
     renderPanel('IB');
@@ -469,13 +487,9 @@ describe('StockDocumentsPanel: the group reading', () => {
     // documents.
     expect(mine.closest('tr')?.textContent).toContain('SO381895');
     expect(screen.getByText('SO381895').className).toContain('font-semibold');
-
-    fireEvent.click(screen.getByTestId('stock-documents-my-line'));
-
-    expect(mine.closest('tr')?.scrollIntoView).toHaveBeenCalled();
   });
 
-  it('offers no jump when the asker has no row in this set', async () => {
+  it('marks no row when the asker has no row in this set', async () => {
     getStockDetail.mockResolvedValue({
       ...groupPosition(),
       sales_orders: groupPosition().sales_orders.map((order) => ({
@@ -487,7 +501,7 @@ describe('StockDocumentsPanel: the group reading', () => {
     renderPanel('IB');
     await screen.findByRole('table');
 
-    expect(screen.queryByTestId('stock-documents-my-line')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('stock-document-this-line')).not.toBeInTheDocument();
   });
 
   it('subtracts a hold taken by a line booked outside the set (R40)', async () => {
@@ -550,7 +564,7 @@ describe('StockDocumentsPanel: the S3 badges, search and jump', () => {
   it('AC-3.3: badges the donor row by its core line id, and leaves other rows plain', async () => {
     getStockDetail.mockResolvedValue(captainsPosition());
 
-    renderPanel(undefined, { donor: { soNumber: 'SO391698', lineId: 'line-a' } });
+    renderPanel(undefined, { donor: [{ soNumber: 'SO391698', lineId: 'line-a' }] });
 
     const table = await screen.findByRole('table');
     // `line-a` is the FIRST sales order in `captainsPosition` (SO391698, also "This line" -
@@ -562,7 +576,7 @@ describe('StockDocumentsPanel: the S3 badges, search and jump', () => {
   it('AC-3.3: falls back to the SO number when no core line id was named', async () => {
     getStockDetail.mockResolvedValue(captainsPosition());
 
-    renderPanel(undefined, { donor: { soNumber: 'SO324265' } });
+    renderPanel(undefined, { donor: [{ soNumber: 'SO324265' }] });
 
     const table = await screen.findByRole('table');
     expect(within(table).getByTestId('stock-document-donor').closest('tr')?.textContent).toContain(
@@ -595,7 +609,7 @@ describe('StockDocumentsPanel: the S3 badges, search and jump', () => {
           productId="prod-1"
           warehouseId="wh-1"
           lineIds={['line-a']}
-          donor={{ soNumber: 'SO324265', lineId: 'line-b' }}
+          donor={[{ soNumber: 'SO324265', lineId: 'line-b' }]}
           jumpTarget={{ kind: 'donor', nonce: 1 }}
         />
       </QueryClientProvider>,

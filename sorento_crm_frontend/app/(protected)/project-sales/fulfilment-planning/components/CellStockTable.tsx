@@ -109,8 +109,12 @@ export interface CellStockTableProps {
    * to distinguish.
    */
   forLine?: string;
-  /** The donor the active suggestion names, if any (AC-3.3/3.13). */
-  donor?: StockDonorMatch | null;
+  /**
+   * Every donor the active suggestion names, if any (AC-3.3/3.13) - a LIST, because a
+   * step-2 combine can draw from several donors on one line (R35) and each of their rows
+   * needs its own "Donor" badge, not only the first one's (review round, S3).
+   */
+  donor?: StockDonorMatch[] | null;
   /** The SPO document the active suggestion names, if any (AC-3.4). */
   documentInfo?: StockDocumentMatch | null;
   /**
@@ -176,6 +180,13 @@ export const CellStockTable = React.forwardRef<
   const [activeJump, setActiveJump] = React.useState<StockJumpTarget | null>(
     null,
   );
+  /**
+   * `nonce`'s only job is to be a value that DIFFERS from the last jump so the effect that
+   * reads it re-fires on a repeat press of the same jump - `Date.now()` collided within the
+   * same millisecond on a fast repeat click (review round, S3) and a second "My line" press
+   * inside that millisecond silently did nothing. A ref-held counter can never repeat.
+   */
+  const jumpNonceRef = React.useRef(0);
 
   /**
    * The rows cut into the SETS availability is actually counted over (ladder v4), computed
@@ -205,7 +216,8 @@ export const CellStockTable = React.forwardRef<
           return next;
         });
       }
-      setActiveJump({ kind, nonce: Date.now() });
+      jumpNonceRef.current += 1;
+      setActiveJump({ kind, nonce: jumpNonceRef.current });
     },
     [],
   );
@@ -231,21 +243,22 @@ export const CellStockTable = React.forwardRef<
     ref,
     () => ({
       jumpToThisLine: () => openSectionAndJump(ownSection(), 'this-line'),
-      jumpToDonor: () =>
-        openSectionAndJump(sectionAt(donor?.location) ?? ownSection(), 'donor'),
-      jumpToDocument: () =>
+      // Explicit ARGUMENT wins over the component's own `donor` prop - the suggestion
+      // sentence passes the SOURCE'S OWN donor (a step-2 combine can name several, R35), and
+      // the toolbar's single "Donor" button, which has no one source to point at, falls back
+      // to the first.
+      jumpToDonor: (target) =>
         openSectionAndJump(
-          sectionAt(documentInfo?.location) ?? ownSection(),
+          sectionAt((target ?? donor?.[0])?.location) ?? ownSection(),
+          'donor',
+        ),
+      jumpToDocument: (target) =>
+        openSectionAndJump(
+          sectionAt((target ?? documentInfo)?.location) ?? ownSection(),
           'document',
         ),
     }),
-    [
-      openSectionAndJump,
-      ownSection,
-      sectionAt,
-      donor?.location,
-      documentInfo?.location,
-    ],
+    [openSectionAndJump, ownSection, sectionAt, donor, documentInfo],
   );
 
   /**

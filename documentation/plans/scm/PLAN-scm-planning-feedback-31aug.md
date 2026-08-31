@@ -1,8 +1,8 @@
 # PLAN: Fulfilment planning feedback batch, 31 Aug (incoming = SPO only, transfer charge configurable, lightbox navigation)
 
-Status: PLANNED - mockup with captain, no code started
+Status: IN REVIEW - S1+S2+S3 built and browser-verified, Phase 3 findings being fixed
 Captain rulings: 31 Aug 2026 production walk-through (screenshots on the session)
-Lane: TBD when implementation starts
+Lane: scm-planning-feedback worktree, FE :3100 / BE :8100
 UAC: `scm-planning-feedback-31aug-acceptance-criteria.md` (same folder)
 
 ## Why

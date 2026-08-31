@@ -4,7 +4,6 @@ import * as React from 'react';
 import Link from 'next/link';
 import { ColumnDef } from '@tanstack/react-table';
 import { PackageSearch } from 'lucide-react';
-import { Button } from '@/components/ui/button';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
@@ -87,9 +86,13 @@ export function StockDocumentsPanel({
    * see where their own claim sits among the documents ahead of and behind it.
    */
   lineIds?: string[];
-  /** The donor the active suggestion names (AC-3.3/3.13). Badged "Donor" wherever it matches -
-   * most panels hold none of it, and simply render nothing extra. */
-  donor?: StockDonorMatch | null;
+  /**
+   * Every donor the active suggestion names (AC-3.3/3.13). Badged "Donor" on EVERY row of
+   * this panel that matches ANY of them - a step-2 combine can draw from several donors on
+   * one line (R35), and a list-of-one just badges the one it always did. Most panels hold
+   * none of it, and simply render nothing extra.
+   */
+  donor?: StockDonorMatch[] | null;
   /** The SPO the active suggestion names (AC-3.4). Badged "This document" wherever it matches. */
   documentInfo?: StockDocumentMatch | null;
   /** The sticky toolbar's search (AC-3.5): SO number, customer, agent. */
@@ -129,12 +132,15 @@ export function StockDocumentsPanel({
         is_this_line: Boolean(order.is_this_line),
         // AC-3.3/3.13: the donor the active suggestion named, by its own core line id where
         // the suggestion carried one - two lines of one donor SO would otherwise both light
-        // up - falling back to the SO number for the shapes that only carry that.
+        // up - falling back to the SO number for the shapes that only carry that. EVERY
+        // donor in the list gets a chance to match, not only the first (review round, S3) -
+        // a step-2 combine can name several on one line (R35).
         is_donor: Boolean(
-          donor &&
-          (donor.lineId
-            ? order.line_id === donor.lineId
-            : order.so_number === donor.soNumber),
+          donor?.some((match) =>
+            match.lineId
+              ? order.line_id === match.lineId
+              : order.so_number === match.soNumber,
+          ),
         ),
         is_document: false,
       })),
@@ -245,7 +251,16 @@ export function StockDocumentsPanel({
     );
   }, [rows, filterText]);
 
-  const hasMyLine = visibleRows.some((row) => row.is_this_line);
+  /**
+   * The jump's own watch state, held in a REF rather than closed over by the effect below
+   * (review round, S3): the effect is keyed on `jumpTarget`'s own identity alone now, so a
+   * still-pending MutationObserver from an EARLIER jump has to be reachable and disconnectable
+   * from the start of a later run, not just from that earlier run's own cleanup.
+   */
+  const jumpWatchRef = React.useRef<{
+    observer: MutationObserver | null;
+    flashTimer: number | undefined;
+  }>({ observer: null, flashTimer: undefined });
 
   // The jump (AC-3.1/3.3/3.4): scroll to and briefly flash whichever row this panel holds
   // that the target names. Every open panel gets the same signal broadcast down from
@@ -261,9 +276,23 @@ export function StockDocumentsPanel({
   // in this hook, `hasAnchor: false` in the grid) while the identical jump from the "My line"
   // button - pressed after that second render had already happened - found it immediately.
   // A `MutationObserver` reacts to the node actually arriving rather than to a timer or to
-  // one extra assumed tick, so it is correct regardless of how many renders the grid needs.
+  // one extra assumed tick, so it is correct regardless of how many renders the grid needs -
+  // including the render that only finishes loading AFTER this effect first runs, so
+  // `detail.isLoading` is not read here at all: the observer keeps watching through it.
+  //
+  // DRIVEN OFF `jumpTarget`'s OWN IDENTITY ALONE (review round, S3 bug-fix). `visibleRows`
+  // used to sit in this dependency list, on the reasoning that a filtered ledger should
+  // re-arm the watch once its target actually exists. What it actually did: `donorMatch`/
+  // `documentMatch` were built as fresh object literals in `BoardCellBreakdownDialog` on
+  // every render, so `visibleRows` (built from `rows`, which closes over `donor`/
+  // `documentInfo`) got a new identity on every keystroke of the STICKY SEARCH, even though
+  // the search had not settled and the filtered set had not actually changed - which re-ran
+  // this effect, found the SAME row already painted, and re-scrolled to and re-flashed it on
+  // every keystroke. `jumpTarget` itself already only changes when a jump is actually
+  // requested (`CellStockTable`'s `activeJump` state), so keying on it - and on nothing a
+  // render can jostle - is what makes typing never scroll.
   React.useEffect(() => {
-    if (!jumpTarget || detail.isLoading) return;
+    if (!jumpTarget) return;
     const panel = panelRef.current;
     if (!panel) return;
     const testId =
@@ -273,47 +302,66 @@ export function StockDocumentsPanel({
           ? 'stock-document-donor'
           : 'stock-document-this-document';
 
-    let flashTimer: number | undefined;
-
-    const land = (row: HTMLElement) => {
-      if (typeof row.scrollIntoView === 'function')
-        row.scrollIntoView({ block: 'center' });
-      // A single fading pulse, never a persistent second selection colour (AC-3.11) - the
-      // CSS class collapses to a flat, briefer highlight under `prefers-reduced-motion`
-      // (styles.css).
-      row.classList.add('jump-flash');
-      flashTimer = window.setTimeout(
-        () => row.classList.remove('jump-flash'),
-        1500,
-      );
-    };
+    const watch = jumpWatchRef.current;
+    // A watch still pending from an earlier jump loses the race the moment a NEW one is
+    // requested - only the jump just asked for gets to land.
+    watch.observer?.disconnect();
+    watch.observer = null;
+    window.clearTimeout(watch.flashTimer);
 
     const findRow = (): HTMLElement | null => {
       const anchor = panel.querySelector(`[data-testid="${testId}"]`);
       return anchor?.closest('tr') ?? null;
     };
 
+    const land = (row: HTMLElement) => {
+      // Idempotent: nothing further to watch for once a row has actually landed.
+      watch.observer?.disconnect();
+      watch.observer = null;
+      if (typeof row.scrollIntoView === 'function')
+        row.scrollIntoView({ block: 'center' });
+      // A single fading pulse, never a persistent second selection colour (AC-3.11) - the
+      // CSS class is disabled outright under `prefers-reduced-motion` (styles.css).
+      //
+      // REMOVED BEFORE IT IS RE-ADDED, with a reflow forced in between (review round, S3):
+      // `classList.add` on a class the row already carries is a no-op, so a second jump to
+      // the SAME row inside the 1.5s window - two quick presses of "My line" - left the
+      // class already present and the animation never restarted. Reading `offsetWidth`
+      // forces the browser to flush the removal before the class goes back on, which is
+      // what makes the animation actually replay from its first frame.
+      row.classList.remove('jump-flash');
+      void row.offsetWidth;
+      row.classList.add('jump-flash');
+      watch.flashTimer = window.setTimeout(
+        () => row.classList.remove('jump-flash'),
+        1500,
+      );
+    };
+
     const already = findRow();
     if (already) {
       land(already);
-      return () => window.clearTimeout(flashTimer);
+      return () => window.clearTimeout(watch.flashTimer);
     }
 
-    // Not there yet - the grid's own render has not caught up with `visibleRows`. Watch for
-    // it to land rather than guessing a delay.
+    // Not there yet - the grid's own render (and its own async gate) has not caught up with
+    // this jump. Watch for it to land rather than guessing a delay.
     const observer = new MutationObserver(() => {
       const row = findRow();
       if (!row) return;
-      observer.disconnect();
       land(row);
     });
     observer.observe(panel, { childList: true, subtree: true });
+    watch.observer = observer;
     return () => {
       observer.disconnect();
-      window.clearTimeout(flashTimer);
+      if (watch.observer === observer) watch.observer = null;
+      window.clearTimeout(watch.flashTimer);
     };
-    // `visibleRows` re-arms the watch once the row it targets actually exists in the data.
-  }, [jumpTarget, detail.isLoading, visibleRows]);
+    // Deliberately NOT `jumpTarget` itself - see the module doc above. `kind`/`nonce` are
+    // the whole of what a jump IS; nothing else may re-run this effect.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jumpTarget?.kind, jumpTarget?.nonce]);
 
   const columns = React.useMemo<ColumnDef<StockDetailRow>[]>(() => {
     const list: ColumnDef<StockDetailRow>[] = [
@@ -668,27 +716,11 @@ export function StockDocumentsPanel({
           // The group reading is a RUNNING balance, so its order is the arithmetic: re-sorting
           // it by customer would leave a column of numbers that add up to nothing.
           sortable={!isGroup}
-          toolbar={
-            isGroup && hasMyLine ? (
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                data-testid="stock-documents-my-line"
-                onClick={() => {
-                  const anchor = panelRef.current?.querySelector(
-                    '[data-testid="stock-document-this-line"]',
-                  );
-                  const row = anchor?.closest('tr');
-                  if (row && typeof row.scrollIntoView === 'function') {
-                    row.scrollIntoView({ block: 'center' });
-                  }
-                }}
-              >
-                My line
-              </Button>
-            ) : undefined
-          }
+          // NO LOCAL "My line" TOOLBAR (retired, review round S3). This panel used to carry
+          // its own, scrolling straight to the row with no flash - a second "My line" that
+          // duplicated the sticky toolbar's own button (`BoardCellBreakdownDialog`), which
+          // already reaches this exact row through `jumpTarget` and lands it WITH the flash.
+          // Two buttons doing the same job, one of them worse, is not a second feature.
           emptyTitle="Nothing is claiming this stock"
           // The live book tops out at 501 rows for one product and location, which is one page:
           // paging it would hide the total that makes the header checkable.

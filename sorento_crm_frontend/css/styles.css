@@ -76,8 +76,9 @@
 /* A jump landing: the planning lightbox scrolls to a row (its own line, a donor, an
    incoming document) and this is the ONE pulse that says "here" - a single fade from a
    tinted background to none, never a second persistent selection colour (AC-3.11). Under
-   reduced motion it collapses to a flat 150ms rule below, same as every other animation on
-   this screen, rather than a colour that snaps on and off with no transition at all. */
+   reduced motion the animation is disabled outright (see `.jump-flash` in the
+   `prefers-reduced-motion` block below), the same as every other one-shot flash on this
+   screen - the row is still selected, it just does not visibly pulse to say so. */
 @keyframes jumpFlash {
   0% { background-color: color-mix(in oklab, var(--primary) 22%, transparent); }
   100% { background-color: transparent; }

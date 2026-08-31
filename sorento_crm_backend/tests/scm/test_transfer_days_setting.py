@@ -40,9 +40,8 @@ from ..test_so_supply_confirmation import (  # noqa: F401  (helpers, not fixture
 )
 from .conftest import requires_pg
 from .test_fulfilment_priority_policy import BASE, _active_row, _client, _write
-from .test_ladder_v7_borrow import LEAD_DAYS, WINDOW_DAY, _options
+from .test_ladder_v7_borrow import LEAD_DAYS, _options
 from .test_project_supply_service_ladder import (
-    _components,
     _group_sites,
     _lead_time,
     _seed_line,

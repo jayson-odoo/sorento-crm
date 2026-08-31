@@ -256,36 +256,60 @@ export function BoardCellBreakdownDialog({
   const stockTableRef = React.useRef<CellStockTableHandle>(null);
 
   /**
-   * The donor and the incoming document the SHOWN line's own suggestion names, if either
-   * (AC-3.3/3.4/3.13). Both can be the SAME source - "Borrow ... (SPO x) from SO397460" names
-   * an SPO and the order waiting on it in one sentence - so the two are read independently
-   * rather than as alternatives.
+   * Every donor and every incoming document the SHOWN line's own suggestion names, if any
+   * (AC-3.3/3.4/3.13). A cell can carry more than one of EACH - a step-2 combine draws from
+   * several donors on one line (R35) - so both are lists, never a single `.find()` (review
+   * round, S3): the old single pick meant a second donor's own link in the sentence jumped to
+   * the FIRST donor's row instead of its own.
+   *
+   * A source can carry a donor AND a document together - "Borrow ... (SPO x) from SO397460"
+   * names an SPO and the order waiting on it in one sentence - so the two lists are read
+   * independently rather than as alternatives.
+   *
+   * MEMOISED on the underlying source lists, not left as bare object literals (review round,
+   * S3): an unmemoised `donorMatch`/`documentMatch` got a fresh identity on every render of
+   * this dialog, including the ones typing in the sticky search causes, which fed
+   * `StockDocumentsPanel`'s own `rows` memo a new `donor`/`documentInfo` reference on every
+   * keystroke and re-ran its jump effect - see that component's own module doc for the other
+   * half of the fix.
    */
-  const donorSource = React.useMemo(
-    () =>
-      shownContribution?.sources.find((source) => source.donor_so_number) ??
-      null,
+  const donorSources = React.useMemo(
+    () => (shownContribution?.sources ?? []).filter((source) => source.donor_so_number),
     [shownContribution],
   );
-  const documentSource = React.useMemo(
-    () =>
-      shownContribution?.sources.find((source) => source.supply_document) ??
-      null,
+  const documentSources = React.useMemo(
+    () => (shownContribution?.sources ?? []).filter((source) => source.supply_document),
     [shownContribution],
   );
-  const donorMatch: StockDonorMatch | null = donorSource
-    ? {
-        soNumber: donorSource.donor_so_number as string,
-        lineId: donorSource.donor_core_line_id,
-        location: donorSource.location,
-      }
-    : null;
-  const documentMatch: StockDocumentMatch | null = documentSource
-    ? {
-        spoNumber: documentSource.supply_document as string,
-        location: documentSource.location,
-      }
-    : null;
+  // The toolbar's single "document" button and badge can only ever point at ONE document, so
+  // it takes the first one that could actually BE a row this drill matches: a PO reaches a
+  // project line by a link, never by sitting as its own document in the stock ledger this
+  // drill reads, so a historical PO snapshot (`supply_document` starting "PO ") can never
+  // match a row here - offering a button for it would be a jump to nowhere.
+  const jumpableDocumentSource = React.useMemo(
+    () =>
+      documentSources.find((source) => isJumpableDocument(source.supply_document)) ?? null,
+    [documentSources],
+  );
+  const donorMatches: StockDonorMatch[] = React.useMemo(
+    () =>
+      donorSources.map((source) => ({
+        soNumber: source.donor_so_number as string,
+        lineId: source.donor_core_line_id,
+        location: source.location,
+      })),
+    [donorSources],
+  );
+  const documentMatch: StockDocumentMatch | null = React.useMemo(
+    () =>
+      jumpableDocumentSource
+        ? {
+            spoNumber: jumpableDocumentSource.supply_document as string,
+            location: jumpableDocumentSource.location,
+          }
+        : null,
+    [jumpableDocumentSource],
+  );
 
   /** AC-3.5: the sticky toolbar's search, filtering the Stock tab's expanded documents. */
   const stockSearch = useDebouncedSearch();
@@ -856,7 +880,7 @@ export function BoardCellBreakdownDialog({
                   here, and nowhere else carries the words to make them one. Only sources that
                   NAME a donor or a document print one - a Reserve or a Buy has neither and
                   says nothing extra. */}
-              {(donorSource || documentSource) && (
+              {(donorSources.length > 0 || documentSources.length > 0) && (
                 <div
                   data-testid="cell-suggestion-sentence"
                   className="mb-3 space-y-1"
@@ -866,19 +890,43 @@ export function BoardCellBreakdownDialog({
                       (source) =>
                         source.donor_so_number || source.supply_document,
                     )
-                    .map((source, index) => (
-                      <p
-                        key={`${source.kind}-${index}`}
-                        className="text-sm text-muted-foreground"
-                      >
-                        {annotateReason(source, {
-                          onDonorClick: () =>
-                            stockTableRef.current?.jumpToDonor(),
-                          onDocumentClick: () =>
-                            stockTableRef.current?.jumpToDocument(),
-                        })}
-                      </p>
-                    ))}
+                    .map((source, index) => {
+                      // Each link jumps by THIS source's own donor/document, not by the
+                      // dialog's single "first of the cell" match (review round, S3) - a
+                      // step-2 combine can name several donors on one line (R35), and a
+                      // second donor's own link has to land its own row.
+                      const sourceDonor: StockDonorMatch | undefined =
+                        source.donor_so_number
+                          ? {
+                              soNumber: source.donor_so_number,
+                              lineId: source.donor_core_line_id,
+                              location: source.location,
+                            }
+                          : undefined;
+                      const sourceDocument: StockDocumentMatch | undefined =
+                        source.supply_document &&
+                        isJumpableDocument(source.supply_document)
+                          ? {
+                              spoNumber: source.supply_document,
+                              location: source.location,
+                            }
+                          : undefined;
+                      return (
+                        <p
+                          key={`${source.kind}-${index}`}
+                          className="text-sm text-muted-foreground"
+                        >
+                          {annotateReason(source, {
+                            onDonorClick: () =>
+                              stockTableRef.current?.jumpToDonor(sourceDonor),
+                            onDocumentClick: () =>
+                              stockTableRef.current?.jumpToDocument(
+                                sourceDocument,
+                              ),
+                          })}
+                        </p>
+                      );
+                    })}
                 </div>
               )}
 
@@ -903,7 +951,7 @@ export function BoardCellBreakdownDialog({
                 >
                   My line
                 </Button>
-                {donorMatch ? (
+                {donorMatches.length > 0 ? (
                   <Button
                     type="button"
                     size="sm"
@@ -949,7 +997,7 @@ export function BoardCellBreakdownDialog({
                     ? `${shownContribution.so_number} line ${shownContribution.line_no}`
                     : undefined
                 }
-                donor={donorMatch}
+                donor={donorMatches}
                 documentInfo={documentMatch}
                 filterText={stockSearch.debouncedValue}
                 landOnMount
@@ -1265,6 +1313,19 @@ export function sourceAt(source: BoardContribution['sources'][number]): string {
   return source.kind === 'borrow'
     ? ` from ${source.location}`
     : ` at ${source.location}`;
+}
+
+/**
+ * Whether a `supply_document` value could ever BE a row `StockDocumentsPanel` shows (review
+ * round, S3). An SPO is one; a historical PO snapshot (`PO 202607-P0031 line 3`, the ladder
+ * v7.1 step-3 spelling for a project PO) is not - a PO reaches a project line through its own
+ * link, never by sitting in the stock ledger the drill reads, so a jump built from one would
+ * fall through to the own-location section with nothing to show for it. The prefix is the
+ * server's own spelling (`fulfilmentPlanningService.ts`'s module doc), read rather than
+ * re-derived.
+ */
+function isJumpableDocument(value: string | null | undefined): boolean {
+  return Boolean(value) && !(value as string).trim().toUpperCase().startsWith('PO ');
 }
 
 /**

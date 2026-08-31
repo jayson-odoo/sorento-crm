@@ -992,7 +992,7 @@ describe('CellStockTable: the S3 jump handles', () => {
           net: '1716',
         }),
       ],
-      { donor: { soNumber: 'SO401624', location: 'BRW' } },
+      { donor: [{ soNumber: 'SO401624', location: 'BRW' }] },
     );
 
     act(() => ref.current?.jumpToDonor());
@@ -1023,7 +1023,9 @@ describe('CellStockTable: the S3 jump handles', () => {
   });
 
   it('falls back to the own section, never a crash, when the named location matches no row', () => {
-    const ref = renderWithRef([position()], { donor: { soNumber: 'SO1', location: 'NOWHERE' } });
+    const ref = renderWithRef([position()], {
+      donor: [{ soNumber: 'SO1', location: 'NOWHERE' }],
+    });
 
     expect(() => act(() => ref.current?.jumpToDonor())).not.toThrow();
   });

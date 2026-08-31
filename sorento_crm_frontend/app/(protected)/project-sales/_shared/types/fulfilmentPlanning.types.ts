@@ -1928,10 +1928,17 @@ export interface StockDocumentMatch {
 export interface CellStockTableHandle {
   /** AC-3.1/3.2: the default landing on open, and what the toolbar's "My line" repeats. */
   jumpToThisLine: () => void;
-  /** AC-3.3/3.13: the suggestion sentence's donor link and the toolbar's "Donor" button. */
-  jumpToDonor: () => void;
-  /** AC-3.4: the suggestion sentence's SPO link and the toolbar's document button. */
-  jumpToDocument: () => void;
+  /**
+   * AC-3.3/3.13: the toolbar's "Donor" button (no argument - the FIRST donor the shown
+   * line's suggestion names) and the suggestion sentence's own donor link, which passes ITS
+   * OWN source's donor explicitly (review round, S3): a step-2 combine can name several
+   * donors on one line (R35), and a second donor's link has to open its own row, not the
+   * first donor's.
+   */
+  jumpToDonor: (donor?: StockDonorMatch) => void;
+  /** AC-3.4: the suggestion sentence's SPO link and the toolbar's document button. Same
+   * explicit-argument shape as `jumpToDonor`, for the same reason. */
+  jumpToDocument: (documentInfo?: StockDocumentMatch) => void;
 }
 
 /**

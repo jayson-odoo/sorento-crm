@@ -18,11 +18,12 @@ Postgres via `blank_session`, every chain seeded here (CI's database has no data
 """
 from __future__ import annotations
 
+import json
 from datetime import date, timedelta
 from decimal import Decimal
 
 from app.services.project_supply_service import ProjectSupplyService
-from app.services.scm.front_planning_engine import date_text, month_text, qty_text
+from app.services.scm.front_planning_engine import date_text, month_text
 
 from .._pg_fixture import blank_session
 from ..test_so_supply_confirmation import (  # noqa: F401  (helpers, not fixtures)
@@ -37,12 +38,10 @@ from ..test_so_supply_confirmation import (  # noqa: F401  (helpers, not fixture
     _user,
     _warehouse,
 )
-from .test_ladder_v7_borrow import LEAD_DAYS, WINDOW_DAY, _options, _policy
+from .test_ladder_v7_borrow import LEAD_DAYS, _options, _policy
 from .test_ladder_v7_supply_borrow import (  # noqa: F401  (helpers, not fixtures)
     ASKER_DAY,
     DONOR_DAY,
-    LATE_ARRIVAL_DAY,
-    _confirm_as_proposed,
     _donor_holding,
     _po,
     _rung,
@@ -232,8 +231,6 @@ def test_no_rendered_sentence_names_the_eligible_pos_document():
         )
         proposal = ProjectSupplyService(db).proposal_for(order)
         po_number = po.po_number
-
-    import json
 
     payload = json.dumps(proposal, default=str)
     assert po_number not in payload, (
