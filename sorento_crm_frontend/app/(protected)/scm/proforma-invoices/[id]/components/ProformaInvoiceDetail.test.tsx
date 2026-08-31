@@ -99,7 +99,6 @@ const writes = {
   matchCode: vi.fn(),
   forgetMatch: vi.fn(),
   save: vi.fn(),
-  deleteInvoice: vi.fn(),
   markAsRevision: vi.fn(),
 };
 
@@ -118,7 +117,6 @@ vi.mock('../../../hooks/useProformaInvoices', () => ({
     isPending: false,
   }),
   useSaveProformaInvoice: () => ({ mutateAsync: writes.save, isPending: false }),
-  useDeleteProformaInvoice: () => ({ mutateAsync: writes.deleteInvoice, isPending: false }),
   useMarkProformaInvoiceAsRevision: () => ({
     mutateAsync: writes.markAsRevision,
     isPending: false,
@@ -281,7 +279,6 @@ beforeEach(() => {
   state.isError = false;
   push.mockReset();
   writes.save.mockReset().mockResolvedValue(undefined);
-  writes.deleteInvoice.mockReset().mockResolvedValue(undefined);
   writes.forgetMatch.mockReset().mockResolvedValue(undefined);
   writes.markAsRevision.mockReset().mockResolvedValue(undefined);
 });
@@ -411,7 +408,6 @@ describe('ProformaInvoiceDetail - deleting the invoice', () => {
         }),
       ),
     );
-    expect(writes.deleteInvoice).not.toHaveBeenCalled();
     expect(push).not.toHaveBeenCalledWith('/scm/proforma-invoices');
   });
 

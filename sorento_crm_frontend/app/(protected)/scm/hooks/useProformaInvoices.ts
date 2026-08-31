@@ -6,7 +6,6 @@ import { toast } from 'sonner';
 import {
   bulkDeleteProformaInvoices,
   convertProformaInvoicesToDraftShipment,
-  deleteProformaInvoice,
   getProformaInvoice,
   listProformaInvoices,
   markProformaInvoiceAsRevisionOf,
@@ -103,24 +102,8 @@ export function useProformaInvoicesApplied() {
   }, [qc]);
 }
 
-/**
- * No success toast here: this mutation is used behind `ConfirmDeleteDialog`, which already
- * shows one on success (`successMessage`) - the same split `useDeletePolicy` / `useDeleteTopic`
- * use elsewhere in this module, so a delete never announces itself twice.
- */
-export function useDeleteProformaInvoice() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => deleteProformaInvoice(id),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: [...KEY, 'list'] });
-    },
-    onError: (e: Error) => toast.error(e.message),
-  });
-}
-
-/** Same "no success toast here" shape as the single delete above - the caller's own
- *  AlertDialog reports the outcome (deleted count + any blocked/converted invoices). */
+/** No success toast here: the caller's own AlertDialog reports the outcome (deleted
+ *  count + any blocked/converted invoices). */
 export function useBulkDeleteProformaInvoices() {
   const qc = useQueryClient();
   return useMutation({

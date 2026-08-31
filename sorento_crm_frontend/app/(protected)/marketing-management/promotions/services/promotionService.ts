@@ -181,20 +181,6 @@ export async function updatePromotionGroup(
   return response.json();
 }
 
-export async function deletePromotionGroup(
-  promotionId: string,
-  groupId: string,
-): Promise<{ message: string; deleted_product_lines?: number }> {
-  const response = await apiFetch(`/api/v1/marketing/promotions/${promotionId}/groups/${groupId}`, {
-    method: 'DELETE',
-  });
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error(err.detail ?? err.message ?? 'Failed to delete promotion group');
-  }
-  return response.json();
-}
-
 export async function addPromotionProduct(
   promotionId: string,
   productId: string,
@@ -240,15 +226,6 @@ export async function compilePromotionsPdf(
     throw new Error(await extractApiError(response, 'Failed to start PDF export'));
   }
   return response.json();
-}
-
-/** `lineId` is promotion_products.id (junction row); required when the same SKU appears in multiple groups. */
-export async function removePromotionProduct(promotionId: string, lineId: string): Promise<void> {
-  const response = await apiFetch(`/api/v1/marketing/promotions/${promotionId}/products/${lineId}`, { method: 'DELETE' });
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: 'Failed to remove product from promotion' }));
-    throw new Error(error.message);
-  }
 }
 
 export async function updatePromotionProductPrice(

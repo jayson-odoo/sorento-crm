@@ -79,6 +79,15 @@ PERMISSION_REGISTRY.append({
     "name": "View Reference Data",
     "description": "Permission to read shared reference catalogs (contact access types, market segments) used by pickers across modules.",
 })
+# `.view` reads the shared catalogs; `.manage` is the narrower authority to WRITE
+# them (market-segment create/update/delete). A view grant permitting a hard
+# delete was wrong in principle even though the route it replaced had no slug
+# at all - see `market_segment.delete` in record_actions.py.
+PERMISSION_REGISTRY.append({
+    "slug": "user_management.reference_data.manage",
+    "name": "Manage Reference Data",
+    "description": "Permission to create, update and delete shared reference catalogs (currently market segments).",
+})
 
 # Delivery Order Management
 PERMISSION_REGISTRY.extend(_crud("order_management", "orders", "Delivery Orders"))

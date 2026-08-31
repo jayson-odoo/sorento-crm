@@ -116,8 +116,8 @@ const hooks = vi.hoisted(() => ({
   bulkDeleteAsync: vi.fn(),
 }));
 vi.mock('../hooks/useCertificates', () => ({
-  // The row's "..." carries the record's own Delete (D15).
-  useDeleteCertificate: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  // The row's "..." carries the record's own Delete (D15), parked as a deferred
+  // action rather than a mutation hook - nothing to mock here.
   useCertificates: (...a: unknown[]) => hooks.useCertificates(...a),
   useBulkDeleteCertificates: () => ({ mutateAsync: hooks.bulkDeleteAsync, isPending: false }),
   useCertificate: () => ({ data: undefined, isLoading: false }),

@@ -301,7 +301,17 @@ export default function TicketDetailPage({ params }: PageProps) {
                 <Button
                   variant="destructive"
                   onClick={() => deletion.start()}
-                  disabled={busy || formAction.ctasDisabled || deletion.isPending}
+                  disabled={
+                    busy ||
+                    formAction.ctasDisabled ||
+                    deletion.isPending ||
+                    draftCancellation.isBlocked
+                  }
+                  title={
+                    draftCancellation.isBlocked
+                      ? 'Discarding the draft is still counting down - wait for it to finish or cancel it first.'
+                      : undefined
+                  }
                 >
                   <Trash2 className="size-4" />
                   Delete
@@ -449,7 +459,12 @@ export default function TicketDetailPage({ params }: PageProps) {
                         variant="outline"
                         size="sm"
                         onClick={() => draftCancellation.start()}
-                        disabled={busy || draftCancellation.isPending}
+                        disabled={busy || draftCancellation.isPending || deletion.isBlocked}
+                        title={
+                          deletion.isBlocked
+                            ? 'Deleting this ticket is still counting down - wait for it to finish or cancel it first.'
+                            : undefined
+                        }
                       >
                         Cancel
                       </Button>

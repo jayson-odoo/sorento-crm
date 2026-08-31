@@ -624,6 +624,9 @@ def _delete_market_segment(db: Session, payload: dict):
 def _delete_onboarding_request(db: Session, payload: dict):
     from app.services import onboarding_service
 
+    # No service method to call: `DELETE /onboarding-requests/{id}` is these three
+    # lines and no rule of its own (`get_request` already carries the 404 and the
+    # company-scope filter), so there is nothing here that could drift from it.
     request = onboarding_service.get_request(db, _entity_id(payload))
     db.delete(request)
     db.commit()
@@ -758,10 +761,10 @@ register(
         entity_types=("market_segment",),
         execute=_delete_market_segment,
         window=WINDOW_DESTRUCTIVE,
-        # The route itself has no slug, so this names the grant the SCREEN is
-        # gated on in `menu.config`. Anyone who can reach the button already
-        # holds it; nobody who could delete a segment before loses the ability.
-        permission="user_management.reference_data.view",
+        # `.manage`, not `.view`: a read grant authorising a hard delete was wrong
+        # in principle, even though the immediate route it replaced had no slug
+        # at all (issue #402).
+        permission="user_management.reference_data.manage",
         label="Delete market segment",
     )
 )

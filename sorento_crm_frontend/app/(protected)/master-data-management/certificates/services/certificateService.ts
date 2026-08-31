@@ -131,13 +131,6 @@ export async function updateCertificate(
   return response.json();
 }
 
-export async function deleteCertificate(id: string): Promise<void> {
-  const response = await apiFetch(`${BASE}/${id}`, { method: 'DELETE' });
-  if (!response.ok) {
-    throw new Error(await extractApiError(response, 'Failed to delete certificate'));
-  }
-}
-
 export async function bulkDeleteCertificates(
   ids: string[],
 ): Promise<{ message: string; deleted_count: number }> {
