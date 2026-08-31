@@ -15,6 +15,13 @@ The tiers, in order, and the order is the design:
 4. **substring**, every match returned. Preserves what attachments did, and its
    reason: "WC7601" names MWC7601-RL-S12, IBWC7601-RL-S10 and everything else
    carrying it, and taking one arbitrarily left the rest silently uncovered.
+5. **prefix**, last resort: a code that is really a FAMILY description, e.g. a
+   certificate reading "SRTBV - BRASS BALL VALVE" names every `SRTBV...`
+   product, not one product literally coded that way. Only reached when tiers
+   1-4 all miss. Head-only (the text before the first ` - `, or the first
+   whitespace token), a minimum head length and a fan-out cap keep this from
+   matching generic description words or an unusably broad family. See
+   `PLAN-shared-brand-attachments.md` S1 for the measured guard rails.
 
 Set expansion sits ABOVE substring on purpose. `SRTWC8608-RL` is a substring of
 `SRTWC8608-RL-200`, so a substring-first resolver would answer a set code with
@@ -46,6 +53,14 @@ VIA_EXACT = "exact"
 VIA_PRODUCT_SET = "product_set"
 VIA_PLUS_SPLIT = "plus_split"
 VIA_SUBSTRING = "substring"
+VIA_PREFIX = "prefix"
+
+#: Tier 5 guard rails, measured against the products table (23,063 rows,
+#: `PLAN-shared-brand-attachments.md` S1). A head shorter than this matches too
+#: much to be useful ("SRT" alone answers 9,655 products); a fan-out over the
+#: cap is refused outright rather than returned as a useless partial list.
+PREFIX_MIN_HEAD = 4
+PREFIX_MAX_FANOUT = 200
 
 
 @dataclass(frozen=True)
@@ -128,6 +143,7 @@ def resolve_codes_to_products(
             or _via_product_set(db, code, normalized)
             or _via_plus_split(db, code)
             or _substring(db, code, normalized)
+            or _via_prefix(db, code, normalized)
         )
         if matches:
             result.matches.extend(matches)
@@ -206,3 +222,44 @@ def _substring(db: Session, code: str, normalized: str) -> list[CodeMatch]:
     return [
         CodeMatch(requested_code=code, product=row, via=VIA_SUBSTRING) for row in rows
     ]
+
+
+_DASH_SPLIT_RE = re.compile(r"\s+-\s+")
+
+
+def _prefix_head(code: str) -> str:
+    """The FAMILY portion of a code: text left of the first ` - `, else the
+    first whitespace-delimited token. Empty when there is nothing to split."""
+    dash_parts = _DASH_SPLIT_RE.split(code, maxsplit=1)
+    if len(dash_parts) > 1 and dash_parts[0].strip():
+        return dash_parts[0].strip()
+    tokens = code.split()
+    return tokens[0] if tokens else ""
+
+
+def _via_prefix(db: Session, code: str, normalized: str) -> list[CodeMatch]:
+    """Last resort: the code names a family by its head, not a real product.
+
+    Only reached when tiers 1-4 all miss. A single-token code (no ` - `, no
+    whitespace to split on) is skipped: its head IS the whole code, and that
+    was already tried as `exact` and `substring` above.
+    """
+    head = _prefix_head(code)
+    head_normalized = _normalize(head)
+    if not head_normalized or head_normalized == normalized:
+        return []
+    if len(head_normalized) < PREFIX_MIN_HEAD:
+        return []
+
+    rows = (
+        db.query(Product)
+        .filter(_norm_col(Product.product_code).like(f"{head_normalized}%"))
+        .order_by(Product.product_code)
+        .limit(PREFIX_MAX_FANOUT + 1)
+        .all()
+    )
+    if len(rows) > PREFIX_MAX_FANOUT:
+        # More hits than a family can plausibly be: refuse rather than link a
+        # useless partial subset ("SRT" alone answers 9,655 products).
+        return []
+    return [CodeMatch(requested_code=code, product=row, via=VIA_PREFIX) for row in rows]

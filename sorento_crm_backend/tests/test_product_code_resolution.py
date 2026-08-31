@@ -295,6 +295,135 @@ def test_a_set_code_is_matched_case_and_space_insensitively(db: Session, world):
     assert len(result.matches) == 3
 
 
+# --------------------------------------------------- tier 5: prefix (S1, R7)
+#
+# `PLAN-shared-brand-attachments.md` S1: n8n reads a certificate and returns a
+# FAMILY description ("SRTBV - BRASS BALL VALVE"), not a real product code. The
+# family here is named for that real defect but built from `ZZT-` codes so
+# nothing in the real catalogue can collide with a prefix probe.
+
+
+@pytest.fixture()
+def srtbv(db: Session):
+    """`ZZT-SRTBV110-DIY` .. `ZZT-SRTBV180-DIY` plus `ZZT-SRTBVB8013` - the same
+    shape as the real certificate family, 9 members, one company."""
+    category = ProductCategory(
+        id=str(uuid.uuid4()), category_code=_uid("cat")[:50], category_name=_uid("cat")
+    )
+    uom = UnitOfMeasure(id=str(uuid.uuid4()), uom_code=_uid("u")[:20], uom_name=_uid("uom"))
+    company = Company(id=str(uuid.uuid4()), name=_uid("co"), code=_uid("C")[:20])
+    db.add_all([category, uom, company])
+    db.flush()
+
+    def product(code: str) -> Product:
+        row = Product(
+            id=str(uuid.uuid4()),
+            product_code=code,
+            product_name=code,
+            category_id=category.id,
+            base_uom_id=uom.id,
+            list_price=Decimal("1.00"),
+            company_id=company.id,
+        )
+        db.add(row)
+        db.flush()
+        return row
+
+    codes = [f"ZZT-SRTBV{n}-DIY" for n in range(110, 181, 10)] + ["ZZT-SRTBVB8013"]
+    members = [product(code) for code in codes]
+    return {"company": company, "category": category, "uom": uom, "members": members, "codes": set(codes)}
+
+
+def test_ac_a1_a_family_head_resolves_via_prefix(db: Session, srtbv):
+    """AC-A1 - all 9 members, ordered by product_code, nothing unmatched."""
+    result = _resolve_in(db, srtbv["company"], ["ZZT-SRTBV - BRASS BALL VALVE"])
+
+    assert _codes(result) == srtbv["codes"]
+    assert all(m.via == "prefix" for m in result.matches)
+    ordered = [m.product.product_code for m in result.matches]
+    assert ordered == sorted(ordered)
+    assert result.unmatched == []
+
+
+def test_ac_a2_a_code_containing_a_space_matches_exact_never_prefix(db: Session, srtbv):
+    """AC-A2 - a code with a space is still an exact hit when it names itself."""
+    exact_code = f"ZZT-CB {uuid.uuid4().hex[:8]}-2B"
+    row = Product(
+        id=str(uuid.uuid4()),
+        product_code=exact_code,
+        product_name=exact_code,
+        category_id=srtbv["category"].id,
+        base_uom_id=srtbv["uom"].id,
+        list_price=Decimal("1.00"),
+        company_id=srtbv["company"].id,
+    )
+    db.add(row)
+    db.flush()
+
+    result = _resolve_in(db, srtbv["company"], [exact_code])
+    assert _codes(result) == {exact_code}
+    assert [m.via for m in result.matches] == ["exact"]
+
+
+def test_ac_a3_a_head_shorter_than_four_chars_is_unmatched(db: Session, srtbv):
+    """AC-A3 - `ZZT` normalises to 3 chars, below PREFIX_MIN_HEAD."""
+    code = "ZZT - SOMETHING"
+    result = _resolve_in(db, srtbv["company"], [code])
+    assert result.matches == []
+    assert result.unmatched == [code]
+
+
+def test_ac_a4_a_fanout_over_the_cap_is_unmatched(db: Session, srtbv):
+    """AC-A4 - more than 200 prefix hits: refused outright, no partial link."""
+    tag = uuid.uuid4().hex[:6].upper()
+    head = f"ZZTFANOUT{tag}"
+    for i in range(201):
+        db.add(
+            Product(
+                id=str(uuid.uuid4()),
+                product_code=f"{head}-{i:04d}",
+                product_name="x",
+                category_id=srtbv["category"].id,
+                base_uom_id=srtbv["uom"].id,
+                list_price=Decimal("1.00"),
+                company_id=srtbv["company"].id,
+            )
+        )
+    db.flush()
+
+    code = f"{head} - DESCRIPTION"
+    result = _resolve_in(db, srtbv["company"], [code])
+    assert result.matches == []
+    assert result.unmatched == [code]
+
+
+def test_ac_a6_link_products_route_reports_via_prefix(db: Session, srtbv):
+    """AC-A6 - the /link-products caller surfaces `via` on every linked item."""
+    from app.api.v1.external.product_attachments import _link_attachment_to_products_bulk
+    from app.models.resources import Attachment
+
+    attachment = Attachment(
+        id=str(uuid.uuid4()),
+        original_filename=_uid("cert") + ".pdf",
+        stored_filename=_uid("stored") + ".pdf",
+        file_path="zzt://cert",
+        company_id=srtbv["company"].id,
+    )
+    db.add(attachment)
+    db.flush()
+
+    response = _link_attachment_to_products_bulk(
+        db,
+        attachment.id,
+        ["ZZT-SRTBV - BRASS BALL VALVE"],
+        current_user={"id": str(uuid.uuid4())},
+    )
+
+    assert response.skipped_product_codes == []
+    assert {item.product_code for item in response.linked} == srtbv["codes"]
+    assert all(item.via == "prefix" for item in response.linked)
+
+
 # ------------------------------------------------------------------ isolation
 
 
