@@ -17,34 +17,12 @@
   }
 
   /* Base */
-  /*
-   * `.header` and `.wrapper` never actually run a transition (S8-03 - only `.sidebar`'s
-   * `transform` below does), but leaving `transition-property` undeclared reports the
-   * CSS-initial value, `all`, to `getComputedStyle` - which reads as "this animates
-   * everything at 0s" rather than "this doesn't animate". Naming `none` here makes that
-   * intent legible instead of accidental.
-   */
-  .demo1 .header,
-  .demo1 .wrapper {
-    transition-property: none;
-  }
-
   .demo1 .header {
     height: var(--header-height);
   }
 
-  /*
-   * The sidebar's own box is ALWAYS the expanded width (S8-03) - collapse is a
-   * `transform: scaleX()` on this box below, not a `width` change, so toggling
-   * it never asks the browser to lay this element's own (deeply nested menu)
-   * subtree out again. The clip that hides what the scale shrinks lives on
-   * `.sidebar-rail` below, not here - the collapse toggle (sidebar.tsx) is a
-   * sibling of the rail specifically so it is NOT inside that clip and can
-   * still float past the sidebar's edge, as it always could (S8 review
-   * finding: `overflow: hidden` used to sit here and cut the toggle in half).
-   */
   .demo1 .sidebar {
-    width: var(--sidebar-default-width);
+    width: var(--sidebar-width);
   }
 
   .demo1.header-fixed .wrapper {
@@ -54,22 +32,9 @@
   /* Desktop mode */
   @media (min-width: theme(--breakpoint-lg)) {
     .demo1 .sidebar {
-      transform: scaleX(var(--sidebar-scale, 1));
-    }
-
-    /*
-     * `.sidebar-rail` (sidebar.tsx) wraps the header + menu and counter-scales
-     * by the reciprocal of `.sidebar`'s own scale, in lockstep with it. The two
-     * cancel exactly at every instant, so the content never visually stretches
-     * or squashes - only how much of it THIS `overflow: hidden` shows changes.
-     * This is the whole trick: a "width" animation with no `width` transition
-     * anywhere in it. The clip sits on the rail, not on `.sidebar` itself, so
-     * the collapse toggle - a sibling of the rail - is never inside it.
-     */
-    .demo1 .sidebar .sidebar-rail {
-      width: var(--sidebar-default-width);
-      transform: scaleX(calc(1 / var(--sidebar-scale, 1)));
-      overflow: hidden;
+      width: var(--sidebar-width);
+      transition: width var(--sidebar-transition-duration)
+        var(--sidebar-transition-timing);
     }
 
     .demo1 .sidebar .sidebar-header {
@@ -102,13 +67,15 @@
 
     .demo1.sidebar-collapse {
       --sidebar-width: var(--sidebar-width-collapse);
-      --sidebar-scale: calc(
-        var(--sidebar-width-collapse) / var(--sidebar-default-width)
-      );
+    }
+
+    .demo1.sidebar-collapse .sidebar {
+      transition: width var(--sidebar-transition-duration)
+        var(--sidebar-transition-timing);
     }
 
     .demo1.sidebar-collapse .sidebar:hover {
-      --sidebar-scale: 1;
+      width: var(--sidebar-default-width);
     }
 
     .demo1.sidebar-collapse .sidebar:not(:hover) .default-logo {
@@ -165,16 +132,18 @@
   }
 
   /*
-   * `layout-initialized` (set one frame after mount, app/components/layouts/
-   * demo1/layout.tsx) exists so the very first paint - which already reflects
-   * a persisted collapsed/expanded setting - does not itself animate. `.sidebar`
-   * is the only thing that transitions on a collapse toggle (S8-03): `.wrapper`
-   * and `.header` reserve the sidebar's already-current width the instant the
-   * class flips, no transition, so they never run a `padding`/`inset` animation
-   * across the whole page's layout.
+   * `layout-initialized` (set one requestAnimationFrame after mount, app/
+   * components/layouts/demo1/layout.tsx) exists so the very first paint -
+   * which already reflects a persisted collapsed/expanded setting - does not
+   * itself animate a `width`/`padding`/`inset` transition across the page.
    */
-  .demo1.layout-initialized .sidebar {
-    transition: transform var(--sidebar-transition-duration)
+  .demo1.layout-initialized .wrapper {
+    transition: padding-inline-start var(--sidebar-transition-duration)
+      var(--sidebar-transition-timing);
+  }
+
+  .demo1.layout-initialized .header {
+    transition: inset-inline-start var(--sidebar-transition-duration)
       var(--sidebar-transition-timing);
   }
 }

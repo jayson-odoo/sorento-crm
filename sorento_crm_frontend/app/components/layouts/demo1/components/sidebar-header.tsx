@@ -1,19 +1,21 @@
 'use client';
 
 import Link from 'next/link';
+import { ChevronFirst } from 'lucide-react';
 import { toAbsoluteUrl } from '@/lib/helpers';
 import { cn } from '@/lib/utils';
 import { useSettings } from '@/providers/settings-provider';
+import { Button } from '@/components/ui/button';
 
-/**
- * The collapse toggle used to render here too, but it floats HALF outside the
- * sidebar's own edge on purpose (a straddling circle) - which put it inside
- * this component's clipped ancestor (`.sidebar-rail`, demo1.css) once S8-03
- * added that clip for the counter-scale trick. It now lives in `sidebar.tsx`,
- * a sibling of the rail, so it is never inside that clip. See `Sidebar()`.
- */
 export function SidebarHeader() {
-  const { settings } = useSettings();
+  const { settings, storeOption } = useSettings();
+
+  const handleToggleClick = () => {
+    storeOption(
+      'layouts.demo1.sidebarCollapse',
+      !settings.layouts.demo1.sidebarCollapse,
+    );
+  };
 
   return (
     <div className="sidebar-header hidden lg:flex items-center relative justify-between px-3 lg:px-6 shrink-0">
@@ -49,6 +51,20 @@ export function SidebarHeader() {
           />
         </div>
       </Link>
+      <Button
+        onClick={handleToggleClick}
+        size="sm"
+        mode="icon"
+        variant="outline"
+        className={cn(
+          'size-7 absolute start-full top-2/4 rtl:translate-x-2/4 -translate-x-2/4 -translate-y-2/4',
+          settings.layouts.demo1.sidebarCollapse
+            ? 'ltr:rotate-180'
+            : 'rtl:rotate-180',
+        )}
+      >
+        <ChevronFirst className="size-4!" />
+      </Button>
     </div>
   );
 }

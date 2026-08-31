@@ -1,3 +1,23 @@
+## Addendum, 31 Aug 2026 (post-merge regression)
+
+The S8-03 finding below (PASS, mid-collapse only) missed the END states: the
+user reported the collapsed sidebar with icons squished/distorted and its
+content overlapping the page past the collapsed rail. Root cause: once the
+toggle-clipping fix (`a5db654aa`) moved `overflow: hidden` from `.sidebar`
+onto `.sidebar-rail`, the rail's own clip ran BEFORE the rail's own
+counter-scale was applied (clip happens in an element's local, pre-transform
+coordinate space), so the counter-scale re-inflated the already-clipped
+content back past the visible collapsed width with nothing left to re-clip
+it - the inflated menu/header spilled over the page. Separately, the toggle
+button (a plain, non-counter-scaled child of `.sidebar`) was itself squished
+by `.sidebar`'s own `scaleX`, since only a shape-preserving counter-scale
+tracks position without also tracking size, and the button needed the former
+without the latter. Given two independent defects in the same mechanism (not
+one clear bug), the fix reverted the collapse to the pre-S8 width-based
+animation rather than patching the transform trick further; see the S8-03
+line in `apple-alignment-acceptance-criteria.md` and
+`PLAN-apple-alignment.md` section 3.11 for the recorded deviation.
+
 # S8 Motion - browser verification evidence (agent-browser, 31 Aug 2026)
 
 Session `s8-evidence` against the S8 worktree lane (:3090/:8000). Verified by
