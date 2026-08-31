@@ -1,6 +1,6 @@
 # PLAN - Spec registry: every reader is a rule, rules read as sentences, try it on a real product
 
-**Status:** In progress 31 Aug 2026. S1 (#432) FE mock done 145e8a3fa; S2 (#433) engine done 096c81a76, golden parity 0 diffs over 2,000 codes, migration `450_spec_rules_readable`; S3 (#434) next. AC-A.1 amended to the measured order (see UAC). UAC: `spec-rules-readable-acceptance-criteria.md`.
+**Status:** All three slices delivered 31 Aug 2026. S1 (#432) FE mock done 145e8a3fa; S2 (#433) engine done 096c81a76, golden parity 0 diffs over 2,000 codes, migration `450_spec_rules_readable`; S3 (#434) done - try/preview endpoints (`apply_rules` explain hook, `product_spec_preview.py` background-thread job, both under `company_scope(db, None)` after the browser evidence run caught it reporting 0/0/0/0 without it), FE swap off the mock, vitest, browser evidence at 1280/375 against real dev-DB products (`SRTWC8354-SH-P` every row nothing, `SRTWB831` row 3 wins 800, an added `number_between` row won 180 off the real `P-TRAP 180MM` text - not the S-TRAP/300 the illustrative UAC text names, which was the S1 mock's canned description). AC-A.1 amended to the measured order (see UAC). UAC: `spec-rules-readable-acceptance-criteria.md`.
 **Issue:** #425 (expanded). **Lane:** worktree `spec-rules-readable`, FE :3110 / BE :8110 (captain 31 Aug), after the
 flyer lanes finish; branch `feat/spec-rules-readable` from `origin/main`.
 **Queue:** flyer #422 -> family #428 -> value labels #423 -> THIS.
