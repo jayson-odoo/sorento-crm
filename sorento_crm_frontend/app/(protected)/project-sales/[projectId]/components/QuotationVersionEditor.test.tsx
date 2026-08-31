@@ -234,10 +234,28 @@ function renderEditor(overrides: Partial<Project> = {}, editing = false) {
   );
 }
 
-/** The screen in an open edit session, which is the only place cells exist. */
+/**
+ * The screen in an open edit session, which is the only place cells exist.
+ *
+ * WAITING ON `Add a line` IS NOT ENOUGH, and that is what made this file the deploy gate's
+ * flakiest: the button belongs to the table's CHROME, which renders a commit BEFORE the rows do.
+ * `InlineLineTable` mirrors its `rows` prop into internal per-row state in an effect and skips
+ * any row that state has not reached yet, so on the commit where the lines query lands there is
+ * a real intermediate DOM with the toolbar, the header, the footer and NOT ONE line row - and no
+ * empty-state row either, because the table does have rows, it just cannot draw them yet. On an
+ * idle machine the next commit follows too fast to observe. On a loaded CI runner it does not,
+ * and whichever spec queried a cell first lost, which is why a DIFFERENT one failed each time.
+ *
+ * So wait for a line ROW. Every caller here opens a version that has at least one.
+ */
 async function renderEditing(overrides: Partial<Project> = {}) {
   const result = renderEditor(overrides, true);
   await screen.findByRole('button', { name: /Add a line/i });
+  await waitFor(() => expect(itemNumbers().length).toBeGreaterThan(0));
+  // The rows being drawn and the session holding them are two different things: staging a scope
+  // the session has not seeded yet is a no-op, so a keystroke landing in that gap is silently
+  // dropped. Specs here type immediately, so the seed is part of "ready", not an extra.
+  await waitFor(() => expect(session?.scopes[QUOTATION.id]?.lines ?? null).not.toBeNull());
   return result;
 }
 
@@ -349,6 +367,10 @@ describe('QuotationVersionEditor', () => {
   it('says what a revise will freeze before doing it', async () => {
     renderEditor();
 
+    // The button is chrome and arrives with the version list, but the sentence it opens counts
+    // the LINES - so clicking the moment it appears asks "how many?" of a query still in flight
+    // and gets nought. Wait for a line to be on screen first.
+    await screen.findByText('Wall-hung WC');
     fireEvent.click(await screen.findByRole('button', { name: /Revise to v3/i }));
 
     expect(await screen.findByText(/frozen for good/i)).toBeInTheDocument();
