@@ -148,3 +148,17 @@ Tests compared `public_token_expires_at > now()` to count live links. `now()` is
 ## 93. The venv is Python 3.14; CI is 3.12. An f-string that reuses its own quote inside `{}` collects locally and is a SyntaxError on CI (30 Aug 2026)
 
 `f"... {refusal.detail["failing_lines"]}"` passed every local run (3.14 accepts nested same-quote expressions) and broke `Validate backend imports` on PR #400 with `SyntaxError: f-string: unmatched '['`, taking a second file down with it through an import while every test suite stayed green. Use the other quote inside the braces (`{d['k']}`), and before pushing a branch with new Python, compile it with a real 3.12 (`uv python install 3.12`, then `python3.12 -m py_compile` over `git diff --name-only origin/main -- '*.py'`); a regex audit is not a parser.
+
+## 89. A motion pass that samples mid-animation proves nothing about the end states (2026-08-31)
+
+S8's sidebar collapse (scaleX + counter-scaled rail) passed browser review because the tester
+sampled mid-collapse frames; both defects lived in the AFTER states (a rail that re-inflates its
+own clip once overflow moved onto it, a toggle distorted by its parent's scale). A later
+one-line fix to the toggle made it worse because it re-verified only the toggle, not the
+collapse it belonged to. The trick is reverted to a plain width animation.
+
+- Verify interactions as ROUND-TRIPS and measure the final geometry (getBoundingClientRect,
+  computed transform) in every end state; mid-animation screenshots are supporting evidence only.
+- A fix touching a mechanism re-verifies the mechanism's whole interaction, not the symptom.
+- A transform trick replacing plain layout needs measured evidence the layout animation is
+  actually too slow; this one had none, and the fragility cost two rounds.
