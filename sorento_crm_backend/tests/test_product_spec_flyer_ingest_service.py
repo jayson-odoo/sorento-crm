@@ -23,8 +23,11 @@ was never tuned against.
 """
 from __future__ import annotations
 
+import json
+import os
 import uuid
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 
@@ -47,6 +50,12 @@ from tests._pg_fixture import blank_session
 
 _REFS: dict = {}
 _USER = {"id": str(uuid.uuid4()), "email": "zzt-flyjob@zzt.test"}
+
+# Three pages cut from the real 2025-2026 A3 flyer, and the base rows they produce.
+_FLYER_FIXTURE = Path(__file__).parent / "fixtures" / "dealer_kit" / "flyer_sample.pdf"
+_BASE_ROWS_GOLDEN = (
+    Path(__file__).parent / "fixtures" / "dealer_kit" / "flyer_base_rows_golden.json"
+)
 
 
 @pytest.fixture
@@ -649,7 +658,10 @@ def test_family_resolution_is_one_statement_per_pass(db):
 
     def _count(conn, cursor, statement, params, context, executemany):
         lowered = statement.lower()
-        if "unnest" in lowered and "like" in lowered and "products" in lowered:
+        # `substr(...) = code || '-'` is the prefix comparison `_siblings` joins
+        # on; it replaced a LIKE so a product code carrying `_` cannot behave
+        # as a wildcard.
+        if "unnest" in lowered and "substr" in lowered and "products" in lowered:
             statements.append(statement)
 
     event.listen(db.bind, "before_cursor_execute", _count)
@@ -659,6 +671,272 @@ def test_family_resolution_is_one_statement_per_pass(db):
         event.remove(db.bind, "before_cursor_execute", _count)
 
     assert len(statements) == 1, f"expected 1 sibling-resolution statement, got {len(statements)}"
+
+
+def test_a_base_code_carrying_an_underscore_does_not_wildcard_into_a_stranger(db):
+    """The prefix join is a comparison, not a pattern. `_` is a single-character
+    wildcard in SQL `LIKE`, so a printed `ZZT_FAM10` matched `ZZTXFAM10-P` as
+    well as its own family - and a product code is data, not a pattern."""
+    from app.services.product_spec_flyer_ingest import run_propose
+
+    _product(db, "ZZT_FAM10", "SORENTO ONE PIECE WC ZZT_FAM10")
+    _product(db, "ZZT_FAM10-P", "SORENTO ONE PIECE WC ZZT_FAM10-P")
+    _product(db, "ZZTXFAM10-P", "SORENTO ONE PIECE WC ZZTXFAM10-P")
+    reading = _reading(db, cards=[_card("ZZT_FAM10", "Twister Flushing")])
+    batch = _batch_row(db, reading)
+    db.commit()
+
+    run_propose(db, batch.id)
+
+    rows = _by_product_key(_proposals_for(db, batch.id))
+    assert rows[("ZZT_FAM10-P", "flush_type")].via_product_code == "ZZT_FAM10"
+    assert ("ZZTXFAM10-P", "flush_type") not in rows
+
+
+def test_a_siblings_hand_set_conflict_survives_even_on_a_key_it_reads_itself(db):
+    """R4 beats R2 (captain, 31 Aug): the family filter drops the card's `new` and
+    `change` proposals for a key the sibling answers itself, but NOT a `conflict`.
+    A conflict is not the card speaking about the key - it is a report that a
+    person set this value by hand and the card disagrees, and that question is
+    worth asking whether or not the sibling's description can also read it."""
+    from app.services.product_spec_flyer_ingest import run_propose
+
+    _product(db, "ZZT-FAM11-X", "SORENTO ONE PIECE WC ZZT-FAM11-X")
+    _product(
+        db,
+        "ZZT-FAM11-X-300",
+        "SORENTO ONE PIECE WC (S-TRAP 300MM) ZZT-FAM11-X-300",
+    )
+    db.commit()
+    derive_for_code(db, "ZZT-FAM11-X-300", commit=True)
+    apply_spec_values(
+        db,
+        "ZZT-FAM11-X-300",
+        [{"spec_key": "trap_length", "op": "set", "value": 250, "source": "human"}],
+        actor=_USER,
+    )
+
+    reading = _reading(db, cards=[_card("ZZT-FAM11-X", "S-Trap: 200mm")])
+    batch = _batch_row(db, reading)
+    db.commit()
+
+    run_propose(db, batch.id)
+
+    rows = _by_product_key(_proposals_for(db, batch.id))
+    row = rows[("ZZT-FAM11-X-300", "trap_length")]
+    assert row.kind == "conflict"
+    assert row.stored_value == 250
+    assert row.stored_source == "human"
+    assert row.via_product_code == "ZZT-FAM11-X"
+
+
+def test_a_fresh_pass_puts_via_count_back_to_zero_with_the_rest(db):
+    """A recompute resets every count on the batch. `via_count` is one of them:
+    a settled batch that kept an old 7 would describe rows it can no longer name,
+    which is the reason `_reset` exists at all."""
+    from app.services.product_spec_flyer_ingest import _reset
+
+    reading = _reading(db, cards=[])
+    batch = _batch_row(db, reading, status="proposed")
+    batch.via_count = 7
+    batch.product_count = 9
+    db.flush()
+
+    _reset(batch)
+
+    assert batch.via_count == 0
+    assert batch.product_count == 0
+
+
+def test_grouped_proposals_puts_each_base_ahead_of_its_own_siblings(db):
+    """AC-B.1: a sibling sorts under the card it was read from, not under its own
+    name. `ZZT-FAM12-A-5` has its own card, so plain alphabetical order would
+    push it BETWEEN `ZZT-FAM12-A` and that base's own sibling `ZZT-FAM12-A-9`,
+    and the review screen would read as one family broken in half."""
+    from app.services.product_spec_flyer_ingest import grouped_proposals, run_propose
+
+    _product(db, "ZZT-FAM12-A", "SORENTO ONE PIECE WC ZZT-FAM12-A")
+    _product(db, "ZZT-FAM12-A-5", "SORENTO ONE PIECE WC ZZT-FAM12-A-5")
+    _product(db, "ZZT-FAM12-A-9", "SORENTO ONE PIECE WC ZZT-FAM12-A-9")
+    reading = _reading(
+        db,
+        cards=[
+            _card("ZZT-FAM12-A", "Twister Flushing"),
+            _card("ZZT-FAM12-A-5", "Twister Flushing"),
+        ],
+    )
+    batch = _batch_row(db, reading)
+    db.commit()
+
+    run_propose(db, batch.id)
+    db.refresh(batch)
+
+    order = [group["product_code"] for group in grouped_proposals(db, batch)]
+    assert order == ["ZZT-FAM12-A", "ZZT-FAM12-A-9", "ZZT-FAM12-A-5"]
+    vias = {group["product_code"]: group["via_product_code"] for group in grouped_proposals(db, batch)}
+    assert vias["ZZT-FAM12-A"] is None
+    assert vias["ZZT-FAM12-A-5"] is None, "a printed code is nobody's sibling"
+    assert vias["ZZT-FAM12-A-9"] == "ZZT-FAM12-A"
+
+
+def test_a_siblings_own_reading_covers_its_product_master_columns_too(db):
+    """R2, under the engine #447 shipped: "the sibling's own reading" is the WHOLE
+    of what the catalogue would derive for it, columns included, because a column
+    is a rule row now. So a length a merchandiser typed into the product master
+    silences the card on that key, exactly as its description does."""
+    from app.services.product_spec_flyer_ingest import run_propose
+
+    _product(db, "ZZT-FAM13-X", "SORENTO ONE PIECE WC ZZT-FAM13-X")
+    sibling = _product(db, "ZZT-FAM13-X-150", "SORENTO ONE PIECE WC ZZT-FAM13-X-150")
+    sibling.dimensions_length = Decimal("800")
+    db.flush()
+
+    reading = _reading(db, cards=[_card("ZZT-FAM13-X", "D: L700xW370xH735mm")])
+    batch = _batch_row(db, reading)
+    db.commit()
+
+    run_propose(db, batch.id)
+
+    rows = _by_product_key(_proposals_for(db, batch.id))
+    assert rows[("ZZT-FAM13-X", "dim_length")].value == 700, "the base still reads the card"
+    sib_keys = {key for (code, key) in rows if code == "ZZT-FAM13-X-150"}
+    assert "dim_length" not in sib_keys, "the product master's own 800 stands"
+    assert "dim_width" in sib_keys, "a key the master is silent on still comes from the card"
+
+
+def test_the_siblings_own_reading_derives_with_its_real_category_and_the_caps(db):
+    """The own reading has to be the reading the CATALOGUE would make, or the card
+    fills a gap the catalogue does not have. `derive_for_code` passes the product's
+    category row and the configured `max_value`s; deriving with `None` for either
+    here would answer `class` differently and stop dropping implausible numbers."""
+    import app.services.product_spec_flyer_ingest as ingest
+    from app.services.product_spec_derivation import configured_max_values
+
+    _product(db, "ZZT-FAM14-X", "SORENTO ONE PIECE WC ZZT-FAM14-X")
+    sibling = _product(db, "ZZT-FAM14-X-150", "SORENTO ONE PIECE WC ZZT-FAM14-X-150")
+    reading = _reading(db, cards=[_card("ZZT-FAM14-X", "D: L700xW370xH735mm")])
+    batch = _batch_row(db, reading)
+    db.commit()
+
+    expected_caps = configured_max_values(db)
+    assert expected_caps, "fixture assumption: the seeded registry carries caps"
+
+    seen: list[tuple] = []
+    real = ingest.derive
+
+    def _record(product, category, **kwargs):
+        seen.append((product.product_code, category, kwargs.get("max_values")))
+        return real(product, category, **kwargs)
+
+    ingest.derive = _record
+    try:
+        ingest.run_propose(db, batch.id)
+    finally:
+        ingest.derive = real
+
+    assert [code for code, _, _ in seen] == [sibling.product_code]
+    _, category, max_values = seen[0]
+    assert category is not None and category.id == _REFS["cat"]
+    assert max_values == expected_caps
+
+
+# --------------------------------------------------------------------------- #
+# AC-A.5 - the base is unchanged, pinned on the real flyer
+# --------------------------------------------------------------------------- #
+def test_base_rows_on_the_real_flyer_match_the_checked_in_golden(db):
+    """AC-A.5: the family feature adds sibling rows and changes NOTHING about the
+    rows a printed code produces for itself.
+
+    Measured on `tests/fixtures/dealer_kit/flyer_sample.pdf` - three pages cut
+    from the real 2025-2026 A3 flyer, 43 cards - because the point of this test is
+    that real card text keeps reading the way it read. `SRTWC8354-SH` is given two
+    siblings so the family path is genuinely running while the base rows are
+    snapshotted; a golden taken with the feature switched off would prove nothing
+    about the feature being on.
+
+    Regenerate ONLY with a reason, and say the reason in the commit:
+    `REBLESS_FLYER_BASE_GOLDEN=1 pytest tests/test_product_spec_flyer_ingest_service.py -k golden`
+    """
+    from app.services.dealer_kit.flyer_extraction import extract_flyer
+    from app.services.product_spec_flyer_ingest import run_propose
+
+    reading = extract_flyer(_FLYER_FIXTURE.read_bytes())
+    # A code can be printed on more than one page (FG-CW06 is on 1 and 2), and it
+    # is still one product.
+    seen: set[str] = set()
+    for card in [card for page in reading.pages for card in page.cards]:
+        if card.code in seen:
+            continue
+        seen.add(card.code)
+        _product(db, card.code, card.code)
+    for suffix in ("-150", "-UF"):
+        _product(
+            db,
+            f"SRTWC8354-SH{suffix}",
+            f"SORENTO ONE PIECE WC SRTWC8354-SH{suffix}",
+        )
+
+    record = FlyerReadingRecord(
+        id=str(uuid.uuid4()),
+        filename="flyer_sample.pdf",
+        byte_size=1,
+        sha256=uuid.uuid4().hex,
+        reading_json=dk_svc.serialise(reading),
+        status="done",
+    )
+    db.add(record)
+    db.flush()
+    batch = _batch_row(db, record)
+    db.commit()
+
+    run_propose(db, batch.id)
+
+    rows = _proposals_for(db, batch.id)
+    assert any(row.via_product_code for row in rows), (
+        "the family path must be ACTIVE while the base rows are measured"
+    )
+
+    snapshot = sorted(
+        (
+            {
+                "product_code": row.product_code,
+                "spec_key": row.spec_key,
+                "value": row.value,
+                "unit": row.unit,
+                "kind": row.kind,
+                "pages": list(row.pages or []),
+                "via_product_code": row.via_product_code,
+            }
+            for row in rows
+            if row.via_product_code is None
+        ),
+        key=lambda entry: (entry["product_code"], entry["spec_key"]),
+    )
+
+    if os.environ.get("REBLESS_FLYER_BASE_GOLDEN"):
+        _BASE_ROWS_GOLDEN.write_text(
+            json.dumps(
+                {
+                    "_about": [
+                        "Every BASE proposal row the pass writes for",
+                        "tests/fixtures/dealer_kit/flyer_sample.pdf, with the family",
+                        "feature ACTIVE (SRTWC8354-SH has two siblings seeded).",
+                        "AC-A.5 of flyer-family-proposals-acceptance-criteria.md: a",
+                        "printed code's own rows are what they were before the feature.",
+                        "A diff here is a change to what the flyer pass reads, and it",
+                        "is either the point of the change or a defect - never noise.",
+                    ],
+                    "fixture": "flyer_sample.pdf",
+                    "rows": snapshot,
+                },
+                indent=1,
+            )
+            + "\n"
+        )
+
+    expected = json.loads(_BASE_ROWS_GOLDEN.read_text())["rows"]
+    assert len(snapshot) == len(expected)
+    assert snapshot == expected
 
 
 # --------------------------------------------------------------------------- #

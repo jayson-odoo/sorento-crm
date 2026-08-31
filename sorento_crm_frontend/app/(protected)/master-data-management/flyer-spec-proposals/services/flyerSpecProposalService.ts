@@ -242,9 +242,13 @@ export interface FlyerSpecApplyResult {
  * are the two exceptions mapped to camelCase, because the review screen and
  * `countsSentence` already read `viaCount` / `viaProductCode`.
  */
-type FlyerSpecBatchWire = Partial<FlyerSpecBatch> & { via_count?: number };
+type FlyerSpecBatchWire = Partial<Omit<FlyerSpecBatch, 'viaCount'>> & {
+  via_count?: number;
+};
 
-type FlyerSpecProductGroupWire = Partial<FlyerSpecProductGroup> & {
+type FlyerSpecProductGroupWire = Partial<
+  Omit<FlyerSpecProductGroup, 'viaProductCode'>
+> & {
   via_product_code?: string | null;
 };
 

@@ -1,7 +1,8 @@
 # UAC - Flyer spec proposals: one card speaks for its code family
 
 **Companion to:** `PLAN-flyer-family-proposals.md`
-**Status:** Built 31 Aug 2026, awaiting review + merge (rulings R1-R4 in the plan).
+**Status:** Built 31 Aug 2026; `origin/main` (#446, #447) merged in and the review fixes
+applied 31 Aug. Awaiting re-review + merge (rulings R1-R4 in the plan; R4 beats R2).
 **Legend:** `[BE]` pytest · `[FE]` vitest · `[E2E]` agent-browser · `[MIG]` migration · `[T]` CI guard.
 
 ## Journey
@@ -47,14 +48,24 @@ Then the sibling's rows include `dim_length 700`, `dim_width 370`, `dim_height 7
 (the sibling's own reading holds `uf` and `300`); if the sibling's stored value for a key
 equals the card's, the row is `unchanged` as today.
 
+**R4 beats R2:** only `new` and `change` proposals are dropped for a key the sibling reads
+itself. A `conflict` row - a value a person set by hand that the card disagrees with - is
+KEPT even on such a key, because it reports what is already stored rather than what the
+card says. "The sibling's own reading" means everything its own rows and rules yield under
+#447, product-master COLUMNS included, so a length typed into `dimensions_length` silences
+the card on `dim_length` exactly as its description does.
+
 ### AC-A.4 [BE] Hand-set values conflict, never silently change
 Given sibling `X-150` with `dim_height` set by hand to 740 and the card saying 735,
 Then its row is `conflict` with `stored_source == human`, same classification the base
 gets (R4).
 
 ### AC-A.5 [BE] The base is unchanged
-Rows for `X` itself are byte-for-byte what the pass produced before this feature (golden
-test on the existing fixture).
+Rows for `X` itself are byte-for-byte what the pass produced before this feature. Pinned
+by a golden on the real three-page flyer fixture
+(`tests/fixtures/dealer_kit/flyer_base_rows_golden.json`): every base row's
+`(product_code, spec_key, value, unit, kind, pages, via_product_code)`, taken with the
+family path active, so the test fails if any base row changes.
 
 ### AC-A.6 [BE] Apply, edit, dismiss work on sibling rows
 The existing apply / edit / dismiss routes accept sibling rows; applying one writes the
@@ -62,8 +73,8 @@ sibling's `product_specifications` with the same source/evidence a base row gets
 `via_product_code` is recorded in the provenance evidence string (`"L700xW370xH735mm (card SRTWC8152-SH)"`).
 
 ### AC-A.7 [MIG] Column
-`product_spec_flyer_proposal.via_product_code VARCHAR(100) NULL`. Chained on the head at
-the time (see PLAN "Migration order").
+`product_spec_flyer_proposal.via_product_code VARCHAR(100) NULL`.
+`451_flyer_proposal_via_code`, chained on `450_spec_rules_readable`; `alembic heads` is one.
 
 ### AC-A.8 [T] Response carries the field
 `FlyerSpecProductGroupOut.via_product_code` present in the serialised JSON (null on the base).
@@ -97,5 +108,12 @@ dimension rows; `SRTWC8152-SH-UF-300`'s Specifications tab shows Length 700 badg
   `...-289UF` codes look like one; measure before building).
 - The base product's own trap keys when the card prints an options line: unchanged today
   (first number). Captain: not concerned.
-- Shipped code rules for `seat_material` (`-UF`): only if S1's measurement finds UF-coded
-  siblings whose description does not say UF; otherwise the description already covers it.
+- Shipped code rules for `seat_material` (`-UF`): SHIPPED, at the END of the key's list
+  (order is priority since #447). The condition this bullet named does not decide it any
+  more: after #447's engine change the `UF ... SEAT` word rules are flyer-scoped and the
+  flyer is not an input to `derive()`, so a description saying UF is never read on a
+  catalogue derivation. Re-measured 31 Aug on the dev catalogue: **143 water closets gain
+  `seat_material = uf`**, not the ~1 first predicted; 1 (`SRTWC8088-RL-UF`) holds a
+  human-set `pp` that is kept and flagged rather than overwritten. See PLAN "The shipped
+  `seat_material` code rule, re-measured after #447" - this is a captain decision, not a
+  settled one.

@@ -277,8 +277,7 @@ export function ProductProposalGroup({
               // the only place on the row that says so.
               <Badge
                 variant="secondary"
-                className="shrink-0 font-mono text-2xs font-normal normal-case"
-                title={`Reading came from ${group.viaProductCode}'s card`}
+                className="shrink-0 font-mono text-2xs font-normal"
                 data-flyer-spec-via={group.viaProductCode}
               >
                 via {group.viaProductCode}

@@ -15,16 +15,17 @@ Both `ADD COLUMN IF NOT EXISTS`, matching `449_flyer_reading_code_overrides`'s
 reasoning: several worktrees share one local database and this may already have been
 applied there by hand.
 
-Chains onto `449_flyer_reading_code_overrides`, the single head on `main` at the time
-this lane branched.
+Chains onto `450_spec_rules_readable`, the head on `main` once #447 landed. This lane
+branched before that and originally named itself 450; it was renamed on the merge so
+`alembic heads` stays at one.
 
-Revision ID: 450_flyer_proposal_via_code
-Revises: 449_flyer_reading_code_overrides
+Revision ID: 451_flyer_proposal_via_code
+Revises: 450_spec_rules_readable
 """
 from alembic import op
 
-revision = "450_flyer_proposal_via_code"
-down_revision = "449_flyer_reading_code_overrides"
+revision = "451_flyer_proposal_via_code"
+down_revision = "450_spec_rules_readable"
 branch_labels = None
 depends_on = None
 
