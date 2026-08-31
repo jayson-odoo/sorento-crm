@@ -367,9 +367,18 @@ def _validate_rules(
         builder = rule.get("builder")
         if isinstance(builder, dict) and builder.get("kind"):
             compiled = compile_builder(builder)
+            # Compared, and later STORED, only against the fields THIS compile
+            # produced (B2). Changing a rule's kind in the editor - Text contains to
+            # Number after a word, say - leaves the previous kind's `value` sitting
+            # on the row unless something clears it; comparing every one of the four
+            # fields regardless of what the new kind emits either 422s on a stale
+            # field nobody asked about, or (worse) lets it survive the merge below
+            # and get saved: a builder row that reads `\bL\s*(\d+...)` next to a
+            # `value` from the sentence it used to be.
+            compiled_fields = {"match", "pattern", "capture", "value"} & set(compiled)
             sent = {
                 field: rule.get(field)
-                for field in ("match", "pattern", "capture", "value")
+                for field in compiled_fields
                 if rule.get(field) is not None
             }
             disagreed = [
@@ -388,6 +397,15 @@ def _validate_rules(
                     ),
                     code="spec_rule_builder_mismatch",
                 )
+            # A full replacement of the four engine fields, not a patch: whatever the
+            # PREVIOUS kind left behind - a stale `value` or `capture` the new kind
+            # does not produce - is dropped here rather than carried through by the
+            # merge below.
+            rule = {
+                k: v
+                for k, v in rule.items()
+                if k not in {"match", "pattern", "capture", "value"}
+            }
             rule = {**rule, **compiled}
 
         kind = str(rule.get("match") or "contains").lower()
@@ -406,6 +424,25 @@ def _validate_rules(
             except re.error as exc:
                 raise _reject(
                     f"Rule {index}: that pattern is not valid ({exc}).",
+                    "spec_registry_bad_rule",
+                )
+        if kind == "from_field":
+            # A `from_field column:<name>` naming a text column reads nothing today
+            # (the engine guards it), but it is a rule that can never fire and a typo
+            # that would go unnoticed forever (B3) - refused here, at the point
+            # someone can still fix it, rather than silently accepted and quietly
+            # useless.
+            from app.services.product_spec_registry import from_field_choices
+
+            allowed = from_field_choices()
+            if pattern not in allowed:
+                columns = ", ".join(
+                    sorted(c[len("column:"):] for c in allowed if c.startswith("column:"))
+                )
+                raise _reject(
+                    f"Rule {index}: '{pattern}' is not something a rule may read off "
+                    f"the product record. Use category, brand, or a numeric column "
+                    f"({columns}).",
                     "spec_registry_bad_rule",
                 )
         entry: dict = {"match": kind, "pattern": pattern}
@@ -819,6 +856,17 @@ async def try_spec_key(
         max_values = configured_max_values(db)
 
         if has_product:
+            import uuid as _uuid
+
+            try:
+                _uuid.UUID(str(payload.productId))
+            except ValueError:
+                # A non-UUID `productId` reached the database driver unparsed and
+                # raised `InvalidTextRepresentation` - a 500, for a typo in a URL a
+                # human never sees (S5). Same answer an unknown-but-valid id gets:
+                # there is no such product either way.
+                raise handle_not_found("Product", payload.productId)
+
             found = (
                 db.query(Product, ProductCategory)
                 .outerjoin(ProductCategory, ProductCategory.id == Product.category_id)
@@ -895,13 +943,18 @@ async def preview_spec_key(
 async def get_spec_key_preview(
     spec_key: str,
     job_id: str,
-    current_user: dict = Depends(require_permission_with_api_key("master_data.spec_registry.view")),
+    # `edit`, matching the POST that started the job (UAC AC-B.2) - a preview is
+    # advice for the person about to save a draft, not a general registry read.
+    current_user: dict = Depends(require_permission_with_api_key("master_data.spec_registry.edit")),
 ):
     """`{"status": "pending"}`, the four counts and a sample once `done`, or `failed`."""
     state = product_spec_preview.get(job_id)
-    if state is None:
+    # A job started against a DIFFERENT key 404s the same as an unknown one: the id
+    # is a random 12-char token, and a caller free to poll any job under any key
+    # could just as well have not checked which key the run was for.
+    if state is None or state.get("spec_key") != spec_key:
         raise handle_not_found("Preview job", job_id)
-    return state
+    return {k: v for k, v in state.items() if k != "spec_key"}
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)

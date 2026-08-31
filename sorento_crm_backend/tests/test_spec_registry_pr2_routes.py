@@ -855,6 +855,83 @@ def test_a_sentence_that_disagrees_with_its_pattern_is_refused(api):
     assert response.json()["code"] == "spec_rule_builder_mismatch"
 
 
+def test_a_stale_value_from_a_previous_kind_does_not_survive_a_kind_change(api):
+    """B2: changing a rule's sentence kind - Text contains to Number after a word -
+    used to leave the old kind's `value` sitting on the row, because only the FIELDS
+    the sender happened to include were compared/merged. A save carrying `value` from
+    the row's previous life, alongside a `number_after` builder that produces none,
+    is accepted and the stale field is dropped rather than stored."""
+    db, _as = api
+    _as(_REGISTRY_ADMIN)
+    client = TestClient(app)
+    _key(db, "zzt_length5", label="Length", data_type="numeric", unit="mm")
+
+    response = client.patch(
+        f"{_BASE}/zzt_length5",
+        json={
+            "derivation_rules": [
+                {
+                    "builder": {"kind": "number_after", "word": "L"},
+                    "match": "regex",
+                    "pattern": r"\bL\s*(\d+(?:\.\d+)?)",
+                    "capture": 1,
+                    # Left over from when this row was `text_contains` - the compare
+                    # must not 422 on it, and the merge must not keep it.
+                    "value": "PP",
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    rule = response.json()["derivation_rules"][0]
+    assert rule["match"] == "regex"
+    assert rule["pattern"] == r"\bL\s*(\d+(?:\.\d+)?)"
+    assert rule["capture"] == 1
+    assert "value" not in rule
+
+
+# --------------------------------------------------------------------------- #
+# B3 - `from_field column:<name>` is refused off a text column
+# --------------------------------------------------------------------------- #
+def test_a_from_field_rule_naming_a_text_column_is_refused(api):
+    db, _as = api
+    _as(_REGISTRY_ADMIN)
+    client = TestClient(app)
+    _key(db, "zzt_length6", label="Length", data_type="numeric", unit="mm")
+
+    response = client.patch(
+        f"{_BASE}/zzt_length6",
+        json={
+            "derivation_rules": [
+                {"match": "from_field", "pattern": "column:currency"}
+            ]
+        },
+    )
+
+    assert response.status_code == 400, response.text
+    assert "Rule 1" in response.json()["message"]
+
+
+def test_a_from_field_rule_naming_a_numeric_column_is_accepted(api):
+    db, _as = api
+    _as(_REGISTRY_ADMIN)
+    client = TestClient(app)
+    _key(db, "zzt_length7", label="Length", data_type="numeric", unit="mm")
+
+    response = client.patch(
+        f"{_BASE}/zzt_length7",
+        json={
+            "derivation_rules": [
+                {"match": "from_field", "pattern": "column:weight"}
+            ]
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["derivation_rules"][0]["pattern"] == "column:weight"
+
+
 def test_the_ignore_above_value_round_trips(api):
     """AC-A.5 - `max_value` is editable, and blank means no cap."""
     db, _as = api

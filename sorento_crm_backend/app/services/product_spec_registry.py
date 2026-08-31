@@ -1580,6 +1580,35 @@ def shipped_max_values() -> dict[str, float]:
     }
 
 
+def numeric_product_columns() -> set[str]:
+    """The `Product` columns a `from_field column:<name>` rule may legally name.
+
+    Computed from the model rather than hand-listed (B3): `from_field
+    column:currency` crashed derivation for the whole catalogue because nothing
+    checked the column existed, let alone that it held a number - `_number(str(raw))`
+    is an unguarded `float()`. A column added to `Product` later is reachable the
+    moment it exists, with no second list to remember to update.
+    """
+    from sqlalchemy import Float, Integer, Numeric
+
+    from app.models.product import Product
+
+    return {
+        column.name
+        for column in Product.__table__.columns
+        if isinstance(column.type, (Numeric, Integer, Float))
+    }
+
+
+def from_field_choices() -> set[str]:
+    """Every pattern a `from_field` rule may carry: `category`, `brand`, or a numeric
+    `column:<name>`. `_validate_rules` refuses anything else at save time (B3); the
+    frontend's `FROM_FIELD_OPTIONS` offers the same set rather than a free-text box."""
+    return {"category", "brand"} | {
+        f"column:{name}" for name in numeric_product_columns()
+    }
+
+
 def configured_max_values(db: Session) -> dict[str, float]:
     """Each key's cap as configured. Blank on a row means NO cap, and says so.
 

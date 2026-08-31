@@ -62,6 +62,11 @@ const SENTENCE_KIND_OPTIONS: { value: SpecRuleBuilderKind; label: string }[] = [
   { value: 'name_head', label: 'Product name head' },
 ];
 
+// The whitelist `from_field_choices()` enforces server-side (B3): `category`,
+// `brand`, or a numeric `Product` column. Offered here rather than a free-text box
+// for the SAME reason the server refuses anything else - `from_field
+// column:currency` used to crash derivation for the whole catalogue, because
+// nothing checked the column existed, let alone that it held a number.
 const FROM_FIELD_OPTIONS = [
   { value: 'category', label: "the product's category" },
   { value: 'brand', label: "the product's brand field" },
@@ -74,6 +79,13 @@ const FROM_FIELD_OPTIONS = [
     value: 'column:dimensions_height',
     label: 'the `dimensions_height` column',
   },
+  { value: 'column:weight', label: 'the `weight` column' },
+  { value: 'column:list_price', label: 'the `list_price` column' },
+  { value: 'column:cost_price', label: 'the `cost_price` column' },
+  { value: 'column:invoice_price', label: 'the `invoice_price` column' },
+  { value: 'column:warranty_months', label: 'the `warranty_months` column' },
+  { value: 'column:reorder_level', label: 'the `reorder_level` column' },
+  { value: 'column:reorder_quantity', label: 'the `reorder_quantity` column' },
 ];
 
 const SIZE_POSITION_OPTIONS = [
@@ -87,6 +99,17 @@ const SOURCES = [
   { value: 'any', label: 'Description and flyer' },
   { value: 'description', label: 'Product description only' },
   { value: 'flyer', label: 'Flyer only' },
+  // The two texts derivation builds FROM the description, so a shipped row can be
+  // scoped to one without it ever meaning "read the flyer" (S6): the shipped
+  // `dim_length` lone-size row is `source: "size_text"` and every `class` rule
+  // defaults to `class_tail`. Without an option for them the select rendered blank
+  // for a row already carrying a valid scope, and picking anything on it silently
+  // rewrote that scope out from under the row.
+  {
+    value: 'size_text',
+    label: 'the description, sizes only (trap span ignored)',
+  },
+  { value: 'class_tail', label: 'the product name tail' },
 ];
 
 function defaultBuilderFor(kind: SpecRuleBuilderKind): SpecRuleBuilder {
@@ -114,17 +137,43 @@ function defaultBuilderFor(kind: SpecRuleBuilderKind): SpecRuleBuilder {
   }
 }
 
-/** Compile the builder into the row's saved fields, so `match`/`pattern`/`capture` are
- *  never stale relative to what the sentence says - true whether the row is about to be
- *  saved or tried against a product this instant. */
+/** Compile the builder into the row's saved fields, so `match`/`pattern`/`capture`/
+ *  `value` are never stale relative to what the sentence says - true whether the row
+ *  is about to be saved or tried against a product this instant.
+ *
+ *  The four engine fields are explicitly cleared FIRST, then overwritten by whatever
+ *  this compile actually produced (B2): `update()` merges the patch with `{...r,
+ *  ...patch}`, and a patch that simply omitted `value` would leave a PREVIOUS kind's
+ *  value sitting on the row - Text contains `PP SEAT` -> Number after a word kept
+ *  `value: "PP"` next to a `\bL\s*(\d+...)` pattern that never produces one, and the
+ *  server's builder/pattern comparison refused the save as a mismatch. Explicitly
+ *  `undefined` here means the spread below actually overwrites the key rather than
+ *  skipping it, and `JSON.stringify` drops an `undefined` value on the way out. */
 function withCompiled(builder: SpecRuleBuilder): Partial<SpecDerivationRule> {
-  return { builder, ...compileBuilder(builder) };
+  return {
+    builder,
+    // `match`/`pattern` are not pre-cleared: `compileBuilder` always returns both
+    // (every branch, including its `default`), so TypeScript rightly flags setting
+    // them here as dead - the spread below overwrites them unconditionally either
+    // way. `capture`/`value` are NOT always returned (`text_contains` has no
+    // `capture`, `number_after` has no `value`), which is the actual bug: clearing
+    // them first is what stops a previous kind's leftovers surviving the merge.
+    capture: undefined,
+    value: undefined,
+    ...compileBuilder(builder),
+  };
 }
 
 /** "300 from `S-TRAP 300MM`" / "nothing". What a rule reads out of the try-it source. */
 function readResultText(read: SpecTryRuleRead | null | undefined): string {
-  if (!read || read.value === null || read.value === undefined)
-    return 'nothing';
+  if (!read) return 'nothing';
+  if (read.value === null || read.value === undefined) {
+    // A capped-and-dropped reading still carries an explanation ("540 from
+    // (540MM) (above 5000, ignored)") - showing bare "nothing" would hide why the
+    // row did not win. A row that truly found nothing has no evidence, so this
+    // still reads as "nothing" for it.
+    return read.evidence || 'nothing';
+  }
   const value =
     typeof read.value === 'boolean'
       ? read.value
@@ -353,6 +402,11 @@ function SortableRule({
   const compiled = rule.builder ? compileBuilder(rule.builder) : rule;
   const isPatternCapture =
     !rule.builder && rule.match === 'regex' && rule.capture !== undefined;
+  // A `from_field` row somebody dropped into Advanced and pressed "Edit pattern" on
+  // still has to stay inside the whitelist (B3) - a free-text `pattern` box let
+  // `column:currency` through, and the server's own guard is the only thing that
+  // then stood between it and a crashed catalogue-wide derivation.
+  const isBareFromField = !rule.builder && rule.match === 'from_field';
 
   return (
     <div
@@ -410,6 +464,17 @@ function SortableRule({
         <div className="min-w-[14rem] flex-1">
           {rule.builder ? (
             <BuilderRowBody builder={rule.builder} onPatch={patchBuilder} />
+          ) : isBareFromField ? (
+            <span className="flex flex-wrap items-center gap-1.5 text-sm">
+              From
+              <SearchableSelect
+                value={rule.pattern}
+                onChange={(pattern) => onPatch({ pattern })}
+                options={FROM_FIELD_OPTIONS}
+                triggerClassName="w-56"
+                size="sm"
+              />
+            </span>
           ) : isPatternCapture ? (
             <span className="flex flex-wrap items-center gap-1.5 text-sm">
               Pattern

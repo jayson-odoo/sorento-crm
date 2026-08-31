@@ -841,7 +841,15 @@ def _record_read(rule: dict, product, category, spec_key: str):
         raw = getattr(product, pattern.split(":", 1)[1], None)
         if raw is None:
             return None
-        return _number(str(raw)), f"{spec_key}={raw}", "field"
+        try:
+            return _number(str(raw)), f"{spec_key}={raw}", "field"
+        except (TypeError, ValueError):
+            # `_validate_rules` refuses a `column:` pattern outside the numeric
+            # whitelist at save time (B3), but a row written before that guard
+            # existed still has to derive without crashing the whole catalogue - a
+            # text column ("column:currency" -> "MYR") must read as nothing, not
+            # raise `float()` out of `derive()`.
+            return None
 
     return None
 
@@ -1012,6 +1020,13 @@ def apply_rules(
                         "stored": None,
                     }
                 )
+                if explain_row is not None:
+                    # An honest try-it row: the cap dropped this reading, so the
+                    # engine does not keep it. Leaving the raw number in `value`
+                    # told the person pressing Save this row won when it did not -
+                    # `evidence` still says what it found and why it was ignored.
+                    explain_row["value"] = None
+                    explain_row["evidence"] = f"{value} from {evidence} (above {cap}, ignored)"
                 if not is_explain:
                     break
                 continue

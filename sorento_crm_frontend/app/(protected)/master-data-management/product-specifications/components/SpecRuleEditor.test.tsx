@@ -5,10 +5,35 @@
  * kind menu, the blanks, the Advanced pane and the remove button.
  */
 import { describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import SpecRuleEditor from './SpecRuleEditor';
 import type { SpecDerivationRule } from '../types/productSpec.types';
 import { compileBuilder } from '../lib/ruleSentence';
+
+// B2's test needs to actually CHANGE the kind select, which the real
+// SearchableSelect (Radix popover + cmdk) is non-deterministic to drive in jsdom -
+// stood in as a native `<select>`, the same swap `PlanRowPanel.test.tsx` and
+// `AddEditPolicyModal.test.tsx` already use. Every other test in this file only
+// renders the row (never opens a dropdown), so the swap changes nothing for them.
+vi.mock('@/components/common/SearchableSelect', () => ({
+  SearchableSelect: ({
+    value,
+    onChange,
+    options,
+  }: {
+    value: string;
+    onChange: (v: string) => void;
+    options: { value: string; label: string }[];
+  }) => (
+    <select value={value} onChange={(e) => onChange(e.target.value)}>
+      {options.map((o) => (
+        <option key={o.value} value={o.value}>
+          {o.label}
+        </option>
+      ))}
+    </select>
+  ),
+}));
 
 function ruleFor(
   builder: SpecDerivationRule['builder'],
@@ -276,5 +301,90 @@ describe('try-it reads render into the rows (AC-B.3)', () => {
       />,
     );
     expect(screen.queryByText(/^Reads:/)).not.toBeInTheDocument();
+  });
+
+  it('a capped-and-dropped read shows why, not a bare "nothing" (nit)', () => {
+    render(
+      <SpecRuleEditor
+        rules={[ruleFor({ kind: 'number_before', word: 'MM' })]}
+        onChange={vi.fn()}
+        reads={[
+          {
+            index: 0,
+            value: null,
+            evidence: '540180 from (540180MM) (above 5000, ignored)',
+          },
+        ]}
+        winnerIndex={null}
+      />,
+    );
+    expect(
+      screen.getByText('540180 from (540180MM) (above 5000, ignored)'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('nothing')).not.toBeInTheDocument();
+  });
+});
+
+describe("changing a rule's kind (B2)", () => {
+  it('changing Text contains -> Number after a word drops value', () => {
+    const onChange = vi.fn();
+    render(
+      <SpecRuleEditor
+        rules={[
+          ruleFor({ kind: 'text_contains', word: 'PP SEAT', value: 'PP' }),
+        ]}
+        onChange={onChange}
+      />,
+    );
+
+    const combos = screen.getAllByRole('combobox');
+    const kindSelect = combos.find((el) =>
+      within(el).queryByRole('option', { name: 'Text contains...' }),
+    )!;
+    fireEvent.change(kindSelect, { target: { value: 'number_after' } });
+
+    const [updated] = onChange.mock.calls.at(-1)![0] as SpecDerivationRule[];
+    expect(updated.builder).toEqual({ kind: 'number_after', word: '' });
+    expect(updated.match).toBe('regex');
+    expect(updated.pattern).toBe('\\b\\s*(\\d+(?:\\.\\d+)?)');
+    expect(updated.capture).toBe(1);
+    // The stale value from the row's previous life as `text_contains` must not
+    // survive the kind change, or the server refuses the save as a builder
+    // mismatch (spec_rule_builder_mismatch).
+    expect(updated.value).toBeUndefined();
+  });
+});
+
+describe('the source select (S6)', () => {
+  it('renders a prose label for a size_text-scoped row instead of a blank select', () => {
+    render(
+      <SpecRuleEditor
+        rules={[
+          ruleFor(
+            { kind: 'number_before', word: 'MM' },
+            { source: 'size_text' },
+          ),
+        ]}
+        onChange={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByText('the description, sizes only (trap span ignored)'),
+    ).toBeInTheDocument();
+  });
+
+  it('renders a prose label for a class_tail-scoped row', () => {
+    render(
+      <SpecRuleEditor
+        rules={[
+          ruleFor(
+            { kind: 'text_contains', word: 'TAP', value: 'Tap' },
+            { source: 'class_tail' },
+          ),
+        ]}
+        onChange={vi.fn()}
+      />,
+    );
+    expect(screen.getByText('the product name tail')).toBeInTheDocument();
   });
 });
