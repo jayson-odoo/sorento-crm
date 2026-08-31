@@ -27,8 +27,12 @@ import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useCompany } from '@/app/providers/CompanyProvider';
 import { useDeferredBulkAction } from '@/hooks/useDeferredBulkAction';
 
-/** `Shared` reads as company_id = null everywhere the value leaves this dialog. */
-export const SHARED_COMPANY_VALUE = '__shared__';
+/**
+ * `Shared` reads as company_id = null everywhere the value leaves this dialog,
+ * and as `company=shared` on the drive/files list filters (AC-E1) - one
+ * sentinel for both, so a real company id (a UUID) never collides with it.
+ */
+export const SHARED_COMPANY_VALUE = 'shared';
 
 /** "3 folders, 12 files" / "1 folder" / "5 files" - the reader's words for a mixed selection. */
 function describeCounts(folderCount: number, fileCount: number): string {
@@ -76,9 +80,17 @@ export default function SetCompanyDialog({
     actionKey: 'attachment.set_company',
     entityType: 'attachment',
     verb: 'Setting company',
-    pastVerb: 'company set',
+    // Only reached by the hook's own "Nothing could be X" refusal sentence
+    // (finishText below covers every other path) - "company set" there reads
+    // as "Nothing could be company set."
+    pastVerb: 'updated',
     describe,
-    invalidateKeys: [['drive-contents'], ['attachments'], ['attachment-metadata']],
+    invalidateKeys: [
+      ['drive-contents'],
+      ['attachments'],
+      ['attachment-metadata'],
+      ['attachment-directories-tree'],
+    ],
     onStarted: onApplied,
     finishText: {
       allCommitted: (count) => `Company set: ${describe(count)}`,
@@ -121,33 +133,31 @@ export default function SetCompanyDialog({
           e.preventDefault();
           document.getElementById(triggerId)?.focus();
         }}
+        onKeyDown={(e) => {
+          // Only the CLOSED trigger, with a value already chosen, applies on
+          // Enter. An Enter fired from inside the open popover (the search
+          // input, a highlighted row) must reach cmdk's own handling - React
+          // portals still bubble through this react subtree even though the
+          // popover renders outside it in the DOM, so this has to be
+          // narrowed to the trigger button itself or every keyboard pick
+          // would be swallowed before it can select anything.
+          const target = e.target as HTMLElement;
+          if (
+            e.key === 'Enter' &&
+            companyValue &&
+            target.getAttribute('role') === 'combobox'
+          ) {
+            e.preventDefault();
+            handleApply();
+          }
+        }}
       >
         <DialogHeader>
           <DialogTitle>Set company</DialogTitle>
           <DialogDescription>{describeCounts(folderIds.length, fileIds.length) || '-'}</DialogDescription>
         </DialogHeader>
 
-        <div
-          className="py-2 space-y-2"
-          onKeyDown={(e) => {
-            // Only the CLOSED trigger, with a value already chosen, applies on
-            // Enter. An Enter fired from inside the open popover (the search
-            // input, a highlighted row) must reach cmdk's own handling - React
-            // portals still bubble through this react subtree even though the
-            // popover renders outside it in the DOM, so this has to be
-            // narrowed to the trigger button itself or every keyboard pick
-            // would be swallowed before it can select anything.
-            const target = e.target as HTMLElement;
-            if (
-              e.key === 'Enter' &&
-              companyValue &&
-              target.getAttribute('role') === 'combobox'
-            ) {
-              e.preventDefault();
-              handleApply();
-            }
-          }}
-        >
+        <div className="py-2 space-y-2">
           <SearchableSelect
             id={triggerId}
             value={companyValue}

@@ -99,6 +99,34 @@ describe('buildDriveBulkActions', () => {
     expect(all).not.toContain('bulk-zip');
   });
 
+  it('AC-F1: bulk-company is enabled for files, for folders and for a mix; absent in trash', () => {
+    const filesOnly = buildDriveBulkActions(
+      { selectionCount: 2, selectionHasFolder: false, isTrashView: false, isResubmitting: false, canRestore: false },
+      handlers,
+    );
+    const foldersOnly = buildDriveBulkActions(
+      { selectionCount: 2, selectionHasFolder: true, isTrashView: false, isResubmitting: false, canRestore: false },
+      handlers,
+    );
+    // A mixed selection is represented the same way as folders-only: at least
+    // one folder is present, so `selectionHasFolder` is the only signal the
+    // state carries either way.
+    const mixed = buildDriveBulkActions(
+      { selectionCount: 3, selectionHasFolder: true, isTrashView: false, isResubmitting: false, canRestore: false },
+      handlers,
+    );
+    for (const actions of [filesOnly, foldersOnly, mixed]) {
+      const setCompany = actions.find((a) => a.key === 'bulk-company');
+      expect(setCompany).toBeDefined();
+      expect(setCompany?.disabled).toBeFalsy();
+    }
+    const trash = buildDriveBulkActions(
+      { selectionCount: 1, selectionHasFolder: false, isTrashView: true, isResubmitting: false, canRestore: true },
+      handlers,
+    );
+    expect(trash.some((a) => a.key === 'bulk-company')).toBe(false);
+  });
+
   it('Trash exposes only Restore + Delete', () => {
     expect(
       keys({

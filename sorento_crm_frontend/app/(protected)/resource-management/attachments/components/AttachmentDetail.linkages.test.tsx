@@ -182,3 +182,57 @@ describe('AttachmentDetail - Certificates linkage tab', () => {
     expect(screen.getByText('SPAN 04124FC')).toBeInTheDocument();
   });
 });
+
+/**
+ * AC-G5 - a shared attachment's Products (and Certificates) rows carry a
+ * company badge; the twin the caller has no grant for reads as muted plain
+ * text with no View link; a single-company attachment is unchanged (R3, R15,
+ * R25, R27). Products defaults open, so these need no tab switch.
+ */
+describe('AttachmentDetail - shared attachment linkage badges (AC-G5)', () => {
+  it('shows a company badge on every row of a shared attachment', async () => {
+    getAttachmentMetadata.mockResolvedValue(
+      attachment({
+        linked_products: [
+          { id: 'p-s', name: 'ZZT Valve S', company_id: 'company-s', company_name: 'Sorento', in_scope: true },
+          { id: 'p-m', name: 'ZZT Valve M', company_id: 'company-m', company_name: 'Mocha', in_scope: false },
+        ],
+      }),
+    );
+    renderDetail();
+    expect(await screen.findByText('ZZT Valve S')).toBeInTheDocument();
+    expect(screen.getByText('ZZT Valve M')).toBeInTheDocument();
+    expect(screen.getByText('Sorento')).toBeInTheDocument();
+    expect(screen.getByText('Mocha')).toBeInTheDocument();
+  });
+
+  it('an out-of-scope row (in_scope=false) is muted plain text with no View link', async () => {
+    getAttachmentMetadata.mockResolvedValue(
+      attachment({
+        linked_products: [
+          { id: 'p-s', name: 'ZZT Valve S', company_id: 'company-s', company_name: 'Sorento', in_scope: true },
+          { id: 'p-m', name: 'ZZT Valve M', company_id: 'company-m', company_name: 'Mocha', in_scope: false },
+        ],
+      }),
+    );
+    renderDetail();
+    const outOfScopeName = await screen.findByText('ZZT Valve M');
+    expect(outOfScopeName.tagName).not.toBe('A');
+    expect(outOfScopeName.className).toMatch(/text-muted-foreground/);
+    // The in-scope row keeps its View link; the out-of-scope row has none.
+    expect(screen.getAllByRole('link', { name: /View/ })).toHaveLength(1);
+  });
+
+  it('a single-company attachment renders with no badges anywhere', async () => {
+    getAttachmentMetadata.mockResolvedValue(
+      attachment({
+        linked_products: [{ id: 'p-1', name: 'ZZT Valve', company_id: null, company_name: null }],
+      }),
+    );
+    renderDetail();
+    expect(await screen.findByText('ZZT Valve')).toBeInTheDocument();
+    expect(screen.queryByText('Sorento')).not.toBeInTheDocument();
+    expect(screen.queryByText('Mocha')).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /View/ })).toBeInTheDocument();
+  });
+});

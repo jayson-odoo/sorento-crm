@@ -105,7 +105,7 @@ import AttachmentDeleteDialog from '../../attachments/components/attachment-dele
 import AttachmentBulkDeleteDialog from '../../attachments/components/AttachmentBulkDeleteDialog';
 import AttachmentDetailModal from '../../attachments/components/AttachmentDetailModal';
 import EditAttachmentTypeDialog from '../../attachments/components/EditAttachmentTypeDialog';
-import SetCompanyDialog from '../../attachments/components/SetCompanyDialog';
+import SetCompanyDialog, { SHARED_COMPANY_VALUE } from '../../attachments/components/SetCompanyDialog';
 import { attachmentCompanyLabel } from '../../attachments/types/attachment.types';
 import { Badge } from '@/components/ui/badge';
 import { TRASH_VIEW_ID, TRASH_FOLDER_PREFIX, FOLDER_ALL_ID } from '../constants';
@@ -642,7 +642,7 @@ export default function AttachmentsInFolderPanel({
       {
         id: 'company',
         header: ({ column }) => <DataGridColumnHeader title="Company" column={column} />,
-        accessorFn: (row) => row.company_name ?? row.company_id ?? '',
+        accessorFn: (row) => row.company_name ?? '',
         enableSorting: false,
         cell: ({ row }) => {
           const item = row.original;
@@ -1147,7 +1147,7 @@ export default function AttachmentsInFolderPanel({
                         clearable
                         options={[
                           ...companyGrants.map((c) => ({ value: c.id, label: c.name })),
-                          { value: 'shared', label: 'Shared' },
+                          { value: SHARED_COMPANY_VALUE, label: 'Shared' },
                         ]}
                         placeholder="All companies"
                         triggerClassName="w-full"
