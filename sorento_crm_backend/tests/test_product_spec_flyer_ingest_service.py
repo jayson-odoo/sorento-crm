@@ -461,6 +461,207 @@ def test_repropose_deletes_old_rows_and_recomputes_against_the_current_master(db
 
 
 # --------------------------------------------------------------------------- #
+# PLAN-flyer-family-proposals.md - one card speaks for its code family
+# --------------------------------------------------------------------------- #
+def test_family_siblings_get_rows_from_the_bases_card_but_xy_1_does_not(db):
+    """AC-A.1: `X`, `X-UF`, `X-UF-300` all get rows from `X`'s card; `XY-1` - no
+    dash after `X` - is not a sibling and gets nothing. `via_product_code` names
+    the base on a sibling's rows and is null on the base's own."""
+    from app.services.product_spec_flyer_ingest import run_propose
+
+    _product(db, "ZZT-FAM1-X", "SORENTO ONE PIECE WC ZZT-FAM1-X")
+    _product(db, "ZZT-FAM1-X-UF", "SORENTO ONE PIECE WC ZZT-FAM1-X-UF")
+    _product(db, "ZZT-FAM1-X-UF-300", "SORENTO ONE PIECE WC ZZT-FAM1-X-UF-300")
+    _product(db, "ZZT-FAM1-XY-1", "SORENTO ONE PIECE WC ZZT-FAM1-XY-1")
+    reading = _reading(db, cards=[_card("ZZT-FAM1-X", "Twister Flushing")])
+    batch = _batch_row(db, reading)
+    db.commit()
+
+    run_propose(db, batch.id)
+
+    rows = _by_product_key(_proposals_for(db, batch.id))
+    assert ("ZZT-FAM1-X", "flush_type") in rows
+    assert ("ZZT-FAM1-X-UF", "flush_type") in rows
+    assert ("ZZT-FAM1-X-UF-300", "flush_type") in rows
+    assert ("ZZT-FAM1-XY-1", "flush_type") not in rows
+
+    assert rows[("ZZT-FAM1-X", "flush_type")].via_product_code is None
+    assert rows[("ZZT-FAM1-X-UF", "flush_type")].via_product_code == "ZZT-FAM1-X"
+    sibling_row = rows[("ZZT-FAM1-X-UF-300", "flush_type")]
+    assert sibling_row.via_product_code == "ZZT-FAM1-X"
+    assert sibling_row.pages == [1], "a sibling's pages are the card's pages"
+
+
+def test_a_sibling_under_another_company_gets_no_rows(db):
+    """AC-A.2: the sibling lookup is company-scoped, like every other product read."""
+    from app.services.product_spec_flyer_ingest import run_propose
+
+    other = Company(
+        id=str(uuid.uuid4()),
+        name=f"ZZT Family Other Co {uuid.uuid4().hex[:8]}",
+        code=f"ZF{uuid.uuid4().hex[:6]}",
+    )
+    db.add(other)
+    db.flush()
+
+    _product(db, "ZZT-FAM2-X", "SORENTO ONE PIECE WC ZZT-FAM2-X")
+    foreign = Product(
+        id=str(uuid.uuid4()),
+        product_code="ZZT-FAM2-X-OTHERCO",
+        product_name="ZZT-FAM2-X-OTHERCO",
+        description="SORENTO ONE PIECE WC ZZT-FAM2-X-OTHERCO",
+        category_id=_REFS["cat"],
+        base_uom_id=_REFS["uom"],
+        brand_id=_REFS["brand"],
+        list_price=Decimal("1.00"),
+        company_id=other.id,
+    )
+    db.add(foreign)
+    db.flush()
+
+    reading = _reading(db, cards=[_card("ZZT-FAM2-X", "Twister Flushing")])
+    batch = _batch_row(db, reading)
+    db.commit()
+
+    run_propose(db, batch.id)
+
+    rows = _by_product_key(_proposals_for(db, batch.id))
+    assert ("ZZT-FAM2-X", "flush_type") in rows
+    assert ("ZZT-FAM2-X-OTHERCO", "flush_type") not in rows
+
+
+def test_a_siblings_own_reading_wins_over_the_card_but_dims_still_come_from_it(db):
+    """AC-A.3: the sibling's own code (`-UF`) says the seat is UF and its own
+    description states a 300mm trap - the card's PP / 200mm claims for those two
+    keys never become rows. Dimensions and flush type, which the sibling's own
+    reading says nothing about, DO come from the card."""
+    from app.services.product_spec_flyer_ingest import run_propose
+
+    _product(db, "ZZT-FAM3-X", "SORENTO ONE PIECE WC ZZT-FAM3-X")
+    _product(
+        db,
+        "ZZT-FAM3-X-UF-300",
+        "SORENTO ONE PIECE WC (S-TRAP 300MM) ZZT-FAM3-X-UF-300",
+    )
+    reading = _reading(
+        db,
+        cards=[
+            _card(
+                "ZZT-FAM3-X",
+                "Twister Flushing. D: L700xW370xH735mm. S-Trap: 200mm. *PP Seat Cover",
+            )
+        ],
+    )
+    batch = _batch_row(db, reading)
+    db.commit()
+
+    run_propose(db, batch.id)
+
+    rows = _by_product_key(_proposals_for(db, batch.id))
+
+    # The base is unaffected (AC-A.5 in miniature): every key the card states lands.
+    for key in ("flush_type", "dim_length", "dim_width", "dim_height", "trap_length", "seat_material"):
+        assert ("ZZT-FAM3-X", key) in rows, f"base missing {key}"
+
+    sib_keys = {key for (code, key) in rows if code == "ZZT-FAM3-X-UF-300"}
+    assert "dim_length" in sib_keys and rows[("ZZT-FAM3-X-UF-300", "dim_length")].value == 700
+    assert "dim_width" in sib_keys and rows[("ZZT-FAM3-X-UF-300", "dim_width")].value == 370
+    assert "dim_height" in sib_keys and rows[("ZZT-FAM3-X-UF-300", "dim_height")].value == 735
+    assert "flush_type" in sib_keys
+
+    # The sibling's own reading (its code says UF, its description says 300mm)
+    # wins: the card is silent on these two keys for this product.
+    assert "seat_material" not in sib_keys
+    assert "trap_length" not in sib_keys
+
+
+def test_a_siblings_hand_set_value_still_conflicts_with_the_card(db):
+    """AC-A.4: the family filter never interferes with the ordinary conflict path -
+    a value a person set by hand on the sibling still conflicts with the card,
+    exactly as it would on the base."""
+    from app.services.product_spec_flyer_ingest import run_propose
+
+    _product(db, "ZZT-FAM4-X", "SORENTO ONE PIECE WC ZZT-FAM4-X")
+    _product(db, "ZZT-FAM4-X-150", "SORENTO ONE PIECE WC ZZT-FAM4-X-150")
+    db.commit()
+    derive_for_code(db, "ZZT-FAM4-X-150", commit=True)
+    apply_spec_values(
+        db,
+        "ZZT-FAM4-X-150",
+        [{"spec_key": "dim_height", "op": "set", "value": 740, "source": "human"}],
+        actor=_USER,
+    )
+
+    reading = _reading(
+        db, cards=[_card("ZZT-FAM4-X", "D: L700xW370xH735mm")]
+    )
+    batch = _batch_row(db, reading)
+    db.commit()
+
+    run_propose(db, batch.id)
+
+    rows = _by_product_key(_proposals_for(db, batch.id))
+    sib_row = rows[("ZZT-FAM4-X-150", "dim_height")]
+    assert sib_row.kind == "conflict"
+    assert sib_row.stored_value == 740
+    assert sib_row.stored_source == "human"
+
+
+def test_family_counts_include_siblings_and_via_count(db):
+    """AC-A.9: `product_count` counts the base and its siblings; `via_count` is
+    how many of them are siblings."""
+    from app.services.product_spec_flyer_ingest import run_propose
+
+    _product(db, "ZZT-FAM5-X", "SORENTO ONE PIECE WC ZZT-FAM5-X")
+    _product(db, "ZZT-FAM5-X-150", "SORENTO ONE PIECE WC ZZT-FAM5-X-150")
+    _product(db, "ZZT-FAM5-X-UF-300", "SORENTO ONE PIECE WC ZZT-FAM5-X-UF-300")
+    reading = _reading(db, cards=[_card("ZZT-FAM5-X", "Twister Flushing")])
+    batch = _batch_row(db, reading)
+    db.commit()
+
+    run_propose(db, batch.id)
+    db.refresh(batch)
+
+    assert batch.product_count == 3
+    assert batch.via_count == 2
+
+
+def test_family_resolution_is_one_statement_per_pass(db):
+    """AC-A.10: the sibling lookup is ONE statement for the whole pass, not one
+    per matched code - measured with a `before_cursor_execute` counter over five
+    bases, each with its own siblings."""
+    from sqlalchemy import event
+
+    from app.services.product_spec_flyer_ingest import run_propose
+
+    cards = []
+    for i in range(5):
+        base_code = f"ZZT-FAM6-X{i}"
+        _product(db, base_code, f"SORENTO ONE PIECE WC {base_code}")
+        _product(db, f"{base_code}-150", f"SORENTO ONE PIECE WC {base_code}-150")
+        _product(db, f"{base_code}-UF-300", f"SORENTO ONE PIECE WC {base_code}-UF-300")
+        cards.append(_card(base_code, "Twister Flushing"))
+    reading = _reading(db, cards=cards)
+    batch = _batch_row(db, reading)
+    db.commit()
+
+    statements: list[str] = []
+
+    def _count(conn, cursor, statement, params, context, executemany):
+        lowered = statement.lower()
+        if "unnest" in lowered and "like" in lowered and "products" in lowered:
+            statements.append(statement)
+
+    event.listen(db.bind, "before_cursor_execute", _count)
+    try:
+        run_propose(db, batch.id)
+    finally:
+        event.remove(db.bind, "before_cursor_execute", _count)
+
+    assert len(statements) == 1, f"expected 1 sibling-resolution statement, got {len(statements)}"
+
+
+# --------------------------------------------------------------------------- #
 # Company scope - a batch belongs to the company whose flyer it was read from
 # --------------------------------------------------------------------------- #
 def test_a_batch_is_only_visible_under_its_own_companys_scope(db):

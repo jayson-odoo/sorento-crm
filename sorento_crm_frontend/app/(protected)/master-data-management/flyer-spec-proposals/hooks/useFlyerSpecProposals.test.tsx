@@ -90,6 +90,7 @@ function batch(overrides: Partial<FlyerSpecBatch> = {}): FlyerSpecBatch {
     applied_at: null,
     created_by_name: null,
     applied_by_name: null,
+    viaCount: 0,
     ...overrides,
   };
 }
@@ -367,6 +368,7 @@ describe('useAddFlyerSpecProposalRow, the cached batch (AC-G.1, AC-F.4)', () => 
             product_code: 'SRTWC8066',
             product_name: 'WC',
             pages: [1],
+            viaProductCode: null,
             proposals: [],
           },
           {
@@ -374,6 +376,7 @@ describe('useAddFlyerSpecProposalRow, the cached batch (AC-G.1, AC-F.4)', () => 
             product_code: 'SRTWC8067',
             product_name: 'WC 2',
             pages: [1],
+            viaProductCode: null,
             proposals: [],
           },
         ],

@@ -282,9 +282,17 @@ def _rules_from_shipped_tables() -> dict[str, list[dict]]:
             {"match": "regex", "pattern": r"H\s*(\d+(?:\.\d+)?)\s*(?:MM|mm)?", "capture": 1,
              "source": "flyer"}
         ],
-        # What the seat cover is made of. Only the flyer says it ("*PP Seat Cover"),
-        # and it is a real buying decision: PP is the cheap one, UF the heavy one.
+        # What the seat cover is made of. Only the flyer says it in words ("*PP Seat
+        # Cover"), and it is a real buying decision: PP is the cheap one, UF the heavy
+        # one. Measured 31 Aug 2026 (PLAN-flyer-family-proposals.md S1): of the 179
+        # `-UF` coded products, 1 (`SRTWC8088-RL-UF`) carries no description at all, so
+        # nothing above can read it - the code is the only fact left. `code_contains`
+        # always runs after every description/flyer rule regardless of its position in
+        # this list (`apply_rules` is source-major), so this is a fallback in practice,
+        # exactly as the finish code-suffix rule is: a word beats a code convention,
+        # and a code convention beats nothing.
         "seat_material": [
+            {"match": "code_contains", "pattern": "-UF", "value": "uf"},
             {"match": "regex", "pattern": r"\bPP\b[^.]*SEAT", "value": "pp", "source": "flyer"},
             {"match": "regex", "pattern": r"\bUF\b[^.]*SEAT", "value": "uf", "source": "flyer"},
             {"match": "regex", "pattern": r"UREA[^.]*SEAT", "value": "uf"},

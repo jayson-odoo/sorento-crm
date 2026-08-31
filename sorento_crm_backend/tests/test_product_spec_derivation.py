@@ -541,6 +541,23 @@ def test_non_finish_suffixes_yield_nothing(db, code):
 
 
 # --------------------------------------------------------------------------- #
+# seat_material, from the code as a fallback (PLAN-flyer-family-proposals.md S1
+# measurement, 31 Aug 2026: one live `-UF` product carries no description at all)
+# --------------------------------------------------------------------------- #
+def test_seat_material_falls_back_to_the_code_when_the_description_is_silent(db):
+    _product(db, "ZZTWC-CODEUF-UF", "SORENTO ONE PIECE WC")
+    derive_for_code(db, "ZZTWC-CODEUF-UF")
+    assert _value(db, "ZZTWC-CODEUF-UF", "seat_material") == "uf"
+
+
+def test_seat_material_from_the_description_beats_the_code(db):
+    """The code says UF; the description says DUROPLAST. Words win (source-major)."""
+    _product(db, "ZZTWC-CODEUF-DUR-UF", "SORENTO ONE PIECE WC DUROPLAST SEAT COVER")
+    derive_for_code(db, "ZZTWC-CODEUF-DUR-UF")
+    assert _value(db, "ZZTWC-CODEUF-DUR-UF", "seat_material") == "duroplast"
+
+
+# --------------------------------------------------------------------------- #
 # accessory discriminator (AC-T0c-14)
 # --------------------------------------------------------------------------- #
 

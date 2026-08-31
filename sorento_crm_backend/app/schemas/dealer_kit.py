@@ -1015,6 +1015,10 @@ class FlyerSpecBatchOut(BaseModel):
     unchanged_count: int = 0
     suppressed_count: int = 0
     applied_count: int = 0
+    # How many of `product_count` came from a family card rather than their own
+    # printed code (PLAN-flyer-family-proposals.md, AC-A.9). Zero on a batch
+    # with no families.
+    via_count: int = 0
 
     read_at: Optional[datetime] = None
     created_at: Optional[datetime] = None
@@ -1066,6 +1070,10 @@ class FlyerSpecProductGroupOut(BaseModel):
     product_code: str
     product_name: str
     pages: list[int] = Field(default_factory=list)
+    # The printed code whose card filled this group's gaps, when this product was
+    # never itself printed on the flyer (PLAN-flyer-family-proposals.md R1). Null
+    # on the base itself and on any product proposed from its own card.
+    via_product_code: Optional[str] = None
     proposals: list[FlyerSpecProposalOut] = Field(default_factory=list)
 
 

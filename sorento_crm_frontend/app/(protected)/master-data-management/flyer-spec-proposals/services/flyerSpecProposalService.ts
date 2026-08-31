@@ -38,9 +38,17 @@
  *        zero counts and no groups - NEVER a 404, because "not proposed yet" is
  *        an answer the screen has to render (AC-B.1).
  *        `groups` is filled only when `status` is `proposed`, in flyer page
- *        order, and each group names its product by CODE and NAME. The only
- *        UUIDs on the wire are `id` (the apply payload names them) and
- *        `product_id` (the link to the product record) - AC-B.3.
+ *        order, base before its own siblings - the FE never re-sorts this.
+ *        Each group names its product by CODE and NAME. The only UUIDs on the
+ *        wire are `id` (the apply payload names them) and `product_id` (the
+ *        link to the product record) - AC-B.3.
+ *
+ *        `via_product_code` (PLAN-flyer-family-proposals.md, R1): null on a
+ *        group proposed from its own printed code; the base's printed code
+ *        (e.g. `SRTWC8152-SH`) on a group that got its reading from that
+ *        card because its own code is `<that code>-<suffix>` and it was never
+ *        printed itself. `via_count` on the batch is how many groups that is.
+ *        Read as `viaProductCode` / `viaCount` below.
  *
  * WRITES
  *
@@ -156,6 +164,13 @@ export interface FlyerSpecBatch {
   /** By NAME, never an id (AC-B.3). Null when nobody is recorded. */
   created_by_name: string | null;
   applied_by_name: string | null;
+  /**
+   * How many of `product_count` are a sibling picked up via a family card
+   * (PLAN-flyer-family-proposals.md, R1) rather than their own printed code.
+   * Zero on a batch with no families, and on any batch proposed before the
+   * feature existed.
+   */
+  viaCount: number;
 }
 
 /**
@@ -185,6 +200,13 @@ export interface FlyerSpecProductGroup {
   product_name: string;
   /** Which flyer pages this product was printed on. */
   pages: number[];
+  /**
+   * The printed code whose card filled this group's gaps, when this product
+   * was never itself printed on the flyer - e.g. `SRTWC8152-SH` on the group
+   * for `SRTWC8152-SH-UF-300` (PLAN-flyer-family-proposals.md, R1). Null on
+   * the base itself and on any product proposed from its own card.
+   */
+  viaProductCode: string | null;
   proposals: FlyerSpecProposal[];
 }
 
@@ -214,9 +236,21 @@ export interface FlyerSpecApplyResult {
   refused: RefusedFlyerSpec[];
 }
 
+/**
+ * The wire shapes below stay snake_case, matching the backend's response
+ * bodies exactly (see the module docstring) - `via_count` / `via_product_code`
+ * are the two exceptions mapped to camelCase, because the review screen and
+ * `countsSentence` already read `viaCount` / `viaProductCode`.
+ */
+type FlyerSpecBatchWire = Partial<FlyerSpecBatch> & { via_count?: number };
+
+type FlyerSpecProductGroupWire = Partial<FlyerSpecProductGroup> & {
+  via_product_code?: string | null;
+};
+
 /** An absent list is an empty one; an absent batch would hide the whole answer. */
 function toBatch(
-  wire: Partial<FlyerSpecBatch>,
+  wire: FlyerSpecBatchWire,
   readingId = '',
 ): FlyerSpecBatch {
   return {
@@ -242,14 +276,29 @@ function toBatch(
     applied_at: wire.applied_at ?? null,
     created_by_name: wire.created_by_name ?? null,
     applied_by_name: wire.applied_by_name ?? null,
+    viaCount: wire.via_count ?? 0,
+  };
+}
+
+function toGroup(wire: FlyerSpecProductGroupWire): FlyerSpecProductGroup {
+  return {
+    product_id: wire.product_id ?? '',
+    product_code: wire.product_code ?? '',
+    product_name: wire.product_name ?? '',
+    pages: wire.pages ?? [],
+    viaProductCode: wire.via_product_code ?? null,
+    proposals: wire.proposals ?? [],
   };
 }
 
 function toProposals(
-  wire: Partial<FlyerSpecProposals>,
+  wire: FlyerSpecBatchWire & { groups?: FlyerSpecProductGroupWire[] },
   readingId: string,
 ): FlyerSpecProposals {
-  return { ...toBatch(wire, readingId), groups: wire.groups ?? [] };
+  return {
+    ...toBatch(wire, readingId),
+    groups: (wire.groups ?? []).map(toGroup),
+  };
 }
 
 /** Every proposal pass, newest first. The Master Data list is this call. */
@@ -260,7 +309,7 @@ export async function listFlyerSpecBatches(): Promise<FlyerSpecBatch[]> {
       await extractApiError(response, 'Could not load the flyer proposals'),
     );
   }
-  const rows = (await response.json()) as Partial<FlyerSpecBatch>[];
+  const rows = (await response.json()) as FlyerSpecBatchWire[];
   return (Array.isArray(rows) ? rows : []).map((row) => toBatch(row));
 }
 
