@@ -52,7 +52,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "450_spec_rules_readable"
-down_revision = "448_merge_s6b_ptag"
+down_revision = "449_flyer_reading_code_overrides"
 branch_labels = None
 depends_on = None
 
