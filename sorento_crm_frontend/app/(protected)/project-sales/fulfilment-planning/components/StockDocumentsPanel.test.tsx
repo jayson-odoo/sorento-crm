@@ -75,7 +75,10 @@ function captainsPosition(overrides: Partial<StockDetail> = {}): StockDetail {
   };
 }
 
-function renderPanel(group?: string) {
+function renderPanel(
+  group?: string,
+  extra: Partial<React.ComponentProps<typeof StockDocumentsPanel>> = {},
+) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, gcTime: 0 } },
   });
@@ -86,6 +89,7 @@ function renderPanel(group?: string) {
         warehouseId={group ? null : 'wh-1'}
         group={group}
         lineIds={['line-a']}
+        {...extra}
       />
     </QueryClientProvider>,
   );
@@ -517,5 +521,142 @@ describe('StockDocumentsPanel: the group reading', () => {
 
     expect(within(table).queryByText('Balance after')).not.toBeInTheDocument();
     expect(within(table).queryByText('Bin')).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * S3 (PLAN-scm-planning-feedback-31aug): the "Donor" and "This document" badges (AC-3.3/3.4),
+ * the search (AC-3.5) and the jump flash (AC-3.1/3.11).
+ */
+describe('StockDocumentsPanel: the S3 badges, search and jump', () => {
+  it('AC-3.3: badges the donor row by its core line id, and leaves other rows plain', async () => {
+    getStockDetail.mockResolvedValue(captainsPosition());
+
+    renderPanel(undefined, { donor: { soNumber: 'SO391698', lineId: 'line-a' } });
+
+    const table = await screen.findByRole('table');
+    // `line-a` is the FIRST sales order in `captainsPosition` (SO391698, also "This line" -
+    // AC-3.3 states the two badges may coexist on one row).
+    expect(within(table).getByTestId('stock-document-donor')).toBeInTheDocument();
+    expect(within(table).getByTestId('stock-document-this-line')).toBeInTheDocument();
+  });
+
+  it('AC-3.3: falls back to the SO number when no core line id was named', async () => {
+    getStockDetail.mockResolvedValue(captainsPosition());
+
+    renderPanel(undefined, { donor: { soNumber: 'SO324265' } });
+
+    const table = await screen.findByRole('table');
+    expect(within(table).getByTestId('stock-document-donor').closest('tr')?.textContent).toContain(
+      'SO324265',
+    );
+  });
+
+  it('AC-3.4: badges the SPO row, normalising the "SPO " prefix either side', async () => {
+    getStockDetail.mockResolvedValue(
+      captainsPosition({
+        incoming: [
+          {
+            spo_number: '202609-0041',
+            supplier_name: 'FOSHAN WORKS',
+            expected_date: '2026-10-20',
+            spo_qty: '30',
+          },
+        ],
+      }),
+    );
+
+    renderPanel(undefined, {
+      documentInfo: { spoNumber: 'SPO 202609-0041' },
+    });
+
+    const table = await screen.findByRole('table');
+    expect(within(table).getByTestId('stock-document-this-document')).toBeInTheDocument();
+  });
+
+  it('AC-3.5: search filters by SO number, customer or agent, case-insensitively', async () => {
+    getStockDetail.mockResolvedValue(captainsPosition());
+
+    renderPanel(undefined, { filterText: 'masuka' });
+
+    const table = await screen.findByRole('table');
+    expect(within(table).queryByText('SO391698')).not.toBeInTheDocument();
+    expect(within(table).getByText('SO324265')).toBeInTheDocument();
+  });
+
+  it('AC-3.5: an explicit empty state on a miss, distinct from "nothing is claiming this stock"', async () => {
+    getStockDetail.mockResolvedValue(captainsPosition());
+
+    renderPanel(undefined, { filterText: 'no such order anywhere' });
+
+    expect(await screen.findByTestId('stock-documents-search-empty')).toBeInTheDocument();
+    expect(screen.getByText('No document matches your search')).toBeInTheDocument();
+  });
+
+  it('AC-3.5: clearing the search restores the full table', async () => {
+    getStockDetail.mockResolvedValue(captainsPosition());
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
+    const props = { productId: 'prod-1', warehouseId: 'wh-1', lineIds: ['line-a'] };
+
+    const { rerender } = render(
+      <QueryClientProvider client={client}>
+        <StockDocumentsPanel {...props} filterText="masuka" />
+      </QueryClientProvider>,
+    );
+    await screen.findByRole('table');
+    expect(screen.queryByText('SO391698')).not.toBeInTheDocument();
+
+    rerender(
+      <QueryClientProvider client={client}>
+        <StockDocumentsPanel {...props} filterText="" />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByText('SO391698')).toBeInTheDocument();
+    expect(screen.getByText('SO324265')).toBeInTheDocument();
+  });
+
+  it('AC-3.1/3.3/3.4: a jump scrolls to and flashes the matching row, then the flash clears', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    Element.prototype.scrollIntoView = vi.fn();
+    getStockDetail.mockResolvedValue(captainsPosition());
+
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
+    const { rerender } = render(
+      <QueryClientProvider client={client}>
+        <StockDocumentsPanel
+          productId="prod-1"
+          warehouseId="wh-1"
+          lineIds={['line-a']}
+          jumpTarget={null}
+        />
+      </QueryClientProvider>,
+    );
+    await screen.findByRole('table');
+
+    rerender(
+      <QueryClientProvider client={client}>
+        <StockDocumentsPanel
+          productId="prod-1"
+          warehouseId="wh-1"
+          lineIds={['line-a']}
+          jumpTarget={{ kind: 'this-line', nonce: 1 }}
+        />
+      </QueryClientProvider>,
+    );
+
+    const row = screen.getByTestId('stock-document-this-line').closest('tr');
+    expect(row?.className).toContain('jump-flash');
+    expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
+
+    // The pulse fades - never a persistent second selection colour (AC-3.11).
+    vi.advanceTimersByTime(1600);
+    expect(row?.className).not.toContain('jump-flash');
+
+    vi.useRealTimers();
   });
 });

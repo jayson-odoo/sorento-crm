@@ -22,6 +22,11 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { StatCard } from '@/components/scm/StatCard';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
+import {
+  isSearchInFlight,
+  useDebouncedSearch,
+} from '@/hooks/useDebouncedSearch';
 import { cn } from '@/lib/utils';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { PanelDataGrid } from '../../_shared/components/PanelDataGrid';
@@ -53,6 +58,10 @@ import type {
   BoardContribution,
   BoardDecision,
   BoardDraft,
+  BoardSource,
+  CellStockTableHandle,
+  StockDocumentMatch,
+  StockDonorMatch,
 } from '../../_shared/types/fulfilmentPlanning.types';
 
 /**
@@ -238,10 +247,87 @@ export function BoardCellBreakdownDialog({
   );
   const shownLocations = shownContribution?.locations ?? cell.locations;
 
+  /**
+   * The lightbox's own navigation (S3, PLAN-scm-planning-feedback-31aug): a jump to "This
+   * line", a donor or an incoming document is driven through this handle rather than through
+   * state here, because the row it scrolls to lives inside a query `CellStockTable` and
+   * `StockDocumentsPanel` own, not inside this dialog.
+   */
+  const stockTableRef = React.useRef<CellStockTableHandle>(null);
+
+  /**
+   * The donor and the incoming document the SHOWN line's own suggestion names, if either
+   * (AC-3.3/3.4/3.13). Both can be the SAME source - "Borrow ... (SPO x) from SO397460" names
+   * an SPO and the order waiting on it in one sentence - so the two are read independently
+   * rather than as alternatives.
+   */
+  const donorSource = React.useMemo(
+    () =>
+      shownContribution?.sources.find((source) => source.donor_so_number) ??
+      null,
+    [shownContribution],
+  );
+  const documentSource = React.useMemo(
+    () =>
+      shownContribution?.sources.find((source) => source.supply_document) ??
+      null,
+    [shownContribution],
+  );
+  const donorMatch: StockDonorMatch | null = donorSource
+    ? {
+        soNumber: donorSource.donor_so_number as string,
+        lineId: donorSource.donor_core_line_id,
+        location: donorSource.location,
+      }
+    : null;
+  const documentMatch: StockDocumentMatch | null = documentSource
+    ? {
+        spoNumber: documentSource.supply_document as string,
+        location: documentSource.location,
+      }
+    : null;
+
+  /** AC-3.5: the sticky toolbar's search, filtering the Stock tab's expanded documents. */
+  const stockSearch = useDebouncedSearch();
+  /** AC-3.5: the Contributing lines tab's own search - a separate box, a separate list. */
+  const linesSearch = useDebouncedSearch();
+
+  /**
+   * AC-3.1: opening a cell lands the lightbox at "This line" by default - own-location
+   * expanded, scrolled, flashed - with no intermediate expand-then-hunt step.
+   *
+   * `CellStockTable` itself raises this landing on its OWN mount (its module doc explains
+   * why) rather than this effect calling it through the ref: the dialog's `<Tabs>` needs a
+   * commit of its own before the "stock" panel's content actually mounts, so a mount-time
+   * effect HERE would fire while `stockTableRef.current` is still null and never re-fire -
+   * `cellKey` does not change between that first commit and the one that follows it. Kept as
+   * the remount key so a stock expansion never survives from one cell to the next.
+   */
+  const cellKey = `${cell.row_key ?? cell.item_code}|${cell.bucket_key}`;
+
   const selectedKeys = React.useMemo(
     () => Object.keys(rowSelection).filter((key) => rowSelection[key]),
     [rowSelection],
   );
+
+  /**
+   * AC-3.5: what the Contributing lines search leaves standing - SO number, customer or
+   * agent, case-insensitively, client-side. `cell.contributions` is already the whole cell,
+   * so there is nothing to fetch a second time.
+   */
+  const filteredContributions = React.useMemo(() => {
+    const needle = linesSearch.debouncedValue.trim().toLowerCase();
+    if (!needle) return cell.contributions;
+    return cell.contributions.filter((contribution) =>
+      [
+        contribution.so_number,
+        contribution.customer_name,
+        contribution.agent_code,
+      ]
+        .filter((value): value is string => Boolean(value))
+        .some((value) => value.toLowerCase().includes(needle)),
+    );
+  }, [cell.contributions, linesSearch.debouncedValue]);
 
   /**
    * One verdict, applied to every ticked row.
@@ -765,6 +851,84 @@ export function BoardCellBreakdownDialog({
             </TabsList>
 
             <TabsContent value="stock">
+              {/* The suggestion, as a SENTENCE rather than only as the composition card above
+                  (mockup round 4): the donor SO and the SPO document a Borrow names are links
+                  here, and nowhere else carries the words to make them one. Only sources that
+                  NAME a donor or a document print one - a Reserve or a Buy has neither and
+                  says nothing extra. */}
+              {(donorSource || documentSource) && (
+                <div
+                  data-testid="cell-suggestion-sentence"
+                  className="mb-3 space-y-1"
+                >
+                  {(shownContribution?.sources ?? [])
+                    .filter(
+                      (source) =>
+                        source.donor_so_number || source.supply_document,
+                    )
+                    .map((source, index) => (
+                      <p
+                        key={`${source.kind}-${index}`}
+                        className="text-sm text-muted-foreground"
+                      >
+                        {annotateReason(source, {
+                          onDonorClick: () =>
+                            stockTableRef.current?.jumpToDonor(),
+                          onDocumentClick: () =>
+                            stockTableRef.current?.jumpToDocument(),
+                        })}
+                      </p>
+                    ))}
+                </div>
+              )}
+
+              {/* The sticky toolbar (AC-3.2/3.9): search plus the three jump buttons, pinned
+                  to the top of the DIALOG'S OWN scroll (`DialogBody`, `overflow-y-auto`) so
+                  they stay reachable while the table below scrolls underneath them. Donor and
+                  document buttons render only when the shown line's suggestion names one. */}
+              <div className="sticky top-0 z-10 mb-3 flex flex-wrap items-center gap-2 border-b border-border bg-background py-2">
+                <ListSearchInput
+                  value={stockSearch.value}
+                  onChange={stockSearch.setValue}
+                  isSettling={stockSearch.isSettling}
+                  placeholder="Search SO number, customer, agent"
+                  className="w-full sm:w-72"
+                />
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  data-testid="stock-jump-this-line"
+                  onClick={() => stockTableRef.current?.jumpToThisLine()}
+                >
+                  My line
+                </Button>
+                {donorMatch ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    data-testid="stock-jump-donor"
+                    className="border-amber-300 text-amber-700 dark:border-amber-800 dark:text-amber-400"
+                    onClick={() => stockTableRef.current?.jumpToDonor()}
+                  >
+                    Donor
+                  </Button>
+                ) : null}
+                {documentMatch ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    data-testid="stock-jump-document"
+                    className="border-emerald-300 text-emerald-700 dark:border-emerald-800 dark:text-emerald-400"
+                    onClick={() => stockTableRef.current?.jumpToDocument()}
+                  >
+                    {documentMatch.spoNumber}
+                  </Button>
+                ) : null}
+              </div>
+
               {/* What is actually AT each location, not only what is outstanding from it - the
                   captain's "where will I need to source to fulfil", answered with facts, and the
                   dialog has to carry it because a reader who opened it from a cell they can no
@@ -774,7 +938,8 @@ export function BoardCellBreakdownDialog({
                   pointed at a different cell: an expansion left open would otherwise show the
                   previous cell's documents under the new cell's row. */}
               <CellStockTable
-                key={`${cell.row_key ?? cell.item_code}|${cell.bucket_key}`}
+                key={cellKey}
+                ref={stockTableRef}
                 locations={shownLocations}
                 groupNote={cell.location_group_note}
                 taken={taken}
@@ -784,6 +949,10 @@ export function BoardCellBreakdownDialog({
                     ? `${shownContribution.so_number} line ${shownContribution.line_no}`
                     : undefined
                 }
+                donor={donorMatch}
+                documentInfo={documentMatch}
+                filterText={stockSearch.debouncedValue}
+                landOnMount
               />
             </TabsContent>
 
@@ -791,7 +960,9 @@ export function BoardCellBreakdownDialog({
               <PanelDataGrid<BoardContribution>
                 title="Contributing lines"
                 columns={columns}
-                rows={cell.contributions}
+                // AC-3.5: the same search box, filtering THESE rows by SO number, customer or
+                // agent - never a second fetch, `cell.contributions` is already the whole cell.
+                rows={filteredContributions}
                 getRowId={(row) => row.key}
                 listingKey="projects.projects.view::project-board-cell-breakdown"
                 sortable
@@ -809,51 +980,70 @@ export function BoardCellBreakdownDialog({
                   !row.original.unplannable && !row.original.covered
                 }
                 toolbar={
-                  selectedKeys.length > 0 ? (
-                    <div className="flex flex-wrap items-center gap-2">
-                      {/* Says exactly how many rows the verbs will act on. With a paginated cell
-                      the header ticks this page, and this count is what was ticked - so the
-                      strip never implies more than it will do. */}
-                      <Badge
-                        variant="secondary"
-                        className="h-8 gap-1 px-2.5 text-sm"
-                      >
-                        {`${selectedKeys.length} selected`}
-                      </Badge>
-                      <Button
-                        type="button"
-                        size="sm"
-                        onClick={() => decideSelected({ verdict: 'approved' })}
-                      >
-                        <Check className="size-4" aria-hidden />
-                        Approve selected
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        onClick={() =>
-                          decideSelected({
-                            verdict: 'rejected',
-                            reason: 'Rejected on the planning board.',
-                          })
-                        }
-                      >
-                        <X className="size-4" aria-hidden />
-                        Reject selected
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => setRowSelection({})}
-                      >
-                        Clear
-                      </Button>
-                    </div>
-                  ) : undefined
+                  <div className="flex flex-wrap items-center gap-2">
+                    <ListSearchInput
+                      value={linesSearch.value}
+                      onChange={linesSearch.setValue}
+                      isSettling={isSearchInFlight(
+                        linesSearch.isSettling,
+                        false,
+                        linesSearch.debouncedValue,
+                      )}
+                      placeholder="Search SO number, customer, agent"
+                      className="w-full sm:w-72"
+                    />
+                    {selectedKeys.length > 0 ? (
+                      <>
+                        {/* Says exactly how many rows the verbs will act on. With a paginated cell
+                        the header ticks this page, and this count is what was ticked - so the
+                        strip never implies more than it will do. */}
+                        <Badge
+                          variant="secondary"
+                          className="h-8 gap-1 px-2.5 text-sm"
+                        >
+                          {`${selectedKeys.length} selected`}
+                        </Badge>
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={() =>
+                            decideSelected({ verdict: 'approved' })
+                          }
+                        >
+                          <Check className="size-4" aria-hidden />
+                          Approve selected
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={() =>
+                            decideSelected({
+                              verdict: 'rejected',
+                              reason: 'Rejected on the planning board.',
+                            })
+                          }
+                        >
+                          <X className="size-4" aria-hidden />
+                          Reject selected
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => setRowSelection({})}
+                        >
+                          Clear
+                        </Button>
+                      </>
+                    ) : null}
+                  </div>
                 }
-                emptyTitle="No line contributes to this cell"
+                emptyTitle={
+                  linesSearch.debouncedValue
+                    ? 'No line matches your search'
+                    : 'No line contributes to this cell'
+                }
                 emptyBody="Nothing in the selection is outstanding for this product by this date."
                 pageSize={25}
               />
@@ -1075,6 +1265,74 @@ export function sourceAt(source: BoardContribution['sources'][number]): string {
   return source.kind === 'borrow'
     ? ` from ${source.location}`
     : ` at ${source.location}`;
+}
+
+/**
+ * The engine's own sentence (`source.reason`), with the donor SO and/or the SPO document it
+ * NAMES turned into jump links in place (AC-3.3/3.4/3.13) - never a second, client-built
+ * sentence beside the server's, which is how a Reserve's wording and a Borrow's would start
+ * to read as two different vocabularies.
+ *
+ * Splits on the EXACT substrings the server already sent (`donor_so_number`,
+ * `supply_document`) rather than re-parsing the prose: the two markers are known values, so
+ * a plain search-and-wrap is the whole job, and a regex over free text would be guessing at
+ * a grammar the server never promised to keep stable.
+ */
+function annotateReason(
+  source: BoardSource,
+  handlers: { onDonorClick: () => void; onDocumentClick: () => void },
+): React.ReactNode {
+  const markers = [
+    source.donor_so_number
+      ? {
+          value: source.donor_so_number,
+          testId: 'suggestion-donor-link',
+          onClick: handlers.onDonorClick,
+        }
+      : null,
+    source.supply_document
+      ? {
+          value: source.supply_document,
+          testId: 'suggestion-document-link',
+          onClick: handlers.onDocumentClick,
+        }
+      : null,
+  ]
+    .filter(
+      (
+        marker,
+      ): marker is { value: string; testId: string; onClick: () => void } =>
+        Boolean(marker),
+    )
+    .map((marker) => ({
+      ...marker,
+      index: source.reason.indexOf(marker.value),
+    }))
+    .filter((marker) => marker.index >= 0)
+    .sort((a, b) => a.index - b.index);
+
+  if (markers.length === 0) return source.reason;
+
+  const nodes: React.ReactNode[] = [];
+  let cursor = 0;
+  markers.forEach((marker, position) => {
+    if (marker.index < cursor) return; // overlapping matches: keep the first, skip the rest
+    nodes.push(source.reason.slice(cursor, marker.index));
+    nodes.push(
+      <button
+        key={`${marker.testId}-${position}`}
+        type="button"
+        data-testid={marker.testId}
+        onClick={marker.onClick}
+        className="font-medium text-primary underline-offset-2 hover:underline"
+      >
+        {marker.value}
+      </button>,
+    );
+    cursor = marker.index + marker.value.length;
+  });
+  nodes.push(source.reason.slice(cursor));
+  return nodes;
 }
 
 /** The outstanding quantity: the server's own name for it when it sends one. */

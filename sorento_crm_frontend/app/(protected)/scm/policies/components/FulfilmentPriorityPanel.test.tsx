@@ -28,6 +28,7 @@ const DATA = {
   demand_class_weights: { project: 1, retail: 0.4 },
   reorder_coverage_until: '2026-10-31',
   tba_date_from: '2029-01-01',
+  transfer_days: 0,
   exists: true,
 };
 
@@ -117,7 +118,36 @@ describe('FulfilmentPriorityPanel', () => {
       demand_class_weights: { project: 1, retail: 0.4 },
       reorder_coverage_until: '2026-12-01',
       tba_date_from: DEFAULT_TBA,
+      transfer_days: 0,
     });
+  });
+
+  it('renders and saves the transfer-days field (AC-2.3)', async () => {
+    hooks.useFulfilmentPriority.mockReturnValue({ data: DATA, isLoading: false, isError: false });
+    render(<FulfilmentPriorityPanel />);
+
+    expect(screen.getByLabelText(/Transfer days between bins/i)).toHaveValue(0);
+
+    fireEvent.change(screen.getByLabelText(/Transfer days between bins/i), {
+      target: { value: '2' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Save fulfilment priority/i }));
+
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
+    expect(mutateAsync.mock.calls[0][0].transfer_days).toBe(2);
+  });
+
+  it('blocks a save with a negative transfer-days value', () => {
+    hooks.useFulfilmentPriority.mockReturnValue({ data: DATA, isLoading: false, isError: false });
+    render(<FulfilmentPriorityPanel />);
+
+    fireEvent.change(screen.getByLabelText(/Transfer days between bins/i), {
+      target: { value: '-1' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Save fulfilment priority/i }));
+
+    expect(screen.getByText(/Transfer days between bins must be 0 or more/i)).toBeInTheDocument();
+    expect(mutateAsync).not.toHaveBeenCalled();
   });
 
   it('save with the date cleared sends null, not an empty string', async () => {

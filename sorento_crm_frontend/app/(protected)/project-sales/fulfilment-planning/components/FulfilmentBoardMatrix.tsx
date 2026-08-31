@@ -49,7 +49,8 @@ const Z_CORNER = 'z-30';
  * is also the only way to tint these tokens: Tailwind v4 resolves them to `oklch(...)`, so
  * `hsl(var(--destructive) / 0.1)` is dropped by the browser as invalid.
  */
-const PAST_HEADER_BG = 'bg-[color-mix(in_oklab,var(--destructive)_12%,var(--muted))]';
+const PAST_HEADER_BG =
+  'bg-[color-mix(in_oklab,var(--destructive)_12%,var(--muted))]';
 const NO_DATE_BG = 'bg-[color-mix(in_oklab,var(--foreground)_6%,var(--muted))]';
 
 /*
@@ -169,7 +170,10 @@ export function FulfilmentBoardMatrix({
                       : 'bg-muted',
                 )}
               >
-                <span className="block truncate" title={bucketLabelText(bucket.label)}>
+                <span
+                  className="block truncate"
+                  title={bucketLabelText(bucket.label)}
+                >
                   {bucketLabelText(bucket.label)}
                 </span>
                 {(bucket.kind === 'no_date' || bucket.is_past) && (
@@ -196,7 +200,10 @@ export function FulfilmentBoardMatrix({
                 {/* The label alone. A product's name is searchable but not printed here: the
                     first column is sticky and every character of it costs width on a board
                     that already spans years. */}
-                <span className="block truncate" title={product.description || product.label}>
+                <span
+                  className="block truncate"
+                  title={product.description || product.label}
+                >
                   {product.label}
                 </span>
               </th>
@@ -207,7 +214,10 @@ export function FulfilmentBoardMatrix({
                   <td
                     key={bucket.key}
                     data-cell={`${product.key}|${bucket.key}`}
-                    className={cn(DATE_COL, 'border-b border-e border-border p-0 align-top')}
+                    className={cn(
+                      DATE_COL,
+                      'border-b border-e border-border p-0 align-top',
+                    )}
                   >
                     {cell ? (
                       <>
@@ -220,13 +230,13 @@ export function FulfilmentBoardMatrix({
                             (AC-P3-2). A SIBLING of the button, never inside it: a table is
                             not phrasing content, and nesting one in a button is invalid
                             HTML the browser reflows out of it. */}
-                        {(annotations?.get(`${product.key}|${bucket.key}`) ?? []).map(
-                          (annotation) => (
-                            <div key={annotation.rowId} className="px-2 pb-1.5">
-                              <BoardChangeTable annotation={annotation} compact />
-                            </div>
-                          ),
-                        )}
+                        {(
+                          annotations?.get(`${product.key}|${bucket.key}`) ?? []
+                        ).map((annotation) => (
+                          <div key={annotation.rowId} className="px-2 pb-1.5">
+                            <BoardChangeTable annotation={annotation} compact />
+                          </div>
+                        ))}
                       </>
                     ) : null}
                   </td>
@@ -256,7 +266,9 @@ function BoardCellButton({
   draft: BoardDraft;
   onOpen: () => void;
 }) {
-  const decided = cell.contributions.filter((entry) => Boolean(draft[entry.key])).length;
+  const decided = cell.contributions.filter((entry) =>
+    Boolean(draft[entry.key]),
+  ).length;
   // Where this cell's quantity is coming from: the DECISION on every line that has one, the
   // engine's proposal on the rest. Ticking Amend from Buy to the shared pool flips the bar
   // rose to sky before anything is confirmed, and clearing the tick puts it back.
@@ -270,7 +282,8 @@ function BoardCellButton({
     .filter((entry) => toMinor(entry.qty) > 0)
     .map((entry) => `${entry.location ?? 'No location'} ${entry.qty}`)
     .join(' · ');
-  const orders = new Set(cell.contributions.map((entry) => entry.so_number)).size;
+  const orders = new Set(cell.contributions.map((entry) => entry.so_number))
+    .size;
   // Confirmed in the DATABASE, not ticked in the draft: the `decided` badge below already
   // counts the draft, and a cell whose supply is settled is a different statement.
   const confirmedRevisions = decidedRevisions(cell.contributions);
@@ -285,9 +298,10 @@ function BoardCellButton({
   const rejected = cell.contributions
     .map((entry) => entry.order_inquiry)
     .filter((inquiry) => inquiry?.ack_state === 'rejected')
-    .map((inquiry) =>
-      `Rejected by ${inquiry?.rejected_by_name ?? 'purchasing'}: ` +
-      `${(inquiry?.rejected_reason ?? '').trim() || 'no reason given'}`,
+    .map(
+      (inquiry) =>
+        `Rejected by ${inquiry?.rejected_by_name ?? 'purchasing'}: ` +
+        `${(inquiry?.rejected_reason ?? '').trim() || 'no reason given'}`,
     )
     .join(' · ');
   const label = `${cell.item_code}, ${cell.total_qty} across ${orders} sales order${
@@ -299,7 +313,12 @@ function BoardCellButton({
       type="button"
       onClick={onOpen}
       aria-label={label}
-      className="flex w-full flex-col gap-0.5 px-2 py-1.5 text-start hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+      // THE WHOLE CELL is the click target (AC-3.1/3.8, the mockup's revision): the button
+      // already fills the `td`, so what was missing was the AFFORDANCE, not a bigger hit
+      // area. A ring on hover, restrained rather than the mockup's drop shadow (apple-design
+      // "restraint" - one signal, not three), says the whole rectangle is pressable before
+      // the pointer ever lands on the small text inside it.
+      className="flex w-full cursor-pointer flex-col gap-0.5 px-2 py-1.5 text-start transition-colors hover:bg-accent hover:ring-1 hover:ring-inset hover:ring-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
     >
       <span className="flex items-center gap-1.5">
         <span className="font-medium tabular-nums">{cell.total_qty}</span>
@@ -312,7 +331,10 @@ function BoardCellButton({
       {/* The source strip. One entry per distinct location, because one cell legitimately
           spans several: the location is the line's own, and lines from different orders do
           not have to agree about it (PLAN 13.7). */}
-      <span className="block truncate text-[11px] text-muted-foreground" title={strip}>
+      <span
+        className="block truncate text-[11px] text-muted-foreground"
+        title={strip}
+      >
         {strip}
       </span>
 
@@ -327,7 +349,10 @@ function BoardCellButton({
       {lead ? (
         <span
           data-testid="cell-supply-lead"
-          className={cn('block truncate text-[11px] font-medium', COLOURS[lead.kind].text)}
+          className={cn(
+            'block truncate text-[11px] font-medium',
+            COLOURS[lead.kind].text,
+          )}
         >
           {dominantText(supply.segments)}
         </span>

@@ -12,7 +12,7 @@
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
@@ -26,7 +26,10 @@ vi.mock('../../_shared/services/fulfilmentPlanningService', () => ({
 }));
 
 import { CellStockTable } from './CellStockTable';
-import type { BoardCellLocation } from '../../_shared/types/fulfilmentPlanning.types';
+import type {
+  BoardCellLocation,
+  CellStockTableHandle,
+} from '../../_shared/types/fulfilmentPlanning.types';
 
 /** The captain's own location, as the live board sends it. */
 function position(overrides: Partial<BoardCellLocation> = {}): BoardCellLocation {
@@ -923,5 +926,105 @@ describe('CellStockTable: the net the ladder obeyed (AC-L12)', () => {
     ]);
 
     expect(screen.getByTestId('stock-subtotal-available-group').textContent).toBe('15');
+  });
+});
+
+/**
+ * S3 (PLAN-scm-planning-feedback-31aug): the lightbox's own navigation. `landOnMount` is
+ * OPT-IN (see its prop doc) precisely so the suite above, which opens closed until a click,
+ * stays exactly as it was; these tests are the ONE place that turns it on.
+ */
+describe('CellStockTable: the S3 jump handles', () => {
+  function renderWithRef(
+    locations: BoardCellLocation[],
+    extra: Partial<React.ComponentProps<typeof CellStockTable>> = {},
+  ) {
+    const ref = React.createRef<CellStockTableHandle>();
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <CellStockTable ref={ref} locations={locations} {...extra} />
+      </QueryClientProvider>,
+    );
+    return ref;
+  }
+
+  beforeEach(() => {
+    // Left in flight on purpose - what is under test is which section opens, not the
+    // documents themselves (`StockDocumentsPanel`'s own suite).
+    getStockDetail.mockReturnValue(new Promise(() => {}));
+  });
+
+  it('AC-3.1: landOnMount expands the own-location row with no click', async () => {
+    renderWithRef([position()], { landOnMount: true });
+
+    expect(await screen.findByTestId('stock-expansion-BRW-BB')).toBeInTheDocument();
+  });
+
+  it('stays closed until asked when landOnMount is not set (the default)', () => {
+    renderWithRef([position()]);
+
+    expect(screen.queryByTestId('stock-expansion-BRW-BB')).not.toBeInTheDocument();
+  });
+
+  it('AC-3.2: "My line" (jumpToThisLine) repeats the landing from the ref, on demand', async () => {
+    const ref = renderWithRef([position()]);
+
+    expect(screen.queryByTestId('stock-expansion-BRW-BB')).not.toBeInTheDocument();
+    act(() => ref.current?.jumpToThisLine());
+
+    expect(await screen.findByTestId('stock-expansion-BRW-BB')).toBeInTheDocument();
+  });
+
+  it('AC-3.3: jumpToDonor opens the SECTION the donor holds, by its location', async () => {
+    // A different SET (`where: 'site_pool'`), the way the engine's own donor rows read: the
+    // own bin and the pool are two piles, and the jump has to tell them apart.
+    const ref = renderWithRef(
+      [
+        position({ location: 'BRW-BB', warehouse_id: 'wh-1' }),
+        position({
+          location: 'BRW',
+          warehouse_id: 'wh-2',
+          where: 'site_pool',
+          net_of: 'pools',
+          net: '1716',
+        }),
+      ],
+      { donor: { soNumber: 'SO401624', location: 'BRW' } },
+    );
+
+    act(() => ref.current?.jumpToDonor());
+
+    // A `net_of` section opens under its SUBTOTAL row (the group drill), not the bin row.
+    expect(await screen.findByTestId('stock-set-expansion-pools')).toBeInTheDocument();
+    expect(screen.queryByTestId('stock-expansion-BRW-BB')).not.toBeInTheDocument();
+  });
+
+  it('AC-3.4: jumpToDocument opens the SECTION the SPO document sits at', async () => {
+    const ref = renderWithRef(
+      [
+        position({ location: 'BRW-BB', warehouse_id: 'wh-1' }),
+        position({
+          location: 'BRW',
+          warehouse_id: 'wh-2',
+          where: 'site_pool',
+          net_of: 'pools',
+          net: '1716',
+        }),
+      ],
+      { documentInfo: { spoNumber: 'SPO 202609-0041', location: 'BRW' } },
+    );
+
+    act(() => ref.current?.jumpToDocument());
+
+    expect(await screen.findByTestId('stock-set-expansion-pools')).toBeInTheDocument();
+  });
+
+  it('falls back to the own section, never a crash, when the named location matches no row', () => {
+    const ref = renderWithRef([position()], { donor: { soNumber: 'SO1', location: 'NOWHERE' } });
+
+    expect(() => act(() => ref.current?.jumpToDonor())).not.toThrow();
   });
 });

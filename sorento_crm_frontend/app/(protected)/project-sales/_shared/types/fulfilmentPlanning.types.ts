@@ -1892,6 +1892,48 @@ export interface StockDetail {
   holds?: StockDetailHold[];
 }
 
+// ---------------------------------------------------------------------------
+// S3 (PLAN-scm-planning-feedback-31aug): the lightbox's own jumps. Declared here, not in
+// either component, so `CellStockTable` and `StockDocumentsPanel` - which already import
+// each other - share one shape without a circular import between them.
+// ---------------------------------------------------------------------------
+
+/**
+ * A jump landing: what to scroll to and flash once the right section's documents are on
+ * screen. `nonce` is what re-fires the effect on a repeat press of the SAME jump (the
+ * mockup's "My line" chip works "from anywhere" - a second click while already on the row
+ * must still re-scroll and re-flash it).
+ */
+export type StockJumpTarget =
+  | { kind: 'this-line'; nonce: number }
+  | { kind: 'donor'; nonce: number }
+  | { kind: 'document'; nonce: number };
+
+/** The donor named by the active suggestion (AC-3.3/3.13), for the row badge and the jump. */
+export interface StockDonorMatch {
+  soNumber: string;
+  /** The donor's own core line id, when the suggestion named one - an exact match where a
+   * `so_number` match alone would light up every line of a donor with several. */
+  lineId?: string | null;
+  /** The holding location, for finding which SECTION to expand. */
+  location?: string | null;
+}
+
+/** The SPO named by an incoming suggestion (AC-3.4), for the row badge and the jump. */
+export interface StockDocumentMatch {
+  spoNumber: string;
+  location?: string | null;
+}
+
+export interface CellStockTableHandle {
+  /** AC-3.1/3.2: the default landing on open, and what the toolbar's "My line" repeats. */
+  jumpToThisLine: () => void;
+  /** AC-3.3/3.13: the suggestion sentence's donor link and the toolbar's "Donor" button. */
+  jumpToDonor: () => void;
+  /** AC-3.4: the suggestion sentence's SPO link and the toolbar's document button. */
+  jumpToDocument: () => void;
+}
+
 /**
  * One line of the queue at a pile: `GET /project-sales/fulfilment-planning/queue`.
  *
