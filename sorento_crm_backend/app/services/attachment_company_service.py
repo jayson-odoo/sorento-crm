@@ -378,6 +378,11 @@ class AttachmentCompanyService:
         twin linker was built to avoid (R26 / AC-B13); the same
         current-revision rule that method uses (``current_revision_id`` when
         set, else the ``is_current`` flag) is expressed directly in the JOIN.
+        The ``current_revision_id IS NULL`` branch is the SAME dangling-
+        pointer fallback ``get_current_revision`` falls back to: the FK is
+        ``ondelete="SET NULL"``, so a certificate whose pointed-to revision
+        row was deleted out from under it reads ``current_revision_id`` as
+        NULL even though a revision with ``is_current = true`` still exists.
         """
         if not file_ids:
             return 0
@@ -409,7 +414,7 @@ class AttachmentCompanyService:
             .all()
         )
         touched = {str(c.id): c for c in rows}
-        self._assert_no_identity_collision(touched.values())
+        self._assert_no_identity_collision(touched.values(), company_id)
 
         for certificate in touched.values():
             certificate.company_id = company_id
@@ -417,15 +422,27 @@ class AttachmentCompanyService:
 
         return len(touched)
 
-    def _assert_no_identity_collision(self, certificates) -> None:
-        """Two DIFFERENT certificates touched by the SAME action, once both
-        land on the same target `company_id`, must not collide on identity
-        (`uq_certificates_company_scheme_number`) - a raw `IntegrityError`
-        surfacing at commit is a 500 with no explanation; this catches it
-        early and names which identity clashed.
-        """
-        from app.services.certificate_service import normalize_identity
+    def _assert_no_identity_collision(self, certificates, company_id) -> None:
+        """Two DIFFERENT certificates landing on the same target `company_id`
+        must not collide on identity (`uq_certificates_company_scheme_number`)
+        - a raw `IntegrityError` surfacing at commit is a 500 with no
+        explanation; this catches it early and names which identity clashed.
 
+        Two shapes, both checked:
+        1. Both certificates are touched by THIS action (loop below).
+        2. One is touched here; the OTHER already sits at the target company
+           from an EARLIER action - e.g. Sorento's copy of identity X was
+           shared yesterday (company_id NULL), and today's action shares
+           Mocha's copy of the SAME identity X. `touched` alone never sees
+           yesterday's row, so this needs its own probe against `certificates`
+           for the same identities, excluding whatever THIS action already
+           touched.
+        """
+        from app.models.certificate import Certificate
+        from app.services.certificate_service import CertificateService, normalize_identity
+
+        certificates = list(certificates)
+        touched_ids = {str(c.id) for c in certificates}
         seen: dict[str, object] = {}
         for certificate in certificates:
             key = normalize_identity(certificate.scheme, certificate.certificate_number)
@@ -440,6 +457,31 @@ class AttachmentCompanyService:
                     "same company."
                 )
             seen[key] = certificate
+
+        if not seen:
+            return
+
+        identity_expr = CertificateService._identity_expression()
+        company_filter = (
+            Certificate.company_id.is_(None)
+            if company_id is None
+            else Certificate.company_id == company_id
+        )
+        existing = (
+            self.db.query(Certificate.id, Certificate.scheme, Certificate.certificate_number)
+            .filter(company_filter)
+            .filter(identity_expr.in_(list(seen.keys())))
+            .filter(Certificate.id.notin_(touched_ids))
+            .all()
+        )
+        if existing:
+            row = existing[0]
+            label = f"{row.scheme} {row.certificate_number}".strip()
+            raise handle_conflict(
+                f"{label} already exists at the target company - an earlier "
+                "action already moved a different certificate onto the same "
+                "identity."
+            )
 
     def _rewrite_certificate_coverage(
         self, cert_service, certificate, targets: list[str], actor_id: Optional[str]
@@ -465,6 +507,10 @@ class AttachmentCompanyService:
         existing_rows = (
             self.db.query(CertificateProduct)
             .filter(CertificateProduct.certificate_id == certificate.id)
+            # Deterministic per-code representative below (setdefault keeps
+            # the FIRST row seen) needs a stable row order - oldest first,
+            # ties broken by id, never physical/scan order.
+            .order_by(CertificateProduct.created_at, CertificateProduct.id)
             .all()
         )
         if not existing_rows:
@@ -478,7 +524,8 @@ class AttachmentCompanyService:
             .all()
         }
         # One representative existing row per product code - the source every
-        # twin row for that code inherits from.
+        # twin row for that code inherits from. Deterministic: the oldest row
+        # (lowest created_at, then id) for that code, per the ORDER BY above.
         representative_by_code: dict[str, CertificateProduct] = {}
         codes: set[str] = set()
         for pid, row in existing_by_product.items():

@@ -193,3 +193,98 @@ def product_attachment(
     db.add(row)
     db.flush()
     return row
+
+
+def certificate(
+    db,
+    *,
+    company_id: str | None,
+    attachment_type_id: str,
+    scheme: str | None = None,
+    number: str | None = None,
+):
+    """A certificate register row. `company_id=None` is a SHARED certificate
+    (S6, R5) - legal at the ORM level since `Certificate.__company_shared__`."""
+    from app.models.certificate import CERTIFICATE_STATUS_ACTIVE, Certificate
+
+    row = Certificate(
+        id=str(uuid.uuid4()),
+        attachment_type_id=attachment_type_id,
+        scheme=scheme or unique_code("SCHEME")[:60],
+        certificate_number=number or unique_code("CERT")[:120],
+        status=CERTIFICATE_STATUS_ACTIVE,
+        company_id=company_id,
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def certificate_revision(
+    db,
+    *,
+    certificate_id: str,
+    attachment_id: str | None,
+    revision_no: int = 1,
+    is_current: bool = True,
+    valid_until=None,
+):
+    from app.models.certificate import CertificateRevision
+
+    row = CertificateRevision(
+        id=str(uuid.uuid4()),
+        certificate_id=certificate_id,
+        attachment_id=attachment_id,
+        revision_no=revision_no,
+        is_current=is_current,
+        valid_until=valid_until,
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def certificate_product(
+    db,
+    *,
+    certificate_id: str,
+    product_id: str,
+    source: str = "manual",
+    created_by: str | None = None,
+):
+    from app.models.certificate import CertificateProduct
+
+    row = CertificateProduct(
+        id=str(uuid.uuid4()),
+        certificate_id=certificate_id,
+        product_id=product_id,
+        source=source,
+        created_by=created_by,
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def filed_certificate(
+    db,
+    *,
+    company_id: str | None,
+    attachment_id: str,
+    attachment_type_id: str,
+    covers_product_id: str,
+    scheme: str | None = None,
+    number: str | None = None,
+):
+    """A certificate whose CURRENT revision is `attachment_id`, covering ONE
+    product - the shape most `_apply_certificate_follow` / `reconcile_certificate`
+    tests start from."""
+    cert = certificate(
+        db, company_id=company_id, attachment_type_id=attachment_type_id,
+        scheme=scheme, number=number,
+    )
+    revision = certificate_revision(db, certificate_id=cert.id, attachment_id=attachment_id)
+    cert.current_revision_id = revision.id
+    certificate_product(db, certificate_id=cert.id, product_id=covers_product_id)
+    db.flush()
+    return cert

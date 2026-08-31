@@ -26,6 +26,7 @@ from app.main import app  # noqa: E402
 from app.api.v1.external.product_attachments import _link_attachment_to_products_bulk
 from app.models.attachment_field_link import AttachmentFieldLink
 from app.models.base import set_company_scope
+from app.models.certificate import Certificate
 from app.models.product import ProductAttachment
 from app.models.resources import Attachment
 from app.services.attachment_company_service import AttachmentCompanyService
@@ -796,3 +797,208 @@ def test_ac_b13_five_hundred_files_share_in_one_insert_and_one_delete(db):
         f"{len(all_statements)} statements for 500 files ({FIELD_KEYED} field-keyed) - "
         f"expected at most {bound}, which would mean a per-FILE statement crept back in"
     )
+
+
+# --------------------------------------------------------------------------- #
+# Identity collision (reviewer final fix round): two DIFFERENT certificates
+# that would land on the SAME (company, identity) key are rejected before
+# commit, both when they are touched by the SAME action and when one already
+# sits there from an EARLIER, separate action. Both shapes, HTTP route and
+# the deferred execute path.
+# --------------------------------------------------------------------------- #
+
+
+def _seed_colliding_pair(db, *, scheme: str, number: str):
+    """Sorento's copy of an identity, already SHARED (an earlier action);
+    Mocha's copy of the SAME identity, still owned by Mocha. Sharing Mocha's
+    copy today must collide with yesterday's row, which `touched` for
+    today's call never sees on its own."""
+    t = seed.att_type(db)
+    s, m = _twin(db, code=f"{scheme}-{number}")
+
+    att_sorento = seed.attachment(db, company_id=None, type_id=t.id)
+    cert_sorento = seed.filed_certificate(
+        db, company_id=None, attachment_id=att_sorento.id, attachment_type_id=t.id,
+        covers_product_id=s.id, scheme=scheme, number=number,
+    )
+
+    att_mocha = seed.attachment(db, company_id=MOCHA, type_id=t.id)
+    cert_mocha = seed.filed_certificate(
+        db, company_id=MOCHA, attachment_id=att_mocha.id, attachment_type_id=t.id,
+        covers_product_id=m.id, scheme=scheme, number=number,
+    )
+    return att_sorento, cert_sorento, att_mocha, cert_mocha
+
+
+def test_identity_collision_same_action_service_level(db):
+    """Both certificates touched by the SAME `apply()` call."""
+    t = seed.att_type(db)
+    scheme, number = "ZZT-SCHEME-SAME", "ZZT-0001"
+    s, m = _twin(db, code=f"{scheme}-{number}")
+
+    att_a = seed.attachment(db, company_id=SORENTO, type_id=t.id)
+    cert_a = seed.filed_certificate(
+        db, company_id=SORENTO, attachment_id=att_a.id, attachment_type_id=t.id,
+        covers_product_id=s.id, scheme=scheme, number=number,
+    )
+    att_b = seed.attachment(db, company_id=MOCHA, type_id=t.id)
+    cert_b = seed.filed_certificate(
+        db, company_id=MOCHA, attachment_id=att_b.id, attachment_type_id=t.id,
+        covers_product_id=m.id, scheme=scheme, number=number,
+    )
+    db.commit()
+
+    set_company_scope(db, frozenset({SORENTO, MOCHA}))
+    with pytest.raises(AppException) as exc_info:
+        AttachmentCompanyService(db).apply(
+            attachment_ids=[att_a.id, att_b.id], company_id=None,
+        )
+
+    assert exc_info.value.status_code == 409
+    message = exc_info.value.detail["message"]
+    assert scheme in message
+    assert number in message
+
+    db.rollback()
+    db.expire_all()
+    still_a = db.query(Certificate).filter(Certificate.id == cert_a.id).first()
+    still_b = db.query(Certificate).filter(Certificate.id == cert_b.id).first()
+    assert still_a.company_id == SORENTO
+    assert still_b.company_id == MOCHA
+
+
+def test_identity_collision_earlier_action_service_level(db):
+    """Only Mocha's copy is touched by TODAY's call; Sorento's copy was
+    shared by a DIFFERENT, earlier action and is not in `touched` at all."""
+    att_sorento, cert_sorento, att_mocha, cert_mocha = _seed_colliding_pair(
+        db, scheme="ZZT-SCHEME-EARLIER", number="ZZT-0002",
+    )
+    db.commit()
+
+    set_company_scope(db, frozenset({SORENTO, MOCHA}))
+    with pytest.raises(AppException) as exc_info:
+        AttachmentCompanyService(db).apply(
+            attachment_ids=[att_mocha.id], company_id=None,
+        )
+
+    assert exc_info.value.status_code == 409
+    message = exc_info.value.detail["message"]
+    assert "ZZT-SCHEME-EARLIER" in message
+    assert "ZZT-0002" in message
+
+    db.rollback()
+    db.expire_all()
+    still_sorento = db.query(Certificate).filter(Certificate.id == cert_sorento.id).first()
+    still_mocha = db.query(Certificate).filter(Certificate.id == cert_mocha.id).first()
+    assert still_sorento.company_id is None
+    assert still_mocha.company_id == MOCHA
+
+
+def test_identity_collision_earlier_action_via_http_route(db):
+    att_sorento, cert_sorento, att_mocha, cert_mocha = _seed_colliding_pair(
+        db, scheme="ZZT-SCHEME-HTTP", number="ZZT-0003",
+    )
+    actor = seed.user(db)
+    seed.grant(db, user_id=actor.id, company_id=SORENTO)
+    seed.grant(db, user_id=actor.id, company_id=MOCHA)
+    db.commit()
+
+    c = _scope_client(db, actor_id=actor.id, scope=frozenset({SORENTO, MOCHA}))
+    try:
+        r = c.post(_URL, json={"attachment_ids": [att_mocha.id], "company_id": None})
+    finally:
+        app.dependency_overrides.clear()
+
+    assert r.status_code == 409, r.text
+    body = r.json()
+    assert "ZZT-SCHEME-HTTP" in body["message"]
+    assert "ZZT-0003" in body["message"]
+
+    set_company_scope(db, frozenset({SORENTO, MOCHA}))
+    db.expire_all()
+    still_mocha = db.query(Certificate).filter(Certificate.id == cert_mocha.id).first()
+    assert still_mocha.company_id == MOCHA
+
+
+class TestIdentityCollisionDeferred:
+    """The same earlier-action collision through the deferred execute path -
+    the action parks fine (a valid request at post time), and the collision
+    only surfaces when the window lapses and `apply()` actually runs."""
+
+    BASE = "/api/v1/pending-actions"
+
+    @pytest.fixture
+    def action_client(self, db):
+        from app.dependencies import get_current_user, get_db
+        from app.services.company_scope_resolver import apply_company_scope
+
+        actor = seed.user(db)
+        seed.grant(db, user_id=actor.id, company_id=SORENTO)
+        seed.grant(db, user_id=actor.id, company_id=MOCHA)
+        db.commit()
+
+        def _override_get_db():
+            yield db
+
+        def _override_current_user():
+            return {"id": actor.id}
+
+        def _override_scope():
+            set_company_scope(db, frozenset({SORENTO, MOCHA}))
+
+        app.dependency_overrides[get_db] = _override_get_db
+        app.dependency_overrides[get_current_user] = _override_current_user
+        app.dependency_overrides[apply_company_scope] = _override_scope
+        from app.services import record_actions  # noqa: F401  (registers the actions)
+
+        try:
+            with TestClient(app) as c:
+                yield c, db, actor
+        finally:
+            app.dependency_overrides.clear()
+
+    @staticmethod
+    def _lapse(db, action_id: str) -> None:
+        from datetime import datetime, timedelta
+
+        from app.models.sla import SlaFormAction
+
+        db.query(SlaFormAction).filter(SlaFormAction.id == action_id).update(
+            {"commit_at": datetime.utcnow() - timedelta(seconds=1)},
+            synchronize_session=False,
+        )
+        db.commit()
+
+    def test_earlier_action_collision_fails_on_lapse_not_at_parking(self, action_client):
+        c, db, actor = action_client
+        att_sorento, cert_sorento, att_mocha, cert_mocha = _seed_colliding_pair(
+            db, scheme="ZZT-SCHEME-DEFER", number="ZZT-0004",
+        )
+        db.commit()
+
+        parked = c.post(
+            self.BASE,
+            json={
+                "action_key": "attachment.set_company",
+                "entity_type": "attachment",
+                "entity_id": att_mocha.id,
+                "payload": {"company_id": None},
+            },
+        )
+        assert parked.status_code == 202, parked.text
+
+        self._lapse(db, parked.json()["id"])
+        current = c.get(
+            f"{self.BASE}/current",
+            params={"entity_type": "attachment", "entity_id": att_mocha.id},
+        )
+        body = current.json()
+        assert body["last_outcome"]["status"] == "failed", body["last_outcome"]
+        assert "ZZT-SCHEME-DEFER" in body["last_outcome"]["error_text"]
+        assert "ZZT-0004" in body["last_outcome"]["error_text"]
+
+        db.expire_all()
+        still_mocha = db.query(Certificate).filter(Certificate.id == cert_mocha.id).first()
+        still_sorento = db.query(Certificate).filter(Certificate.id == cert_sorento.id).first()
+        assert still_mocha.company_id == MOCHA
+        assert still_sorento.company_id is None

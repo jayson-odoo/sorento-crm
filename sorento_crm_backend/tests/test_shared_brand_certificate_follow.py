@@ -170,6 +170,92 @@ def test_h1_sharing_a_filed_certificate_widens_coverage_and_projection(db):
         )
 
 
+# --- B1 regression: reconcile_certificate is consistently unscoped -------------
+
+
+def test_b1_reconcile_shared_certificate_under_sorento_scope_is_a_no_op(db):
+    """A shared certificate whose coverage AND projection are already correct
+    (both twins covered, both product_attachments rows present and correctly
+    stamped) reconciles to an ALL-ZERO result under a Sorento-only scope.
+
+    This is the B1 regression: before `reconcile_certificate` ran entirely
+    under `company_scope(db, None)`, the Sorento-scoped read of
+    `product_attachments` silently missed the Mocha row, so `seen` never
+    included it and reconcile tried to INSERT a duplicate for a product it
+    could no longer see - a raw IntegrityError on the unique constraint.
+    """
+    type_id = _type(db)
+    p_s, p_m = _twin_products(db, unique_code("SRTBV"))
+    att = _attachment(db, company_id=None, type_id=type_id)
+    cert = _filed_certificate(db, company_id=None, attachment=att, type_id=type_id, covers=p_s)
+    # Coverage spans both twins, as AC-H1 would have left it.
+    db.add(CertificateProduct(id=str(uuid.uuid4()), certificate_id=cert.id, product_id=p_m.id))
+    db.flush()
+    # Both projection rows already present and correctly stamped - the SAME
+    # access_levels the filing attachment carries, so reconcile has nothing
+    # to update either.
+    access_levels = list(att.access_levels or [])
+    db.add(ProductAttachment(
+        id=str(uuid.uuid4()), product_id=p_s.id, attachment_id=att.id,
+        company_id=DEFAULT_COMPANY_ID, access_levels=access_levels,
+    ))
+    db.add(ProductAttachment(
+        id=str(uuid.uuid4()), product_id=p_m.id, attachment_id=att.id,
+        company_id=MOCHA_ID, access_levels=access_levels,
+    ))
+    db.commit()
+
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+    result = CertificateService(db).reconcile(cert.id)
+
+    assert result == {"inserted": 0, "updated": 0, "deleted": 0}
+
+    with company_scope(db, None):
+        rows = {
+            str(r.product_id): str(r.company_id)
+            for r in db.query(ProductAttachment).filter(ProductAttachment.attachment_id == att.id)
+        }
+    assert rows == {p_s.id: DEFAULT_COMPANY_ID, p_m.id: MOCHA_ID}, (
+        "both rows must survive reconcile, each still stamped to its own company"
+    )
+
+
+def test_b1_reconcile_deletes_an_out_of_coverage_row_in_another_company(db):
+    """Deliberate decision, documented in `reconcile_certificate`'s own
+    docstring: `product_attachments` is a PURE FUNCTION of coverage. A
+    Sorento-OWNED certificate (not shared) on a SHARED file covers only the
+    Sorento twin; a Mocha `product_attachments` row exists on the SAME file
+    but OUTSIDE this certificate's coverage (e.g. left over from a manual
+    link, or a narrowed earlier certificate). Reconcile under Sorento scope
+    deletes that Mocha row - it is not this certificate's to keep just
+    because the caller cannot otherwise see it.
+    """
+    type_id = _type(db)
+    p_s, p_m = _twin_products(db, unique_code("SRTBV"))
+    att = _attachment(db, company_id=None, type_id=type_id)  # the FILE is shared
+    cert = _filed_certificate(
+        db, company_id=DEFAULT_COMPANY_ID, attachment=att, type_id=type_id, covers=p_s,
+    )  # the CERTIFICATE is Sorento-owned, coverage = {p_s} only
+    db.add(ProductAttachment(
+        id=str(uuid.uuid4()), product_id=p_m.id, attachment_id=att.id,
+        company_id=MOCHA_ID, access_levels=list(att.access_levels or []),
+    ))
+    db.commit()
+
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+    result = CertificateService(db).reconcile(cert.id)
+
+    assert result["deleted"] == 1
+
+    with company_scope(db, None):
+        remaining = {
+            str(r.product_id)
+            for r in db.query(ProductAttachment).filter(ProductAttachment.attachment_id == att.id)
+        }
+    assert p_m.id not in remaining, "an out-of-coverage row must go regardless of company"
+    assert p_s.id in remaining
+
+
 # --- AC-H2: moving back to one company shrinks coverage + projection -----------
 
 

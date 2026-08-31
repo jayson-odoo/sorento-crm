@@ -950,7 +950,12 @@ class CertificateService:
         ``Product`` SELECTs but not the bulk-DELETE ``_delete_projection_rows``
         issues (a DELETE query, which ``do_orm_execute`` never touches -
         already unscoped by construction). Making every read/write here agree
-        on ``None`` is what keeps the two consistent.
+        on ``None`` is what keeps the two consistent. Deliberate consequence:
+        ``product_attachments`` is a PURE FUNCTION of coverage, so a row for
+        a product outside ``wanted`` is deleted regardless of which company
+        it belongs to - even for a certificate that is not itself shared,
+        an out-of-coverage row in ANOTHER company is not this method's to
+        keep.
         """
         from app.models.base import company_scope
 
