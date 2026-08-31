@@ -243,9 +243,11 @@ describe('Focus rings on the S9-02 outline-none sweep (S9-02)', () => {
   // silently. `components/ui` primitives (button, tabs, input, input-otp,
   // datefield) already carried a ring before S9 and are not re-asserted here -
   // this list is the sites that had none.
-  const RING_FIXED: { file: string; needle: string }[] = [
+  const RING_FIXED: { file: string; needle: string | RegExp }[] = [
     { file: 'app/components/common/AIAssistantBubble.tsx', needle: 'focus-visible:ring-2 focus-visible:ring-ring' },
-    { file: 'app/(protected)/marketing-management/promotions/components/PromotionsList.tsx', needle: 'focus-visible:ring-2 focus-visible:ring-ring' },
+    // The S7 sweep replaces this list's hand-rolled box with ListSearchInput,
+    // whose Input primitive carries the ring itself - either form satisfies the pin.
+    { file: 'app/(protected)/marketing-management/promotions/components/PromotionsList.tsx', needle: /focus-visible:ring-2 focus-visible:ring-ring|<ListSearchInput/ },
     { file: 'app/(protected)/system-management/health/components/HealthDashboard.tsx', needle: 'focus-visible:ring-2 focus-visible:ring-ring' },
     { file: 'components/common/find-in-text/FindBar.tsx', needle: 'focus-visible:ring-2 focus-visible:ring-ring' },
     { file: 'components/common/find-in-text/SearchableCode.tsx', needle: 'focus-visible:ring-2 focus-visible:ring-ring' },
@@ -257,7 +259,8 @@ describe('Focus rings on the S9-02 outline-none sweep (S9-02)', () => {
   it('each fixed site still carries its ring', () => {
     for (const { file, needle } of RING_FIXED) {
       const src = fs.readFileSync(file, 'utf8');
-      expect(src, file).toContain(needle);
+      if (typeof needle === 'string') expect(src, file).toContain(needle);
+      else expect(src, file).toMatch(needle);
     }
   });
 });
