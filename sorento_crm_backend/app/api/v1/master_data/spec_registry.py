@@ -809,6 +809,31 @@ def update_spec_key(
                     detail="Permission required: master_data.spec_registry.edit",
                 )
 
+        # Suppressions land BEFORE the near-duplicate guard below, so the guard judges the
+        # vocabulary as this save leaves it. Renaming a value - take `floor_standing`
+        # away, add `free_standing` - is one save, and `free standing` ships as a word
+        # for the value being removed; judged against the row as it was, the rename was
+        # refused as already meaning the value it replaces. `user_synonyms` stays AFTER
+        # the guard: the words for the new value spell the new value, and applied first
+        # they would make it collide with itself.
+        if "suppressed_synonyms" in fields:
+            row.suppressed_synonyms = {
+                value: [w.strip() for w in words if w and w.strip()]
+                for value, words in (fields["suppressed_synonyms"] or {}).items()
+                if [w for w in words if w and w.strip()]
+            }
+
+        if "suppressed_values" in fields:
+            # Only shipped values can be suppressed. A staff-added value is removed by
+            # dropping it from user_values, and recording it here as well would leave a
+            # tombstone that silently blocks re-adding it under the same name.
+            shipped = {str(v) for v in (row.allowed_values or [])}
+            row.suppressed_values = [
+                v.strip()
+                for v in (fields["suppressed_values"] or [])
+                if v and v.strip() and v.strip() in shipped
+            ]
+
         if "user_values" in fields:
             # Server-side, mirroring the key guard (D11). The dialog runs the same
             # comparison against data it already holds so the common case never round
@@ -856,30 +881,12 @@ def update_spec_key(
                 for value, words in (fields["user_synonyms"] or {}).items()
             }
 
-        if "suppressed_synonyms" in fields:
-            row.suppressed_synonyms = {
-                value: [w.strip() for w in words if w and w.strip()]
-                for value, words in (fields["suppressed_synonyms"] or {}).items()
-                if [w for w in words if w and w.strip()]
-            }
-
         if "user_values" in fields:
             shipped = {str(v) for v in (row.allowed_values or [])}
             row.user_values = [
                 v.strip()
                 for v in (fields["user_values"] or [])
                 if v and v.strip() and v.strip() not in shipped
-            ]
-
-        if "suppressed_values" in fields:
-            # Only shipped values can be suppressed. A staff-added value is removed by
-            # dropping it from user_values, and recording it here as well would leave a
-            # tombstone that silently blocks re-adding it under the same name.
-            shipped = {str(v) for v in (row.allowed_values or [])}
-            row.suppressed_values = [
-                v.strip()
-                for v in (fields["suppressed_values"] or [])
-                if v and v.strip() and v.strip() in shipped
             ]
 
         if "derivation_rules" in fields:
