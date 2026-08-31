@@ -256,3 +256,30 @@ def test_the_shipped_rules_derive_the_sample_exactly_as_before_without_a_databas
         differences.extend(_compare(entry, "shipped", result))
 
     assert not differences, _report(differences)
+
+
+def test_the_backfilled_owned_class_rules_derive_the_sample_exactly_as_before(sample):
+    """AC-A.2 + AC-A.6 - the live database's own 33 class rules, backfilled.
+
+    `class` is owned on the live database, so its stored rules REPLACE the shipped ones
+    and the readers underneath them - the product name head and the category - ran
+    without appearing anywhere. Appending those two rows is what has to leave every
+    product classed exactly as it was.
+    """
+    from app.services.product_spec_derivation import shipped_rules
+
+    shipped = shipped_rules()
+    hidden = [rule for rule in shipped["class"] if rule["match"] in {"name_head", "from_field"}]
+    assert len(hidden) == 2, "the class readers that used to run outside the list"
+
+    rules = dict(shipped)
+    rules["class"] = list(GOLDEN["owned_class_rules"]) + hidden
+    scopes = shipped_scopes()
+
+    differences: list[str] = []
+    for entry in sample:
+        product, category = _in_memory(entry)
+        result = derive(product, category, rules_by_key=rules, scopes_by_key=scopes)
+        differences.extend(_compare(entry, "owned_class", result))
+
+    assert not differences, _report(differences)
