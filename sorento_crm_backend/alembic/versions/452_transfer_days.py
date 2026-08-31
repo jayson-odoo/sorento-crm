@@ -17,14 +17,14 @@ the shared dev database is a prod copy whose `alembic_version` points at another
 head, so this is applied there by hand and re-running it has to be a no-op rather than a
 failure.
 
-Revision ID: 451_transfer_days
-Revises: 450_spec_rules_readable
+Revision ID: 452_transfer_days
+Revises: 451_flyer_proposal_via_code
 """
 import sqlalchemy as sa
 from alembic import op
 
-revision = "451_transfer_days"
-down_revision = "450_spec_rules_readable"
+revision = "452_transfer_days"
+down_revision = "451_flyer_proposal_via_code"
 branch_labels = None
 depends_on = None
 
