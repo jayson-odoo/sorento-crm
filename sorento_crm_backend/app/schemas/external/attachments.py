@@ -158,6 +158,10 @@ class ProductAttachmentLinkRequestAny(CertificateExtractionFields):
 class ProductAttachmentBulkLinkItem(BaseModel):
     product_id: str
     product_code: str
+    # Which resolver tier reached this product (`exact`, `product_set`,
+    # `plus_split`, `substring`, `prefix`) - PLAN-shared-brand-attachments.md S1.
+    # Surfaced so the Integration tab can show how each link was reached.
+    via: str
 
 
 class ProductAttachmentBulkLinkResponse(BaseModel):
