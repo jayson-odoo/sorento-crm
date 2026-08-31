@@ -1,5 +1,6 @@
 """Resources service for business logic."""
 import logging
+import re
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_
 from typing import Any, Optional, List
@@ -11,9 +12,46 @@ from app.schemas.resources import (
     AttachmentCreate, AttachmentUpdate, AttachmentTypeCreate, AttachmentTypeUpdate,
     AttachmentDirectoryCreate, AttachmentDirectoryUpdate,
 )
-from app.services.error_handler import handle_not_found, handle_conflict, handle_validation_error
+from app.services.error_handler import (
+    handle_not_found,
+    handle_conflict,
+    handle_unprocessable,
+    handle_validation_error,
+)
 from app.services.embedding_events import publish_embedding_event
 from app.services.storage_router import extract_key
+
+
+_UUID_RE = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
+
+# Distinguishes "the caller didn't say" (look it up) from "the caller said
+# None" (the attachment IS shared) on get_linked_entities' company_id kwarg.
+_COMPANY_ID_NOT_GIVEN = object()
+
+
+def _apply_company_filter(query, model, company: Optional[str]):
+    """The `company` filter (AC-E1), shared by attachments and folders - both
+    carry a `company_id` column and the exact same two-value contract:
+    `"shared"` narrows to `company_id IS NULL`; a UUID narrows to that
+    company only (excludes shared rows); omitted/blank leaves `query`
+    untouched (today's scope-predicate default). Anything else - a typo, a
+    non-UUID string - is a 422 rather than silently falling through to "no
+    filter", which would show the caller everything instead of failing loud.
+    """
+    if company is None:
+        return query
+    value = str(company).strip()
+    if not value:
+        return query
+    if value.lower() == "shared":
+        return query.filter(model.company_id.is_(None))
+    if not _UUID_RE.match(value):
+        raise handle_unprocessable(
+            f"`company` must be 'shared' or a company UUID, got {value!r}."
+        )
+    return query.filter(model.company_id == value.lower())
 
 
 class AttachmentDirectoryService:
@@ -766,12 +804,7 @@ class AttachmentService:
         else:
             q = q.filter(Attachment.is_deleted == False)
 
-        company_norm = (str(company).strip() if company else None)
-        if company_norm:
-            if company_norm.lower() == "shared":
-                q = q.filter(Attachment.company_id.is_(None))
-            else:
-                q = q.filter(Attachment.company_id == company_norm)
+        q = _apply_company_filter(q, Attachment, company)
 
         if storage_status and str(storage_status).strip():
             q = q.filter(Attachment.storage_status == str(storage_status).strip())
@@ -1130,12 +1163,7 @@ class AttachmentService:
                 folder_q = folder_q.filter(
                     AttachmentDirectory.name.ilike(f"%{query.strip()}%")
                 )
-            company_norm = (str(company).strip() if company else None)
-            if company_norm:
-                if company_norm.lower() == "shared":
-                    folder_q = folder_q.filter(AttachmentDirectory.company_id.is_(None))
-                else:
-                    folder_q = folder_q.filter(AttachmentDirectory.company_id == company_norm)
+            folder_q = _apply_company_filter(folder_q, AttachmentDirectory, company)
             folders = folder_q.all()
             folder_ids = [str(f.id) for f in folders]
             folder_rows = {str(f.id): f for f in folders}
@@ -1325,7 +1353,13 @@ class AttachmentService:
             return next(iter(scope))
         return None
 
-    def get_linked_entities(self, attachment_id: str, actor_id: Optional[str] = None) -> dict:
+    def get_linked_entities(
+        self,
+        attachment_id: str,
+        actor_id: Optional[str] = None,
+        *,
+        company_id: Any = _COMPANY_ID_NOT_GIVEN,
+    ) -> dict:
         """
         Resolve linked product(s), promotion(s), and form from product_attachments,
         promotion_attachments, and forms.attachment_id.
@@ -1338,6 +1372,13 @@ class AttachmentService:
         when ``actor_id`` is passed - callers that don't (upload-activity's
         summary builder) keep today's single-scope result. A single-company
         attachment is never widened, so its payload is unchanged (AC-G3).
+
+        ``company_id`` lets a caller that already holds the attachment ORM
+        row (``_attachment_response_with_linked_entities``) pass its
+        ``company_id`` straight through instead of this method re-querying
+        ``Attachment`` for it. Left at the sentinel default, this method
+        looks it up itself - the shape upload-activity's summary builder,
+        which only ever has an id, still relies on.
         """
         from app.models.product import ProductAttachment, Product
         from app.models.marketing import PromotionAttachment, Promotion
@@ -1346,12 +1387,15 @@ class AttachmentService:
 
         active_company_id = self._active_scope_company_id()
 
-        att_row = (
-            self.db.query(Attachment.company_id)
-            .filter(Attachment.id == attachment_id)
-            .first()
-        )
-        is_shared = bool(att_row) and att_row[0] is None
+        if company_id is _COMPANY_ID_NOT_GIVEN:
+            att_row = (
+                self.db.query(Attachment.company_id)
+                .filter(Attachment.id == attachment_id)
+                .first()
+            )
+            is_shared = bool(att_row) and att_row[0] is None
+        else:
+            is_shared = company_id is None
 
         widen_scope: Optional[frozenset] = None
         if is_shared and actor_id:
@@ -1368,7 +1412,7 @@ class AttachmentService:
             return fn()
 
         def _query_products():
-            return (
+            q = (
                 self.db.query(
                     Product.id,
                     Product.product_name,
@@ -1378,9 +1422,13 @@ class AttachmentService:
                 )
                 .join(ProductAttachment, ProductAttachment.product_id == Product.id)
                 .filter(ProductAttachment.attachment_id == attachment_id)
-                .order_by(Product.company_id, Product.product_name)
-                .all()
             )
+            # Only the widened (shared-attachment) branch orders explicitly -
+            # a single-company attachment's row order is UNCHANGED from
+            # before this slice (AC-G3), which had no order_by here at all.
+            if widen_scope:
+                q = q.order_by(Product.company_id, Product.product_name)
+            return q.all()
 
         product_rows = _widened(_query_products)
 

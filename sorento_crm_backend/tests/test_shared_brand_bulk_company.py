@@ -617,12 +617,14 @@ def test_ac_b13_five_hundred_files_share_in_one_insert_and_one_delete(db):
         attachment_ids.append(a.id)
     db.commit()
 
-    statements: list[str] = []
+    # Reviewer fix round (S3): capture EVERY statement, not just the
+    # product_attachments ones - the whole call has to be bounded, including
+    # the certificate-follow hook's own lookup (a per-file loop there would
+    # be invisible to a filter that only watched product_attachments).
+    all_statements: list[str] = []
 
     def _capture(conn, cursor, statement, *_a, **_kw):
-        low = statement.lower()
-        if "product_attachments" in low and ("insert into" in low or "delete from" in low):
-            statements.append(low)
+        all_statements.append(statement.lower())
 
     connection = db.get_bind()
     event.listen(connection, "before_cursor_execute", _capture)
@@ -635,7 +637,22 @@ def test_ac_b13_five_hundred_files_share_in_one_insert_and_one_delete(db):
         event.remove(connection, "before_cursor_execute", _capture)
 
     assert result["links_added"] == 500
-    inserts = [s for s in statements if "insert into" in s]
-    deletes = [s for s in statements if "delete from" in s]
+    pa_statements = [s for s in all_statements if "product_attachments" in s]
+    inserts = [s for s in pa_statements if "insert into" in s]
+    deletes = [s for s in pa_statements if "delete from" in s]
     assert len(inserts) == 1, f"expected ONE insert for 500 files, saw {len(inserts)}"
     assert len(deletes) == 1, f"expected ONE delete for 500 files, saw {len(deletes)}"
+
+    # The certificate-follow hook's own lookup (none of these 500 files are a
+    # certificate revision) is ONE join query, not one per file.
+    cert_lookups = [s for s in all_statements if "certificate_revisions" in s and "select" in s]
+    assert len(cert_lookups) <= 1, (
+        f"certificate-follow lookup must be ONE query for the whole batch, saw {len(cert_lookups)}"
+    )
+
+    # Not asserting a bound on `len(all_statements)` overall: 500 newly-linked
+    # rows each pass through `AttachmentFieldLinkService.apply_template_to_row`
+    # (a pre-existing per-row call, untouched by this fix round), so the raw
+    # total scales with the link count for a reason unrelated to what's under
+    # test here. The certificate-follow lookup above is the piece this round
+    # actually changed, and it is asserted directly.

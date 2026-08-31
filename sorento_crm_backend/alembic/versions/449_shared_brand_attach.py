@@ -93,9 +93,20 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # --- 4. certificates.company_id -> NOT NULL again ----------------------
-    cert_columns_down = _columns("certificates")
-    if "company_id" in cert_columns_down:
+    # --- 3a. drop the coalesced identity index FIRST ------------------------
+    # It must be gone before the piece-4 stamp below: that UPDATE moves a
+    # shared (NULL) certificate's company_id to Sorento, and the COALESCED
+    # index treats NULL and Sorento as different keys - a certificate already
+    # sharing Sorento's identity would make the UPDATE itself collide against
+    # a still-live unique index mid-statement. Dropping it first means the
+    # UPDATE always succeeds; a genuine duplicate then surfaces cleanly at the
+    # plain index's CREATE below, not as a confusing UPDATE failure.
+    cert_columns = _columns("certificates")
+    if cert_columns:
+        op.execute("DROP INDEX IF EXISTS uq_certificates_company_scheme_number")
+
+    # --- 4. certificates.company_id -> NOT NULL again -----------------------
+    if "company_id" in cert_columns:
         # A certificate shared while this migration was up has NULL here;
         # stamp it to the incumbent company first, same pattern as piece 2.
         op.execute(
@@ -104,10 +115,8 @@ def downgrade() -> None:
         )
         op.execute("ALTER TABLE certificates ALTER COLUMN company_id SET NOT NULL")
 
-    # --- 3. restore the plain (non-coalesced) certificate identity index --
-    cert_columns = _columns("certificates")
+    # --- 3b. restore the plain (non-coalesced) certificate identity index --
     if cert_columns:
-        op.execute("DROP INDEX IF EXISTS uq_certificates_company_scheme_number")
         op.execute(
             """
             CREATE UNIQUE INDEX IF NOT EXISTS uq_certificates_company_scheme_number

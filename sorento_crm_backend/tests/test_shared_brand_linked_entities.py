@@ -13,7 +13,12 @@ from __future__ import annotations
 import uuid
 
 import pytest
+from fastapi.testclient import TestClient
 
+# MUST be first app import - resolves a circular import in app.modules.runtime.guards
+from app.main import app  # noqa: E402
+
+from app.dependencies import get_current_user, get_current_user_or_api_key, get_db
 from app.models.base import set_company_scope
 from app.models.certificate import Certificate, CertificateRevision
 from app.models.company import Company, UserCompany
@@ -22,6 +27,7 @@ from app.models.resources import Attachment, AttachmentType
 from app.models.user import User
 from app.schemas.resources import LinkedEntityRef
 from app.services.company_scope import DEFAULT_COMPANY_ID, register_company_scope_listeners
+from app.services.company_scope_resolver import apply_company_scope
 from app.services.resources_service import AttachmentService
 
 from tests._pg_fixture import blank_session, unique_code
@@ -200,6 +206,65 @@ def test_g4_defaults_when_absent(db):
     assert dumped["company_id"] is None
     assert dumped["company_name"] is None
     assert dumped["in_scope"] is True
+
+
+@pytest.fixture
+def api():
+    """A TestClient wired to the SAME scratch session `db` uses, so the HTTP
+    round trip below reads the rows this file's other fixtures write - the
+    real proof for AC-G4: `response_model` silently drops undeclared fields
+    (LESSONS-LEARNT), so asserting on `LinkedEntityRef.model_dump()` alone
+    (as the rest of this file does, correctly, for the OTHER AC-Gs) never
+    catches a field that never made it onto `AttachmentResponse` or through
+    FastAPI's own serialization.
+    """
+    with blank_session() as session:
+        session.add(Company(id=MOCHA_ID, name="Mocha", code=unique_code("MCH")[:20]))
+        session.flush()
+
+        def _override_get_db():
+            yield session
+
+        app.dependency_overrides[get_db] = _override_get_db
+        yield session
+        app.dependency_overrides.clear()
+
+
+def test_g4_company_fields_survive_the_http_response_model(api):
+    """AC-G4 end to end: GET /attachments/{id}'s JSON body - not
+    `model_dump()` - carries `company_id` / `company_name` / `in_scope` on
+    each `linked_products` row of a shared attachment."""
+    db = api
+    p_s, p_m = _twin_products(db, unique_code("SRTBV"))
+    att = _attachment(db, company_id=None, type_id=_type(db))
+    _link(db, product_id=p_s.id, attachment_id=att.id, company_id=DEFAULT_COMPANY_ID)
+    _link(db, product_id=p_m.id, attachment_id=att.id, company_id=MOCHA_ID)
+    user_id = _user_with_grants(db, [DEFAULT_COMPANY_ID, MOCHA_ID])
+    db.commit()
+
+    principal = {"id": user_id, "email": "zzt-g4@test.com"}
+    app.dependency_overrides[get_current_user] = lambda: principal
+    app.dependency_overrides[get_current_user_or_api_key] = lambda: principal
+
+    async def _override_scope():
+        scope = frozenset({DEFAULT_COMPANY_ID})
+        set_company_scope(db, scope)
+        return scope
+
+    app.dependency_overrides[apply_company_scope] = _override_scope
+
+    with TestClient(app) as c:
+        res = c.get(f"/api/v1/resource-management/attachments/{att.id}")
+
+    assert res.status_code == 200, res.text
+    body = res.json()
+    rows = {r["id"]: r for r in body["linked_products"]}
+    assert set(rows) == {p_s.id, p_m.id}
+    assert rows[p_s.id]["company_id"] == DEFAULT_COMPANY_ID
+    assert rows[p_s.id]["in_scope"] is True
+    assert rows[p_m.id]["company_id"] == MOCHA_ID
+    assert rows[p_m.id]["company_name"] == "Mocha"
+    assert rows[p_m.id]["in_scope"] is False
 
 
 # --- certificates follow the same widening rule --------------------------------

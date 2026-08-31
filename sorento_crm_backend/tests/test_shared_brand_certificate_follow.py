@@ -23,10 +23,13 @@ import uuid
 from datetime import date, timedelta
 
 import pytest
+from sqlalchemy import event
 from sqlalchemy.exc import IntegrityError
 
-from app.models.base import company_scope, set_company_scope
+from app.models.base import UNSET, company_scope, set_company_scope
 from app.models.certificate import (
+    CERTIFICATE_SOURCE_AI,
+    CERTIFICATE_SOURCE_MANUAL,
     CERTIFICATE_STATUS_ACTIVE,
     Certificate,
     CertificateProduct,
@@ -37,8 +40,9 @@ from app.models.product import Product, ProductAttachment, ProductCategory, Unit
 from app.models.resources import Attachment, AttachmentType
 from app.models.user import User
 from app.services.attachment_company_service import AttachmentCompanyService
-from app.services.certificate_service import CertificateService
+from app.services.certificate_service import CertificateService, normalize_identity
 from app.services.company_scope import DEFAULT_COMPANY_ID, register_company_scope_listeners
+from app.services.error_handler import AppException
 
 from tests._pg_fixture import blank_session, unique_code
 
@@ -252,19 +256,32 @@ def test_h4_two_null_company_certificates_same_identity_rejected(db):
 
 
 def test_h5_upsert_from_extraction_shared_attachment_makes_a_shared_certificate(db):
+    """The n8n path names products by CODE, not by id - the twin has to come
+    from RESOLUTION (`resolve_codes_to_products`, same as the real external
+    route runs before calling `upsert_from_extraction`), not from the test
+    handing both companies' ids to `upsert_from_extraction` by hand."""
+    from app.services.product_code_resolution import resolve_codes_to_products
+
     type_id = _type(db)
-    p_s, p_m = _twin_products(db, unique_code("SRTBV"))
+    code = unique_code("SRTBV")
+    p_s, p_m = _twin_products(db, code)
     att = _attachment(db, company_id=None, type_id=type_id)
     db.commit()
 
     # The n8n binding path leaves scope at None (all companies) for a shared
     # attachment (scope_to_attachment_company) - reproduced directly here.
     with company_scope(db, None):
+        resolved = resolve_codes_to_products(db, [code])
+        product_ids = [str(m.product.id) for m in resolved.matches]
+        assert set(product_ids) == {p_s.id, p_m.id}, (
+            "the seeded code must resolve to both twins under the all-companies scope"
+        )
+
         cert: any = CertificateService(db).upsert_from_extraction(
             scheme="SRTBV",
             certificate_number=unique_code("CERT")[:120],
             attachment_id=att.id,
-            product_ids=[p_s.id, p_m.id],
+            product_ids=product_ids,
             commit=True,
         )
 
@@ -330,3 +347,213 @@ def test_h6_expiry_sweep_one_match_for_a_shared_certificate(db):
     matches = [m for m in matches if m.source_id == str(cert.id)]
 
     assert len(matches) == 1, "a shared certificate must fire exactly one match, not one per company"
+
+
+# --- S2 (reviewer fix round): _resolve_new_certificate_company_id mirrors the
+# retired auto-stamp - only a bound attachment with a NULL company yields a
+# shared certificate; every other path resolves like `resolve_write_company_id`.
+
+
+def test_s2_bound_attachment_owned_company_wins(db):
+    type_id = _type(db)
+    att = _attachment(db, company_id=MOCHA_ID, type_id=type_id)
+    db.commit()
+
+    # The realistic precondition: a caller can only NAME an attachment_id it
+    # can already see, so its own scope already includes that company (or is
+    # the n8n all-companies `None`) by the time this resolves.
+    set_company_scope(db, frozenset({MOCHA_ID}))
+    result = CertificateService(db)._resolve_new_certificate_company_id(att.id)
+
+    assert result == MOCHA_ID
+
+
+def test_s2_bound_attachment_shared_yields_none(db):
+    type_id = _type(db)
+    att = _attachment(db, company_id=None, type_id=type_id)
+    db.commit()
+
+    result = CertificateService(db)._resolve_new_certificate_company_id(att.id)
+
+    assert result is None
+
+
+def test_s2_no_attachment_single_active_company_wins(db):
+    set_company_scope(db, frozenset({MOCHA_ID}))
+
+    result = CertificateService(db)._resolve_new_certificate_company_id(None)
+
+    assert result == MOCHA_ID
+
+
+def test_s2_no_attachment_none_scope_falls_back_to_incumbent(db):
+    set_company_scope(db, None)
+
+    result = CertificateService(db)._resolve_new_certificate_company_id(None)
+
+    assert result == DEFAULT_COMPANY_ID
+
+
+def test_s2_no_attachment_unset_scope_raises(db):
+    set_company_scope(db, UNSET)
+
+    with pytest.raises(AppException):
+        CertificateService(db)._resolve_new_certificate_company_id(None)
+
+
+def test_s2_no_attachment_multi_company_scope_raises(db):
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID, MOCHA_ID}))
+
+    with pytest.raises(AppException):
+        CertificateService(db)._resolve_new_certificate_company_id(None)
+
+
+def test_s2_unresolved_attachment_id_falls_back_to_scope(db):
+    """A bound id that does not resolve (e.g. deleted / foreign) is treated
+    the SAME as no attachment - never silently None."""
+    set_company_scope(db, frozenset({MOCHA_ID}))
+
+    result = CertificateService(db)._resolve_new_certificate_company_id(str(uuid.uuid4()))
+
+    assert result == MOCHA_ID
+
+
+# --- S4 (reviewer fix round): two same-identity certificates sharing in one
+# action are rejected before commit, naming the identity.
+
+
+def test_s4_two_same_identity_certificates_sharing_in_one_action_is_rejected(db):
+    type_id = _type(db)
+    scheme = unique_code("SCHEME")[:60]
+    number = unique_code("CERT")[:120]
+
+    att_a = _attachment(db, company_id=DEFAULT_COMPANY_ID, type_id=type_id)
+    cert_a = Certificate(
+        id=str(uuid.uuid4()), attachment_type_id=type_id,
+        scheme=scheme, certificate_number=number,
+        status=CERTIFICATE_STATUS_ACTIVE, company_id=DEFAULT_COMPANY_ID,
+    )
+    db.add(cert_a)
+    db.flush()
+    rev_a = CertificateRevision(
+        id=str(uuid.uuid4()), certificate_id=cert_a.id, attachment_id=att_a.id,
+        revision_no=1, is_current=True,
+    )
+    db.add(rev_a)
+    db.flush()
+    cert_a.current_revision_id = rev_a.id
+
+    # A second, DIFFERENT certificate that happens to share the same identity
+    # (a normalization collision - "SCHEME 001" vs "SCHEME001", say) but lives
+    # under a different attachment, filed in Mocha.
+    att_b = _attachment(db, company_id=MOCHA_ID, type_id=type_id)
+    cert_b = Certificate(
+        id=str(uuid.uuid4()), attachment_type_id=type_id,
+        scheme=scheme, certificate_number=number,
+        status=CERTIFICATE_STATUS_ACTIVE, company_id=MOCHA_ID,
+    )
+    db.add(cert_b)
+    db.flush()
+    rev_b = CertificateRevision(
+        id=str(uuid.uuid4()), certificate_id=cert_b.id, attachment_id=att_b.id,
+        revision_no=1, is_current=True,
+    )
+    db.add(rev_b)
+    db.flush()
+    cert_b.current_revision_id = rev_b.id
+    db.commit()
+
+    user_id = _user_with_grants(db, [DEFAULT_COMPANY_ID, MOCHA_ID])
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID, MOCHA_ID}))
+
+    with pytest.raises(AppException) as exc_info:
+        AttachmentCompanyService(db).apply(
+            attachment_ids=[att_a.id, att_b.id], company_id=None, actor_id=user_id,
+        )
+
+    assert exc_info.value.status_code == 409
+    message = exc_info.value.detail["message"]
+    assert scheme in message
+    assert number in message
+
+    # Nothing committed: both certificates keep their original company.
+    db.rollback()
+    with company_scope(db, None):
+        db.refresh(cert_a)
+        db.refresh(cert_b)
+    assert cert_a.company_id == DEFAULT_COMPANY_ID
+    assert cert_b.company_id == MOCHA_ID
+
+
+# --- S5 (reviewer fix round): find_by_identity ties break deterministically,
+# an owned row over a shared one.
+
+
+def test_s5_find_by_identity_prefers_the_owned_row_over_a_shared_one(db):
+    type_id = _type(db)
+    scheme = unique_code("SCHEME")[:60]
+    number = unique_code("CERT")[:120]
+
+    shared_cert = Certificate(
+        id=str(uuid.uuid4()), attachment_type_id=type_id,
+        scheme=scheme, certificate_number=number,
+        status=CERTIFICATE_STATUS_ACTIVE, company_id=None,
+    )
+    owned_cert = Certificate(
+        id=str(uuid.uuid4()), attachment_type_id=type_id,
+        scheme=scheme, certificate_number=number,
+        status=CERTIFICATE_STATUS_ACTIVE, company_id=DEFAULT_COMPANY_ID,
+    )
+    db.add_all([shared_cert, owned_cert])
+    db.commit()
+
+    with company_scope(db, None):
+        found = CertificateService(db).find_by_identity(scheme, number)
+
+    assert found is not None
+    assert str(found.id) == str(owned_cert.id), (
+        "a real company's own row must win the tie over a shared one"
+    )
+
+
+# --- S7 (reviewer fix round): a twin coverage row inherits `source` (and
+# `created_by`) from the SAME-code row it was expanded from, never defaults
+# to manual.
+
+
+def test_s7_twin_coverage_row_inherits_source_from_the_same_code_row(db):
+    type_id = _type(db)
+    p_s, p_m = _twin_products(db, unique_code("SRTBV"))
+    att = _attachment(db, company_id=DEFAULT_COMPANY_ID, type_id=type_id)
+    cert = _filed_certificate(
+        db, company_id=DEFAULT_COMPANY_ID, attachment=att, type_id=type_id, covers=p_s,
+    )
+    # The source row was AI-extracted, and created by a specific integration
+    # principal - both must survive onto the twin.
+    source_row = (
+        db.query(CertificateProduct)
+        .filter(CertificateProduct.certificate_id == cert.id, CertificateProduct.product_id == p_s.id)
+        .first()
+    )
+    ai_created_by = str(uuid.uuid4())
+    source_row.source = CERTIFICATE_SOURCE_AI
+    source_row.created_by = ai_created_by
+    user_id = _user_with_grants(db, [DEFAULT_COMPANY_ID, MOCHA_ID])
+    db.commit()
+
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+    AttachmentCompanyService(db).apply(
+        attachment_ids=[att.id], company_id=None, actor_id=user_id,
+    )
+
+    with company_scope(db, None):
+        twin_row = (
+            db.query(CertificateProduct)
+            .filter(CertificateProduct.certificate_id == cert.id, CertificateProduct.product_id == p_m.id)
+            .first()
+        )
+    assert twin_row is not None
+    assert twin_row.source == CERTIFICATE_SOURCE_AI, (
+        "a twin row must inherit the source-code row's source, never default to manual"
+    )
+    assert str(twin_row.created_by) == ai_created_by

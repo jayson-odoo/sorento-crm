@@ -24,9 +24,17 @@ inserted, so no consumer can be served the expired PDF. ``reconcile`` is the one
 implementation, written JOIN-style as "set it to the correct value where it
 differs" rather than "insert where missing", so it is safe to re-run.
 
-Company scope is never filtered by hand here: ``app/services/company_scope.py``
+Company scope is mostly not filtered by hand here: ``app/services/company_scope.py``
 injects the predicate into every ORM SELECT touching ``Certificate`` /
-``Product`` / ``ProductAttachment`` and auto-stamps ``company_id`` on insert.
+``Product`` / ``ProductAttachment``, and auto-stamps ``company_id`` on insert
+for every owned model EXCEPT ``Certificate`` itself - it is
+``__company_shared__`` (S6, R5: a certificate follows its filed attachment's
+company, which can be no company at all), so every certificate-create path
+stamps it explicitly (``_resolve_new_certificate_company_id``). The one
+deliberate exception to "never filtered by hand" is ``reconcile_certificate``,
+which wraps its own body in ``company_scope(db, None)`` - the projection is
+machine-owned and a shared certificate's coverage spans MULTIPLE companies by
+design, so it cannot run under the caller's single-company scope.
 """
 from __future__ import annotations
 
@@ -194,20 +202,6 @@ def _months_between(start: date, end: date) -> int:
     return months
 
 
-def _single_active_company(scope: Any) -> Optional[str]:
-    """The one company a new row may be stamped with, or None.
-
-    Only an unambiguous single-company scope counts; UNSET / all-companies /
-    multi-company stay None rather than guess - a wrong guess is worse than a
-    company-less (shared) row. Mirrors ``resources_service._single_active_company``;
-    kept local rather than imported to avoid coupling the two service modules
-    over a three-line helper.
-    """
-    if isinstance(scope, frozenset) and len(scope) == 1:
-        return next(iter(scope))
-    return None
-
-
 class CertificateService:
     """Every write to the certificate register goes through here.
 
@@ -239,13 +233,24 @@ class CertificateService:
     def find_by_identity(
         self, scheme: Any, certificate_number: Any
     ) -> Optional[Certificate]:
-        """Exact identity match, using the same expression as the unique index."""
+        """Exact identity match, using the same expression as the unique index.
+
+        Deterministic tie-break for when the caller's scope is widened (all
+        companies): a real company's own row wins over a shared one - the
+        identity index only allows ONE row per (company_id, identity), so a
+        tie here is always "one owned row plus one shared row", never two
+        rows in the same company. ``company_id`` (NULLS first via ``IS NULL``
+        sorting after real values) then ``id`` keep the choice stable for two
+        owned rows or two shared rows, matching this codebase's usual
+        "end an ordering with id" tie-breaker.
+        """
         key = normalize_identity(scheme, certificate_number)
         if not key:
             return None
         return (
             self.db.query(Certificate)
             .filter(self._identity_expression() == key)
+            .order_by(Certificate.company_id.is_(None), Certificate.company_id, Certificate.id)
             .first()
         )
 
@@ -933,87 +938,101 @@ class CertificateService:
         return result
 
     def reconcile_certificate(self, certificate: Any) -> dict:
-        """The single projection writer. Returns per-action counters."""
-        counters = {"inserted": 0, "updated": 0, "deleted": 0}
-        current = self.get_current_revision(certificate)
-        current_attachment_id = (
-            str(current.attachment_id)
-            if current is not None and current.attachment_id is not None
-            else None
-        )
+        """The single projection writer. Returns per-action counters.
 
-        # 1. Superseded revisions' attachments must serve nothing (REV-3).
-        stale = self._revision_attachment_ids(certificate) - {current_attachment_id}
-        if stale:
-            counters["deleted"] += self._delete_projection_rows(stale)
+        Runs ENTIRELY under ``company_scope(db, None)`` (all companies): the
+        projection is machine-owned, not filtered through the caller's own
+        scope, and a shared certificate's coverage spans DIFFERENT companies
+        by design. A caller-scoped read here would silently miss the OTHER
+        company's existing ``product_attachments`` row - not just fail to
+        update it, but try to INSERT a duplicate for a product it can no
+        longer see, since the session scope filters ``ProductAttachment`` /
+        ``Product`` SELECTs but not the bulk-DELETE ``_delete_projection_rows``
+        issues (a DELETE query, which ``do_orm_execute`` never touches -
+        already unscoped by construction). Making every read/write here agree
+        on ``None`` is what keeps the two consistent.
+        """
+        from app.models.base import company_scope
 
-        if current_attachment_id is None:
-            return counters
-
-        attachment: Any = (
-            self.db.query(Attachment)
-            .filter(Attachment.id == current_attachment_id)
-            .first()
-        )
-        if attachment is None:
-            return counters
-
-        wanted = {str(row.product_id) for row in self.get_coverage(certificate.id)}
-        access_levels = list(attachment.access_levels or [])
-        rows: list[Any] = (
-            self.db.query(ProductAttachment)
-            .filter(ProductAttachment.attachment_id == current_attachment_id)
-            .all()
-        )
-        seen: set[str] = set()
-        for row in rows:
-            product_id = str(row.product_id)
-            if product_id not in wanted:
-                self.db.delete(row)
-                counters["deleted"] += 1
-                continue
-            seen.add(product_id)
-            # Set it to the correct value where it differs - not "insert where
-            # missing", so a drifted access level is repaired on re-run.
-            if list(row.access_levels or []) != access_levels:
-                row.access_levels = access_levels
-                counters["updated"] += 1
-
-        missing = sorted(wanted - seen)
-        # Stamp from the COVERED PRODUCT's own company, not the certificate's:
-        # a shared certificate (company_id NULL) covers twins in DIFFERENT
-        # companies, so there is no one company to fall back to, and leaning on
-        # the session scope would auto-stamp every row into the incumbent
-        # company when this runs under company_scope(db, None) (the
-        # bulk-company follow hook's widened scope, S6) - the same latent bug
-        # S2 fixed for the twin linker. Gives an identical result for a
-        # single-company certificate, since its wanted products are all in
-        # that one company anyway.
-        product_company_ids: dict[str, str] = {}
-        if missing:
-            product_company_ids = {
-                str(pid): str(cid)
-                for pid, cid in self.db.query(Product.id, Product.company_id)
-                .filter(Product.id.in_(missing))
-                .all()
-                if cid is not None
-            }
-        for product_id in missing:
-            row = ProductAttachment(
-                id=str(uuid.uuid4()),
-                product_id=product_id,
-                attachment_id=current_attachment_id,
-                access_levels=access_levels,
-                created_by=certificate.created_by,
+        with company_scope(self.db, None):
+            counters = {"inserted": 0, "updated": 0, "deleted": 0}
+            current = self.get_current_revision(certificate)
+            current_attachment_id = (
+                str(current.attachment_id)
+                if current is not None and current.attachment_id is not None
+                else None
             )
-            stamp = product_company_ids.get(product_id) or certificate.company_id
-            if stamp is not None:
-                row.company_id = stamp
-            self.db.add(row)
-            counters["inserted"] += 1
 
-        self.db.flush()
-        return counters
+            # 1. Superseded revisions' attachments must serve nothing (REV-3).
+            stale = self._revision_attachment_ids(certificate) - {current_attachment_id}
+            if stale:
+                counters["deleted"] += self._delete_projection_rows(stale)
+
+            if current_attachment_id is None:
+                return counters
+
+            attachment: Any = (
+                self.db.query(Attachment)
+                .filter(Attachment.id == current_attachment_id)
+                .first()
+            )
+            if attachment is None:
+                return counters
+
+            wanted = {str(row.product_id) for row in self.get_coverage(certificate.id)}
+            access_levels = list(attachment.access_levels or [])
+            rows: list[Any] = (
+                self.db.query(ProductAttachment)
+                .filter(ProductAttachment.attachment_id == current_attachment_id)
+                .all()
+            )
+            seen: set[str] = set()
+            for row in rows:
+                product_id = str(row.product_id)
+                if product_id not in wanted:
+                    self.db.delete(row)
+                    counters["deleted"] += 1
+                    continue
+                seen.add(product_id)
+                # Set it to the correct value where it differs - not "insert where
+                # missing", so a drifted access level is repaired on re-run.
+                if list(row.access_levels or []) != access_levels:
+                    row.access_levels = access_levels
+                    counters["updated"] += 1
+
+            missing = sorted(wanted - seen)
+            # Stamp from the COVERED PRODUCT's own company, not the certificate's:
+            # a shared certificate (company_id NULL) covers twins in DIFFERENT
+            # companies, so there is no one company to fall back to, and leaning on
+            # the session scope would auto-stamp every row into the incumbent
+            # company - the same latent bug S2 fixed for the twin linker. Gives an
+            # identical result for a single-company certificate, since its wanted
+            # products are all in that one company anyway.
+            product_company_ids: dict[str, str] = {}
+            if missing:
+                product_company_ids = {
+                    str(pid): str(cid)
+                    for pid, cid in self.db.query(Product.id, Product.company_id)
+                    .filter(Product.id.in_(missing))
+                    .all()
+                    if cid is not None
+                }
+            for product_id in missing:
+                row = ProductAttachment(
+                    id=str(uuid.uuid4()),
+                    product_id=product_id,
+                    attachment_id=current_attachment_id,
+                    access_levels=access_levels,
+                    created_by=certificate.created_by,
+                )
+                stamp = product_company_ids.get(product_id) or certificate.company_id
+                if stamp is not None:
+                    row.company_id = stamp
+                self.db.add(row)
+                counters["inserted"] += 1
+
+            self.db.flush()
+            return counters
 
     # ---------------------------------------------------------- write: merge
     def merge_into(
@@ -1510,16 +1529,21 @@ class CertificateService:
         """The company to stamp on a BRAND NEW certificate (S6, R5).
 
         A certificate follows its filing attachment's company: a shared file
-        (``company_id`` NULL) makes a shared certificate; a single-company
-        file makes a certificate in that same company. ``Certificate`` is now
-        ``__company_shared__`` (see the model), so the ``before_insert``
-        auto-stamp skips it entirely - every create path has to decide this
-        explicitly or the row silently lands company-less.
+        (``company_id`` NULL) makes a shared certificate - the ONLY path that
+        yields ``None`` here; a single-company file makes a certificate in
+        that same company. ``Certificate`` is now ``__company_shared__`` (see
+        the model), so the ``before_insert`` auto-stamp skips it entirely -
+        every create path has to decide this explicitly or the row silently
+        lands company-less.
 
-        No attachment bound yet (a manual create with the file to follow) has
-        nothing to inherit from, so it falls back to the caller's own single
-        active company - the same value the auto-stamp would have chosen
-        before this table became shareable.
+        No attachment bound (a manual create with the file to follow) or a
+        bound id that does not resolve falls back to
+        ``resolve_write_company_id`` - the SAME rule the retired auto-stamp
+        used for every other owned table: a single active company stamps
+        that company, the ``None`` (all-companies, X-API-Key) scope stamps
+        the incumbent company (``DEFAULT_COMPANY_ID``), and an ambiguous
+        scope (UNSET / multi-company) raises rather than guesses (AC-D4's
+        rule, unchanged by this table becoming shareable).
         """
         if attachment_id:
             attachment: Any = (
@@ -1528,8 +1552,9 @@ class CertificateService:
             if attachment is not None:
                 return str(attachment.company_id) if attachment.company_id else None
         from app.models.base import get_company_scope
+        from app.services.company_scope import resolve_write_company_id
 
-        return _single_active_company(get_company_scope(self.db))
+        return resolve_write_company_id(get_company_scope(self.db))
 
     def _max_validity_months(self, attachment_type_id: Any) -> Optional[int]:
         if not attachment_type_id:

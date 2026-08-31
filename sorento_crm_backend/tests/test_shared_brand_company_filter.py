@@ -14,11 +14,17 @@ from __future__ import annotations
 import uuid
 
 import pytest
+from fastapi.testclient import TestClient
 
+# MUST be first app import - resolves a circular import in app.modules.runtime.guards
+from app.main import app  # noqa: E402
+
+from app.dependencies import get_current_user, get_current_user_or_api_key, get_db
 from app.models.base import set_company_scope
 from app.models.company import Company
 from app.models.resources import Attachment, AttachmentDirectory, AttachmentType
 from app.services.company_scope import DEFAULT_COMPANY_ID, register_company_scope_listeners
+from app.services.company_scope_resolver import apply_company_scope
 from app.services.resources_service import AttachmentService
 
 from tests._pg_fixture import blank_session, unique_code
@@ -170,3 +176,65 @@ def test_drive_company_id_narrows_to_that_company_only(db):
     assert folder_ids == {root_mocha.id}
     assert root_sorento.id not in folder_ids
     assert root_shared.id not in folder_ids
+
+
+def test_service_level_company_garbage_is_rejected(db):
+    from app.services.error_handler import AppException
+
+    service = AttachmentService(db)
+    with pytest.raises(AppException) as exc_info:
+        service.list_attachments(company="garbage")
+    assert exc_info.value.status_code == 422
+
+
+# --- S6 (reviewer fix round): the route itself 422s on a malformed `company`
+# param, for both GET /attachments and GET /attachments/drive. ----------------
+
+
+@pytest.fixture
+def api():
+    with blank_session() as session:
+        session.add(Company(id=MOCHA_ID, name="Mocha", code=unique_code("MCH")[:20]))
+        session.flush()
+
+        def _override_get_db():
+            yield session
+
+        app.dependency_overrides[get_db] = _override_get_db
+        principal = {"id": str(uuid.uuid4()), "email": "zzt-company-filter@test.com"}
+        app.dependency_overrides[get_current_user] = lambda: principal
+        app.dependency_overrides[get_current_user_or_api_key] = lambda: principal
+
+        async def _override_scope():
+            scope = frozenset({DEFAULT_COMPANY_ID})
+            set_company_scope(session, scope)
+            return scope
+
+        app.dependency_overrides[apply_company_scope] = _override_scope
+
+        yield session
+        app.dependency_overrides.clear()
+
+
+def test_s6_attachments_route_422s_on_garbage_company(api):
+    with TestClient(app) as c:
+        res = c.get("/api/v1/resource-management/attachments/?company=garbage")
+    assert res.status_code == 422, res.text
+
+
+def test_s6_drive_route_422s_on_garbage_company(api):
+    with TestClient(app) as c:
+        res = c.get("/api/v1/resource-management/attachments/drive?company=garbage")
+    assert res.status_code == 422, res.text
+
+
+def test_s6_attachments_route_accepts_shared(api):
+    with TestClient(app) as c:
+        res = c.get("/api/v1/resource-management/attachments/?company=shared")
+    assert res.status_code == 200, res.text
+
+
+def test_s6_attachments_route_accepts_a_uuid(api):
+    with TestClient(app) as c:
+        res = c.get(f"/api/v1/resource-management/attachments/?company={DEFAULT_COMPANY_ID}")
+    assert res.status_code == 200, res.text

@@ -355,6 +355,13 @@ async def get_attachments(
 
         result["data"] = enriched
         return result
+    except HTTPException:
+        # AppException (and any other HTTPException) has its own status - a
+        # bare re-raise, not the generic 500 below. Without this, a 422 from
+        # the `company` filter validator (S6, reviewer fix round) came back
+        # as a 500 "INTERNAL_ERROR" - the same bug class every other route in
+        # this file already guards against.
+        raise
     except Exception as e:
         raise handle_internal_error(str(e))
 
@@ -576,7 +583,9 @@ def _attachment_response_with_linked_entities(
         provider=getattr(attachment, "storage_provider", None),
     )
     actor_id = (current_user or {}).get("id")
-    linked = service.get_linked_entities(attachment_id, actor_id=actor_id)
+    linked = service.get_linked_entities(
+        attachment_id, actor_id=actor_id, company_id=getattr(attachment, "company_id", None)
+    )
     data["linked_products"] = [LinkedEntityRef.model_validate(p).model_dump() for p in linked["linked_products"]]
     data["linked_promotions"] = [LinkedEntityRef.model_validate(p).model_dump() for p in linked["linked_promotions"]]
     data["linked_form"] = LinkedEntityRef.model_validate(linked["linked_form"]).model_dump() if linked["linked_form"] else None

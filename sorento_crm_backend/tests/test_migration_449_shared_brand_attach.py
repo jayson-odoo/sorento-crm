@@ -295,3 +295,65 @@ def test_downgrade_restores_the_old_index_allowing_two_distinct_company_duplicat
             {"i": str(uuid.uuid4()), "s": scheme, "n": number, "c": SORENTO},
         )
     db.rollback()
+
+
+def test_downgrade_drops_the_coalesced_index_before_stamping_so_a_real_collision_surfaces_at_index_create(db):
+    """Reviewer fix round (S8): dropping the coalesced index BEFORE the
+    stamp-to-Sorento UPDATE means that UPDATE can never fail on a still-live
+    unique index. Seed a Sorento-owned certificate AND a SHARED certificate
+    with the SAME identity - legal today (NULL and Sorento coalesce to
+    different keys) - and prove the eventual duplicate surfaces at the LAST
+    step (the plain index's CREATE), not mid-UPDATE."""
+    _run_upgrade(db)
+    scheme = f"ZZT-SCHEME-{uuid.uuid4().hex[:6]}"
+    number = f"ZZT-{uuid.uuid4().hex[:8]}"
+    db.execute(
+        text(
+            "INSERT INTO certificates (id, scheme, certificate_number, company_id) "
+            "VALUES (:i, :s, :n, :c)"
+        ),
+        {"i": str(uuid.uuid4()), "s": scheme, "n": number, "c": SORENTO},
+    )
+    db.execute(
+        text(
+            "INSERT INTO certificates (id, scheme, certificate_number, company_id) "
+            "VALUES (:i, :s, :n, NULL)"
+        ),
+        {"i": str(uuid.uuid4()), "s": scheme, "n": number},
+    )
+    db.commit()
+
+    # The stamp-to-Sorento UPDATE inside downgrade() must not be what raises -
+    # the coalesced index is already gone by then, so it always succeeds; the
+    # genuine duplicate this creates only fails the LATER plain-index CREATE.
+    with pytest.raises(IntegrityError):
+        _run_downgrade(db)
+    db.rollback()
+
+
+# --------------------------------------------------------------------------- #
+# Round trip (AC-H7 / S9): nullability toggles correctly both directions
+# --------------------------------------------------------------------------- #
+
+
+def _certificates_company_id_nullable(db) -> str:
+    schema = _current_schema(db)
+    return db.execute(
+        text(
+            "SELECT is_nullable FROM information_schema.columns "
+            "WHERE table_name = 'certificates' AND column_name = 'company_id' "
+            "AND table_schema = :s"
+        ),
+        {"s": schema},
+    ).scalar()
+
+
+def test_upgrade_downgrade_upgrade_round_trip_toggles_certificates_company_id_nullability(db):
+    _run_upgrade(db)
+    assert _certificates_company_id_nullable(db) == "YES"
+
+    _run_downgrade(db)
+    assert _certificates_company_id_nullable(db) == "NO"
+
+    _run_upgrade(db)
+    assert _certificates_company_id_nullable(db) == "YES"

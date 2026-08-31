@@ -172,8 +172,10 @@ class Certificate(Base, CompanyScopedMixin):
         # with the same identity cannot coexist - a plain unique index treats
         # every NULL as distinct, which would let a shared certificate be
         # re-filed indefinitely (PLAN-shared-brand-attachments S6, migration
-        # 449). The certificate-sharing logic that actually writes a
-        # NULL company_id lands in a later slice; this index is ready for it.
+        # 449). The certificate-sharing logic that writes a NULL company_id -
+        # `AttachmentCompanyService._apply_certificate_follow` /
+        # `CertificateService._resolve_new_certificate_company_id` - is wired
+        # in the same slice this index landed in.
         Index(
             "uq_certificates_company_scheme_number",
             text("coalesce(company_id, '00000000-0000-0000-0000-000000000000')"),
