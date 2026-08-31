@@ -48,6 +48,7 @@ Policy, unchanged from the MCP era:
 - Use `screenshot` for visual confirmation of CRUD flows (list → modal create → row appears → row edit → confirm-delete dialog → row gone).
 - Use `network requests --filter /api/v1/` to verify the FE hit the expected endpoint with the right method/payload - confirms the hook → service → api-client chain wired correctly.
 - Test the golden path AND edge cases: empty states (every section per CRUD UX standard), validation errors, delete confirmation copy, RBAC denial.
+- **End states over frames, never a mid-animation read.** A collapse/expand, dialog, or sheet needs its transition settled (poll geometry until two consecutive reads agree) before you assert against it - a mid-transition frame can look broken, or worse, look fine while the end state isn't (the S8 sidebar collapse regression; see the end-states-over-frames lesson in LESSONS-LEARNT.md). Per-slice, run the persisted guardrail for this class of bug: `npm run layout:smoke` (`sorento_crm_frontend/scripts/layout-smoke.mjs`) asserts sidebar collapse/expand/collapse geometry and dialog/sheet open/close/reopen unmount, against `BASE_URL` (default `http://localhost:3090`).
 - `close` when done. Never `close --all` - it closes every session, including other agents' browsers on the same machine.
 
 **The daemon's browser is SHARED across every agent on this machine, and it is one tab list.**
