@@ -25,6 +25,7 @@ from app.schemas.price_tag import (
     PriceTagRequestCreate,
     PriceTagRequestResponse,
     PriceTagRequestUpdate,
+    PromotionLookupItem,
     TagItemLookupItem,
 )
 from app.services.error_handler import AppException
@@ -342,6 +343,29 @@ def portal_lookup_tag_items(
     return [
         TagItemLookupItem(**item)
         for item in PriceTagRequestService.lookup_tag_items(db, q, limit=limit)
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Promotion lookup
+# ---------------------------------------------------------------------------
+
+
+@router.get("/lookups/promotions", response_model=list[PromotionLookupItem])
+def portal_lookup_promotions(
+    q: Optional[str] = Query(None),
+    token: PortalToken = Depends(get_portal_token),
+    db: Session = Depends(get_db),
+):
+    """Active-window promotions for the portal form's promotion dropdown (S4, #477).
+
+    Gated the same way as every other price tag route: a contact who cannot see
+    the form cannot browse the promotion book through it either.
+    """
+    _assert_visible(db, token.contact_id)
+    return [
+        PromotionLookupItem(**item)
+        for item in PriceTagRequestService.lookup_promotions(db, q)
     ]
 
 

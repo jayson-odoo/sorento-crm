@@ -505,6 +505,19 @@ class TagItemLookupItem(BaseModel):
     name: str
 
 
+class PromotionLookupItem(BaseModel):
+    """One row of the portal promotion dropdown (S4, #477).
+
+    ``name`` is ``promotions.description`` - the column the rest of the price
+    tag request already reads it off (``PriceTagRequestSummary.promotion_name``,
+    ``resolved_labels``), so the portal and the CRM never disagree about what a
+    promotion is called.
+    """
+
+    id: str
+    name: str
+
+
 class TagImage(BaseModel):
     """One photo of a bound product, signed for the viewer that asked."""
 

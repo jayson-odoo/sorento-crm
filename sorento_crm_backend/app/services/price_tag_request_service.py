@@ -695,6 +695,33 @@ class PriceTagRequestService:
         return items
 
     @staticmethod
+    def lookup_promotions(db: Session, query: str | None = None) -> list[dict]:
+        """Active-window promotions for the portal's promotion dropdown (S4, #477).
+
+        Same rule ``resolve_prices``' ``_offer_prices`` already enforces when it
+        prices a line against a promotion: switched-on (``is_active``) AND inside
+        an inclusive ``[start_date, end_date]`` window, either end open. Company
+        scoping is not written here on purpose - ``Promotion`` carries
+        ``CompanyScopedMixin`` and the ordinary ORM scope filter already keeps
+        another company's promotion off this list, the same way it already keeps
+        it out of a price.
+        """
+        from app.models.marketing import Promotion
+        from app.services.dealer_kit.pricing import business_today
+
+        today = business_today()
+        q = (
+            db.query(Promotion)
+            .filter(Promotion.is_active.is_(True))
+            .filter(or_(Promotion.start_date.is_(None), Promotion.start_date <= today))
+            .filter(or_(Promotion.end_date.is_(None), Promotion.end_date >= today))
+        )
+        if query:
+            q = q.filter(Promotion.description.ilike(f"%{query}%"))
+        rows = q.order_by(Promotion.description).all()
+        return [{"id": row.id, "name": row.description or ""} for row in rows]
+
+    @staticmethod
     def lookup_debtors_for_agent(
         db: Session,
         contact_id: str,

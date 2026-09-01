@@ -1,6 +1,6 @@
 # PLAN - Price Tag Feedback R2
 
-Status: Approved 1 Sep 2026 - implementation starting
+Status: Approved 1 Sep 2026 - implementation starting. S4 (portal promotions lookup) DONE, ready for PR - 1 Sep 2026 on branch `price-tag-r2-s4`: `GET /portal/lookups/promotions` on the portal price-tag router (active-window + company scope mirrors resolve_prices' _offer_prices), `lookupPromotions` wired FE-side, SearchableSelect stays clearable. pytest test-first (7 new tests, all portal/price-tag suites green - 89 tests); browser-verified end to end on a fresh :3131 FE / :8131 BE pair (own backend, since the endpoint is new code) - real promotions load, search filters, selection submits promotion_id, verified on the created request, fixtures cleaned up.
 UAC: `documentation/plans/dealer-kit/price-tag-feedback-r2-acceptance-criteria.md`
 Predecessor: `documentation/plans/dealer-kit/PLAN-price-tag-request.md` (shipped, PR #289)
 

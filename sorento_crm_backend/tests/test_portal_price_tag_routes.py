@@ -507,3 +507,121 @@ class TestTheGrantGatesEveryRoute:
 
         assert res.status_code == 200, res.text
         assert isinstance(res.json(), list)
+
+
+
+# ---------------------------------------------------------------------------
+# The promotions lookup (S4, #477)
+# ---------------------------------------------------------------------------
+
+
+def _seed_promotion(
+    db: Session,
+    *,
+    description: str = "ZZT Promo",
+    is_active: bool = True,
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> str:
+    from app.models.marketing import Promotion
+
+    promo = Promotion(
+        id=str(uuid.uuid4()),
+        description=description,
+        is_active=is_active,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    db.add(promo)
+    db.flush()
+    return promo.id
+
+
+class TestThePromotionsLookup:
+    """``GET /portal/lookups/promotions`` - active-window promotions only.
+
+    Same active-window rule ``resolve_prices``' ``_offer_prices`` already
+    enforces when it prices a line against a promotion: ``is_active`` plus an
+    inclusive ``[start_date, end_date]`` window with either end open. Company
+    scoping is the ordinary ORM scope filter the portal's ``X-Portal-Token``
+    header primes - nothing route-specific to prove here beyond "it answers".
+    """
+
+    def test_an_active_promotion_is_returned(self, client):
+        c, db, _contact_id = client
+        promo_id = _seed_promotion(db, description="ZZT Spring Sale")
+
+        res = c.get("/api/v1/public/portal/lookups/promotions")
+
+        assert res.status_code == 200, res.text
+        rows = res.json()
+        assert {"id": promo_id, "name": "ZZT Spring Sale"} in rows
+
+    def test_an_expired_promotion_is_excluded(self, client):
+        c, db, _contact_id = client
+        _seed_promotion(
+            db, description="ZZT Last Year", end_date=date.today() - timedelta(days=1)
+        )
+
+        rows = c.get("/api/v1/public/portal/lookups/promotions").json()
+
+        assert not any(r["name"] == "ZZT Last Year" for r in rows)
+
+    def test_a_not_yet_started_promotion_is_excluded(self, client):
+        c, db, _contact_id = client
+        _seed_promotion(
+            db, description="ZZT Not Yet", start_date=date.today() + timedelta(days=7)
+        )
+
+        rows = c.get("/api/v1/public/portal/lookups/promotions").json()
+
+        assert not any(r["name"] == "ZZT Not Yet" for r in rows)
+
+    def test_a_switched_off_promotion_is_excluded(self, client):
+        c, db, _contact_id = client
+        _seed_promotion(db, description="ZZT Switched Off", is_active=False)
+
+        rows = c.get("/api/v1/public/portal/lookups/promotions").json()
+
+        assert not any(r["name"] == "ZZT Switched Off" for r in rows)
+
+    def test_q_filters_by_name(self, client):
+        c, db, _contact_id = client
+        _seed_promotion(db, description="ZZT Kitchen Bash")
+        _seed_promotion(db, description="ZZT Bathroom Blitz")
+
+        rows = c.get(
+            "/api/v1/public/portal/lookups/promotions", params={"q": "kitchen"}
+        ).json()
+
+        names = {r["name"] for r in rows}
+        assert "ZZT Kitchen Bash" in names
+        assert "ZZT Bathroom Blitz" not in names
+
+    def test_the_grant_gates_this_lookup_too(self, client):
+        """The control: its sibling lookups are already gated the same way."""
+        c, db, contact_id = client
+        _revoke_the_grant(db, contact_id)
+
+        res = c.get("/api/v1/public/portal/lookups/promotions")
+
+        assert res.status_code == 403, res.text
+        assert res.json()["code"] == "FORM_TYPE_NOT_VISIBLE"
+
+    def test_a_missing_token_is_refused(self):
+        """Auth runs before the grant check and before any DB read."""
+        from app.database import get_db
+
+        with blank_session() as db:
+
+            def _override_get_db():
+                yield db
+
+            app.dependency_overrides[get_db] = _override_get_db
+            try:
+                with TestClient(app) as c:
+                    res = c.get("/api/v1/public/portal/lookups/promotions")
+            finally:
+                app.dependency_overrides.clear()
+
+        assert res.status_code == 401, res.text
