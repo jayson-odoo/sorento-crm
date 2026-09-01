@@ -23,6 +23,7 @@ import type { PlanLine } from './planLine';
 import type {
   PlanRowDecision as ServerPlanDecision,
   PlanRowDecisionKind,
+  PlanRowDecisionListResponse,
   PlanRowPriceMode,
   RecordPlanRowDecisionPayload,
 } from '../types/decisions.types';
@@ -320,6 +321,50 @@ export function serverDecisionsToMap(
     map[sd.recommendation_id] = fromServerPlanDecision(sd, resolve);
   }
   return map;
+}
+
+/**
+ * Fold freshly-written decisions straight into the cached list (S3 perf, AC-3.5) -
+ * deciding one row must not refetch the whole run's decisions. `decided_count` moves
+ * by AT MOST one, matching the server's own by-PRODUCT count (R14): a write is a NEW
+ * decided product only when none of its recs (the group's members, for a grouped row)
+ * carried one already - a member re-decided, or one of several members that already
+ * had a decision, leaves the count exactly where it was.
+ */
+export function applyDecisionWrites(
+  old: PlanRowDecisionListResponse | undefined,
+  writes: ServerPlanDecision[],
+): PlanRowDecisionListResponse | undefined {
+  if (!old || writes.length === 0) return old;
+  const hadAny = writes.some((w) =>
+    old.data.some((d) => d.recommendation_id === w.recommendation_id),
+  );
+  const byId = new Map(old.data.map((d) => [d.recommendation_id, d]));
+  for (const w of writes) byId.set(w.recommendation_id, w);
+  return {
+    ...old,
+    data: Array.from(byId.values()),
+    decided_count: hadAny ? old.decided_count : old.decided_count + 1,
+  };
+}
+
+/**
+ * Withdraw recs from the cached list (S3 perf, AC-3.5) - the mirror of
+ * `applyDecisionWrites`. `decided_count` drops by one only when a decision was
+ * actually removed (idempotent-clear of an already-undecided row changes nothing).
+ */
+export function applyDecisionClears(
+  old: PlanRowDecisionListResponse | undefined,
+  recIds: string[],
+): PlanRowDecisionListResponse | undefined {
+  if (!old) return old;
+  const removedAny = old.data.some((d) => recIds.includes(d.recommendation_id));
+  if (!removedAny) return old;
+  return {
+    ...old,
+    data: old.data.filter((d) => !recIds.includes(d.recommendation_id)),
+    decided_count: Math.max(0, old.decided_count - 1),
+  };
 }
 
 /**

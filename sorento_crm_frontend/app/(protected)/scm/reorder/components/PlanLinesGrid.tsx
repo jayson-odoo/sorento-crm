@@ -349,7 +349,7 @@ export function PlanLinesGrid({
   isLoading?: boolean;
 }) {
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 25 });
-  // No column is actively sorted by default: the DEFAULT order comes from `ordered` below
+  // No column is actively sorted by default: the DEFAULT order comes from `tableData` below
   // (undecided first, decided sunk to the bottom, rank-ordered within each). Clicking a
   // header still sorts normally - the buyer overriding the default is a real request.
   const [sorting, setSorting] = useState<SortingState>([]);
@@ -381,12 +381,15 @@ export function PlanLinesGrid({
   // one can be open at a time, and six mounted bodies per row is what the popovers cost.
   const [dialogRequest, setDialogRequest] = useState<PlanDialogRequest | null>(null);
 
+  // Search/status/price/action/level - every filter that does NOT read a decision.
+  // Deliberately kept decision-independent (S3 perf, AC-3.5): `groupPlanLinesByChannel`
+  // below is fed by THIS memo rather than one that also depends on `decisions`, so
+  // deciding one row anywhere on the plan no longer forces the whole grid's grouping to
+  // recompute - only the (much cheaper) decided-filter/sort step after it does.
   const filtered = useMemo(() => {
     const needle = searchQuery.trim().toLowerCase();
     return lines.filter((l) => {
       if (statusFilter !== 'all' && l.status !== statusFilter) return false;
-      if (decidedFilter === 'undecided' && decisions[l.id]) return false;
-      if (decidedFilter === 'decided' && !decisions[l.id]) return false;
       if (priceFilter !== 'all') {
         const advice = l.purchasable ? priceFor?.(l)?.advice : undefined;
         if ((advice ?? 'none') !== priceFilter) return false;
@@ -418,26 +421,44 @@ export function PlanLinesGrid({
         l.supplier.name.toLowerCase().includes(needle)
       );
     });
-  }, [lines, searchQuery, statusFilter, decidedFilter, priceFilter,
-      actionFilter, levelFilter, decisions, priceFor, coverFor, levelFor, poFor]);
-
-  // Undecided first, decided sunk to the bottom (user markup, 2026-08-12: "so they can decide
-  // until all outstanding decisions are cleared"). `filtered` is already rank-ordered (`lines`
-  // comes out of `toPlanLines` sorted by rank), and `Array.prototype.sort` is stable, so this
-  // grouping never disturbs the rank order WITHIN either group - only the two groups move.
-  const ordered = useMemo(
-    () => [...filtered].sort((a, b) => (decisions[a.id] ? 1 : 0) - (decisions[b.id] ? 1 : 0)),
-    [filtered, decisions],
-  );
+  }, [lines, searchQuery, statusFilter, priceFilter, actionFilter, levelFilter,
+      priceFor, coverFor, levelFor, poFor]);
 
   // 5.3: one row per PRODUCT on a Product-grain run, each expandable to the per-warehouse
-  // rows it summed. Grouping runs AFTER the existing filter/sort pipeline, so search/
-  // status/side/price/action/level all narrow the same per-warehouse facts they always
-  // did; only the rendered ROW count changes.
-  const tableData = useMemo<PlanLine[]>(
-    () => (groupByChannel ? groupPlanLinesByChannel(ordered) : ordered),
-    [groupByChannel, ordered],
+  // rows it summed. Grouping runs AFTER the decision-independent filters above, so search/
+  // status/price/action/level all narrow the same per-warehouse facts they always did; only
+  // the rendered ROW count changes. `filtered` is already rank-ordered (`lines` comes out of
+  // `toPlanLines` sorted by rank), so a group's own position stays first-member rank order.
+  const grouped = useMemo<PlanLine[]>(
+    () => (groupByChannel ? groupPlanLinesByChannel(filtered) : filtered),
+    [groupByChannel, filtered],
   );
+
+  /** Whether a row (a genuine group's worth of members, or one ungrouped line) carries
+   *  ANY decision - the same "has this product been touched" reading `groupDecisionState`
+   *  gives the row's own pill, so the Decided/Undecided filter and sort agree with it. */
+  const isRowDecided = useCallback(
+    (line: PlanLine): boolean =>
+      isGroupedLine(line)
+        ? line.__group.members.some((m) => Boolean(decisions[m.rec.id]))
+        : Boolean(decisions[line.id]),
+    [decisions],
+  );
+
+  // The Decided/Undecided filter, then "still to decide" first / "already decided" last
+  // (user markup, 2026-08-12: "so they can decide until all outstanding decisions are
+  // cleared") - both against the GROUPED rows, so the two never see a different row count
+  // and `Array.prototype.sort`'s stability keeps each bucket in `grouped`'s own rank order.
+  const tableData = useMemo<PlanLine[]>(() => {
+    const withState = grouped.map((l) => ({ line: l, decided: isRowDecided(l) }));
+    const kept =
+      decidedFilter === 'all'
+        ? withState
+        : withState.filter((x) => (decidedFilter === 'decided' ? x.decided : !x.decided));
+    return kept
+      .sort((a, b) => (a.decided ? 1 : 0) - (b.decided ? 1 : 0))
+      .map((x) => x.line);
+  }, [grouped, decidedFilter, isRowDecided]);
 
   // The channel COLUMN set: Project and Retail, always (captain, 28 Aug 2026: "where is my
   // project quantity column" on a run whose rows were all retail). The 19-20 Aug rule
