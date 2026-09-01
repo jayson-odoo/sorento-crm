@@ -1,6 +1,6 @@
 """Migration `456_reorder_perf_quickwins` (S3, issue #464) - the ONE-TIME backfill of
-`scm.reorder_run.{planned,decided,confirmed}_count` and
-`scm.reorder_recommendation.pool_warehouse_{id,code}`.
+`scm.reorder_run.{planned,decided,confirmed}_count` and (product/network-grain rows
+only - see below) `scm.reorder_recommendation.pool_warehouse_{id,code}`.
 
 Runs the migration's own SQL against `blank_session`'s scratch schema rather than
 importing and executing the module directly. That is a deliberate departure from the
@@ -30,6 +30,16 @@ real database: every one of the 52,168 rows with `warehouse_id IS NULL` carried 
 `pool_warehouse_id` - that backfill block never ran. Both the migration and this file's
 copy of it now use a CTE (the LATERAL correlation happens inside an ordinary SELECT,
 which Postgres does allow, then the UPDATE joins back to it by id).
+
+The migration's LOCATION-grain pool backfill (`WHERE rr.warehouse_id = w.id`) was
+dropped entirely (review finding S2) - it was a 671,125-row / ~2.5GB `UPDATE` on the
+real database, and provably unnecessary: `list_recommendations`'s read path already
+does `COALESCE(rr.pool_warehouse_id, w.pool_warehouse_id, w.id)`, which computes the
+identical answer for a location-grain row whose `pool_warehouse_id` stays NULL, off
+the same live join, forever. That equivalence is asserted directly in
+`tests/scm/test_s3_reorder_perf_quickwins.py::
+test_a_never_backfilled_location_row_still_reads_its_pool_via_the_live_fallback`
+rather than here, since it is a READ-PATH property, not something this migration does.
 """
 from __future__ import annotations
 
@@ -70,15 +80,6 @@ UPDATE reorder_run rr
  WHERE rr.id = c.run_id
 """
 
-_BACKFILL_LOCATION_POOL = """
-UPDATE reorder_recommendation rr
-   SET pool_warehouse_id = COALESCE(w.pool_warehouse_id, w.id),
-       pool_warehouse_code = COALESCE(pw.warehouse_code, w.warehouse_code)
-  FROM warehouses w
-  LEFT JOIN warehouses pw ON pw.id = w.pool_warehouse_id
- WHERE rr.warehouse_id = w.id
-"""
-
 _BACKFILL_NETWORK_POOL = """
 WITH plan_pool AS (
     SELECT rr.id AS rec_id,
@@ -106,7 +107,6 @@ UPDATE reorder_recommendation rr
 
 def _run_backfill(db) -> None:
     db.execute(text(_BACKFILL_COUNTS))
-    db.execute(text(_BACKFILL_LOCATION_POOL))
     db.execute(text(_BACKFILL_NETWORK_POOL))
     db.flush()
 
@@ -259,10 +259,17 @@ def test_confirmed_count_follows_a_draft_or_active_po_line_either_source_system(
 
 
 # ===========================================================================
-# pool_warehouse_id / pool_warehouse_code - location grain
+# pool_warehouse_id / pool_warehouse_code - location grain is DELIBERATELY
+# never backfilled (review finding S2) - guards against the 671,125-row UPDATE
+# quietly coming back
 # ===========================================================================
 
-def test_a_location_at_a_pool_reads_the_pools_id_and_code(db):
+def test_a_location_grain_row_stays_null_the_read_path_covers_it_instead(db):
+    """No backfill touches `warehouse_id IS NOT NULL` rows at all - this pins that,
+    so a future edit cannot silently reintroduce the dropped 671,125-row / ~2.5GB
+    `UPDATE`. `tests/scm/test_s3_reorder_perf_quickwins.py::
+    test_a_never_backfilled_location_row_still_reads_its_pool_via_the_live_fallback`
+    is the read-path half of this claim - the API answers correctly anyway."""
     cat, uom = _category(db), _uom(db)
     pool = _warehouse(db)
     member = _warehouse(db, pool_warehouse_id=pool.id)
@@ -273,24 +280,8 @@ def test_a_location_at_a_pool_reads_the_pools_id_and_code(db):
 
     db.expire_all()
     refreshed = db.query(ReorderRecommendation).filter(ReorderRecommendation.id == rec.id).one()
-    assert refreshed.pool_warehouse_id == pool.id
-    assert refreshed.pool_warehouse_code == pool.warehouse_code
-
-
-def test_a_location_that_heads_its_own_pool_reads_itself(db):
-    """COALESCE(w.pool_warehouse_id, w.id) - a warehouse with no `pool_warehouse_id`
-    IS its own pool."""
-    cat, uom = _category(db), _uom(db)
-    standalone = _warehouse(db)
-    run = _run(db)
-    rec = _rec(db, run, _product(db, cat, uom), warehouse_id=standalone.id)
-
-    _run_backfill(db)
-
-    db.expire_all()
-    refreshed = db.query(ReorderRecommendation).filter(ReorderRecommendation.id == rec.id).one()
-    assert refreshed.pool_warehouse_id == standalone.id
-    assert refreshed.pool_warehouse_code == standalone.warehouse_code
+    assert refreshed.pool_warehouse_id is None
+    assert refreshed.pool_warehouse_code is None
 
 
 # ===========================================================================
@@ -362,13 +353,20 @@ def test_a_network_row_with_no_plan_basis_at_all_stays_null(db):
 def test_backfill_is_idempotent(db):
     """Running it twice (the migration's own `IF NOT EXISTS` column guards make a
     second `upgrade()` a real possibility on a database migrated more than once)
-    reproduces the exact same values, not a second summation."""
+    reproduces the exact same values, not a second summation. `rec` is
+    location-grain (deliberately never pool-backfilled, review finding S2) so its own
+    idempotence check is "stays NULL both times"; `network_rec` covers the
+    network-grain CTE backfill's idempotence, the piece that still runs."""
     cat, uom = _category(db), _uom(db)
     pool = _warehouse(db)
     member = _warehouse(db, pool_warehouse_id=pool.id)
     run = _run(db)
     rec = _rec(db, run, _product(db, cat, uom), warehouse_id=member.id)
     _decision(db, rec)
+    network_rec = _rec(
+        db, run, _product(db, cat, uom), warehouse_id=None,
+        inputs={"plan_basis": {"locations": [{"warehouse_id": member.id}]}},
+    )
 
     _run_backfill(db)
     _run_backfill(db)
@@ -376,6 +374,10 @@ def test_backfill_is_idempotent(db):
     db.expire_all()
     refreshed_run = db.query(ReorderRun).filter(ReorderRun.id == run.id).one()
     refreshed_rec = db.query(ReorderRecommendation).filter(ReorderRecommendation.id == rec.id).one()
-    assert refreshed_run.planned_count == 1
+    refreshed_network = (
+        db.query(ReorderRecommendation).filter(ReorderRecommendation.id == network_rec.id).one()
+    )
+    assert refreshed_run.planned_count == 2
     assert refreshed_run.decided_count == 1
-    assert refreshed_rec.pool_warehouse_id == pool.id
+    assert refreshed_rec.pool_warehouse_id is None
+    assert refreshed_network.pool_warehouse_id == pool.id

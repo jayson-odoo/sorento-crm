@@ -36,6 +36,7 @@ import {
   applyDecisionClears,
   applyDecisionWrites,
   planTotals,
+  productIdMap,
   serverDecisionsToMap,
   toRecordPlanRowDecisionPayload,
   type PlanDecision,
@@ -255,6 +256,17 @@ export function usePlanLines(runId: string | null, enabled = true) {
     [planRowDecisions.data, lines, cover.data],
   );
 
+  /** `recommendation_id -> product_id`, built once off this run's flat line list - what
+   *  `applyDecisionWrites`/`applyDecisionClears` need to recompute `decided_count` by
+   *  DISTINCT PRODUCT (R14) rather than per write/clear call (S3 perf review fix: an
+   *  increment-per-call double-counted a product decided at two warehouses on a
+   *  location-grain, ungrouped run). */
+  const productOfMap = useMemo(() => productIdMap(lines), [lines]);
+  const productOf = useCallback(
+    (recId: string) => productOfMap.get(recId),
+    [productOfMap],
+  );
+
   // Read inside `chooseRow`, whose identity must not change with every decision fetch.
   const decisionsRef = useRef(decisions);
   decisionsRef.current = decisions;
@@ -310,7 +322,7 @@ export function usePlanLines(runId: string | null, enabled = true) {
           r.status === 'fulfilled')
         .map((r) => r.value);
       qc.setQueryData<PlanRowDecisionListResponse>(planRowDecisionsKey(runId), (old) =>
-        applyDecisionWrites(old, written),
+        applyDecisionWrites(old, written, productOf),
       );
       const failures = results.filter(
         (r): r is PromiseRejectedResult => r.status === 'rejected',
@@ -324,7 +336,7 @@ export function usePlanLines(runId: string | null, enabled = true) {
           : detail,
       );
     },
-    [qc, runId],
+    [qc, runId, productOf],
   );
 
   /**
@@ -373,7 +385,7 @@ export function usePlanLines(runId: string | null, enabled = true) {
       // simply leaves that rec's cached row as-is.
       const cleared = recIds.filter((id, i) => results[i].status === 'fulfilled');
       qc.setQueryData<PlanRowDecisionListResponse>(planRowDecisionsKey(runId), (old) =>
-        applyDecisionClears(old, cleared),
+        applyDecisionClears(old, cleared, productOf),
       );
       const failures = results.filter(
         (r): r is PromiseRejectedResult => r.status === 'rejected',
@@ -387,7 +399,7 @@ export function usePlanLines(runId: string | null, enabled = true) {
           : detail,
       );
     },
-    [qc, runId],
+    [qc, runId, productOf],
   );
 
   const totals = useMemo(

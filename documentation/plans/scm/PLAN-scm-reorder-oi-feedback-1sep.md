@@ -1,6 +1,11 @@
 # PLAN: SCM reorder + order-inquiry feedback batch (1 Sep 2026)
 
-Status: GRILLED AND APPROVED - three grill rounds settled 1 Sep 2026, nothing built.
+Status: GRILLED AND APPROVED - three grill rounds settled 1 Sep 2026. All six slices
+built, PRs open as of 2 Sep 2026: S1 #471, S2 #488, S3 #491 (this doc's own perf slice,
+review fix round in progress), S4 #489, S5 #493, S6 #490. Merge order:
+#471 -> #488 -> #489 -> #491 -> #490 -> #493 - S3/S4/S5/S6 each stack a migration onto
+453/454/455 in turn (see `456_reorder_perf_quickwins`'s own docstring for the two-round
+renumbering this caused).
 UAC: `scm-reorder-oi-feedback-1sep-acceptance-criteria.md`
 
 ## Journeys

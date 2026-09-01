@@ -306,13 +306,21 @@ export function fromServerPlanDecision(
  * against that SAME product's free pool); `coverSources` is `usePlanLines`' own
  * `cover.data.sources` map, keyed by product id.
  */
+/** `recommendation_id -> product_id`, built once off the run's flat (ungrouped) line
+ *  list - the same lookup `serverDecisionsToMap` needs and the cache-patch functions
+ *  below need too, so it lives in one place rather than three. */
+export function productIdMap(lines: PlanLine[]): Map<string, string | null> {
+  const map = new Map<string, string | null>();
+  for (const l of lines) map.set(l.id, l.product_id);
+  return map;
+}
+
 export function serverDecisionsToMap(
   serverDecisions: ServerPlanDecision[],
   lines: PlanLine[],
   coverSources: Record<string, { warehouse_id: string; warehouse_code: string }[]>,
 ): PlanDecisionMap {
-  const productOf = new Map<string, string | null>();
-  for (const l of lines) productOf.set(l.id, l.product_id);
+  const productOf = productIdMap(lines);
   const map: Record<string, PlanDecision> = {};
   for (const sd of serverDecisions) {
     const productId = productOf.get(sd.recommendation_id) ?? null;
@@ -323,47 +331,85 @@ export function serverDecisionsToMap(
   return map;
 }
 
+/** A recommendation id resolved to whatever counts it as "the same product" for
+ *  `decided_count` purposes - the real product id when known, or (falling back
+ *  safely, never silently dropping the row from the count) the recommendation id
+ *  itself when the caller's line list cannot name one. */
+function countingKey(recId: string, productOf: (recId: string) => string | null | undefined): string {
+  return productOf(recId) ?? recId;
+}
+
 /**
  * Fold freshly-written decisions straight into the cached list (S3 perf, AC-3.5) -
- * deciding one row must not refetch the whole run's decisions. `decided_count` moves
- * by AT MOST one, matching the server's own by-PRODUCT count (R14): a write is a NEW
- * decided product only when none of its recs (the group's members, for a grouped row)
- * carried one already - a member re-decided, or one of several members that already
- * had a decision, leaves the count exactly where it was.
+ * deciding one row must not refetch the whole run's decisions.
+ *
+ * `decided_count` is RECOMPUTED off the merged data's distinct product set, matching
+ * the server's own by-PRODUCT count (R14) exactly - not incremented per call. An
+ * increment-per-write OVERcounts on a LOCATION-grain (ungrouped) run: the same
+ * product decided at two different warehouses is two separate `decide()` calls (two
+ * rows, never fanned out together the way a product-grain GROUP's members are), and
+ * an increment-per-call reads that as two decided products where the server - and the
+ * header's own "N of Total made" - counts one. Bug found in review: the header could
+ * read "412 of 200 decided" on a run with heavy multi-warehouse products.
  */
 export function applyDecisionWrites(
   old: PlanRowDecisionListResponse | undefined,
   writes: ServerPlanDecision[],
+  productOf: (recommendationId: string) => string | null | undefined,
 ): PlanRowDecisionListResponse | undefined {
   if (!old || writes.length === 0) return old;
-  const hadAny = writes.some((w) =>
-    old.data.some((d) => d.recommendation_id === w.recommendation_id),
-  );
   const byId = new Map(old.data.map((d) => [d.recommendation_id, d]));
   for (const w of writes) byId.set(w.recommendation_id, w);
+  const data = Array.from(byId.values());
+  const decidedKeys = new Set(data.map((d) => countingKey(d.recommendation_id, productOf)));
   return {
     ...old,
-    data: Array.from(byId.values()),
-    decided_count: hadAny ? old.decided_count : old.decided_count + 1,
+    data,
+    decided_count: decidedKeys.size,
   };
 }
 
 /**
  * Withdraw recs from the cached list (S3 perf, AC-3.5) - the mirror of
- * `applyDecisionWrites`. `decided_count` drops by one only when a decision was
- * actually removed (idempotent-clear of an already-undecided row changes nothing).
+ * `applyDecisionWrites`. `decided_count` is recomputed the same way (see that
+ * function's docstring), off whatever survives the removal.
+ *
+ * The server's clear pulls EVERY draft PO line the cleared rec's PRODUCT carries
+ * (`decision_service._remove_product_lines`), not just the cleared rec's own line - a
+ * product-grain group's OTHER members, or a location-grain row sharing the same
+ * product, can lose their draft line as a side effect of clearing a different row.
+ * Any surviving cached decision for that same product has its `draft_po_number` /
+ * `draft_po_id` stripped here too, or the Decision pill would keep reading Confirmed
+ * for a line the server already pulled (found in review).
  */
 export function applyDecisionClears(
   old: PlanRowDecisionListResponse | undefined,
   recIds: string[],
+  productOf: (recommendationId: string) => string | null | undefined,
 ): PlanRowDecisionListResponse | undefined {
   if (!old) return old;
-  const removedAny = old.data.some((d) => recIds.includes(d.recommendation_id));
+  const clearedIds = new Set(recIds);
+  const removedAny = old.data.some((d) => clearedIds.has(d.recommendation_id));
   if (!removedAny) return old;
+  const clearedProducts = new Set(
+    recIds
+      .map((id) => productOf(id))
+      .filter((p): p is string => Boolean(p)),
+  );
+  const data = old.data
+    .filter((d) => !clearedIds.has(d.recommendation_id))
+    .map((d) => {
+      const pid = productOf(d.recommendation_id);
+      if (pid && clearedProducts.has(pid) && (d.draft_po_number || d.draft_po_id)) {
+        return { ...d, draft_po_number: null, draft_po_id: null };
+      }
+      return d;
+    });
+  const decidedKeys = new Set(data.map((d) => countingKey(d.recommendation_id, productOf)));
   return {
     ...old,
-    data: old.data.filter((d) => !recIds.includes(d.recommendation_id)),
-    decided_count: Math.max(0, old.decided_count - 1),
+    data,
+    decided_count: decidedKeys.size,
   };
 }
 

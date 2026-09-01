@@ -1,9 +1,7 @@
 """S3 reorder perf quick wins (PLAN-scm-reorder-oi-feedback-1sep.md, issue #464,
-migration `456_reorder_perf_quickwins`).
-
-Four independent pieces landed in commit 8def0247a with NO tests (a process violation -
-Phase 2 is test-first, and this suite is the belated red/green/refactor pass). Each test
-below traces to one UAC id.
+migration `456_reorder_perf_quickwins`). Covers AC-3.1 through AC-3.4; AC-3.5 (the FE
+cache-patch behaviour) is `planDecisions.test.ts` and `PlanLinesGrid.test.tsx`. Each
+test below traces to one UAC id.
 """
 from __future__ import annotations
 
@@ -16,6 +14,7 @@ from sqlalchemy.dialects import postgresql
 
 from app.models.procurement import PurchaseOrderLine
 from app.services.scm import decision_service as dsvc
+from app.services.scm import reorder_run_service as run_svc
 from tests.scm.conftest import SORENTO_COMPANY_ID, requires_pg, set_plan_grain
 from tests.scm.test_m4_cash import (
     _client,
@@ -304,6 +303,33 @@ def test_confirm_decisions_moves_confirmed_count(scm_app):
     assert _run_counts(db, run_id) == (1, 1, 1)
 
 
+def test_reject_recommendation_moves_confirmed_count(scm_app):
+    """Review finding S1 - a rec reaches a draft line through the LEGACY
+    accept/adjust status alone (`_confirm_location_grain`'s legacy loop), no
+    `plan_row_decision` involved, so a reject that follows an accept-then-confirm
+    must move `confirmed_count` back down. `reject_recommendation` never called
+    `_refresh_run_counts` before this fix - `confirmed_count` went stale."""
+    _, db, _, _ = scm_app
+    run_id, rec_id, _wid = _buy_rec(db, f"{MARKER}W-REJ", f"{MARKER}P-REJ")
+    dsvc.accept_recommendation(db, rec_id, actor="tester")
+    dsvc.confirm_decisions(db, run_id, ids=None, actor="tester")
+    assert _run_counts(db, run_id) == (1, 0, 1), "accepted+confirmed, no row decision"
+
+    dsvc.reject_recommendation(db, rec_id, reason_text="discontinued", actor="tester")
+    assert _run_counts(db, run_id) == (1, 0, 0), "confirmed_count must drop with the pulled line"
+
+
+def test_bulk_reject_moves_confirmed_count_for_every_rec(scm_app):
+    _, db, _, _ = scm_app
+    run_id, rec_id, _wid = _buy_rec(db, f"{MARKER}W-BREJ", f"{MARKER}P-BREJ")
+    dsvc.accept_recommendation(db, rec_id, actor="tester")
+    dsvc.confirm_decisions(db, run_id, ids=None, actor="tester")
+    assert _run_counts(db, run_id) == (1, 0, 1)
+
+    dsvc.bulk_reject(db, run_id, [rec_id], reason_text="discontinued", actor="tester")
+    assert _run_counts(db, run_id) == (1, 0, 0)
+
+
 def test_reset_run_decisions_moves_every_count_back(scm_app):
     _, db, _, _ = scm_app
     run_id, rec_id, _wid = _buy_rec(db, f"{MARKER}W-RESET", f"{MARKER}P-RESET")
@@ -461,3 +487,98 @@ def test_a_network_row_with_no_precomputed_pool_reads_null_not_a_stale_lateral(s
     row = res.json()["data"][0]
     assert row["pool_warehouse_id"] is None
     assert row["pool_warehouse_code"] is None
+
+
+def test_a_never_backfilled_location_row_still_reads_its_pool_via_the_live_fallback(scm_app):
+    """AC-3.4 / review finding S2 - a location-grain row's `pool_warehouse_id` column
+    is deliberately NEVER backfilled by the migration (dropped: it was a 671,125-row
+    UPDATE on the real database). The read path's live `COALESCE(rr.pool_warehouse_id,
+    w.pool_warehouse_id, w.id)` must still answer correctly off the warehouse join
+    alone - this is the equivalence the migration's own comment claims, proven here
+    against the real API response rather than just the migration's SQL in isolation
+    (see tests/test_migration_456_reorder_perf_backfill.py for that half)."""
+    _, db, _, _ = scm_app
+
+    pool_code = f"{MARKER}W-LIVEPOOL"
+    member_code = f"{MARKER}W-LIVEMEMBER"
+    pool_wid = _mk_warehouse(db, pool_code)
+    member_wid = str(uuid.uuid4())
+    db.execute(text(
+        "INSERT INTO warehouses (id, warehouse_code, warehouse_name, is_active, "
+        "pool_warehouse_id, created_at, updated_at) "
+        "VALUES (CAST(:id AS uuid), :code, :name, true, CAST(:pool AS uuid), now(), now())"
+    ), {"id": member_wid, "code": member_code, "name": f"{MARKER} live member",
+        "pool": pool_wid})
+
+    pid = _mk_product(db, f"{MARKER}P-LIVEPOOL")
+    run_id = str(uuid.uuid4())
+    from tests.scm.conftest import ensure_reference_data
+
+    ensure_reference_data(db)
+    db.execute(text(
+        "INSERT INTO scm.reorder_run (id, status, decision_grain, "
+        "front_planning_contract_version, company_id, created_at) "
+        "VALUES (CAST(:id AS uuid), 'completed', 'location', 1, CAST(:co AS uuid), now())"
+    ), {"id": run_id, "co": SORENTO_COMPANY_ID})
+    rec_id = str(uuid.uuid4())
+    # `pool_warehouse_id`/`code` left NULL - exactly the state every LOCATION-grain
+    # row is in forever now (never backfilled, and this one predates the
+    # generation-time stamp too).
+    db.execute(text(
+        "INSERT INTO scm.reorder_recommendation (id, run_id, rec_type, product_id, "
+        "warehouse_id, rounded_qty, recommended_qty, unit_cost, currency, "
+        "company_id, created_at) "
+        "VALUES (CAST(:id AS uuid), CAST(:run AS uuid), 'buy', CAST(:p AS uuid), "
+        "CAST(:w AS uuid), 10, 10, 20, 'MYR', CAST(:co AS uuid), now())"
+    ), {"id": rec_id, "run": run_id, "p": pid, "w": member_wid, "co": SORENTO_COMPANY_ID})
+    db.commit()
+
+    from tests.scm.conftest import as_user, seed_user
+
+    app = scm_app[0]
+    uid = seed_user(db, "purchasing")
+    as_user(app, scm_app[2], scm_app[3], uid)
+    with TestClient(app) as client:
+        res = client.get(f"/api/v1/scm/reorder-runs/{run_id}/recommendations?limit=100")
+    assert res.status_code == 200, res.text
+    row = res.json()["data"][0]
+    assert row["pool_warehouse_id"] == pool_wid
+    assert row["pool_warehouse_code"] == pool_code
+
+
+def test_generation_time_stamps_the_network_rows_consensus_pool(scm_app):
+    """Nit (review) - a POSITIVE test for `reorder_run_service._build_rec` /
+    `_group_pool_from_basis` stamping a genuine product/network-grain row's consensus
+    pool at GENERATION time, off a real engine run - the read-path tests above only
+    prove the API answers correctly off directly-inserted rows, never that the engine
+    itself writes the right value in the first place."""
+    _, db, _, _ = scm_app
+    set_plan_grain(db, "product")
+    pool_code = f"{MARKER}W-GENPOOL"
+    wa_code = f"{MARKER}W-GENA"
+    wb_code = f"{MARKER}W-GENB"
+    pool_wid = _mk_warehouse(db, pool_code)
+    wa = _mk_warehouse(db, wa_code)
+    wb = _mk_warehouse(db, wb_code)
+    db.execute(
+        text("UPDATE warehouses SET pool_warehouse_id = :p WHERE id::text = ANY(:ids)"),
+        {"p": pool_wid, "ids": [pool_wid, wa, wb]},
+    )
+    pid = _mk_product(db, f"{MARKER}P-GENPOOL")
+    _mk_stock(db, pid, wa, 0)
+    _mk_stock(db, pid, wb, 0)
+    _mk_demand(db, pid, wa, 5.0)
+    _mk_demand(db, pid, wb, 5.0)
+    _link(db, pid, _mk_supplier(db, f"{MARKER} genpool supplier"), moq=None, mult=None)
+    db.flush()
+
+    created = run_svc.create_run(db, [wa_code, wb_code], "network", enqueue=False)
+    run_svc.run_reorder(created["run_id"], db=db)
+
+    buy = db.execute(text(
+        "SELECT pool_warehouse_id, pool_warehouse_code FROM scm.reorder_recommendation "
+        "WHERE run_id = :r AND product_id = :p AND rec_type = 'buy' AND warehouse_id IS NULL"
+    ), {"r": created["run_id"], "p": pid}).mappings().first()
+    assert buy is not None, "fixture must produce a network-grain buy row"
+    assert str(buy["pool_warehouse_id"]) == pool_wid
+    assert buy["pool_warehouse_code"] == pool_code

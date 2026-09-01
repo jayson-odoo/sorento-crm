@@ -106,11 +106,36 @@ def _assert_not_legacy(db: Session, run_id: str) -> None:
 
 def _refresh_run_counts(db: Session, run_id: str) -> None:
     """Keep `scm.reorder_run.{planned,decided,confirmed}_count` current (S3 perf,
-    AC-3.3) - called at the end of every decision write (accept/adjust/reject, a covered
-    choice, a row decision, confirm, reset) so the plans list and its Decided sort read a
-    stored column instead of re-joining `purchase_order_lines` on every page load. Same
-    shape (by DISTINCT product, R14) the plans-list read used to run itself, just scoped
-    to one run and run at write time rather than at every read."""
+    AC-3.3) so the plans list and its Decided sort read a stored column instead of
+    re-joining `purchase_order_lines` on every page load. Same shape (by DISTINCT
+    product, R14) the plans-list read used to run itself, just scoped to one run and
+    run at write time rather than at every read.
+
+    Called from every write that can move one of the three counts:
+    `record_plan_row_decision`, `clear_plan_row_decision`, `confirm_decisions`,
+    `reset_run_decisions`, `reject_recommendation` (review finding S1 - a rec can
+    reach a draft line through the LEGACY accept/adjust status alone, via
+    `_confirm_location_grain`'s legacy loop, with no `plan_row_decision` involved, so
+    a reject can pull that line and move `confirmed_count`). `accept_recommendation` /
+    `adjust_recommendation` do NOT call this: staging an accept/adjust writes neither
+    `plan_row_decision` nor a `purchase_order_lines` row by itself - nothing this
+    query reads moves until the run is actually confirmed - so a call there would be
+    a correct but pointless no-op.
+
+    `SELECT ... FOR UPDATE` on the run row first (review finding S4): every caller
+    here does read-the-aggregate-then-UPDATE, and this function is reachable from
+    concurrent writers on the SAME run - the FE's own `decide()`/`clear()` fan a
+    single row's decision out to several recs via `Promise.allSettled`, and two
+    buyers working the same run at once is a real scenario. Without a lock, two
+    concurrent calls can each read the counts before the other's write lands, then
+    each write its own (by then stale) computed figure - a classic lost update, the
+    later call silently overwriting the earlier one's more current count. The lock
+    serializes every caller on this `run_id`: a second call blocks until the first's
+    transaction commits, then reads a state that already reflects it."""
+    db.execute(
+        text("SELECT id FROM scm.reorder_run WHERE id = CAST(:run_id AS uuid) FOR UPDATE"),
+        {"run_id": run_id},
+    )
     row = db.execute(
         text(
             """
@@ -507,7 +532,13 @@ def reject_recommendation(
     db: Session, rec_id: str, reason_text: str, actor: Optional[str]
 ) -> dict:
     """Reject (M4-D8) → rec dismissed, reason stored (feedback trigger). Any draft PO
-    line the rec previously landed in is pulled back out."""
+    line the rec previously landed in is pulled back out.
+
+    A rec reaches a draft line through the LEGACY accept/adjust status alone, with no
+    ``plan_row_decision`` involved (``_confirm_location_grain``'s own legacy loop), so
+    a reject that follows an accept-then-confirm genuinely moves `confirmed_count` -
+    `_refresh_run_counts` is called here for exactly that reason (review finding S1:
+    it never was, and `confirmed_count` went stale after a reject)."""
     rec = _get_buy_rec(db, rec_id)
     _assert_location_grain(db, str(rec.run_id))
     if not (reason_text or "").strip():
@@ -530,6 +561,7 @@ def reject_recommendation(
     )
     rec.status = "dismissed"
     db.flush()
+    _refresh_run_counts(db, str(rec.run_id))
     return {}
 
 
@@ -1552,9 +1584,13 @@ def _product_supplier_leads_batch(
 
 def _pos_for_recs(db: Session, rec_ids: list[str]) -> dict[str, PurchaseOrder]:
     """Batched `_po_for_rec` (both source systems, AC-3.1: hits
-    `ix_purchase_order_lines_source_ref_system`). Ordered `(source_ref, created_at DESC)`
-    so the FIRST row seen per rec id is the latest one - same "most recent line wins" rule
-    the single-row lookup applies via `.order_by(created_at.desc()).first()`."""
+    `ix_purchase_order_lines_source_ref_system`). Ordered
+    `(source_ref, created_at DESC, id DESC)` so the FIRST row seen per rec id is the
+    latest one - same "most recent line wins" rule the single-row lookup applies via
+    `.order_by(created_at.desc()).first()`. `id` is the final tiebreak (nit from
+    review): several lines confirmed in the SAME transaction share one `now()`, and
+    without it "most recent" is not deterministic across runs (the standing "now()
+    ties in a transaction, end orderings with id" lesson)."""
     if not rec_ids:
         return {}
     lines = (
@@ -1564,7 +1600,11 @@ def _pos_for_recs(db: Session, rec_ids: list[str]) -> dict[str, PurchaseOrder]:
             PurchaseOrderLine.source_ref.in_(rec_ids),
             PurchaseOrderLine.source_system.in_((_SRC, _SRC_PRODUCT)),
         )
-        .order_by(PurchaseOrderLine.source_ref, PurchaseOrderLine.created_at.desc())
+        .order_by(
+            PurchaseOrderLine.source_ref,
+            PurchaseOrderLine.created_at.desc(),
+            PurchaseOrderLine.id.desc(),
+        )
         .all()
     )
     out: dict[str, PurchaseOrder] = {}

@@ -15,13 +15,16 @@ another:
    against the whole ``purchase_order_lines`` table on every page load; this is that
    answer, stored once per write instead of recomputed on every read.
 3. **AC-3.4** - ``pool_warehouse_id`` / ``pool_warehouse_code`` on
-   ``scm.reorder_recommendation``, backfilled here and set at generation time from here
-   on (``reorder_run_service._plan_basis``). Read path (``list_recommendations``) used a
+   ``scm.reorder_recommendation``, set at generation time from here on
+   (``reorder_run_service._plan_basis``). Read path (``list_recommendations``) used a
    ``LEFT JOIN LATERAL`` unnesting ``inputs.plan_basis.locations`` per row to name the
    pool a product/network-grain row's members share - and that LATERAL ran for the
    MAJORITY of rows (every product-grain buy/covered/needs_level row names no single
-   warehouse), not an edge case. Backfilling with the identical LATERAL logic, once, is
-   the one-time cost the per-row version used to pay on every read.
+   warehouse), not an edge case. Backfilled here ONLY for that product/network-grain
+   set (52,168 rows on the real database) - a location-grain row is deliberately left
+   NULL, because the read path's own ``COALESCE`` fallback already computes the exact
+   answer a backfill would have written, forever (see that ``UPDATE``'s own comment
+   below for why a 671,125-row / ~2.5GB pass would have bought nothing).
 
 Revision ID: 456_reorder_perf_quickwins
 Revises: 453_shared_brand_attach
@@ -141,17 +144,24 @@ def upgrade() -> None:
             sa.Column("pool_warehouse_code", sa.String(length=50), nullable=True),
             schema="scm",
         )
-    # Backfill location-grain rows (cheap: the location's own pool, or itself).
-    op.execute(
-        """
-        UPDATE scm.reorder_recommendation rr
-           SET pool_warehouse_id = COALESCE(w.pool_warehouse_id, w.id),
-               pool_warehouse_code = COALESCE(pw.warehouse_code, w.warehouse_code)
-          FROM warehouses w
-          LEFT JOIN warehouses pw ON pw.id = w.pool_warehouse_id
-         WHERE rr.warehouse_id = w.id
-        """
-    )
+    # NO backfill for location-grain rows (review finding S2, dropped deliberately -
+    # the earlier draft of this migration ran one, and it was a ~2.5GB / 671,125-row
+    # UPDATE on the real database). It is provably unnecessary: `list_recommendations`'
+    # read path already does `COALESCE(rr.pool_warehouse_id, w.pool_warehouse_id, w.id)`
+    # - for a location-grain row with `rr.pool_warehouse_id IS NULL` (every row this
+    # backfill would have touched), that COALESCE computes the EXACT SAME value the
+    # backfill's own `COALESCE(w.pool_warehouse_id, w.id)` would have written, off the
+    # SAME live join, forever - a stored NULL and a live-computed answer are
+    # indistinguishable to every reader. Verified against the dev DB (reviewer). Every
+    # NEW row gets the column set directly at generation time
+    # (`reorder_run_service._build_rec`), so this is a permanent freeze-vs-live
+    # semantics feature (R15: a re-pooled warehouse must not retroactively change a
+    # FROZEN recommendation's pool), not a temporary bootstrap step to skip and revisit
+    # - see the identical COALESCE's own comment in `reorder_runs.py`. A one-time
+    # migration touching the whole table is exactly the deploy-timeout shape migration
+    # 420 got burned by (PR #353's ~15-minute delete on an unindexed FK referrer) -
+    # not worth paying for an answer the read path already gives for free.
+    #
     # Backfill product/network-grain rows (`warehouse_id IS NULL`) with the SAME rule the
     # read-path LATERAL used to apply on every request: name the pool only when every
     # member location the row was sized over shares one.

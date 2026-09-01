@@ -2334,6 +2334,14 @@ def _group_pool_from_basis(plan_basis: Optional[dict]) -> tuple[Optional[str], O
          if loc.get("pool_warehouse_id") == pool_id and loc.get("pool_warehouse_code")),
         None,
     )
+    # Nit (review): in practice this never returns an id with no code - every
+    # location's own `pool_warehouse_code` is populated by `_plan_basis` off the same
+    # `COALESCE(pw.warehouse_code, w.warehouse_code)` the main planning query already
+    # carries, so a consensus `pool_id` always has at least one location naming its
+    # code too. Left as `(pool_id, None)` rather than folded to `(None, None)` should
+    # that assumption ever break on real data - a caller failing to resolve a code for
+    # a real pool id is a data gap worth surfacing, not one worth hiding behind a
+    # second null.
     return pool_id, pool_code
 
 

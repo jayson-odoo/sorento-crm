@@ -966,11 +966,24 @@ def list_recommendations(
                -- (named ONLY when every location it was netted over shares one) for a row
                -- with no single warehouse. Used to be a `LEFT JOIN LATERAL` unnesting
                -- `inputs.plan_basis.locations` per row - and that ran for the MAJORITY of
-               -- rows, since every product-grain row names no warehouse at all. The
-               -- location-grain COALESCE fallback stays (cheap - `w`/`pw` are joined
-               -- anyway) for a row from before the backfill; a NULL-warehouse row with no
-               -- precomputed pool has no cheap fallback and reads no pool, same as an
-               -- unshared LATERAL group used to.
+               -- rows, since every product-grain row names no warehouse at all.
+               --
+               -- `rr.pool_warehouse_id` wins the COALESCE, not `w.pool_warehouse_id`, and
+               -- that order is deliberate FREEZE semantics (R15), not a migration-vintage
+               -- accident: once a recommendation is generated, its pool is fixed to
+               -- whatever the run computed it against, even if the warehouse's OWN pool
+               -- assignment changes later (a re-pool). The stored value winning is what
+               -- keeps a historical run's own numbers self-consistent after that.
+               --
+               -- The `w`/`pw` live join stays as the fallback for a LOCATION-grain row
+               -- with no stored value - deliberately never backfilled (review finding S2):
+               -- this live COALESCE computes the identical answer a backfill would have
+               -- written, for as long as the row exists, so a one-time pass over the
+               -- whole table bought nothing (see migration
+               -- `456_reorder_perf_quickwins`'s own comment on that dropped UPDATE). A
+               -- NULL-warehouse (product/network-grain) row with no precomputed pool has
+               -- no cheap live fallback and reads no pool, same as an unshared LATERAL
+               -- group used to.
                COALESCE(rr.pool_warehouse_id, w.pool_warehouse_id, w.id) AS pool_warehouse_id,
                COALESCE(rr.pool_warehouse_code, pw.warehouse_code, w.warehouse_code)
                    AS pool_warehouse_code,
