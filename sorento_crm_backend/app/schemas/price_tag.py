@@ -399,6 +399,47 @@ class TagTemplateResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
+    # The live pointer (PLAN D7). Absent = never published, so the request
+    # designer's list never sees this row. Filled by the route, not by
+    # ``from_attributes`` alone, because the published branch of the list
+    # route substitutes a VERSION's doc/print_size for the draft above.
+    published_version_id: Optional[str] = None
+    published_version_no: Optional[int] = None
+
+
+# ---------------------------------------------------------------------------
+# Tag template versions (S5)
+# ---------------------------------------------------------------------------
+
+
+class TagTemplatePublishIn(BaseModel):
+    note: Optional[str] = Field(default=None, max_length=500)
+
+
+class TagTemplateVersionResponse(BaseModel):
+    """One row of the Versions sheet. No ``doc`` - the list is deliberately
+    light; a version's document is fetched only when View is clicked."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    template_id: str
+    version_no: int
+    note: Optional[str] = None
+    created_by: Optional[str] = None
+    # Resolved, not stored - a version row holds a user id and nothing a
+    # person can read (no UUIDs in the UI). Filled by the route.
+    created_by_name: Optional[str] = None
+    created_at: datetime
+
+
+class TagTemplateVersionDetailResponse(TagTemplateVersionResponse):
+    """A past version's full document, for View (D16) - read-only on the
+    canvas, never mutated."""
+
+    doc: dict
+    print_size: dict
+
 
 # ---------------------------------------------------------------------------
 # Tag sheet design doc

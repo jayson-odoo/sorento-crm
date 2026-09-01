@@ -111,6 +111,21 @@ export function TagTemplatesList() {
         ),
       },
       {
+        id: 'published',
+        header: 'Status',
+        size: 100,
+        cell: ({ row }) =>
+          row.original.published_version_id ? (
+            <Badge variant="success" className="font-normal">
+              Live v{row.original.published_version_no}
+            </Badge>
+          ) : (
+            <Badge variant="outline" className="font-normal">
+              Draft
+            </Badge>
+          ),
+      },
+      {
         id: 'actions',
         header: '',
         size: 100,

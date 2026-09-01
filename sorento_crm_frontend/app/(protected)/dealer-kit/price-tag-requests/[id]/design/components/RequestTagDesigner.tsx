@@ -72,7 +72,7 @@ import {
   type PriceTagRequestDetail,
   type PriceTagRequestLine,
 } from '../../../../services/priceTagRequestService';
-import { listTemplates } from '../../../../services/tagTemplateService';
+import { listPublishedTemplates } from '../../../../services/tagTemplateService';
 
 let idSeq = 0;
 function newTagId(): string {
@@ -125,7 +125,7 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
   // -- Loading ---------------------------------------------------------------
 
   useEffect(() => {
-    listTemplates()
+    listPublishedTemplates()
       .then(setTemplates)
       .catch(() => toast.error('Failed to load tag templates'));
   }, []);
