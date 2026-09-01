@@ -23,14 +23,31 @@ another:
    warehouse), not an edge case. Backfilling with the identical LATERAL logic, once, is
    the one-time cost the per-row version used to pay on every read.
 
-Revision ID: 454_reorder_perf_quickwins
+Revision ID: 456_reorder_perf_quickwins
 Revises: 453_shared_brand_attach
+
+Renumbered TWICE on the night of 1-2 Sep 2026: three lanes minted a 454 on 1 Sep, then
+S4 (PR #489) independently minted the 455 this migration had first been renumbered to.
+Global batch chain, captain's final call:
+    454_order_inquiry_born_ack   (S1, PR #471)
+    455_saved_views_and_perms    (S4, PR #489)
+    456_reorder_perf_quickwins   (S3, this branch, PR #491)
+    457                          (S5, PR #493)
+Merge order: #471 -> #488 -> #489 -> #491 -> #490 -> #493.
+
+``down_revision`` stays pinned to ``453_shared_brand_attach`` for now, deliberately NOT
+``455_saved_views_and_perms`` - that revision id exists only on the S4 branch (PR #489),
+not on this one, and an alembic graph with a ``down_revision`` pointing at a revision id
+absent from the loaded version files fails to load AT ALL (breaks every `alembic` command,
+including CI's `alembic upgrade head` for this whole PR). ``down_revision`` moves to
+``455_saved_views_and_perms`` in a one-line follow-up commit immediately before #491 merges,
+once #489 has landed on main and that revision id is real here too.
 """
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
-revision = "454_reorder_perf_quickwins"
+revision = "456_reorder_perf_quickwins"
 down_revision = "453_shared_brand_attach"
 branch_labels = None
 depends_on = None
@@ -138,21 +155,43 @@ def upgrade() -> None:
     # Backfill product/network-grain rows (`warehouse_id IS NULL`) with the SAME rule the
     # read-path LATERAL used to apply on every request: name the pool only when every
     # member location the row was sized over shares one.
+    #
+    # Written as a CTE rather than a bare `UPDATE ... FROM LATERAL (...) alias ON true`:
+    # Postgres does not allow a LATERAL subquery in an UPDATE's FROM clause to reference
+    # the UPDATE's own target table (`rr`) - that correlation is only legal inside an
+    # ordinary SELECT, where the target is just another FROM item. The original form
+    # raised `syntax error at or near "ON"` (dropping the `ON true` instead raises
+    # `invalid reference to FROM-clause entry for table "rr"`) - a genuine defect this
+    # migration shipped with and never actually ran: verified against the real database,
+    # every one of its 52,168 `warehouse_id IS NULL` rows carried a NULL
+    # `pool_warehouse_id` (tests/test_migration_456_reorder_perf_backfill.py). The CTE
+    # does the LATERAL correlation inside a plain SELECT, then the UPDATE joins back to
+    # it by id - the row-selection rule is unchanged (HAVING drops a row with zero or
+    # more-than-one member pool, so the outer UPDATE simply never touches it and its
+    # columns stay NULL, matching "name none rather than one of several").
     op.execute(
         """
+        WITH plan_pool AS (
+            SELECT rr.id AS rec_id,
+                   pool.pool_id::uuid AS pool_warehouse_id,
+                   pool.pool_code AS pool_warehouse_code
+              FROM scm.reorder_recommendation rr
+              JOIN LATERAL (
+                SELECT MIN(COALESCE(lw.pool_warehouse_id, lw.id)::text) AS pool_id,
+                       MIN(COALESCE(lpw.warehouse_code, lw.warehouse_code)) AS pool_code
+                  FROM jsonb_array_elements(
+                           COALESCE(rr.inputs -> 'plan_basis' -> 'locations', '[]'::jsonb)) loc
+                  JOIN warehouses lw ON lw.id = CAST(loc ->> 'warehouse_id' AS uuid)
+                  LEFT JOIN warehouses lpw ON lpw.id = lw.pool_warehouse_id
+                 HAVING COUNT(DISTINCT COALESCE(lw.pool_warehouse_id, lw.id)) = 1
+              ) pool ON true
+             WHERE rr.warehouse_id IS NULL
+        )
         UPDATE scm.reorder_recommendation rr
-           SET pool_warehouse_id = plan_pool.pool_id::uuid,
-               pool_warehouse_code = plan_pool.pool_code
-          FROM LATERAL (
-            SELECT MIN(COALESCE(lw.pool_warehouse_id, lw.id)::text) AS pool_id,
-                   MIN(COALESCE(lpw.warehouse_code, lw.warehouse_code)) AS pool_code
-              FROM jsonb_array_elements(
-                       COALESCE(rr.inputs -> 'plan_basis' -> 'locations', '[]'::jsonb)) loc
-              JOIN warehouses lw ON lw.id = CAST(loc ->> 'warehouse_id' AS uuid)
-              LEFT JOIN warehouses lpw ON lpw.id = lw.pool_warehouse_id
-             HAVING COUNT(DISTINCT COALESCE(lw.pool_warehouse_id, lw.id)) = 1
-          ) plan_pool ON true
-         WHERE rr.warehouse_id IS NULL
+           SET pool_warehouse_id = plan_pool.pool_warehouse_id,
+               pool_warehouse_code = plan_pool.pool_warehouse_code
+          FROM plan_pool
+         WHERE rr.id = plan_pool.rec_id
         """
     )
 

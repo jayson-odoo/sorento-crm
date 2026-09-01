@@ -8,7 +8,10 @@
 import { describe, it, expect } from 'vitest';
 import type { ReorderRecommendation } from '../types/reorder.types';
 import { recToPlanLine, toPlanLines, countByStatus, type PlanLine } from './planLine';
+import type { PlanRowDecision as ServerPlanDecision, PlanRowDecisionListResponse } from '../types/decisions.types';
 import {
+  applyDecisionClears,
+  applyDecisionWrites,
   budgetVerdict,
   decidedCost,
   decidedQty,
@@ -473,5 +476,133 @@ describe('groupDecisionState - a grouped row reads the fan-out back', () => {
   it('reads mixed when only SOME members have decided', () => {
     const decisions: PlanDecisionMap = { a: { buy: 10 } };
     expect(groupDecisionState(['a', 'b'], decisions)).toEqual({ decision: undefined, mixed: true });
+  });
+});
+
+// ===========================================================================
+// S3 perf, AC-3.5 - the cache is patched, never refetched, on a decide/clear
+// ===========================================================================
+
+function serverDecision(over: Partial<ServerPlanDecision> = {}): ServerPlanDecision {
+  return {
+    recommendation_id: 'r1', kind: 'buy', buy_qty: 10, stock_takes: [], po_qty: null,
+    po_refs: [], reason_text: null, price_mode: 'use_last', supplier_code: null,
+    supplier_name: null, unit_cost: null, lead_time_days: null,
+    draft_po_number: null, draft_po_id: null,
+    ...over,
+  };
+}
+
+function decisionList(
+  data: ServerPlanDecision[],
+  decided_count: number,
+  total_count = 10,
+): PlanRowDecisionListResponse {
+  return { data, decided_count, total_count };
+}
+
+describe('applyDecisionWrites - folds a written decision straight into the cache (AC-3.5)', () => {
+  it('does nothing when there is no cached list to patch (never conjures one)', () => {
+    expect(applyDecisionWrites(undefined, [serverDecision()])).toBeUndefined();
+  });
+
+  it('is a no-op when nothing was actually written', () => {
+    const old = decisionList([], 0);
+    expect(applyDecisionWrites(old, [])).toBe(old);
+  });
+
+  it('adds a NEW recommendation and increments decided_count by one', () => {
+    const old = decisionList([], 0);
+    const next = applyDecisionWrites(old, [serverDecision({ recommendation_id: 'r1' })]);
+    expect(next?.data.map((d) => d.recommendation_id)).toEqual(['r1']);
+    expect(next?.decided_count).toBe(1);
+  });
+
+  it('replaces an EXISTING recommendation in place without moving decided_count', () => {
+    const old = decisionList([serverDecision({ recommendation_id: 'r1', buy_qty: 10 })], 1);
+    const next = applyDecisionWrites(old, [serverDecision({ recommendation_id: 'r1', buy_qty: 99 })]);
+    expect(next?.data).toHaveLength(1);
+    expect(next?.data[0].buy_qty).toBe(99);
+    expect(next?.decided_count).toBe(1);
+  });
+
+  it('a grouped write (several member recs) increments decided_count by AT MOST one', () => {
+    // A product-grain group's decide fans the SAME decision out to every member rec -
+    // that is still ONE product decided, matching the server's own by-product count (R14).
+    const old = decisionList([], 0);
+    const next = applyDecisionWrites(old, [
+      serverDecision({ recommendation_id: 'r1' }),
+      serverDecision({ recommendation_id: 'r2' }),
+      serverDecision({ recommendation_id: 'r3' }),
+    ]);
+    expect(next?.data).toHaveLength(3);
+    expect(next?.decided_count).toBe(1);
+  });
+
+  it("a group re-decided where SOME members already had a decision leaves the count where it was", () => {
+    const old = decisionList(
+      [serverDecision({ recommendation_id: 'r1' })],
+      1,
+    );
+    const next = applyDecisionWrites(old, [
+      serverDecision({ recommendation_id: 'r1', buy_qty: 5 }),
+      serverDecision({ recommendation_id: 'r2', buy_qty: 5 }),
+    ]);
+    expect(next?.decided_count).toBe(1);
+  });
+
+  it('leaves total_count untouched - the denominator is a server fact this never guesses at', () => {
+    const old = decisionList([], 0, 42);
+    const next = applyDecisionWrites(old, [serverDecision()]);
+    expect(next?.total_count).toBe(42);
+  });
+});
+
+describe('applyDecisionClears - withdraws recs from the cache, the mirror of applyDecisionWrites (AC-3.5)', () => {
+  it('does nothing when there is no cached list to patch', () => {
+    expect(applyDecisionClears(undefined, ['r1'])).toBeUndefined();
+  });
+
+  it('is idempotent - clearing a rec already absent changes nothing, same object back', () => {
+    const old = decisionList([serverDecision({ recommendation_id: 'r1' })], 1);
+    expect(applyDecisionClears(old, ['not-there'])).toBe(old);
+  });
+
+  it('removes the cleared rec and drops decided_count by one', () => {
+    const old = decisionList([serverDecision({ recommendation_id: 'r1' })], 1);
+    const next = applyDecisionClears(old, ['r1']);
+    expect(next?.data).toHaveLength(0);
+    expect(next?.decided_count).toBe(0);
+  });
+
+  it('never drops decided_count below zero', () => {
+    const old = decisionList([serverDecision({ recommendation_id: 'r1' })], 0);
+    const next = applyDecisionClears(old, ['r1']);
+    expect(next?.decided_count).toBe(0);
+  });
+
+  it('a grouped clear (several member recs) drops decided_count by AT MOST one', () => {
+    const old = decisionList(
+      [
+        serverDecision({ recommendation_id: 'r1' }),
+        serverDecision({ recommendation_id: 'r2' }),
+      ],
+      1,
+    );
+    const next = applyDecisionClears(old, ['r1', 'r2']);
+    expect(next?.data).toHaveLength(0);
+    expect(next?.decided_count).toBe(0);
+  });
+
+  it('leaves the rest of the cached list alone', () => {
+    const old = decisionList(
+      [
+        serverDecision({ recommendation_id: 'r1' }),
+        serverDecision({ recommendation_id: 'r2' }),
+      ],
+      2,
+    );
+    const next = applyDecisionClears(old, ['r1']);
+    expect(next?.data.map((d) => d.recommendation_id)).toEqual(['r2']);
   });
 });
