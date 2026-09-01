@@ -15,6 +15,13 @@ to "the filters of a view". Unlike `report_views`, nothing here validates it aga
 catalog on the way in - the field descriptor a saved view's filters were built from lives
 on the FRONTEND (`components/list/DynamicFilterBuilder.tsx`), beside the listing's own
 column defs, so the backend never has an opinion on what a valid filter looks like.
+
+`CompanyScopedMixin` (S1, PR #489 review round): a shared/published view's `view` blob
+can carry supplier/product/warehouse NAMES inside its filters - real facts about the
+owner's own company's data - so a segment published under a listing key another
+company also uses must not cross the boundary. The mixin's `do_orm_execute` filter and
+`before_insert` auto-stamp do the work; nothing in `saved_views_service.py` filters by
+hand (see `app/models/base.py` / `app/services/company_scope.py`).
 """
 import uuid
 
@@ -23,9 +30,10 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.sql import func, text
 
 from app.database import Base
+from app.models.base import CompanyScopedMixin
 
 
-class SavedView(Base):
+class SavedView(Base, CompanyScopedMixin):
     __tablename__ = "saved_views"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -46,6 +54,11 @@ class SavedView(Base):
 
     __table_args__ = (
         UniqueConstraint("listing_key", "owner_user_id", "name", name="uq_saved_views_owner_name"),
+        # NOT company-scoped (matches `report_views`/`promotion_types`' own
+        # one-default index): multi-company is still stubbed to one incumbent
+        # tenant end to end (`app/api/v1/__init__.py:_tenant_id_for_request`), so
+        # a second company independently defaulting the SAME listing key is not a
+        # real scenario yet - flagged rather than built ahead of the trigger.
         Index(
             "uq_saved_views_one_default",
             "listing_key",

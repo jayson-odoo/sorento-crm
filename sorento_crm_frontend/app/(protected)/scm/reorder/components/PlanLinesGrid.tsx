@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import {
   ColumnDef,
   ExpandedState,
@@ -374,15 +374,19 @@ export function PlanLinesGrid({
     debouncedValue: searchQuery,
   } = useDebouncedSearch();
   const statusFilter: string = statusFilterProp ?? 'all';
-  const setStatusFilter = (next: string) =>
-    onStatusFilterChange?.(next === 'all' ? null : (next as PlanLineStatus));
+  const setStatusFilter = useCallback(
+    (next: string) => onStatusFilterChange?.(next === 'all' ? null : (next as PlanLineStatus)),
+    [onStatusFilterChange],
+  );
   // Undecided/decided is its own filter, controllable the same way statusFilter is: the
   // reorder page's decision-progress tile drives it from outside, and every other caller
   // (the SCM simulation tab) leaves it uncontrolled and gets its own local toggle.
   const [ownDecidedFilter, setOwnDecidedFilter] = useState<'all' | 'undecided' | 'decided'>('all');
   const decidedFilter = decidedFilterProp ?? ownDecidedFilter;
-  const setDecidedFilter = (next: string) =>
-    (onDecidedFilterChange ?? setOwnDecidedFilter)(next as 'all' | 'undecided' | 'decided');
+  const setDecidedFilter = useCallback(
+    (next: string) => (onDecidedFilterChange ?? setOwnDecidedFilter)(next as 'all' | 'undecided' | 'decided'),
+    [onDecidedFilterChange],
+  );
   // S14: one filter per suggestion column, so the buyer can work one question at a time
   // ("show me every stale price", "every level change", "project side only").
   const [priceFilter, setPriceFilter] = useState<string>('all');
@@ -1105,6 +1109,12 @@ export function PlanLinesGrid({
   // S4 (PLAN-scm-reorder-oi-feedback-1sep.md, AC-4.2): the FULL view a segment saves -
   // filters + sort + visible columns + column order - and the handler that restores all
   // four exactly when a segment is applied (or clears them for "No segment").
+  //
+  // S4 shortfall (PR #489 review round): the FULL Filters popover per G9 also means
+  // the five FIXED dropdowns (status/decided/price/action/level) - they are ANDed
+  // into `filtered` above and counted in the toolbar's `activeCount` beside the
+  // recursive `filterGroup`, so a segment that left them out would not be "the full
+  // view" the AC promises. Carried in `quick_filters`, opaque like `filters` itself.
   const visibleColumnIds = useMemo(
     () => columnOrder.filter((id) => columnVisibility[id] !== false),
     [columnOrder, columnVisibility],
@@ -1115,16 +1125,74 @@ export function PlanLinesGrid({
       sort: sorting.map((s) => ({ id: s.id, desc: Boolean(s.desc) })),
       columns: visibleColumnIds,
       column_order: columnOrder,
+      quick_filters: {
+        status: statusFilter,
+        decided: decidedFilter,
+        price: priceFilter,
+        action: actionFilter,
+        level: levelFilter,
+      },
     }),
-    [filterGroup, sorting, visibleColumnIds, columnOrder],
+    [filterGroup, sorting, visibleColumnIds, columnOrder,
+     statusFilter, decidedFilter, priceFilter, actionFilter, levelFilter],
   );
+  // B1 (PR #489 review round): the column layout the reader had BEFORE the first
+  // segment ever applied this session - taken once, restored verbatim by "No
+  // segment", so a segment (published-default ones apply automatically, AC-4.4)
+  // never permanently overwrites what was there. Persistence itself is also
+  // suppressed for as long as `segmentId` is set (`suppressPersist` below), so a
+  // segment's columns are never written back as the reader's OWN saved layout in
+  // the first place - the snapshot only covers restoring the on-screen state.
+  const preSegmentColumnsRef = useRef<{
+    order: string[];
+    visibility: Record<string, boolean>;
+  } | null>(null);
+
   const applySegment = useCallback(
     (view: SavedView | null) => {
-      setSegmentId(view?.id ?? null);
-      setFilterGroup(view?.view.filters ?? null);
-      if (!view) return;
+      if (!view) {
+        setSegmentId(null);
+        setFilterGroup(null);
+        // S4 shortfall: the quick filters are part of "the full view" the same way
+        // `filterGroup` already is above - cleared unconditionally on "No segment",
+        // the same rule `filterGroup` follows regardless of whether a segment was
+        // ever applied this session.
+        setStatusFilter('all');
+        setDecidedFilter('all');
+        setPriceFilter('all');
+        setActionFilter('all');
+        setLevelFilter('all');
+        const snapshot = preSegmentColumnsRef.current;
+        preSegmentColumnsRef.current = null;
+        if (snapshot) {
+          setColumnOrder(snapshot.order);
+          setColumnVisibility(snapshot.visibility);
+        }
+        return;
+      }
+      // Snapshot BEFORE this segment's own columns overwrite the state - only on the
+      // FIRST segment applied (switching straight from one segment to another must
+      // not re-snapshot the segment we are leaving as if it were the personal layout).
+      if (!preSegmentColumnsRef.current) {
+        preSegmentColumnsRef.current = { order: columnOrder, visibility: columnVisibility };
+      }
+      setSegmentId(view.id);
+      setFilterGroup(view.view.filters ?? null);
       setSorting(view.view.sort.map((s) => ({ id: s.id, desc: s.desc })));
-      if (view.view.column_order.length) setColumnOrder(view.view.column_order);
+      // S4 shortfall: restore the five fixed dropdowns the segment captured -
+      // missing from an older segment (saved before this fix) falls back to "all",
+      // the same default the dropdowns themselves start from.
+      const quick = view.view.quick_filters ?? {};
+      setStatusFilter(quick.status ?? 'all');
+      setDecidedFilter(quick.decided ?? 'all');
+      setPriceFilter(quick.price ?? 'all');
+      setActionFilter(quick.action ?? 'all');
+      setLevelFilter(quick.level ?? 'all');
+      // Nit (PR #489 review round): restored unconditionally - a saved segment's own
+      // `column_order` is always this grid's full leaf-column list (`savedViewConfig`
+      // never saves an empty one), so the length guard only hid a real segment doing
+      // nothing behind what looked like "no order to restore".
+      setColumnOrder(view.view.column_order);
       if (view.view.columns.length) {
         const visible = new Set(view.view.columns);
         setColumnVisibility((prev) => {
@@ -1136,7 +1204,7 @@ export function PlanLinesGrid({
         });
       }
     },
-    [],
+    [columnOrder, columnVisibility, setStatusFilter, setDecidedFilter],
   );
 
   /** Whether Expand all / Collapse all have anything to do (C3). A control that is always
@@ -1163,7 +1231,7 @@ export function PlanLinesGrid({
         secondaryActions={secondaryActions}
         primaryAction={toolbarPrimary}
         leftActions={
-          <div className="flex items-center">
+          <div className="flex items-center gap-2">
             <Button
               variant="outline"
               size="sm"
@@ -1299,6 +1367,9 @@ export function PlanLinesGrid({
       // the pathname it keyed off `/scm/reorder/{run_id}`, so every plan a buyer opened
       // started from the defaults again and their own layout was never seen twice.
       listingKey={REORDER_PLAN_LINES_LISTING_KEY}
+      // B1 (PR #489 review round): while a segment is driving the columns, never
+      // write them back as the reader's own saved layout - see `applySegment` above.
+      suppressPersist={Boolean(segmentId)}
       tableClassNames={{ edgeCell: 'px-5' }}
       onRowClick={(row) => {
         // The whole row toggles its decision panel (D1). Several may be open at once -

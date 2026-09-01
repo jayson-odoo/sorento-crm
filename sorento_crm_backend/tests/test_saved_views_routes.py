@@ -25,6 +25,7 @@ from app.database import get_db
 from app.dependencies import get_current_user
 from app.main import app
 from app.models.user import User, UserPermission
+from app.services.company_scope_resolver import apply_company_scope
 from app.services.user_service import UserPermissionService
 from tests._pg_fixture import blank_session
 
@@ -61,6 +62,12 @@ def api(db, monkeypatch):
 
     app.dependency_overrides[get_db] = _override_db
     app.dependency_overrides[get_current_user] = lambda: _ME
+    # S1 (PR #489 review round): `saved_views` is now CompanyScopedMixin, and the
+    # REAL `apply_company_scope` resolves UNSET for a request with no Authorization
+    # header - which would overwrite the conftest default (Sorento) the `db` fixture's
+    # seeding already ran under and fail-close every read/write in this file. No-op
+    # override, same pattern `test_project_schedule_delete.py` uses.
+    app.dependency_overrides[apply_company_scope] = lambda: None
     monkeypatch.setattr(
         UserPermissionService,
         "check_user_has_permission",
@@ -72,6 +79,7 @@ def api(db, monkeypatch):
     finally:
         app.dependency_overrides.pop(get_db, None)
         app.dependency_overrides.pop(get_current_user, None)
+        app.dependency_overrides.pop(apply_company_scope, None)
 
 
 def _config(**overrides) -> dict:
@@ -117,16 +125,16 @@ def test_listing_key_denial_is_403_for_a_permission_the_caller_lacks(api):
     assert _create_view(client, "Nope").status_code == 403
 
 
-def test_listing_key_with_an_unknown_permission_slug_is_module_auth_only(api):
-    """A slug that does not exist in the RBAC catalog at all reads as a listing gated
-    by a module guard rather than fine-grained RBAC, and is allowed through - the same
-    behaviour `test_list_column_config_allows_when_permission_slug_unknown` pins for
-    column-config."""
+def test_listing_key_with_an_unknown_permission_slug_is_fail_closed_on_saved_views(api):
+    """S2 (PR #489 review round, captain ruling pending confirm 2 Sep): unlike
+    column-config's permissive fallback (`test_list_column_config_allows_when_permission_slug_unknown`),
+    saved views are a SHARED cross-user surface, so an unrecognised listing key denies
+    rather than opening create/list to anyone who can reach the route."""
     client, _allow = api
     key = "zzt.nonexistent.permission.slug::x"
-    resp = client.get(f"{BASE}/{key}")
-    assert resp.status_code == 200
-    assert resp.json() == {"mine": [], "shared": []}
+    assert client.get(f"{BASE}/{key}").status_code == 403
+    created = client.post(f"{BASE}/{key}", json={"name": "Nope", "view": _config()})
+    assert created.status_code == 403
 
 
 # --------------------------------------------------------------------- list scoping
@@ -150,6 +158,23 @@ def test_a_saved_view_comes_back_under_mine(api):
     assert listed["shared"] == []
 
 
+def test_the_fixed_dropdown_filters_round_trip_in_the_view_blob(api):
+    """S4 shortfall (PR #489 review round): `quick_filters` - the listing's own FIXED
+    dropdowns (`PlanLinesGrid`'s status/decided/price/action/level) beside the
+    recursive filter builder - is a fifth top-level key on `view`, declared on
+    `SavedViewConfig` rather than left opaque-and-dropped (`response_model` silently
+    drops undeclared fields)."""
+    client, _allow = api
+    created = _create_view(
+        client, "With quick filters", view=_config(quick_filters={"status": "buy", "decided": "undecided"})
+    )
+    assert created.status_code == 200, created.text
+    assert created.json()["view"]["quick_filters"] == {"status": "buy", "decided": "undecided"}
+
+    listed = client.get(f"{BASE}/{LISTING_KEY}").json()
+    assert listed["mine"][0]["view"]["quick_filters"] == {"status": "buy", "decided": "undecided"}
+
+
 def test_a_second_view_with_the_same_name_is_refused(api):
     client, _allow = api
     _create_view(client, "Same name")
@@ -162,6 +187,33 @@ def test_a_blank_name_is_refused_at_the_button(api):
     client, _allow = api
     resp = _create_view(client, "   ")
     assert resp.status_code == 422, resp.text
+
+
+def _nested_group(depth: int) -> dict:
+    """A filter group nested `depth` levels deep - the same shape
+    `DynamicFilterBuilder.tsx`'s `addGroup` builds one call at a time."""
+    group: dict = {"op": "and", "children": []}
+    node = group
+    for _ in range(depth - 1):
+        child = {"op": "and", "children": []}
+        node["children"].append(child)
+        node = child
+    return group
+
+
+def test_a_filter_group_nested_six_deep_is_refused(api):
+    """S6 (PR #489 review round): the SAME cap `DynamicFilterBuilder.tsx`'s `addGroup`
+    enforces client-side - a published default segment auto-applies for every reader
+    (AC-4.4), so an over-deep blob saved through some other path must not reach one."""
+    client, _allow = api
+    resp = _create_view(client, "Too deep", view=_config(filters=_nested_group(6)))
+    assert resp.status_code == 422, resp.text
+
+
+def test_a_filter_group_nested_five_deep_is_accepted(api):
+    client, _allow = api
+    resp = _create_view(client, "Just deep enough", view=_config(filters=_nested_group(5)))
+    assert resp.status_code == 200, resp.text
 
 
 def test_another_users_personal_view_is_invisible(api, db):
@@ -179,6 +231,35 @@ def test_another_users_published_view_is_shared_not_mine(api, db):
     assert listed["mine"] == []
     assert [v["name"] for v in listed["shared"]] == ["Management default"]
     assert listed["shared"][0]["owner_name"] == "Other Person"
+
+
+def test_a_shared_view_in_another_company_never_leaks_its_filters(api, db):
+    """S1 (PR #489 review round): `saved_views` gained `CompanyScopedMixin` because a
+    shared segment's `view` blob can carry supplier/product/warehouse NAMES in its
+    filters - a fact about the owner's own company's data, not something to publish
+    across every company on the install, even under the same `listing_key`."""
+    from app.models.company import Company
+    from app.models.saved_view import SavedView as SavedViewRow
+    from tests._pg_fixture import unique_code
+
+    client, _allow = api
+    other_company_id = str(uuid.uuid4())
+    db.add(Company(id=other_company_id, name="Other Co", code=unique_code("OTH")[:20]))
+    db.flush()
+    row = SavedViewRow(
+        listing_key=LISTING_KEY,
+        owner_user_id=_OTHER_ID,
+        name="Other company's view",
+        view=_config(),
+        is_shared=True,
+        company_id=other_company_id,
+    )
+    db.add(row)
+    db.flush()
+
+    listed = client.get(f"{BASE}/{LISTING_KEY}").json()
+    assert listed["mine"] == []
+    assert listed["shared"] == []
 
 
 def test_my_own_published_view_stays_under_mine(api):

@@ -230,6 +230,17 @@ describe('SavedViewsMenu - AC-4.4 defaults on open', () => {
     await waitFor(() => expect(fetchSavedViews).toHaveBeenCalled());
     expect(onApply).not.toHaveBeenCalled();
   });
+
+  it('S3 (PR #489 review round): a FAILED personal-default fetch still lets the ' +
+    'published default apply', async () => {
+    // Gating on `personalConfig === undefined` left this stuck forever on a failed
+    // fetch (undefined never became defined); gating on `isFetched` (settled either
+    // way) is what makes the published default reach a reader whose own config GET
+    // errored, rather than silently doing nothing for them alone.
+    getUserListColumnConfig.mockRejectedValue(new Error('network error'));
+    const { onApply } = render();
+    await waitFor(() => expect(onApply).toHaveBeenCalledWith(THEIRS_DEFAULT));
+  });
 });
 
 describe('SavedViewsMenu - saving the current shape', () => {

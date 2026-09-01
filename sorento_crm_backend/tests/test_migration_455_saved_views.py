@@ -108,6 +108,65 @@ def db():
 def test_the_table_is_created(db):
     _run(db)
     assert db.execute(text("SELECT count(*) FROM saved_views")).scalar() == 0
+    assert db.execute(
+        text(
+            "SELECT count(*) FROM information_schema.columns "
+            "WHERE table_schema = current_schema() AND table_name = 'saved_views' "
+            "AND column_name = 'company_id'"
+        )
+    ).scalar() == 1
+
+
+def test_an_existing_table_without_company_id_gets_it_added_and_backfilled(db):
+    """S1 (PR #489 review round): the ADD-COLUMN branch this migration takes when
+    `saved_views` predates `company_id` - the shared local database's shape before
+    this change (`sorento_crm_backend/CLAUDE.md`)."""
+    db.execute(
+        text(
+            """
+            CREATE TABLE saved_views (
+                id uuid PRIMARY KEY,
+                listing_key text NOT NULL,
+                owner_user_id varchar NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                name text NOT NULL,
+                view jsonb NOT NULL,
+                is_shared boolean NOT NULL DEFAULT false,
+                is_default boolean NOT NULL DEFAULT false,
+                created_at timestamp NOT NULL DEFAULT now(),
+                updated_at timestamp NOT NULL DEFAULT now()
+            )
+            """
+        )
+    )
+    owner = str(uuid.uuid4())
+    from app.models.user import User
+
+    db.add(User(id=owner, email=f"{owner}@zzt.test", name="Pre-existing", status="ACTIVE"))
+    db.flush()
+    db.execute(
+        text(
+            """
+            INSERT INTO saved_views (id, listing_key, owner_user_id, name, view)
+            VALUES (gen_random_uuid(), 'zzt.dashboard.view::pre-existing', :o, 'Untouched', '{}'::jsonb)
+            """
+        ),
+        {"o": owner},
+    )
+    db.flush()
+
+    _run(db)
+
+    assert db.execute(
+        text(
+            "SELECT count(*) FROM information_schema.columns "
+            "WHERE table_schema = current_schema() AND table_name = 'saved_views' "
+            "AND column_name = 'company_id'"
+        )
+    ).scalar() == 1
+    company_id = db.execute(
+        text("SELECT company_id FROM saved_views WHERE name = 'Untouched'")
+    ).scalar()
+    assert str(company_id) == "00000000-0000-0000-0000-000000000001"
 
 
 def _insert(db, *, listing_key="zzt.dashboard.view::reorder-plan-lines", owner=None, name="A view", is_default=False):

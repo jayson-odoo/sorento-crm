@@ -4,14 +4,13 @@
  * defs, per the plan, and consumed nowhere else - a second listing (AC-4.5) declares its
  * own descriptor rather than importing this one.
  *
- * Two of the plan's named v1 fields have no home on `PlanLine` today - "category" (no
- * product category reaches `ReorderRecommendation`) and "days late" (no lateness figure
- * is computed for a plan row; `coverageTimeline.ts`'s `days_late` is a different
- * feature's field on a different shape). Both are declared here anyway, so the builder
- * offers exactly the v1 list the plan named, but their `getValue` returns `null` for
- * every row - `is_empty` on either always matches, and every other operator never does,
- * which is an honest "not on this row" rather than an invented number. Flagged back to
- * the plan rather than silently fabricated.
+ * S7 (PR #489 review round): the plan's v1 list also named "category" and "days late",
+ * but neither has a home on `PlanLine` today - no product category reaches
+ * `ReorderRecommendation`, and no lateness figure is computed for a plan row
+ * (`coverageTimeline.ts`'s `days_late` is a different feature's field on a different
+ * shape). A field whose `getValue` always returns `null` offers a buyer a dropdown entry
+ * that can never do anything but "is empty" - dropped rather than shipped as a dead
+ * control; the PLAN's v1 field list is corrected to match (18 -> 16 fields).
  */
 import { isGroupedLine } from './planLineGrouping';
 import { groupDecisionState, type PlanDecisionMap } from './planDecisions';
@@ -34,8 +33,6 @@ export function planLineFilterFields(decisions: PlanDecisionMap): FilterFieldDes
   return [
     { field_key: 'sku', label: 'Product code', type: 'text', getValue: (l) => l.sku },
     { field_key: 'product_name', label: 'Product name', type: 'text', getValue: (l) => l.product_name },
-    // No product category reaches a plan row today - see the module doc above.
-    { field_key: 'category', label: 'Category', type: 'text', getValue: () => null },
     { field_key: 'supplier', label: 'Supplier', type: 'text', getValue: (l) => l.supplier.name || null },
     { field_key: 'location', label: 'Location', type: 'text', getValue: (l) => l.warehouse },
     {
@@ -90,7 +87,5 @@ export function planLineFilterFields(decisions: PlanDecisionMap): FilterFieldDes
     },
     { field_key: 'unit_cost', label: 'Unit cost', type: 'number', getValue: (l) => l.unit_cost ?? null },
     { field_key: 'currency', label: 'Currency', type: 'text', getValue: (l) => l.currency ?? null },
-    // No lateness figure is computed for a plan row today - see the module doc above.
-    { field_key: 'days_late', label: 'Days late', type: 'number', getValue: () => null },
   ];
 }

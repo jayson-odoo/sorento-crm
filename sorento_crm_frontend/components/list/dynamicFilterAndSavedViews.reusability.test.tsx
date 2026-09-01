@@ -203,6 +203,23 @@ describe('AC-4.5: DynamicFilterBuilder reused on a second, non-reorder descripto
     const groups = screen.getAllByTestId('dynamic-filter-group');
     expect(groups.length).toBe(2); // root + the nested one just added
   });
+
+  it('drops the innermost Group button once nesting reaches the backend cap (S6)', () => {
+    // A group node's own buttons render AFTER its nested children in DOM order, so
+    // the FIRST "Group" button in document order always belongs to the deepest node
+    // added so far - clicking it four times in a row extends one branch to depth 4
+    // (backend depth 5, `app/schemas/saved_view.py`'s `SavedViewConfig` validator cap).
+    render(<Harness onFilterChange={vi.fn()} />);
+    for (let i = 0; i < 4; i += 1) {
+      fireEvent.click(screen.getAllByRole('button', { name: /^Group$/i })[0]);
+    }
+    const groups = screen.getAllByTestId('dynamic-filter-group');
+    expect(groups.length).toBe(5); // root + 4 nested levels
+    const groupButtons = screen.getAllByRole('button', { name: /^Group$/i });
+    // The deepest node offers no further nesting - fewer Group buttons than groups,
+    // where every node short of the cap renders one.
+    expect(groupButtons.length).toBeLessThan(groups.length);
+  });
 });
 
 describe('AC-4.5: SavedViewsMenu reused on a second listing key', () => {

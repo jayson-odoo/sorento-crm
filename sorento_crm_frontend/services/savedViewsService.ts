@@ -31,6 +31,14 @@ export interface SavedViewConfig {
   sort: SavedViewSortEntry[];
   columns: string[];
   column_order: string[];
+  /**
+   * S4 shortfall (PR #489 review round): a listing's own FIXED dropdown filters
+   * (`PlanLinesGrid`'s status/decided/price/action/level) sit beside the recursive
+   * `filters` builder in the SAME Filters popover and are ANDed into what a reader
+   * sees - a segment omitting them is not "the full view" G9 promises. Opaque, the
+   * same reason `filters` is: each listing declares its own set.
+   */
+  quick_filters?: Record<string, string> | null;
 }
 
 export interface SavedView {

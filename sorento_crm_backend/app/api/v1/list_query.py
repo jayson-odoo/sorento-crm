@@ -71,7 +71,9 @@ def _can_view(db: Session, user_id: str, resource_key: str) -> bool:
     return UserPermissionService(db).check_user_has_permission(user_id, slug)
 
 
-def _can_view_listing_key(db: Session, user_id: str, listing_key: str) -> bool:
+def _can_view_listing_key(
+    db: Session, user_id: str, listing_key: str, *, fail_closed: bool = False
+) -> bool:
     """
     Personalization configs are authorized by the listing key itself.
 
@@ -79,6 +81,12 @@ def _can_view_listing_key(db: Session, user_id: str, listing_key: str) -> bool:
   - the RBAC view permission slug (e.g. `order_management.orders.view`), or
   - a composite key prefixed with the RBAC permission slug, using `::`:
       `order_management.orders.view::orders-list`.
+
+    `fail_closed` flips the unknown-slug fallback below: the saved-views routes pass
+    `True` (S2, PR #489 review round) because a saved view is a SHARED, cross-user
+    surface - a stray or renamed listing key there would silently let every caller
+    read/create views under it, where column-config's per-user personalization blob
+    has no such blast radius. Column-config call sites keep the default (permissive).
     """
     listing_key = (listing_key or "").strip()
     if not listing_key:
@@ -87,10 +95,12 @@ def _can_view_listing_key(db: Session, user_id: str, listing_key: str) -> bool:
 
     # If the permission slug does not exist in the RBAC catalog, treat the listing
     # as "module-auth only" (many routes in this repo use module guards instead
-    # of fine-grained `require_permission`).
+    # of fine-grained `require_permission`) - UNLESS the caller asked for the
+    # fail-closed variant, in which case an unrecognised slug denies rather than
+    # opening a shared surface to anyone who can reach the route.
     perm_exists = db.query(UserPermission).filter(UserPermission.slug == perm_slug).first()
     if not perm_exists:
-        return True
+        return not fail_closed
 
     return UserPermissionService(db).check_user_has_permission(user_id, perm_slug)
 
@@ -365,7 +375,7 @@ def list_saved_views(
     db: Session = Depends(get_db),
 ) -> SavedViews:
     listing_key = (listing_key or "").strip()
-    if not _can_view_listing_key(db, current_user["id"], listing_key):
+    if not _can_view_listing_key(db, current_user["id"], listing_key, fail_closed=True):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission denied")
     return SavedViewsService(db).list_for(listing_key, str(current_user["id"]))
 
@@ -377,7 +387,9 @@ def _authorised_saved_view(db: Session, user: dict, view_id: str) -> str:
     an unknown view answers the same 404 the ownership checks further down already give.
     """
     listing_key = SavedViewsService(db).listing_key_of(view_id)
-    if listing_key is None or not _can_view_listing_key(db, user["id"], listing_key):
+    if listing_key is None or not _can_view_listing_key(
+        db, user["id"], listing_key, fail_closed=True
+    ):
         raise handle_not_found("View", view_id)
     return listing_key
 
@@ -423,6 +435,6 @@ def create_saved_view(
     db: Session = Depends(get_db),
 ) -> SavedView:
     listing_key = (listing_key or "").strip()
-    if not _can_view_listing_key(db, current_user["id"], listing_key):
+    if not _can_view_listing_key(db, current_user["id"], listing_key, fail_closed=True):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission denied")
     return SavedViewsService(db).create(listing_key, str(current_user["id"]), body.name, body.view)

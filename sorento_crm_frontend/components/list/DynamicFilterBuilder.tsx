@@ -8,6 +8,7 @@ import { cn } from '@/lib/utils';
 import {
   emptyFilterGroup,
   isFilterGroup,
+  MAX_FILTER_GROUP_DEPTH,
   newConditionFor,
   operatorsFor,
   OPERATOR_LABEL,
@@ -196,6 +197,11 @@ function FilterGroupNode<TRow>({
   const addGroup = () => {
     onChange({ ...group, children: [...group.children, emptyFilterGroup('and')] });
   };
+  // S6: `depth` is 0-based (root = 0), `MAX_FILTER_GROUP_DEPTH` is root-inclusive
+  // (root alone = depth 1, matching the backend validator) - so a new child group
+  // stays within the cap only while this node's OWN depth-from-root (`depth + 1`)
+  // has room for one more level.
+  const canAddGroup = depth + 2 <= MAX_FILTER_GROUP_DEPTH;
 
   return (
     <div
@@ -254,10 +260,12 @@ function FilterGroupNode<TRow>({
           <Plus className="size-3.5" />
           Condition
         </Button>
-        <Button type="button" variant="outline" size="sm" className="gap-1" onClick={addGroup}>
-          <Plus className="size-3.5" />
-          Group
-        </Button>
+        {canAddGroup ? (
+          <Button type="button" variant="outline" size="sm" className="gap-1" onClick={addGroup}>
+            <Plus className="size-3.5" />
+            Group
+          </Button>
+        ) : null}
       </div>
     </div>
   );

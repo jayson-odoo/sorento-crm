@@ -90,6 +90,14 @@ describe('evaluateFilterGroup - every operator', () => {
     expect(evaluateFilterGroup(g, row('3'), FIELDS)).toBe(false);
   });
 
+  it('eq: a number field compares numerically, not as strings (S5)', () => {
+    // The builder's number input sends a string ("40.0"), which `String(40) === '40'`
+    // never matches against - the same fabrication `gt`/`lt`/`between` already guard.
+    const g = group('and', [cond('amount', 'eq', '40.0')]);
+    expect(evaluateFilterGroup(g, row('2'), FIELDS)).toBe(true);
+    expect(evaluateFilterGroup(g, row('1'), FIELDS)).toBe(false);
+  });
+
   it('contains: substring, case-insensitive', () => {
     const g = group('and', [cond('title', 'contains', 'GADGET')]);
     expect(evaluateFilterGroup(g, row('2'), FIELDS)).toBe(true);
@@ -112,6 +120,14 @@ describe('evaluateFilterGroup - every operator', () => {
     expect(
       evaluateFilterGroup(group('and', [cond('status', 'in', 'not-an-array')]), row('1'), FIELDS),
     ).toBe(false);
+  });
+
+  it('in: a number field compares each entry numerically (S5)', () => {
+    // The builder's "in list" input is a comma-separated text field split into
+    // strings - `["40.0", "abc"]` must still find row 2's amount of 40.
+    const g = group('and', [cond('amount', 'in', ['40.0', 'abc'])]);
+    expect(evaluateFilterGroup(g, row('2'), FIELDS)).toBe(true);
+    expect(evaluateFilterGroup(g, row('1'), FIELDS)).toBe(false);
   });
 
   it('gt: numeric greater-than', () => {

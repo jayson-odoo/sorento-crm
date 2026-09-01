@@ -24,6 +24,15 @@ both this migration and #471 were authored on top of 453, and #471 is declared t
 first in the 1 Sep batch order, so this revision was renumbered 454 -> 455 and rechained
 to avoid two heads on main the moment both land.
 
+S1 (PR #489 review round, captain ruling pending confirm 2 Sep): `saved_views` gained
+`company_id` (`CompanyScopedMixin`, `app/models/saved_view.py`) after this migration was
+first written - a shared/published view's filters can name another company's suppliers,
+products or warehouses, and the listing key alone does not stop that from crossing a
+company boundary. Added additively (nullable, indexed, FK to `companies`) rather than
+rewritten, and backfilled to the incumbent company for the ADD-COLUMN branch, the same
+shape migration 320 (`app/services/company_scope.py:DEFAULT_COMPANY_ID`) established -
+the CREATE-TABLE branch below never needs a backfill because it starts empty.
+
 Revision ID: 455_saved_views_and_perms
 Revises: 454_order_inquiry_born_ack
 """
@@ -36,6 +45,9 @@ revision = "455_saved_views_and_perms"
 down_revision = "454_order_inquiry_born_ack"
 branch_labels = None
 depends_on = None
+
+# The incumbent company (Sorento) - see `app/services/company_scope.py`.
+_DEFAULT_COMPANY_ID = "00000000-0000-0000-0000-000000000001"
 
 # (slug, name, description, the slug whose holders inherit it)
 _PERMS = (
@@ -60,6 +72,18 @@ def _has_table(bind, table: str) -> bool:
     )
 
 
+def _has_column(bind, table: str, column: str) -> bool:
+    return bool(
+        bind.execute(
+            sa.text(
+                "SELECT 1 FROM information_schema.columns "
+                "WHERE table_schema = current_schema() AND table_name = :t AND column_name = :c"
+            ),
+            {"t": table, "c": column},
+        ).scalar()
+    )
+
+
 def upgrade() -> None:
     bind = op.get_bind()
 
@@ -77,6 +101,12 @@ def upgrade() -> None:
             sa.Column("name", sa.Text(), nullable=False),
             sa.Column("view", postgresql.JSONB(), nullable=False),
             sa.Column(
+                "company_id",
+                postgresql.UUID(as_uuid=False),
+                sa.ForeignKey("companies.id"),
+                nullable=True,
+            ),
+            sa.Column(
                 "is_shared", sa.Boolean(), nullable=False, server_default=sa.text("false")
             ),
             sa.Column(
@@ -93,6 +123,7 @@ def upgrade() -> None:
             ),
         )
         op.create_index("ix_saved_views_listing_key", "saved_views", ["listing_key"])
+        op.create_index("ix_saved_views_company_id", "saved_views", ["company_id"])
         # At most one default per listing key, enforced where it cannot be forgotten.
         op.create_index(
             "uq_saved_views_one_default",
@@ -100,6 +131,24 @@ def upgrade() -> None:
             ["listing_key"],
             unique=True,
             postgresql_where=sa.text("is_default"),
+        )
+    elif not _has_column(bind, "saved_views", "company_id"):
+        # The table already exists (the shared local database converges through
+        # `create_all`, not through this migration - see `sorento_crm_backend/CLAUDE.md`)
+        # but predates S1's `company_id` column. Added additively and backfilled to the
+        # incumbent company (S1's module docstring above), rather than dropped and
+        # recreated, so a saved view nobody has touched yet is not silently discarded.
+        op.add_column(
+            "saved_views",
+            sa.Column("company_id", postgresql.UUID(as_uuid=False), nullable=True),
+        )
+        op.create_foreign_key(
+            "saved_views_company_id_fkey", "saved_views", "companies", ["company_id"], ["id"]
+        )
+        op.create_index("ix_saved_views_company_id", "saved_views", ["company_id"])
+        bind.execute(
+            sa.text("UPDATE saved_views SET company_id = :c WHERE company_id IS NULL"),
+            {"c": _DEFAULT_COMPANY_ID},
         )
 
     for slug, name, descr, source in _PERMS:

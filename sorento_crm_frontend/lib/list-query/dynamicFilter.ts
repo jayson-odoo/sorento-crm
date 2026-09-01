@@ -14,6 +14,17 @@ import type { ListQueryFilterCondition, ListQueryFilterGroup } from '@/lib/list-
 
 export type FilterOperator = 'eq' | 'contains' | 'in' | 'gt' | 'lt' | 'between' | 'is_empty';
 
+/**
+ * S6 (PR #489 review round): the SAME cap `app/schemas/saved_view.py`'s
+ * `SavedViewConfig` validator rejects a saved segment for on the backend - counted
+ * root-inclusive (a group with no nested children is depth 1), matching that
+ * validator's `_group_depth`. A published default segment auto-applies for every
+ * reader (AC-4.4), so this is the UI's OWN guard against building one nobody could
+ * turn off without first reaching for "No segment" - the backend cap is the one
+ * that actually enforces it.
+ */
+export const MAX_FILTER_GROUP_DEPTH = 5;
+
 export type FilterFieldType = 'text' | 'number' | 'select';
 
 export interface FilterFieldOption {
@@ -91,14 +102,30 @@ function evaluateCondition<TRow>(
       // `ListQueryFilterDialog`'s `is_null` operator uses.
       return condition.value === false ? !empty : empty;
     }
-    case 'eq':
+    case 'eq': {
       if (raw === null || raw === undefined) return false;
+      // S5 (PR #489 review round): a number field compares NUMERICALLY - `eq`/`in`
+      // used to `normalise` (stringify) both sides, so "5" and "5.0" (or a value
+      // typed with trailing whitespace) read as different values on the very
+      // fields `gt`/`lt`/`between` already compare as numbers.
+      if (field.type === 'number') {
+        const n = Number(raw);
+        const t = Number(condition.value);
+        return Number.isFinite(n) && Number.isFinite(t) && n === t;
+      }
       return normalise(raw) === normalise(condition.value);
+    }
     case 'contains':
       if (raw === null || raw === undefined) return false;
       return normalise(raw).includes(normalise(condition.value));
     case 'in': {
       if (raw === null || raw === undefined) return false;
+      if (field.type === 'number') {
+        const n = Number(raw);
+        if (!Number.isFinite(n)) return false;
+        const list = Array.isArray(condition.value) ? condition.value.map(Number) : [];
+        return list.some((t) => Number.isFinite(t) && t === n);
+      }
       const list = Array.isArray(condition.value) ? condition.value.map(normalise) : [];
       return list.includes(normalise(raw));
     }

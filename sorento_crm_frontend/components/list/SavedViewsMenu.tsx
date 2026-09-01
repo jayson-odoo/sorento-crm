@@ -1,8 +1,9 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { Check, ChevronDown, Pin, Share2, Star, Trash2 } from 'lucide-react';
+import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -19,7 +20,11 @@ import { FormDialogScaffold } from '@/components/common/FormDialogScaffold';
 import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { useSavedViewMutations, useSavedViews } from '@/hooks/useSavedViews';
-import { getUserListColumnConfig, upsertUserListColumnConfig } from '@/lib/listing-column-preferences/listColumnPreferencesService';
+import { upsertUserListColumnConfig } from '@/lib/listing-column-preferences/listColumnPreferencesService';
+import {
+  USER_LIST_COLUMN_CONFIG_QUERY_KEY_PREFIX,
+  useUserListColumnConfigQuery,
+} from '@/lib/listing-column-preferences/useUserListColumnConfigQuery';
 import {
   SAVED_VIEWS_QUERY_KEY,
   type SavedView,
@@ -31,7 +36,7 @@ export const SAVED_VIEWS_PUBLISH_PERMISSION = 'list_query.saved_views.publish';
 
 /** The SAME key `useListingColumnPreferences`/`useListingViewPreferences` use, so the
  *  personal-default read below shares their cache entry rather than a second GET. */
-const CONFIG_QUERY_KEY_PREFIX = 'list-column-config';
+const CONFIG_QUERY_KEY_PREFIX = USER_LIST_COLUMN_CONFIG_QUERY_KEY_PREFIX;
 
 /**
  * The saved-views (segments) dropdown, beside Filters (AC-4.4) - generalised from
@@ -68,12 +73,8 @@ export function SavedViewsMenu({
   const { create, publish, setDefault } = useSavedViewMutations(listingKey);
   const canPublish = useHasPermission(SAVED_VIEWS_PUBLISH_PERMISSION);
 
-  const { data: personalConfig } = useQuery({
-    queryKey: [CONFIG_QUERY_KEY_PREFIX, listingKey],
-    queryFn: () => getUserListColumnConfig(listingKey),
-    enabled: Boolean(listingKey),
-    staleTime: 60_000,
-  });
+  const { data: personalConfig, isFetched: personalConfigFetched } =
+    useUserListColumnConfigQuery(listingKey);
   const myDefaultId = personalConfig?.config?.defaultSavedViewId ?? null;
 
   const [saveOpen, setSaveOpen] = useState(false);
@@ -100,11 +101,14 @@ export function SavedViewsMenu({
   });
 
   // Auto-apply on open (AC-4.4), once views + the personal-default blob have both
-  // loaded, and only while nothing has been picked yet - a caller with a view already
-  // applied (e.g. restored from URL state) must not be overridden.
+  // SETTLED (S3, PR #489 review round: `isFetched` - true whether the GET succeeded
+  // or failed - rather than `personalConfig === undefined`, which stayed undefined
+  // forever on a failed fetch and meant the published default never applied for
+  // that reader), and only while nothing has been picked yet - a caller with a view
+  // already applied (e.g. restored from URL state) must not be overridden.
   const appliedOnceRef = useRef(false);
   useEffect(() => {
-    if (appliedOnceRef.current || !views || personalConfig === undefined) return;
+    if (appliedOnceRef.current || !views || !personalConfigFetched) return;
     appliedOnceRef.current = true;
     if (currentViewId) return;
     const personal = myDefaultId ? all.find((v) => v.id === myDefaultId) : undefined;
@@ -112,12 +116,12 @@ export function SavedViewsMenu({
     const resolved = personal ?? published;
     if (resolved) onApply(resolved);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [views, personalConfig]);
+  }, [views, personalConfigFetched]);
 
   const setMyDefault = (id: string | null) => {
-    upsertUserListColumnConfig(listingKey, { defaultSavedViewId: id }).then(() =>
-      queryClient.invalidateQueries({ queryKey: [CONFIG_QUERY_KEY_PREFIX, listingKey] }),
-    );
+    upsertUserListColumnConfig(listingKey, { defaultSavedViewId: id })
+      .then(() => queryClient.invalidateQueries({ queryKey: [CONFIG_QUERY_KEY_PREFIX, listingKey] }))
+      .catch(() => toast.error('Could not save your default view'));
   };
 
   const save = (event: React.FormEvent) => {
@@ -173,7 +177,7 @@ export function SavedViewsMenu({
     <>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button variant="outline" className="gap-1.5">
+          <Button variant="outline" size="sm" className="gap-1.5">
             <span className="max-w-40 truncate" title={current?.name ?? 'No segment'}>
               {current?.name ?? 'No segment'}
             </span>
@@ -238,7 +242,7 @@ export function SavedViewsMenu({
         </DropdownMenuContent>
       </DropdownMenu>
 
-      <Button variant="outline" onClick={() => setSaveOpen(true)}>
+      <Button variant="outline" size="sm" onClick={() => setSaveOpen(true)}>
         Save view
       </Button>
 

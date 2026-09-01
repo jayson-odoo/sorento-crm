@@ -76,6 +76,19 @@ UAC: `scm-reorder-oi-feedback-1sep-acceptance-criteria.md`
   product = buyer intent).
 - G11 S3 perf quick wins approved as listed.
 
+### PR #489 review round (2 Sep 2026) - pending captain confirm
+
+Two additions to G9, applied per the repo's standing fail-closed doctrine rather than a
+fresh grill - **pending captain confirm 2 Sep**:
+
+- S1: `saved_views` gets `CompanyScopedMixin` + `company_id`. A shared/published
+  segment's `view` blob can name another company's suppliers/products/warehouses inside
+  its filters, and the listing key alone does not stop that crossing a company boundary.
+- S2: on the saved-views routes ONLY, `_can_view_listing_key`'s unknown-permission-slug
+  fallback goes fail-closed (403) rather than the permissive "module-auth only" default -
+  a saved view is a shared, cross-user surface, unlike column-config's per-user blob
+  (which keeps the permissive fallback).
+
 ## Slices
 
 ### S1 - OI auto-acknowledge
@@ -119,9 +132,11 @@ UAC: `scm-reorder-oi-feedback-1sep-acceptance-criteria.md`
   scope-keyed `saved_views` keyed by listing key; port `views_service.py` (one-default race
   guard, publish permission); lift `ReportViewsMenu` -> generic `<SavedViewsMenu>` dropdown
   beside Filters. Auth via `_can_view_listing_key`.
-- v1 fields: product code/name, category, supplier, location, rec type, decision state,
-  suggested qty, reorder level, reorder qty, on-hand BRW, SPO qty, PO qty, project
-  committed, retail committed, unit cost, currency, days late.
+- v1 fields: product code/name, supplier, location, rec type, decision state, suggested
+  qty, reorder level, reorder qty, on-hand BRW, SPO qty, PO qty, project committed,
+  retail committed, unit cost, currency (16 fields; PR #489 review round S7 dropped
+  category and days late - neither has a data source on `PlanLine`, so both would have
+  shipped as a dropdown entry that could only ever match "is empty").
 - First consumer: plan grid (`scm.dashboard.view::reorder-plan-lines`).
 
 ### S5 - Plan detail tabs + Re-plan
