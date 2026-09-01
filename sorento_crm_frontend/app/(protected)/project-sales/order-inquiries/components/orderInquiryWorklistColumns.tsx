@@ -3,9 +3,17 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { ColumnDef } from '@tanstack/react-table';
-import { CircleCheck, CircleDashed, Info } from 'lucide-react';
+import { CircleCheck, CircleDashed, History, Info } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -37,6 +45,75 @@ import { OrderInquiryDocumentLink } from './OrderInquiryDocumentDialog';
 
 function Muted({ children }: { children: React.ReactNode }) {
   return <span className="text-muted-foreground">{children}</span>;
+}
+
+/**
+ * The Was/Now of a settled amendment, behind a lightbox: the row keeps only the clickable
+ * "Changed <date>" badge (captain, 1 Sep - the inline table crowded the qty cell), and the
+ * dialog is mounted only once it has been asked for, same as the document lightbox below.
+ */
+function ChangedBadge({ row }: { row: OrderInquiryWorklistRow }) {
+  const [open, setOpen] = React.useState(false);
+  const previous = previousValueOf(row);
+  if (!previous) return null;
+  return (
+    <>
+      <button
+        type="button"
+        data-testid={`change-badge-trigger-${row.id}`}
+        className="cursor-pointer"
+        aria-label={`Show what changed on ${row.item_code ?? row.so_number ?? 'this row'}`}
+        onClick={(event) => {
+          event.stopPropagation();
+          setOpen(true);
+        }}
+      >
+        <Badge variant="warning" appearance="light" size="sm">
+          <History className="size-3" aria-hidden="true" />
+          {row.changed_at
+            ? `${ACK_LABELS.changed} ${formatDateInMalaysia(row.changed_at)}`
+            : ACK_LABELS.changed}
+        </Badge>
+      </button>
+      {open ? (
+        <Dialog open={open} onOpenChange={setOpen}>
+          <DialogContent className="max-w-lg" data-testid={`change-detail-${row.id}`}>
+            <DialogHeader>
+              <DialogTitle className="tabular-nums">
+                {row.item_code ?? row.so_number ?? 'Changed'}
+              </DialogTitle>
+              <DialogDescription>
+                {row.changed_at
+                  ? `Changed ${formatDateInMalaysia(row.changed_at)}`
+                  : 'Changed by customer service'}
+              </DialogDescription>
+            </DialogHeader>
+            <DialogBody>
+              <BoardChangeTable
+                omitDecision
+                omitHeader
+                annotation={{
+                  rowId: row.id,
+                  soNumber: row.so_number ?? '',
+                  lineNo: 0,
+                  itemCode: row.item_code ?? '',
+                  // The batch's own change vocabulary is never shown (part 3) and this
+                  // table prints none of it; `qty_up` is the nearest true word for a row
+                  // CS amended, and nothing reads it here.
+                  kind: 'qty_up',
+                  closed: false,
+                  was: { qty: previous.qty, date: previous.date, decision: null },
+                  now: { qty: row.qty, date: row.delivery_date ?? null, decision: null },
+                  movedTransfer: null,
+                  projectLineId: null,
+                }}
+              />
+            </DialogBody>
+          </DialogContent>
+        </Dialog>
+      ) : null}
+    </>
+  );
 }
 
 /**
@@ -220,11 +297,10 @@ export function useOrderInquiryWorklistColumns({
         // acknowledged (the ordinary case) shows the number and nothing else.
         accessorKey: 'qty',
         header: ({ column }) => <DataGridColumnHeader title="Qty" column={column} />,
-        size: 220,
+        size: 150,
         meta: { headerTitle: 'Qty', skeleton: <Skeleton className="h-4 w-10" /> },
         cell: ({ row }) => {
           const state = ackStateOf(row.original);
-          const previous = state !== 'rejected' ? previousValueOf(row.original) : null;
           return (
             <div className="min-w-0 space-y-1">
               <span className="block tabular-nums">
@@ -232,38 +308,9 @@ export function useOrderInquiryWorklistColumns({
               </span>
               {state === 'rejected' ? (
                 <RejectedNote row={row.original} />
-              ) : previous ? (
-                <div className="space-y-1">
-                  {row.original.changed_at ? (
-                    <Badge variant="warning" appearance="light" size="sm">
-                      {`${ACK_LABELS.changed} ${formatDateInMalaysia(row.original.changed_at)}`}
-                    </Badge>
-                  ) : null}
-                  <BoardChangeTable
-                    compact
-                    omitDecision
-                    annotation={{
-                      rowId: row.original.id,
-                      soNumber: row.original.so_number ?? '',
-                      lineNo: 0,
-                      itemCode: row.original.item_code ?? '',
-                      // The batch's own change vocabulary is never shown (part 3) and
-                      // this table prints none of it; `qty_up` is the nearest true word
-                      // for a row CS amended, and nothing reads it here.
-                      kind: 'qty_up',
-                      closed: false,
-                      was: { qty: previous.qty, date: previous.date, decision: null },
-                      now: {
-                        qty: row.original.qty,
-                        date: row.original.delivery_date ?? null,
-                        decision: null,
-                      },
-                      movedTransfer: null,
-                      projectLineId: null,
-                    }}
-                  />
-                </div>
-              ) : null}
+              ) : (
+                <ChangedBadge row={row.original} />
+              )}
             </div>
           );
         },

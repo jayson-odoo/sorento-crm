@@ -9,7 +9,7 @@
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { flexRender, getCoreRowModel, useReactTable } from '@tanstack/react-table';
 import type { ColumnDef } from '@tanstack/react-table';
 import { describe, expect, it } from 'vitest';
@@ -321,10 +321,14 @@ describe('the qty cell: rejected reason and Was/Now (S1 AC-1.5, S7 review of PR 
     expect(within(row).getByText('Rejected by Joey Ang')).toBeInTheDocument();
   });
 
-  it('draws the Was/Now table under the qty for a settled row, off previous_qty alone', () => {
+  it('shows only the qty and a Changed badge for a settled row - the table is behind a lightbox now', () => {
     // Driven by `previous_qty`, NOT `ack_state === 'changed'` (S1): a settle
     // auto-acknowledges the instant it stamps `changed_at` (G4), so the row this cell
     // reads is `acknowledged`, never `changed`, by the time the wire carries it.
+    //
+    // The Was/Now table used to render inline here; it now lives behind a lightbox
+    // (captain, 1 Sep - the inline table crowded the qty cell), so the row's own cell
+    // carries only the figure and the clickable badge, not the table's own "10"/"25".
     renderQtyCell([
       worklistRow({
         id: 'row-settled',
@@ -337,11 +341,34 @@ describe('the qty cell: rejected reason and Was/Now (S1 AC-1.5, S7 review of PR 
       }),
     ]);
     const row = screen.getByTestId('row-row-settled');
-    // "25" appears twice - the qty cell's own figure and the table's own Now column -
-    // which is the point: both read the row's current qty and can never disagree.
-    expect(within(row).getAllByText('25').length).toBeGreaterThanOrEqual(2);
-    expect(within(row).getByTestId('board-change-row-settled')).toBeInTheDocument();
-    expect(within(row).getByText('10')).toBeInTheDocument();
+    expect(within(row).getByText('25')).toBeInTheDocument();
+    expect(within(row).getByText(/Changed/)).toBeInTheDocument();
+    expect(within(row).queryByText('10')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('board-change-row-settled')).not.toBeInTheDocument();
+  });
+
+  it('opens the lightbox with the Was/Now table when the Changed badge is clicked', () => {
+    renderQtyCell([
+      worklistRow({
+        id: 'row-settled',
+        qty: '25',
+        ack_state: 'acknowledged',
+        changed_at: '2026-09-01T10:00:00',
+        previous_qty: '10',
+        previous_delivery_date: '2026-08-10',
+        delivery_date: '2026-09-20',
+      }),
+    ]);
+
+    fireEvent.click(screen.getByTestId('change-badge-trigger-row-settled'));
+
+    // Rendered via a portal (Radix `Dialog`), so it is read off `screen`, not `row`.
+    const table = screen.getByTestId('board-change-row-settled');
+    // "25" appears twice once open - the qty cell's own figure and the table's own Now
+    // column - which is the point: both read the row's current qty and can never
+    // disagree.
+    expect(screen.getAllByText('25').length).toBeGreaterThanOrEqual(2);
+    expect(within(table).getByText('10')).toBeInTheDocument();
   });
 
   it('never shows the Was/Now table on a rejected row, even if it once carried a previous value', () => {
