@@ -2,7 +2,11 @@
 
 Status: S1 IMPLEMENTED (PR #471, 1 Sep 2026) - review found a 6th creation site
 (`project_supply_service.py::_place_supply_borrows`) and 6 other must-fix items, addressed on the
-same branch. S2-S6 not built.
+same branch. S6 IMPLEMENTED (PR #490, 2 Sep 2026) - tester found G12's gate blocking the
+automatic pass's own first, uncontested take of a project-bin line (63 pre-existing test
+cases across 8 files, shared root cause with a G7 own-claim double-count/identity bug);
+fixed with the born-claimed mechanism, see G12's own entry below (PENDING CAPTAIN CONFIRM
+2 Sep). S2-S5 not built.
 UAC: `scm-reorder-oi-feedback-1sep-acceptance-criteria.md`
 
 ## Journeys
@@ -67,6 +71,27 @@ UAC: `scm-reorder-oi-feedback-1sep-acceptance-criteria.md`
   unclaimed line still counts as supply in the plan; only the OI cover state waits for
   attribution. The import result + PO view surface the unclaimed-project-bin count so Joey
   backfills FromSODocList in AutoCount.
+  - BORN CLAIMED (PENDING CAPTAIN CONFIRM 2 Sep 2026 - PR #490 review fix): the gate
+    above is unconditional by design, which left no path for the automatic pass to EVER
+    take the very first, genuinely uncontested unit of a project-bin line - nothing has
+    written a claim for it yet, and only taking it could write one. Resolved WITHOUT an
+    exception clause on the gate itself: `_born_claimed_takes` previews the SAME walk
+    with a project-bin candidate additionally admitted when it has real, netted capacity
+    left AND no EXTERNAL claim (`po_history` / `so_upload` / `po_upload` / `manual`)
+    already names a specific SO for it; a claim for the row's own SO is written for
+    whatever that preview would take, in the same transaction as the real placement
+    right after, so the UNCHANGED gate then finds the claim already there. A LATER,
+    DIFFERENT SO reaching the same line's remaining capacity - a separate press, or a
+    second row in the same pass - is ordinary G7 sharing ("PO 100, SO A 30 claimed ->
+    70 free"), not a special case: the check is re-read fresh off the database every
+    time, never cached across rows or requests. A line an EXTERNAL feed already
+    dedicates to a specific SO is refused to the automatic pass exactly as before -
+    the born-claimed path only ever fires for capacity nothing but the cascade's own
+    prior automatic claims stands against. See `app/services/project_order_inquiry_
+    service.py` (`_born_claimed_takes`, `_has_external_claim`, `_reserved_for_netting`,
+    `trial_cascadable`/`pass_unattributed` on `_candidate`) and PR #490's review-fix
+    commit for the eight pre-existing test files this closed out (63 cases) plus the
+    G7 double-count / own-claim-identity bug it shared root cause with.
 - G8 Re-plan: Plan until AND warehouse/product scope editable. New run supersedes old;
   decisions carry for products present in both runs with unchanged suggestion; leaving scope
   drops them; entering arrives undecided; changed suggestions return flagged "re-check".
@@ -143,6 +168,7 @@ UAC: `scm-reorder-oi-feedback-1sep-acceptance-criteria.md`
   (claimed-by-other AND unclaimed alike); dialog shows unclaimed project-bin lines greyed
   "Unattributed - link manually"; manual link writes the claim. Unclaimed-project-bin
   counts on the PO/SPO upload result and as a PO-view filter for Joey's backfill.
+  Born-claimed follow-up: see G12's own ruling entry above (PENDING CAPTAIN CONFIRM).
 
 ## Build order
 
