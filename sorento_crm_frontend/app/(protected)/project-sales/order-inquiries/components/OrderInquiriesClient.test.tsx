@@ -421,15 +421,18 @@ describe('AC-1.5/G5: no default ack filter', () => {
     expect(screen.getByText('Confirmed: Rejected')).toBeInTheDocument();
   });
 
-  it('the Confirmed filter still offers To confirm first, with its own count', async () => {
+  it('the Confirmed filter no longer offers To confirm (S3, review of PR #471)', async () => {
+    // A row is born acknowledged now (G4) and a settle auto-acknowledges again, so
+    // nothing purchasing still has to answer sits in `awaiting` any more - the FE stops
+    // offering the option even though the backend still accepts an old bookmark's
+    // `?ack=to_confirm` for compatibility.
     getOrderInquiryWorklistSummary.mockResolvedValue({
       ...MOCK_WORKLIST_SUMMARY,
       ack: {
-        awaiting: 3,
+        awaiting: 0,
         acknowledged: 1,
         changed: 1,
         rejected: 0,
-        to_confirm: 4,
       },
     });
     renderClient();
@@ -439,7 +442,6 @@ describe('AC-1.5/G5: no default ack filter', () => {
     const select = (await screen.findByLabelText('Any')) as HTMLSelectElement;
     expect([...select.options].map((option) => option.textContent)).toEqual([
       'Any',
-      'To confirm (4)',
       'Confirmed (1)',
       'Changed (1)',
       'Rejected (0)',

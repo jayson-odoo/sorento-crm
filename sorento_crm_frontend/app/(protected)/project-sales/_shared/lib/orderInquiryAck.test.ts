@@ -8,9 +8,7 @@ import {
   ACK_ANY,
   ACK_FILTER_OPTIONS,
   ACK_LABELS,
-  ACK_TO_CONFIRM,
   ackStateOf,
-  isAcknowledgeable,
   isBulkRejectable,
   isRejectable,
   previousValueOf,
@@ -44,56 +42,22 @@ describe('ACK_LABELS (R7: Confirm replaced Acknowledge everywhere a person can s
   });
 });
 
-describe('ACK_TO_CONFIRM / ACK_FILTER_OPTIONS (R3: the page opens on a to-do list)', () => {
-  it('is its own filter value, not the raw awaiting state', () => {
-    expect(ACK_TO_CONFIRM).toBe('to_confirm');
+describe('ACK_ANY / ACK_FILTER_OPTIONS (S3, review of PR #471: no "To confirm" option)', () => {
+  it('ACK_ANY is the URL word for "show me everything"', () => {
     expect(ACK_ANY).toBe('all');
   });
 
-  it('offers To confirm first, then the three other states, in that order', () => {
+  it('offers acknowledged, changed and rejected only - a row is born acknowledged now', () => {
     expect(ACK_FILTER_OPTIONS.map((option) => option.value)).toEqual([
-      'to_confirm',
       'acknowledged',
       'changed',
       'rejected',
     ]);
     expect(ACK_FILTER_OPTIONS.map((option) => option.label)).toEqual([
-      'To confirm',
       'Confirmed',
       'Changed',
       'Rejected',
     ]);
-  });
-});
-
-describe('isAcknowledgeable', () => {
-  it('is true for an awaiting row still owed', () => {
-    expect(isAcknowledgeable({ ack_state: 'awaiting', state: 'raised' })).toBe(true);
-  });
-
-  it('is true for a changed row - re-acknowledging is how it returns', () => {
-    expect(isAcknowledgeable({ ack_state: 'changed', state: 'partly_linked' })).toBe(true);
-  });
-
-  it('is false once acknowledged - a second press would move the stamp', () => {
-    expect(isAcknowledgeable({ ack_state: 'acknowledged', state: 'raised' })).toBe(false);
-  });
-
-  it('is false for a rejected row - CS re-decides the line, not purchasing', () => {
-    expect(isAcknowledgeable({ ack_state: 'rejected', state: 'raised' })).toBe(false);
-  });
-
-  it('is false for a cancelled row even while still awaiting (plan section 7)', () => {
-    expect(isAcknowledgeable({ ack_state: 'awaiting', state: 'cancelled' })).toBe(false);
-  });
-
-  it('is false for an actioned row even while still awaiting', () => {
-    expect(isAcknowledgeable({ ack_state: 'awaiting', state: 'actioned' })).toBe(false);
-  });
-
-  it('defaults ack_state to awaiting, so a row with none is still gated on its state', () => {
-    expect(isAcknowledgeable({ state: 'cancelled' })).toBe(false);
-    expect(isAcknowledgeable({ state: 'raised' })).toBe(true);
   });
 });
 

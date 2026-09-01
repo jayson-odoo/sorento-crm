@@ -74,7 +74,6 @@ import {
 import {
   ACK_ANY,
   ACK_FILTER_OPTIONS,
-  ACK_TO_CONFIRM,
   isBulkRejectable,
 } from '../../_shared/lib/orderInquiryAck';
 import {
@@ -705,10 +704,6 @@ export function OrderInquiriesClient() {
   // in this popover: it narrows exactly what the rest of these narrow, so leaving it out
   // hid "Clear filters" from the one person who most needs it - somebody who pressed Buy,
   // sees three rows, and has nothing on the toolbar offering to give the rest back.
-  // How many rows the default filter is about (AC-D12), off the server's own facet: it
-  // counts the filtered set, and a client that added two of the other counts together
-  // would be answering a different question the moment either gained a state.
-  const toConfirmCount = summary.data?.ack?.to_confirm;
 
   // What the chip above the grid says, so the buyer can see WHY the list is short and
   // take the narrowing off in one press (AC-D12).
@@ -1050,13 +1045,11 @@ export function OrderInquiriesClient() {
                           clearable
                           options={ACK_FILTER_OPTIONS.map((option) => {
                             const count =
-                              option.value === ACK_TO_CONFIRM
-                                ? toConfirmCount
-                                : summary.data?.ack?.[
-                                    option.value as keyof NonNullable<
-                                      typeof summary.data.ack
-                                    >
-                                  ];
+                              summary.data?.ack?.[
+                                option.value as keyof NonNullable<
+                                  typeof summary.data.ack
+                                >
+                              ];
                             return {
                               value: option.value,
                               label:
