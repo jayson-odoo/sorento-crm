@@ -345,6 +345,7 @@ export function SPODocumentDetail({ spoNumber }: { spoNumber: string }) {
                 }
                 fetchProducts={fetchProducts}
                 productFallback={line.product}
+                truncateTriggerLabel
               />
             );
           }
@@ -394,6 +395,7 @@ export function SPODocumentDetail({ spoNumber }: { spoNumber: string }) {
                 // clipped the second line instead of letting the control grow, which
                 // is what read as the label rendering twice ("BRW-SYNT - BRW-S...").
                 clearable
+                truncateTriggerLabel
               />
             );
           }
@@ -569,6 +571,7 @@ export function SPODocumentDetail({ spoNumber }: { spoNumber: string }) {
                 }
                 placeholder="No supplier"
                 clearable
+                truncateTriggerLabel
               />
             );
           }

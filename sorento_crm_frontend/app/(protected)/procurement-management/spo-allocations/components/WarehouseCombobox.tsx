@@ -20,10 +20,15 @@ interface WarehouseComboboxProps {
    *  warehouse picker (e.g. the create-allocation form) does not grow a clear affordance
    *  it has no use for. */
   clearable?: boolean;
+  /** One-line ellipsis trigger for fixed-width table cells. */
+  truncateTriggerLabel?: boolean;
 }
 
 const label = (w: WarehouseOption) =>
-  w.warehouse_name ? `${w.warehouse_code} - ${w.warehouse_name}` : w.warehouse_code;
+  // A name that merely repeats the code says nothing twice ("BRW-IB - BRW-IB").
+  w.warehouse_name && w.warehouse_name !== w.warehouse_code
+    ? `${w.warehouse_code} - ${w.warehouse_name}`
+    : w.warehouse_code;
 
 /**
  * Thin domain wrapper over the standard SearchableSelect: it owns the warehouse label
@@ -38,6 +43,7 @@ export function WarehouseCombobox({
   disabled,
   className,
   clearable = false,
+  truncateTriggerLabel,
 }: WarehouseComboboxProps) {
   const options = [
     ...warehouses,
@@ -57,6 +63,7 @@ export function WarehouseCombobox({
       clearable={clearable}
       emptyMessage="No warehouse found."
       triggerClassName={className}
+      truncateTriggerLabel={truncateTriggerLabel}
       options={options.map((w) => ({
         value: w.id,
         label: label(w),

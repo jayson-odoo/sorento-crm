@@ -95,6 +95,13 @@ export type SearchableSelectProps = {
   disabled?: boolean;
   className?: string;
   triggerClassName?: string;
+  /**
+   * Truncate the trigger label to one line with an ellipsis (full text in `title`).
+   * For triggers inside fixed-width table cells, where the default grow-and-wrap
+   * behavior cannot work: the cell's nowrap defeats wrapping and the label paints
+   * over the clear/chevron icon instead.
+   */
+  truncateTriggerLabel?: boolean;
   /** Render the trigger label differently from the option label. */
   renderTriggerLabel?: (opt: SearchableSelectOption) => React.ReactNode;
   /** Render a custom option body (status dots, icons). Defaults to label + description. */
@@ -144,6 +151,7 @@ export function SearchableSelect({
   disabled = false,
   className,
   triggerClassName,
+  truncateTriggerLabel = false,
   renderTriggerLabel,
   renderOption,
   renderTrigger,
@@ -299,13 +307,21 @@ export function SearchableSelect({
           aria-expanded={open}
           className={cn(selectTriggerVariants({ size }), triggerClassName)}
         >
-          {/* No truncation: the chosen option is the one thing the closed control has
-              to say, so it wraps and the trigger grows with it (min-height, not height). */}
+          {/* Default: no truncation - the chosen option is the one thing the closed
+              control has to say, so it wraps and the trigger grows with it (min-height,
+              not height). `truncateTriggerLabel` opts a fixed-width-cell trigger into
+              one-line ellipsis instead, with the full text on `title`. */}
           <span
             className={cn(
-              'min-w-0 flex-1 text-left break-words',
+              'min-w-0 flex-1 text-left',
+              truncateTriggerLabel ? 'truncate' : 'break-words',
               !selected && 'text-muted-foreground',
             )}
+            title={
+              truncateTriggerLabel && selected && typeof selected.label === 'string'
+                ? selected.label
+                : undefined
+            }
           >
             {selected
               ? renderTriggerLabel
@@ -318,7 +334,10 @@ export function SearchableSelect({
               role="button"
               tabIndex={-1}
               aria-label="Clear selection"
-              className="mt-0.5 shrink-0 self-start rounded-sm opacity-60 hover:opacity-100"
+              className={cn(
+                'shrink-0 rounded-sm opacity-60 hover:opacity-100',
+                truncateTriggerLabel ? 'self-center' : 'mt-0.5 self-start',
+              )}
               onPointerDown={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
@@ -329,7 +348,12 @@ export function SearchableSelect({
               <X className="size-4" />
             </span>
           ) : (
-            <ChevronDown className="mt-0.5 size-4 shrink-0 self-start opacity-60 -me-0.5" />
+            <ChevronDown
+              className={cn(
+                'size-4 shrink-0 opacity-60 -me-0.5',
+                truncateTriggerLabel ? 'self-center' : 'mt-0.5 self-start',
+              )}
+            />
           )}
         </button>
         )}
