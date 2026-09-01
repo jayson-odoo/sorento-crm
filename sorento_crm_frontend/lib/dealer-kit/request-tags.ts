@@ -13,12 +13,14 @@
  * around it.
  */
 
-import { bindTemplateLayers } from './product-block';
+import { bindTemplateLayers, buildProductBlock, PRODUCT_BLOCK_SIZE } from './product-block';
 import { lineFamily } from './line-family';
 import type {
   GroupBinding,
   ImpositionConfig,
+  LineTagData,
   PlacedTag,
+  ProductTagData,
   TagLayer,
   TagSheet,
   TagSheetDoc,
@@ -62,6 +64,51 @@ export function defaultTemplateFor(
     templates.find((t) => t.family === 'ala_carte') ??
     templates[0]
   );
+}
+
+/**
+ * The starter a line opens on when there is not one PUBLISHED template to
+ * clone from (D6/D13): a product block bound to the line's own product, at
+ * the default block footprint. The design page must never dead-end on a
+ * silent "Preparing this line..." (#476), so this stands in for a real
+ * template - it is a plain `ProductTagData` built from the already-resolved
+ * line, fed through `buildProductBlock`, and never written back as a
+ * `tag_templates` row.
+ */
+export function starterTemplateFor(
+  line: Pick<TagRequestLine, 'id'>,
+  data: LineTagData | undefined,
+  newId: () => string,
+): TagTemplate {
+  const product: ProductTagData = {
+    id: line.id,
+    code: data?.code ?? '',
+    name: data?.name ?? '',
+    dimensions: data?.dimensions ?? '',
+    spec_lines: data?.spec_lines ? data.spec_lines.split('\n') : [],
+    specs: data?.specs ?? [],
+    images: data?.images ?? [],
+    list_price: data?.list_price ?? null,
+    offer_price: data?.show_promo_price ? (data?.sell_price ?? null) : null,
+    promotion_id: null,
+  };
+  const layers = buildProductBlock(product, { newId, x_mm: 0, y_mm: 0, z_index: 0 });
+  return {
+    id: 'starter',
+    name: 'Starter',
+    family: 'ala_carte',
+    doc: {
+      layers,
+      width_mm: PRODUCT_BLOCK_SIZE.width_mm,
+      height_mm: PRODUCT_BLOCK_SIZE.height_mm,
+    },
+    print_size: {
+      width_mm: PRODUCT_BLOCK_SIZE.width_mm,
+      height_mm: PRODUCT_BLOCK_SIZE.height_mm,
+    },
+    created_at: '',
+    updated_at: '',
+  };
 }
 
 // ---------------------------------------------------------------------------

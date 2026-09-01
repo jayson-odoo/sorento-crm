@@ -21,9 +21,17 @@
  * there to look at it and to drag a copy if somebody wants to.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
-import { ChevronLeft, Check, LayoutTemplate, Loader2, Eye, Save } from 'lucide-react';
+import {
+  ChevronLeft,
+  Check,
+  LayoutTemplate,
+  Loader2,
+  Eye,
+  Save,
+  RefreshCw,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import {
   AlertDialog,
@@ -55,6 +63,7 @@ import {
   defaultTemplateFor,
   pinKeyForPlacement,
   pinnedFromDoc,
+  starterTemplateFor,
   tagForLine,
   tagsFromDoc,
   type ArrangeItem,
@@ -91,6 +100,9 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
 
   const [mode, setMode] = useState<'design' | 'arrange'>('design');
   const [templates, setTemplates] = useState<TagTemplate[]>([]);
+  const [templatesStatus, setTemplatesStatus] = useState<'loading' | 'loaded' | 'error'>(
+    'loading',
+  );
   const [resolvedRows, setResolvedRows] = useState<LineTagData[] | null>(null);
 
   /** One tag per line, keyed by line id. The live layers live here. */
@@ -124,11 +136,21 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
 
   // -- Loading ---------------------------------------------------------------
 
-  useEffect(() => {
+  // A failed fetch gets an explicit, stays-put error state with Retry (AC-S3-3)
+  // rather than a toast that vanishes and leaves the canvas silent.
+  const loadTemplates = useCallback(() => {
+    setTemplatesStatus('loading');
     listTemplates()
-      .then(setTemplates)
-      .catch(() => toast.error('Failed to load tag templates'));
+      .then((rows) => {
+        setTemplates(rows);
+        setTemplatesStatus('loaded');
+      })
+      .catch(() => setTemplatesStatus('error'));
   }, []);
+
+  useEffect(() => {
+    loadTemplates();
+  }, [loadTemplates]);
 
   useEffect(() => {
     let live = true;
@@ -168,24 +190,30 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
   }, [selectedLineId, request.lines]);
 
   // A line with no tag yet is cloned from its family's default template. It
-  // waits for BOTH the templates and the resolved lines: the family comes off
-  // the resolved code, so cloning early would pick the ala carte fallback for
-  // everything.
+  // waits for the templates to settle (loaded OR error - an error state has
+  // its own Retry, not a silent stall) AND the resolved lines: the family
+  // comes off the resolved code, so cloning early would pick the ala carte
+  // fallback for everything.
+  //
+  // Zero PUBLISHED templates is not an error: the line starts from a
+  // product-block starter bound to its own product instead of dead-ending on
+  // "Preparing this line..." forever (D6/D13, #476).
   useEffect(() => {
     if (!selectedLineId || tags[selectedLineId]) return;
-    if (templates.length === 0 || resolvedRows === null) return;
+    if (templatesStatus === 'loading' || templatesStatus === 'error') return;
+    if (resolvedRows === null) return;
     const line = request.lines.find((l) => l.id === selectedLineId);
     if (!line) return;
-    const template = defaultTemplateFor(line, templates, resolved.get(line.id)?.code);
-    if (!template) {
-      toast.error('There are no tag templates yet. Design one under Tag Templates first.');
-      return;
-    }
+    const lineData = resolved.get(line.id);
+    const template =
+      defaultTemplateFor(line, templates, lineData?.code) ??
+      starterTemplateFor(line, lineData, newTagId);
     applyTemplate(line, template);
   }, [
     selectedLineId,
     tags,
     templates,
+    templatesStatus,
     resolvedRows,
     resolved,
     request.lines,
@@ -444,7 +472,20 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
 
       <div className="flex-1 overflow-hidden">
         {mode === 'design' ? (
-          selectedTag && selectedDoc ? (
+          request.lines.length === 0 ? (
+            <CanvasMessage text="This request has no lines, so there is nothing to design." />
+          ) : templatesStatus === 'loading' ? (
+            <CanvasMessage text="Loading templates..." />
+          ) : templatesStatus === 'error' ? (
+            <CanvasMessage text="Failed to load tag templates.">
+              <Button variant="outline" size="sm" onClick={loadTemplates}>
+                <RefreshCw className="mr-1.5 size-3.5" />
+                Retry
+              </Button>
+            </CanvasMessage>
+          ) : resolvedRows === null ? (
+            <CanvasMessage text="Resolving prices..." />
+          ) : selectedTag && selectedDoc ? (
             <TagCanvasEditor
               key={selectedTag.id}
               doc={selectedDoc}
@@ -459,13 +500,7 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
               hideSaveBar
             />
           ) : (
-            <div className="flex h-full items-center justify-center px-6 text-center">
-              <p className="text-sm text-muted-foreground">
-                {request.lines.length === 0
-                  ? 'This request has no lines, so there is nothing to design.'
-                  : 'Preparing this line...'}
-              </p>
-            </div>
+            <CanvasMessage text="Preparing this line..." />
           )
         ) : (
           <ArrangeSheetView
@@ -531,6 +566,27 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// The canvas's own placeholder states (loading / resolving / error) - the
+// design page must always say what it is waiting for rather than sitting on
+// a bare, permanent "Preparing this line..." (#476).
+// ---------------------------------------------------------------------------
+
+function CanvasMessage({
+  text,
+  children,
+}: {
+  text: string;
+  children?: ReactNode;
+}) {
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
+      <p className="text-sm text-muted-foreground">{text}</p>
+      {children}
     </div>
   );
 }
