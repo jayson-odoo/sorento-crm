@@ -71,19 +71,20 @@ def _assign(db, contact: RespondContact, access_type: ContactAccessType) -> None
     db.flush()
 
 
-def _client(db, monkeypatch) -> TestClient:
+def _client(db, monkeypatch, *, requested_slugs: list[str] | None = None) -> TestClient:
     user = {"id": str(uuid.uuid4())}
 
     def _db_override():
         yield db
 
+    def _check(self, uid, slug):
+        if requested_slugs is not None:
+            requested_slugs.append(slug)
+        return True
+
     app.dependency_overrides[get_db] = _db_override
     app.dependency_overrides[get_current_user] = lambda: user
-    monkeypatch.setattr(
-        UserPermissionService,
-        "check_user_has_permission",
-        lambda self, uid, slug: True,
-    )
+    monkeypatch.setattr(UserPermissionService, "check_user_has_permission", _check)
     return TestClient(app)
 
 
@@ -192,6 +193,57 @@ def test_put_null_deletes_the_override_row_back_to_inherit(monkeypatch):
             .count()
             == 0
         )
+
+
+def test_put_same_form_type_twice_in_one_request_last_wins(monkeypatch):
+    """AC-2/AC-6 review fix: a payload naming price_tag_request twice - once
+    enabling it, once clearing it - must not hit the unique constraint (500)
+    or leave the outcome dependent on list order. The last entry wins, so
+    [true, null] ends with no row at all."""
+    with blank_session() as db:
+        contact = _seeded_contact(db)
+        client = _client(db, monkeypatch)
+
+        response = client.put(
+            BASE.format(contact_id=contact.id),
+            json={
+                "overrides": [
+                    {"form_type": "price_tag_request", "is_enabled": True},
+                    {"form_type": "price_tag_request", "is_enabled": None},
+                ]
+            },
+        )
+
+        assert response.status_code == 200, response.text
+        row = response.json()["forms"][0]
+        assert row["override"] is None
+        assert row["effective"] is False
+        assert (
+            db.query(ContactPortalFormOverride)
+            .filter(ContactPortalFormOverride.contact_id == contact.id)
+            .count()
+            == 0
+        )
+
+
+def test_get_and_put_ask_for_the_right_permission_slugs(monkeypatch):
+    with blank_session() as db:
+        contact = _seeded_contact(db)
+        slugs: list[str] = []
+        client = _client(db, monkeypatch, requested_slugs=slugs)
+
+        get_response = client.get(BASE.format(contact_id=contact.id))
+        assert get_response.status_code == 200, get_response.text
+        assert "user_management.contacts.view" in slugs
+        assert "user_management.contacts.edit" not in slugs
+
+        slugs.clear()
+        put_response = client.put(
+            BASE.format(contact_id=contact.id),
+            json={"overrides": [{"form_type": "price_tag_request", "is_enabled": True}]},
+        )
+        assert put_response.status_code == 200, put_response.text
+        assert "user_management.contacts.edit" in slugs
 
 
 def test_put_twice_updates_the_same_row_no_duplicate(monkeypatch):

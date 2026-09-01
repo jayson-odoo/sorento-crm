@@ -57,8 +57,11 @@ New route file `app/api/v1/user_management/contact_portal_forms.py`, mirroring
   duplicate (unique constraint on `(contact_id, form_type)`). An unknown `form_type` is 422
   via `handle_unprocessable`; an unknown contact is 404. Returns the same shape as GET.
 
-No new storage. No new resolver logic - `resolve_visible_form_types` is read-only from this
-route's point of view; it already applies whatever the route writes.
+No new storage. The union-of-access-types query the route needs for `inherited` is the same
+query step 1+2 of `resolve_visible_form_types` already runs, so it was extracted to
+`inherited_form_types(db, contact_id)` in `portal_form_visibility_service.py` and both callers
+use it - no second copy of that join. `resolve_visible_form_types` itself is otherwise
+untouched; it already applies whatever the route writes.
 
 ### Frontend
 
@@ -79,9 +82,12 @@ operator cannot see again by picking Inherit or the opposite state.
 
 pytest (`tests/test_contact_portal_forms.py`): inheritance with no override, override winning
 over inheritance in both directions, null override deleting the row, a second PUT on the same
-form_type updating in place rather than duplicating, an unknown form_type refused 422, an
-unknown contact 404 on both routes, and `resolve_visible_form_types` picking up a
-route-written override (the AC-6 integration check). vitest
-(`ContactPortalFormsSection.test.tsx`): renders the price-tag row from a mocked GET, selecting
-"Always show" issues the true PUT, selecting "Inherit" issues the null PUT, no UUID in the
-rendered output.
+form_type updating in place rather than duplicating, a single PUT naming the same form_type
+twice collapsing to its last entry rather than double-inserting or racing a delete against an
+add, an unknown form_type refused 422, an unknown contact 404 on both routes,
+`resolve_visible_form_types` picking up a route-written override (the AC-6 integration check),
+and GET/PUT asking for the view/edit permission slugs respectively rather than a stub that
+answers True regardless of what was asked. vitest (`ContactPortalFormsSection.test.tsx`):
+renders the price-tag row from a mocked GET, selecting "Always show" issues the true PUT,
+selecting "Always hide" issues the false PUT, selecting "Inherit" issues the null PUT, no UUID
+in the rendered output.

@@ -55,8 +55,8 @@ real stack for the side marked.
   section appears with one row per gated kind: a human label, a Badge showing the current
   `effective` state, and a `SearchableSelect` with exactly three options (Inherit from access
   types / Always show / Always hide) reflecting `override` (null/true/false). Changing the
-  selection issues the PUT immediately and the row's badge updates from the response - no
-  separate save action.
+  selection issues the PUT immediately and the row refreshes to the saved state once the
+  save completes - no separate save action.
 
 - **AC-6 [BE]** Given a PUT that sets `is_enabled=true` for a contact with no other grant of
   `price_tag_request`, when `resolve_visible_form_types(db, contact_id)` is called afterward in

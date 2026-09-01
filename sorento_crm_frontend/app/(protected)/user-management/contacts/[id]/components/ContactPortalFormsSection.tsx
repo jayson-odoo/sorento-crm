@@ -3,13 +3,12 @@
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect';
-import { GATED_LANDING_KINDS, portalFormKindLabel } from '@/lib/portal-form-kinds';
+import { portalFormKindLabel } from '@/lib/portal-form-kinds';
 
 import {
   useContactPortalForms,
   useUpdateContactPortalForm,
 } from '../hooks/useContactPortalForms';
-import type { ContactPortalFormRow } from '../services/contactPortalFormsService';
 
 type OverrideChoice = 'inherit' | 'show' | 'hide';
 
@@ -42,13 +41,7 @@ export default function ContactPortalFormsSection({ contactId }: { contactId: st
   const { data, isLoading, isError } = useContactPortalForms(contactId);
   const update = useUpdateContactPortalForm(contactId);
 
-  const rows: ContactPortalFormRow[] =
-    data?.forms ?? GATED_LANDING_KINDS.map((formType) => ({
-      form_type: formType,
-      inherited: false,
-      override: null,
-      effective: false,
-    }));
+  const rows = data?.forms ?? [];
 
   if (isLoading) {
     return (
@@ -73,39 +66,38 @@ export default function ContactPortalFormsSection({ contactId }: { contactId: st
   return (
     <div>
       <p className="text-sm text-muted-foreground mb-1">Portal forms</p>
-      <div className="flex flex-col gap-2">
-        {rows.map((row) => {
-          const choice = choiceFor(row.override);
-          return (
-            <div
-              key={row.form_type}
-              className="flex flex-col gap-1.5 sm:flex-row sm:items-center sm:justify-between rounded-md border p-2"
-            >
-              <div className="flex items-center gap-2 min-w-0">
-                <span className="font-medium truncate" title={portalFormKindLabel(row.form_type)}>
-                  {portalFormKindLabel(row.form_type)}
-                </span>
-                <Badge variant={row.effective ? 'success' : 'secondary'} className="font-normal shrink-0">
-                  {row.effective ? 'Visible' : 'Hidden'}
-                </Badge>
+      {rows.length === 0 ? (
+        <p className="font-medium text-muted-foreground">No gated forms configured</p>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {rows.map((row) => {
+            const choice = choiceFor(row.override);
+            return (
+              <div key={row.form_type} className="flex flex-col gap-1.5 rounded-md border p-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="font-medium break-words">{portalFormKindLabel(row.form_type)}</span>
+                  <Badge variant={row.effective ? 'success' : 'secondary'} className="font-normal shrink-0">
+                    {row.effective ? 'Visible' : 'Hidden'}
+                  </Badge>
+                </div>
+                <SearchableSelect
+                  value={choice}
+                  onChange={(value) =>
+                    update.mutate({
+                      formType: row.form_type,
+                      isEnabled: isEnabledFor(value as OverrideChoice),
+                    })
+                  }
+                  options={CHOICE_OPTIONS}
+                  disabled={update.isPending}
+                  size="sm"
+                  triggerClassName="w-full"
+                />
               </div>
-              <SearchableSelect
-                value={choice}
-                onChange={(value) =>
-                  update.mutate({
-                    formType: row.form_type,
-                    isEnabled: isEnabledFor(value as OverrideChoice),
-                  })
-                }
-                options={CHOICE_OPTIONS}
-                disabled={update.isPending}
-                size="sm"
-                triggerClassName="w-full sm:w-56"
-              />
-            </div>
-          );
-        })}
-      </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

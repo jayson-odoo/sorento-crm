@@ -22,10 +22,13 @@ from app.models.price_tag import ContactPortalFormOverride
 logger = logging.getLogger(__name__)
 
 
-def resolve_visible_form_types(db: Session, contact_id: str) -> set[str]:
-    """Return the set of portal form type strings visible to ``contact_id``."""
+def inherited_form_types(db: Session, contact_id: str) -> set[str]:
+    """Union of ``portal_form_types`` across the contact's assigned access types.
 
-    # Step 1+2: union of portal_form_types across assigned access types.
+    Shared by ``resolve_visible_form_types`` (step 1+2 below) and the
+    ``contact_portal_forms`` admin route, which needs the same union to show
+    "inherited" separately from any per-contact override.
+    """
     rows = (
         db.query(ContactAccessType.portal_form_types)
         .join(
@@ -35,10 +38,18 @@ def resolve_visible_form_types(db: Session, contact_id: str) -> set[str]:
         .filter(respond_contact_access_types.c.contact_id == contact_id)
         .all()
     )
-    visible: set[str] = set()
+    inherited: set[str] = set()
     for (form_types,) in rows:
         if isinstance(form_types, list):
-            visible.update(form_types)
+            inherited.update(form_types)
+    return inherited
+
+
+def resolve_visible_form_types(db: Session, contact_id: str) -> set[str]:
+    """Return the set of portal form type strings visible to ``contact_id``."""
+
+    # Step 1+2: union of portal_form_types across assigned access types.
+    visible = inherited_form_types(db, contact_id)
 
     # Step 3: apply per-contact overrides.
     overrides = (

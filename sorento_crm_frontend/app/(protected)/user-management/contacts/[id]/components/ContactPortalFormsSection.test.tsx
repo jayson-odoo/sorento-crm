@@ -101,6 +101,20 @@ describe('ContactPortalFormsSection', () => {
     });
   });
 
+  it('selecting Always hide issues a PUT with is_enabled false', async () => {
+    mockApi({ forms: [row({ inherited: true, effective: true })] });
+    renderWithClient();
+    await screen.findByText('Price Tag Request');
+
+    openMenu();
+    fireEvent.click(await screen.findByText('Always hide'));
+
+    await waitFor(() => expect(putCalls()).toHaveLength(1));
+    expect(JSON.parse(putCalls()[0][1].body)).toEqual({
+      overrides: [{ form_type: 'price_tag_request', is_enabled: false }],
+    });
+  });
+
   it('selecting Inherit issues a PUT with is_enabled null', async () => {
     mockApi({ forms: [row({ override: true, effective: true })] });
     renderWithClient();

@@ -23,9 +23,10 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import require_permission
-from app.models.access import ContactAccessType, RespondContact, respond_contact_access_types
+from app.models.access import RespondContact
 from app.models.price_tag import ContactPortalFormOverride
 from app.services.error_handler import handle_internal_error, handle_not_found, handle_unprocessable
+from app.services.portal_form_visibility_service import inherited_form_types
 
 logger = logging.getLogger(__name__)
 
@@ -54,26 +55,8 @@ def _require_contact(db: Session, contact_id: str) -> RespondContact:
     return contact
 
 
-def _inherited_form_types(db: Session, contact_id: str) -> set[str]:
-    """Union of portal_form_types across the contact's assigned access types."""
-    rows = (
-        db.query(ContactAccessType.portal_form_types)
-        .join(
-            respond_contact_access_types,
-            respond_contact_access_types.c.access_type_code == ContactAccessType.code,
-        )
-        .filter(respond_contact_access_types.c.contact_id == contact_id)
-        .all()
-    )
-    inherited: set[str] = set()
-    for (form_types,) in rows:
-        if isinstance(form_types, list):
-            inherited.update(form_types)
-    return inherited
-
-
 def _build_view(db: Session, contact_id: str) -> dict:
-    inherited = _inherited_form_types(db, contact_id)
+    inherited = inherited_form_types(db, contact_id)
     overrides = {
         row.form_type: row.is_enabled
         for row in db.query(ContactPortalFormOverride)
@@ -126,6 +109,13 @@ async def update_contact_portal_forms(
     `is_enabled=None` deletes the row (back to inherit); True/False upserts it,
     updating an existing row in place rather than inserting a duplicate - the
     unique constraint is on (contact_id, form_type).
+
+    A payload naming the same `form_type` twice is collapsed to its LAST entry
+    before the write loop runs, so two writes for one key in a single request
+    can never both hit the write loop - the second insert on an already-added
+    row would violate the unique constraint (500), and processing a delete
+    then an add (or vice versa) in list order would leave the outcome
+    dependent on payload order rather than on what the caller actually meant.
     """
     _ = current_user
     try:
@@ -134,25 +124,29 @@ async def update_contact_portal_forms(
             if item.form_type not in GATED_FORM_TYPES:
                 raise handle_unprocessable(f"'{item.form_type}' is not a gated form type.")
 
+        deduped: dict[str, bool | None] = {}
+        for item in payload.overrides:
+            deduped[item.form_type] = item.is_enabled
+
         existing = {
             row.form_type: row
             for row in db.query(ContactPortalFormOverride)
             .filter(ContactPortalFormOverride.contact_id == contact_id)
             .all()
         }
-        for item in payload.overrides:
-            row = existing.get(item.form_type)
-            if item.is_enabled is None:
+        for form_type, is_enabled in deduped.items():
+            row = existing.get(form_type)
+            if is_enabled is None:
                 if row is not None:
                     db.delete(row)
             elif row is not None:
-                row.is_enabled = item.is_enabled
+                row.is_enabled = is_enabled
             else:
                 db.add(
                     ContactPortalFormOverride(
                         contact_id=contact_id,
-                        form_type=item.form_type,
-                        is_enabled=item.is_enabled,
+                        form_type=form_type,
+                        is_enabled=is_enabled,
                     )
                 )
         db.commit()
