@@ -19,16 +19,21 @@ Idempotent raw SQL, safe to re-run. The table creation is guarded by an existenc
 for the same reason 422 guards `report_views`: the shared local database converges
 through `create_all` rather than through migrations, so the table can already be there.
 
-Revision ID: 454_saved_views_and_perms
-Revises: 453_shared_brand_attach
+Chains onto 454_order_inquiry_born_ack (PR #471), not 453_shared_brand_attach directly:
+both this migration and #471 were authored on top of 453, and #471 is declared to merge
+first in the 1 Sep batch order, so this revision was renumbered 454 -> 455 and rechained
+to avoid two heads on main the moment both land.
+
+Revision ID: 455_saved_views_and_perms
+Revises: 454_order_inquiry_born_ack
 """
 import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
 # Kept <=32 chars: alembic_version.version_num is varchar(32).
-revision = "454_saved_views_and_perms"
-down_revision = "453_shared_brand_attach"
+revision = "455_saved_views_and_perms"
+down_revision = "454_order_inquiry_born_ack"
 branch_labels = None
 depends_on = None
 

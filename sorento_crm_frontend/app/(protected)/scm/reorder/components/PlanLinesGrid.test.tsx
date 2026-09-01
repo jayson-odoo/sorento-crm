@@ -66,6 +66,34 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   },
 }));
 
+// S4's <SavedViewsMenu> (segments dropdown, AC-4.4) reads permissions through
+// next-auth's `useSession`, which throws outside a `<SessionProvider>` - this file has
+// no session context and is not about publish permissions, so it is stubbed the same way
+// the column layout above is. `SavedViewsMenu.test.tsx` and the AC-4.5 reusability file
+// own its own behaviour; this file only needs it not to crash the grid it now sits in.
+vi.mock('@/hooks/usePermissions', () => ({ useHasPermission: () => false }));
+vi.mock('@/hooks/useDeferredRowAction', () => ({
+  useDeferredRowAction: () => ({ run: vi.fn(), targetId: null, isPending: false }),
+}));
+vi.mock('@/services/savedViewsService', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/services/savedViewsService')>();
+  return {
+    ...actual,
+    fetchSavedViews: vi.fn(async () => ({ mine: [], shared: [] })),
+    createSavedView: vi.fn(),
+    publishSavedView: vi.fn(),
+    setDefaultSavedView: vi.fn(),
+  };
+});
+vi.mock('@/lib/listing-column-preferences/listColumnPreferencesService', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/listing-column-preferences/listColumnPreferencesService')>();
+  return {
+    ...actual,
+    getUserListColumnConfig: vi.fn(async () => ({ listing_key: '', config: null })),
+    upsertUserListColumnConfig: vi.fn(),
+  };
+});
+
 // The filter popover uses the standard SearchableSelect. A native <select> keeps the
 // options in the DOM without driving a cmdk popover.
 vi.mock('@/components/common/SearchableSelect', () => ({

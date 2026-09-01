@@ -370,19 +370,6 @@ def list_saved_views(
     return SavedViewsService(db).list_for(listing_key, str(current_user["id"]))
 
 
-@router.post("/saved-views/{listing_key:path}", response_model=SavedView)
-def create_saved_view(
-    listing_key: str,
-    body: SavedViewCreate,
-    current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db),
-) -> SavedView:
-    listing_key = (listing_key or "").strip()
-    if not _can_view_listing_key(db, current_user["id"], listing_key):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission denied")
-    return SavedViewsService(db).create(listing_key, str(current_user["id"]), body.name, body.view)
-
-
 def _authorised_saved_view(db: Session, user: dict, view_id: str) -> str:
     """The view's listing key, or 404 - checked before anything else can be asked about it.
 
@@ -395,6 +382,13 @@ def _authorised_saved_view(db: Session, user: dict, view_id: str) -> str:
     return listing_key
 
 
+# `/{view_id}/publish` and `/{view_id}/set-default` MUST be declared before
+# `/{listing_key:path}` below: Starlette matches routes in registration order, and a
+# `:path` converter matches every remaining segment including slashes, so a POST route
+# on `/{listing_key:path}` registered first swallows `POST /saved-views/<id>/publish`
+# whole - the path "<id>/publish" becomes `listing_key`, `create_saved_view` runs
+# instead, and the real handler is never reached (the same shape LESSONS-LEARNT.md's
+# SLA route-shadowing entry names: static before the greedy path param).
 @router.post("/saved-views/{view_id}/publish", response_model=SavedView)
 def publish_saved_view(
     view_id: str,
@@ -419,3 +413,16 @@ def set_default_saved_view(
     _authorised_saved_view(db, current_user, view_id)
     _require_saved_view_publish(db, current_user)
     return SavedViewsService(db).set_default(view_id, str(current_user["id"]))
+
+
+@router.post("/saved-views/{listing_key:path}", response_model=SavedView)
+def create_saved_view(
+    listing_key: str,
+    body: SavedViewCreate,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> SavedView:
+    listing_key = (listing_key or "").strip()
+    if not _can_view_listing_key(db, current_user["id"], listing_key):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission denied")
+    return SavedViewsService(db).create(listing_key, str(current_user["id"]), body.name, body.view)

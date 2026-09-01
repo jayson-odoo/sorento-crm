@@ -103,16 +103,22 @@ function evaluateCondition<TRow>(
       return list.includes(normalise(raw));
     }
     case 'gt': {
+      // `Number(null) === 0`, so a field with no data source (e.g. "days late" on a
+      // plan row) would silently outrank a negative threshold without this guard -
+      // the exact fabrication `planLineFilterFields.ts` documents avoiding.
+      if (raw === null || raw === undefined) return false;
       const n = Number(raw);
       const t = Number(condition.value);
       return Number.isFinite(n) && Number.isFinite(t) && n > t;
     }
     case 'lt': {
+      if (raw === null || raw === undefined) return false;
       const n = Number(raw);
       const t = Number(condition.value);
       return Number.isFinite(n) && Number.isFinite(t) && n < t;
     }
     case 'between': {
+      if (raw === null || raw === undefined) return false;
       const n = Number(raw);
       const bounds = Array.isArray(condition.value) ? condition.value.map(Number) : [];
       const [a, b] = bounds;
