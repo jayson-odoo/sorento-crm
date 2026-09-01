@@ -16,12 +16,15 @@ from app.schemas.list_query import (
     UserListColumnConfigPayload,
     UserListColumnConfigResponse,
 )
-from app.services.error_handler import handle_internal_error
+from app.schemas.saved_view import SavedView, SavedViewCreate, SavedViewPublish, SavedViews
+from app.services.error_handler import AppException, handle_internal_error, handle_not_found
 from app.services.list_query_export_service import ListQueryExportService
 from app.services.list_query_metadata_service import ListQueryMetadataService
 from app.services.list_query_registry import get_adapter, require_adapter
 from app.services.list_query_search_service import ListQuerySearchService
+from app.services.saved_views_service import PUBLISH_PERMISSION, SavedViewsService
 from app.services.user_service import UserPermissionService
+from app.services.uuid_path_param import validate_uuid_path
 from app.services.workflow_submission_dynamic_list_query import (
     build_dynamic_field_metas_for_definition,
     get_published_schema_for_definition,
@@ -334,3 +337,85 @@ def reset_list_column_config(
     except Exception as e:
         db.rollback()
         raise handle_internal_error(str(e))
+
+
+# --------------------------------------------------------------------------------- saved views
+#
+# Segments (S4, PLAN-scm-reorder-oi-feedback-1sep.md): a saved view of filters + sort +
+# columns, generalised from `report_views`/`views_service.py` and keyed by the SAME
+# `listing_key` the column-config routes above already authorise with
+# `_can_view_listing_key`. Delete is deliberately absent here - it runs through the
+# deferred-action registry (`saved_view.delete` in `app/services/record_actions.py`) so
+# the frontend gets the standard countdown rather than a confirmation dialog.
+
+
+def _require_saved_view_publish(db: Session, user: dict) -> None:
+    if not UserPermissionService(db).check_user_has_permission(user["id"], PUBLISH_PERMISSION):
+        raise AppException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            message=f"Permission required: {PUBLISH_PERMISSION}",
+            code="FORBIDDEN",
+        )
+
+
+@router.get("/saved-views/{listing_key:path}", response_model=SavedViews)
+def list_saved_views(
+    listing_key: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> SavedViews:
+    listing_key = (listing_key or "").strip()
+    if not _can_view_listing_key(db, current_user["id"], listing_key):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission denied")
+    return SavedViewsService(db).list_for(listing_key, str(current_user["id"]))
+
+
+@router.post("/saved-views/{listing_key:path}", response_model=SavedView)
+def create_saved_view(
+    listing_key: str,
+    body: SavedViewCreate,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> SavedView:
+    listing_key = (listing_key or "").strip()
+    if not _can_view_listing_key(db, current_user["id"], listing_key):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission denied")
+    return SavedViewsService(db).create(listing_key, str(current_user["id"]), body.name, body.view)
+
+
+def _authorised_saved_view(db: Session, user: dict, view_id: str) -> str:
+    """The view's listing key, or 404 - checked before anything else can be asked about it.
+
+    A view id in someone else's hand is not a licence to learn a listing key exists, so
+    an unknown view answers the same 404 the ownership checks further down already give.
+    """
+    listing_key = SavedViewsService(db).listing_key_of(view_id)
+    if listing_key is None or not _can_view_listing_key(db, user["id"], listing_key):
+        raise handle_not_found("View", view_id)
+    return listing_key
+
+
+@router.post("/saved-views/{view_id}/publish", response_model=SavedView)
+def publish_saved_view(
+    view_id: str,
+    body: SavedViewPublish,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> SavedView:
+    validate_uuid_path(view_id, resource="View")
+    _authorised_saved_view(db, current_user, view_id)
+    _require_saved_view_publish(db, current_user)
+    return SavedViewsService(db).publish(view_id, str(current_user["id"]), body.is_shared)
+
+
+@router.post("/saved-views/{view_id}/set-default", response_model=SavedView)
+def set_default_saved_view(
+    view_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> SavedView:
+    """Make one shared view the listing's default for everyone. At most one per listing key."""
+    validate_uuid_path(view_id, resource="View")
+    _authorised_saved_view(db, current_user, view_id)
+    _require_saved_view_publish(db, current_user)
+    return SavedViewsService(db).set_default(view_id, str(current_user["id"]))

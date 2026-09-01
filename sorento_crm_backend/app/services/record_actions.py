@@ -1164,3 +1164,29 @@ register(
         label="Delete notification",
     )
 )
+
+
+def _delete_saved_view(db: Session, payload: dict):
+    from app.services.saved_views_service import SavedViewsService
+
+    # `SavedViewsService.delete` already answers 404 (via `handle_not_found`) for a view
+    # that is not the requester's own, so ownership IS the check - the same shape
+    # `notification.delete` above uses.
+    SavedViewsService(db).delete(_entity_id(payload), str(payload.get("requested_by_id") or ""))
+    return {"message": "Deleted"}
+
+
+register(
+    FormAction(
+        key="saved_view.delete",
+        entity_types=("saved_view",),
+        execute=_delete_saved_view,
+        # Destructive (the suite's own default for every `.delete`, `test_record_actions_s6b
+        # .SHORT_WINDOW_DELETES` is a narrow allowlist): unlike a notification, a saved view
+        # can carry real, non-trivial filter/sort/column work a reader built up over time,
+        # so ten seconds to catch a stray click is worth more than the five-second window.
+        window=WINDOW_DESTRUCTIVE,
+        permission=OWN_RECORD,
+        label="Delete view",
+    )
+)

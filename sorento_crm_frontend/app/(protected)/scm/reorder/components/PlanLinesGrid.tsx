@@ -82,6 +82,17 @@ import {
   PLAN_CHANNEL_LABEL,
   type PlanChannel,
 } from '../lib/planLineGrouping';
+import { DynamicFilterBuilder } from '@/components/list/DynamicFilterBuilder';
+import { SavedViewsMenu } from '@/components/list/SavedViewsMenu';
+import { countFilterConditions, evaluateFilterGroup } from '@/lib/list-query/dynamicFilter';
+import type { ListQueryFilterGroup } from '@/lib/list-query/listQueryService';
+import type { SavedView, SavedViewConfig } from '@/services/savedViewsService';
+import { planLineFilterFields } from '../lib/planLineFilterFields';
+
+/** The listing key `PlanLinesGrid` personalizes column config AND saved segments
+ *  under (S4, PLAN-scm-reorder-oi-feedback-1sep.md) - one constant, so the two
+ *  cannot drift apart. */
+const REORDER_PLAN_LINES_LISTING_KEY = 'scm.dashboard.view::reorder-plan-lines';
 
 /**
  * ONE grid for every line of a plan.
@@ -380,6 +391,14 @@ export function PlanLinesGrid({
   // Which number a buyer pressed, and on which row (plan 4.6). ONE dialog per grid: only
   // one can be open at a time, and six mounted bodies per row is what the popovers cost.
   const [dialogRequest, setDialogRequest] = useState<PlanDialogRequest | null>(null);
+  // S4 (PLAN-scm-reorder-oi-feedback-1sep.md): the dynamic filter builder + saved
+  // segments, first consumer of the reusable pair. `segmentId` is which saved view is
+  // currently applied (null = none) - kept separate from `filterGroup` because applying
+  // a segment also sets sort/columns, and the menu needs to know WHICH one is active to
+  // badge it and offer Delete/Publish.
+  const [filterGroup, setFilterGroup] = useState<ListQueryFilterGroup | null>(null);
+  const [segmentId, setSegmentId] = useState<string | null>(null);
+  const filterFields = useMemo(() => planLineFilterFields(decisions), [decisions]);
 
   const filtered = useMemo(() => {
     const needle = searchQuery.trim().toLowerCase();
@@ -410,6 +429,9 @@ export function PlanLinesGrid({
         const state = !s ? 'none' : levelActionLabel(s).changed ? 'change' : 'keep';
         if (state !== levelFilter) return false;
       }
+      // S4: the dynamic filter builder / applied segment, evaluated client-side over
+      // the same already-fetched rows (AC-4.1) - no server round trip.
+      if (!evaluateFilterGroup(filterGroup, l, filterFields)) return false;
       if (!needle) return true;
       return (
         l.sku.toLowerCase().includes(needle) ||
@@ -419,7 +441,8 @@ export function PlanLinesGrid({
       );
     });
   }, [lines, searchQuery, statusFilter, decidedFilter, priceFilter,
-      actionFilter, levelFilter, decisions, priceFor, coverFor, levelFor, poFor]);
+      actionFilter, levelFilter, decisions, priceFor, coverFor, levelFor, poFor,
+      filterGroup, filterFields]);
 
   // Undecided first, decided sunk to the bottom (user markup, 2026-08-12: "so they can decide
   // until all outstanding decisions are cleared"). `filtered` is already rank-ordered (`lines`
@@ -1079,6 +1102,43 @@ export function PlanLinesGrid({
     getPaginationRowModel: getPaginationRowModel(),
   });
 
+  // S4 (PLAN-scm-reorder-oi-feedback-1sep.md, AC-4.2): the FULL view a segment saves -
+  // filters + sort + visible columns + column order - and the handler that restores all
+  // four exactly when a segment is applied (or clears them for "No segment").
+  const visibleColumnIds = useMemo(
+    () => columnOrder.filter((id) => columnVisibility[id] !== false),
+    [columnOrder, columnVisibility],
+  );
+  const savedViewConfig = useMemo<SavedViewConfig>(
+    () => ({
+      filters: filterGroup,
+      sort: sorting.map((s) => ({ id: s.id, desc: Boolean(s.desc) })),
+      columns: visibleColumnIds,
+      column_order: columnOrder,
+    }),
+    [filterGroup, sorting, visibleColumnIds, columnOrder],
+  );
+  const applySegment = useCallback(
+    (view: SavedView | null) => {
+      setSegmentId(view?.id ?? null);
+      setFilterGroup(view?.view.filters ?? null);
+      if (!view) return;
+      setSorting(view.view.sort.map((s) => ({ id: s.id, desc: s.desc })));
+      if (view.view.column_order.length) setColumnOrder(view.view.column_order);
+      if (view.view.columns.length) {
+        const visible = new Set(view.view.columns);
+        setColumnVisibility((prev) => {
+          const next: Record<string, boolean> = { ...prev };
+          for (const id of view.view.column_order.length ? view.view.column_order : Object.keys(prev)) {
+            next[id] = visible.has(id);
+          }
+          return next;
+        });
+      }
+    },
+    [],
+  );
+
   /** Whether Expand all / Collapse all have anything to do (C3). A control that is always
    *  live tells the reader nothing about the state it would change. */
   const pageRows = table.getRowModel().rows;
@@ -1128,6 +1188,13 @@ export function PlanLinesGrid({
             >
               <ChevronsDownUp className="size-4" />
             </Button>
+            {/* S4: segments dropdown, beside Filters (AC-4.4) - never chips. */}
+            <SavedViewsMenu
+              listingKey={REORDER_PLAN_LINES_LISTING_KEY}
+              currentViewId={segmentId}
+              currentConfig={savedViewConfig}
+              onApply={applySegment}
+            />
           </div>
         }
         searchSlot={
@@ -1141,9 +1208,10 @@ export function PlanLinesGrid({
         filters={{
           kind: 'custom',
           active: [statusFilter, decidedFilter, priceFilter, actionFilter,
-                   levelFilter].some((f) => f !== 'all'),
+                   levelFilter].some((f) => f !== 'all') || countFilterConditions(filterGroup) > 0,
           activeCount: [statusFilter, decidedFilter, priceFilter, actionFilter,
-                        levelFilter].filter((f) => f !== 'all').length,
+                        levelFilter].filter((f) => f !== 'all').length
+                        + countFilterConditions(filterGroup),
           content: (
             <div className="space-y-3">
               <p className="text-sm font-medium">Filters</p>
@@ -1200,6 +1268,13 @@ export function PlanLinesGrid({
                 ]}
                 placeholder="AutoCount level"
               />
+              {/* S4 (PLAN-scm-reorder-oi-feedback-1sep.md): the dynamic filter builder,
+                  reusable and fully recursive (AC-4.1) - additional to the five quick
+                  filters above, for a question none of them name. */}
+              <div className="space-y-2 border-t border-border pt-3">
+                <p className="text-sm font-medium">Advanced filters</p>
+                <DynamicFilterBuilder fields={filterFields} value={filterGroup} onChange={setFilterGroup} />
+              </div>
             </div>
           ),
         }}
@@ -1223,7 +1298,7 @@ export function PlanLinesGrid({
       // Saved column order/visibility belongs to the SCREEN, not to one plan: defaulted to
       // the pathname it keyed off `/scm/reorder/{run_id}`, so every plan a buyer opened
       // started from the defaults again and their own layout was never seen twice.
-      listingKey="scm.dashboard.view::reorder-plan-lines"
+      listingKey={REORDER_PLAN_LINES_LISTING_KEY}
       tableClassNames={{ edgeCell: 'px-5' }}
       onRowClick={(row) => {
         // The whole row toggles its decision panel (D1). Several may be open at once -
