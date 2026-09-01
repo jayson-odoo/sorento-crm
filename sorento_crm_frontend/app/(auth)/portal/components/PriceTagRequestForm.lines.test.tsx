@@ -130,6 +130,16 @@ async function addLine() {
   fireEvent.click(screen.getByRole('button', { name: /Add line/ }));
 }
 
+// The debtor options land only after the lookupDebtors mock resolves; firing a
+// change before the <option> exists is a jsdom no-op that leaves the field
+// empty and flakes the submit assertions under CI load.
+async function selectDebtor() {
+  await screen.findByRole('option', { name: 'ZZT Dealer Sdn Bhd' });
+  fireEvent.change(screen.getByLabelText('Debtor'), {
+    target: { value: 'ZZTD01' },
+  });
+}
+
 describe('PriceTagRequestForm - one lines table, one item dropdown (D47)', () => {
   it('adds a row with one button and offers sets and products in one dropdown', async () => {
     render(<PriceTagRequestForm />);
@@ -153,9 +163,7 @@ describe('PriceTagRequestForm - one lines table, one item dropdown (D47)', () =>
   it('a picked product posts line_type product with the product id', async () => {
     render(<PriceTagRequestForm />);
     await screen.findByLabelText('Debtor');
-    fireEvent.change(screen.getByLabelText('Debtor'), {
-      target: { value: 'ZZTD01' },
-    });
+    await selectDebtor();
     // The deadline starts empty since D48a, and Submit asks for it by name.
     fireEvent.change(screen.getByLabelText(/Needed by/), {
       target: { value: '2026-09-30' },
@@ -186,9 +194,7 @@ describe('PriceTagRequestForm - one lines table, one item dropdown (D47)', () =>
   it('a picked set posts line_type product_set and disables that row Alternatives', async () => {
     render(<PriceTagRequestForm />);
     await screen.findByLabelText('Debtor');
-    fireEvent.change(screen.getByLabelText('Debtor'), {
-      target: { value: 'ZZTD01' },
-    });
+    await selectDebtor();
     // The deadline starts empty since D48a, and Submit asks for it by name.
     fireEvent.change(screen.getByLabelText(/Needed by/), {
       target: { value: '2026-09-30' },

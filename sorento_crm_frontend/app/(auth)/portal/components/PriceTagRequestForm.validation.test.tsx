@@ -102,6 +102,16 @@ beforeEach(() => {
   asMock(submitRequest).mockResolvedValue({ status: 'new' });
 });
 
+// The debtor options land only after the lookupDebtors mock resolves; firing a
+// change before the <option> exists is a jsdom no-op that leaves the field
+// empty and flakes the submit assertions under CI load.
+async function selectDebtor() {
+  await screen.findByRole('option', { name: 'ZZT Dealer Sdn Bhd' });
+  fireEvent.change(screen.getByLabelText('Debtor'), {
+    target: { value: 'ZZTD01' },
+  });
+}
+
 async function addLineWithAProduct() {
   fireEvent.click(screen.getByRole('button', { name: /Add line/ }));
   await screen.findByText('ZZT Kitchen Sink');
@@ -129,9 +139,7 @@ describe('Save Draft validates nothing (D48a)', () => {
   it('saves a form that has a debtor and nothing else', async () => {
     render(<PriceTagRequestForm />);
     await screen.findByLabelText('Debtor');
-    fireEvent.change(screen.getByLabelText('Debtor'), {
-      target: { value: 'ZZTD01' },
-    });
+    await selectDebtor();
 
     fireEvent.click(screen.getByRole('button', { name: /Save Draft/ }));
 
@@ -178,9 +186,7 @@ describe('Submit says what is missing (D48b)', () => {
   it('names the row that has no item picked', async () => {
     render(<PriceTagRequestForm />);
     await screen.findByLabelText('Debtor');
-    fireEvent.change(screen.getByLabelText('Debtor'), {
-      target: { value: 'ZZTD01' },
-    });
+    await selectDebtor();
     fireEvent.change(screen.getByLabelText(/Needed by/), {
       target: { value: '2026-09-30' },
     });
@@ -200,9 +206,7 @@ describe('Submit says what is missing (D48b)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
     await screen.findByText('Select the dealer these tags are for.');
 
-    fireEvent.change(screen.getByLabelText('Debtor'), {
-      target: { value: 'ZZTD01' },
-    });
+    await selectDebtor();
 
     await waitFor(() =>
       expect(
@@ -220,9 +224,7 @@ describe('Submit says what is missing (D48b)', () => {
     );
     render(<PriceTagRequestForm />);
     await screen.findByLabelText('Debtor');
-    fireEvent.change(screen.getByLabelText('Debtor'), {
-      target: { value: 'ZZTD01' },
-    });
+    await selectDebtor();
     fireEvent.change(screen.getByLabelText(/Needed by/), {
       target: { value: '2026-09-30' },
     });
@@ -248,9 +250,7 @@ describe('Submit says what is missing (D48b)', () => {
     );
     render(<PriceTagRequestForm />);
     await screen.findByLabelText('Debtor');
-    fireEvent.change(screen.getByLabelText('Debtor'), {
-      target: { value: 'ZZTD01' },
-    });
+    await selectDebtor();
     fireEvent.change(screen.getByLabelText(/Needed by/), {
       target: { value: '2026-09-30' },
     });
