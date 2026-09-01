@@ -2112,21 +2112,27 @@ class ProjectSupplyService:
 
     def _drawn_at_own_date(
         self, fact: _LineFacts, *, as_of: Optional[date] = None
-    ) -> List[Tuple[str, Decimal, Optional[date], str]]:
+    ) -> List[Tuple[str, Decimal, Optional[date], str, Optional[str], Optional[str]]]:
         """What the assignment gave this unit BY ITS OWN DATE, per bin (R24, AC-S3-1b).
 
-        `(warehouse_code, qty, arrival_date_or_None, kind)`, in the order the walk drew
-        them. The cut is `open_qty - short_at_date`: `short_at_date` is what the line was
-        still missing when its own date came round, so the difference is precisely what was
-        there BY THEN - supply that arrived later and cleared the shortfall made the line
-        `late` and is not a promise this step may make.
+        `(warehouse_code, qty, arrival_date_or_None, kind, event_key, event_ref)`, in the
+        order the walk drew them. The cut is `open_qty - short_at_date`: `short_at_date` is
+        what the line was still missing when its own date came round, so the difference is
+        precisely what was there BY THEN - supply that arrived later and cleared the
+        shortfall made the line `late` and is not a promise this step may make.
 
         This is what makes rung 1 date-aware: SRTWB242's BB pile holds 199 with 144 due
         before JEREMY, so his 27 due 15 September reads 55 free and reserves; JAY's 32 due
         26 October reads 16, which is not the whole of his unit, so step 1 gives him
         nothing (AC-S3-1b).
+
+        `event_key`/`event_ref` are the event's own address (S4 task 3) - carried so a WATER
+        entry that turns out to be exactly one document can name it, the way a step-3
+        component already does; a caller reading a floor entry simply never uses them.
         """
-        out: List[Tuple[str, Decimal, Optional[date], str]] = []
+        out: List[
+            Tuple[str, Decimal, Optional[date], str, Optional[str], Optional[str]]
+        ] = []
         for line_id in self._unit_line_ids(fact):
             row = self._assignment_line(fact, line_id, as_of=as_of)
             if row is None:
@@ -2144,12 +2150,22 @@ class ProjectSupplyService:
                     # named as a source at all.
                     left -= take
                     continue
+                if event.kind == SA_KIND_PO:
+                    # S4 (1 Sep ruling): a PO event may never supply a walk offer, own group
+                    # included - it is still ON ORDER, not incoming. It is still what the
+                    # ASSIGNMENT gave this unit (`left` still absorbs it, exactly like a pool
+                    # hold above), so a later SPO or floor share the same date is not
+                    # double-counted; it is simply never named as a source.
+                    left -= take
+                    continue
                 out.append(
                     (
                         str(event.warehouse),
                         take,
                         event.at if event.kind != SA_KIND_ON_HAND else None,
                         str(event.kind),
+                        str(event.key),
+                        event.ref,
                     )
                 )
                 left -= take
@@ -2157,12 +2173,17 @@ class ProjectSupplyService:
 
     def _other_group_free_at_own_date(
         self, fact: _LineFacts, *, as_of: Optional[date] = None
-    ) -> List[Tuple[str, Decimal, Optional[date], str]]:
+    ) -> List[
+        Tuple[str, Decimal, Optional[date], str, str, Optional[str], Optional[str]]
+    ]:
         """The OTHER project groups' FREE piles at this unit's own date (R40's offer half).
 
-        `(warehouse_code, qty, arrival_date_or_None, kind)`, the same shape
-        `_drawn_at_own_date` returns, so step 1's two halves are accumulated by one piece of
-        code and cannot come to describe a document differently.
+        `(warehouse_code, qty, arrival_date_or_None, kind, group, event_key, event_ref)`,
+        the same shape `_drawn_at_own_date` returns plus the GROUP the bin belongs to -
+        carried so the option's label can name whose stock it is (S4 task 2) without a
+        second read of `sales_agent_service.group_of_warehouse_code`, which would risk
+        disagreeing with the grouping `free_piles_at` already did - and the event's own
+        address (S4 task 3), for the same reason `_drawn_at_own_date` carries it.
 
         R40 stopped the WALK from giving an undecided line another group's stock - the
         captain: "who is us to decide those BB group takes our IB pile" - and left the OFFER
@@ -2170,6 +2191,11 @@ class ProjectSupplyService:
         by the asker's date, net of every pin and of what its own earlier lines drew
         (`supply_assignment.free_piles_at`). It becomes real only on Confirm, which writes a
         pinned hold, and only then does the pile deplete for everybody else.
+
+        **S4 (1 Sep ruling): a PO event may never supply this offer either.** The captain's
+        own repro named it exactly here - "Use incoming 15 from BRW-BB, arriving 6 Sep 2026"
+        off a bin whose SPO qty was 0 and whose PO qty was 978 - so a PO event reaching this
+        function is skipped outright, not merely relabelled.
         """
         if not fact.product_id or not fact.group_code:
             return []
@@ -2180,7 +2206,9 @@ class ProjectSupplyService:
         if result is None:
             return []
         at = sa_effective_date(fact.required_date, as_of)
-        out: List[Tuple[str, Decimal, Optional[date], str]] = []
+        out: List[
+            Tuple[str, Decimal, Optional[date], str, str, Optional[str], Optional[str]]
+        ] = []
         for group, pile in free_piles_at(result, at=at, as_of=as_of).items():
             # An ungrouped bin (`group` empty) is outside this step, and the site pools are
             # step 4 - taking one raises an order-back, which is the opposite of free.
@@ -2189,12 +2217,17 @@ class ProjectSupplyService:
             for event, qty in pile:
                 if not event.warehouse or event.is_pool:
                     continue
+                if event.kind == SA_KIND_PO:
+                    continue
                 out.append(
                     (
                         str(event.warehouse),
                         _dec(qty),
                         event.at if event.kind != SA_KIND_ON_HAND else None,
                         str(event.kind),
+                        group,
+                        str(event.key),
+                        event.ref,
                     )
                 )
         return out
@@ -2247,13 +2280,31 @@ class ProjectSupplyService:
             qty: Decimal,
             arrival: Optional[date],
             kind: str,
+            group: Optional[str] = None,
+            *,
+            event_key: Optional[str] = None,
+            event_ref: Optional[str] = None,
         ) -> None:
             # On a floor, or on the water: the second is composed as `timely_spo`, never as
             # a Reserve, because a hold cannot be written against goods nobody can pick.
             water = kind != SA_KIND_ON_HAND
             entry = into.setdefault(
                 (code, water),
-                {"location": code, "qty": _ZERO, "water": water, "arrival_date": None},
+                {
+                    "location": code,
+                    "qty": _ZERO,
+                    "water": water,
+                    "arrival_date": None,
+                    # The lending group, for the OTHER half only (task 2): the step-1 option
+                    # row names it rather than defaulting to "our locations" beside a
+                    # composition that never touched this line's own group.
+                    "group": group,
+                    # Every WATER document that fed this bucket (task 3), keyed by the
+                    # event's own address. Named in the sentence only when there turns out
+                    # to be exactly one - "list nothing rather than lie" when two documents
+                    # share one bucket, which the aggregate sentence still describes fine.
+                    "documents": {},
+                },
             )
             entry["qty"] += qty
             if arrival is not None and (
@@ -2262,22 +2313,35 @@ class ProjectSupplyService:
                 # The day the WHOLE of this draw has landed by, which is the date a planner
                 # promises against - not the earliest of several documents.
                 entry["arrival_date"] = arrival
+            if water and event_key:
+                entry["documents"][event_key] = event_ref
 
-        for code, qty, arrival, kind in self._drawn_at_own_date(fact, as_of=as_of):
+        for code, qty, arrival, kind, event_key, event_ref in self._drawn_at_own_date(
+            fact, as_of=as_of
+        ):
             group = sales_agent_service.group_of_warehouse_code(code)
             if not group:
                 continue
             if group == own_group:
-                accumulate(mine, code, qty, arrival, kind)
+                accumulate(
+                    mine, code, qty, arrival, kind,
+                    event_key=event_key, event_ref=event_ref,
+                )
             else:
                 # A CONFIRMED hold at another group's bin. Already this line's, so it is
                 # stated with the offer half rather than re-offered by it - `free_piles_at`
                 # nets a pin out of the pile it stands on.
-                accumulate(others, code, qty, arrival, kind)
-        for code, qty, arrival, kind in self._other_group_free_at_own_date(
-            fact, as_of=as_of
-        ):
-            accumulate(others, code, qty, arrival, kind)
+                accumulate(
+                    others, code, qty, arrival, kind, group,
+                    event_key=event_key, event_ref=event_ref,
+                )
+        for (
+            code, qty, arrival, kind, group, event_key, event_ref,
+        ) in self._other_group_free_at_own_date(fact, as_of=as_of):
+            accumulate(
+                others, code, qty, arrival, kind, group,
+                event_key=event_key, event_ref=event_ref,
+            )
 
         def rows(
             entries: Dict[Tuple[str, bool], Dict[str, Any]],
@@ -2310,6 +2374,10 @@ class ProjectSupplyService:
                     budget[code] = budget.get(code, _ZERO) - qty
                 if qty <= _ZERO:
                     continue
+                # ONE document, named; more than one, named to nobody (task 3) - the
+                # aggregate sentence still says the quantity and the arrival either way.
+                documents = entry.get("documents") or {}
+                single = next(iter(documents.items())) if len(documents) == 1 else None
                 out.append(
                     {
                         "location": code,
@@ -2317,6 +2385,12 @@ class ProjectSupplyService:
                         **(
                             {"water": True, "arrival_date": entry["arrival_date"]}
                             if water
+                            else {}
+                        ),
+                        **({"group": entry["group"]} if entry.get("group") else {}),
+                        **(
+                            {"supply_key": single[0], "supply_document": single[1]}
+                            if single
                             else {}
                         ),
                     }

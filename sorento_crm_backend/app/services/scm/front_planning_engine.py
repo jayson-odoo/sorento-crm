@@ -442,6 +442,7 @@ def group_water_reason(
     group_code: Optional[str],
     group_offer: Optional[Decimal],
     arrival_date: Optional[date],
+    document: Optional[str] = None,
 ) -> str:
     """Question 1's OTHER answer: the share of the group's offer that is still on the water.
 
@@ -452,13 +453,19 @@ def group_water_reason(
 
     `arrival_date` is the day the whole of this draw has landed by, which is the date a
     planner needs before promising it - not the earliest of several documents.
+
+    `document` names the ONE SPO this draw is, when it is one (S4 task 3) - never a second
+    document's number pasted beside the first, and never present at all when the draw is
+    actually several documents sharing a bucket; the caller decides which is true and passes
+    `None` rather than let this function guess.
     """
     when = f", arriving {date_text(arrival_date)}" if arrival_date else ""
+    named = f" ({document})" if document else ""
     if group_offer is None or not group_code:
-        return f"{location} has {qty_text(qty)} on the water{when}"
+        return f"{location} has {qty_text(qty)} on the water{when}{named}"
     return (
         f"{location} has {qty_text(qty)} of the {qty_text(group_offer)} the {group_code} "
-        f"group can cover this line with on the water{when}"
+        f"group can cover this line with on the water{when}{named}"
     )
 
 
@@ -501,6 +508,7 @@ def other_group_reason(
     qty: Decimal,
     group_code: Optional[str],
     arrival_date: Optional[date] = None,
+    document: Optional[str] = None,
 ) -> str:
     """Step 1's second half (v7.1, R5, AC-S3-1): another PROJECT group's FREE pile.
 
@@ -513,12 +521,17 @@ def other_group_reason(
     it is the day the WHOLE of the draw has landed by - the same rule the own half's
     `group_water_reason` follows. Without it an incoming container in another group read as
     stock available today, and the option table dated the whole proposal `today`.
+
+    `document` names the ONE SPO this draw is (S4 task 3) - the captain's own repro was this
+    sentence naming an arrival with nothing to click on. `None` when the caller cannot say
+    that truthfully (several documents share the bucket), and it is never guessed here.
     """
     whose = f" the {group_code} group" if group_code else " this line's group"
     when = f", arriving {date_text(arrival_date)}" if arrival_date else ""
+    named = f" ({document})" if document else ""
     return (
-        f"{location} has {qty_text(qty)} free outside{whose}{when}, and free stock is owed "
-        "to nobody"
+        f"{location} has {qty_text(qty)} free outside{whose}{when}{named}, and free stock "
+        "is owed to nobody"
     )
 
 
@@ -849,12 +862,19 @@ class _Offer:
     donor_so_number: Optional[str] = None
     donor_qty: Decimal = ZERO
     donor_required_date: Optional[date] = None
+    #: STEP 1 ONLY (S4 task 2): every OTHER project group `_draw_other_groups` drew this
+    #: offer from, in draw order, deduped. Empty means every source is this line's own
+    #: group. Lets `_use_step_label` say what was actually composed - "our locations" beside
+    #: a card that read "Use incoming" was the captain's own screenshot of the bug.
+    other_group_names: List[str] = None  # type: ignore[assignment]
 
     def __post_init__(self) -> None:
         if self.components is None:
             self.components = []
         if self.locations is None:
             self.locations = []
+        if self.other_group_names is None:
+            self.other_group_names = []
 
     def add(self, component: Component, *, arrival: Optional[date] = None) -> None:
         self.components.append(component)
@@ -893,19 +913,32 @@ def _draw_group(
         take = min(left, capacity)
         water = bool(candidate.get("water"))
         arrival = candidate.get("arrival_date") if water else None
+        # Named only when the bucket turns out to be exactly one document (task 3);
+        # `use_candidates_for` already decided that, so this reads its answer rather than
+        # guessing a second time.
+        document = candidate.get("supply_document") if water else None
         offer.add(
             Component(
                 kind=TIMELY_SPO if water else RESERVE,
                 qty=take,
                 reason=(
                     group_water_reason(
-                        str(location), take, group_code, group_offer, arrival
+                        str(location), take, group_code, group_offer, arrival, document
                     )
                     if water
                     else group_take_reason(str(location), take, group_code, group_offer)
                 ),
                 source_location=str(location),
                 rung=RUNG_GROUP_TAKE,
+                **(
+                    {
+                        "supply_key": candidate.get("supply_key"),
+                        "supply_document": document,
+                        "arrival_date": arrival,
+                    }
+                    if water and document
+                    else {}
+                ),
             ),
             arrival=arrival,
         )
@@ -939,13 +972,29 @@ def _draw_other_groups(
         take = min(left, capacity)
         water = bool(candidate.get("water"))
         arrival = candidate.get("arrival_date") if water else None
+        lending_group = candidate.get("group")
+        if lending_group and lending_group not in offer.other_group_names:
+            offer.other_group_names.append(str(lending_group))
+        # Named only when the bucket is exactly one document (task 3), same as the own half.
+        document = candidate.get("supply_document") if water else None
         offer.add(
             Component(
                 kind=TIMELY_SPO if water else RESERVE,
                 qty=take,
-                reason=other_group_reason(str(location), take, group_code, arrival),
+                reason=other_group_reason(
+                    str(location), take, group_code, arrival, document
+                ),
                 source_location=str(location),
                 rung=RUNG_GROUP_TAKE,
+                **(
+                    {
+                        "supply_key": candidate.get("supply_key"),
+                        "supply_document": document,
+                        "arrival_date": arrival,
+                    }
+                    if water and document
+                    else {}
+                ),
             ),
             arrival=arrival,
         )
@@ -1108,6 +1157,31 @@ def _draw_pool(
         left_in_pile -= take
 
 
+def _use_step_label(offer: Optional["_Offer"]) -> str:
+    """Step 1's option label follows what it actually composed (S4 task 2).
+
+    Every other step's label is a fixed sentence because every other step is one kind of
+    promise. Step 1 is not: it draws the asker's own floor, its own group's water, and
+    another group's free pile - on a floor or on the water too - and the static label always
+    read "Use our locations" whatever it drew. The captain's own screenshot was this row
+    reading "Use our locations" beside a suggestion card that read "Use incoming" for the
+    SAME composition.
+
+    Own floor -> `STEP_LABELS[STEP_USE]`, unchanged. Own group's water -> "Use incoming": a
+    promise on a ship is not "our locations" any more than it is a Reserve. Another group's
+    free pile is named by its group - "Use BB group stock" on a floor, "Use incoming from BB
+    group" on the water - mirroring the card's own words (`supplyVocabulary.ts`, R41), so the
+    two surfaces cannot disagree about one composition again.
+    """
+    if offer is None or not offer.components:
+        return STEP_LABELS[STEP_USE]
+    water = any(component.kind == TIMELY_SPO for component in offer.components)
+    if offer.other_group_names:
+        named = " and ".join(f"{name} group" for name in sorted(set(offer.other_group_names)))
+        return f"Use incoming from {named}" if water else f"Use {named} stock"
+    return "Use incoming" if water else STEP_LABELS[STEP_USE]
+
+
 def _options(
     *,
     required_date: Optional[date],
@@ -1142,9 +1216,10 @@ def _options(
             )
             continue
         offer = offers.get(step)
+        label = _use_step_label(offer) if step == STEP_USE else STEP_LABELS[step]
         whole = bool(offer and offer.components and offer.qty >= need > ZERO)
         if not whole:
-            out.append(Option(step=step, label=STEP_LABELS[step], whole=False))
+            out.append(Option(step=step, label=label, whole=False))
             continue
         fulfil = offer.arrival or today
         if transfer_days and any(code != own_location for code in offer.locations):
@@ -1153,7 +1228,7 @@ def _options(
         out.append(
             Option(
                 step=step,
-                label=STEP_LABELS[step],
+                label=label,
                 whole=True,
                 fulfil_date=fulfil,
                 days_late=_days_late(fulfil, required_date),
