@@ -29,12 +29,14 @@ from app.models.product import Brand, Product
 from app.models.resources import Attachment, AttachmentType
 from app.services.entity_resolver import (
     _CODE_RE,
+    EntityPinMismatch,
     _canonical_entity_type,
     fetch_product_brands,
     resolve_references,
     resolve_references_intersection,
     token_word_coverage_for_rows,
 )
+from app.services.error_handler import AppException
 
 
 # Canonical entity types the resolver understands. domain_hint matching one of
@@ -1397,6 +1399,26 @@ class ResolveReferenceRequest(BaseModel):
             "containing 'Sorento'."
         ),
     )
+    entity_pins: dict[str, str] | None = Field(
+        default=None,
+        description=(
+            "Optional per-token uuid pin: token (as it appears in `tokens`) -> "
+            "the exact row uuid the caller already picked for it (e.g. from a "
+            "prior disambiguation reply). Codes are unique only PER COMPANY, so "
+            "re-deriving from the bare code alone can reopen an ambiguity the "
+            "caller already closed (n8n exec 14659385 customer 300-C043, exec "
+            "14661446 product SRTBV110-DIY - both cross-company). When the "
+            "pinned uuid is among the token's OWN candidate matches, resolution "
+            "narrows to exactly that row. A uuid the caller's company scope "
+            "cannot see still fails closed (silently unresolved, the same as "
+            "any other out-of-scope match) - never an error. A uuid that is not "
+            "one of the token's candidates AT ALL is a caller bug: the request "
+            "fails with an explicit 400 (`ENTITY_PIN_MISMATCH`) rather than "
+            "silently falling back to plain token matching. Absent or empty = "
+            "byte-identical to today. OR-mode only (`match_mode='or'`, the "
+            "default); AND-mode intersection is unaffected."
+        ),
+    )
 
 
 def _result_has_zero_matches(result: dict[str, Any]) -> bool:
@@ -1578,6 +1600,7 @@ def _resolve_input(
     access_levels: list[str] | None = None,
     fallback_to_all_types: bool = False,
     domain_hint: str | None = None,
+    entity_pins: dict[str, str] | None = None,
     limit: int | None = None,
 ):
     mode = (match_mode or "or").strip().lower()
@@ -1713,6 +1736,7 @@ def _resolve_input(
                 allowed_entity_types=allowed,
                 cross_type_expand=cross_type_expand,
                 domain_hint=hint,
+                entity_pins=entity_pins,
             ).as_dict()
         raw = _apply_promotion_access_levels_filter(db, raw, access_levels)
         # Promotion-domain hint: run the expander. It owns the dispatch:
@@ -1806,6 +1830,7 @@ def _resolve_input(
         unresolved,
         allowed_entity_types=fb_allowed,
         cross_type_expand=True,
+        entity_pins=entity_pins,
     ).as_dict()
     fb = _apply_promotion_access_levels_filter(db, fb_raw, access_levels)
     # Per-token fallback bypasses `_run`, so the promotion-domain product
@@ -2137,17 +2162,29 @@ def resolve_reference_post(
     db: Session = Depends(get_db),
 ):
     """POST variant for external callers that send JSON body (e.g. n8n HTTP node)."""
-    result = _resolve_input(
-        db,
-        payload.query,
-        payload.tokens,
-        match_mode=payload.match_mode,
-        allowed_entity_types=payload.allowed_entity_types,
-        access_levels=payload.access_levels,
-        fallback_to_all_types=payload.fallback_to_all_types,
-        domain_hint=payload.domain_hint,
-        limit=payload.limit,
-    )
+    try:
+        result = _resolve_input(
+            db,
+            payload.query,
+            payload.tokens,
+            match_mode=payload.match_mode,
+            allowed_entity_types=payload.allowed_entity_types,
+            access_levels=payload.access_levels,
+            fallback_to_all_types=payload.fallback_to_all_types,
+            domain_hint=payload.domain_hint,
+            entity_pins=payload.entity_pins,
+            limit=payload.limit,
+        )
+    except EntityPinMismatch as exc:
+        raise AppException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            message=(
+                f"entity_pins uuid for token {exc.token!r} does not match any "
+                "candidate the resolver found for that token."
+            ),
+            detail=f"token={exc.token} pinned_uuid={exc.pinned_uuid}",
+            code="ENTITY_PIN_MISMATCH",
+        ) from exc
 
     # Shape B: a domain predicate over the described set. This is NOT a fallback -
     # "what faucets have certs" is a different question from "find me a faucet",
