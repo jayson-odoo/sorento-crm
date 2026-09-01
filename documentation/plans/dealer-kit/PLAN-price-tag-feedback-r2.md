@@ -17,7 +17,25 @@ ruling, pending user ratification - see AC-S5-6), made Publish persist the
 draft before snapshotting it, and added a 409 for a concurrent publish race.
 S6 (editor UX - fullscreen, live text reflow, ruler guides, per-block
 preview) branched from S5 with S3 merged in (pre-resolving #484-vs-#486),
-PR TBD.
+DONE 2 Sep 2026, PR TBD: `FocusShell`/`FocusToggle` on the template editor
+and the request designer (Design + Arrange both wrap the same shell); text
+reflow via a live `onTransform` handler on the Transformer that folds scale
+into width/height and resets it every tick (extracted pure helper
+`reflowedTextSize`), text-only, groups untouched (`transformGroup` still
+owns their commit); ruler guides are a new session-only `RulerGuide[]`
+(`lib/dealer-kit/ruler-guides.ts`) with click-to-drop, drag-to-move,
+drag-back-onto-the-spawning-ruler-to-remove, and they join
+`useSnapGuides`' targets; per-block preview moved off the toolbar onto each
+block (hover/selected eye, `PreviewBlocksDialog` + the toolbar chip deleted)
+plus a new synthesized `WHOLE_TAG_BLOCK_ID` block/eye on the tag frame for
+loose (ungrouped) bound layers, replacing the old "loose layer follows the
+first previewed block" rule. Browser-verified on lane :3135/:8135 (fullscreen
+both pages + Esc, live reflow edge+corner handles, guide click/drag/remove
+on both rulers - caught and fixed a real bug where a plain ruler click
+dropped then immediately deleted its own guide, per-block eye independence,
+whole-tag frame eye + picker copy, toolbar eye gone, 375px). Full
+`app/(protected)/dealer-kit` + `lib/dealer-kit` suite green (794 tests),
+tsc/eslint clean on touched files.
 UAC: `documentation/plans/dealer-kit/price-tag-feedback-r2-acceptance-criteria.md`
 Predecessor: `documentation/plans/dealer-kit/PLAN-price-tag-request.md` (shipped, PR #289)
 

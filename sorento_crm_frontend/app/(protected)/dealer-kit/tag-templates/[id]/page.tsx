@@ -49,6 +49,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Skeleton } from '@/components/ui/skeleton';
 import dynamic from 'next/dynamic';
+import { cn } from '@/lib/utils';
 import type {
   TagLayer,
   TagTemplate,
@@ -62,6 +63,7 @@ import {
   updateTemplate,
 } from '../../services/tagTemplateService';
 import { TemplateVersionsSheet } from '../components/TemplateVersionsSheet';
+import { FocusShell, FocusToggle } from '../../components/FocusMode';
 
 const TagCanvasEditor = dynamic(
   () => import('../components/TagCanvasEditor').then((m) => ({ default: m.TagCanvasEditor })),
@@ -101,6 +103,9 @@ export default function TagTemplateEditorPage() {
   // needs to know so it can say "Restoring..." (the sheet tracks its own row
   // locally).
   const [restoringVersionId, setRestoringVersionId] = useState<string | null>(null);
+
+  /** Full screen (D11, AC-S6-1): the same `FocusShell` the room designer uses. */
+  const [focus, setFocus] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -242,7 +247,17 @@ export default function TagTemplateEditorPage() {
   const isLive = Boolean(template.published_version_id);
 
   return (
-    <div className="flex h-[calc(100dvh-var(--header-height)-20px)] flex-col">
+    <FocusShell active={focus} onExit={() => setFocus(false)}>
+    <div
+      className={cn(
+        'flex flex-col',
+        // Full screen (D11): `FocusShell`'s own overlay is already 100dvh
+        // with no app chrome inside it, so the fixed calc below - which
+        // exists to subtract THAT chrome - would leave a dead gap at the
+        // bottom instead of filling the window.
+        focus ? 'h-full' : 'h-[calc(100dvh-var(--header-height)-20px)]',
+      )}
+    >
       {/* Header: PageHeader keeps the trail and title one component and one
           scale (S5-01, S5-02) even though this shell sits outside the normal
           scrolling Toolbar rhythm - shrink-0 so the canvas below still gets
@@ -288,6 +303,7 @@ export default function TagTemplateEditorPage() {
                   <Upload className="size-3.5" />
                   Publish
                 </Button>
+                <FocusToggle active={focus} onToggle={setFocus} label="template" />
                 <BackToList listPath="/dealer-kit/tag-templates" label="Back to templates" />
               </div>
             }
@@ -369,5 +385,6 @@ export default function TagTemplateEditorPage() {
         </DialogContent>
       </Dialog>
     </div>
+    </FocusShell>
   );
 }

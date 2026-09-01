@@ -3,8 +3,10 @@
 /**
  * Top toolbar for the tag canvas editor.
  *
- * Tools, add-layer buttons, undo/redo, zoom, selection actions, and the preview
- * chip that says which product the canvas is currently drawn against (D41).
+ * Tools, add-layer buttons, undo/redo, zoom, selection actions. The preview
+ * eye used to live here as one whole-tag chip (D41); it moved onto each
+ * previewable block itself (D10, S6) - hover/select a block on the canvas for
+ * its own eye, so there is nothing left for the toolbar to show.
  */
 
 import {
@@ -12,7 +14,6 @@ import {
   Boxes,
   Copy,
   Expand,
-  Eye,
   Group,
   Hand,
   MousePointer2,
@@ -30,7 +31,6 @@ import {
   Type,
   Undo2,
   Ungroup,
-  X,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
@@ -74,12 +74,6 @@ interface CanvasToolbarProps {
   hasSelection: boolean;
   hasMultiSelection: boolean;
   selectionIsGroup: boolean;
-  /** The whole chip text while anything is previewing, else null (D53). */
-  previewLabel: string | null;
-  /** False when the template has no block a product could be shown in. */
-  canPreview?: boolean;
-  onPreview: () => void;
-  onClearPreview: () => void;
 }
 
 function ToolbarButton({
@@ -151,10 +145,6 @@ export function CanvasToolbar({
   hasSelection,
   hasMultiSelection,
   selectionIsGroup,
-  previewLabel,
-  canPreview = true,
-  onPreview,
-  onClearPreview,
 }: CanvasToolbarProps) {
   return (
     <div className="flex h-10 shrink-0 items-center gap-1 border-b bg-background px-2">
@@ -271,37 +261,6 @@ export function CanvasToolbar({
         onClick={onUngroupSelected}
         disabled={!selectionIsGroup}
       />
-
-      {/* Preview chip (D41, D53). Sits right so it reads as state, not as an action. */}
-      <div className="ml-auto flex items-center gap-1">
-        {previewLabel ? (
-          <div className="flex h-7 items-center gap-1 rounded-full border bg-muted/60 pl-2.5 pr-1 text-xs">
-            <button
-              type="button"
-              className="max-w-[220px] truncate hover:underline"
-              onClick={onPreview}
-              title={previewLabel}
-            >
-              {previewLabel}
-            </button>
-            <button
-              type="button"
-              className="rounded-full p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
-              onClick={onClearPreview}
-              title="Stop previewing"
-            >
-              <X className="size-3" />
-            </button>
-          </div>
-        ) : (
-          <ToolbarButton
-            icon={Eye}
-            label="Preview with a product"
-            onClick={onPreview}
-            disabled={!canPreview}
-          />
-        )}
-      </div>
     </div>
   );
 }

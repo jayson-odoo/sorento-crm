@@ -82,6 +82,7 @@ import {
   type PriceTagRequestLine,
 } from '../../../../services/priceTagRequestService';
 import { listPublishedTemplates } from '../../../../services/tagTemplateService';
+import { FocusShell, FocusToggle } from '../../../../components/FocusMode';
 
 let idSeq = 0;
 function newTagId(): string {
@@ -99,6 +100,10 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
   const router = useRouter();
 
   const [mode, setMode] = useState<'design' | 'arrange'>('design');
+  /** Full screen (D11, AC-S6-1): the same `FocusShell` the room designer uses.
+   *  Both Design and Arrange sit inside it - the toggle is one control for
+   *  either half, not a per-mode setting. */
+  const [focus, setFocus] = useState(false);
   const [templates, setTemplates] = useState<TagTemplate[]>([]);
   const [templatesStatus, setTemplatesStatus] = useState<'loading' | 'loaded' | 'error'>(
     'loading',
@@ -408,6 +413,7 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
   );
 
   return (
+    <FocusShell active={focus} onExit={() => setFocus(false)}>
     <div className="flex h-full flex-col">
       {/* Request bar: what this is, which half is showing, and the two actions
           that leave the page in a different state. */}
@@ -441,6 +447,8 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
         </div>
 
         <div className="flex-1" />
+
+        <FocusToggle active={focus} onToggle={setFocus} label="tags" />
 
         <Button
           variant="outline"
@@ -579,6 +587,7 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
         </AlertDialogContent>
       </AlertDialog>
     </div>
+    </FocusShell>
   );
 }
 

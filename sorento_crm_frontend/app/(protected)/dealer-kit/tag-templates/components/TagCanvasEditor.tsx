@@ -81,11 +81,21 @@ import {
   type ReparentTarget,
 } from '@/lib/dealer-kit/canvas-geometry';
 import {
+  WHOLE_TAG_BLOCK_ID,
   previewBindingFor,
   previewBlockOf,
   previewableBlocks,
+  wholeTagBlock,
   type PreviewMap,
 } from '@/lib/dealer-kit/preview';
+import { reflowedTextSize } from '@/lib/dealer-kit/text-reflow';
+import {
+  guideCrossedIntoRuler,
+  moveGuide,
+  newGuideId,
+  removeGuide,
+  type RulerGuide,
+} from '@/lib/dealer-kit/ruler-guides';
 import {
   ContextMenu,
   ContextMenuContent,
@@ -118,7 +128,6 @@ import {
 import { AssetPickerDialog } from './AssetPickerDialog';
 import { FontUploadDialog } from './FontUploadDialog';
 import { ProductPickDialog, type PickMode } from './ProductPickDialog';
-import { PreviewBlocksDialog, type PreviewChoice } from './PreviewBlocksDialog';
 import { cn } from '@/lib/utils';
 import { useKitLibrary, useTagBindings } from './useTagBindings';
 import { getProductTagData } from '../../services/tagDataService';
@@ -129,6 +138,12 @@ import { InspectorPanel } from './InspectorPanel';
 import { InsertFieldDialog } from './InsertFieldDialog';
 import { useCanvasHistory } from './useCanvasHistory';
 import { useSnapGuides } from './useSnapGuides';
+
+/** What a previewed block is showing, named the way a person reads it. */
+interface PreviewChoice {
+  id: string;
+  label: string;
+}
 
 // This component is loaded with ssr:false by the page, so direct imports are safe.
 import { Stage, Layer as KonvaLayer, Rect, Line, Transformer } from 'react-konva';
@@ -161,6 +176,44 @@ function describeBindingData(data: TagBindingData | null | undefined): string | 
   if (data.kind === 'product') return `${data.product.code} - ${data.product.name}`;
   if (data.kind === 'set') return `${data.set.set_code} - ${data.set.name}`;
   return `${data.line.code} - ${data.line.name}`;
+}
+
+/**
+ * The eye chip that opens a block's (or the whole tag's) preview picker
+ * (D10, S6). A plain DOM overlay, not a Konva node: it needs to sit ON TOP of
+ * the canvas bitmap and stay a normal, focusable, hoverable button, which is
+ * cheaper as HTML positioned over the Stage than as a Konva shape faking one.
+ */
+function PreviewEyeButton({
+  label,
+  active,
+  style,
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  style: React.CSSProperties;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={cn(
+        'absolute z-10 flex h-6 w-6 items-center justify-center rounded-full border bg-background shadow-sm hover:bg-accent',
+        active && 'border-primary text-primary',
+      )}
+      style={style}
+      title={label}
+      aria-label={label}
+      onMouseDown={(e) => e.stopPropagation()}
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
+    >
+      <Eye className="size-3.5" />
+    </button>
+  );
 }
 
 /** One press of the toolbar's zoom buttons. The wheel uses its own factor. */
@@ -281,7 +334,14 @@ export function TagCanvasEditor({
    * quietly bind it.
    */
   const [previews, setPreviews] = useState<PreviewMap>({});
-  const [previewDialogOpen, setPreviewDialogOpen] = useState(false);
+  /**
+   * The block the on-canvas eye is showing for (S6, D10). Hover only - the
+   * SELECTED block reads straight off `selectedBlock` below, no state needed
+   * for that half.
+   */
+  const [hoveredLayerId, setHoveredLayerId] = useState<string | null>(null);
+  /** Session-only ruler guides (D9/D17). Never touch the document. */
+  const [rulerGuides, setRulerGuides] = useState<RulerGuide[]>([]);
 
   const bindings = useTagBindings(promotionId);
   const library = useKitLibrary();
@@ -296,6 +356,18 @@ export function TagCanvasEditor({
     additive: boolean;
   } | null>(null);
   const fittedRef = useRef(false);
+  /**
+   * Which guide a pointer drag is currently moving, if any (S6). `moved`
+   * distinguishes a genuine drag from a plain click: a click's mousedown and
+   * mouseup land at the SAME point, which for a freshly-dropped guide is
+   * still technically "inside the ruler" - without this a click on the ruler
+   * created a guide and the very next tick deleted it again, netting zero.
+   */
+  const guideDragRef = useRef<{
+    id: string;
+    orientation: RulerGuide['orientation'];
+    moved: boolean;
+  } | null>(null);
 
   const history = useCanvasHistory(doc.layers);
   const { computeSnap, guides, clearGuides } = useSnapGuides();
@@ -499,7 +571,7 @@ export function TagCanvasEditor({
       // The preview of the layer's own BLOCK wins (D53), then whatever the
       // document binds. Asking the document first would leave every slot empty
       // on a template, which ships unbound on purpose.
-      const previewed = previewBindingFor(layer, previews, groupOfChild, layers);
+      const previewed = previewBindingFor(layer, previews, groupOfChild);
       if (previewed) return previewed;
       if (layer.props.kind === 'group') return layer.props.binding ?? undefined;
       const group = groupOfChild.get(layer.id);
@@ -507,7 +579,7 @@ export function TagCanvasEditor({
         ? group.props.binding ?? undefined
         : undefined;
     },
-    [groupOfChild, layers, previews],
+    [groupOfChild, previews],
   );
 
   const dataOf = useCallback(
@@ -516,12 +588,12 @@ export function TagCanvasEditor({
       // outranks even the data the host handed in (D51). Per layer rather than
       // per canvas: previewing ONE block of a request's tag must not blank the
       // rest of it.
-      const previewed = previewBindingFor(layer, previews, groupOfChild, layers);
+      const previewed = previewBindingFor(layer, previews, groupOfChild);
       if (previewed) return bindings.get(previewed);
       if (boundData) return boundData;
       return bindings.get(bindingOf(layer));
     },
-    [bindings, bindingOf, boundData, groupOfChild, layers, previews],
+    [bindings, bindingOf, boundData, groupOfChild, previews],
   );
 
   // Resolve whatever the document already carries, once, on open. A template
@@ -608,27 +680,30 @@ export function TagCanvasEditor({
   const previewBlocks = useMemo(() => previewableBlocks(layers), [layers]);
 
   /**
-   * Open the right surface for the number of blocks there are: one block is
-   * one question, so it keeps D41's single picker; several need a row each.
+   * ONE implicit block over every loose (ungrouped) bound layer (D10, S6).
+   * Its eye lives on the tag frame rather than on any single layer - there is
+   * no group to put it on.
    */
-  const openPreviewPicker = useCallback(() => {
-    if (previewBlocks.length === 0) return;
-    if (previewBlocks.length === 1) {
-      const [block] = previewBlocks;
-      setPicker({ kind: 'preview', groupId: block.groupId, mode: block.mode });
-      return;
-    }
-    setPreviewDialogOpen(true);
-  }, [previewBlocks]);
+  const wholeTagPreviewBlock = useMemo(() => wholeTagBlock(layers), [layers]);
 
-  /** One block, from the Inspector: the same picker, aimed at that block. */
+  /** Every block with its own eye - the real ones plus the frame's, if any. */
+  const allPreviewBlocks = useMemo(
+    () => (wholeTagPreviewBlock ? [...previewBlocks, wholeTagPreviewBlock] : previewBlocks),
+    [previewBlocks, wholeTagPreviewBlock],
+  );
+
+  /**
+   * One block's eye, from anywhere it is shown - the canvas chip, the
+   * Inspector, or the tag frame (D10, S6): all three open the same
+   * single-question picker aimed at that block.
+   */
   const openBlockPreview = useCallback(
     (groupId: string) => {
-      const block = previewBlocks.find((b) => b.groupId === groupId);
+      const block = allPreviewBlocks.find((b) => b.groupId === groupId);
       if (!block) return;
       setPicker({ kind: 'preview', groupId: block.groupId, mode: block.mode });
     },
-    [previewBlocks],
+    [allPreviewBlocks],
   );
 
   const clearBlockPreview = useCallback((groupId: string) => {
@@ -638,34 +713,6 @@ export function TagCanvasEditor({
       return next;
     });
   }, []);
-
-  /** Every block the dialog was given a product for, loaded then shown. */
-  const applyPreviews = useCallback(
-    async (choices: Record<string, PreviewChoice>) => {
-      setPickerBusy(true);
-      try {
-        const next: PreviewMap = {};
-        for (const block of previewBlocks) {
-          const choice = choices[block.groupId];
-          if (!choice) continue;
-          const loaded =
-            block.mode === 'set'
-              ? await bindings.loadSet(choice.id)
-              : await bindings.loadProduct(choice.id);
-          if (!loaded) continue;
-          next[block.groupId] =
-            block.mode === 'set'
-              ? { product_set_id: choice.id }
-              : { product_id: choice.id };
-        }
-        setPreviews(next);
-        setPreviewDialogOpen(false);
-      } finally {
-        setPickerBusy(false);
-      }
-    },
-    [bindings, previewBlocks],
-  );
 
   const handlePick = useCallback(
     async (ids: string[]) => {
@@ -952,6 +999,19 @@ export function TagCanvasEditor({
     return point ? stageToMm(view, point.x, point.y) : null;
   }, [view]);
 
+  /**
+   * A layer's own hover state (S6, D10) - not yet resolved to a BLOCK, which
+   * `hoveredBlockId` below does: hovering any child of a block should reveal
+   * its eye, and that resolution belongs with the other block bookkeeping,
+   * not here.
+   */
+  const handleLayerHoverChange = useCallback((id: string, hovering: boolean) => {
+    setHoveredLayerId((prev) => {
+      if (hovering) return id;
+      return prev === id ? null : prev;
+    });
+  }, []);
+
   const handleLayerDoubleClick = useCallback(
     (rawId: string) => {
       const targetId = resolveTarget(rawId);
@@ -1026,6 +1086,19 @@ export function TagCanvasEditor({
     [selectedIds, selectionRoots, layers],
   );
 
+  /** Ruler guide positions, split by axis, so a drag can also snap to them (D9). */
+  const guideSnapTargets = useMemo(
+    () => ({
+      vertical: rulerGuides
+        .filter((g) => g.orientation === 'vertical')
+        .map((g) => g.position_mm),
+      horizontal: rulerGuides
+        .filter((g) => g.orientation === 'horizontal')
+        .map((g) => g.position_mm),
+    }),
+    [rulerGuides],
+  );
+
   const handleDragMove = useCallback(
     (id: string, rawX: number, rawY: number) => {
       const drag = dragRef.current;
@@ -1046,6 +1119,7 @@ export function TagCanvasEditor({
         layers.filter((l) => !movingSet.has(l.id)),
         doc.width_mm,
         doc.height_mm,
+        guideSnapTargets,
       );
       drag.dx = result.x_mm - anchorStart.x;
       drag.dy = result.y_mm - anchorStart.y;
@@ -1061,7 +1135,7 @@ export function TagCanvasEditor({
         node.y((from.y + drag.dy) * scale);
       }
     },
-    [layers, computeSnap, doc.width_mm, doc.height_mm, scale],
+    [layers, computeSnap, doc.width_mm, doc.height_mm, scale, guideSnapTargets],
   );
 
   const handleDragEnd = useCallback(
@@ -1096,13 +1170,64 @@ export function TagCanvasEditor({
     transformer.getLayer()?.batchDraw();
   }, [selectedIds, layers, scale, view]);
 
+  /**
+   * Live reflow while a TEXT layer is being resized (D8, S6).
+   *
+   * Fires on every `onTransform` tick, not just at the end. A text node's
+   * Group sits at a fixed `width`/`height` (the layer's own mm size, in px)
+   * until `handleTransformEnd` commits a new one; in between, Konva expresses
+   * the drag as a `scale` on that Group, which stretches the fixed-size Text
+   * child inside it along with everything else - the font visibly balloons or
+   * shrinks for the whole drag and only snaps back to its real size on
+   * release. Reading that scale here, folding it into the Group's AND the
+   * Text child's own `width`/`height`, and resetting the scale to 1 makes
+   * Konva re-wrap the text at its real, UNCHANGED `fontSize` on every frame
+   * instead: the box reflows live, the font never moves.
+   *
+   * Only text nodes get this. A GROUP's own Konva node is just its dashed
+   * outline (`KonvaTagLayer`'s children render as separate, flat siblings,
+   * not nested inside it) - resizing it live here would touch nothing a user
+   * can see, and `transformGroup`'s redistribution to every descendant still
+   * has to wait for `handleTransformEnd`, exactly as before.
+   */
+  const handleTransform = useCallback(() => {
+    const transformer = transformerRef.current;
+    if (!transformer) return;
+    for (const node of transformer.nodes()) {
+      const layer = layers.find((l) => l.id === node.id());
+      if (!layer || layer.props.kind !== 'text') continue;
+      const { width, height } = reflowedTextSize(
+        node.width(),
+        node.height(),
+        node.scaleX(),
+        node.scaleY(),
+      );
+      node.scaleX(1);
+      node.scaleY(1);
+      node.width(width);
+      node.height(height);
+      // `KonvaTagLayer` always renders a text layer as `<Group><Text/></Group>`,
+      // so this cast is safe for exactly the nodes reaching this branch -
+      // `findOne` only exists on a Container, and `Konva.Node` (what
+      // `transformer.nodes()` is typed as) is not one.
+      const textNode = (node as unknown as Konva.Group).findOne('Text');
+      if (textNode) {
+        textNode.width(width);
+        textNode.height(height);
+      }
+    }
+    transformer.getLayer()?.batchDraw();
+  }, [layers]);
+
   const handleTransformEnd = useCallback(() => {
     const transformer = transformerRef.current;
     if (!transformer) return;
 
     // Read and reset the Konva scale BEFORE touching state: a React updater can
     // run twice, and a second read would see the already-reset scale and undo
-    // the resize.
+    // the resize. `handleTransform` above has already zeroed a text node's
+    // scale on the last live tick, so this reads 1 for one and the SAME
+    // computed size either way - text and non-text share one commit path.
     const changes = transformer.nodes().map((node) => {
       const scaleX = node.scaleX();
       const scaleY = node.scaleY();
@@ -1135,6 +1260,85 @@ export function TagCanvasEditor({
     }
     commit(next);
   }, [layers, scale, commit]);
+
+  // -- Ruler guides (D9/D17, S6) ----------------------------------------------
+
+  /** The stage-relative pixel a client (viewport) point falls on. */
+  const stagePointFromClient = useCallback((clientX: number, clientY: number) => {
+    const element = containerRef.current;
+    if (!element) return null;
+    const rect = element.getBoundingClientRect();
+    return {
+      x: clientX - rect.left - RULER_THICKNESS,
+      y: clientY - rect.top - RULER_THICKNESS,
+    };
+  }, []);
+
+  /**
+   * A guide-drop gesture started on a ruler (D9/D17). The guide is created
+   * IMMEDIATELY, right where the pointer went down - a plain click needs no
+   * separate "drop" step - and `guideDragRef` hands the rest of the gesture
+   * to the same window-level listener an existing guide's own drag reuses
+   * below, so a click that is followed by movement smoothly turns into a
+   * pull-out without two code paths to keep in sync.
+   */
+  const handleGuideStart = useCallback(
+    (orientation: RulerGuide['orientation'], event: React.MouseEvent) => {
+      const point = stagePointFromClient(event.clientX, event.clientY);
+      if (!point) return;
+      const { x_mm, y_mm } = stageToMm(view, point.x, point.y);
+      const id = newGuideId();
+      setRulerGuides((prev) => [
+        ...prev,
+        { id, orientation, position_mm: orientation === 'vertical' ? x_mm : y_mm },
+      ]);
+      guideDragRef.current = { id, orientation, moved: false };
+    },
+    [stagePointFromClient, view],
+  );
+
+  /** An EXISTING guide picked up off the canvas: the same drag, a later start. */
+  const handleGuidePointerDown = useCallback((guide: RulerGuide) => {
+    guideDragRef.current = { id: guide.id, orientation: guide.orientation, moved: false };
+  }, []);
+
+  // ONE pair of window listeners, always attached, no-op unless a guide is
+  // being dragged (`guideDragRef`) - the drag can wander outside the ruler
+  // or the Stage's own DOM bounds, which a React-level handler on either
+  // would silently drop.
+  useEffect(() => {
+    const onMove = (event: MouseEvent) => {
+      const drag = guideDragRef.current;
+      if (!drag) return;
+      drag.moved = true;
+      const point = stagePointFromClient(event.clientX, event.clientY);
+      if (!point) return;
+      const { x_mm, y_mm } = stageToMm(view, point.x, point.y);
+      setRulerGuides((prev) =>
+        moveGuide(prev, drag.id, drag.orientation === 'vertical' ? x_mm : y_mm),
+      );
+    };
+
+    const onUp = (event: MouseEvent) => {
+      const drag = guideDragRef.current;
+      if (!drag) return;
+      // A plain click - mousedown and mouseup at the same spot, no `onMove`
+      // tick in between - never counts as "dragged back onto the ruler",
+      // or the guide this same gesture just dropped would delete itself.
+      const point = stagePointFromClient(event.clientX, event.clientY);
+      if (drag.moved && point && guideCrossedIntoRuler(drag.orientation, point)) {
+        setRulerGuides((prev) => removeGuide(prev, drag.id));
+      }
+      guideDragRef.current = null;
+    };
+
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+  }, [stagePointFromClient, view]);
 
   // -- Viewport (D33, D34) ---------------------------------------------------
 
@@ -1627,28 +1831,25 @@ export function TagCanvasEditor({
     return out;
   }, [previews, bindings]);
 
-  const previewCount = Object.keys(previews).length;
-
   /**
-   * The block the selection sits in, so the Inspector can preview THAT block.
-   * A child answers for its block: somebody who clicked the code text wants the
-   * whole block's product, not a binding on one text layer.
+   * The block the selection sits in, so the Inspector - and the on-canvas eye
+   * chip below - can preview THAT block. A child answers for its block:
+   * somebody who clicked the code text wants the whole block's product, not
+   * a binding on one text layer.
    */
   const selectedBlock = selectedLayer
     ? previewBlockOf(selectedLayer, previewBlocks, groupOfChild)
     : null;
 
-  /**
-   * The chip on the toolbar. A one-block tag names its product, because that is
-   * the whole fact; a tag with several is tracked by how many of them are
-   * showing something, which is what the user is actually keeping count of.
-   */
-  const previewLabel =
-    previewCount === 0
-      ? null
-      : previewBlocks.length <= 1
-        ? `Previewing: ${Object.values(previewChoices)[0]?.label ?? 'loading'}`
-        : `Previewing ${previewCount} of ${previewBlocks.length} blocks`;
+  /** The block the pointer is hovering, if any (D10, S6). */
+  const hoveredBlock = useMemo(() => {
+    if (!hoveredLayerId) return null;
+    const layer = layers.find((l) => l.id === hoveredLayerId);
+    return layer ? previewBlockOf(layer, previewBlocks, groupOfChild) : null;
+  }, [hoveredLayerId, layers, previewBlocks, groupOfChild]);
+
+  /** Which block's on-canvas eye is showing right now (hovered OR selected). */
+  const activeCanvasEyeBlockId = hoveredBlock?.groupId ?? selectedBlock?.groupId ?? null;
 
   /** The bound product's photos, for the image picker's first tab. */
   const pickerProductImages = useMemo(() => {
@@ -1701,10 +1902,6 @@ export function TagCanvasEditor({
         hasSelection={hasSelection}
         hasMultiSelection={selectedIds.size >= 2}
         selectionIsGroup={selectionIsGroup}
-        previewLabel={previewLabel}
-        canPreview={previewBlocks.length > 0}
-        onPreview={openPreviewPicker}
-        onClearPreview={() => setPreviews({})}
       />
 
       <div className="flex flex-1 overflow-hidden">
@@ -1743,6 +1940,7 @@ export function TagCanvasEditor({
                 originY={view.panY}
                 viewportWidth={stageWidth}
                 viewportHeight={stageHeight}
+                onGuideStart={handleGuideStart}
               />
 
               <div
@@ -1789,6 +1987,7 @@ export function TagCanvasEditor({
                         onDragStart={handleDragStart}
                         onDragMove={handleDragMove}
                         onDragEnd={handleDragEnd}
+                        onHoverChange={handleLayerHoverChange}
                       />
                     ))}
 
@@ -1825,12 +2024,47 @@ export function TagCanvasEditor({
                       ),
                     )}
 
+                    {/* Ruler guides (D9/D17, S6). Dotted, and a different
+                        colour from the transient snap guides above so the
+                        two are never confused - these are placed on
+                        purpose and stay until dragged away. */}
+                    {rulerGuides.map((g) =>
+                      g.orientation === 'vertical' ? (
+                        <Line
+                          key={g.id}
+                          points={[g.position_mm * scale, 0, g.position_mm * scale, canvasHeightPx]}
+                          stroke="#0ea5e9"
+                          strokeWidth={1}
+                          dash={[2, 3]}
+                          hitStrokeWidth={10}
+                          onMouseDown={(e) => {
+                            e.cancelBubble = true;
+                            handleGuidePointerDown(g);
+                          }}
+                        />
+                      ) : (
+                        <Line
+                          key={g.id}
+                          points={[0, g.position_mm * scale, canvasWidthPx, g.position_mm * scale]}
+                          stroke="#0ea5e9"
+                          strokeWidth={1}
+                          dash={[2, 3]}
+                          hitStrokeWidth={10}
+                          onMouseDown={(e) => {
+                            e.cancelBubble = true;
+                            handleGuidePointerDown(g);
+                          }}
+                        />
+                      ),
+                    )}
+
                     {/* ONE Transformer, after every layer, for the selection. */}
                     <Transformer
                       ref={transformerRef}
                       rotateEnabled
                       keepRatio={false}
                       listening={!handMode}
+                      onTransform={handleTransform}
                       onTransformEnd={handleTransformEnd}
                       enabledAnchors={[
                         'top-left',
@@ -1873,6 +2107,54 @@ export function TagCanvasEditor({
                   </KonvaLayer>
                 </Stage>
               </div>
+
+              {/* Per-block preview eyes (D10, S6): hover or select a
+                  previewable block to reveal its eye, right on the block. */}
+              {previewBlocks.map((block) => {
+                if (activeCanvasEyeBlockId !== block.groupId) return null;
+                const layer = layers.find((l) => l.id === block.groupId);
+                if (!layer) return null;
+                return (
+                  <PreviewEyeButton
+                    key={block.groupId}
+                    label={
+                      previewChoices[block.groupId]
+                        ? `Previewing ${previewChoices[block.groupId].label}`
+                        : `Preview ${block.label}`
+                    }
+                    active={Boolean(previewChoices[block.groupId])}
+                    style={{
+                      left:
+                        RULER_THICKNESS +
+                        view.panX +
+                        (layer.x_mm + layer.width_mm) * scale -
+                        24,
+                      top: RULER_THICKNESS + view.panY + layer.y_mm * scale + 4,
+                    }}
+                    onClick={() => openBlockPreview(block.groupId)}
+                  />
+                );
+              })}
+
+              {/* The whole-tag eye, on the frame itself (D10, AC-S6-5): one
+                  product choice resolves every loose bound layer at once.
+                  Always visible when eligible, unlike a block's own eye -
+                  there is no single layer on the tag to hover for it. */}
+              {wholeTagPreviewBlock && (
+                <PreviewEyeButton
+                  label={
+                    previewChoices[WHOLE_TAG_BLOCK_ID]
+                      ? `Previewing ${previewChoices[WHOLE_TAG_BLOCK_ID].label}`
+                      : 'Preview the whole tag'
+                  }
+                  active={Boolean(previewChoices[WHOLE_TAG_BLOCK_ID])}
+                  style={{
+                    left: RULER_THICKNESS + view.panX + canvasWidthPx - 28,
+                    top: RULER_THICKNESS + view.panY - 28,
+                  }}
+                  onClick={() => openBlockPreview(WHOLE_TAG_BLOCK_ID)}
+                />
+              )}
             </div>
           </ContextMenuTrigger>
 
@@ -1992,14 +2274,6 @@ export function TagCanvasEditor({
                   Zoom 100%
                   <ContextMenuShortcut>Ctrl+1</ContextMenuShortcut>
                 </ContextMenuItem>
-                <ContextMenuSeparator />
-                <ContextMenuItem
-                  onSelect={openPreviewPicker}
-                  disabled={previewBlocks.length === 0}
-                >
-                  <Eye />
-                  Preview with a product
-                </ContextMenuItem>
               </>
             )}
           </ContextMenuContent>
@@ -2051,9 +2325,9 @@ export function TagCanvasEditor({
             : picker.kind === 'rebind'
               ? 'Change what this block is about'
               : picker.kind === 'preview'
-                ? previewBlocks.length > 1
-                  ? 'Preview this block with'
-                  : 'Preview this template with'
+                ? picker.groupId === WHOLE_TAG_BLOCK_ID
+                  ? 'Preview the whole tag with'
+                  : 'Preview this block with'
                 : picker.kind === 'alternatives'
                   ? 'Add an alternatives row'
                   : picker.kind === 'accessories'
@@ -2071,21 +2345,6 @@ export function TagCanvasEditor({
         onCancel={closePicker}
         onConfirm={(ids) => {
           void handlePick(ids);
-        }}
-      />
-
-      <PreviewBlocksDialog
-        open={previewDialogOpen}
-        blocks={previewBlocks}
-        value={previewChoices}
-        busy={pickerBusy}
-        onCancel={() => setPreviewDialogOpen(false)}
-        onClearAll={() => {
-          setPreviews({});
-          setPreviewDialogOpen(false);
-        }}
-        onApply={(choices) => {
-          void applyPreviews(choices);
         }}
       />
 

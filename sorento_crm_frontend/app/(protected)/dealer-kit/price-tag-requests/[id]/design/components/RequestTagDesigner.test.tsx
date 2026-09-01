@@ -46,7 +46,7 @@ vi.mock('@/app/(protected)/dealer-kit/tag-templates/components/TagCanvasEditor',
 }));
 
 vi.mock('../../../../services/tagTemplateService', () => ({
-  listTemplates: vi.fn(),
+  listPublishedTemplates: vi.fn(),
 }));
 vi.mock('../../../../services/priceTagRequestService', () => ({
   resolveRequestLines: vi.fn(),
@@ -54,7 +54,7 @@ vi.mock('../../../../services/priceTagRequestService', () => ({
   exportTagSheet: vi.fn(),
 }));
 
-import { listTemplates } from '../../../../services/tagTemplateService';
+import { listPublishedTemplates } from '../../../../services/tagTemplateService';
 import { resolveRequestLines } from '../../../../services/priceTagRequestService';
 import { RequestTagDesigner } from './RequestTagDesigner';
 import type {
@@ -63,7 +63,7 @@ import type {
 } from '../../../../services/priceTagRequestService';
 import type { LineTagData, TagTemplate } from '@/lib/dealer-kit/tag-template-types';
 
-const mockListTemplates = vi.mocked(listTemplates);
+const mockListTemplates = vi.mocked(listPublishedTemplates);
 const mockResolveRequestLines = vi.mocked(resolveRequestLines);
 
 // ---------------------------------------------------------------------------
@@ -293,7 +293,7 @@ describe('RequestTagDesigner - explicit canvas states (AC-S3-2, AC-S3-3)', () =>
   it('says "Loading templates..." while the template fetch is in flight', async () => {
     const templatesGate = deferred<TagTemplate[]>();
     mockListTemplates.mockReturnValue(
-      templatesGate.promise as unknown as ReturnType<typeof listTemplates>,
+      templatesGate.promise as unknown as ReturnType<typeof listPublishedTemplates>,
     );
     mockResolveRequestLines.mockResolvedValue([lineTagData()]);
 
