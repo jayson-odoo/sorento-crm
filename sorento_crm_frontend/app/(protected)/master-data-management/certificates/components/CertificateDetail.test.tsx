@@ -240,8 +240,22 @@ describe('CertificateDetail - tabs', () => {
       data: bareCertificate({
         covered_product_count: 2,
         products: [
-          { id: 'cov-1', product_id: 'p1', product_code: 'SR-1', product_name: 'One', source: 'ai' },
-          { id: 'cov-2', product_id: 'p2', product_code: 'SR-2', product_name: 'Two', source: 'manual' },
+          {
+            id: 'cov-1',
+            product_id: 'p1',
+            product_code: 'SR-1',
+            product_name: 'One',
+            company_name: 'Sorento',
+            source: 'ai',
+          },
+          {
+            id: 'cov-2',
+            product_id: 'p2',
+            product_code: 'SR-2',
+            product_name: 'Two',
+            company_name: 'Sorento',
+            source: 'manual',
+          },
         ],
         revisions: [
           {

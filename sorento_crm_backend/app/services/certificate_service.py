@@ -1312,13 +1312,30 @@ class CertificateService:
         )
 
     def serialize_coverage(self, certificate_id: Any) -> list[CertificateProductResponse]:
-        rows: list[Any] = (
-            self.db.query(CertificateProduct, Product)
-            .outerjoin(Product, Product.id == CertificateProduct.product_id)
-            .filter(CertificateProduct.certificate_id == str(certificate_id))
-            .order_by(Product.product_code)
-            .all()
-        )
+        """Every coverage row, code/name/company resolved regardless of the
+        viewer's company scope.
+
+        Coverage rows point at products from BOTH companies - AI document
+        extraction matches codes across companies, and a certificate can be
+        shared. Reading under the caller's ambient scope silently drops the
+        OTHER company's products from the outer join (``product_code`` /
+        ``product_name`` come back None), which the UI used to render as a
+        blank row. Widening to ``company_scope(db, None)`` for the duration
+        of this query is the same "machine-owned, spans companies by design"
+        reasoning ``reconcile_certificate`` already uses above.
+        """
+        from app.models.base import company_scope
+        from app.models.company import Company
+
+        with company_scope(self.db, None):
+            rows: list[Any] = (
+                self.db.query(CertificateProduct, Product, Company)
+                .outerjoin(Product, Product.id == CertificateProduct.product_id)
+                .outerjoin(Company, Company.id == Product.company_id)
+                .filter(CertificateProduct.certificate_id == str(certificate_id))
+                .order_by(Product.product_code)
+                .all()
+            )
         return [
             CertificateProductResponse(
                 id=str(coverage.id),
@@ -1326,11 +1343,16 @@ class CertificateService:
                 product_id=str(coverage.product_id),
                 product_code=product.product_code if product is not None else None,
                 product_name=product.product_name if product is not None else None,
+                company_name=(
+                    None
+                    if product is None
+                    else (company.name if company is not None else "Shared")
+                ),
                 source=coverage.source,
                 created_at=coverage.created_at,
                 created_by=str(coverage.created_by) if coverage.created_by else None,
             )
-            for coverage, product in rows
+            for coverage, product, company in rows
         ]
 
     # ------------------------------------------------------------- internals
