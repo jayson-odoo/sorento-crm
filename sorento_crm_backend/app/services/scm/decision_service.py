@@ -1425,6 +1425,99 @@ def list_plan_row_decisions(db: Session, run_id: str) -> dict:
     return {"data": data, "decided_count": len(decided), "total_count": total}
 
 
+def carry_replan_decisions(db: Session, old_run_id: str, new_run_id: str) -> dict:
+    """Re-plan (plan 5.1, G8): move each decided row from the OLD run to its matching row
+    on the NEW run, when the suggestion is unchanged. Matched by (product_id, warehouse_id)
+    - the plan's own location grain - since the same product can carry a different
+    decision at two locations.
+
+    A product/location:
+    - present in both runs with an UNCHANGED suggestion (same rec_type + same order qty):
+      the decision is COPIED onto the new recommendation as a fresh `PlanRowDecision` row -
+      the old one is untouched, runs stay immutable.
+    - present in both but the suggestion CHANGED: arrives undecided, flagged
+      `needs_recheck` in the new rec's frozen `inputs` (AC-5.3's "visible flag" - `inputs`
+      already carries display extras alongside the frozen engine facts, so this needs no
+      new column).
+    - present only in the OLD run (left scope): not carried - there is no new rec to
+      attach the decision to, so this is a silent drop rather than a code path of its own.
+    - present only in the NEW run (entered scope): arrives undecided already, by default.
+
+    Only OLD rows that carry an actual decision are examined - an undecided old row has
+    nothing to carry and nothing to flag.
+    """
+    old_rows = (
+        db.query(
+            ReorderRecommendation.product_id,
+            ReorderRecommendation.warehouse_id,
+            ReorderRecommendation.rec_type,
+            ReorderRecommendation.rounded_qty,
+            PlanRowDecision,
+        )
+        .join(PlanRowDecision, PlanRowDecision.recommendation_id == ReorderRecommendation.id)
+        .filter(
+            ReorderRecommendation.run_id == old_run_id,
+            ReorderRecommendation.rec_type.in_(_PLAN_ROW_DECIDABLE_TYPES),
+        )
+        .all()
+    )
+    if not old_rows:
+        return {"carried": 0, "recheck": 0, "dropped": 0}
+
+    new_recs = (
+        db.query(ReorderRecommendation)
+        .filter(
+            ReorderRecommendation.run_id == new_run_id,
+            ReorderRecommendation.rec_type.in_(_PLAN_ROW_DECIDABLE_TYPES),
+        )
+        .all()
+    )
+    new_by_key = {
+        (str(r.product_id), str(r.warehouse_id) if r.warehouse_id else None): r
+        for r in new_recs
+    }
+
+    carried = recheck = dropped = 0
+    now = datetime.utcnow()
+    for product_id, warehouse_id, rec_type, rounded_qty, old_decision in old_rows:
+        key = (str(product_id), str(warehouse_id) if warehouse_id else None)
+        new_rec = new_by_key.get(key)
+        if new_rec is None:
+            dropped += 1
+            continue
+        unchanged = new_rec.rec_type == rec_type and _qty_eq(new_rec.rounded_qty, rounded_qty)
+        if not unchanged:
+            recheck += 1
+            new_rec.inputs = {**(new_rec.inputs or {}), "needs_recheck": True}
+            db.add(new_rec)
+            continue
+        db.add(PlanRowDecision(
+            id=str(uuid.uuid4()),
+            recommendation_id=new_rec.id,
+            kind=old_decision.kind,
+            buy_qty=old_decision.buy_qty,
+            stock_takes=old_decision.stock_takes,
+            po_qty=old_decision.po_qty,
+            po_refs=old_decision.po_refs,
+            reason_text=old_decision.reason_text,
+            price_mode=old_decision.price_mode,
+            supplier_id=old_decision.supplier_id,
+            unit_cost=old_decision.unit_cost,
+            decided_by=old_decision.decided_by,
+            decided_at=now,
+        ))
+        carried += 1
+    db.flush()
+    return {"carried": carried, "recheck": recheck, "dropped": dropped}
+
+
+def _qty_eq(a, b) -> bool:
+    """Decimal-safe equality for two possibly-None recommendation quantities."""
+    if a is None or b is None:
+        return a is None and b is None
+    return abs(float(a) - float(b)) < 1e-6
+
+
 def _plan_row_decision_dict(
     db: Session, decision: PlanRowDecision, po: Optional[PurchaseOrder]
 ) -> dict:

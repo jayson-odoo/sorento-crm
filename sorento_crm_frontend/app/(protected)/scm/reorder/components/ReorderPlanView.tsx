@@ -17,6 +17,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import type { ToolbarAction } from '@/components/ui/data-grid-list-toolbar';
 import { ConfirmActionDialog } from '../../components/ConfirmActionDialog';
 import { fmtDate, fmtInt } from '../../lib/format';
@@ -33,6 +34,7 @@ import {
 import { resetRunDecisions } from '../services/reorderRunService';
 import type { PlanTotals } from '../lib/planDecisions';
 import { PlanExceptionsView } from './PlanExceptionsView';
+import { PlanHeaderTab } from './PlanHeaderTab';
 import { PlanLinesSection } from './PlanLinesSection';
 import { PoWorklistView } from './PoWorklistView';
 import { ReorderStatTiles, type ReorderPlanView as PlanViewKey } from './ReorderStatTiles';
@@ -62,6 +64,11 @@ export function ReorderPlanView({ runId }: { runId: string }) {
   const [leaveOpen, setLeaveOpen] = useState(false);
   const [resetOpen, setResetOpen] = useState(false);
   const [resetting, setResetting] = useState(false);
+  // S5: Header (Plan until, warehouse/product scope, cut-off, status, counts) + Lines
+  // (the existing grid) - view and edit share the SAME layout (ADR-PRODUCT-STANDARDS).
+  // Defaults to Lines: the deciding happens there, and that is what this page has always
+  // opened to.
+  const [tab, setTab] = useState<'header' | 'lines'>('lines');
 
   const run = useReorderRunDetail(runId, true);
   // A property of the demand book, not of this run, so it is read once and shown whichever
@@ -237,60 +244,73 @@ export function ReorderPlanView({ runId }: { runId: string }) {
     <div className="space-y-5">
       {header}
 
-      {/* Demand that arrived with no stated location. It IS planned - it lands on the
-          location holding the most of each item - but the planner should know which part of
-          the plan rests on demand nobody located, because that is the part most likely to be
-          wrong. */}
-      {unlocated.data && unlocated.data.products > 0 ? (
-        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-sm">
-          <AlertTriangle className="size-4 shrink-0 text-amber-600" aria-hidden />
-          <span className="text-muted-foreground">
-            <span className="font-medium text-foreground tabular-nums">
-              {fmtInt(unlocated.data.quantity)}
-            </span>{' '}
-            units of committed demand across{' '}
-            <span className="font-medium text-foreground tabular-nums">
-              {fmtInt(unlocated.data.products)}
-            </span>{' '}
-            product{unlocated.data.products === 1 ? '' : 's'} arrived with no stock location.
-            It is planned against the location holding the most of each item.
-          </span>
-        </div>
-      ) : null}
+      <Tabs value={tab} onValueChange={(v) => setTab(v as 'header' | 'lines')} className="w-full">
+        <TabsList variant="line" className="mb-4 w-full justify-start overflow-x-auto">
+          <TabsTrigger value="lines">Lines</TabsTrigger>
+          <TabsTrigger value="header">Header</TabsTrigger>
+        </TabsList>
 
-      {/* R9: the tiles stay above the grid, counting PRODUCTS (R14). */}
-      <ReorderStatTiles
-        decided={decisionProgress?.decided ?? 0}
-        total={decisionProgress?.total ?? 0}
-        cashCommitted={progressTotals?.cost ?? 0}
-        cashTotal={item.summary?.total_cash_impact ?? 0}
-        awaitingRows={0}
-        undecidedFilterActive={decidedFilter === 'undecided'}
-        onToggleUndecidedFilter={() =>
-          setDecidedFilter((f) => (f === 'undecided' ? 'all' : 'undecided'))
-        }
-      />
+        <TabsContent value="header" className="mt-0 focus-visible:outline-none">
+          <PlanHeaderTab runId={runId} run={item} />
+        </TabsContent>
 
-      {view === 'plan_exceptions' ? (
-        <PlanExceptionsView runId={runId} onBack={() => setView('buy')} />
-      ) : view === 'po_worklist' ? (
-        <PoWorklistView runId={runId} onBack={() => setView('buy')} />
-      ) : view === 'order_summary' ? (
-        <SummaryOrderReportView runId={runId} onBack={() => setView('buy')} />
-      ) : (
-        <PlanLinesSection
-          runId={runId}
-          decidedFilter={decidedFilter}
-          onDecidedFilterChange={setDecidedFilter}
-          onTotalsChange={setProgressTotals}
-          onDecisionProgressChange={setDecisionProgress}
-          onUnsavedChange={setUnsavedCount}
-          secondaryActions={actions}
-          decisionsReadOnly={!!rowDecisionLockReason}
-          readOnlyReason={rowDecisionLockReason}
-          groupByChannel={groupByChannel}
-        />
-      )}
+        <TabsContent value="lines" className="mt-0 space-y-5 focus-visible:outline-none">
+          {/* Demand that arrived with no stated location. It IS planned - it lands on the
+              location holding the most of each item - but the planner should know which part
+              of the plan rests on demand nobody located, because that is the part most likely
+              to be wrong. */}
+          {unlocated.data && unlocated.data.products > 0 ? (
+            <div className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-sm">
+              <AlertTriangle className="size-4 shrink-0 text-amber-600" aria-hidden />
+              <span className="text-muted-foreground">
+                <span className="font-medium text-foreground tabular-nums">
+                  {fmtInt(unlocated.data.quantity)}
+                </span>{' '}
+                units of committed demand across{' '}
+                <span className="font-medium text-foreground tabular-nums">
+                  {fmtInt(unlocated.data.products)}
+                </span>{' '}
+                product{unlocated.data.products === 1 ? '' : 's'} arrived with no stock location.
+                It is planned against the location holding the most of each item.
+              </span>
+            </div>
+          ) : null}
+
+          {/* R9: the tiles stay above the grid, counting PRODUCTS (R14). */}
+          <ReorderStatTiles
+            decided={decisionProgress?.decided ?? 0}
+            total={decisionProgress?.total ?? 0}
+            cashCommitted={progressTotals?.cost ?? 0}
+            cashTotal={item.summary?.total_cash_impact ?? 0}
+            awaitingRows={0}
+            undecidedFilterActive={decidedFilter === 'undecided'}
+            onToggleUndecidedFilter={() =>
+              setDecidedFilter((f) => (f === 'undecided' ? 'all' : 'undecided'))
+            }
+          />
+
+          {view === 'plan_exceptions' ? (
+            <PlanExceptionsView runId={runId} onBack={() => setView('buy')} />
+          ) : view === 'po_worklist' ? (
+            <PoWorklistView runId={runId} onBack={() => setView('buy')} />
+          ) : view === 'order_summary' ? (
+            <SummaryOrderReportView runId={runId} onBack={() => setView('buy')} />
+          ) : (
+            <PlanLinesSection
+              runId={runId}
+              decidedFilter={decidedFilter}
+              onDecidedFilterChange={setDecidedFilter}
+              onTotalsChange={setProgressTotals}
+              onDecisionProgressChange={setDecisionProgress}
+              onUnsavedChange={setUnsavedCount}
+              secondaryActions={actions}
+              decisionsReadOnly={!!rowDecisionLockReason}
+              readOnlyReason={rowDecisionLockReason}
+              groupByChannel={groupByChannel}
+            />
+          )}
+        </TabsContent>
+      </Tabs>
 
       <ConfirmActionDialog
         open={leaveOpen}

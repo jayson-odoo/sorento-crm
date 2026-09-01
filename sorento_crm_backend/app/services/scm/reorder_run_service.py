@@ -70,7 +70,8 @@ def create_run(db: Session, warehouse_codes: Optional[list[str]],
                budget_id: Optional[str] = None, actor: Optional[str] = None,
                enqueue: bool = True, include_market: bool = False,
                product_codes: Optional[list[str]] = None,
-               plan_horizon_date: Optional[date] = None) -> dict:
+               plan_horizon_date: Optional[date] = None,
+               supersedes_run_id: Optional[str] = None) -> dict:
     """Insert a ``running`` ``scm.reorder_run`` (scope snapshot + started_at) and
     enqueue the RQ ``run_reorder`` task. Returns ``{run_id, status, buy_scope, stage}``.
 
@@ -98,6 +99,13 @@ def create_run(db: Session, warehouse_codes: Optional[list[str]],
     version here, at creation, and never again: the grain a screen shows for a run is its
     stamp rather than the live setting, so changing the policy affects only later runs and
     an existing run's decisions stay valid where they were made.
+
+    ``supersedes_run_id`` (plan 5.1, G8) is set only by `replan_run` below - it is the run
+    a Re-plan is replacing. Stamped on THIS row immediately (the RQ worker needs it to find
+    the old run's decisions once its own recommendations exist); the reverse pointer on the
+    OLD run is written only when this run actually reaches ``completed`` (see
+    `_execute_run_scoped`), so a still-running or failed re-plan never makes a still-valid
+    old run look superseded.
     """
     buy_scope = buy_scope if buy_scope in ("network", "warehouse") else "warehouse"
     warehouse_ids = _resolve_warehouse_ids(db, warehouse_codes)
@@ -121,6 +129,7 @@ def create_run(db: Session, warehouse_codes: Optional[list[str]],
         source_ref=_SEED,
         decision_grain=plan_grain.resolve_plan_grain(db),
         front_planning_contract_version=plan_grain.FRONT_PLANNING_CONTRACT_VERSION,
+        supersedes_run_id=supersedes_run_id,
     ))
     db.commit()
 
@@ -180,6 +189,43 @@ def _resolve_warehouse_ids(db: Session, warehouse_codes: Optional[list[str]]) ->
         return [str(r[0]) for r in rows]
     rows = db.query(Warehouse.id).filter(Warehouse.is_active.is_(True)).all()
     return [str(r[0]) for r in rows]
+
+
+# ===========================================================================
+# replan - a new run that supersedes an old one (plan 5.1, G8)
+# ===========================================================================
+
+def replan_run(db: Session, old_run_id: str, *, warehouse_codes: list[str],
+               product_codes: list[str], plan_horizon_date: Optional[date],
+               actor: Optional[str]) -> dict:
+    """Launch a NEW run that supersedes ``old_run_id`` (G8). Runs stay immutable - this
+    never mutates the old row's own scope/recommendations, it only starts a fresh run and
+    marks the lineage. Returns the same shape `create_run` does.
+
+    The old run must be ``completed`` (nothing to supersede on a run that never finished)
+    and not already superseded (one re-plan per run keeps the lineage a simple chain rather
+    than a fork nobody asked for - re-plan the NEWEST run instead)."""
+    old = db.get(ReorderRun, old_run_id)
+    if old is None:
+        raise AppException(status_code=404, message="Reorder run not found.")
+    if old.status != "completed":
+        raise AppException(
+            status_code=422,
+            message="Only a completed plan can be re-planned.",
+        )
+    if old.superseded_by_run_id:
+        raise AppException(
+            status_code=422,
+            message="This plan has already been re-planned - open the newer plan instead.",
+        )
+    return create_run(
+        db,
+        warehouse_codes=warehouse_codes,
+        product_codes=product_codes or None,
+        actor=actor,
+        plan_horizon_date=plan_horizon_date,
+        supersedes_run_id=old_run_id,
+    )
 
 
 # ===========================================================================
@@ -460,6 +506,25 @@ def _execute_run_scoped(db: Session, run: ReorderRun, _caller_scope) -> dict:
             log.info("run_reorder %s: refreshed %s level suggestions", run_id, n)
         except Exception:  # noqa: BLE001
             log.exception("run_reorder %s: failed to refresh level suggestions", run_id)
+
+        # Re-plan (plan 5.1, G8): carry decisions to THIS run, then mark the OLD run
+        # superseded. AFTER the commit and BEST-EFFORT, same reasoning as the two blocks
+        # above - this run is a complete, durable plan either way, and a failure here must
+        # not flip it to `failed`. Superseding happens regardless of whether the carry
+        # itself found anything to move: the new run is the live one from here on.
+        if run.supersedes_run_id:
+            try:
+                from app.services.scm import decision_service
+                stats = decision_service.carry_replan_decisions(
+                    db, str(run.supersedes_run_id), run_id)
+                old = db.get(ReorderRun, run.supersedes_run_id)
+                if old is not None:
+                    old.superseded_by_run_id = run_id
+                    db.add(old)
+                db.commit()
+                log.info("run_reorder %s: replan carried %s", run_id, stats)
+            except Exception:  # noqa: BLE001
+                log.exception("run_reorder %s: failed to carry replan decisions", run_id)
 
         return {"run_id": run_id, "status": "completed", **counts}
     except Exception as exc:  # noqa: BLE001 - record, never crash the worker

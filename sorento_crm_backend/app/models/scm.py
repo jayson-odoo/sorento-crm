@@ -301,6 +301,17 @@ class ReorderRun(Base, CompanyScopedMixin):
     decision_grain = Column(String(20), nullable=True)
     front_planning_contract_version = Column(SmallInteger, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    # Re-plan supersede link (plan 5.1 / G8). Two columns rather than one, so the RQ worker
+    # can find the OLD run's decisions the moment it starts (`supersedes_run_id`, stamped at
+    # creation) without waiting on the reverse pointer, which is only written once THIS run
+    # actually completes (`superseded_by_run_id`, stamped on the OLD row) - a still-running
+    # or failed re-plan must never make a still-valid old run look superseded.
+    supersedes_run_id = Column(
+        UUID(as_uuid=False), ForeignKey("scm.reorder_run.id", ondelete="SET NULL"), nullable=True
+    )
+    superseded_by_run_id = Column(
+        UUID(as_uuid=False), ForeignKey("scm.reorder_run.id", ondelete="SET NULL"), nullable=True
+    )
 
     recommendations = relationship(
         "ReorderRecommendation",

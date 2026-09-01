@@ -8,7 +8,7 @@ fields - SKU/warehouse/supplier resolve to human codes/names.
 """
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, List, Optional
 
 from fastapi import APIRouter, Body, Depends, Query, Response
 from sqlalchemy import text
@@ -25,6 +25,8 @@ from app.schemas.scm_reorder import (
     ReorderRunListResponse,
     ReorderRunStatusResponse,
     ReorderRunTodayResponse,
+    ReplanReorderRunAccepted,
+    ReplanReorderRunRequest,
     UnlocatedDemandResponse,
 )
 from app.services.company_scope_sql import company_sql_predicate
@@ -97,6 +99,36 @@ def create_reorder_run(
     if response is not None:
         response.status_code = 202
     return result
+
+
+@router.post(
+    "/reorder-runs/{run_id}/replan",
+    response_model=ReplanReorderRunAccepted,
+    status_code=202,
+)
+def replan_reorder_run(
+    run_id: str,
+    payload: ReplanReorderRunRequest = Body(...),
+    response: Response = None,  # type: ignore[assignment]
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_RUN),
+):
+    """Re-plan (plan 5.1, G8): editing Plan until or the warehouse/product scope on a
+    completed plan offers this - a NEW run with the edited values, which supersedes
+    ``run_id`` once it finishes. The FE navigates to the returned ``run_id`` immediately
+    and polls it exactly like Start Plan's own 202 (the carry of decisions + the old
+    run's supersede stamp both happen once the new run's own worker job completes)."""
+    svc.assert_run_visible(db, run_id)
+    result = svc.replan_run(
+        db, run_id,
+        warehouse_codes=payload.warehouse_codes or [],
+        product_codes=payload.product_codes or [],
+        plan_horizon_date=payload.plan_horizon_date,
+        actor=(_user or {}).get("id"),
+    )
+    if response is not None:
+        response.status_code = 202
+    return {**result, "supersedes_run_id": run_id}
 
 
 #: The plans list's sortable columns, keyed by the column id the grid sends
@@ -197,6 +229,7 @@ def list_reorder_runs(
         SELECT id, status, buy_scope, warehouse_ids, product_ids, created_by,
                started_at, finished_at, run_log,
                decision_grain, front_planning_contract_version, plan_horizon_date,
+               superseded_by_run_id,
                -- How many warehouses were there to plan WHEN THIS RUN RAN. Compared with
                -- the run's own scope, that is what says "all" rather than "60 warehouses"
                -- - and it has to be as-of the run: 60 warehouses existed on 27 Aug and 61
@@ -355,6 +388,11 @@ def _list_item(
         "planned_product_count": (counts or {}).get("planned"),
         "decided_product_count": (counts or {}).get("decided"),
         "confirmed_product_count": (counts or {}).get("confirmed"),
+        # AC-5.4: the superseded run stays readable and labelled in the plans list.
+        "superseded_by_run_id": (
+            str(_key(r, "superseded_by_run_id"))
+            if _key(r, "superseded_by_run_id") is not None else None
+        ),
     }
 
 
@@ -501,7 +539,8 @@ def get_reorder_run(
     co, co_params = company_sql_predicate(db, "company_id", param_prefix="crg")
     row = db.execute(text(
         "SELECT id, status, buy_scope, error_text, run_log, decision_grain, "
-        "       front_planning_contract_version, plan_horizon_date, started_at "
+        "       front_planning_contract_version, plan_horizon_date, started_at, "
+        "       warehouse_ids, product_ids, supersedes_run_id, superseded_by_run_id "
         "  FROM scm.reorder_run "
         f"WHERE id = :id AND {co or 'true'}"
     ), {"id": run_id, **co_params}).mappings().first()
@@ -510,6 +549,7 @@ def get_reorder_run(
         # from one that does not exist.
         raise AppException(status_code=404, message="Reorder run not found.")
     log_obj = row["run_log"] or {}
+    scope = _scope_for_run(db, row["warehouse_ids"], row["product_ids"], row["started_at"])
     summary = None
     if row["status"] == "completed":
         buy_count = _costed_buy_counts(db, [str(row["id"])]).get(str(row["id"]))
@@ -536,6 +576,57 @@ def get_reorder_run(
         # The plan header is "Plan dd/mm/yyyy HH:mm" (C1) and this is the only response
         # that page reads.
         "started_at": _iso(row["started_at"]),
+        "warehouse_codes": scope["warehouse_codes"],
+        "is_all_warehouses": scope["is_all_warehouses"],
+        "product_codes": scope["product_codes"],
+        "supersedes_run_id": (str(row["supersedes_run_id"])
+                              if row["supersedes_run_id"] else None),
+        "superseded_by_run_id": (str(row["superseded_by_run_id"])
+                                 if row["superseded_by_run_id"] else None),
+    }
+
+
+def _scope_for_run(db: Session, warehouse_ids, product_ids, started_at) -> dict:
+    """Resolve one run's stored id scope to human codes for the Header tab (plan 5.1,
+    AC-5.1) - the same facts `_list_item` already resolves per page, done here for ONE
+    run so the detail page needs no second endpoint to pre-fill a Re-plan edit."""
+    wids = [str(w) for w in (warehouse_ids or [])]
+    codes: List[str] = []
+    if wids:
+        wh_co, wh_co_params = company_sql_predicate(db, "w.company_id", param_prefix="cws",
+                                                     shared=True)
+        wh_co_sql = ("AND " + wh_co) if wh_co else ""
+        rows = db.execute(text(
+            "SELECT warehouse_code FROM warehouses w "
+            "WHERE id = ANY(CAST(:ids AS uuid[])) "
+            f"{wh_co_sql}"
+        ), {"ids": wids, **wh_co_params}).all()
+        codes = [r[0] for r in rows]
+    wh_co2, wh_co2_params = company_sql_predicate(db, "w.company_id", param_prefix="cwt2",
+                                                   shared=True)
+    wh_co2_sql = ("AND " + wh_co2) if wh_co2 else ""
+    warehouses_then = db.execute(text(
+        "SELECT count(*) FROM warehouses w WHERE w.is_active = true "
+        "AND (CAST(:started AS timestamp) IS NULL OR w.created_at <= CAST(:started AS timestamp)) "
+        f"{wh_co2_sql}"
+    ), {"started": started_at, **wh_co2_params}).scalar() or 0
+    pids = [str(p) for p in product_ids] if product_ids is not None else None
+    product_codes: Optional[List[str]] = None
+    if pids is not None:
+        product_codes = []
+        if pids:
+            po_co, po_co_params = company_sql_predicate(db, "company_id", param_prefix="cps")
+            po_co_sql = ("AND " + po_co) if po_co else ""
+            rows = db.execute(text(
+                "SELECT product_code FROM products "
+                "WHERE id = ANY(CAST(:ids AS uuid[])) "
+                f"{po_co_sql}"
+            ), {"ids": pids, **po_co_params}).all()
+            product_codes = [r[0] for r in rows]
+    return {
+        "warehouse_codes": codes,
+        "is_all_warehouses": _covers_every_warehouse(wids, warehouses_then),
+        "product_codes": product_codes,
     }
 
 
@@ -1209,6 +1300,10 @@ def _row(r, funding_by_id: Optional[dict[str, str]] = None, *,
         "supplier_reason": inp.get("supplier_reason"),
         "alternatives": inp.get("alternatives") or [],
         "is_exception": bool(inp.get("is_exception")),
+        # Re-plan (plan 5.1, G8): this row's product/location carried a decision on the
+        # run this one superseded, but the suggestion changed - the buyer decides again,
+        # not blindly reads the carried figure. Never true on a run nobody re-planned.
+        "needs_recheck": bool(inp.get("needs_recheck")),
         # --- covered rows: the two numbers the stock-or-buy choice turns on ---
         # The decision taken on this row, if any. A covered row KEEPS its place in the
         # list after a decision so it can be changed; without the state the list would
