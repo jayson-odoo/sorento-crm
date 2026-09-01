@@ -1,6 +1,9 @@
 # PLAN - Price Tag Feedback R2
 
-Status: Approved 1 Sep 2026 - implementation starting
+Status: Approved 1 Sep 2026 - implementation starting. S7 (barcode) DONE 2 Sep
+2026, branch `price-tag-r2-s7`, PR open on `origin/main` - MERGE ORDER: needs
+#486 (branch `price-tag-r2-s5`, adds migration `454_tag_template_versions`)
+merged first, since S7's migration `455_products_barcode` chains onto it.
 UAC: `documentation/plans/dealer-kit/price-tag-feedback-r2-acceptance-criteria.md`
 Predecessor: `documentation/plans/dealer-kit/PLAN-price-tag-request.md` (shipped, PR #289)
 
