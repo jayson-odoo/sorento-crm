@@ -138,6 +138,15 @@ class PriceTagRequestResponse(BaseModel):
     promotion_name: Optional[str] = None
     line_count: int = 0
 
+    # The PO files the salesperson attached, in
+    # ``entity_attachment_service.list_attachments_for_entity``'s shape
+    # (link_id, attachment_id, filename, size, url, content_type, ...). Filled
+    # by ``response_with_resolved_lines`` for both the CRM and the portal
+    # detail routes (D49) - declared here for the same reason as the four
+    # fields above it: an undeclared field is dropped by ``response_model``
+    # without a word (AC-S1-5).
+    attachments: list[dict] = Field(default_factory=list)
+
 
 class PriceTagRequestListItem(BaseModel):
     model_config = ConfigDict(from_attributes=True)

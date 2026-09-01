@@ -37,6 +37,13 @@ from app.models.entity_attachment import EntityAttachmentLink
 from app.models.portal import PortalToken
 from app.models.resources import Attachment, AttachmentType
 from app.services.entity_attachment_service import EntityAttachmentService
+# Aliased to the old local name: every `_list_attachments_for(...)` call site
+# below is unchanged. Moved to the service module so the price tag request's
+# CRM detail route can answer with the same shape without a service reaching
+# up into this route module (D49).
+from app.services.entity_attachment_service import (
+    list_attachments_for_entity as _list_attachments_for,
+)
 from app.services.portal_form_visibility_service import resolve_visible_form_types
 from app.services.error_handler import (
     AppException,
@@ -698,6 +705,33 @@ def _check_kind(kind: str) -> str:
     return k
 
 
+# Kinds the ATTACHMENT routes accept beyond SUPPORTED_TYPES. price_tag_request
+# has its own dedicated submissions router (portal_price_tag.py, not
+# PortalService's generic CRUD) but shares this generic attachments plumbing
+# (D3) - so only the kind check and the ownership check below widen for it;
+# `_check_kind` above stays exactly as it was for the generic submissions routes.
+_ATTACHMENT_ONLY_KINDS = ("price_tag_request",)
+
+
+def _check_attachment_kind(kind: str) -> str:
+    k = (kind or "").strip().lower()
+    if k not in SUPPORTED_TYPES and k not in _ATTACHMENT_ONLY_KINDS:
+        raise handle_validation_error(f"Unsupported submission type: {kind!r}.")
+    return k
+
+
+def _require_own_price_tag_request(db: Session, token: PortalToken, submission_id: str) -> None:
+    """The contact's own price tag request, or a 404 - mirrors
+    ``_require_own_request`` in portal_price_tag.py. The attachment routes check
+    ownership here instead of ``PortalService.get_submission``, which does not
+    know about price_tag_request."""
+    from app.models.price_tag import PriceTagRequest
+
+    row = db.query(PriceTagRequest).filter(PriceTagRequest.id == submission_id).first()
+    if row is None or str(row.contact_id) != str(token.contact_id):
+        raise handle_not_found("Price tag request", submission_id)
+
+
 @router.get("/submissions")
 def portal_list_submissions(
     type: str = Query(...),
@@ -1016,6 +1050,8 @@ def _kinds_for_entity_type(entity_type: str) -> tuple[str, ...]:
     et = (entity_type or "").strip().lower()
     if et == "purchase_request":
         return ("purchase_request", "sponsorship_form")
+    if et in _ATTACHMENT_ONLY_KINDS:
+        return (et,)
     return (et,) if et in SUPPORTED_TYPES else ()
 
 
@@ -1080,85 +1116,6 @@ def _safe_presigned_url(
         return None
 
 
-def _list_attachments_for(db: Session, entity_type: str, entity_id: str) -> list[dict]:
-    rows = (
-        db.query(EntityAttachmentLink, Attachment)
-        .join(Attachment, Attachment.id == EntityAttachmentLink.attachment_id)
-        .filter(
-            EntityAttachmentLink.entity_type == entity_type,
-            EntityAttachmentLink.entity_id == entity_id,
-        )
-        .order_by(EntityAttachmentLink.sort_order.asc().nulls_last(), EntityAttachmentLink.created_at.asc())
-        .all()
-    )
-
-    # Batch-resolve uploader names in two queries rather than one per row - a
-    # submission can carry up to the type's per-record cap (10-20) attachments.
-    from app.models.access import RespondContact
-    from app.models.user import User
-
-    contact_ids = {att.uploaded_by_contact_id for _, att in rows if att.uploaded_by_contact_id}
-    user_ids = {att.uploaded_by for _, att in rows if att.uploaded_by}
-    contacts_by_id: dict[str, RespondContact] = {}
-    if contact_ids:
-        contacts_by_id = {
-            c.id: c
-            for c in db.query(RespondContact).filter(RespondContact.id.in_(contact_ids)).all()
-        }
-    users_by_id: dict[str, User] = {}
-    if user_ids:
-        users_by_id = {
-            u.id: u for u in db.query(User).filter(User.id.in_(user_ids)).all()
-        }
-
-    out: list[dict] = []
-    for link, att in rows:
-        uploader_kind = att.uploader_kind
-        uploaded_by_name = "Unknown"
-        uploaded_by_role = "unknown"
-        if uploader_kind == "contact" and att.uploaded_by_contact_id:
-            contact = contacts_by_id.get(att.uploaded_by_contact_id)
-            name = (
-                (
-                    (contact.name or "").strip()
-                    or " ".join(
-                        p for p in [(contact.first_name or "").strip(), (contact.last_name or "").strip()] if p
-                    ).strip()
-                    or (contact.phone_number or "").strip()
-                )
-                if contact is not None
-                else ""
-            )
-            if name:
-                uploaded_by_name = name
-                uploaded_by_role = "contact"
-        elif uploader_kind == "user" and att.uploaded_by:
-            user = users_by_id.get(att.uploaded_by)
-            name = ((user.name or "").strip() or (user.email or "").strip()) if user is not None else ""
-            if name:
-                uploaded_by_name = name
-                uploaded_by_role = "staff"
-        out.append(
-            {
-                "link_id": str(link.id),
-                "attachment_id": str(att.id),
-                "filename": att.original_filename,
-                "size": att.file_size_bytes,
-                "url": _safe_presigned_url(att.file_path, getattr(att, "storage_provider", None)) or att.file_path,
-                "content_type": att.mime_type if hasattr(att, "mime_type") else None,
-                "uploaded_at": att.uploaded_at.isoformat() if att.uploaded_at else None,
-                "uploader_kind": uploader_kind,
-                "uploaded_by_name": uploaded_by_name,
-                "uploaded_by_role": uploaded_by_role,
-                # A staff (`user`) upload has no unlink control in the portal
-                # server-enforced in portal_delete_attachment, this just matches
-                # the FE's gating so it never renders a control that would 403.
-                "can_unlink": uploader_kind != "user",
-            }
-        )
-    return out
-
-
 @router.get("/attachments")
 def portal_list_attachments(
     kind: str = Query(...),
@@ -1166,9 +1123,12 @@ def portal_list_attachments(
     token: PortalToken = Depends(get_portal_token),
     db: Session = Depends(get_db),
 ):
-    k = _check_kind(kind)
+    k = _check_attachment_kind(kind)
     # Ensures the contact owns this submission.
-    PortalService(db).get_submission(token, k, submission_id)
+    if k == "price_tag_request":
+        _require_own_price_tag_request(db, token, submission_id)
+    else:
+        PortalService(db).get_submission(token, k, submission_id)
     return {"items": _list_attachments_for(db, _entity_type_for(k), submission_id)}
 
 
@@ -1185,7 +1145,10 @@ def _attachment_is_on_own_submission(
     for link in links:
         for kind in _kinds_for_entity_type(link.entity_type):
             try:
-                portal.get_submission(token, kind, link.entity_id)
+                if kind == "price_tag_request":
+                    _require_own_price_tag_request(db, token, link.entity_id)
+                else:
+                    portal.get_submission(token, kind, link.entity_id)
                 return True
             except HTTPException:
                 # Not this contact's (404 / OWNER_MISMATCH) - try the next link.
@@ -1311,8 +1274,11 @@ async def portal_upload_attachment(
     db: Session = Depends(get_db),
 ):
     portal = PortalService(db)
-    k = _check_kind(kind)
-    portal.get_submission(token, k, submission_id)  # ownership check
+    k = _check_attachment_kind(kind)
+    if k == "price_tag_request":
+        _require_own_price_tag_request(db, token, submission_id)
+    else:
+        portal.get_submission(token, k, submission_id)  # ownership check
     attachment_type = portal.get_portal_attachment_type()
 
     contents = await file.read()
@@ -1363,6 +1329,13 @@ async def portal_upload_attachment(
         created_by=None,
         thumbnail_path=portal_thumbnail,
         storage_provider=portal_provider,
+        # Pre-existing gap, not price-tag-specific: this call never passed the
+        # browser's content type through, so every portal upload's attachment
+        # row (every kind, not just price_tag_request) carried mime_type=None
+        # and every reader of it - the PO cross-check PDF/image branch
+        # included - always fell to the generic file row. AC-S1-5 needs a real
+        # content_type, so it is fixed here rather than worked around per kind.
+        mime_type=file.content_type,
     )
     # Uploader attribution (UAC B1): create_attachment_and_link has no fields
     # for this, so stamp the freshly created row directly, in the same
@@ -1414,6 +1387,8 @@ def portal_delete_attachment(
                 continue
         if not owns:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment not found.")
+    elif raw_kind == "price_tag_request":
+        _require_own_price_tag_request(db, token, link.entity_id)
     else:
         portal.get_submission(token, raw_kind, link.entity_id)
 

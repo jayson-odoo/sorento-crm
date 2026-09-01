@@ -375,18 +375,17 @@ def _require_draft(req, message: str, code: str = "NOT_DRAFT") -> None:
 
 
 def _detail_body(db: Session, req) -> dict:
-    """The request with its lines resolved, plus the attachments key.
+    """The request with its lines AND its PO attachments resolved.
 
-    The portal form reads `attachments` without checking, and nothing writes an
-    attachment against a price tag request yet (the PO dropzone holds its files
-    on the client), so the honest answer today is an empty list rather than a
-    missing key that would crash the page.
+    ``response_with_resolved_lines`` (the same call the CRM detail route makes,
+    D49) already fills ``attachments`` via
+    ``entity_attachment_service.list_attachments_for_entity`` - real rows once
+    the PO dropzone has uploaded any, an empty list otherwise. The portal form
+    reads the key unconditionally, so it always has to be present.
     """
-    body = PriceTagRequestService.response_with_resolved_lines(db, req).model_dump(
+    return PriceTagRequestService.response_with_resolved_lines(db, req).model_dump(
         mode="json"
     )
-    body["attachments"] = []
-    return body
 
 
 def _resolve_company(db: Session, token: PortalToken) -> str:

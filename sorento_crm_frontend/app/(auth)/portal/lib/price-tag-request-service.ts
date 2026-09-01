@@ -9,6 +9,7 @@ import { extractApiError } from '@/lib/api-client';
 import {
   portalFetch,
   unwrap,
+  type PortalAttachment,
   type PortalSubmissionSummary,
 } from './portal-client';
 
@@ -57,19 +58,14 @@ export interface PriceTagRequestSummary {
 export interface PriceTagRequestDetail extends PriceTagRequestSummary {
   contact_id: string;
   lines: PriceTagRequestLine[];
-  attachments: PriceTagAttachment[];
+  /** Same shape the legacy submission kinds already carry (`_list_attachments_for`
+   *  serves both), which is what lets the PO dropzone and its preview/download
+   *  read this request exactly like any other portal submission. */
+  attachments: PortalAttachment[];
   /** Set while the request is a draft. This, not the status, is what says so:
    *  a draft's status is `new`, the same status a submitted request keeps until
    *  marketing claims it. */
   portal_draft_at?: string | null;
-}
-
-export interface PriceTagAttachment {
-  id: string;
-  filename: string;
-  content_type: string | null;
-  url: string | null;
-  created_at: string;
 }
 
 export interface DebtorOption {

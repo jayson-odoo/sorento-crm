@@ -504,10 +504,15 @@ class PriceTagRequestService:
         than were submitted is the worse failure.
 
         Lives here, not in a route module, because the CRM detail route and the
-        portal detail route both answer with it (D49).
+        portal detail route both answer with it (D49). Same reason
+        ``attachments`` is resolved here rather than in either route: one call
+        to ``list_attachments_for_entity`` is what keeps the two screens from
+        ever disagreeing about what this request's PO files look like
+        (PLAN-price-tag-feedback-r2 S1).
         """
         from app.schemas.price_tag import PriceTagRequestResponse
         from app.services.dealer_kit import tag_data_service
+        from app.services.entity_attachment_service import list_attachments_for_entity
 
         response = PriceTagRequestResponse.model_validate(request)
         resolved = {
@@ -525,6 +530,8 @@ class PriceTagRequestService:
             # is serialised as a JSON STRING and the page's `.toFixed(2)` throws.
             line.list_price = None if row["list_price"] is None else float(row["list_price"])
             line.sell_price = None if row["sell_price"] is None else float(row["sell_price"])
+
+        response.attachments = list_attachments_for_entity(db, "price_tag_request", request.id)
 
         # The header's names, from the same resolver the listing uses so the two
         # screens cannot disagree about who claimed a request.

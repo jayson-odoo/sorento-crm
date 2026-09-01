@@ -650,7 +650,7 @@ export async function deleteDraftSubmission(
 }
 
 export async function uploadAttachment(
-  kind: PortalSubmissionKind,
+  kind: PortalLandingKind,
   submissionId: string,
   file: File,
 ): Promise<PortalAttachment> {

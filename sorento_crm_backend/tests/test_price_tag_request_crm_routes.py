@@ -356,3 +356,60 @@ class TestTheQueuePagesOnTheServer:
 def _rows_of(body):
     """The listing rows, whether the body is a bare list or a paged envelope."""
     return body["data"] if isinstance(body, dict) else body
+
+
+# ---------------------------------------------------------------------------
+# AC-S1-5 (CRM half): the detail route answers with real attachments
+#
+# response_model drops any field the schema does not declare, silently
+# (LESSONS-LEARNT.md) - this is that trap, exercised on the wire rather than
+# on the service, same as the rest of this file.
+# ---------------------------------------------------------------------------
+
+
+def _link_attachment_to_request(db, request_id: str, *, filename: str = "ZZT-po.pdf") -> str:
+    import uuid as _uuid
+
+    from app.models.entity_attachment import EntityAttachmentLink
+    from app.models.resources import Attachment
+
+    att = Attachment(
+        id=str(_uuid.uuid4()),
+        original_filename=filename,
+        stored_filename=filename,
+        file_path=f"portal/zzt/{_uuid.uuid4()}.pdf",
+        mime_type="application/pdf",
+        uploader_kind="contact",
+    )
+    db.add(att)
+    db.flush()
+    link = EntityAttachmentLink(
+        entity_type="price_tag_request", entity_id=request_id, attachment_id=att.id
+    )
+    db.add(link)
+    db.commit()
+    return str(att.id)
+
+
+class TestTheCRMDetailCarriesPOAttachments:
+    def test_the_detail_route_lists_the_po_attachments(self, api):
+        client, db = api
+        request, _contact = _submitted_request(db)
+        attachment_id = _link_attachment_to_request(db, request.id)
+
+        body = client.get(f"{_BASE}/{request.id}").json()
+
+        assert len(body["attachments"]) == 1
+        att = body["attachments"][0]
+        assert att["attachment_id"] == attachment_id
+        assert att["filename"] == "ZZT-po.pdf"
+        assert att["content_type"] == "application/pdf"
+        assert "url" in att
+
+    def test_a_request_with_no_attachments_still_answers_with_an_empty_list(self, api):
+        client, db = api
+        request, _contact = _submitted_request(db)
+
+        body = client.get(f"{_BASE}/{request.id}").json()
+
+        assert body["attachments"] == []

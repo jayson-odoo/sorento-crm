@@ -79,6 +79,28 @@ vi.mock('@/components/common/SearchableMultiSelect', () => ({
   ),
 }));
 
+// A button that buffers one pending file, standing in for a real drop - the
+// dropzone's own drag/paste/upload mechanics are AttachmentDropzone.test.tsx's
+// job. This file only needs `pendingFiles` to become non-empty (AC-S1-2).
+vi.mock('./AttachmentDropzone', () => ({
+  AttachmentDropzone: (props: {
+    pendingFiles?: File[];
+    onPendingFilesChange?: (files: File[]) => void;
+  }) => (
+    <button
+      type="button"
+      onClick={() =>
+        props.onPendingFilesChange?.([
+          ...(props.pendingFiles ?? []),
+          new File(['zzt'], 'ZZT-po.pdf', { type: 'application/pdf' }),
+        ])
+      }
+    >
+      Attach PO file
+    </button>
+  ),
+}));
+
 import {
   createRequest,
   lookupDebtors,
@@ -150,6 +172,21 @@ describe('Save Draft validates nothing (D48a)', () => {
     fireEvent.change(screen.getByLabelText('Notes'), {
       target: { value: 'for the showroom' },
     });
+
+    expect(screen.getByRole('button', { name: /Save Draft/ })).not.toBeDisabled();
+  });
+
+  it('a dropped PO file with nothing else filled in still enables Save Draft (AC-S1-2)', async () => {
+    // Regression: `hasSomethingToSave` used to check only debtor/promotion/
+    // needed-by/notes/lines, so a PO file dropped before anything else was
+    // filled in left the button permanently disabled with no way to give the
+    // buffered file a draft to upload to.
+    render(<PriceTagRequestForm />);
+    await screen.findByLabelText('Debtor');
+
+    expect(screen.getByRole('button', { name: /Save Draft/ })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Attach PO file' }));
 
     expect(screen.getByRole('button', { name: /Save Draft/ })).not.toBeDisabled();
   });

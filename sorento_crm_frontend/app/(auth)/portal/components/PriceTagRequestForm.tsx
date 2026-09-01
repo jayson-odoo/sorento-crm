@@ -44,7 +44,6 @@ import {
   type SearchableSelectOption,
 } from '@/components/common/SearchableSelect';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
-import { FileDropzone } from '@/components/common/FileDropzone';
 import {
   priceTagStatusLabel,
   priceTagStatusPillClass,
@@ -70,6 +69,10 @@ import {
 } from '../lib/price-tag-request-service';
 import PriceTagProofViewer from './PriceTagProofViewer';
 import POCrossCheckViewer from './POCrossCheckViewer';
+import { AttachmentDropzone } from './AttachmentDropzone';
+import AttachmentPreviewModal from '@/components/common/AttachmentPreviewModal';
+import { toPreviewItem, portalFetchBytes } from '../lib/portal-preview';
+import { uploadAttachment, type PortalAttachment } from '../lib/portal-client';
 import type { ResolvedLineData } from '@/app/(public)/c/print/tag-sheet/[downloadId]/components/TagSheetRenderer';
 import type { TagSheetDoc } from '@/lib/dealer-kit/tag-template-types';
 
@@ -221,6 +224,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   const [neededByDate, setNeededByDate] = useState('');
   const [notes, setNotes] = useState('');
   const [lines, setLines] = useState<DraftLine[]>([]);
+  const [attachments, setAttachments] = useState<PortalAttachment[]>([]);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
 
   // ---- Proof review state ----
@@ -287,6 +291,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         setNeededByDate(data.needed_by_date ?? '');
         setNotes(data.notes ?? '');
         setLines(data.lines.map(lineToDraft));
+        setAttachments(data.attachments ?? []);
       })
       .catch(() => {
         if (!cancelled) toast.error('Failed to load request');
@@ -427,13 +432,17 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
 
   // ---- What there is to save, and what Submit still needs (D48) ----
 
-  /** Save Draft asks for one thing only: that there is something to save. */
+  /** Save Draft asks for one thing only: that there is something to save. A
+   *  dropped PO file with nothing else filled in still counts (AC-S1-2) - it is
+   *  parked in `pendingFiles` waiting on a draft id to upload to, and Save Draft
+   *  is the only way to give it one. */
   const hasSomethingToSave =
     !!debtorCode ||
     !!promotionId ||
     !!neededByDate ||
     notes.trim().length > 0 ||
-    lines.length > 0;
+    lines.length > 0 ||
+    pendingFiles.length > 0;
 
   const payloadLines = () =>
     lines.map((l) => ({
@@ -510,6 +519,40 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     });
   }, [debtorCode, neededByDate, lines.length]);
 
+  // ---- PO attachments: buffer pre-draft, flush once the draft exists ----
+  //
+  // The legacy SubmissionForm pattern (D2): a file dropped before Save Draft or
+  // Submit is held in `pendingFiles` (nothing to upload TO yet) and uploaded the
+  // moment the draft is created. A file that fails names itself in the thrown
+  // error and stays in `pendingFiles`, so Save Draft / Submit refuse to look
+  // like they finished cleanly.
+  const flushPendingFiles = useCallback(
+    async (id: string) => {
+      if (pendingFiles.length === 0) return;
+      const uploaded: PortalAttachment[] = [];
+      const remaining: File[] = [];
+      const errors: string[] = [];
+      for (const file of pendingFiles) {
+        try {
+          const att = await uploadAttachment('price_tag_request', id, file);
+          uploaded.push(att);
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : 'unknown error';
+          errors.push(`${file.name}: ${msg}`);
+          remaining.push(file);
+        }
+      }
+      if (uploaded.length > 0) setAttachments((prev) => [...prev, ...uploaded]);
+      setPendingFiles(remaining);
+      if (errors.length > 0) {
+        throw new Error(
+          `${errors.length} attachment${errors.length > 1 ? 's' : ''} failed: ${errors.join('; ')}`,
+        );
+      }
+    },
+    [pendingFiles],
+  );
+
   // ---- Save draft (D48a: validates nothing) ----
   const handleSaveDraft = useCallback(async () => {
     setSaving(true);
@@ -525,11 +568,10 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       };
       // An open draft is UPDATED, not created again: saving twice used to leave
       // the salesperson with two rows and no way to tell them apart.
-      if (requestId) {
-        await updateRequest(requestId, payload);
-      } else {
-        await createRequest(payload);
-      }
+      const saved = requestId
+        ? await updateRequest(requestId, payload)
+        : await createRequest(payload);
+      await flushPendingFiles(saved.id);
       toast.success('Draft saved');
       router.push(`${portalBase(slug)}?type=price_tag_request`);
     } catch (e) {
@@ -541,7 +583,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       setSaving(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [requestId, debtorCode, debtors, promotionId, neededByDate, notes, lines, router, slug]);
+  }, [requestId, debtorCode, debtors, promotionId, neededByDate, notes, lines, flushPendingFiles, router, slug]);
 
   // ---- Delete draft ----
   const handleDeleteDraft = useCallback(async () => {
@@ -589,6 +631,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         notes: notes || null,
         lines: payloadLines(),
       });
+      await flushPendingFiles(created.id);
       await submitRequest(created.id);
       toast.success('Request submitted');
       router.push(`${portalBase(slug)}?type=price_tag_request`);
@@ -612,7 +655,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       setSubmitting(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [collectProblems, applyFieldErrors, debtorCode, debtors, promotionId, neededByDate, notes, lines, router, slug]);
+  }, [collectProblems, applyFieldErrors, debtorCode, debtors, promotionId, neededByDate, notes, lines, flushPendingFiles, router, slug]);
 
   // ---- Approve proof ----
   const handleApprove = useCallback(async () => {
@@ -936,43 +979,18 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           <CardTitle className="text-base">Purchase Order</CardTitle>
         </CardHeader>
         <CardContent className="px-4 pb-4">
-          {/* The shared drop surface, not a hand-rolled dashed box: the old one
-              said "Drop PO files here" and had no drag handlers at all, so a
-              dropped file opened in the browser tab instead. */}
-          <FileDropzone
-            id="po-upload"
-            multiple
-            accept=".pdf,.jpg,.jpeg,.png"
-            files={pendingFiles}
-            onFilesChange={setPendingFiles}
-            onReject={(file, reason) =>
-              toast.error(
-                reason === 'type'
-                  ? `${file.name} is not a PDF, JPG or PNG.`
-                  : `${file.name} could not be attached.`,
-              )
-            }
-            title="Drop PO files here, or click to browse"
-            aria-label="Attach purchase order files"
+          {/* The shared portal dropzone (D2/D3): a file dropped before the draft
+              exists is buffered and shown here as pending; once the draft exists
+              (this request already has an id) a drop uploads immediately. */}
+          <AttachmentDropzone
+            kind="price_tag_request"
+            submissionId={requestId ?? null}
+            attachments={attachments}
+            onChange={setAttachments}
+            disabled={saving || submitting || deleting}
+            pendingFiles={pendingFiles}
+            onPendingFilesChange={setPendingFiles}
           />
-          {(request?.attachments?.length ?? 0) > 0 && (
-            <div className="mt-3 space-y-1">
-              <p className="text-xs text-muted-foreground font-medium">
-                Existing attachments
-              </p>
-              {(request?.attachments ?? []).map((att) => (
-                <div
-                  key={att.id}
-                  className="flex items-center text-sm px-2 py-1 bg-muted rounded"
-                >
-                  <FileText className="size-3.5 mr-2 text-muted-foreground" />
-                  <span className="truncate" title={att.filename}>
-                    {att.filename}
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
         </CardContent>
       </Card>
 
@@ -1360,6 +1378,11 @@ function RequestDetailView({
 }: {
   request: PriceTagRequestDetail;
 }) {
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewIndex, setPreviewIndex] = useState(0);
+  const attachments = request.attachments ?? [];
+  const previewItems = attachments.map(toPreviewItem);
+
   return (
     <>
       {/* Header */}
@@ -1457,27 +1480,42 @@ function RequestDetailView({
         </CardContent>
       </Card>
 
-      {/* Attachments */}
-      {(request.attachments?.length ?? 0) > 0 && (
+      {/* Attachments - same preview/download the dropzone renders while editable
+          (D2/S1): reopening a submitted request shows the PO files it travelled
+          with, openable in place. */}
+      {attachments.length > 0 && (
         <Card>
           <CardHeader className="py-3 px-4">
             <CardTitle className="text-base">PO Attachments</CardTitle>
           </CardHeader>
           <CardContent className="px-4 pb-4 space-y-1">
-            {(request.attachments ?? []).map((att) => (
-              <div
-                key={att.id}
-                className="flex items-center text-sm px-2 py-1.5 bg-muted rounded"
+            {attachments.map((att, idx) => (
+              <button
+                key={att.link_id}
+                type="button"
+                onClick={() => {
+                  setPreviewIndex(idx);
+                  setPreviewOpen(true);
+                }}
+                className="flex w-full items-center text-sm px-2 py-1.5 bg-muted rounded hover:bg-muted/70 transition text-left"
               >
-                <FileText className="size-3.5 mr-2 text-muted-foreground" />
-                <span className="truncate" title={att.filename}>
-                  {att.filename}
+                <FileText className="size-3.5 mr-2 text-muted-foreground shrink-0" />
+                <span className="truncate" title={att.filename ?? undefined}>
+                  {att.filename || 'Attachment'}
                 </span>
-              </div>
+              </button>
             ))}
           </CardContent>
         </Card>
       )}
+
+      <AttachmentPreviewModal
+        open={previewOpen}
+        onOpenChange={setPreviewOpen}
+        items={previewItems}
+        startIndex={previewIndex}
+        fetchBytes={portalFetchBytes}
+      />
     </>
   );
 }
