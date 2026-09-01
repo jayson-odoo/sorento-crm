@@ -2,6 +2,7 @@
 
 import { useCallback, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { LoaderCircle, SquarePen } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
@@ -15,6 +16,7 @@ import { EM_DASH, fmtDate, fmtInt, fmtMoney } from '../../lib/format';
 import { runStartedLabel } from '../lib/runListing';
 import { searchProductOptions } from '../../services/scmOptionsService';
 import { useWarehouseOptions } from '../../hooks/useScmOptions';
+import { runHistoryKey, todayRunKey } from '../hooks/useReorderRun';
 import { replanReorderRun } from '../services/reorderRunService';
 import { ConfirmActionDialog } from '../../components/ConfirmActionDialog';
 import type { ReorderRun } from '../types/reorder.types';
@@ -63,16 +65,32 @@ function todayDateInputValue(): string {
  * **Re-plan**, not an in-place save: a run is immutable history, so the edit launches a
  * NEW run carrying the edited values, which supersedes this one once it finishes (G8).
  * Decisions carry across for a product/location whose suggestion did not change; a changed
- * one arrives flagged "re-check" on the Lines tab of the new plan.
+ * one arrives flagged "re-check" on the Lines tab of the new plan (the `ConfirmActionDialog`
+ * below states the consequence - no second explanation lives on the page, per the repo's
+ * own "no feature explanations in the UI" rule).
  */
-export function PlanHeaderTab({ runId, run }: { runId: string; run: ReorderRun }) {
+export function PlanHeaderTab({
+  runId,
+  run,
+  unsavedCount,
+}: {
+  runId: string;
+  run: ReorderRun;
+  /** Decided-but-unsaved rows on the Lines tab (review S5) - the same count `goToPlans`
+   *  guards leaving the page with. Re-plan navigates away exactly like Leave does, so it
+   *  needs the same guard: dropping unsaved decisions silently just because the exit was
+   *  a different button is still dropping them silently. */
+  unsavedCount: number;
+}) {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const [isEditing, setIsEditing] = useState(false);
   const [horizon, setHorizon] = useState('');
   const [warehouses, setWarehouses] = useState<string[]>([]);
   const [products, setProducts] = useState<string[]>([]);
   const [productLabels, setProductLabels] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
+  const [unsavedWarnOpen, setUnsavedWarnOpen] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
@@ -94,8 +112,17 @@ export function PlanHeaderTab({ runId, run }: { runId: string; run: ReorderRun }
     [products, productLabels],
   );
 
+  const today = todayDateInputValue();
+
   const beginEdit = () => {
-    setHorizon(run.plan_horizon_date ?? '');
+    // Clamped to today (review nit): a cut-off the run was launched with can already be in
+    // the PAST by the time someone edits it, and the date input's own `min={today}` would
+    // otherwise show that stored value as invalid the instant the form opens - blocking a
+    // scope-only edit that never touched the date at all. Today is the same floor the field
+    // already enforces on submit, so clamping the prefill to it changes nothing about what
+    // the buyer is allowed to pick.
+    const stored = run.plan_horizon_date ?? '';
+    setHorizon(stored && stored > today ? stored : stored ? today : '');
     setWarehouses(run.is_all_warehouses ? [] : (run.warehouse_codes ?? []));
     setProducts(run.product_codes ?? []);
     setError(null);
@@ -111,12 +138,17 @@ export function PlanHeaderTab({ runId, run }: { runId: string; run: ReorderRun }
   // again (the backend's own guard) - the Edit control is simply not offered.
   const canReplan = run.status === 'completed' && !run.superseded_by_run_id;
 
-  const today = todayDateInputValue();
-
   const openConfirm = () => {
     setError(null);
     if (horizon && horizon < today) {
       setError('The cut-off cannot be in the past - it would leave the run with no demand.');
+      return;
+    }
+    // Re-plan navigates away from THIS run exactly like the "Plans" back-link does
+    // (`ReorderPlanView.goToPlans`) - same guard, same reason: leaving drops whatever the
+    // Lines tab has decided and not yet saved.
+    if (unsavedCount > 0) {
+      setUnsavedWarnOpen(true);
       return;
     }
     setConfirmOpen(true);
@@ -132,6 +164,11 @@ export function PlanHeaderTab({ runId, run }: { runId: string; run: ReorderRun }
       });
       setConfirmOpen(false);
       setIsEditing(false);
+      // Mirrors Start Plan's own accept handler (`ReorderRunsGrid.start`) - the plans list
+      // and "today's plan" must see the new run the moment its 202 lands, not stale until
+      // their own staleTime lapses.
+      void queryClient.invalidateQueries({ queryKey: runHistoryKey });
+      void queryClient.invalidateQueries({ queryKey: todayRunKey });
       router.push(`/scm/reorder/${created.run_id}`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to re-plan');
@@ -224,18 +261,11 @@ export function PlanHeaderTab({ runId, run }: { runId: string; run: ReorderRun }
               </span>
             </Field>
             <Field label="Status">
-              <Badge
-                variant={
-                  run.status === 'failed'
-                    ? 'destructive'
-                    : run.status === 'completed'
-                      ? 'success'
-                      : 'info'
-                }
-                appearance="light"
-                size="sm"
-              >
-                {run.status === 'failed' ? 'Failed' : run.status === 'completed' ? 'Completed' : 'Running'}
+              {/* This tab only ever renders once the plan is complete - `ReorderPlanView`
+                  shows its own running/failed states before the tabs exist at all, so
+                  there is no reachable status here other than Completed. */}
+              <Badge variant="success" appearance="light" size="sm">
+                Completed
               </Badge>
             </Field>
             <Field label="Sales order cut-off" htmlFor={isEditing ? 'plan-header-cutoff' : undefined}>
@@ -258,14 +288,27 @@ export function PlanHeaderTab({ runId, run }: { runId: string; run: ReorderRun }
 
             <Field label="Warehouses" htmlFor={isEditing ? 'plan-header-warehouses' : undefined}>
               {isEditing ? (
-                <SearchableMultiSelect
-                  value={warehouses}
-                  onChange={setWarehouses}
-                  options={warehouseOptions ?? []}
-                  disabled={warehousesLoading}
-                  placeholder={warehousesLoading ? 'Loading warehouses...' : 'All warehouses'}
-                  emptyMessage={warehousesError ? 'Could not load warehouses.' : 'No warehouses found.'}
-                />
+                <div className="space-y-1">
+                  {warehouses.length ? (
+                    <div className="flex justify-end">
+                      <button
+                        type="button"
+                        className="text-2xs font-medium text-primary underline-offset-2 hover:underline"
+                        onClick={() => setWarehouses([])}
+                      >
+                        Clear all
+                      </button>
+                    </div>
+                  ) : null}
+                  <SearchableMultiSelect
+                    value={warehouses}
+                    onChange={setWarehouses}
+                    options={warehouseOptions ?? []}
+                    disabled={warehousesLoading}
+                    placeholder={warehousesLoading ? 'Loading warehouses...' : 'All warehouses'}
+                    emptyMessage={warehousesError ? 'Could not load warehouses.' : 'No warehouses found.'}
+                  />
+                </div>
               ) : (
                 <span className="block truncate" title={warehouseSummary}>
                   {warehouseSummary}
@@ -274,27 +317,32 @@ export function PlanHeaderTab({ runId, run }: { runId: string; run: ReorderRun }
             </Field>
             <Field label="Products" htmlFor={isEditing ? 'plan-header-products' : undefined}>
               {isEditing ? (
-                <SearchableMultiSelect
-                  value={products}
-                  onChange={setProducts}
-                  fetchOptions={fetchProductOptions}
-                  selectedOptions={selectedProductOptions}
-                  placeholder="All products"
-                  emptyMessage="No products found."
-                />
+                <div className="space-y-1">
+                  {products.length ? (
+                    <div className="flex justify-end">
+                      <button
+                        type="button"
+                        className="text-2xs font-medium text-primary underline-offset-2 hover:underline"
+                        onClick={() => setProducts([])}
+                      >
+                        Clear all
+                      </button>
+                    </div>
+                  ) : null}
+                  <SearchableMultiSelect
+                    value={products}
+                    onChange={setProducts}
+                    fetchOptions={fetchProductOptions}
+                    selectedOptions={selectedProductOptions}
+                    placeholder="All products"
+                    emptyMessage="No products found."
+                  />
+                </div>
               ) : (
                 <span>{productSummary}</span>
               )}
             </Field>
           </div>
-
-          {isEditing ? (
-            <p className="text-2xs text-muted-foreground">
-              Re-plan creates a new plan with these values and supersedes this one once it
-              finishes. Decisions carry over for anything the suggestion did not change; a
-              changed suggestion arrives flagged for another look.
-            </p>
-          ) : null}
         </CardContent>
       </Card>
 
@@ -306,12 +354,9 @@ export function PlanHeaderTab({ runId, run }: { runId: string; run: ReorderRun }
         </CardHeader>
         <CardContent>
           {summary ? (
-            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
               <Field label="Buy">
                 <span className="tabular-nums">{fmtInt(summary.buy_count)}</span>
-              </Field>
-              <Field label="Disposition">
-                <span className="tabular-nums">{fmtInt(summary.disposition_count)}</span>
               </Field>
               <Field label="Exceptions">
                 <span className="tabular-nums">{fmtInt(summary.exception_count)}</span>
@@ -324,18 +369,29 @@ export function PlanHeaderTab({ runId, run }: { runId: string; run: ReorderRun }
               </Field>
             </div>
           ) : (
-            <p className="text-sm text-muted-foreground">
-              {run.status === 'running' ? 'Still being built.' : 'No counts yet.'}
-            </p>
+            <p className="text-sm text-muted-foreground">No counts yet.</p>
           )}
         </CardContent>
       </Card>
 
       <ConfirmActionDialog
+        open={unsavedWarnOpen}
+        onOpenChange={setUnsavedWarnOpen}
+        title="Leave with unsaved changes?"
+        description={`${fmtInt(unsavedCount)} product${unsavedCount === 1 ? '' : 's'} carry changes nobody has saved. Re-planning drops them.`}
+        confirmLabel="Continue anyway"
+        isBusy={false}
+        onConfirm={() => {
+          setUnsavedWarnOpen(false);
+          setConfirmOpen(true);
+        }}
+      />
+
+      <ConfirmActionDialog
         open={confirmOpen}
         onOpenChange={setConfirmOpen}
         title="Re-plan this plan?"
-        description="This starts a new plan with the values above and marks this one superseded once it finishes. Decisions carry over automatically wherever the suggestion has not changed."
+        description="This starts a new plan with the values above and marks this one superseded once it finishes. Decisions carry over automatically wherever the suggestion has not changed; a changed one arrives flagged for another look."
         confirmLabel="Re-plan"
         onConfirm={() => void doReplan()}
         isBusy={submitting}

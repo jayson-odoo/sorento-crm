@@ -275,6 +275,11 @@ function buildGroupRec(members: PlanLine[]): ReorderRecommendation {
     supplier,
     alternatives: supplierMember ? supplierMember.rec.alternatives : [],
     is_exception: false,
+    // Re-plan (S5, review B2): true the moment ANY member's suggestion changed since the
+    // plan this one replaced - the group row is what the buyer actually sees and decides
+    // on, so the flag has to survive grouping, not just live on a member the collapsed
+    // row never renders.
+    needs_recheck: members.some((m) => m.rec.needs_recheck),
     disposition_action: null,
     transfer_flag: null,
     forecast_daily_demand: sumOrNull(members.map((m) => m.forecast_daily_demand)),
@@ -375,6 +380,13 @@ function buildProductGroupedLine(
     // Grouped mode drops the Location column, so this only ever reaches a title/search:
     // the locations underneath, not the product row's own empty one.
     warehouse: locationCodes.length ? locationLabel(locationCodes) : productLine.warehouse,
+    // Re-plan (S5, review B2): explicit, rather than relying on the `...productLine`
+    // spread carrying `rec` through unchanged - the SAME rule `buildGroupRec` applies,
+    // so a member other than the product row's own carrying the flag still surfaces it.
+    rec: {
+      ...productLine.rec,
+      needs_recheck: members.some((m) => m.rec.needs_recheck),
+    },
     __group: {
       members: ordered,
       locationCodes,

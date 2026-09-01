@@ -251,7 +251,7 @@ export function ReorderPlanView({ runId }: { runId: string }) {
         </TabsList>
 
         <TabsContent value="header" className="mt-0 focus-visible:outline-none">
-          <PlanHeaderTab runId={runId} run={item} />
+          <PlanHeaderTab runId={runId} run={item} unsavedCount={unsavedCount} />
         </TabsContent>
 
         <TabsContent value="lines" className="mt-0 space-y-5 focus-visible:outline-none">

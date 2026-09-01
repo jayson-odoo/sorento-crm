@@ -10,15 +10,15 @@ No new table - a run's whole history is two columns and a self-join, and the pla
 this as the "simplest thing that works" option explicitly.
 
 Numbering note: four lanes minted a "454" independently the same night. The captain assigned
-the batch's real order as 454 (S1, order_inquiry_born_ack) -> 455 (S3, reorder_perf_quickwins)
--> 456 (S4, saved_views_and_perms) -> 457 (this one). This file is renumbered to 457 to reserve
+the batch's real order as 454 (S1, order_inquiry_born_ack) -> 455 (S4, saved_views_and_perms)
+-> 456 (S3, reorder_perf_quickwins) -> 457 (this one). This file is renumbered to 457 to reserve
 its slot, but ``down_revision`` stays on 453 (this PR's actual base) until immediately before
-merge, when a one-line commit flips it to "456_saved_views_and_perms" - pointing it at a
+merge, when a one-line commit flips it to "456_reorder_perf_quickwins" - pointing it at a
 revision that does not exist yet on this branch would break the alembic graph load and fail
 CI. See the PR body for the merge order.
 
 Revision ID: 457_reorder_replan
-Revises: 453_shared_brand_attach (temporary - flips to 456_saved_views_and_perms pre-merge)
+Revises: 453_shared_brand_attach (temporary - flips to 456_reorder_perf_quickwins pre-merge)
 """
 from alembic import op
 import sqlalchemy as sa

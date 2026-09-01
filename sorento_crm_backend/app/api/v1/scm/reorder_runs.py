@@ -8,7 +8,7 @@ fields - SKU/warehouse/supplier resolve to human codes/names.
 """
 from __future__ import annotations
 
-from typing import Any, List, Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, Body, Depends, Query, Response
 from sqlalchemy import text
@@ -549,7 +549,7 @@ def get_reorder_run(
         # from one that does not exist.
         raise AppException(status_code=404, message="Reorder run not found.")
     log_obj = row["run_log"] or {}
-    scope = _scope_for_run(db, row["warehouse_ids"], row["product_ids"], row["started_at"])
+    scope = svc.resolve_run_scope(db, row["warehouse_ids"], row["product_ids"], row["started_at"])
     summary = None
     if row["status"] == "completed":
         buy_count = _costed_buy_counts(db, [str(row["id"])]).get(str(row["id"]))
@@ -583,50 +583,6 @@ def get_reorder_run(
                               if row["supersedes_run_id"] else None),
         "superseded_by_run_id": (str(row["superseded_by_run_id"])
                                  if row["superseded_by_run_id"] else None),
-    }
-
-
-def _scope_for_run(db: Session, warehouse_ids, product_ids, started_at) -> dict:
-    """Resolve one run's stored id scope to human codes for the Header tab (plan 5.1,
-    AC-5.1) - the same facts `_list_item` already resolves per page, done here for ONE
-    run so the detail page needs no second endpoint to pre-fill a Re-plan edit."""
-    wids = [str(w) for w in (warehouse_ids or [])]
-    codes: List[str] = []
-    if wids:
-        wh_co, wh_co_params = company_sql_predicate(db, "w.company_id", param_prefix="cws",
-                                                     shared=True)
-        wh_co_sql = ("AND " + wh_co) if wh_co else ""
-        rows = db.execute(text(
-            "SELECT warehouse_code FROM warehouses w "
-            "WHERE id = ANY(CAST(:ids AS uuid[])) "
-            f"{wh_co_sql}"
-        ), {"ids": wids, **wh_co_params}).all()
-        codes = [r[0] for r in rows]
-    wh_co2, wh_co2_params = company_sql_predicate(db, "w.company_id", param_prefix="cwt2",
-                                                   shared=True)
-    wh_co2_sql = ("AND " + wh_co2) if wh_co2 else ""
-    warehouses_then = db.execute(text(
-        "SELECT count(*) FROM warehouses w WHERE w.is_active = true "
-        "AND (CAST(:started AS timestamp) IS NULL OR w.created_at <= CAST(:started AS timestamp)) "
-        f"{wh_co2_sql}"
-    ), {"started": started_at, **wh_co2_params}).scalar() or 0
-    pids = [str(p) for p in product_ids] if product_ids is not None else None
-    product_codes: Optional[List[str]] = None
-    if pids is not None:
-        product_codes = []
-        if pids:
-            po_co, po_co_params = company_sql_predicate(db, "company_id", param_prefix="cps")
-            po_co_sql = ("AND " + po_co) if po_co else ""
-            rows = db.execute(text(
-                "SELECT product_code FROM products "
-                "WHERE id = ANY(CAST(:ids AS uuid[])) "
-                f"{po_co_sql}"
-            ), {"ids": pids, **po_co_params}).all()
-            product_codes = [r[0] for r in rows]
-    return {
-        "warehouse_codes": codes,
-        "is_all_warehouses": _covers_every_warehouse(wids, warehouses_then),
-        "product_codes": product_codes,
     }
 
 
