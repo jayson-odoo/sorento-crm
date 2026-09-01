@@ -7,7 +7,6 @@ below traces to one UAC id.
 """
 from __future__ import annotations
 
-import json
 import uuid
 
 import pytest
@@ -362,7 +361,7 @@ def test_recommendations_payload_never_carries_plan_basis(scm_app):
     _link(db, pid, _mk_supplier(db, f"{MARKER} PB supplier"), cost=60)
     db.flush()
     set_plan_grain(db, "location")
-    run_id, rec_id, _wid = _run_buys(db, wid_code), None, None
+    run_id = _run_buys(db, wid_code)
     db.commit()
 
     with TestClient(app) as client:
