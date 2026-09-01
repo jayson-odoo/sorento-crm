@@ -415,6 +415,14 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
   const [aiExtractOpen, setAiExtractOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [detail, setDetail] = useState<PortalSubmissionDetail | null>(null);
+  // The id a create call answered with, held in STATE rather than trusted to
+  // live only in the `submissionId` prop (the route param) - a retry after
+  // create-succeeded-but-flushPendingFiles-failed never gets a fresh prop, so
+  // without this the next Save Draft/Submit click saw "no id yet" again and
+  // created a second row for the same draft (#482).
+  const [createdSubmissionId, setCreatedSubmissionId] = useState<
+    string | null
+  >(null);
   const [fields, setFields] = useState<Record<string, string | string[]>>({});
   const [products, setProducts] = useState<ProductLine[]>([]);
   const [complaintLines, setComplaintLines] = useState<ComplaintLine[]>([]);
@@ -447,6 +455,9 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
     [kind, contact],
   );
   const showLines = HAS_LINES.includes(kind);
+  // The id to save/flush against: the route param when one exists, else
+  // whatever a create call in THIS session already answered with (#482).
+  const effectiveId = submissionId ?? createdSubmissionId ?? undefined;
   const isEditable = useMemo(
     () => !detail || detail.is_draft || detail.status === 'rejected',
     [detail],
@@ -804,12 +815,16 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
   const handleSaveDraft = async () => {
     setSaving(true);
     try {
+      // A retry after create succeeded but the attachment flush after it
+      // failed must UPDATE that row, not create a second one (#482) - so this
+      // checks `effectiveId` (state) rather than only the `submissionId` prop.
       const saved = await saveDraft(
         kind,
         cleanedFields,
         cleanedProducts,
-        submissionId,
+        effectiveId,
       );
+      if (!effectiveId) setCreatedSubmissionId(saved.id);
       await flushPendingFiles(saved.id);
       toast.success('Draft saved.');
       router.replace(portalHomePath({ type: kind }));
@@ -873,10 +888,14 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
     }
     setSubmitting(true);
     try {
-      let id = submissionId;
+      // Same reasoning as Save Draft: a retry after a create succeeded but
+      // the attachment flush after it failed must update that row, not
+      // create a second one (#482).
+      let id = effectiveId;
       if (!id) {
         const saved = await saveDraft(kind, cleanedFields, cleanedProducts);
         id = saved.id;
+        setCreatedSubmissionId(saved.id);
       }
       await flushPendingFiles(id);
       await submitDraft(kind, id, cleanedFields, cleanedProducts);
@@ -1758,7 +1777,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
         <CardContent>
           <AttachmentDropzone
             kind={kind}
-            submissionId={submissionId ?? null}
+            submissionId={effectiveId ?? null}
             attachments={attachments}
             onChange={setAttachments}
             disabled={!editing}
