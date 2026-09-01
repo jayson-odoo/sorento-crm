@@ -1,6 +1,9 @@
 # PLAN - Price Tag Feedback R2
 
-Status: Approved 1 Sep 2026 - implementation starting
+Status: Approved 1 Sep 2026 - implementation starting. S3 Phase 1 (frontend
+against mocks) done 1 Sep 2026 on branch `price-tag-r2-s3`, browser-verified
+(starter path, template-load error+Retry, published-template regression);
+Phase 2 (vitest) pending the tester.
 UAC: `documentation/plans/dealer-kit/price-tag-feedback-r2-acceptance-criteria.md`
 Predecessor: `documentation/plans/dealer-kit/PLAN-price-tag-request.md` (shipped, PR #289)
 
