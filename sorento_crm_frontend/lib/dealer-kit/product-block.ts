@@ -90,6 +90,8 @@ export function resolveSlotText(
         return data.line.set_members;
       case 'included_accessories':
         return data.line.included_accessories;
+      case 'barcode':
+        return data.line.barcode;
       default:
         return null;
     }
@@ -103,6 +105,7 @@ export function resolveSlotText(
         return data.set.name;
       case 'set_members':
         return data.set.members.map(formatSetMemberLine).join('\n');
+      // A set has no barcode of its own (S7) - falls through to null.
       default:
         return null;
     }
@@ -118,6 +121,8 @@ export function resolveSlotText(
       return product.dimensions;
     case 'spec_lines':
       return product.spec_lines.join('\n');
+    case 'barcode':
+      return product.barcode;
     default:
       return null;
   }
@@ -660,6 +665,12 @@ export interface TagLayerDisplay {
   text?: string;
   imageUrl?: string | null;
   price?: PriceBadgeInput;
+  /**
+   * The bound product/line's own CODE, for the barcode layer's optional
+   * product-code strip (D18). Distinct from `text`, which for a barcode
+   * layer carries the barcode VALUE itself, not the product code.
+   */
+  code?: string | null;
 }
 
 /**
@@ -687,6 +698,8 @@ export function layerDisplayName(layer: TagLayer): string {
       return layer.props.variant === 'promo' ? 'Price (promo)' : 'Price (list)';
     case 'badge':
       return 'Badge';
+    case 'barcode':
+      return 'Barcode';
     case 'group': {
       const binding = layer.props.binding;
       const what = binding?.product_set_id
@@ -720,6 +733,12 @@ export function layerDisplay(
 
     case 'badge':
       return { imageUrl: assetUrls[layer.props.assetId] ?? null };
+
+    case 'barcode':
+      return {
+        text: resolveSlotText({ slot_binding: 'barcode' }, data) ?? undefined,
+        code: resolveSlotText({ slot_binding: 'code' }, data),
+      };
 
     case 'image': {
       const source = imageSourceOf(layer.props);

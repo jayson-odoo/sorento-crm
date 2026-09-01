@@ -16,10 +16,12 @@
 import { useEffect, useState } from 'react';
 import { Ellipse, Group, Image as KonvaImage, Line, Rect, Text } from 'react-konva';
 import type Konva from 'konva';
+import JsBarcode from 'jsbarcode';
 import type { TagLayer, TagLayerProps } from '@/lib/dealer-kit/tag-template-types';
 import type { PriceBadgeInput } from '@/lib/dealer-kit/price-badge';
 import { priceBadgeParts } from '@/lib/dealer-kit/price-badge';
 import type { TagLayerDisplay } from '@/lib/dealer-kit/product-block';
+import { barcodeSymbologyFor, humanReadableBarcode } from '@/lib/dealer-kit/barcode';
 
 // `TagLayerDisplay` is resolved by whoever owns the data (the editor, the
 // designer) and handed DOWN: the canvas draws layers and knows nothing about
@@ -320,6 +322,17 @@ function LayerContent({
         </>
       );
 
+    case 'barcode':
+      return (
+        <BarcodeContent
+          w={w}
+          h={h}
+          showCode={props.show_code}
+          value={display?.text ?? null}
+          code={display?.code ?? null}
+        />
+      );
+
     case 'group':
       // Group renders nothing itself; children are rendered separately.
       return (
@@ -480,6 +493,148 @@ function ImageContent({
   }
 
   return body;
+}
+
+// ---------------------------------------------------------------------------
+// Barcode (D18, S7)
+// ---------------------------------------------------------------------------
+
+/**
+ * Generates the bars onto an offscreen canvas via `jsbarcode`, the same
+ * symbology decision `humanReadableBarcode` and the print page's DOM
+ * renderer use (`barcodeSymbologyFor`). Konva takes any `CanvasImageSource`
+ * as an Image's `image` prop, so the generated canvas is used directly -
+ * no data-URL round trip.
+ */
+function useBarcodeCanvas(value: string | null): HTMLCanvasElement | null {
+  const [canvas, setCanvas] = useState<HTMLCanvasElement | null>(null);
+
+  useEffect(() => {
+    const symbology = barcodeSymbologyFor(value);
+    if (!symbology || !value) {
+      setCanvas(null);
+      return;
+    }
+    const element = document.createElement('canvas');
+    try {
+      JsBarcode(element, value.trim(), {
+        format: symbology,
+        displayValue: false,
+        margin: 0,
+        height: 160,
+      });
+      setCanvas(element);
+    } catch {
+      setCanvas(null);
+    }
+  }, [value]);
+
+  return canvas;
+}
+
+/**
+ * The label plate (D18): white rounded backing, an optional black
+ * product-code strip on top, the bars, then the guard-split human-readable
+ * digits. Empty binding draws the same dashed placeholder every unbound
+ * slot draws, so a designer sees the same "nothing here yet" language across
+ * layer types.
+ */
+function BarcodeContent({
+  w,
+  h,
+  showCode,
+  value,
+  code,
+}: {
+  w: number;
+  h: number;
+  showCode: boolean;
+  value: string | null;
+  code: string | null | undefined;
+}) {
+  const symbology = barcodeSymbologyFor(value);
+  const bars = useBarcodeCanvas(value);
+
+  if (!value || !symbology) {
+    return (
+      <>
+        <Rect
+          width={w}
+          height={h}
+          fill="transparent"
+          stroke="#3b82f6"
+          strokeWidth={1}
+          dash={[4, 4]}
+        />
+        <Text
+          width={w}
+          height={h}
+          text="barcode"
+          align="center"
+          verticalAlign="middle"
+          fontSize={Math.min(11, w / 6)}
+          fill="#3b82f6"
+        />
+      </>
+    );
+  }
+
+  const strip = showCode && code ? h * 0.18 : 0;
+  const humanH = h * 0.16;
+  const barsY = strip;
+  const barsH = Math.max(0, h - strip - humanH);
+
+  return (
+    <>
+      <Rect width={w} height={h} fill="#ffffff" cornerRadius={Math.min(w, h) * 0.06} />
+      {strip > 0 && (
+        <>
+          <Rect width={w} height={strip} fill="#000000" />
+          <Text
+            width={w}
+            height={strip}
+            text={code ?? ''}
+            align="center"
+            verticalAlign="middle"
+            fontSize={Math.max(6, strip * 0.6)}
+            fontStyle="bold"
+            fill="#ffffff"
+          />
+        </>
+      )}
+      {bars ? (
+        <KonvaImage
+          image={bars}
+          x={w * 0.06}
+          y={barsY}
+          width={w * 0.88}
+          height={barsH}
+        />
+      ) : (
+        <Text
+          width={w}
+          y={barsY}
+          height={barsH}
+          text="Loading"
+          align="center"
+          verticalAlign="middle"
+          fontSize={9}
+          fill="#999999"
+        />
+      )}
+      <Text
+        width={w}
+        y={h - humanH}
+        height={humanH}
+        text={humanReadableBarcode(value, symbology)}
+        align="center"
+        verticalAlign="middle"
+        fontSize={Math.max(6, humanH * 0.6)}
+        fontFamily="monospace"
+        fill="#000000"
+      />
+    </>
+  );
 }
 
 // ---------------------------------------------------------------------------

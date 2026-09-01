@@ -47,6 +47,7 @@ function product(overrides: Partial<ProductTagData> = {}): ProductTagData {
     list_price: 1599,
     offer_price: null,
     promotion_id: null,
+    barcode: null,
     ...overrides,
   };
 }
@@ -460,6 +461,7 @@ describe('layerDisplay', () => {
         show_promo_price: true,
         included_accessories: '',
         quantity: 1,
+        barcode: null,
       },
     };
 

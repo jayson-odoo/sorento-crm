@@ -9,6 +9,7 @@
 
 import {
   Banknote,
+  Barcode,
   Boxes,
   Copy,
   Expand,
@@ -54,6 +55,7 @@ interface CanvasToolbarProps {
   onAddProductSlot: () => void;
   onAddPriceBadge: () => void;
   onAddBadge: () => void;
+  onAddBarcode: () => void;
   onAddProduct: () => void;
   onAddSet: () => void;
   onAddAlternativesRow: () => void;
@@ -131,6 +133,7 @@ export function CanvasToolbar({
   onAddProductSlot,
   onAddPriceBadge,
   onAddBadge,
+  onAddBarcode,
   onAddProduct,
   onAddSet,
   onAddAlternativesRow,
@@ -191,6 +194,7 @@ export function CanvasToolbar({
         onClick={onAddPriceBadge}
       />
       <ToolbarButton icon={Tag} label="Add Badge" onClick={onAddBadge} />
+      <ToolbarButton icon={Barcode} label="Add Barcode" onClick={onAddBarcode} />
 
       <Separator orientation="vertical" className="mx-1 h-5" />
 

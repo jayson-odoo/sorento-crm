@@ -14,6 +14,7 @@
 
 import {
   Banknote,
+  Barcode,
   ChevronDown,
   ChevronRight,
   Eye,
@@ -71,6 +72,8 @@ function layerIcon(type: TagLayerType) {
       return <Banknote className="size-3.5" />;
     case 'badge':
       return <Tag className="size-3.5" />;
+    case 'barcode':
+      return <Barcode className="size-3.5" />;
     case 'group':
       return <Layers className="size-3.5" />;
   }

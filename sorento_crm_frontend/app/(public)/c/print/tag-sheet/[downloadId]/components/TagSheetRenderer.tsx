@@ -10,7 +10,8 @@
  * CSS variables.
  */
 
-import type { CSSProperties } from 'react';
+import { useEffect, useState, type CSSProperties } from 'react';
+import JsBarcode from 'jsbarcode';
 
 import type {
   ImpositionConfig,
@@ -23,8 +24,9 @@ import type {
   TagSpecValue,
 } from '@/lib/dealer-kit/tag-template-types';
 import { imageSourceOf } from '@/lib/dealer-kit/tag-template-types';
-import { layerText, slotImageAttachmentId } from '@/lib/dealer-kit/product-block';
+import { layerText, resolveSlotText, slotImageAttachmentId } from '@/lib/dealer-kit/product-block';
 import { priceBadgeParts } from '@/lib/dealer-kit/price-badge';
+import { barcodeSymbologyFor, humanReadableBarcode } from '@/lib/dealer-kit/barcode';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -57,6 +59,9 @@ export interface ResolvedLineData {
    * empty box where the picture goes.
    */
   images?: TagImage[];
+  /** `products.barcode` (D14/S7). Null/absent for a set line or a product with
+   * none - the barcode layer renders nothing on print for either. */
+  barcode?: string | null;
 }
 
 /**
@@ -104,6 +109,7 @@ function bindingOf(resolved: ResolvedLineData | null): TagBindingData | null {
       set_members: resolved.set_members ?? '',
       specs: resolved.specs ?? [],
       images: resolved.images ?? [],
+      barcode: resolved.barcode ?? null,
     },
   };
 }
@@ -442,6 +448,127 @@ function renderBadgeLayer(layer: TagLayer, media: TagSheetMedia) {
   );
 }
 
+/**
+ * The barcode's label plate (D18), on the print page. Empty renders NOTHING -
+ * not the editor's dashed placeholder, which exists to tell a designer what
+ * is missing and has no business on a physical tag (AC-S7-3).
+ *
+ * A real component (not a plain function like its siblings above) because it
+ * needs `useEffect` to generate the bars: `jsbarcode` draws onto a canvas,
+ * which this converts to a data URL for an `<img>` - the same symbology
+ * decision `KonvaTagLayer`'s editor preview makes, off the same helper.
+ */
+function BarcodeLayer({
+  layer,
+  resolved,
+}: {
+  layer: TagLayer;
+  resolved: ResolvedLineData | null;
+}) {
+  const props = layer.props;
+  const isBarcode = props.kind === 'barcode';
+  const [barsUrl, setBarsUrl] = useState<string | null>(null);
+
+  const binding = bindingOf(resolved);
+  const value = isBarcode ? resolveSlotText({ slot_binding: 'barcode' }, binding) : null;
+  const code = isBarcode ? resolveSlotText({ slot_binding: 'code' }, binding) : null;
+  const symbology = barcodeSymbologyFor(value);
+
+  useEffect(() => {
+    if (!value || !symbology) {
+      setBarsUrl(null);
+      return;
+    }
+    const canvas = document.createElement('canvas');
+    try {
+      JsBarcode(canvas, value.trim(), {
+        format: symbology,
+        displayValue: false,
+        margin: 0,
+        height: 160,
+      });
+      setBarsUrl(canvas.toDataURL('image/png'));
+    } catch {
+      setBarsUrl(null);
+    }
+  }, [value, symbology]);
+
+  // Nothing on print for an unbound/empty barcode - AC-S7-3. The `kind` check
+  // is unreachable in practice (the caller only renders this for a barcode
+  // layer) but is what lets TS narrow `props.show_code` below.
+  if (props.kind !== 'barcode' || !value || !symbology) return null;
+
+  const h = layer.height_mm;
+  const w = layer.width_mm;
+  const strip = props.show_code && code ? h * 0.18 : 0;
+  const humanH = h * 0.16;
+
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        left: `${layer.x_mm}mm`,
+        top: `${layer.y_mm}mm`,
+        width: `${w}mm`,
+        height: `${h}mm`,
+        transform: layer.rotation_deg ? `rotate(${layer.rotation_deg}deg)` : undefined,
+        backgroundColor: '#ffffff',
+        borderRadius: `${Math.min(w, h) * 0.06}mm`,
+        overflow: 'hidden',
+        display: 'flex',
+        flexDirection: 'column',
+      }}
+    >
+      {strip > 0 && (
+        <div
+          style={{
+            height: `${strip}mm`,
+            backgroundColor: '#000000',
+            color: '#ffffff',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontWeight: 700,
+            fontSize: `${Math.max(6, strip * 0.6)}mm`,
+            fontFamily: 'DM Sans, sans-serif',
+          }}
+        >
+          {code}
+        </div>
+      )}
+      <div
+        style={{
+          flex: 1,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+      >
+        {barsUrl && (
+          <img
+            src={barsUrl}
+            alt=""
+            style={{ width: '88%', height: '100%', objectFit: 'contain' }}
+          />
+        )}
+      </div>
+      <div
+        style={{
+          height: `${humanH}mm`,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          fontFamily: 'monospace',
+          fontSize: `${Math.max(6, humanH * 0.6)}mm`,
+          color: '#000000',
+        }}
+      >
+        {humanReadableBarcode(value, symbology)}
+      </div>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Tag renderer
 // ---------------------------------------------------------------------------
@@ -482,6 +609,7 @@ function TagRenderer({
             renderProductSlotLayer(layer, resolved, media)}
           {layer.type === 'price_badge' && renderPriceBadgeLayer(layer, resolved)}
           {layer.type === 'badge' && renderBadgeLayer(layer, media)}
+          {layer.type === 'barcode' && <BarcodeLayer layer={layer} resolved={resolved} />}
         </div>
       ))}
 

@@ -41,6 +41,7 @@ import {
   defaultProductSlotProps,
   defaultPriceBadgeProps,
   defaultBadgeProps,
+  defaultBarcodeProps,
 } from '@/lib/dealer-kit/tag-template-types';
 import {
   buildAccessoriesStrip,
@@ -590,6 +591,17 @@ export function TagCanvasEditor({
     // Straight into the picker: a badge with no artwork is an empty square, and
     // the reason somebody pressed the button was to place a specific badge.
     setImagePicker({ layerId: layer.id, badge: true });
+  }, [addLayer, makeBaseLayer]);
+
+  const handleAddBarcode = useCallback(() => {
+    // Bound to slot 'barcode' on creation, not left null like the generic
+    // layer types: there is only one thing a barcode layer could ever draw
+    // (the tag's own product), so there is no picker step to go through (S7).
+    addLayer({
+      ...makeBaseLayer('barcode', 40, 22),
+      slot_binding: 'barcode',
+      props: defaultBarcodeProps(),
+    });
   }, [addLayer, makeBaseLayer]);
 
   // -- Bound blocks (D27) and preview (D41) ----------------------------------
@@ -1681,6 +1693,7 @@ export function TagCanvasEditor({
         onAddProductSlot={handleAddProductSlot}
         onAddPriceBadge={handleAddPriceBadge}
         onAddBadge={handleAddBadge}
+        onAddBarcode={handleAddBarcode}
         onAddProduct={() => setPicker({ kind: 'add-product' })}
         onAddSet={() => setPicker({ kind: 'add-set' })}
         onAddAlternativesRow={() => setPicker({ kind: 'alternatives' })}

@@ -46,6 +46,7 @@ const SLOT_BINDING_OPTIONS = [
   { value: 'badges', label: 'Badges' },
   { value: 'alternatives', label: 'Alternatives' },
   { value: 'set_members', label: 'Set Members' },
+  { value: 'barcode', label: 'Barcode' },
 ];
 
 /**
@@ -376,6 +377,9 @@ export function InspectorPanel({
               props={layer.props}
               onChooseBadge={onChooseBadge}
             />
+          )}
+          {layer.props.kind === 'barcode' && (
+            <BarcodeInspector props={layer.props} onChange={updateProps} />
           )}
         </div>
       </ScrollArea>
@@ -936,6 +940,33 @@ function BadgeInspector({
           Choose badge
         </Button>
       </div>
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Barcode inspector (D18, S7)
+// ---------------------------------------------------------------------------
+
+function BarcodeInspector({
+  props,
+  onChange,
+}: {
+  props: Extract<TagLayerProps, { kind: 'barcode' }>;
+  onChange: (changes: Partial<TagLayerProps>) => void;
+}) {
+  return (
+    <section>
+      <h4 className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+        Barcode
+      </h4>
+      <label className="flex items-center gap-1.5 text-xs">
+        <Checkbox
+          checked={props.show_code}
+          onCheckedChange={(v) => onChange({ ...props, show_code: !!v })}
+        />
+        Show product code
+      </label>
     </section>
   );
 }

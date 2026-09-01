@@ -18,6 +18,7 @@ export type TagLayerType =
   | 'product_slot'
   | 'price_badge'
   | 'badge'
+  | 'barcode'
   | 'group';
 
 /** Named slots that bind a layer to a product data field at render time. */
@@ -34,6 +35,7 @@ export type SlotBinding =
   | 'alternatives'
   | 'accessories'
   | 'set_members'
+  | 'barcode'
   | null;
 
 export type ShapeType = 'rect' | 'rounded_rect' | 'ellipse' | 'line';
@@ -145,6 +147,18 @@ export interface PriceBadgeLayerProps {
   showNett: boolean;
 }
 
+/**
+ * A barcode, drawn as a label plate matching the printed sample (D18): white
+ * backing with rounded corners, an optional black product-code strip on top
+ * (per-layer `show_code`), the bars, and the guard-split human-readable
+ * digits beneath. Always bound to slot `barcode` - a tag has one product, so
+ * there is nothing else for it to draw.
+ */
+export interface BarcodeLayerProps {
+  kind: 'barcode';
+  show_code: boolean;
+}
+
 export interface GroupLayerProps {
   kind: 'group';
   children: string[];
@@ -164,6 +178,7 @@ export type TagLayerProps =
   | ProductSlotLayerProps
   | PriceBadgeLayerProps
   | BadgeLayerProps
+  | BarcodeLayerProps
   | GroupLayerProps;
 
 // ---------------------------------------------------------------------------
@@ -354,6 +369,9 @@ export interface ProductTagData {
   list_price: number | null;
   offer_price: number | null;
   promotion_id: string | null;
+  /** `products.barcode` (D14/S7). Null renders a placeholder in the editor
+   * and nothing on print. */
+  barcode: string | null;
 }
 
 export interface ProductSetMemberTagData {
@@ -399,6 +417,8 @@ export interface LineTagData {
   show_promo_price: boolean;
   included_accessories: string;
   quantity: number;
+  /** Null for a set line - a set has no barcode of its own (S7). */
+  barcode: string | null;
 }
 
 /** A binding's resolved data, whichever kind of thing it points at. */
@@ -504,5 +524,12 @@ export function defaultBadgeProps(): BadgeLayerProps {
   return {
     kind: 'badge',
     assetId: '',
+  };
+}
+
+export function defaultBarcodeProps(): BarcodeLayerProps {
+  return {
+    kind: 'barcode',
+    show_code: true,
   };
 }
