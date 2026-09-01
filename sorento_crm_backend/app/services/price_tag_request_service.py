@@ -536,6 +536,9 @@ class PriceTagRequestService:
             for row in list_attachments_for_entity(db, "price_tag_request", request.id)
         ]
 
+        # Function-local: breaks a module cycle. tag_sheet_export_service
+        # imports STATUS_APPROVED/STATUS_READY from THIS module at its own
+        # top level, so a top-level import here would be circular.
         from app.services.dealer_kit.tag_sheet_export_service import (
             latest_completed_export,
         )

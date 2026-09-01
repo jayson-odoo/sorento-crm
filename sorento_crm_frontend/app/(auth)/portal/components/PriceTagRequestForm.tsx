@@ -247,6 +247,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewIndex, setPreviewIndex] = useState(0);
   const [downloadingPdf, setDownloadingPdf] = useState(false);
+  const [gearOpen, setGearOpen] = useState(false);
 
   // ---- What Submit found wrong, where it found it (D48b) ----
   // Set by a Submit click and by a server refusal that named a field; cleared
@@ -719,6 +720,9 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       toast.error(e instanceof Error ? e.message : 'Failed to download the PDF');
     } finally {
       setDownloadingPdf(false);
+      // Close the gear once the download has settled (success or failure) -
+      // a failure still toasts, so nothing is lost by not leaving it open.
+      setGearOpen(false);
     }
   }, [requestId]);
 
@@ -757,8 +761,15 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
             <ArrowLeft className="size-4 mr-1" /> Back
           </Button>
           {/* The gear (D19): Download PDF, disabled with a reason until a
-              completed export exists. The stub toast is gone. */}
-          <DetailActionsMenu ariaLabel="Price tag request actions">
+              completed export exists. The stub toast is gone. Controlled open
+              state so the menu closes itself once the download settles,
+              instead of sitting open with a stale item until an outside
+              click. */}
+          <DetailActionsMenu
+            ariaLabel="Price tag request actions"
+            open={gearOpen}
+            onOpenChange={setGearOpen}
+          >
             <DropdownMenuItem
               disabled={!request.has_completed_export || downloadingPdf}
               onSelect={(event) => {
@@ -766,10 +777,14 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
                 void handleDownloadPdf();
               }}
             >
-              <Download className="size-4" />
+              {downloadingPdf ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Download className="size-4" />
+              )}
               <span className="flex flex-col items-start">
-                <span>Download PDF</span>
-                {!request.has_completed_export && (
+                <span>{downloadingPdf ? 'Downloading...' : 'Download PDF'}</span>
+                {!request.has_completed_export && !downloadingPdf && (
                   <span className="text-xs text-muted-foreground">
                     No completed export yet
                   </span>
@@ -965,8 +980,12 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           <>
             <ProofPreviewSection request={request} />
 
+            {/* Same `attachments` state the Purchase Order card above reads
+                (not `request.attachments`, which is only ever the snapshot
+                from the initial fetch) - one source, so the two can never
+                show a different file list for the same request. */}
             <POCrossCheckViewer
-              attachments={request.attachments ?? []}
+              attachments={attachments}
               lines={request.lines.map((l) => ({
                 id: l.id,
                 code: l.code,

@@ -413,3 +413,47 @@ class TestTheCRMDetailCarriesPOAttachments:
         body = client.get(f"{_BASE}/{request.id}").json()
 
         assert body["attachments"] == []
+
+
+# ---------------------------------------------------------------------------
+# has_completed_export: the same response_model trap, on the CRM detail route
+#
+# The portal detail route has its own assertion of this
+# (``test_portal_price_tag_routes.py::TestTheDownloadRoute``); this is the
+# CRM twin. `get_price_tag_request` answers with `response_model=
+# PriceTagRequestResponse` (LESSONS-LEARNT.md: an undeclared field is dropped
+# silently), so a schema change on the portal side that missed this route
+# would pass every portal test and still ship a marketing screen that always
+# reads "no export".
+# ---------------------------------------------------------------------------
+
+
+def _seed_completed_export(db, request_id: str, *, filename: str = "ZZT-tags.pdf") -> None:
+    from app.models.download import DownloadStatus, UserDownload
+    from app.services.dealer_kit.tag_sheet_export_service import KIND
+
+    db.add(
+        UserDownload(
+            id=str(uuid.uuid4()),
+            user_id=_MARKETER_ID,
+            kind=KIND,
+            source_entity_type="price_tag_request",
+            source_entity_id=str(request_id),
+            status=DownloadStatus.READY.value,
+            filename=filename,
+            storage_provider="s3",
+            storage_key=f"zzt/{uuid.uuid4()}.pdf",
+        )
+    )
+    db.commit()
+
+
+class TestTheDetailCarriesHasCompletedExport:
+    def test_a_completed_export_flips_the_flag(self, api):
+        client, db = api
+        request, _contact = _submitted_request(db)
+        assert client.get(f"{_BASE}/{request.id}").json()["has_completed_export"] is False
+
+        _seed_completed_export(db, request.id)
+
+        assert client.get(f"{_BASE}/{request.id}").json()["has_completed_export"] is True

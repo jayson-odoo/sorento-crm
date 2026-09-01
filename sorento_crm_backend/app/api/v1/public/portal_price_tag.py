@@ -11,11 +11,10 @@ portal module.
 from __future__ import annotations
 
 import logging
+import mimetypes
 from typing import Optional
 
-import mimetypes
-
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -39,6 +38,7 @@ from app.services.price_tag_request_service import (
     STATUS_NEW,
 )
 from app.services.storage_router import get_backend
+from app.services.uuid_path_param import validate_uuid_path
 from app.utils.http import content_disposition
 
 logger = logging.getLogger(__name__)
@@ -122,6 +122,7 @@ def portal_get_price_tag_request(
     Answers the same body as the CRM detail route (lines resolved to code, name
     and both prices), plus the attachments key the form reads unconditionally.
     """
+    request_id = validate_uuid_path(request_id, resource="Price tag request")
     _assert_visible(db, token.contact_id)
     return _detail_body(db, _require_own_request(db, token, request_id))
 
@@ -141,10 +142,17 @@ def portal_download_price_tag_pdf(
 
     Ownership is the request's contact (``_require_own_request``), exactly like
     every other portal price tag route - never the download row's ``user_id``
-    (whichever marketing staffer ran the export). A foreign token and "no
-    completed export yet" both refuse with the same 404 message, so neither
-    leaks whether the request, or an export for it, exists (AC-S2-4).
+    (whichever marketing staffer ran the export). A foreign token refuses with
+    "Price tag request not found." (``_require_own_request``'s message, the
+    ownership check runs first); an owned request with no completed export
+    refuses with "No completed export exists for this request yet." - two
+    DIFFERENT messages, not the same one as an earlier version of this
+    docstring claimed. What they share is that neither leaks whether the OTHER
+    fact is true: a foreign token never learns whether an export exists, and a
+    "no export yet" 404 never confirms the request is genuinely this
+    contact's until ownership has already passed (AC-S2-4).
     """
+    request_id = validate_uuid_path(request_id, resource="Price tag request")
     _assert_visible(db, token.contact_id)
     req = _require_own_request(db, token, request_id)
     download = latest_completed_export(db, req.id)
@@ -156,16 +164,19 @@ def portal_download_price_tag_pdf(
         )
     try:
         content = get_backend(download.storage_provider).download_file(download.storage_key)
-    except Exception:  # noqa: BLE001 - a missing object is not a server bug worth a 500
+    except HTTPException:
+        # An AppException from the service is already the right answer -
+        # don't relabel it as a storage failure.
+        raise
+    except Exception as e:  # noqa: BLE001 - mirrors portal_download_attachment
         logger.warning(
             "portal_download_price_tag_pdf: could not read %s", download.storage_key,
             exc_info=True,
         )
-        raise AppException(
-            status_code=404,
-            message="The stored file is no longer available.",
-            code="NOT_FOUND",
-        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="File download failed. Please try again.",
+        ) from e
 
     filename = download.filename or "tag-sheet.pdf"
     media_type = mimetypes.guess_type(filename)[0] or "application/pdf"
@@ -192,6 +203,7 @@ def portal_update_price_tag_request(
     db: Session = Depends(get_db),
 ):
     """Update a draft price tag request."""
+    request_id = validate_uuid_path(request_id, resource="Price tag request")
     _assert_visible(db, token.contact_id)
     req = _require_own_request(db, token, request_id)
     _require_draft(req, "Only draft requests can be updated.")
@@ -248,6 +260,7 @@ def portal_submit_price_tag_request(
 ):
     """Submit a draft price tag request: clears portal_draft_at, runs set guard,
     and fires the form SLA."""
+    request_id = validate_uuid_path(request_id, resource="Price tag request")
     _assert_visible(db, token.contact_id)
     req = _require_own_request(db, token, request_id)
     _require_draft(req, "This request has already been submitted.", code="ALREADY_SUBMITTED")

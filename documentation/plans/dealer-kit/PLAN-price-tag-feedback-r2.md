@@ -1,6 +1,6 @@
 # PLAN - Price Tag Feedback R2
 
-Status: Lane A S1 in review fixes
+Status: Lane A S1 merged; S2 delivered (PR #494), review round closed 2 Sep 2026
 UAC: `documentation/plans/dealer-kit/price-tag-feedback-r2-acceptance-criteria.md`
 Predecessor: `documentation/plans/dealer-kit/PLAN-price-tag-request.md` (shipped, PR #289)
 

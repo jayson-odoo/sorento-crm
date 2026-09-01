@@ -217,6 +217,11 @@ def latest_completed_export(db: Session, request_id: str) -> Optional[UserDownlo
     the portal contact who owns the request. The caller checks the request's
     ownership itself (``_require_own_request``); this only answers "does a
     finished PDF exist for it".
+
+    ``id.desc()`` breaks a tie on ``created_at``: two rows seeded (or, in a
+    real export, committed) inside the same transaction see the same Postgres
+    ``now()`` (it is fixed at transaction start, not per-statement), so
+    ``created_at`` alone cannot always tell "latest" from "simultaneous".
     """
     return (
         db.query(UserDownload)
@@ -226,7 +231,7 @@ def latest_completed_export(db: Session, request_id: str) -> Optional[UserDownlo
             UserDownload.kind == KIND,
             UserDownload.status == DownloadStatus.READY.value,
         )
-        .order_by(UserDownload.created_at.desc())
+        .order_by(UserDownload.created_at.desc(), UserDownload.id.desc())
         .first()
     )
 

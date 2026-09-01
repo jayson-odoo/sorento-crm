@@ -68,10 +68,16 @@ versions.
 - **AC-S2-2 [FE]** Given proof-review statuses, when opened, then the same
   read-only layout renders with the proof section beneath it (existing proof UI
   unchanged).
-- **AC-S2-3 [FE]** Given a request in `ready`/`approved` with a completed export,
-  when the salesperson opens the gear dropdown, then Download PDF fetches the real
-  exported file; with no completed export the item is disabled with a reason.
-  The stub toast is gone.
+- **AC-S2-3 [FE]** Given a non-editable request (any status past draft) with a
+  completed export, when the salesperson opens the gear dropdown, then Download
+  PDF fetches the real exported file; with no completed export the item is
+  disabled with a reason. The stub toast is gone. (Captain ruling, 2 Sep 2026,
+  pending user ratification: kept the wider "any non-editable status with a
+  completed export may download" behavior rather than narrowing to
+  `ready`/`approved` - the contact owns the request regardless of its status, and
+  a status filter would just refuse a download for a proof re-exported after
+  `changes_requested` or a request that has since moved to `void`. No status
+  filter was added to the download route or the FE gating.)
 - **AC-S2-4 [BE]** Given a portal token owning a request with a completed tag
   sheet export, when the portal download route is called, then it streams the PDF;
   not-owned or no-export cases refuse without leaking existence.

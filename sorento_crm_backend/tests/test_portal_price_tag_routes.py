@@ -634,9 +634,14 @@ class TestTheDownloadRoute:
 
         assert res.status_code == 404, res.text
 
-    def test_a_foreign_token_gets_the_same_404_no_existence_oracle(self, client):
-        """A request not owned by this token 404s exactly like "no export yet" -
-        neither the request's existence nor its export's is leaked."""
+    def test_a_foreign_token_gets_404_not_found_no_existence_oracle(self, client):
+        """Ownership fails BEFORE the export lookup runs, so a foreign token
+        gets ``_require_own_request``'s message ("Price tag request not
+        found.") rather than anything about the export - it never learns one
+        exists. That message differs from the "no export yet" 404 an owner
+        gets (asserted below); what neither one leaks is whether the OTHER
+        fact is true.
+        """
         c, db, _contact_id = client
         from app.services.price_tag_request_service import PriceTagRequestService
 
@@ -653,6 +658,7 @@ class TestTheDownloadRoute:
         res = c.get(f"{_BASE}/{theirs.id}/download")
 
         assert res.status_code == 404, res.text
+        assert res.json()["message"] == "Price tag request not found."
 
     def test_visibility_revoked_refuses_before_looking_for_an_export(self, client):
         c, db, contact_id = client
@@ -668,3 +674,69 @@ class TestTheDownloadRoute:
 
         assert res.status_code == 403, res.text
         assert res.json()["code"] == "FORM_TYPE_NOT_VISIBLE"
+
+    def test_a_storage_outage_answers_502_not_a_relabeled_404(self, client, monkeypatch):
+        """Mirrors ``portal_download_attachment``: a bucket that refuses is a
+        502 the caller can retry, not a 404 that reads like the file was
+        deleted."""
+        c, db, _contact_id = client
+        from app.api.v1.public import portal_price_tag
+        from tests._fake_storage import FakeStorage
+
+        product_id = _seed_product(db)
+        created = c.post(
+            _BASE,
+            json={"lines": [{"line_type": "product", "product_id": product_id}]},
+        ).json()
+
+        storage = FakeStorage()
+        storage.downloading_fails = True
+        monkeypatch.setattr(portal_price_tag, "get_backend", lambda provider: storage)
+        _seed_completed_export(db, created["id"])
+
+        res = c.get(f"{_BASE}/{created['id']}/download")
+
+        assert res.status_code == 502, res.text
+
+
+# ---------------------------------------------------------------------------
+# A malformed id must 404, never 500 (uuid_path_param gap)
+# ---------------------------------------------------------------------------
+
+
+class TestMalformedRequestId:
+    """A non-UUID ``{request_id}`` used to reach the service layer, whose
+    ``get_request`` would either raise a raw DB error or simply find nothing
+    the hard way. Either path is a client-visible 500 for what is, from the
+    caller's side, a guaranteed-missing row - the same thing a well-formed but
+    absent id already answers with a clean 404."""
+
+    _BAD_ID = "not-a-uuid"
+
+    def test_the_detail_route_404s_on_a_malformed_id(self, client):
+        c, _db, _contact_id = client
+
+        res = c.get(f"{_BASE}/{self._BAD_ID}")
+
+        assert res.status_code == 404, res.text
+
+    def test_the_download_route_404s_on_a_malformed_id(self, client):
+        c, _db, _contact_id = client
+
+        res = c.get(f"{_BASE}/{self._BAD_ID}/download")
+
+        assert res.status_code == 404, res.text
+
+    def test_the_update_route_404s_on_a_malformed_id(self, client):
+        c, _db, _contact_id = client
+
+        res = c.put(f"{_BASE}/{self._BAD_ID}", json={"debtor_name": "ZZT"})
+
+        assert res.status_code == 404, res.text
+
+    def test_the_submit_route_404s_on_a_malformed_id(self, client):
+        c, _db, _contact_id = client
+
+        res = c.post(f"{_BASE}/{self._BAD_ID}/submit")
+
+        assert res.status_code == 404, res.text
