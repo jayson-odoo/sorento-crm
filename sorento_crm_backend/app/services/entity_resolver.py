@@ -22,6 +22,7 @@ from __future__ import annotations
 import logging
 import re
 import time
+import uuid
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Any, Callable, Iterable, Optional
@@ -32,7 +33,7 @@ from operator import add
 from sqlalchemy import and_, case, func, or_, text
 from sqlalchemy.orm import Session
 
-from app.models.base import UNSET, get_company_scope, set_company_scope
+from app.models.base import UNSET, get_company_scope
 from app.models.forms import Form
 from app.models.inventory import Warehouse
 from app.models.marketing import Promotion
@@ -4437,18 +4438,29 @@ _TIER1_PROBES: tuple[tuple[Callable[[Session, list[str]], dict[str, list[Resolve
 
 
 class EntityPinMismatch(Exception):
-    """A caller-supplied `entity_pins` uuid is not among the token's own candidates.
+    """A caller-supplied `entity_pins` entry does not resolve to exactly one
+    of the token's own SCOPED matches.
 
-    Raised, never swallowed: a pin naming nothing the token's own Tier-1 probes
-    (scope widened - see `resolve_references`' `entity_pins` handling) produced
-    is a caller bug (stale uuid, wrong token key, cross-entity mixup). Silently
-    ignoring it - either falling back to plain token matching or just dropping
-    the pin - is exactly the failure mode this feature exists to close (n8n
-    exec 14659385, 14661446: a picked customer/product re-opened as ambiguous
-    because the caller re-derived from the bare code instead of the uuid it had
-    already pinned). Distinct from a pin that names a REAL row the caller's own
-    company scope cannot see, which fails closed silently instead - see the
-    caller in `resolve_references`.
+    ONE rule, no exceptions: a pin whose uuid is not among the token's matches
+    AFTER company-scope filtering raises. This covers every failure shape the
+    same way - a stale/bogus uuid, a uuid belonging to a DIFFERENT token, a
+    real row the caller's own company scope cannot see (LESSONS section 61c:
+    a customer/product code is unique only PER COMPANY), an unparseable uuid,
+    a blank pin value, and an `entity_pins` key that names no token in this
+    request at all. Earlier drafts tried to tell "real row, wrong scope" apart
+    from "bogus uuid" by re-probing the database with company scope widened to
+    None - that path is gone: it only ever checked Tier-1 (so it was WRONG for
+    a pin on a Tier-2/3 match), it was a hand-rolled reimplementation of the
+    scope machinery `company_scope`/`set_company_scope` already owns (with an
+    autoflush-stamping hazard from mutating session-level scope mid-request),
+    and it opened a company-existence oracle: a caller could learn "this uuid
+    exists in SOME company" from a 200 it should never have gotten.
+
+    Silently ignoring a pin - falling back to plain token matching, or just
+    dropping an unrecognised key - is exactly the failure mode this feature
+    exists to close (n8n exec 14659385, 14661446: a picked customer/product
+    re-opened as ambiguous because the caller re-derived from the bare code
+    instead of the uuid it had already pinned).
     """
 
     def __init__(self, token: str, pinned_uuid: str) -> None:
@@ -4456,8 +4468,70 @@ class EntityPinMismatch(Exception):
         self.pinned_uuid = pinned_uuid
         super().__init__(
             f"entity_pins uuid {pinned_uuid!r} for token {token!r} is not "
-            "among that token's own candidate matches"
+            "among that token's own scoped candidate matches"
         )
+
+
+def _canonical_pin_uuid(value: Any) -> Optional[str]:
+    """`str(uuid.UUID(value))` - accepts hyphenless / braced / mixed-case forms
+    and normalises to lowercase-hyphenated. `None` on anything unparseable."""
+    try:
+        return str(uuid.UUID(str(value)))
+    except (ValueError, AttributeError, TypeError):
+        return None
+
+
+def _pin_key_norm(token: str) -> str:
+    return (token or "").strip().lower()
+
+
+def _apply_entity_pins(
+    resolutions: list[TokenResolution], entity_pins: dict[str, str]
+) -> None:
+    """Narrow each pinned token to exactly its pinned uuid, in place. Called
+    AFTER `_apply_company_scope`, so every check below is against the token's
+    own SCOPED matches.
+
+    ONE rule: a pin's uuid must be exactly one of the token's scoped matches,
+    or the whole call raises `EntityPinMismatch` - see that class for why a
+    bogus uuid and a real-but-out-of-scope uuid are deliberately NOT told
+    apart. Same treatment for a blank pin value and an unparseable uuid.
+
+    Key matching is case-insensitive on the (already-stripped, see
+    `references._resolve_input`) token. Every `entity_pins` key must bind to
+    a token actually present in `resolutions`; a key that binds to nothing -
+    a typo, a stale key from an earlier turn - raises too, rather than being
+    silently ignored.
+    """
+    by_key: dict[str, tuple[str, str]] = {
+        _pin_key_norm(key): (key, value) for key, value in entity_pins.items()
+    }
+    consumed: set[str] = set()
+
+    for tr in resolutions:
+        norm_tok = _pin_key_norm(tr.token)
+        entry = by_key.get(norm_tok)
+        if entry is None:
+            continue
+        orig_key, raw_pin = entry
+        consumed.add(norm_tok)
+
+        pin_norm = _canonical_pin_uuid((raw_pin or "").strip())
+        if pin_norm is None:
+            raise EntityPinMismatch(orig_key, raw_pin)
+
+        pinned = next(
+            (m for m in tr.matches if _canonical_pin_uuid(m.uuid) == pin_norm),
+            None,
+        )
+        if pinned is None:
+            raise EntityPinMismatch(orig_key, raw_pin)
+        tr.matches = [pinned]
+        tr.ambiguous = False
+
+    for norm_key, (orig_key, raw_pin) in by_key.items():
+        if norm_key not in consumed:
+            raise EntityPinMismatch(orig_key, raw_pin)
 
 
 def resolve_references(
@@ -4488,11 +4562,13 @@ def resolve_references(
     callers pass the types they can filter on so resolution doesn't return entities the
     caller has nowhere to send.
 
-    `entity_pins` (token -> uuid) narrows an already-disambiguated token to exactly
-    that row instead of re-deriving from the bare code - see the handling right
-    before `_apply_company_scope` below for the full contract (raises
-    `EntityPinMismatch` on a uuid that names nothing the token itself resolved to;
-    fails closed, silently, on a uuid the caller's company scope cannot see).
+    `entity_pins` (token -> uuid) narrows an already-disambiguated token to
+    exactly that row instead of re-deriving from the bare code - see
+    `_apply_entity_pins` (run AFTER company-scope filtering, below) for the
+    full contract. A uuid not among that token's SCOPED matches always raises
+    `EntityPinMismatch` - a bogus uuid and a real-but-out-of-scope uuid are
+    NOT distinguished, both are a 400 to the caller. Every `entity_pins` key
+    must bind to a token actually being resolved, or the whole call raises.
     """
     t0 = time.perf_counter()
     raw_query: Optional[str] = None
@@ -4746,63 +4822,12 @@ def resolve_references(
             hits = []
         tr.alternatives = [h for h in hits if (h.similarity or 0.0) >= SUGGEST_FLOOR][:_ALTERNATIVES_CAP]
 
-    # ----- Entity pins: the caller already picked a specific row for a token -----
-    # A code is unique only PER COMPANY (LESSONS §61c) - re-deriving from the bare
-    # code after the caller already disambiguated it reopens exactly the
-    # ambiguity the pick just closed (n8n exec 14659385, 14661446). Must run
-    # BEFORE `_apply_company_scope`: the pin is checked against the token's own,
-    # not-yet-scope-filtered Tier-1/2/3 candidates.
-    if entity_pins:
-        for tr in resolutions:
-            pin = entity_pins.get(tr.token)
-            if not pin:
-                continue
-            pin_norm = str(pin).strip().lower()
-            pinned = next(
-                (m for m in tr.matches if m.uuid and str(m.uuid).strip().lower() == pin_norm),
-                None,
-            )
-            if pinned is not None:
-                tr.matches = [pinned]
-                tr.ambiguous = False
-                continue
-            # Not among this token's own candidates. Before treating that as a
-            # caller bug, prove whether the uuid is a REAL Tier-1 match for this
-            # token that the caller's own company scope hid - re-run the exact
-            # same probes with scope WIDENED, for this one token only. Raw SQL
-            # (`_attach_company_info`'s pattern) needs the entity_type known
-            # ahead of time; a bare pin does not carry one, so reusing the
-            # probes instead avoids inventing a second, per-table lookup.
-            tok_allowed = _types_for(tr.token)
-            prior_scope = get_company_scope(db)
-            unscoped: list[ResolvedEntity] = []
-            try:
-                set_company_scope(db, None)
-                for probe, produces in _TIER1_PROBES:
-                    if tok_allowed is not None and produces.isdisjoint(tok_allowed):
-                        continue
-                    try:
-                        unscoped.extend(probe(db, [tr.token]).get(tr.token, []))
-                    except Exception:
-                        logger.exception(
-                            "Unscoped entity-pin verification probe %s failed",
-                            getattr(probe, "__name__", probe),
-                        )
-            finally:
-                set_company_scope(db, prior_scope)
-            if any(
-                m.uuid and str(m.uuid).strip().lower() == pin_norm for m in unscoped
-            ):
-                # Genuinely this token's own record - the caller's company scope
-                # just cannot see it. Fail closed, silently: the same outcome
-                # every other out-of-scope match already gets from
-                # `_apply_company_scope` below.
-                tr.matches = []
-                tr.ambiguous = False
-            else:
-                raise EntityPinMismatch(tr.token, pin)
-
     _apply_company_scope(db, resolutions)
+
+    # Entity pins run LAST, against the token's own SCOPED matches - see
+    # `_apply_entity_pins` for the single-rule contract.
+    if entity_pins:
+        _apply_entity_pins(resolutions, entity_pins)
 
     final_tokens = list(tokens) + [r.token for r in freeword_resolutions]
     elapsed_ms = (time.perf_counter() - t0) * 1000.0

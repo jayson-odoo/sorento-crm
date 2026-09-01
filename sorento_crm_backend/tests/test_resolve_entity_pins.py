@@ -1,6 +1,6 @@
 """``entity_pins``: a caller that already disambiguated a token by uuid keeps that pick.
 
-Codes are unique only PER COMPANY (LESSONS §61c). Real incidents this closes:
+Codes are unique only PER COMPANY (LESSONS section 61c). Real incidents this closes:
 
 - n8n exec 14659385 - the parser resolved the customer picker's pick to a uuid
   (`060f4eaf-...`), but `resolve-entity` re-derived customer code `300-C043`
@@ -12,10 +12,15 @@ Codes are unique only PER COMPANY (LESSONS §61c). Real incidents this closes:
 See sorento_crm_n8n/n8n-workflows-init/tests/diffs/rs-9-triage.md sections F5
 and F7 (read-only evidence doc, not part of this repo).
 
-Fix (`app/services/entity_resolver.py::resolve_references`): an optional
-``entity_pins`` mapping (token -> uuid) narrows that token's resolution to
-exactly the pinned row, checked against the token's OWN candidate matches
-before company-scope filtering runs.
+Contract (`app/services/entity_resolver.py`): ``entity_pins`` (token -> uuid)
+narrows that token's resolution to exactly the pinned row, checked against the
+token's own SCOPED matches (run AFTER `_apply_company_scope`). ONE failure
+mode, always `EntityPinMismatch` -> 400 `ENTITY_PIN_MISMATCH`: a bogus uuid, a
+real uuid the caller's own company scope cannot see, a blank pin value, an
+unparseable uuid, and an `entity_pins` key that binds to no token at all are
+all the SAME error - never a silent misresolution, never a silent fallback to
+plain token matching, and never a way to learn "this uuid exists somewhere I
+can't see" from a 200.
 """
 from __future__ import annotations
 
@@ -28,6 +33,7 @@ from sqlalchemy import text
 from app.models.base import set_company_scope
 from app.models.company import Company
 from app.models.order import Customer
+from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.services.company_scope import DEFAULT_COMPANY_ID, register_company_scope_listeners
 from app.services.entity_resolver import EntityPinMismatch, resolve_references
 
@@ -85,6 +91,29 @@ def _resolution(result, token: str):
         if tr.token.upper() == token.upper():
             return tr
     return None
+
+
+def _product_refs(db):
+    if not hasattr(db, "_refs"):
+        cat, uom = str(uuid.uuid4()), str(uuid.uuid4())
+        db.add(ProductCategory(id=cat, category_code=unique_code("C")[:50], category_name="C"))
+        db.add(UnitOfMeasure(id=uom, uom_code=unique_code("U")[:20], uom_name="Each"))
+        db.flush()
+        db._refs = (cat, uom)
+    return db._refs
+
+
+def _product(db, *, code: str, company_id: str) -> str:
+    cat, uom = _product_refs(db)
+    pid = str(uuid.uuid4())
+    db.add(
+        Product(
+            id=pid, product_code=code, product_name=code, category_id=cat,
+            base_uom_id=uom, list_price=10, is_active=True, company_id=company_id,
+        )
+    )
+    db.flush()
+    return pid
 
 
 # --------------------------------------------------------------------------- #
@@ -173,6 +202,53 @@ def test_a_pin_for_the_other_companys_row_resolves_to_that_one_instead(db):
     assert tr.matches[0].company_name == "Mocha"
 
 
+def test_a_pin_key_differing_in_case_and_whitespace_still_binds(db):
+    """Key matching is case-insensitive on the stripped token - a caller that
+    echoes the token back with different casing/whitespace must not lose the
+    pin."""
+    sorento_id, _mocha_id = _seed_two_companies(db)
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID, MOCHA_ID}))
+
+    result = resolve_references(
+        db,
+        [SHARED_CODE],
+        allowed_entity_types=["customer"],
+        entity_pins={f"  {SHARED_CODE.lower()}  ": sorento_id},
+    )
+    tr = _resolution(result, SHARED_CODE)
+
+    assert tr is not None
+    assert [m.uuid for m in tr.matches] == [sorento_id]
+    assert tr.resolved is True
+
+
+def test_a_pin_on_a_tier_2_variant_expansion_match_narrows_to_it(db):
+    """Product variant expansion (siblings like `-BL`/`-NEW`) surfaces as a
+    Tier-2 prefix match beside the Tier-1 exact hit for the base code - the
+    pin must be able to select EITHER row, not just a Tier-1 exact one (the
+    deleted widened re-probe only ever checked Tier-1, which was wrong for
+    exactly this shape)."""
+    base_code = unique_code("BASE")
+    variant_code = f"{base_code}-BL"
+    base_id = _product(db, code=base_code, company_id=DEFAULT_COMPANY_ID)
+    variant_id = _product(db, code=variant_code, company_id=DEFAULT_COMPANY_ID)
+    db.commit()
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+
+    result = resolve_references(
+        db,
+        [base_code],
+        allowed_entity_types=["product"],
+        entity_pins={base_code: variant_id},
+    )
+    tr = _resolution(result, base_code)
+
+    assert tr is not None
+    assert [m.uuid for m in tr.matches] == [variant_id]
+    assert tr.resolved is True
+    assert base_id != variant_id
+
+
 # --------------------------------------------------------------------------- #
 # (c) a pin naming nothing the token resolved to -> explicit structured error
 # --------------------------------------------------------------------------- #
@@ -191,6 +267,49 @@ def test_a_pin_mismatching_the_token_raises_entity_pin_mismatch(db):
 
     assert exc_info.value.token == SHARED_CODE
     assert exc_info.value.pinned_uuid == bogus_uuid
+
+
+def test_an_unparseable_pin_value_raises(db):
+    _seed_two_companies(db)
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID, MOCHA_ID}))
+
+    with pytest.raises(EntityPinMismatch):
+        resolve_references(
+            db,
+            [SHARED_CODE],
+            allowed_entity_types=["customer"],
+            entity_pins={SHARED_CODE: "not-a-uuid"},
+        )
+
+
+def test_a_blank_pin_value_raises_never_a_silent_skip(db):
+    _seed_two_companies(db)
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID, MOCHA_ID}))
+
+    with pytest.raises(EntityPinMismatch):
+        resolve_references(
+            db,
+            [SHARED_CODE],
+            allowed_entity_types=["customer"],
+            entity_pins={SHARED_CODE: "   "},
+        )
+
+
+def test_an_entity_pins_key_binding_to_no_token_raises(db):
+    """A key that does not correspond to ANY token in the request - a typo, a
+    stale key from an earlier turn - must never be silently ignored."""
+    _seed_two_companies(db)
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID, MOCHA_ID}))
+
+    with pytest.raises(EntityPinMismatch) as exc_info:
+        resolve_references(
+            db,
+            [SHARED_CODE],
+            allowed_entity_types=["customer"],
+            entity_pins={"NOT-THE-REQUESTED-TOKEN": str(uuid.uuid4())},
+        )
+
+    assert exc_info.value.token == "NOT-THE-REQUESTED-TOKEN"
 
 
 def test_the_route_converts_a_pin_mismatch_into_an_explicit_400(db):
@@ -221,30 +340,81 @@ def test_the_route_converts_a_pin_mismatch_into_an_explicit_400(db):
 
 
 # --------------------------------------------------------------------------- #
-# (d) a pin for a real record the caller's own company scope cannot see
+# (d) a pin for a real record the caller's own company scope cannot see is
+# treated EXACTLY the same as a bogus pin - a 400, never a silent fail-close.
 # --------------------------------------------------------------------------- #
-def test_a_pin_the_callers_scope_cannot_see_fails_closed_not_an_error(db):
+def test_out_of_scope_pin_raises_same_as_bogus(db):
     sorento_id, mocha_id = _seed_two_companies(db)
     # Scope covers ONLY Sorento - Mocha's row (and its uuid) genuinely exists,
-    # the caller simply cannot see it.
+    # the caller simply cannot see it. Deliberately NOT distinguished from a
+    # bogus uuid - see `EntityPinMismatch`'s docstring for why the widened
+    # re-probe that used to tell them apart was removed.
     set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
 
-    result = resolve_references(
-        db,
-        [SHARED_CODE],
-        allowed_entity_types=["customer"],
-        entity_pins={SHARED_CODE: mocha_id},
-    )
-    tr = _resolution(result, SHARED_CODE)
+    with pytest.raises(EntityPinMismatch) as exc_info:
+        resolve_references(
+            db,
+            [SHARED_CODE],
+            allowed_entity_types=["customer"],
+            entity_pins={SHARED_CODE: mocha_id},
+        )
 
-    assert tr is not None
-    # Never a silent misresolution to a DIFFERENT company's row sharing the
-    # same code (Sorento's), and never an exception either - just unresolved.
-    assert tr.matches == [], (
-        f"expected fail-closed (no matches), got {[m.uuid for m in tr.matches]}"
+    assert exc_info.value.token == SHARED_CODE
+    assert exc_info.value.pinned_uuid == mocha_id
+    assert sorento_id != mocha_id
+
+
+# --------------------------------------------------------------------------- #
+# match_mode="and" + entity_pins -> 400 (AND-mode has no per-token view to
+# pin, and the force_mode="or" retry would otherwise apply pins by surprise)
+# --------------------------------------------------------------------------- #
+def test_and_mode_with_entity_pins_is_rejected(db):
+    from app.api.v1.system.references import _resolve_input
+
+    with pytest.raises(HTTPException) as exc_info:
+        _resolve_input(
+            db,
+            "",
+            [SHARED_CODE],
+            match_mode="and",
+            entity_pins={SHARED_CODE: str(uuid.uuid4())},
+        )
+
+    assert exc_info.value.status_code == 400
+
+
+# --------------------------------------------------------------------------- #
+# fallback_to_all_types: a pinned token resolves in the primary pass; an
+# UNRELATED unresolved token must still reach the per-token fallback re-probe
+# without the already-consumed pin poisoning that second call.
+# --------------------------------------------------------------------------- #
+def test_fallback_to_all_types_does_not_choke_on_an_already_consumed_pin(db):
+    from app.models.inventory import Warehouse
+
+    from app.api.v1.system.references import _resolve_input
+
+    sorento_id, _mocha_id = _seed_two_companies(db)
+    wh_code = unique_code("WH")
+    db.add(
+        Warehouse(
+            id=str(uuid.uuid4()), warehouse_code=wh_code, is_active=True,
+            company_id=DEFAULT_COMPANY_ID,
+        )
     )
-    assert tr.ambiguous is False
-    assert tr.resolved is False
-    assert SHARED_CODE in result.unresolved_tokens
-    # Guard against the same code being silently swapped for Sorento's own row.
-    assert sorento_id not in [m.uuid for m in tr.matches]
+    db.commit()
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID, MOCHA_ID}))
+
+    result = _resolve_input(
+        db,
+        "",
+        [SHARED_CODE, wh_code],
+        match_mode="or",
+        allowed_entity_types=["customer"],
+        fallback_to_all_types=True,
+        entity_pins={SHARED_CODE: sorento_id},
+    )
+
+    by_token = {r["token"]: r for r in result.get("resolutions", [])}
+    assert [m["uuid"] for m in by_token[SHARED_CODE]["matches"]] == [sorento_id]
+    assert any(m["entity_type"] == "warehouse" for m in by_token[wh_code]["matches"])
+    assert result.get("fallback_applied") is True
