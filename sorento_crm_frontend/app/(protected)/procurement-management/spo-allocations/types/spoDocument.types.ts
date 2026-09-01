@@ -92,6 +92,15 @@ export interface SPODocument {
   balance: number;
   line_count: number;
   lines: SPODocumentLine[];
+  /** GRNs received against this SPO number (variant number formats matched by key). */
+  linked_grns: LinkedGRNRef[];
+}
+
+export interface LinkedGRNRef {
+  id: string;
+  picking_number: string | null;
+  picking_status: string | null;
+  picking_date: string | null;
 }
 
 /** The document list's filters, matching the Phase 2 endpoint's own query params

@@ -815,6 +815,34 @@ export function SPODocumentDetail({ spoNumber }: { spoNumber: string }) {
               <Field label="Received">{fmtQty(doc.total_received)}</Field>
               <Field label="Balance">{fmtQty(doc.balance)}</Field>
               <Field label="Line count">{fmtQty(doc.line_count)}</Field>
+              <Field label="Goods receipts">
+                {doc.linked_grns.length === 0 ? (
+                  <span className="text-muted-foreground">None received yet</span>
+                ) : (
+                  <ul className="space-y-0.5">
+                    {doc.linked_grns.map((grn) => (
+                      <li key={grn.id} className="flex items-center gap-2">
+                        <Link
+                          href={`/procurement-management/grn/${grn.id}`}
+                          className="text-primary hover:underline"
+                        >
+                          {grn.picking_number || 'GRN'}
+                        </Link>
+                        {grn.picking_date ? (
+                          <span className="text-xs font-normal text-muted-foreground">
+                            {fmtEta(grn.picking_date)}
+                          </span>
+                        ) : null}
+                        {grn.picking_status ? (
+                          <Badge variant="outline" size="sm" className="font-normal">
+                            {grn.picking_status}
+                          </Badge>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </Field>
             </section>
           </Card>
         </TabsContent>
