@@ -1,10 +1,11 @@
 /**
- * Versions sheet (S5, AC-S5-6): newest-first list, View is immediate, Restore
- * is gated behind a confirm - it overwrites the draft, so the same click
- * pattern as `VersionHistory`'s rollback confirm applies here.
+ * Versions sheet (S5, AC-S5-6): newest-first list, View is immediate, and so
+ * (B2 captain ruling, 2 Sep) is Restore - no confirmation dialog. The host
+ * owns the undo-toast safety net; this component only disables the row
+ * being restored while `onRestore` is in flight.
  */
 import React from 'react';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, expect, it, vi } from 'vitest';
 
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
@@ -86,35 +87,35 @@ it('View fires immediately, no confirmation needed', async () => {
   expect(onView).toHaveBeenCalledWith('v1', 1);
 });
 
-it('Restore asks for confirmation before calling onRestore', async () => {
+it('Restore fires immediately, no confirmation needed (B2)', async () => {
   const onRestore = vi.fn().mockResolvedValue(undefined);
   renderSheet({ onRestore });
 
   await waitFor(() => expect(screen.getByText('Version 1')).toBeInTheDocument());
   fireEvent.click(screen.getAllByText('Restore')[1]); // v1's row
 
-  // The confirm dialog is up, and onRestore has NOT fired yet.
-  expect(await screen.findByText('Restore version 1?')).toBeInTheDocument();
-  expect(onRestore).not.toHaveBeenCalled();
-
-  const dialog = within(screen.getByRole('alertdialog'));
-  fireEvent.click(dialog.getByRole('button', { name: 'Restore' }));
-
   await waitFor(() => expect(onRestore).toHaveBeenCalledWith('v1'));
+  expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
 });
 
-it('cancelling the confirm never calls onRestore', async () => {
-  const onRestore = vi.fn();
+it('disables only the restoring row while onRestore is in flight', async () => {
+  let resolveRestore: () => void = () => {};
+  const onRestore = vi.fn(
+    () =>
+      new Promise<void>((resolve) => {
+        resolveRestore = resolve;
+      }),
+  );
   renderSheet({ onRestore });
 
   await waitFor(() => expect(screen.getByText('Version 1')).toBeInTheDocument());
-  fireEvent.click(screen.getAllByText('Restore')[1]);
-  expect(await screen.findByText('Restore version 1?')).toBeInTheDocument();
+  const restoreButtons = screen.getAllByText(/Restore/);
+  fireEvent.click(restoreButtons[1]); // v1's row
 
-  fireEvent.click(screen.getByText('Cancel'));
+  await waitFor(() => expect(screen.getByText('Restoring...')).toBeInTheDocument());
+  // v2's row is untouched - still says "Restore", not disabled.
+  expect(screen.getAllByText('Restore')[0]).not.toBeDisabled();
 
-  await waitFor(() =>
-    expect(screen.queryByText('Restore version 1?')).not.toBeInTheDocument(),
-  );
-  expect(onRestore).not.toHaveBeenCalled();
+  resolveRestore();
+  await waitFor(() => expect(screen.queryByText('Restoring...')).not.toBeInTheDocument());
 });

@@ -13,7 +13,8 @@ from __future__ import annotations
 import logging
 
 from fastapi import APIRouter, Depends, Query, status
-from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session, joinedload
 
 from app.database import get_db
 from app.dependencies import require_permission, require_permission_with_api_key
@@ -85,7 +86,7 @@ def list_tag_templates(
     db: Session = Depends(get_db),
     _user: dict = Depends(_VIEW),
 ):
-    query = db.query(TagTemplate)
+    query = db.query(TagTemplate).options(joinedload(TagTemplate.published_version))
     if published:
         query = query.filter(TagTemplate.published_version_id.isnot(None))
     templates = query.order_by(TagTemplate.family, TagTemplate.name).all()
@@ -239,9 +240,21 @@ def publish_tag_template(
         created_by=_user_id(user),
     )
     db.add(version)
-    db.flush()
-    t.published_version_id = version.id
-    db.commit()
+    try:
+        db.flush()
+        t.published_version_id = version.id
+        db.commit()
+    except IntegrityError as exc:
+        # Two publishes racing land on the same `next_version_no` - the
+        # `uq_dealer_kit_tag_template_version` unique index is the only thing
+        # left holding the line, and it fires as a 500 unless translated here.
+        db.rollback()
+        logger.warning("tag template publish hit a version conflict: %s", getattr(exc, "orig", exc))
+        raise AppException(
+            status_code=409,
+            message="Someone else just published this template. Reload and try again.",
+            code="tag_template_publish_conflict",
+        ) from exc
     db.refresh(t)
     return _response_for(t)
 

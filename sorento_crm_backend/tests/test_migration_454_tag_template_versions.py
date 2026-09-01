@@ -126,3 +126,33 @@ def test_the_downgrade_removes_the_table_and_column(db):
 
     assert not _has_table(db)
     assert not _has_column(db)
+
+
+def test_running_upgrade_a_second_time_is_a_no_op(db):
+    """The shared dev DB already has this DDL hand-applied with
+    ``alembic_version`` stuck on ``ptag_0003`` (see the migration's docstring
+    and this repo's ``sorento_crm_backend/CLAUDE.md``) - replaying head must
+    not error and must not double the v1 backfill."""
+    a = _make_template(db, unique_code("ZZT Tmpl Replay"))
+
+    _run(db)
+    first_pointer = db.execute(
+        text("SELECT published_version_id FROM dealer_kit.tag_template WHERE id = :id"),
+        {"id": a},
+    ).scalar()
+
+    _run(db)  # replay - must not raise a duplicate-key error
+
+    second_pointer = db.execute(
+        text("SELECT published_version_id FROM dealer_kit.tag_template WHERE id = :id"),
+        {"id": a},
+    ).scalar()
+    version_count = db.execute(
+        text(
+            "SELECT count(*) FROM dealer_kit.tag_template_version WHERE template_id = :id"
+        ),
+        {"id": a},
+    ).scalar()
+
+    assert second_pointer == first_pointer
+    assert version_count == 1

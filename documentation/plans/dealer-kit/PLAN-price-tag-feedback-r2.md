@@ -1,7 +1,10 @@
 # PLAN - Price Tag Feedback R2
 
 Status: Approved 1 Sep 2026 - implementation starting; Lane B S5 (template save/publish
-versions) delivered 2 Sep 2026, PR pending
+versions) delivered 2 Sep 2026, PR #486 open; review round 2 Sep 2026 fixed B1 (View mount-reset
+wiped unsaved drafts), replaced the Restore confirm dialog with an immediate-restore + Undo toast
+(captain ruling, pending user ratification - see AC-S5-6), made Publish persist the draft before
+snapshotting it, and added a 409 for a concurrent publish race
 UAC: `documentation/plans/dealer-kit/price-tag-feedback-r2-acceptance-criteria.md`
 Predecessor: `documentation/plans/dealer-kit/PLAN-price-tag-request.md` (shipped, PR #289)
 

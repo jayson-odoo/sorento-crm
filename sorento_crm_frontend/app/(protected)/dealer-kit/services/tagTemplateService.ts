@@ -95,20 +95,6 @@ export async function deleteTemplate(id: string): Promise<void> {
 }
 
 /**
- * Find the first template whose family matches.
- *
- * Used by the tag sheet designer to auto-select a template when a request
- * line is dropped onto a sheet. Returns null when no matching template
- * exists (caller falls back to the generic ala_carte template).
- */
-export async function getTemplateForFamily(
-  family: TagTemplateFamily,
-): Promise<TagTemplate | null> {
-  const templates = await listTemplates();
-  return templates.find((t) => t.family === family) ?? null;
-}
-
-/**
  * The request designer's template source (AC-S5-2): only templates with a
  * live pointer, and each one's PUBLISHED doc - never its draft, which keeps
  * changing underneath it the moment marketing edits after a publish.

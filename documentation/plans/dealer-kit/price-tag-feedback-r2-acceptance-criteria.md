@@ -124,8 +124,14 @@ versions.
   gone.
 - **AC-S5-6 [FE]** Given version history, when the designer opens Versions, then
   versions list newest-first with number, note, author, time; Restore copies that
-  version's doc into the draft (confirmation first) without touching the live
-  pointer.
+  version's doc into the draft immediately, without touching the live pointer.
+  DEVIATION (captain ruling 2 Sep 2026, pending user ratification): the
+  original "(confirmation first)" wording is replaced by an undo pattern -
+  PRINCIPLES treats a new destructive-confirm `AlertDialog` as an auto-reject,
+  so Restore (both the Versions sheet row and the version viewer's banner,
+  identical) runs on click with no dialog; the host holds the draft it is
+  about to overwrite in memory and the success toast carries an Undo action
+  that PUTs that prior draft straight back.
 - **AC-S5-8 [FE]** Given a past version, when View is clicked, then the canvas
   shows that version's design read-only under a "Viewing vN - read-only" banner
   with Back-to-draft and Restore actions; the unsaved draft is intact after

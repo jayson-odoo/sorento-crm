@@ -4,16 +4,28 @@
  * Tag template editor page.
  *
  * Loads the template by id and renders the full TagCanvasEditor against its
- * DRAFT doc. Save writes the draft (unchanged). Publish snapshots the draft
- * into an immutable version and moves the live pointer (S5, PLAN D7) - the
- * request designer's template source reads only that pointer's doc, never
- * this draft, so an in-progress edit is never at risk of going live by
- * accident.
+ * DRAFT doc. Save writes the draft (unchanged). Publish persists the current
+ * draft first and only then snapshots it into an immutable version and moves
+ * the live pointer (S5, PLAN D7) - an unsaved edit publishes exactly like a
+ * saved one. The request designer's template source reads only the live
+ * pointer's doc, never this draft, so an in-progress edit is never at risk
+ * of going live by accident on its own.
  *
- * View, from the Versions sheet, swaps the canvas to a read-only render of
- * that version (D16) via `TagVersionViewer`; the draft in memory is
- * untouched underneath it, so Back to draft returns exactly where editing
- * left off.
+ * View, from the Versions sheet, swaps the VISIBLE panel to a read-only
+ * render of that version (D16) via `TagVersionViewer` - `TagCanvasEditor`
+ * itself stays mounted underneath (merely hidden), because it seeds its
+ * internal layer state from `doc` ONCE, on mount: unmounting it to show the
+ * viewer and remounting it on Back-to-draft would silently reset any edit
+ * made since the last render to whatever `doc` was at that later moment
+ * (bug fixed here - Back-to-draft used to throw away unsaved work). Feeding
+ * it `{...template.doc, layers: draftLayers}` keeps that seed correct even
+ * on a genuine remount (Restore bumps `editorGeneration`).
+ *
+ * Restore (from the sheet or from the viewer's banner - same action, same
+ * handler) runs immediately, no confirmation dialog (PRINCIPLES: a new
+ * destructive-confirm dialog is a defect). The draft it overwrites is held
+ * in memory first, so the success toast's Undo action can PUT it straight
+ * back.
  */
 
 import { useCallback, useEffect, useState } from 'react';
@@ -85,6 +97,10 @@ export default function TagTemplateEditorPage() {
   const [versionsOpen, setVersionsOpen] = useState(false);
   const [viewing, setViewing] = useState<TagTemplateVersionDetail | null>(null);
   const [viewingLoading, setViewingLoading] = useState(false);
+  // Which version Restore is in flight for - the viewer banner's own button
+  // needs to know so it can say "Restoring..." (the sheet tracks its own row
+  // locally).
+  const [restoringVersionId, setRestoringVersionId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -126,7 +142,12 @@ export default function TagTemplateEditorPage() {
     if (!template) return;
     setPublishing(true);
     try {
-      const updated = await publishTemplate(template.id, publishNote.trim() || undefined);
+      // Persist the draft FIRST (S1): Publish snapshots the CURRENT draft,
+      // including edits made since the last manual Save, not whatever the
+      // backend last had saved.
+      const saved = await updateTemplate(template.id, { ...template.doc, layers: draftLayers });
+      setTemplate(saved);
+      const updated = await publishTemplate(saved.id, publishNote.trim() || undefined);
       setTemplate(updated);
       setPublishOpen(false);
       setPublishNote('');
@@ -136,7 +157,7 @@ export default function TagTemplateEditorPage() {
     } finally {
       setPublishing(false);
     }
-  }, [template, publishNote]);
+  }, [template, draftLayers, publishNote]);
 
   const handleView = useCallback(
     async (versionId: string) => {
@@ -155,32 +176,45 @@ export default function TagTemplateEditorPage() {
     [template],
   );
 
-  const handleRestoreFromSheet = useCallback(
+  // Restore (B2 captain ruling, 2 Sep): runs immediately, no confirm dialog -
+  // the sheet's row button and the viewer's banner button both call this
+  // same handler. The draft it is about to overwrite is captured first so
+  // the success toast's Undo action can PUT it straight back.
+  const handleRestore = useCallback(
     async (versionId: string) => {
       if (!template) return;
-      const updated = await restoreTemplateVersion(template.id, versionId);
-      setTemplate(updated);
-      setDraftLayers(updated.doc.layers);
-      setEditorGeneration((n) => n + 1);
-      setViewing(null);
-      toast.success('Draft restored');
+      const priorDraft = { ...template.doc, layers: draftLayers };
+      setRestoringVersionId(versionId);
+      try {
+        const updated = await restoreTemplateVersion(template.id, versionId);
+        setTemplate(updated);
+        setDraftLayers(updated.doc.layers);
+        setEditorGeneration((n) => n + 1);
+        setViewing(null);
+        toast.success('Draft restored', {
+          action: {
+            label: 'Undo',
+            onClick: async () => {
+              try {
+                const reverted = await updateTemplate(template.id, priorDraft);
+                setTemplate(reverted);
+                setDraftLayers(reverted.doc.layers);
+                setEditorGeneration((n) => n + 1);
+                toast.success('Restore undone');
+              } catch (err) {
+                toast.error(err instanceof Error ? err.message : 'Could not undo the restore');
+              }
+            },
+          },
+        });
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : 'Could not restore version');
+      } finally {
+        setRestoringVersionId(null);
+      }
     },
-    [template],
+    [template, draftLayers],
   );
-
-  const handleRestoreFromViewer = useCallback(async () => {
-    if (!template || !viewing) return;
-    try {
-      const updated = await restoreTemplateVersion(template.id, viewing.id);
-      setTemplate(updated);
-      setDraftLayers(updated.doc.layers);
-      setEditorGeneration((n) => n + 1);
-      setViewing(null);
-      toast.success('Draft restored');
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Could not restore version');
-    }
-  }, [template, viewing]);
 
   if (isLoading) {
     return (
@@ -229,7 +263,9 @@ export default function TagTemplateEditorPage() {
               </span>
             }
             actions={
-              <div className="flex items-center gap-2">
+              // flex-wrap: at 375px four buttons plus BackToList do not fit
+              // one row (S7).
+              <div className="flex flex-wrap items-center gap-2">
                 <Button
                   variant="outline"
                   size="sm"
@@ -263,22 +299,31 @@ export default function TagTemplateEditorPage() {
           (AC-S5-5), so the canvas's own bottom save bar is hidden here - its
           `onChange` still fires as a fallback, but this host reads layers via
           `onLayersChange` so header Save always has the latest state even
-          before that fires. */}
+          before that fires.
+
+          The editor stays MOUNTED the whole time, merely hidden while View
+          is open (B1 fix, AC-S5-8): TagCanvasEditor seeds its internal
+          layers state from `doc` once, on mount, so unmounting it to show
+          the viewer and remounting it on Back-to-draft used to reset any
+          edit made since the last render - a silent data loss the version
+          viewer's very existence should never cause. */}
       <div className="flex-1 overflow-hidden">
-        {viewing ? (
+        <div className={viewing ? 'hidden' : 'h-full'}>
+          <TagCanvasEditor
+            key={editorGeneration}
+            doc={{ ...template.doc, layers: draftLayers }}
+            onChange={(doc) => setDraftLayers(doc.layers)}
+            onLayersChange={setDraftLayers}
+            hideSaveBar
+          />
+        </div>
+        {viewing && (
           <TagVersionViewer
             doc={viewing.doc}
             versionNo={viewing.version_no}
             onBackToDraft={() => setViewing(null)}
-            onRestore={handleRestoreFromViewer}
-          />
-        ) : (
-          <TagCanvasEditor
-            key={editorGeneration}
-            doc={template.doc}
-            onChange={(doc) => setDraftLayers(doc.layers)}
-            onLayersChange={setDraftLayers}
-            hideSaveBar
+            onRestore={() => handleRestore(viewing.id)}
+            restoring={restoringVersionId === viewing.id}
           />
         )}
       </div>
@@ -289,7 +334,7 @@ export default function TagTemplateEditorPage() {
         onOpenChange={setVersionsOpen}
         liveVersionNo={template.published_version_no}
         onView={(versionId) => handleView(versionId)}
-        onRestore={handleRestoreFromSheet}
+        onRestore={handleRestore}
       />
 
       <Dialog open={publishOpen} onOpenChange={setPublishOpen}>
@@ -310,6 +355,7 @@ export default function TagTemplateEditorPage() {
               onChange={(e) => setPublishNote(e.target.value)}
               placeholder="What changed in this version?"
               rows={3}
+              maxLength={500}
             />
           </div>
           <DialogFooter>

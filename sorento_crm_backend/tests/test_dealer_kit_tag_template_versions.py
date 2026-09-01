@@ -180,6 +180,50 @@ def test_a_draft_edit_after_publish_does_not_move_the_live_version(api):
     assert row["doc"]["width_mm"] == 85
 
 
+def test_a_concurrent_publish_is_a_409_not_a_500(api, monkeypatch):
+    """Two publishes racing both compute ``next_version_no`` before either
+    commits, so the second's INSERT collides on
+    ``uq_dealer_kit_tag_template_version`` and Postgres raises IntegrityError
+    at flush. Forced here by making the flush that carries the pending
+    ``TagTemplateVersion`` raise it once - an incidental autoflush earlier in
+    the same request (``_get_template_or_404``'s SELECT) must NOT trip it,
+    or this would fail before the route's own try/except is even reached."""
+    from sqlalchemy.exc import IntegrityError
+    from app.models.dealer_kit import TagTemplateVersion
+
+    db, _as, _scope = api
+
+    with TestClient(app) as client:
+        template_id = _create_template(client)
+
+        original_flush = db.flush
+
+        def _flush_maybe_conflicting(*args, **kwargs):
+            if any(isinstance(obj, TagTemplateVersion) for obj in db.new):
+                monkeypatch.setattr(db, "flush", original_flush)
+                raise IntegrityError(
+                    "INSERT INTO dealer_kit.tag_template_version ...",
+                    {},
+                    Exception(
+                        'duplicate key value violates unique constraint '
+                        '"uq_dealer_kit_tag_template_version"'
+                    ),
+                )
+            return original_flush(*args, **kwargs)
+
+        monkeypatch.setattr(db, "flush", _flush_maybe_conflicting)
+
+        published = client.post(f"/api/v1/dealer-kit/tag-templates/{template_id}/publish")
+
+        # The session survived the rollback and still works for the next
+        # request - a real race leaves the template publishable again.
+        retried = client.post(f"/api/v1/dealer-kit/tag-templates/{template_id}/publish")
+
+    assert published.status_code == 409, published.text
+    assert published.json()["code"] == "tag_template_publish_conflict"
+    assert retried.status_code == 200, retried.text
+
+
 def test_publishing_again_creates_v2_and_moves_the_pointer_forward(api):
     _db, _as, _scope = api
 
@@ -202,6 +246,32 @@ def test_publishing_again_creates_v2_and_moves_the_pointer_forward(api):
 # ---------------------------------------------------------------------------
 # AC-S5-2: published-only resolution
 # ---------------------------------------------------------------------------
+
+
+def test_the_published_list_substitutes_the_versions_print_size_too(api):
+    """AC-S5-2 covers ``doc``; the same drift can happen to ``print_size`` the
+    moment a draft edit changes the tag's dimensions after a publish."""
+    _db, _as, _scope = api
+
+    with TestClient(app) as client:
+        template_id = _create_template(client)
+        client.post(f"/api/v1/dealer-kit/tag-templates/{template_id}/publish")
+
+        client.put(
+            f"/api/v1/dealer-kit/tag-templates/{template_id}",
+            json={"print_size": {"width_mm": 100, "height_mm": 70}},
+        )
+
+        published_list = client.get(
+            "/api/v1/dealer-kit/tag-templates", params={"published": "1"}
+        )
+        unfiltered = client.get(f"/api/v1/dealer-kit/tag-templates/{template_id}")
+
+    row = next(r for r in published_list.json() if r["id"] == template_id)
+    assert row["print_size"] == {"width_mm": 85, "height_mm": 58}
+    # The draft (unfiltered) branch shows the edited size - proves the two
+    # really did diverge rather than the assertion above being a no-op.
+    assert unfiltered.json()["print_size"] == {"width_mm": 100, "height_mm": 70}
 
 
 def test_a_never_published_template_is_absent_from_the_published_list(api):
@@ -355,6 +425,25 @@ class TestScope:
             )
 
         assert got.status_code == 404, got.text
+
+    def test_another_companys_restore_is_404(self, api):
+        db, _as, _scope = api
+
+        with TestClient(app) as client:
+            template_id = _create_template(client)
+            published = client.post(
+                f"/api/v1/dealer-kit/tag-templates/{template_id}/publish"
+            ).json()
+            version_id = published["published_version_id"]
+
+        _scope(str(uuid.uuid4()))
+
+        with TestClient(app) as client:
+            restored = client.post(
+                f"/api/v1/dealer-kit/tag-templates/{template_id}/versions/{version_id}/restore"
+            )
+
+        assert restored.status_code == 404, restored.text
 
 
 # ---------------------------------------------------------------------------
