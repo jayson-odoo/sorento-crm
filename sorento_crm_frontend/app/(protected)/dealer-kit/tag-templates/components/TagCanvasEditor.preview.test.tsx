@@ -15,7 +15,7 @@
  * block's eye chip in the first place.
  */
 
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ProductTagData, TagLayer, TagTemplateDoc } from '@/lib/dealer-kit/tag-template-types';
@@ -328,5 +328,85 @@ describe('TagCanvasEditor preview per block (D53, D10/S6)', () => {
       expect(screen.getByTestId('layer-main-code')).toHaveTextContent('Product code'),
     );
     expect(screen.getByTestId('layer-alt-a-code')).toHaveTextContent('SRT2201');
+  });
+
+  // -- B1: the chip must survive the pointer crossing onto it (AC-S6-4) -----
+
+  it('keeps the eye chip mounted while the pointer crosses onto it, so the later click lands (B1, AC-S6-4)', async () => {
+    render(<TagCanvasEditor doc={twoBlockDoc()} onChange={vi.fn()} />);
+
+    hoverBlock('main');
+    const chip = await screen.findByRole('button', {
+      name: accessibleNameIncludes(MAIN_LABEL),
+    });
+
+    // The pointer crossing from the Konva shape onto the chip is ONE
+    // continuous mouse movement: the Stage's own mouseleave on the block and
+    // the chip's own mouseenter both fire from it, together - unlike the
+    // click that follows a moment later, a genuinely separate gesture. The
+    // OLD mock never fired this leave at all, which is why the bug never
+    // showed up in the earlier "opens that block's own picker" test above.
+    act(() => {
+      fireEvent.mouseLeave(screen.getByTestId('layer-main'));
+      fireEvent.mouseEnter(chip);
+    });
+
+    // Still mounted, still the SAME element - not remounted from a fallback.
+    expect(screen.getByRole('button', { name: accessibleNameIncludes(MAIN_LABEL) })).toBe(
+      chip,
+    );
+
+    fireEvent.mouseDown(chip);
+    fireEvent.click(chip);
+
+    expect(await screen.findByText('Preview this block with')).toBeInTheDocument();
+  });
+
+  // -- S1/AC-S6-5: the whole-tag eye, and clearing it -----------------------
+
+  function looseLayerDoc(): TagTemplateDoc {
+    return {
+      width_mm: 60,
+      height_mm: 40,
+      layers: [
+        {
+          ...base('loose-code'),
+          slot_binding: 'code',
+          props: { ...defaultTextProps(), text: 'Product code' },
+        },
+      ],
+    };
+  }
+
+  it("previews every loose bound layer from the frame's eye, and clears it in one click (S1, AC-S6-5)", async () => {
+    render(<TagCanvasEditor doc={looseLayerDoc()} onChange={vi.fn()} />);
+
+    const frameEye = await screen.findByRole('button', {
+      name: 'Preview the whole tag',
+    });
+    // No clear affordance while nothing is previewed yet.
+    expect(
+      screen.queryByRole('button', { name: 'Stop previewing the whole tag' }),
+    ).toBeNull();
+
+    fireEvent.click(frameEye);
+    await choose('CBF3612');
+    fireEvent.click(screen.getByRole('button', { name: 'Preview' }));
+
+    await waitFor(() =>
+      expect(screen.getByTestId('layer-loose-code')).toHaveTextContent('CBF3612'),
+    );
+
+    const clear = await screen.findByRole('button', {
+      name: 'Stop previewing the whole tag',
+    });
+    fireEvent.click(clear);
+
+    await waitFor(() =>
+      expect(screen.getByTestId('layer-loose-code')).toHaveTextContent('Product code'),
+    );
+    expect(
+      screen.queryByRole('button', { name: 'Stop previewing the whole tag' }),
+    ).toBeNull();
   });
 });

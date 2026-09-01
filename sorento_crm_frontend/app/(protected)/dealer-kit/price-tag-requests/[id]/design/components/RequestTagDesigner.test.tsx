@@ -286,6 +286,29 @@ describe('RequestTagDesigner - which template a line clones', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Full screen (S7, AC-S6-1): the shared FocusShell, same as the room designer.
+// ---------------------------------------------------------------------------
+
+describe('RequestTagDesigner - full screen (AC-S6-1)', () => {
+  it('wraps the canvas in the shared FocusShell, and Escape exits', async () => {
+    mockListTemplates.mockResolvedValue([]);
+    mockResolveRequestLines.mockResolvedValue([lineTagData()]);
+
+    renderDesigner();
+
+    await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
+    expect(document.querySelector('[data-dk-focus-mode]')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: /Full screen/ }));
+    expect(document.querySelector('[data-dk-focus-mode]')).not.toBeNull();
+    expect(screen.getByTestId('canvas-editor')).toBeInTheDocument();
+
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(document.querySelector('[data-dk-focus-mode]')).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // The canvas's own placeholder states
 // ---------------------------------------------------------------------------
 

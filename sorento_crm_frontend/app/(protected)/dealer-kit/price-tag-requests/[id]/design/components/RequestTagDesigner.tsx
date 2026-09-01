@@ -414,10 +414,15 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
 
   return (
     <FocusShell active={focus} onExit={() => setFocus(false)}>
-    <div className="flex h-full flex-col">
+    <div className="flex min-h-0 flex-1 flex-col">
       {/* Request bar: what this is, which half is showing, and the two actions
-          that leave the page in a different state. */}
-      <div className="flex h-10 shrink-0 items-center gap-2 border-b bg-background px-3">
+          that leave the page in a different state.
+          `flex-wrap` (S6): at 375px the back button, mode toggle, Full
+          screen, Save and (for a designing request) Mark proof ready do not
+          fit one row - the same fix the template page's own action row
+          carries. `min-h-10` rather than a fixed `h-10` so the row can
+          actually grow into a second line instead of clipping it. */}
+      <div className="flex min-h-10 shrink-0 flex-wrap items-center gap-2 border-b bg-background px-3 py-1.5">
         <Button
           variant="ghost"
           size="sm"
@@ -448,7 +453,13 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
 
         <div className="flex-1" />
 
-        <FocusToggle active={focus} onToggle={setFocus} label="tags" />
+        <FocusToggle
+          active={focus}
+          onToggle={setFocus}
+          label="tags"
+          className="h-7 text-xs"
+          iconClassName="size-3.5"
+        />
 
         <Button
           variant="outline"

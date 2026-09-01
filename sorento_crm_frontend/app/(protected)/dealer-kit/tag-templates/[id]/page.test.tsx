@@ -157,6 +157,26 @@ describe('header badge', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Full screen (S7, AC-S6-1): the shared FocusShell, same as the room designer.
+// ---------------------------------------------------------------------------
+
+it('Full screen wraps the canvas in the shared FocusShell, and Escape exits', async () => {
+  mockGet.mockResolvedValue(templateFixture());
+  render(<TagTemplateEditorPage />);
+
+  await screen.findByTestId('canvas-editor');
+  expect(document.querySelector('[data-dk-focus-mode]')).toBeNull();
+
+  fireEvent.click(screen.getByRole('button', { name: /Full screen/ }));
+  expect(document.querySelector('[data-dk-focus-mode]')).not.toBeNull();
+  // The canvas is still the same content, now inside the overlay.
+  expect(screen.getByTestId('canvas-editor')).toBeInTheDocument();
+
+  fireEvent.keyDown(document, { key: 'Escape' });
+  expect(document.querySelector('[data-dk-focus-mode]')).toBeNull();
+});
+
+// ---------------------------------------------------------------------------
 // Save (header, not the canvas's own bar - AC-S5-5)
 // ---------------------------------------------------------------------------
 

@@ -124,6 +124,7 @@ import {
   Trash2,
   Ungroup,
   Unlock,
+  X,
 } from 'lucide-react';
 import { AssetPickerDialog } from './AssetPickerDialog';
 import { FontUploadDialog } from './FontUploadDialog';
@@ -183,17 +184,29 @@ function describeBindingData(data: TagBindingData | null | undefined): string | 
  * (D10, S6). A plain DOM overlay, not a Konva node: it needs to sit ON TOP of
  * the canvas bitmap and stay a normal, focusable, hoverable button, which is
  * cheaper as HTML positioned over the Stage than as a Konva shape faking one.
+ *
+ * `onMouseEnter`/`onMouseLeave` (B1, AC-S6-4) exist because the chip sits
+ * INSIDE the block's own corner: the pointer crossing from the Konva shape
+ * onto the chip makes the Stage fire the shape's own `mouseleave` first,
+ * which would otherwise unmount this button (nothing else was keeping it
+ * shown) before the user's later, separate mousedown for the click ever
+ * lands. Reasserting hover on the chip itself keeps it mounted for exactly as
+ * long as the pointer is actually over it.
  */
 function PreviewEyeButton({
   label,
   active,
   style,
   onClick,
+  onMouseEnter,
+  onMouseLeave,
 }: {
   label: string;
   active: boolean;
   style: React.CSSProperties;
   onClick: () => void;
+  onMouseEnter?: () => void;
+  onMouseLeave?: () => void;
 }) {
   return (
     <button
@@ -205,6 +218,8 @@ function PreviewEyeButton({
       style={style}
       title={label}
       aria-label={label}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
       onMouseDown={(e) => e.stopPropagation()}
       onClick={(e) => {
         e.stopPropagation();
@@ -340,6 +355,15 @@ export function TagCanvasEditor({
    * for that half.
    */
   const [hoveredLayerId, setHoveredLayerId] = useState<string | null>(null);
+  /**
+   * A block's eye chip hovers itself (B1, AC-S6-4): the chip sits inside the
+   * block's own corner, so the pointer crossing onto it makes the Stage fire
+   * the block's `mouseleave` first. Without this, `hoveredLayerId` clearing
+   * would unmount the chip before the click that followed the hover ever
+   * landed - the whole point of `activeCanvasEyeBlockId` falling back to this
+   * below.
+   */
+  const [chipHoveredBlockId, setChipHoveredBlockId] = useState<string | null>(null);
   /** Session-only ruler guides (D9/D17). Never touch the document. */
   const [rulerGuides, setRulerGuides] = useState<RulerGuide[]>([]);
 
@@ -357,16 +381,30 @@ export function TagCanvasEditor({
   } | null>(null);
   const fittedRef = useRef(false);
   /**
-   * Which guide a pointer drag is currently moving, if any (S6). `moved`
-   * distinguishes a genuine drag from a plain click: a click's mousedown and
-   * mouseup land at the SAME point, which for a freshly-dropped guide is
-   * still technically "inside the ruler" - without this a click on the ruler
-   * created a guide and the very next tick deleted it again, netting zero.
+   * Which guide a pointer drag is currently moving, if any (S6, B2).
+   *
+   * `moved` distinguishes a genuine drag from a plain click, the same way
+   * `MARQUEE_SLOP_PX` does for the marquee below: it only flips once the
+   * pointer has wandered past the slop from `downClient`, not on the very
+   * first `mousemove` tick. A freshly-dropped guide sits INSIDE ruler
+   * territory by construction (that is where the ruler's own mousedown put
+   * it) - without the slop, the sub-pixel jitter every real click carries set
+   * `moved` on tick one, and the guide deleted itself on mouseup for having
+   * never actually left the ruler.
+   *
+   * `leftRuler` is the second half: only a drag that has genuinely LEFT ruler
+   * territory at some point counts as "dragged back onto the ruler" on
+   * release. A newly-spawned guide starts inside the ruler and so starts
+   * `false`; a guide picked up off the canvas starts outside it and so starts
+   * `true` - it can be sent home on the very first re-entry, exactly as
+   * before.
    */
   const guideDragRef = useRef<{
     id: string;
     orientation: RulerGuide['orientation'];
     moved: boolean;
+    leftRuler: boolean;
+    downClient: { x: number; y: number };
   } | null>(null);
 
   const history = useCanvasHistory(doc.layers);
@@ -1012,6 +1050,14 @@ export function TagCanvasEditor({
     });
   }, []);
 
+  /** A block's own eye chip re-asserting its hover (B1, AC-S6-4). */
+  const handleChipHoverChange = useCallback((groupId: string, hovering: boolean) => {
+    setChipHoveredBlockId((prev) => {
+      if (hovering) return groupId;
+      return prev === groupId ? null : prev;
+    });
+  }, []);
+
   const handleLayerDoubleClick = useCallback(
     (rawId: string) => {
       const targetId = resolveTarget(rawId);
@@ -1189,8 +1235,26 @@ export function TagCanvasEditor({
    * not nested inside it) - resizing it live here would touch nothing a user
    * can see, and `transformGroup`'s redistribution to every descendant still
    * has to wait for `handleTransformEnd`, exactly as before.
+   *
+   * Konva's Transformer fires its own `transform` event once per ATTACHED
+   * NODE on every tick, not once (`_fitNodesInto` loops `this._nodes` and
+   * fires on each) - so with N selected layers this callback itself runs N
+   * times per tick, and each run already loops every selected node again
+   * (N4). The guard below collapses that back to one pass: the first call in
+   * a tick does the work and schedules a microtask to clear itself, and every
+   * other call in the SAME synchronous batch of `_fire`s - which is all of
+   * them, since `_fitNodesInto` never yields between them - sees the guard
+   * still set and returns immediately.
    */
+  const transformTickRef = useRef(false);
+
   const handleTransform = useCallback(() => {
+    if (transformTickRef.current) return;
+    transformTickRef.current = true;
+    queueMicrotask(() => {
+      transformTickRef.current = false;
+    });
+
     const transformer = transformerRef.current;
     if (!transformer) return;
     for (const node of transformer.nodes()) {
@@ -1226,20 +1290,23 @@ export function TagCanvasEditor({
     // Read and reset the Konva scale BEFORE touching state: a React updater can
     // run twice, and a second read would see the already-reset scale and undo
     // the resize. `handleTransform` above has already zeroed a text node's
-    // scale on the last live tick, so this reads 1 for one and the SAME
-    // computed size either way - text and non-text share one commit path.
+    // scale on the last live tick, so this reads 1 for one - and runs the
+    // SAME `reflowedTextSize` fold either way (N3), so text and non-text
+    // really do share one commit path rather than a comment merely claiming
+    // they do.
     const changes = transformer.nodes().map((node) => {
       const scaleX = node.scaleX();
       const scaleY = node.scaleY();
       node.scaleX(1);
       node.scaleY(1);
+      const { width, height } = reflowedTextSize(node.width(), node.height(), scaleX, scaleY);
       return {
         id: node.id(),
         attrs: {
           x_mm: node.x() / scale,
           y_mm: node.y() / scale,
-          width_mm: (node.width() * scaleX) / scale,
-          height_mm: (node.height() * scaleY) / scale,
+          width_mm: width / scale,
+          height_mm: height / scale,
           rotation_deg: node.rotation(),
         },
       };
@@ -1284,6 +1351,12 @@ export function TagCanvasEditor({
    */
   const handleGuideStart = useCallback(
     (orientation: RulerGuide['orientation'], event: React.MouseEvent) => {
+      // Left button only (D44's own rule, applied here too, S4): the middle
+      // button pans and the right button opens no context menu on a ruler,
+      // so neither should spawn a guide. `preventDefault` keeps a middle-
+      // button press from also triggering the browser's autoscroll cursor.
+      if (event.button !== 0) return;
+      event.preventDefault();
       const point = stagePointFromClient(event.clientX, event.clientY);
       if (!point) return;
       const { x_mm, y_mm } = stageToMm(view, point.x, point.y);
@@ -1292,15 +1365,34 @@ export function TagCanvasEditor({
         ...prev,
         { id, orientation, position_mm: orientation === 'vertical' ? x_mm : y_mm },
       ]);
-      guideDragRef.current = { id, orientation, moved: false };
+      guideDragRef.current = {
+        id,
+        orientation,
+        moved: false,
+        // Spawned FROM the ruler, so the drag starts inside it (B2).
+        leftRuler: false,
+        downClient: { x: event.clientX, y: event.clientY },
+      };
     },
     [stagePointFromClient, view],
   );
 
   /** An EXISTING guide picked up off the canvas: the same drag, a later start. */
-  const handleGuidePointerDown = useCallback((guide: RulerGuide) => {
-    guideDragRef.current = { id: guide.id, orientation: guide.orientation, moved: false };
-  }, []);
+  const handleGuidePointerDown = useCallback(
+    (guide: RulerGuide, event: { clientX: number; clientY: number }) => {
+      guideDragRef.current = {
+        id: guide.id,
+        orientation: guide.orientation,
+        moved: false,
+        // Picked up from somewhere on the canvas, never from inside the
+        // ruler strip itself, so this drag has already left ruler territory
+        // the moment it starts (B2).
+        leftRuler: true,
+        downClient: { x: event.clientX, y: event.clientY },
+      };
+    },
+    [],
+  );
 
   // ONE pair of window listeners, always attached, no-op unless a guide is
   // being dragged (`guideDragRef`) - the drag can wander outside the ruler
@@ -1310,9 +1402,26 @@ export function TagCanvasEditor({
     const onMove = (event: MouseEvent) => {
       const drag = guideDragRef.current;
       if (!drag) return;
-      drag.moved = true;
+      // The button came up somewhere outside the window - no `mouseup` here
+      // to catch it (S3) - so there is no drag left to continue.
+      if (event.buttons === 0) {
+        guideDragRef.current = null;
+        return;
+      }
+      if (!drag.moved) {
+        // The file's own marquee-slop pattern (B2): a real click always
+        // wanders a pixel or two between mousedown and mouseup, and without
+        // this threshold that jitter alone flipped `moved` on tick one.
+        const dx = event.clientX - drag.downClient.x;
+        const dy = event.clientY - drag.downClient.y;
+        if (Math.hypot(dx, dy) >= MARQUEE_SLOP_PX) drag.moved = true;
+      }
       const point = stagePointFromClient(event.clientX, event.clientY);
       if (!point) return;
+      // Only once the pointer has genuinely left ruler territory does a later
+      // re-entry count as "dragged back onto the ruler" (B2) - see the ref's
+      // own doc comment above.
+      if (!guideCrossedIntoRuler(drag.orientation, point)) drag.leftRuler = true;
       const { x_mm, y_mm } = stageToMm(view, point.x, point.y);
       setRulerGuides((prev) =>
         moveGuide(prev, drag.id, drag.orientation === 'vertical' ? x_mm : y_mm),
@@ -1322,11 +1431,16 @@ export function TagCanvasEditor({
     const onUp = (event: MouseEvent) => {
       const drag = guideDragRef.current;
       if (!drag) return;
-      // A plain click - mousedown and mouseup at the same spot, no `onMove`
-      // tick in between - never counts as "dragged back onto the ruler",
-      // or the guide this same gesture just dropped would delete itself.
+      // A plain click - never past the slop, or never having left ruler
+      // territory - never counts as "dragged back onto the ruler", or the
+      // guide this same gesture just dropped would delete itself (B2).
       const point = stagePointFromClient(event.clientX, event.clientY);
-      if (drag.moved && point && guideCrossedIntoRuler(drag.orientation, point)) {
+      if (
+        drag.moved &&
+        drag.leftRuler &&
+        point &&
+        guideCrossedIntoRuler(drag.orientation, point)
+      ) {
         setRulerGuides((prev) => removeGuide(prev, drag.id));
       }
       guideDragRef.current = null;
@@ -1848,8 +1962,13 @@ export function TagCanvasEditor({
     return layer ? previewBlockOf(layer, previewBlocks, groupOfChild) : null;
   }, [hoveredLayerId, layers, previewBlocks, groupOfChild]);
 
-  /** Which block's on-canvas eye is showing right now (hovered OR selected). */
-  const activeCanvasEyeBlockId = hoveredBlock?.groupId ?? selectedBlock?.groupId ?? null;
+  /**
+   * Which block's on-canvas eye is showing right now: hovered, then the
+   * chip's OWN hover (B1 - keeps it mounted once the pointer has crossed
+   * onto it, even after the block's own hover cleared), then selected.
+   */
+  const activeCanvasEyeBlockId =
+    hoveredBlock?.groupId ?? chipHoveredBlockId ?? selectedBlock?.groupId ?? null;
 
   /** The bound product's photos, for the image picker's first tab. */
   const pickerProductImages = useMemo(() => {
@@ -1860,6 +1979,22 @@ export function TagCanvasEditor({
   }, [imagePicker, layers, dataOf]);
 
   // -- Render ----------------------------------------------------------------
+
+  /**
+   * The whole-tag eye's on-canvas position (S5). Anchored to the frame's own
+   * top-right corner, but CLAMPED into the viewport: a pan or zoom that
+   * carries that corner above the ruler or off either side must not bury the
+   * one control that reaches the whole-tag preview.
+   */
+  const wholeTagEyePosition = useMemo(() => {
+    const rawLeft = RULER_THICKNESS + view.panX + canvasWidthPx - 28;
+    const rawTop = RULER_THICKNESS + view.panY - 28;
+    const maxLeft = Math.max(RULER_THICKNESS + 2, containerSize.width - 26);
+    return {
+      left: Math.min(Math.max(rawLeft, RULER_THICKNESS + 2), maxLeft),
+      top: Math.max(rawTop, RULER_THICKNESS + 2),
+    };
+  }, [view.panX, view.panY, canvasWidthPx, containerSize.width]);
 
   const sortedLayers = useMemo(
     () => [...layers].sort((a, b) => a.z_index - b.z_index),
@@ -2027,7 +2162,11 @@ export function TagCanvasEditor({
                     {/* Ruler guides (D9/D17, S6). Dotted, and a different
                         colour from the transient snap guides above so the
                         two are never confused - these are placed on
-                        purpose and stay until dragged away. */}
+                        purpose and stay until dragged away.
+                        `listening={!handMode}` (S2) so the hand tool can pan
+                        through them like everything else, and a narrower
+                        `hitStrokeWidth` so a guide crossing a layer does not
+                        turn a whole strip of that layer unselectable. */}
                     {rulerGuides.map((g) =>
                       g.orientation === 'vertical' ? (
                         <Line
@@ -2036,10 +2175,11 @@ export function TagCanvasEditor({
                           stroke="#0ea5e9"
                           strokeWidth={1}
                           dash={[2, 3]}
-                          hitStrokeWidth={10}
+                          listening={!handMode}
+                          hitStrokeWidth={4}
                           onMouseDown={(e) => {
                             e.cancelBubble = true;
-                            handleGuidePointerDown(g);
+                            handleGuidePointerDown(g, e.evt);
                           }}
                         />
                       ) : (
@@ -2049,10 +2189,11 @@ export function TagCanvasEditor({
                           stroke="#0ea5e9"
                           strokeWidth={1}
                           dash={[2, 3]}
-                          hitStrokeWidth={10}
+                          listening={!handMode}
+                          hitStrokeWidth={4}
                           onMouseDown={(e) => {
                             e.cancelBubble = true;
-                            handleGuidePointerDown(g);
+                            handleGuidePointerDown(g, e.evt);
                           }}
                         />
                       ),
@@ -2132,6 +2273,8 @@ export function TagCanvasEditor({
                       top: RULER_THICKNESS + view.panY + layer.y_mm * scale + 4,
                     }}
                     onClick={() => openBlockPreview(block.groupId)}
+                    onMouseEnter={() => handleChipHoverChange(block.groupId, true)}
+                    onMouseLeave={() => handleChipHoverChange(block.groupId, false)}
                   />
                 );
               })}
@@ -2139,21 +2282,45 @@ export function TagCanvasEditor({
               {/* The whole-tag eye, on the frame itself (D10, AC-S6-5): one
                   product choice resolves every loose bound layer at once.
                   Always visible when eligible, unlike a block's own eye -
-                  there is no single layer on the tag to hover for it. */}
+                  there is no single layer on the tag to hover for it.
+                  Clamped into the viewport (S5) so a pan or zoom that carries
+                  the frame's own corner off-screen cannot bury it. */}
               {wholeTagPreviewBlock && (
-                <PreviewEyeButton
-                  label={
-                    previewChoices[WHOLE_TAG_BLOCK_ID]
-                      ? `Previewing ${previewChoices[WHOLE_TAG_BLOCK_ID].label}`
-                      : 'Preview the whole tag'
-                  }
-                  active={Boolean(previewChoices[WHOLE_TAG_BLOCK_ID])}
-                  style={{
-                    left: RULER_THICKNESS + view.panX + canvasWidthPx - 28,
-                    top: RULER_THICKNESS + view.panY - 28,
-                  }}
-                  onClick={() => openBlockPreview(WHOLE_TAG_BLOCK_ID)}
-                />
+                <>
+                  <PreviewEyeButton
+                    label={
+                      previewChoices[WHOLE_TAG_BLOCK_ID]
+                        ? `Previewing ${previewChoices[WHOLE_TAG_BLOCK_ID].label}`
+                        : 'Preview the whole tag'
+                    }
+                    active={Boolean(previewChoices[WHOLE_TAG_BLOCK_ID])}
+                    style={wholeTagEyePosition}
+                    onClick={() => openBlockPreview(WHOLE_TAG_BLOCK_ID)}
+                  />
+                  {/* Clear affordance (S1), mirroring PreviewBlockInspector's
+                      own X: a whole-tag preview is otherwise only clearable
+                      from the Inspector, which is not on screen for whatever
+                      layer is currently selected. */}
+                  {previewChoices[WHOLE_TAG_BLOCK_ID] && (
+                    <button
+                      type="button"
+                      className="absolute z-20 flex h-3.5 w-3.5 items-center justify-center rounded-full border bg-background text-muted-foreground shadow-sm hover:bg-accent hover:text-foreground"
+                      style={{
+                        left: wholeTagEyePosition.left - 6,
+                        top: wholeTagEyePosition.top - 6,
+                      }}
+                      title="Stop previewing the whole tag"
+                      aria-label="Stop previewing the whole tag"
+                      onMouseDown={(e) => e.stopPropagation()}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        clearBlockPreview(WHOLE_TAG_BLOCK_ID);
+                      }}
+                    >
+                      <X className="size-2" />
+                    </button>
+                  )}
+                </>
               )}
             </div>
           </ContextMenuTrigger>
