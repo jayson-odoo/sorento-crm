@@ -20,7 +20,7 @@ import pytest
 from sqlalchemy import text
 
 from app.models.order import SalesOrder, SalesOrderLine
-from app.models.scm import ReorderRun
+from app.models.scm import ReorderRecommendation, ReorderRun
 from app.services.error_handler import AppException
 from app.services.scm import decision_service
 from app.services.scm import reorder_run_service as svc
@@ -264,6 +264,165 @@ def test_replan_refuses_a_run_already_replanned(scm_app):
         actor="tester",
     )
     svc.run_reorder(first["run_id"], db=db)
+
+    with pytest.raises(AppException) as exc:
+        svc.replan_run(
+            db, old["run_id"],
+            warehouse_codes=[p["warehouse_code"]], product_codes=[], plan_horizon_date=None,
+            actor="tester",
+        )
+    assert exc.value.status_code == 422
+
+
+def test_replan_survives_a_colliding_match_key(scm_app):
+    """Review B1: the match key was (product_id, warehouse_id) alone, which is NOT unique
+    per run - two decidable recs (measured on real data: a `buy` beside a `needs_level`,
+    and even two `buy` rows) can share one key. A synthetic SECOND `buy` rec at the exact
+    same (product, warehouse, type) as the real one - both decided, both unchanged versus
+    the new run's ONE matching rec - forces the genuine collision: the first of the pair
+    carries, the second hits the unique constraint and must be skipped, not abort the run.
+    """
+    _, db, _, _ = scm_app
+    p = _seed_buy_scenario(db, "G1")
+
+    old = svc.create_run(db, [p["warehouse_code"]], enqueue=False)
+    svc.run_reorder(old["run_id"], db=db)
+    real_rec_id = _buy_rec_id(db, old["run_id"], p["product_code"])
+    real_qty = db.execute(text(
+        "SELECT rounded_qty FROM scm.reorder_recommendation WHERE id = :r"
+    ), {"r": real_rec_id}).scalar()
+
+    dup_id = str(uuid.uuid4())
+    db.add(ReorderRecommendation(
+        id=dup_id, run_id=old["run_id"], rec_type="buy",
+        product_id=p["product_id"], warehouse_id=p["warehouse_id"], rounded_qty=real_qty,
+    ))
+    db.flush()
+    for rec_id, qty in ((real_rec_id, 25), (dup_id, 40)):
+        decision_service.record_plan_row_decision(
+            db, rec_id, kind="buy", buy_qty=qty, stock_takes=None, po_qty=None,
+            po_refs=None, reason_text=None, actor="tester",
+        )
+    db.flush()
+
+    new = svc.replan_run(
+        db, old["run_id"],
+        warehouse_codes=[p["warehouse_code"]], product_codes=[], plan_horizon_date=None,
+        actor="tester",
+    )
+    svc.run_reorder(new["run_id"], db=db)  # must not raise - the collision is swallowed
+
+    new_rec_id = _buy_rec_id(db, new["run_id"], p["product_code"])
+    decisions = _decisions_for(db, new_rec_id)
+    assert len(decisions) == 1, (
+        "exactly one of the colliding pair must carry - never both (impossible, the "
+        "unique constraint forbids it) and never neither (that would mean the run itself "
+        "aborted)"
+    )
+
+
+def test_carry_leaves_a_pre_existing_new_run_decision_alone(scm_app):
+    """Review S2: the race window between the new run completing and the carry running -
+    a buyer who decides the NEW row directly (before the carry gets to it) must never have
+    that decision silently overwritten by a carried one."""
+    _, db, _, _ = scm_app
+    p = _seed_buy_scenario(db, "H1")
+
+    old = svc.create_run(db, [p["warehouse_code"]], enqueue=False)
+    svc.run_reorder(old["run_id"], db=db)
+    old_rec_id = _buy_rec_id(db, old["run_id"], p["product_code"])
+    decision_service.record_plan_row_decision(
+        db, old_rec_id, kind="buy", buy_qty=10, stock_takes=None, po_qty=None,
+        po_refs=None, reason_text=None, actor="tester",
+    )
+    db.flush()
+
+    # A plain second run (no `supersedes_run_id`), so `run_reorder` does NOT auto-carry -
+    # this isolates the race window `carry_replan_decisions` itself has to defend.
+    new = svc.create_run(db, [p["warehouse_code"]], enqueue=False)
+    svc.run_reorder(new["run_id"], db=db)
+    new_rec_id = _buy_rec_id(db, new["run_id"], p["product_code"])
+    # The buyer decides the NEW row directly, before the (here manually-invoked) carry.
+    decision_service.record_plan_row_decision(
+        db, new_rec_id, kind="buy", buy_qty=999, stock_takes=None, po_qty=None,
+        po_refs=None, reason_text=None, actor="the-buyer",
+    )
+    db.flush()
+
+    stats = decision_service.carry_replan_decisions(db, old["run_id"], new["run_id"])
+    assert stats["skipped"] >= 1
+
+    decisions = _decisions_for(db, new_rec_id)
+    assert len(decisions) == 1 and float(decisions[0]["buy_qty"]) == 999.0, (
+        "the buyer's own decision must survive untouched"
+    )
+
+
+def test_replan_refuses_a_concurrent_second_request(scm_app):
+    """Review S3: a double-click (or two tabs) firing two re-plan requests for the same
+    run before the first one's worker has stamped `superseded_by_run_id` must not both
+    succeed - the completion-time stamp alone is too late to catch this."""
+    _, db, _, _ = scm_app
+    p = _seed_buy_scenario(db, "I1")
+    old = svc.create_run(db, [p["warehouse_code"]], enqueue=False)
+    svc.run_reorder(old["run_id"], db=db)
+
+    first = svc.replan_run(
+        db, old["run_id"],
+        warehouse_codes=[p["warehouse_code"]], product_codes=[], plan_horizon_date=None,
+        actor="tester",
+    )
+    assert first["status"] == "running"  # deliberately never run_reorder'd - still "in flight"
+
+    with pytest.raises(AppException) as exc:
+        svc.replan_run(
+            db, old["run_id"],
+            warehouse_codes=[p["warehouse_code"]], product_codes=[], plan_horizon_date=None,
+            actor="tester",
+        )
+    assert exc.value.status_code == 422
+
+
+def test_replan_refuses_a_run_with_a_keyed_decision(scm_app):
+    """Review S4 (conservative ruling, pending captain confirm): a run carrying ANY
+    keyed decision refuses Re-plan outright - re-planning it would risk a double-key of
+    the same purchase into AutoCount off two different plans."""
+    _, db, _, _ = scm_app
+    p = _seed_buy_scenario(db, "J1")
+    old = svc.create_run(db, [p["warehouse_code"]], enqueue=False)
+    svc.run_reorder(old["run_id"], db=db)
+    rec_id = _buy_rec_id(db, old["run_id"], p["product_code"])
+    db.execute(text(
+        "UPDATE scm.reorder_recommendation SET keyed_status = 'keyed' WHERE id = :r"
+    ), {"r": rec_id})
+    db.flush()
+
+    with pytest.raises(AppException) as exc:
+        svc.replan_run(
+            db, old["run_id"],
+            warehouse_codes=[p["warehouse_code"]], product_codes=[], plan_horizon_date=None,
+            actor="tester",
+        )
+    assert exc.value.status_code == 422
+    assert "confirmed or keyed" in exc.value.detail["message"].lower()
+
+
+def test_replan_refuses_a_run_with_a_confirmed_product_grain_decision(scm_app):
+    """Review S4: the PRODUCT-grain confirmed state (`OrderSummaryRow.chosen_qty`) is
+    guarded the same way as location-grain `keyed_status` - both are states a re-plan
+    would duplicate/orphan."""
+    _, db, _, _ = scm_app
+
+    p = _seed_buy_scenario(db, "K1")
+    old = svc.create_run(db, [p["warehouse_code"]], enqueue=False)
+    svc.run_reorder(old["run_id"], db=db)
+    # `run_reorder` already froze an `OrderSummaryRow` for (run, product) itself (S3b) -
+    # set the buyer's chosen quantity on THAT row rather than inserting a second one.
+    db.execute(text(
+        "UPDATE scm.order_summary_row SET chosen_qty = 25 "
+        "WHERE run_id = :r AND product_id = :p"
+    ), {"r": old["run_id"], "p": p["product_id"]})
+    db.flush()
 
     with pytest.raises(AppException) as exc:
         svc.replan_run(

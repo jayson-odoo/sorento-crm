@@ -2,6 +2,10 @@
 
 Status: GRILLED AND APPROVED - three grill rounds settled 1 Sep 2026. S1 in flight on
 `feat/oi-auto-ack`. S2 (engine scope) built on `feat/reorder-committed-only`, PR open.
+S5 (plan detail Header/Lines tabs + Re-plan supersede) built on `feat/reorder-replan`, PR
+#493 open (stacked on S2), review round 1 addressed - see the S5 section's own note on the
+one OPEN ruling (confirmed/keyed decisions block a Re-plan outright; captain confirm
+pending).
 UAC: `scm-reorder-oi-feedback-1sep-acceptance-criteria.md`
 
 ## Journeys
@@ -180,6 +184,14 @@ UAC: `scm-reorder-oi-feedback-1sep-acceptance-criteria.md`
 - Editing Plan until OR scope offers Re-plan (G8): POST creates a NEW run, supersedes the
   old (two-way link, list label), carries decisions per G8's rule, "re-check" flag on
   changed suggestions.
+- OPEN RULING (review round 1, flagged for captain confirm - built conservative pending
+  the answer): `replan_run` currently REJECTS (422) a run carrying any CONFIRMED (draft PO
+  line already written) or KEYED (`keyed_status`/`OrderSummaryRow.chosen_qty`) decision -
+  re-planning it would hand `confirm_decisions` a run whose recs carry brand-new ids,
+  orphaning the existing draft line and inviting a double-key into AutoCount from two
+  different plans. The captain may instead want that state CARRIED forward onto the new
+  run rather than blocked outright - not built; `decision_service.has_confirmed_or_keyed_decisions`
+  is the one call site to change if so.
 
 ### S6 - Dedication-aware OI takes (claims)
 - `_candidates_for_row` consults `scm.order_link_claim` per G7: other-SO claims subtract
