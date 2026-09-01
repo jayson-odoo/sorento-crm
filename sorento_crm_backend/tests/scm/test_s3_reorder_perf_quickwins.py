@@ -39,11 +39,21 @@ MARKER = "ZZTS3"
 class TestIndexUsage:
     """`_po_for_rec` (single) and `_pos_for_recs` (batched, AC-3.2) both resolve a
     recommendation's draft/active PO line by `(source_ref, source_system)`. Mirrors
-    the exact ORM filter each one runs and EXPLAINs it against the real, already-
-    migrated database - the only place the index (created by migration
-    `456_reorder_perf_quickwins`, née `454`) actually exists."""
+    the exact ORM filter each one runs and EXPLAINs it.
+
+    ``SET LOCAL enable_seqscan = OFF`` runs ahead of every plan here (scoped to the
+    savepoint transaction, so it never leaks to another test). Without it, this suite
+    is only meaningful against the shared dev DB's populated `purchase_order_lines`
+    (72,902 rows) - CI's `bootstrap_env` builds a schema, not data, and the cost-based
+    planner correctly (and cheaply) prefers a sequential scan of a near-EMPTY table
+    over the index every time, which fails this assertion for a reason that has
+    nothing to do with the index existing or being usable. Forcing seqscan off asks
+    the real, useful question instead: is this predicate shape STRUCTURALLY capable of
+    using the index, independent of how many rows the current database happens to
+    hold (found failing exactly this way on the first CI run of this file)."""
 
     def _plan(self, db, statement) -> list[str]:
+        db.execute(text("SET LOCAL enable_seqscan = OFF"))
         compiled = statement.compile(
             dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}
         )
@@ -95,6 +105,7 @@ class TestIndexUsage:
         same pair, keyed off `scm.reorder_recommendation.id::text` - the join predicate
         the AC-3.1 index-vs-guard corner case lives on (see
         `tests/scm/test_plan_read_path_uses_indexes.py`)."""
+        db_session.execute(text("SET LOCAL enable_seqscan = OFF"))
         plan = db_session.execute(
             text(
                 "EXPLAIN "
