@@ -611,15 +611,37 @@ def test_the_to_confirm_filter_is_awaiting_and_changed(api):
     assert str(confirmed.id) not in ids
 
 
-def test_the_summary_facet_counts_to_confirm(api):
+def test_the_summary_facet_to_confirm_stays_the_sum_and_moves_only_on_a_real_settle(api):
+    """S3 (review of PR #471): `to_confirm` is still `awaiting + changed` structurally -
+    that identity never breaks - but a row is born acknowledged now (G4) and a settle
+    auto-acknowledges again (S1), so a fresh raise contributes to NEITHER state any more.
+    Asserted as a DELTA, not an absolute count: this suite runs against a real Postgres
+    database that already carries genuinely-settled historical rows (`changed_at` set
+    before this test ever ran), so `facet["changed"]` is not zero to start with - the
+    contract is that two fresh raises move it by exactly zero, and one real settle moves
+    it by exactly one."""
     client, world = api
-    _raise_one_row(api, qty="4")
+    _open_po_line(world, qty=50)
+    before = client.get(f"{LIST}/summary").json()["ack"]
+    assert before["to_confirm"] == before["awaiting"] + before["changed"]
+
+    fresh = _raise_one_row(api, qty="4")
     _raise_one_row(api, qty="6")
 
-    facet = client.get(f"{LIST}/summary").json()["ack"]
+    after_raise = client.get(f"{LIST}/summary").json()["ack"]
+    assert after_raise["to_confirm"] == after_raise["awaiting"] + after_raise["changed"]
+    assert after_raise["to_confirm"] == before["to_confirm"], (
+        "two freshly-raised rows are born acknowledged - neither moves the facet"
+    )
 
-    assert facet["to_confirm"] == facet["awaiting"] + facet["changed"]
-    assert facet["to_confirm"] >= 2
+    # A genuine settle: `changed_at` moves, and the facet has to move with it.
+    _settle(world, fresh, qty="9")
+    world.db.commit()
+
+    settled = client.get(f"{LIST}/summary").json()["ack"]
+    assert settled["changed"] == after_raise["changed"] + 1
+    assert settled["to_confirm"] == settled["awaiting"] + settled["changed"]
+    assert settled["to_confirm"] == before["to_confirm"] + 1
 
 
 def test_the_export_accepts_to_confirm(api):
