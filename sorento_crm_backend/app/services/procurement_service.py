@@ -12,8 +12,8 @@ import re
 import secrets
 import uuid
 from fastapi import HTTPException
-from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import or_, and_, exists, false, func, select
+from sqlalchemy.orm import Session, joinedload, aliased
+from sqlalchemy import or_, and_, exists, false, func, select, case, cast, literal, Date
 from sqlalchemy import inspect
 from decimal import Decimal, InvalidOperation
 from typing import Optional, List, Dict, Any
@@ -37,6 +37,8 @@ from app.schemas.procurement import (
     SPOAllocationCreate, SPOAllocationUpdate, PickingHeaderCreate, PickingHeaderUpdate,
     StockInquiryCreate, StockInquiryUpdate,
     PurchaseRequestHeaderCreate, PurchaseRequestHeaderUpdate, PurchaseRequestUpdateAndReply,
+    ProductSimple, WarehouseSimple, InboundShipmentSimple,
+    SPODocument, SPODocumentLine, SPODocumentRow,
 )
 from app.services.error_handler import (
     handle_not_found,
@@ -1833,6 +1835,461 @@ class SPOAllocationService:
             "pagination": {"total": total, "page": page, "limit": limit},
             "empty": total == 0,
         }
+
+    # ------------------------------------------------------------------------------
+    # SPO document list + form view (PLAN-spo-investigation-grid.md S2, AC-11..AC-16b).
+    #
+    # A DOCUMENT read of `spo_allocations`, grouped by `spo_number` at read time - no new
+    # table (plan "Not in scope"). `outstanding` line membership is
+    # `spo_supply.open_incoming_clauses()` AND balance > 0 - the fifth reader of ONE rule
+    # (AC-12), imported and never restated.
+    # ------------------------------------------------------------------------------
+
+    def list_documents(
+        self,
+        page: int = 1,
+        limit: int = 50,
+        state: str = "outstanding",
+        product_id: Optional[str] = None,
+        warehouse_id: Optional[str] = None,
+        overdue_only: bool = False,
+        query: Optional[str] = None,
+        sort_field: str = "spo_number",
+        sort_dir: str = "desc",
+    ):
+        """`GET /spo-allocations/documents`: paged header rows grouped by `spo_number`.
+
+        The grouping, the header rollups and the paging all happen in SQL against the
+        80k-row table (AC-11) - a second, small query reads only the page's own documents
+        (at most `limit` of them) to break the majority-supplier tie, the same two-phase
+        shape `list_allocations_grouped_by_spo_number` already uses above.
+        """
+        from app.services.scm import spo_supply
+
+        # The SAME clock the detail route reads (`get_document`'s `date.today()`,
+        # review S7) - `func.current_date()` asks the DB server instead of the app
+        # server, and the two can disagree by a few minutes around midnight, which
+        # would put a line in this list's Overdue count that the document it opens
+        # does not agree is late.
+        today = date.today()
+
+        is_outstanding = and_(
+            *spo_supply.open_incoming_clauses(),
+            SPOAllocation.allocated_quantity > func.coalesce(SPOAllocation.quantity_received, 0),
+        )
+        arrival_expr = func.coalesce(
+            InboundShipment.eta_delay_date,
+            InboundShipment.estimated_arrival_date,
+            SPOAllocation.expected_date,
+        )
+        overdue_expr = func.greatest(literal(today) - arrival_expr, 0)
+        balance_expr = SPOAllocation.allocated_quantity - func.coalesce(SPOAllocation.quantity_received, 0)
+        has_outstanding_expr = func.coalesce(func.bool_or(is_outstanding), False)
+        balance_sum_expr = func.coalesce(func.sum(case((is_outstanding, balance_expr), else_=0)), 0)
+        worst_overdue_expr = func.coalesce(func.max(case((is_outstanding, overdue_expr), else_=0)), 0)
+        earliest_eta_expr = func.min(case((is_outstanding, arrival_expr), else_=None))
+        # COALESCE(min(issue_date), min(created_at)) (review S4): `issue_date` is the
+        # document's own date; `created_at` is the import timestamp, a fallback for
+        # rows a bare shipment-allocation import never set `issue_date` on. Cast the
+        # `created_at` MIN to DATE so the two arms of the coalesce agree on type.
+        doc_date_expr = func.coalesce(
+            func.min(SPOAllocation.issue_date),
+            cast(func.min(SPOAllocation.created_at), Date),
+        )
+
+        # Which DOCUMENTS have >=1 line matching product/warehouse/query (Q10) - filters
+        # match LINES, the list shows the whole document (every other line included).
+        # A correlated EXISTS (review S1), not a materialised id list into an unbounded
+        # `IN (...)`: the outer query groups by `spo_number`, and this subquery
+        # correlates on that SAME column, so every LINE of one document sees the
+        # identical boolean - the predicate decides document membership, never which
+        # of a document's own lines survive the aggregate.
+        #
+        # `Product` stays UNALIASED (measured, not assumed - an `aliased(Product)`
+        # here 500s: `psycopg2.errors.UndefinedTable`, because the company-scope
+        # listener's `with_loader_criteria(Product, ..., include_aliases=True)`
+        # cannot find the alias from OUTSIDE this correlated subquery - Product is
+        # never referenced anywhere else in this query - and falls back to an
+        # unaliased `products.company_id` that has no FROM-clause entry here. A
+        # nested, UNCORRELATED `product_id IN (SELECT id FROM products WHERE ...)`
+        # needs no alias in the first place, which is the actual fix, not a
+        # workaround for it.
+        match_filter = None
+        if product_id or warehouse_id or (query and query.strip()):
+            MatchLine = aliased(SPOAllocation)
+            match_conditions = [MatchLine.spo_number == SPOAllocation.spo_number]
+            if product_id:
+                match_conditions.append(MatchLine.product_id == product_id)
+            if warehouse_id:
+                match_conditions.append(MatchLine.warehouse_id == warehouse_id)
+            if query and query.strip():
+                q_str = query.strip()
+                matching_product_ids = select(Product.id).where(
+                    or_(
+                        Product.product_code.ilike(f"%{q_str}%"),
+                        Product.product_name.ilike(f"%{q_str}%"),
+                    )
+                )
+                # Same shape as `matching_product_ids` (AC-25): a nested, UNCORRELATED
+                # `id IN (SELECT ...)` needs no alias, unlike a join, which is why
+                # `Warehouse`/`InboundShipment` stay unaliased here too (see the
+                # `Product` comment above this block for the company-scope reason).
+                matching_warehouse_ids = select(Warehouse.id).where(
+                    Warehouse.warehouse_code.ilike(f"%{q_str}%")
+                )
+                matching_shipment_ids = select(InboundShipment.id).where(
+                    or_(
+                        InboundShipment.shipment_number.ilike(f"%{q_str}%"),
+                        InboundShipment.shipping_container_number.ilike(f"%{q_str}%"),
+                    )
+                )
+                match_conditions.append(
+                    or_(
+                        MatchLine.spo_number.ilike(f"%{q_str}%"),
+                        MatchLine.product_id.in_(matching_product_ids),
+                        MatchLine.warehouse_id.in_(matching_warehouse_ids),
+                        MatchLine.inbound_shipment_id.in_(matching_shipment_ids),
+                    )
+                )
+            match_filter = select(MatchLine.id).where(*match_conditions).exists()
+
+        rollup = (
+            self.db.query(
+                SPOAllocation.spo_number.label("spo_number"),
+                doc_date_expr.label("doc_date"),
+                func.sum(SPOAllocation.allocated_quantity).label("total_allocated"),
+                func.sum(func.coalesce(SPOAllocation.quantity_received, 0)).label("total_received"),
+                func.count(SPOAllocation.id).label("line_count"),
+                has_outstanding_expr.label("has_outstanding"),
+                balance_sum_expr.label("balance"),
+                worst_overdue_expr.label("worst_overdue_days"),
+                earliest_eta_expr.label("earliest_eta"),
+            )
+            .outerjoin(InboundShipment, InboundShipment.id == SPOAllocation.inbound_shipment_id)
+            .filter(SPOAllocation.spo_number.isnot(None))
+        )
+        if match_filter is not None:
+            rollup = rollup.filter(match_filter)
+        rollup = rollup.group_by(SPOAllocation.spo_number)
+
+        state_norm = (state or "outstanding").strip().lower()
+        if state_norm == "outstanding":
+            rollup = rollup.having(has_outstanding_expr.is_(True))
+        elif state_norm == "completed":
+            rollup = rollup.having(has_outstanding_expr.is_(False))
+        if overdue_only:
+            rollup = rollup.having(worst_overdue_expr > 0)
+
+        total = rollup.count()
+        if total == 0:
+            return {
+                "data": [],
+                "pagination": {"total": 0, "page": page, "limit": limit},
+                "empty": True,
+            }
+
+        sort_map = {
+            "spo_number": SPOAllocation.spo_number,
+            "doc_date": doc_date_expr,
+            "created_at": doc_date_expr,
+            "total_allocated": func.sum(SPOAllocation.allocated_quantity),
+            "line_count": func.count(SPOAllocation.id),
+            "balance": balance_sum_expr,
+            "worst_overdue_days": worst_overdue_expr,
+            "earliest_eta": earliest_eta_expr,
+        }
+        sort_dir_norm = (sort_dir or "desc").strip().lower()
+        order_col = sort_map.get((sort_field or "spo_number").strip().lower(), SPOAllocation.spo_number)
+        if sort_dir_norm == "asc":
+            rollup = rollup.order_by(order_col.asc().nullslast(), SPOAllocation.spo_number.asc())
+        else:
+            rollup = rollup.order_by(order_col.desc().nullslast(), SPOAllocation.spo_number.desc())
+
+        offset = (page - 1) * limit
+        page_rows = rollup.offset(offset).limit(limit).all()
+        spo_numbers_page = [r.spo_number for r in page_rows if r.spo_number]
+        if not spo_numbers_page:
+            return {
+                "data": [],
+                "pagination": {"total": total, "page": page, "limit": limit},
+                "empty": total == 0,
+            }
+
+        supplier_map = self._document_supplier_rollup(spo_numbers_page)
+
+        rows = []
+        for r in page_rows:
+            majority_name, extra_count = supplier_map.get(r.spo_number, (None, 0))
+            rows.append(
+                SPODocumentRow(
+                    id=r.spo_number,
+                    spo_number=r.spo_number,
+                    doc_date=r.doc_date,
+                    supplier_name=majority_name,
+                    supplier_extra_count=extra_count,
+                    status="outstanding" if r.has_outstanding else "completed",
+                    earliest_eta=r.earliest_eta,
+                    total_allocated=int(r.total_allocated or 0),
+                    total_received=int(r.total_received or 0),
+                    balance=int(r.balance or 0),
+                    line_count=int(r.line_count or 0),
+                    worst_overdue_days=int(r.worst_overdue_days or 0),
+                )
+            )
+        return {
+            "data": rows,
+            "pagination": {"total": total, "page": page, "limit": limit},
+            "empty": False,
+        }
+
+    def _document_supplier_rollup(self, spo_numbers: List[str]) -> Dict[str, tuple]:
+        """Majority supplier + how many others disagree, per document (Q8, AC-15).
+
+        Reads only the page's own documents - the small second query the two-phase
+        shape above always pays, never the whole table.
+        """
+        if not spo_numbers:
+            return {}
+        # ONE join, not two (review: a SECOND `aliased(Supplier)` join is not a
+        # SQLAlchemy/Postgres limitation - `project_supply_service._spo_rows` joins
+        # `Supplier` unaliased AND `aliased(Supplier)` in the same query and works fine).
+        # This stays a single join because `coalesce(shipment.supplier_id,
+        # line.supplier_id)` already picks "whichever id is present" as ONE key, so a
+        # second join would only return a second, always-empty row to coalesce the
+        # NAME from afterwards - one join less for the same answer.
+        supplier_key = func.coalesce(InboundShipment.supplier_id, SPOAllocation.supplier_id)
+        rows = (
+            self.db.query(
+                SPOAllocation.spo_number,
+                Supplier.supplier_name,
+                func.count(SPOAllocation.id).label("cnt"),
+            )
+            .outerjoin(InboundShipment, InboundShipment.id == SPOAllocation.inbound_shipment_id)
+            .outerjoin(Supplier, Supplier.id == supplier_key)
+            .filter(SPOAllocation.spo_number.in_(spo_numbers))
+            .group_by(SPOAllocation.spo_number, Supplier.supplier_name)
+            .all()
+        )
+        by_doc: Dict[str, list] = {}
+        for spo_number, supplier_name, cnt in rows:
+            by_doc.setdefault(spo_number, []).append((supplier_name, int(cnt or 0)))
+        result: Dict[str, tuple] = {}
+        for spo_number, entries in by_doc.items():
+            # Majority by line count, ties broken by name for a deterministic result.
+            entries.sort(key=lambda e: (-e[1], e[0] or ""))
+            majority_name = entries[0][0]
+            extra = max(len(entries) - 1, 0)
+            result[spo_number] = (majority_name, extra)
+        return result
+
+    def _planning_span_map(self, warehouse_ids: List[str]) -> Dict[str, str]:
+        """Which of the four planning-visibility states each warehouse earns (AC-14).
+
+        Priority: flagged into fulfilment planning -> `in_plan`; else some OTHER active
+        warehouse's `pool_warehouse_id` points at it (the fulfilment-pool netting
+        opt-in - a different mechanism from the "site pool" segment classification in
+        `scm/pool_predicate.py`, which this is not) -> `pool`; else `off`. A line
+        carrying no warehouse at all is `none`, decided by the caller - there is
+        nothing to look up.
+        """
+        from app.services.scm.planning_predicate import in_fulfilment_planning
+
+        if not warehouse_ids:
+            return {}
+        warehouses = {
+            str(w.id): w
+            for w in self.db.query(Warehouse).filter(Warehouse.id.in_(warehouse_ids)).all()
+        }
+        pool_ids = {
+            str(pid)
+            for (pid,) in self.db.query(Warehouse.pool_warehouse_id)
+            .filter(Warehouse.pool_warehouse_id.isnot(None))
+            .distinct()
+            .all()
+        }
+        result: Dict[str, str] = {}
+        for wid, warehouse in warehouses.items():
+            if in_fulfilment_planning(warehouse):
+                result[wid] = "in_plan"
+            elif wid in pool_ids and warehouse.is_active:
+                result[wid] = "pool"
+            else:
+                result[wid] = "off"
+        return result
+
+    def get_document(self, spo_number: str) -> SPODocument:
+        """`GET /spo-allocations/documents/{spo_number}`: header rollup + every line
+        (AC-16). Computed over ALL of this one document's lines, in Python - a
+        document's own line count is small next to the 80k-row table `list_documents`
+        pages over, so there is nothing here for SQL to page.
+
+        No server-side prev/next (S1 deviation, accepted 1 Sep): the frontend pager is
+        cache-based (`useListPager`).
+        """
+        from app.services.scm import spo_supply
+
+        is_open_expr = and_(*spo_supply.open_incoming_clauses())
+        # ONE join, not two - see `_document_supplier_rollup`'s comment: a second
+        # `aliased(Supplier)` join is not a SQLAlchemy/Postgres limitation, just an
+        # extra join this coalesced key makes unnecessary (whichever id is present,
+        # the shipment's own supplier or the line's).
+        supplier_key = func.coalesce(InboundShipment.supplier_id, SPOAllocation.supplier_id)
+        rows = (
+            self.db.query(
+                SPOAllocation,
+                InboundShipment,
+                Supplier.supplier_name,
+                is_open_expr.label("is_open"),
+            )
+            .outerjoin(InboundShipment, InboundShipment.id == SPOAllocation.inbound_shipment_id)
+            .outerjoin(Supplier, Supplier.id == supplier_key)
+            .options(
+                joinedload(SPOAllocation.product),
+                joinedload(SPOAllocation.warehouse),
+            )
+            .filter(SPOAllocation.spo_number == spo_number)
+            .order_by(SPOAllocation.spo_line_number.asc().nullslast(), SPOAllocation.id)
+            .all()
+        )
+        if not rows:
+            raise handle_not_found("SPO document", spo_number)
+
+        today = date.today()
+        warehouse_ids = {
+            str(allocation.warehouse_id) for allocation, *_ in rows if allocation.warehouse_id
+        }
+        span_map = self._planning_span_map(list(warehouse_ids))
+
+        lines: List[SPODocumentLine] = []
+        supplier_counts: Dict[Optional[str], int] = {}
+        for allocation, shipment, supplier_name, is_open in rows:
+            allocated = allocation.allocated_quantity or 0
+            received = allocation.quantity_received or 0
+            balance = max(allocated - received, 0)
+            arrival = None
+            if shipment is not None:
+                arrival = shipment.eta_delay_date or shipment.estimated_arrival_date
+            arrival = arrival or allocation.expected_date
+            outstanding = bool(is_open) and allocated > received
+            overdue_days = spo_supply.overdue_days(arrival, today) if outstanding else 0
+            supplier_counts[supplier_name] = supplier_counts.get(supplier_name, 0) + 1
+
+            warehouse_id = str(allocation.warehouse_id) if allocation.warehouse_id else None
+            planning_span = span_map.get(warehouse_id, "off") if warehouse_id else "none"
+
+            lines.append(
+                SPODocumentLine(
+                    id=str(allocation.id),
+                    spo_number=allocation.spo_number,
+                    product_id=str(allocation.product_id) if allocation.product_id else None,
+                    product=ProductSimple.model_validate(allocation.product)
+                    if allocation.product
+                    else None,
+                    warehouse_id=warehouse_id,
+                    warehouse=WarehouseSimple.model_validate(allocation.warehouse)
+                    if allocation.warehouse
+                    else None,
+                    allocated_quantity=allocated,
+                    quantity_received=received,
+                    quantity_rejected=allocation.quantity_rejected or 0,
+                    balance=balance,
+                    arrival_date=arrival,
+                    overdue_days=overdue_days,
+                    supplier_name=supplier_name,
+                    supplier_id=str(allocation.supplier_id) if allocation.supplier_id else None,
+                    expected_date=allocation.expected_date,
+                    planning_span=planning_span,
+                    receipt_status=allocation.receipt_status or "pending",
+                    outstanding=outstanding,
+                    inbound_shipment=InboundShipmentSimple.model_validate(shipment)
+                    if shipment
+                    else None,
+                    line_status=allocation.line_status,
+                )
+            )
+
+        outstanding_lines = [l for l in lines if l.outstanding]
+        total_allocated = sum(l.allocated_quantity for l in lines)
+        total_received = sum(l.quantity_received for l in lines)
+        balance_sum = sum(l.balance for l in outstanding_lines)
+        worst_overdue = max((l.overdue_days for l in outstanding_lines), default=0)
+        earliest_eta = min(
+            (l.arrival_date for l in outstanding_lines if l.arrival_date is not None),
+            default=None,
+        )
+        # COALESCE(min(issue_date), min(created_at)) (review S4), the same rule
+        # `list_documents`' `doc_date_expr` states in SQL: `issue_date` is the
+        # document's own date; `created_at` (the import timestamp) only stands in
+        # when NONE of the document's lines carry one.
+        issue_dates = [
+            allocation.issue_date for allocation, *_ in rows if allocation.issue_date is not None
+        ]
+        if issue_dates:
+            doc_date = min(issue_dates)
+        else:
+            created_ats = [
+                allocation.created_at for allocation, *_ in rows if allocation.created_at is not None
+            ]
+            doc_date = min(created_ats).date() if created_ats else None
+
+        entries = sorted(supplier_counts.items(), key=lambda e: (-e[1], e[0] or ""))
+        majority_name = entries[0][0] if entries else None
+        extra_count = max(len(entries) - 1, 0)
+
+        return SPODocument(
+            spo_number=spo_number,
+            doc_date=doc_date,
+            supplier_name=majority_name,
+            supplier_extra_count=extra_count,
+            status="outstanding" if outstanding_lines else "completed",
+            total_allocated=total_allocated,
+            total_received=total_received,
+            balance=balance_sum,
+            line_count=len(lines),
+            lines=lines,
+        )
+
+    def delete_document(self, spo_number: str) -> dict:
+        """`spo_document.delete` (record-actions registry, review B1/AC-16b): hard-
+        delete every allocation line of ONE named document, and nothing else.
+
+        `spo_number` is UNIQUE per `(company_id, spo_number, spo_line_number)`, not
+        globally - two companies can each own a document numbered identically. A bulk
+        ORM `.filter(...).delete()` bypasses `do_orm_execute`'s company-scope filter
+        entirely (that listener only rewrites SELECTs), so filtering straight off
+        `spo_number` and deleting would let company B delete company A's document.
+        The fix is the same shape `_delete_onboarding_request` (record_actions.py)
+        uses: resolve the ids under a plain SELECT FIRST - which IS scoped, because
+        `do_orm_execute` filters every SELECT to the caller's own company - and delete
+        by id. The id list is already narrowed to one company by construction, so the
+        second query's own missing scope changes nothing.
+        """
+        ids = [
+            row[0]
+            for row in self.db.query(SPOAllocation.id)
+            .filter(SPOAllocation.spo_number == spo_number)
+            .all()
+        ]
+        if not ids:
+            return {"message": "No SPO document to delete", "deleted_count": 0}
+        shipment_ids = {
+            shipment_id
+            for (shipment_id,) in self.db.query(SPOAllocation.inbound_shipment_id)
+            .filter(SPOAllocation.id.in_(ids))
+            .distinct()
+            .all()
+            if shipment_id is not None
+        }
+        deleted = (
+            self.db.query(SPOAllocation)
+            .filter(SPOAllocation.id.in_(ids))
+            .delete(synchronize_session=False)
+        )
+        self.db.commit()
+        inbound_svc = InboundShipmentService(self.db)
+        for shipment_id in shipment_ids:
+            inbound_svc.refresh_shipment_line_statuses(shipment_id)
+        return {"message": f"Deleted {deleted} SPO allocation line(s)", "deleted_count": deleted}
 
     def get_allocation(self, allocation_id: str):
         """Get an SPO allocation by UUID or spo_number."""

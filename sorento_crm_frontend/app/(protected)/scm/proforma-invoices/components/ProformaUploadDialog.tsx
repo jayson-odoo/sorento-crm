@@ -204,7 +204,16 @@ export function ProformaUploadDialog({
 
   const upload = useTwoStepUpload<ProformaInvoicePreview, ProformaApplyResult>({
     open,
-    preview: (file) => previewProformaInvoice(file, supplierId as string),
+    preview: async (file) => {
+      const read = await previewProformaInvoice(file, supplierId as string);
+      // Stored at RESOLVE time, not only via the follower effect below: Confirm
+      // enables on the same commit that stores the preview, so a click landing
+      // before that effect has flushed found an empty ref and read the file a
+      // second time (the CI flake of 1 Sep). The effect still follows the hook's
+      // state for the clearing half - a new file nulls the preview.
+      previewRef.current = read;
+      return read;
+    },
     apply: async (file) => {
       const read =
         previewRef.current ?? (await previewProformaInvoice(file, supplierId as string));

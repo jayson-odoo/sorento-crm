@@ -12,9 +12,10 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { SpoAllocationCell } from './SpoAllocationCell';
 
 describe('SpoAllocationCell', () => {
-  // AC-FM-1: a matched line still links to its allocation, labelled with the
-  // allocation's spo_number, unchanged from today.
-  it('AC-FM-1: links a matched line to its allocation, labelled with spo_number', () => {
+  // AC-FM-1 (review B3): a matched line links to the SPO DOCUMENT - the
+  // allocation's `spo_number`, slash-encoded - never the allocation's own uuid
+  // (the retired standalone per-allocation route it used to point at).
+  it('AC-FM-1: links a matched line to its SPO document, labelled with spo_number', () => {
     render(
       <SpoAllocationCell
         allocation={{ id: 'alloc-1', spo_number: 'SPO-2026/07-0012' }}
@@ -25,14 +26,16 @@ describe('SpoAllocationCell', () => {
     const link = screen.getByRole('link', { name: 'SPO-2026/07-0012' });
     expect(link).toHaveAttribute(
       'href',
-      '/procurement-management/spo-allocations/alloc-1',
+      '/procurement-management/spo-allocations/SPO-2026%2F07-0012',
     );
   });
 
-  // AC-FM-1b: a matched line whose allocation has a null spo_number falls
-  // back to spo_number_raw, then to the literal "SPO allocation" - never the
-  // allocation's id. "No UUIDs in the UI" is a PRINCIPLES.md hard-fail rule.
-  it('AC-FM-1b: falls back to spo_number_raw when the allocation has no spo_number', () => {
+  // AC-FM-1b (review B3): a matched line whose allocation has no `spo_number`
+  // of its own has no document to open - the label still falls back to
+  // `spo_number_raw`, then to the literal "SPO allocation" - never the
+  // allocation's id ("No UUIDs in the UI" is a PRINCIPLES.md hard-fail rule) -
+  // but it renders with NO LINK now, since there is nothing for it to open.
+  it('AC-FM-1b: falls back to spo_number_raw, with no link, when the allocation has no spo_number', () => {
     render(
       <SpoAllocationCell
         allocation={{ id: 'f47ac10b-58cc-4372-a567-0e02b2c3d479', spo_number: null }}
@@ -40,19 +43,14 @@ describe('SpoAllocationCell', () => {
       />,
     );
 
-    const link = screen.getByRole('link', { name: 'SPO-2026/07-0012' });
-    expect(link).toHaveAttribute(
-      'href',
-      '/procurement-management/spo-allocations/f47ac10b-58cc-4372-a567-0e02b2c3d479',
-    );
-    // The label is never the raw id, even though the id is part of the href.
-    expect(link.textContent).not.toContain('f47ac10b-58cc-4372-a567-0e02b2c3d479');
+    expect(screen.queryByRole('link')).toBeNull();
+    expect(screen.getByText('SPO-2026/07-0012')).toBeInTheDocument();
     expect(document.body.textContent).not.toContain(
       'f47ac10b-58cc-4372-a567-0e02b2c3d479',
     );
   });
 
-  it('AC-FM-1b: falls back to the literal "SPO allocation" when neither spo_number nor spo_number_raw is present', () => {
+  it('AC-FM-1b: falls back to the literal "SPO allocation", with no link, when neither spo_number nor spo_number_raw is present', () => {
     render(
       <SpoAllocationCell
         allocation={{ id: 'a1b2c3d4-e5f6-4789-9abc-def012345678', spo_number: null }}
@@ -60,11 +58,8 @@ describe('SpoAllocationCell', () => {
       />,
     );
 
-    const link = screen.getByRole('link', { name: 'SPO allocation' });
-    expect(link).toHaveAttribute(
-      'href',
-      '/procurement-management/spo-allocations/a1b2c3d4-e5f6-4789-9abc-def012345678',
-    );
+    expect(screen.queryByRole('link')).toBeNull();
+    expect(screen.getByText('SPO allocation')).toBeInTheDocument();
     expect(document.body.textContent).not.toContain(
       'a1b2c3d4-e5f6-4789-9abc-def012345678',
     );
@@ -265,7 +260,7 @@ describe('AC-FM-4: SpoAllocationCell is shared by GRNDetail and PickingLinesList
     const pickingShape = cellShapeFor(MATCHED.key);
 
     expect(grnShape.href).toBe(
-      '/procurement-management/spo-allocations/alloc-shared-1',
+      '/procurement-management/spo-allocations/SPO-2026%2F07-0011',
     );
     expect(grnShape.href).toBe(pickingShape.href);
     expect(grnShape.label).toBe('SPO-2026/07-0011');

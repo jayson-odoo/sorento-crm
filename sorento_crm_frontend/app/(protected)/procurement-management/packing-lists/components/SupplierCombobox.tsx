@@ -24,6 +24,12 @@ interface SupplierComboboxProps {
   placeholder?: string;
   disabled?: boolean;
   className?: string;
+  /** One-line ellipsis trigger for fixed-width table cells. */
+  truncateTriggerLabel?: boolean;
+  /** Every optional select is clearable (ADR standard) - off by default so a REQUIRED
+   *  supplier picker (every existing packing-list caller) does not grow a clear
+   *  affordance it has no use for. */
+  clearable?: boolean;
 }
 
 const asOption = (s: SupplierOption) => ({
@@ -53,6 +59,8 @@ export function SupplierCombobox({
   placeholder = 'Select supplier',
   disabled,
   className,
+  truncateTriggerLabel,
+  clearable = false,
 }: SupplierComboboxProps) {
   // What the trigger shows for a value that is already set. The server list only holds what
   // the last search returned, so without this a saved supplier reads as an empty box until
@@ -70,8 +78,10 @@ export function SupplierCombobox({
       onChange={onChange}
       disabled={disabled}
       placeholder={placeholder}
+      clearable={clearable}
       emptyMessage="No supplier found."
       triggerClassName={className}
+      truncateTriggerLabel={truncateTriggerLabel}
       fetchOptions={(query) => searchSuppliersForSelect(query)}
       selectedOption={selectedOption}
     />

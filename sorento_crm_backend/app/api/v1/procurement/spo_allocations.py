@@ -17,6 +17,8 @@ from app.schemas.procurement import (
     ShipmentAllocationSummaryGroup,
     SPOWithAllocationsGroup,
     BulkDeleteSPOAllocationsRequest,
+    SPODocument,
+    SPODocumentRow,
 )
 from app.schemas.common import ListResponse
 from app.services.error_handler import handle_internal_error
@@ -84,6 +86,81 @@ async def get_spo_allocations_grouped_by_spo_number(
         return result
     except Exception as e:
         logger.exception("grouped-by-spo-number failed: %s", e)
+        raise handle_internal_error(str(e))
+
+
+#: The SPO investigation grid (PLAN-spo-investigation-grid.md). Registered BEFORE
+#: `/{allocation_id}` below: Starlette matches routes in registration order, and
+#: `/{allocation_id}` accepts any single path segment - including the literal word
+#: "documents" - so it would swallow these two routes if it came first.
+#:
+#: Bulk delete has no route of its own (review B1): it rides the pending-actions
+#: registry's `spo_document.delete` (`app/services/record_actions.py`), because a
+#: bespoke `DELETE /documents` endpoint took `spo_numbers` straight into a bulk ORM
+#: `.filter(...).delete()`, which bypasses the company-scope filter entirely and let
+#: one company delete another company's identically-numbered document.
+
+
+@router.get("/documents", response_model=ListResponse[SPODocumentRow])
+async def get_spo_documents(
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=1000),
+    query: Optional[str] = Query(None),
+    state: str = Query("outstanding"),
+    product_id: Optional[str] = Query(None),
+    warehouse_id: Optional[str] = Query(None),
+    overdue_only: bool = Query(False),
+    sort: Optional[str] = Query("spo_number"),
+    dir: Optional[str] = Query("desc"),
+    current_user: dict = Depends(require_permission("procurement.spo_allocations.view")),
+    db: Session = Depends(get_db),
+):
+    """Paged header rows grouped by `spo_number` (AC-11): one row per SPO document,
+    newest first by default, the fifth reader of `spo_supply.open_incoming_clauses()`."""
+    try:
+        service = SPOAllocationService(db)
+        result = service.list_documents(
+            page=page,
+            limit=limit,
+            state=state,
+            product_id=product_id,
+            warehouse_id=warehouse_id,
+            overdue_only=overdue_only,
+            query=query,
+            sort_field=sort or "spo_number",
+            sort_dir=dir or "desc",
+        )
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("get_spo_documents failed: %s", e)
+        raise handle_internal_error(str(e))
+
+
+@router.get("/documents/{spo_number:path}", response_model=SPODocument)
+async def get_spo_document(
+    spo_number: str,
+    current_user: dict = Depends(require_permission("procurement.spo_allocations.view")),
+    db: Session = Depends(get_db),
+):
+    """The document form view's payload (AC-16): header rollup + every line, computed
+    fields included. `spo_number` travels slash-encoded (plan Q7): the `:path` converter
+    is required, not the default `str` one - on THIS side, the ASGI server decodes
+    `%2F` in `scope["path"]` BEFORE routing (review S5: unlike the FRONTEND's Next.js
+    dynamic segment, `[spoNumber]/page.tsx`, which does the opposite and leaves it
+    encoded - two different frameworks, not a contradiction), so an SPO number with a
+    literal slash (`SPO-2026/08-0061`) already reads as two path segments by the time
+    Starlette matches routes, and a plain `{spo_number}` (`[^/]+`) 404s on it. `:path`
+    matches everything after the prefix, slashes included, which is exactly the one
+    extra segment this needs."""
+    try:
+        service = SPOAllocationService(db)
+        return service.get_document(spo_number)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("get_spo_document failed for spo_number=%s: %s", spo_number, e)
         raise handle_internal_error(str(e))
 
 

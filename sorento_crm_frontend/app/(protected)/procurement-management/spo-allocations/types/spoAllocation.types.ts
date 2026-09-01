@@ -107,4 +107,8 @@ export interface SPOAllocationFormData {
   quantity_rejected?: number;
   allocation_notes?: string;
   product_id: string;
+  // The document form view's Lines-tab editors (UAT AC-24 parts 2/3): the line's OWN
+  // ETA fallback and its OWN supplier, never the shipment's.
+  expected_date?: string;
+  supplier_id?: string;
 }
