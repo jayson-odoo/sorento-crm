@@ -721,6 +721,7 @@ def _raise_rows(db: Session, parsed, actor: Optional[str], now: datetime) -> dic
     below already say theirs.
     """
     from app.models.project_so import (
+        ACK_ACKNOWLEDGED,
         INQUIRY_RAISED,
         IV_ORDER_BACK,
         OrderInquiry,
@@ -876,6 +877,12 @@ def _raise_rows(db: Session, parsed, actor: Optional[str], now: datetime) -> dic
                 cited_document=cited,
                 note=_also_cited_note(others),
                 state=INQUIRY_RAISED,
+                # Born acknowledged (G4, `PLAN-scm-reorder-oi-feedback-1sep.md` S1):
+                # system-attributed, or the uploader's, when the upload has one. Its links
+                # are firm rather than drafts the moment the cascade below runs.
+                ack_state=ACK_ACKNOWLEDGED,
+                acknowledged_by=actor,
+                acknowledged_at=now,
             )
             db.add(row)
             db.flush()
@@ -1082,10 +1089,11 @@ def apply(db: Session, file_data: bytes, actor: Optional[str] = None,
                 row_ids=raised["row_ids"],
                 actor_user_id=link_actor,
                 trigger="order_inquiry_form",
-                # The rows this sheet just raised are AWAITING, and what the pass writes
-                # for them is a DRAFT (`PLAN-scm-oi-draft-links.md` R6): purchasing opens
-                # the page with the documents already found and still says the word.
-                include_awaiting=True,
+                # The rows this sheet just raised are already ACKNOWLEDGED (G4,
+                # `PLAN-scm-reorder-oi-feedback-1sep.md` S1), so what this pass writes for
+                # them is a FIRM link, not a draft (`PLAN-scm-oi-draft-links.md` R6 no
+                # longer applies here - a draft is a link on a row still to confirm, and
+                # nothing here waits on a confirm any more).
             )["placed_rows"]
         except Exception as exc:  # noqa: BLE001 - see above
             logger.exception("auto-link failed after an order inquiry form upload")

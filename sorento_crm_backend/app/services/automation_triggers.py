@@ -438,6 +438,58 @@ register(
 )
 
 
+def _build_order_inquiry_link(so_number: Optional[str]) -> str:
+    """The Order Inquiries worklist, narrowed to the sales order the row belongs to.
+
+    There is no per-row detail page (`documentation/plans/scm/PLAN-scm-oi-handshake.md`) -
+    the worklist's own search IS the way in, exactly as `orderInquiryRowHref` reaches it
+    from every other screen. A row with no SO number (a claim-only or free-standing row)
+    gets the unfiltered list rather than a broken query string.
+    """
+    base = (settings.frontend_base_url or "").rstrip("/")
+    path = "/project-sales/order-inquiries"
+    if so_number:
+        from urllib.parse import quote
+
+        path = f"{path}?query={quote(so_number)}"
+    return f"{base}{path}" if base else path
+
+
+def _trigger_order_inquiry_changed_with_links(
+    db: Session,
+    config: dict[str, Any],
+    timezone: str,
+) -> Iterable[TriggerMatch]:
+    """Event-driven; pull-mode evaluation yields nothing.
+
+    Matches are produced via :meth:`AutomationService.dispatch_event` from
+    ``ProjectOrderInquiryService._settle_row_in_place`` (`PLAN-scm-reorder-oi-feedback-
+    1sep.md` S1, G6) - the moment a row CS has amended settles, is auto-acknowledged, AND
+    already carries a link. A linkless amendment fires nothing: purchasing has arranged
+    nothing yet, so there is nothing for this trigger to warn them a change moved.
+    """
+    return []
+
+
+register(
+    TriggerSpec(
+        type="order_inquiry_changed_with_links",
+        label="Order inquiry changed with links",
+        description=(
+            "Fires when CS amends an order inquiry row that already has a purchase order "
+            "or SPO linked to it (event-driven, dispatched when the row settles). A row "
+            "with no links yet fires nothing."
+        ),
+        config_schema={
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False,
+        },
+    ),
+    _trigger_order_inquiry_changed_with_links,
+)
+
+
 def _trigger_sponsorship_form_approved(
     db: Session,
     config: dict[str, Any],

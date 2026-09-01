@@ -123,26 +123,22 @@ def _draft_po_line(world, *, qty, product=None, warehouse=None):
     return po, line
 
 
-def test_po_confirm_cascade_links_the_confirmed_row_and_drafts_the_awaiting_one(api):
-    """REVERSED by `PLAN-scm-oi-draft-links.md` R6 (AC-D11), walked through the real
-    confirm rather than an already-open line.
-
-    Two rows at the same cell, one taken on and one not. Both are answered, and the
-    difference is what the answer MEANS: the confirmed row gains a link purchasing has
-    already stood behind, the awaiting one gains a draft it has still to confirm. Leaving
-    the awaiting row out was the handshake's rule, and it meant a plan-generated purchase
-    order landed on a page that still read "Not found" for the very rows that sized it.
+def test_po_confirm_cascade_links_every_acknowledged_row_the_same_way(api):
+    """SUPERSEDED by `PLAN-scm-reorder-oi-feedback-1sep.md` S1 (G4): every row is born
+    acknowledged now, so there is no unread row left for a plan-generated purchase order to
+    draft against - the cascade links BOTH rows firmly, whether or not either one was ever
+    pressed through the (now-tolerant, no-op) Acknowledge endpoint.
     """
     _client, world = api
     acknowledged = _raise_one_row(api, qty="5")
-    awaiting = _raise_one_row(api, qty="5")
+    never_pressed = _raise_one_row(api, qty="5")
 
     with _as_purchasing(world) as buyer:
         response = buyer.post(ACK_URL, json={"row_ids": [str(acknowledged["row"].id)]})
     assert response.status_code == 200, response.text
     world.db.commit()
-    world.db.refresh(awaiting["row"])
-    assert awaiting["row"].ack_state == ACK_AWAITING, "the control row is still untouched"
+    world.db.refresh(never_pressed["row"])
+    assert never_pressed["row"].ack_state == ACK_ACKNOWLEDGED, "born acknowledged already"
 
     po, _line = _draft_po_line(world, qty=20)
 
@@ -150,10 +146,10 @@ def test_po_confirm_cascade_links_the_confirmed_row_and_drafts_the_awaiting_one(
     world.db.commit()
 
     assert out["confirmed_count"] == 1
-    assert _links_of(world, acknowledged["row"]), "the confirm cascaded to the row that took it on"
-    assert _links_of(world, awaiting["row"]), "and drafted the one that has not"
-    world.db.refresh(awaiting["row"])
-    assert awaiting["row"].ack_state == ACK_AWAITING, "a draft is not a confirmation"
+    assert _links_of(world, acknowledged["row"]), "the confirm cascaded to the pressed row"
+    assert _links_of(world, never_pressed["row"]), "and to the row nobody ever pressed"
+    world.db.refresh(never_pressed["row"])
+    assert never_pressed["row"].ack_state == ACK_ACKNOWLEDGED
 
 
 # ---------------------------------------------------------------------------
@@ -178,8 +174,8 @@ def test_a_cs_user_is_refused_a_batch_acknowledge_and_a_populated_link_now(api):
 
     world.db.refresh(first["row"])
     world.db.refresh(second["row"])
-    assert first["row"].ack_state == ACK_AWAITING
-    assert second["row"].ack_state == ACK_AWAITING
+    assert first["row"].ack_state == ACK_ACKNOWLEDGED
+    assert second["row"].ack_state == ACK_ACKNOWLEDGED
 
 
 # ---------------------------------------------------------------------------
@@ -197,6 +193,7 @@ def test_acknowledging_a_cancelled_row_is_refused(api):
     _client, world = api
     fixture = _raise_one_row(api)
     row = fixture["row"]
+    born_by = row.acknowledged_by
     row.state = INQUIRY_CANCELLED
     world.db.commit()
 
@@ -205,8 +202,8 @@ def test_acknowledging_a_cancelled_row_is_refused(api):
 
     assert response.status_code == 422, response.text
     world.db.refresh(row)
-    assert row.ack_state == ACK_AWAITING, "and nothing was stamped on it"
-    assert row.acknowledged_by is None
+    assert row.ack_state == ACK_ACKNOWLEDGED, "the born stamp, untouched"
+    assert row.acknowledged_by == born_by, "the buyer's press was refused, not stamped"
 
 
 def test_one_cancelled_row_refuses_the_whole_batch_and_stamps_none_of_it(api):
@@ -225,7 +222,7 @@ def test_one_cancelled_row_refuses_the_whole_batch_and_stamps_none_of_it(api):
 
     assert response.status_code == 422, response.text
     world.db.refresh(live["row"])
-    assert live["row"].ack_state == ACK_AWAITING
+    assert live["row"].ack_state == ACK_ACKNOWLEDGED
 
 
 def test_rejecting_a_row_that_is_no_longer_open_is_refused_and_writes_nothing(api):
@@ -246,7 +243,7 @@ def test_rejecting_a_row_that_is_no_longer_open_is_refused_and_writes_nothing(ap
 
     assert response.status_code == 422, response.text
     world.db.refresh(row)
-    assert row.ack_state == ACK_AWAITING
+    assert row.ack_state == ACK_ACKNOWLEDGED
     assert row.rejected_reason is None
     assert _active_revision_no(world, fixture["order"]) == before, (
         "and the line's decision was left exactly as it stood"
@@ -314,16 +311,19 @@ def test_rejecting_a_partly_linked_row_takes_its_half_back_too(api):
 # ---------------------------------------------------------------------------
 
 
-def test_acknowledging_twice_does_not_double_the_cascade_or_move_the_stamp(api):
-    """A duplicate id inside ONE batch is not two rows (the `IN (...)` the service
-    queries with returns the row once); a SECOND, separate press is refused outright
-    (AC-H2's own `ACK_ACKNOWLEDGEABLE` gate) rather than silently re-stamping the row -
-    'idempotent' here means the second press has no effect at all, not that it succeeds
-    twice for free."""
+def test_acknowledging_an_already_acknowledged_row_twice_never_moves_the_stamp(api):
+    """SUPERSEDED by `PLAN-scm-reorder-oi-feedback-1sep.md` S1 (G4): the guard is TOLERANT
+    of the born-ack world, not refusing - a row is already acknowledged the instant it is
+    raised, so a duplicate id inside ONE batch, and a wholly separate second press, are
+    BOTH no-ops on the stamp. 'Idempotent' here means neither press moves who took the row
+    on or when, and neither doubles the cascade.
+    """
     _client, world = api
     _open_po_line(world, qty=50)
     fixture = _raise_one_row(api)
     row = fixture["row"]
+    assert row.ack_state == ACK_ACKNOWLEDGED, "born acknowledged already"
+    born_by, born_at = row.acknowledged_by, row.acknowledged_at
 
     with _as_purchasing(world) as buyer:
         first = buyer.post(ACK_URL, json={"row_ids": [str(row.id), str(row.id)]})
@@ -332,18 +332,20 @@ def test_acknowledging_twice_does_not_double_the_cascade_or_move_the_stamp(api):
     world.db.commit()
 
     world.db.refresh(row)
-    stamped_at = row.acknowledged_at
+    assert row.acknowledged_by == born_by
+    assert row.acknowledged_at == born_at, "the buyer's press did not move the born stamp"
     linked_before = sum(Decimal(str(link.qty)) for link in _links_of(world, row))
-    assert linked_before > 0, "the cascade ran once, against the open line"
+    assert linked_before > 0, "the raise-time cascade already ran, against the open line"
 
     with _as_purchasing(world) as buyer:
         second = buyer.post(ACK_URL, json={"row_ids": [str(row.id)]})
-    assert second.status_code == 422, second.text
+    assert second.status_code == 200, second.text
 
     world.db.refresh(row)
-    assert row.acknowledged_at == stamped_at, "a refused second press must not move the stamp"
+    assert row.acknowledged_by == born_by
+    assert row.acknowledged_at == born_at, "a tolerant second press must not move the stamp"
     linked_after = sum(Decimal(str(link.qty)) for link in _links_of(world, row))
-    assert linked_after == linked_before, "no second cascade ran"
+    assert linked_after == linked_before, "no double-linking from a repeated cascade"
 
 
 # ---------------------------------------------------------------------------
@@ -414,7 +416,7 @@ def test_row_ids_naming_another_companys_row_are_refused_not_skipped(api):
 
     assert response.status_code == 404, response.text
     world.db.refresh(row)
-    assert row.ack_state == ACK_AWAITING, "the whole batch was refused, not partly applied"
+    assert row.ack_state == ACK_ACKNOWLEDGED, "the whole batch was refused, not partly applied"
 
 
 # ---------------------------------------------------------------------------
@@ -538,21 +540,27 @@ def test_the_summary_ack_facet_carries_all_four_keys_by_name(api):
     field (`app/schemas/project_order_inquiry.py`) so a typo in the schema or in the
     service key it reads would show up here as a missing key, not a silently-dropped
     zero - and this is the one place all four states are proven to coexist and to be
-    counted correctly at once, rather than one state at a time."""
+    counted correctly at once, rather than one state at a time.
+
+    `awaiting` and `changed` are no longer reachable through the API once a row is born
+    acknowledged and a settle auto-acknowledges again (G4, `PLAN-scm-reorder-oi-feedback-
+    1sep.md` S1) - the facet still has to count a row that somehow sits in either (a
+    pre-migration row, a direct write), so the two are written straight onto the ORM
+    object rather than through a route that cannot produce them any more.
+    """
     client, world = api
-    awaiting = _raise_one_row(api, qty="1")
     acknowledged = _raise_one_row(api, qty="1")
+    awaiting = _raise_one_row(api, qty="1")
     to_change = _raise_one_row(api, qty="1")
     to_reject = _raise_one_row(api, qty="1")
 
+    awaiting["row"].ack_state = ACK_AWAITING
+    awaiting["row"].acknowledged_by = None
+    awaiting["row"].acknowledged_at = None
+    to_change["row"].ack_state = ACK_CHANGED
+    world.db.commit()
+
     with _as_purchasing(world) as buyer:
-        for fixture in (acknowledged, to_change):
-            assert (
-                buyer.post(
-                    ACK_URL, json={"row_ids": [str(fixture["row"].id)]}
-                ).status_code
-                == 200
-            )
         assert (
             buyer.post(
                 f"{LIST}/{to_reject['row'].id}/reject", json={"reason": "no capacity"}
@@ -560,9 +568,6 @@ def test_the_summary_ack_facet_carries_all_four_keys_by_name(api):
             == 200
         )
     world.db.commit()
-    _settle(world, to_change, qty="1", required_date=NOW)
-    world.db.refresh(to_change["row"])
-    assert to_change["row"].ack_state == ACK_CHANGED
 
     summary = client.get(
         f"{LIST}/summary", params={"project_id": str(world.project.id)}
@@ -586,8 +591,16 @@ def test_the_summary_ack_facet_carries_all_four_keys_by_name(api):
 def test_committed_v_and_the_plan_agree_only_on_acknowledged_and_changed(api):
     """Three rows at the SAME cell - awaiting, changed and rejected - so the view's own
     rule (drop rejected, keep awaiting) and the plan's narrower one (acknowledged and
-    changed only) can be told apart in one assertion, and the awaiting chip is proven to
-    count exactly the row that neither reading credits."""
+    changed only) can be told apart in one assertion.
+
+    `awaiting` and `changed` are no longer reachable through the API in the born-ack
+    world (G4, `PLAN-scm-reorder-oi-feedback-1sep.md` S1) - the underlying VIEW and the
+    plan's own SELECT still have to read a row that somehow sits in either correctly, so
+    the two are written straight onto the ORM object. The awaiting chip itself is gone
+    from the plan page (S1, AC-1.8); `awaiting_acknowledgement_rows` stays as the read
+    both `committed_v` and the plan disagree with, so it is asserted here rather than
+    dropped along with the chip that used to show it.
+    """
     from app.services.scm.reorder_run_service import awaiting_acknowledgement_rows
 
     _client, world = api
@@ -597,13 +610,13 @@ def test_committed_v_and_the_plan_agree_only_on_acknowledged_and_changed(api):
     to_change = _raise_one_row(api, qty="9")
     to_reject = _raise_one_row(api, qty="11")
 
+    awaiting["row"].ack_state = ACK_AWAITING
+    awaiting["row"].acknowledged_by = None
+    awaiting["row"].acknowledged_at = None
+    to_change["row"].ack_state = ACK_CHANGED
+    world.db.commit()
+
     with _as_purchasing(world) as buyer:
-        assert (
-            buyer.post(
-                ACK_URL, json={"row_ids": [str(to_change["row"].id)]}
-            ).status_code
-            == 200
-        )
         assert (
             buyer.post(
                 f"{LIST}/{to_reject['row'].id}/reject", json={"reason": "no supply"}
@@ -612,20 +625,13 @@ def test_committed_v_and_the_plan_agree_only_on_acknowledged_and_changed(api):
         )
     world.db.commit()
 
-    _settle(world, to_change, qty="9", required_date=NOW)
-    world.db.refresh(to_change["row"])
-    assert to_change["row"].ack_state == ACK_CHANGED
-
     # committed_v: everything still owed except the rejected row (awaiting + changed).
     assert _project_committed(world, planned=False) == Decimal("7") + Decimal("9")
     # the plan's own SELECT: acknowledged + changed only - the awaiting row is nothing
     # to buy against yet.
     assert _project_committed(world, planned=True) == Decimal("9")
-    # The chip counts what is still IN FRONT of purchasing, which is the To confirm set
-    # the page itself opens on (R3): the row nobody has read AND the row CS has amended
-    # since it was read. The rejected row is nobody's work - it went back to CS - and the
-    # count is blind to whether a draft has made either row `placed` (S6, review round
-    # 28 Aug), which is the state every row reaches a second after it is raised.
+    # The count both readings disagree with - the row nobody has read AND the row CS
+    # amended since (`changed`), the two states `ACK_ACKNOWLEDGEABLE` used to gate.
     assert awaiting_acknowledgement_rows(world.db) == before_awaiting + 2
 
     world.db.refresh(awaiting["row"])
