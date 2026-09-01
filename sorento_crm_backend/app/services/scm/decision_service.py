@@ -1546,6 +1546,18 @@ def carry_replan_decisions(db: Session, old_run_id: str, new_run_id: str) -> dic
         sp.commit()
         already_decided.add(str(new_rec.id))
         carried += 1
+
+    # S3 (#491, merging around the same time as this PR) denormalises planned/decided/
+    # confirmed counts onto scm.reorder_run, kept current by _refresh_run_counts on every
+    # decision write - this function inserts PlanRowDecision rows directly, bypassing that,
+    # so a re-planned run carrying N carried decisions would show decided_count = 0 on the
+    # plans list until someone touched a row by hand. Guarded (module-attribute check, not
+    # an import) so this branch stays green BOTH before and after #491 merges: the name
+    # only exists in this module once that PR lands.
+    refresh_counts = globals().get("_refresh_run_counts")
+    if refresh_counts is not None:
+        refresh_counts(db, new_run_id)
+
     return {"carried": carried, "recheck": recheck, "dropped": dropped, "skipped": skipped}
 
 
