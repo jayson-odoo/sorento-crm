@@ -231,6 +231,58 @@ describe('RequestTagDesigner - which template a line clones', () => {
     expect(drawn.width_mm).toBe(60);
     expect(drawn.height_mm).toBe(40);
   });
+
+  it('binds the starter to the line\'s REAL product id, not the line id (review #2, #3)', async () => {
+    mockListTemplates.mockResolvedValue([]);
+    mockResolveRequestLines.mockResolvedValue([lineTagData()]);
+
+    renderDesigner(request({ lines: [line({ id: 'line-1', product_id: 'prod-1' })] }));
+
+    await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
+
+    const drawn = canvasDocs[canvasDocs.length - 1].doc;
+    const group = drawn.layers.find((l) => l.props.kind === 'group');
+    expect(group?.props).toMatchObject({ binding: { product_id: 'prod-1' } });
+    expect(group?.props).not.toMatchObject({ binding: { product_id: 'line-1' } });
+  });
+
+  it('builds a set-block starter, bound to the real set id, for a product_set line (review #1)', async () => {
+    mockListTemplates.mockResolvedValue([]);
+    mockResolveRequestLines.mockResolvedValue([
+      lineTagData({
+        line_id: 'line-2',
+        code: 'BF-SET-01',
+        name: 'Bathroom Set',
+        set_members: '- A1 (Basin)\n- A2 (Tap)',
+      }),
+    ]);
+
+    renderDesigner(
+      request({
+        lines: [
+          line({
+            id: 'line-2',
+            line_type: 'product_set',
+            product_id: null,
+            product_set_id: 'set-1',
+          }),
+        ],
+      }),
+    );
+
+    await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
+
+    const drawn = canvasDocs[canvasDocs.length - 1].doc;
+    // The set footprint (85x62), not the product footprint (85x58).
+    expect(drawn.width_mm).toBe(85);
+    expect(drawn.height_mm).toBe(62);
+
+    const membersLayer = drawn.layers.find((l) => l.slot_binding === 'set_members');
+    expect(membersLayer?.props).toMatchObject({ text: '- A1 (Basin)\n- A2 (Tap)' });
+
+    const group = drawn.layers.find((l) => l.props.kind === 'group');
+    expect(group?.props).toMatchObject({ binding: { product_set_id: 'set-1' } });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -289,6 +341,27 @@ describe('RequestTagDesigner - explicit canvas states (AC-S3-2, AC-S3-3)', () =>
     expect(mockListTemplates).toHaveBeenCalledTimes(2);
     await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
     expect(screen.queryByText('Failed to load tag templates.')).not.toBeInTheDocument();
+  });
+
+  it('shows an explicit error with Retry when price resolution fails, and Retry recovers it (review #5)', async () => {
+    mockListTemplates.mockResolvedValue([realTemplate()]);
+    mockResolveRequestLines.mockRejectedValueOnce(new Error('network down'));
+
+    renderDesigner();
+
+    expect(await screen.findByText('Failed to resolve prices.')).toBeInTheDocument();
+    const retryButton = screen.getByRole('button', { name: /retry/i });
+    expect(retryButton).toBeInTheDocument();
+    // Not "opens with blank data and no cause" - the canvas must not appear
+    // at all until prices are either resolved or explicitly retried.
+    expect(screen.queryByTestId('canvas-editor')).not.toBeInTheDocument();
+
+    mockResolveRequestLines.mockResolvedValueOnce([lineTagData()]);
+    fireEvent.click(retryButton);
+
+    expect(mockResolveRequestLines).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
+    expect(screen.queryByText('Failed to resolve prices.')).not.toBeInTheDocument();
   });
 
   it('says there is nothing to design when the request has no lines', async () => {

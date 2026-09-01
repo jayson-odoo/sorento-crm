@@ -13,7 +13,13 @@
  * around it.
  */
 
-import { bindTemplateLayers, buildProductBlock, PRODUCT_BLOCK_SIZE } from './product-block';
+import {
+  bindTemplateLayers,
+  buildProductBlock,
+  buildSetStarterBlock,
+  PRODUCT_BLOCK_SIZE,
+  SET_BLOCK_SIZE,
+} from './product-block';
 import { lineFamily } from './line-family';
 import type {
   GroupBinding,
@@ -66,46 +72,83 @@ export function defaultTemplateFor(
   );
 }
 
+/** What the tag's groups are about: this line's product, or its set. */
+export function bindingForLine(line: TagRequestLine): GroupBinding {
+  return line.line_type === 'product_set'
+    ? { product_set_id: line.product_set_id ?? undefined }
+    : { product_id: line.product_id ?? undefined };
+}
+
+/**
+ * The synthetic `TagTemplate.id` a starter carries. Never a real
+ * `tag_templates` row, so anything that treats a template id as a foreign key
+ * - the versions/publish machinery included - has to special-case this one.
+ */
+export const STARTER_TEMPLATE_ID = 'starter';
+
 /**
  * The starter a line opens on when there is not one PUBLISHED template to
- * clone from (D6/D13): a product block bound to the line's own product, at
- * the default block footprint. The design page must never dead-end on a
- * silent "Preparing this line..." (#476), so this stands in for a real
- * template - it is a plain `ProductTagData` built from the already-resolved
- * line, fed through `buildProductBlock`, and never written back as a
- * `tag_templates` row.
+ * clone from (D6/D13): a product block - or, for a set line, a set block - at
+ * the default block footprint, bound to the line's real product/set. The
+ * design page must never dead-end on a silent "Preparing this line..."
+ * (#476), so this stands in for a real template: a synthetic doc built from
+ * the already-resolved line and never written back as a `tag_templates` row.
+ *
+ * `buildProductBlock`/`buildSetStarterBlock` do not know the line, so
+ * whatever binding they seed their group with is provisional; `bindTemplateLayers`
+ * below re-binds it to `bindingForLine(line)` the same way `tagForLine` binds
+ * a real template's clone, so the starter's binding is never a stand-in id
+ * (e.g. the line's own id) masquerading as a product/set id.
  */
 export function starterTemplateFor(
-  line: Pick<TagRequestLine, 'id'>,
+  line: TagRequestLine,
   data: LineTagData | undefined,
   newId: () => string,
 ): TagTemplate {
-  const product: ProductTagData = {
-    id: line.id,
-    code: data?.code ?? '',
-    name: data?.name ?? '',
-    dimensions: data?.dimensions ?? '',
-    spec_lines: data?.spec_lines ? data.spec_lines.split('\n') : [],
-    specs: data?.specs ?? [],
-    images: data?.images ?? [],
-    list_price: data?.list_price ?? null,
-    offer_price: data?.show_promo_price ? (data?.sell_price ?? null) : null,
-    promotion_id: null,
-  };
-  const layers = buildProductBlock(product, { newId, x_mm: 0, y_mm: 0, z_index: 0 });
+  const opts = { newId, x_mm: 0, y_mm: 0, z_index: 0 };
+  const isSet = line.line_type === 'product_set';
+
+  const layers = isSet
+    ? buildSetStarterBlock(
+        {
+          code: data?.code ?? '',
+          name: data?.name ?? '',
+          set_members: data?.set_members ?? '',
+          list_price: data?.list_price ?? null,
+          offer_price: data?.show_promo_price ? (data?.sell_price ?? null) : null,
+        },
+        opts,
+      )
+    : buildProductBlock(
+        {
+          // Never read for binding purposes - bindTemplateLayers below
+          // overwrites the group's binding with the line's real product id.
+          id: '',
+          code: data?.code ?? '',
+          name: data?.name ?? '',
+          dimensions: data?.dimensions ?? '',
+          spec_lines: data?.spec_lines ? data.spec_lines.split('\n') : [],
+          specs: data?.specs ?? [],
+          images: data?.images ?? [],
+          list_price: data?.list_price ?? null,
+          offer_price: data?.show_promo_price ? (data?.sell_price ?? null) : null,
+          promotion_id: null,
+        } satisfies ProductTagData,
+        opts,
+      );
+
+  const size = isSet ? SET_BLOCK_SIZE : PRODUCT_BLOCK_SIZE;
+
   return {
-    id: 'starter',
+    id: STARTER_TEMPLATE_ID,
     name: 'Starter',
     family: 'ala_carte',
     doc: {
-      layers,
-      width_mm: PRODUCT_BLOCK_SIZE.width_mm,
-      height_mm: PRODUCT_BLOCK_SIZE.height_mm,
+      layers: bindTemplateLayers(layers, bindingForLine(line)),
+      width_mm: size.width_mm,
+      height_mm: size.height_mm,
     },
-    print_size: {
-      width_mm: PRODUCT_BLOCK_SIZE.width_mm,
-      height_mm: PRODUCT_BLOCK_SIZE.height_mm,
-    },
+    print_size: { width_mm: size.width_mm, height_mm: size.height_mm },
     created_at: '',
     updated_at: '',
   };
@@ -114,13 +157,6 @@ export function starterTemplateFor(
 // ---------------------------------------------------------------------------
 // The tag itself
 // ---------------------------------------------------------------------------
-
-/** What the tag's groups are about: this line's product, or its set. */
-export function bindingForLine(line: TagRequestLine): GroupBinding {
-  return line.line_type === 'product_set'
-    ? { product_set_id: line.product_set_id ?? undefined }
-    : { product_id: line.product_id ?? undefined };
-}
 
 /**
  * A fresh tag for this line, cloned from `template`.

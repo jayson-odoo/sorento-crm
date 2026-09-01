@@ -104,6 +104,7 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
     'loading',
   );
   const [resolvedRows, setResolvedRows] = useState<LineTagData[] | null>(null);
+  const [pricesStatus, setPricesStatus] = useState<'loading' | 'loaded' | 'error'>('loading');
 
   /** One tag per line, keyed by line id. The live layers live here. */
   const [tags, setTags] = useState<Record<string, PlacedTag>>(() => {
@@ -152,20 +153,22 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
     loadTemplates();
   }, [loadTemplates]);
 
-  useEffect(() => {
-    let live = true;
+  // Same mechanism as loadTemplates just above: a failed resolve gets an
+  // explicit, stays-put error state with Retry, not a toast that vanishes and
+  // leaves the canvas open on blank data with no visible cause.
+  const loadPrices = useCallback(() => {
+    setPricesStatus('loading');
     resolveRequestLines(request.id)
       .then((rows) => {
-        if (live) setResolvedRows(rows);
+        setResolvedRows(rows);
+        setPricesStatus('loaded');
       })
-      .catch((error: unknown) => {
-        if (live) setResolvedRows([]);
-        toast.error(error instanceof Error ? error.message : 'Failed to resolve prices');
-      });
-    return () => {
-      live = false;
-    };
+      .catch(() => setPricesStatus('error'));
   }, [request.id]);
+
+  useEffect(() => {
+    loadPrices();
+  }, [loadPrices]);
 
   const resolved = useMemo(() => {
     const map = new Map<string, LineTagData>();
@@ -190,18 +193,19 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
   }, [selectedLineId, request.lines]);
 
   // A line with no tag yet is cloned from its family's default template. It
-  // waits for the templates to settle (loaded OR error - an error state has
-  // its own Retry, not a silent stall) AND the resolved lines: the family
-  // comes off the resolved code, so cloning early would pick the ala carte
-  // fallback for everything.
+  // waits for BOTH the templates and the prices to settle (loaded OR error -
+  // an error state has its own Retry, not a silent stall): the family comes
+  // off the resolved code, so cloning early would pick the ala carte fallback
+  // for everything.
   //
   // Zero PUBLISHED templates is not an error: the line starts from a
-  // product-block starter bound to its own product instead of dead-ending on
-  // "Preparing this line..." forever (D6/D13, #476).
+  // product-block (or, for a set line, a set block) starter bound to its own
+  // item instead of dead-ending on "Preparing this line..." forever
+  // (D6/D13, #476).
   useEffect(() => {
     if (!selectedLineId || tags[selectedLineId]) return;
     if (templatesStatus === 'loading' || templatesStatus === 'error') return;
-    if (resolvedRows === null) return;
+    if (pricesStatus === 'loading' || pricesStatus === 'error') return;
     const line = request.lines.find((l) => l.id === selectedLineId);
     if (!line) return;
     const lineData = resolved.get(line.id);
@@ -214,7 +218,7 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
     tags,
     templates,
     templatesStatus,
-    resolvedRows,
+    pricesStatus,
     resolved,
     request.lines,
     applyTemplate,
@@ -483,8 +487,15 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
                 Retry
               </Button>
             </CanvasMessage>
-          ) : resolvedRows === null ? (
+          ) : pricesStatus === 'loading' ? (
             <CanvasMessage text="Resolving prices..." />
+          ) : pricesStatus === 'error' ? (
+            <CanvasMessage text="Failed to resolve prices.">
+              <Button variant="outline" size="sm" onClick={loadPrices}>
+                <RefreshCw className="mr-1.5 size-3.5" />
+                Retry
+              </Button>
+            </CanvasMessage>
           ) : selectedTag && selectedDoc ? (
             <TagCanvasEditor
               key={selectedTag.id}
@@ -646,7 +657,7 @@ function LinesRail({
                     <div className="flex items-center gap-1.5">
                       <Badge
                         variant="secondary"
-                        className="shrink-0 px-1 py-0 text-[10px]"
+                        className="shrink-0 px-1 py-0 text-2xs"
                       >
                         {line.line_type === 'product' ? 'P' : 'Set'}
                       </Badge>
@@ -663,7 +674,7 @@ function LinesRail({
                     <p className="mt-0.5 truncate text-xs" title={name}>
                       {name}
                     </p>
-                    <p className="mt-0.5 truncate text-[10px] text-muted-foreground">
+                    <p className="mt-0.5 truncate text-2xs text-muted-foreground">
                       Qty {line.quantity} / {family}
                       {row && row.show_promo_price && row.sell_price != null
                         ? ` / SP ${formatTagPrice(row.sell_price)}`

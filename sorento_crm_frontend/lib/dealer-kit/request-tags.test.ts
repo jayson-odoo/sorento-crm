@@ -18,7 +18,7 @@ import type {
   TagTemplateFamily,
 } from './tag-template-types';
 import { IMPOSITION_PRESETS, defaultTextProps } from './tag-template-types';
-import { PRODUCT_BLOCK_SIZE } from './product-block';
+import { PRODUCT_BLOCK_SIZE, SET_BLOCK_SIZE } from './product-block';
 import {
   autoArrange,
   copiesOf,
@@ -255,6 +255,49 @@ describe('starterTemplateFor', () => {
     expect(source.print_size).toEqual(PRODUCT_BLOCK_SIZE);
     expect(source.doc.width_mm).toBe(PRODUCT_BLOCK_SIZE.width_mm);
     expect(source.doc.height_mm).toBe(PRODUCT_BLOCK_SIZE.height_mm);
+  });
+
+  it('binds the group to the LINE\'S REAL product id, never the line id itself', () => {
+    const line = productLine('l7');
+    const source = starterTemplateFor(line, lineTagData(), newId);
+    const group = source.doc.layers.find((l) => l.props.kind === 'group');
+    expect(group?.props).toMatchObject({ binding: { product_id: 'p-l7' } });
+    // The line id and the product id are deliberately different strings in
+    // this fixture, so a binding of { product_id: 'l7' } - the line id
+    // masquerading as the product id - would fail this assertion too.
+    expect(group?.props).not.toMatchObject({ binding: { product_id: 'l7' } });
+  });
+
+  it('a set line gets a SET block - set_members text, no empty product-only slots - not buildProductBlock', () => {
+    const line = setLine('l6');
+    const data = lineTagData({
+      code: 'BF-SET-01',
+      name: 'Bathroom Furniture Set',
+      set_members: '- A1 (Basin)\n- A2 (Tap)',
+    });
+    const source = starterTemplateFor(line, data, newId);
+
+    expect(source.print_size).toEqual(SET_BLOCK_SIZE);
+    expect(source.doc.width_mm).toBe(SET_BLOCK_SIZE.width_mm);
+    expect(source.doc.height_mm).toBe(SET_BLOCK_SIZE.height_mm);
+
+    const membersLayer = source.doc.layers.find((l) => l.slot_binding === 'set_members');
+    expect(membersLayer?.props).toMatchObject({
+      kind: 'text',
+      text: '- A1 (Basin)\n- A2 (Tap)',
+    });
+
+    // A set has no product photo, dimensions or spec lines of its own - a
+    // set-line starter must not carry the empty boxes buildProductBlock would
+    // draw for them.
+    const slots = source.doc.layers.map((l) => l.slot_binding).filter(Boolean);
+    expect(slots).not.toEqual(
+      expect.arrayContaining(['product_image', 'dimensions', 'spec_lines']),
+    );
+
+    // Bound to the set, not the line id and not a product id.
+    const group = source.doc.layers.find((l) => l.props.kind === 'group');
+    expect(group?.props).toMatchObject({ binding: { product_set_id: 's-l6' } });
   });
 });
 

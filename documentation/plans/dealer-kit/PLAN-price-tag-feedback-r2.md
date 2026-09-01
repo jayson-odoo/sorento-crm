@@ -1,11 +1,15 @@
 # PLAN - Price Tag Feedback R2
 
-Status: Approved 1 Sep 2026 - implementation starting. S3 DONE pending review
-1 Sep 2026 on branch `price-tag-r2-s3`: Phase 1 browser-verified (starter
-path, template-load error+Retry, published-template regression); Phase 2
-vitest red-first (41 tests across `request-tags.test.ts` +
-`RequestTagDesigner.test.tsx`), full `app/(protected)/dealer-kit` + lib suite
-green (416 tests), tsc/eslint clean on touched files.
+Status: Approved 1 Sep 2026 - implementation starting. S3 DONE, review round
+closed, ready for PR - 1 Sep 2026 on branch `price-tag-r2-s3`: Phase 1
+browser-verified (starter path, template-load error+Retry, published-template
+regression); Phase 2 vitest red-first (46 tests across `request-tags.test.ts`
++ `RequestTagDesigner.test.tsx`); review fixes closed - set-line starter
+(`buildSetStarterBlock`), honest group binding via `bindingForLine` inside
+`starterTemplateFor` (not left to `tagForLine` to correct downstream),
+`STARTER_TEMPLATE_ID` constant, price-resolution failure gets the same
+explicit error+Retry as templates. Full `app/(protected)/dealer-kit` + lib
+suite green (762 tests), tsc/eslint clean on touched files.
 UAC: `documentation/plans/dealer-kit/price-tag-feedback-r2-acceptance-criteria.md`
 Predecessor: `documentation/plans/dealer-kit/PLAN-price-tag-request.md` (shipped, PR #289)
 
