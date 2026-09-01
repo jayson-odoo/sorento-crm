@@ -160,7 +160,7 @@ def world():
 def test_only_the_open_unclaimed_project_bin_line_is_counted(world):
     """AC-6.11: an open PO line at a project-bin warehouse, unclaimed, is counted; the
     same order's POOL line never is, whatever its claim state."""
-    made = world.purchase_order(f"{MARKER}-PO-1")
+    world.purchase_order(f"{MARKER}-PO-1")
 
     assert count_unclaimed_project_bin_lines(world.db, world.company_id) == 1
 
