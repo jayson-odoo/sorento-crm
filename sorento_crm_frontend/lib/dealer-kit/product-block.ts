@@ -480,6 +480,85 @@ export function buildSetBlock(
   return [...children, group];
 }
 
+/** The already-formatted text a set-line starter draws - no member array. */
+export interface SetStarterData {
+  code: string;
+  name: string;
+  /** Pre-joined, one line per member - what a request line resolves to,
+   *  unlike `ProductSetTagData.members` which `buildSetBlock` still formats
+   *  itself for the template editor's own "add a set" picker. */
+  set_members: string;
+  list_price: number | null;
+  offer_price: number | null;
+}
+
+/**
+ * The set-line starter (D6/D13): same layout as `buildSetBlock` - code, name,
+ * one line per member, price badge - but reads a request line's ALREADY
+ * resolved `set_members` string instead of a `ProductSetTagData.members`
+ * array, since that is the shape `starterTemplateFor` has on hand and forcing
+ * a fake member list just to re-derive the same string back out would be
+ * make-work.
+ *
+ * The group's binding is not this function's job: the caller re-binds every
+ * group to the real line afterward (`bindTemplateLayers`), so what is passed
+ * to `groupLayers` here is a placeholder.
+ */
+export function buildSetStarterBlock(
+  set: SetStarterData,
+  opts: BuildOptions,
+): TagLayer[] {
+  const promo = set.offer_price != null;
+
+  const children = materialise(
+    [
+      {
+        type: 'text',
+        x: 0,
+        y: 0,
+        w: 85,
+        h: 6,
+        slot: 'code',
+        props: text(set.code, { fontSize: 11, fontWeight: 700 }),
+      },
+      {
+        type: 'text',
+        x: 0,
+        y: 6.5,
+        w: 85,
+        h: 8,
+        slot: 'name',
+        props: text(set.name, { fontSize: 9, fontWeight: 600 }),
+      },
+      {
+        type: 'text',
+        x: 0,
+        y: 15,
+        w: 85,
+        h: 28,
+        slot: 'set_members',
+        props: text(set.set_members, { fontSize: 8, lineHeight: 1.35 }),
+      },
+      {
+        type: 'price_badge',
+        x: 40,
+        y: 45,
+        w: 45,
+        h: 17,
+        slot: promo ? 'sell_price' : 'list_price',
+        props: defaultPriceBadgeProps(promo ? 'promo' : 'list_only'),
+      },
+    ],
+    opts,
+  );
+
+  const group = groupLayers(children, {}, {
+    newId: opts.newId,
+    z_index: opts.z_index + children.length,
+  });
+  return [...children, group];
+}
+
 // ---------------------------------------------------------------------------
 // Presets (D28)
 // ---------------------------------------------------------------------------

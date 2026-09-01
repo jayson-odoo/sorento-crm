@@ -1,10 +1,23 @@
 # PLAN - Price Tag Feedback R2
 
-Status: Approved 1 Sep 2026 - implementation starting; Lane B S5 (template save/publish
-versions) delivered 2 Sep 2026, PR #486 open; review round 2 Sep 2026 fixed B1 (View mount-reset
-wiped unsaved drafts), replaced the Restore confirm dialog with an immediate-restore + Undo toast
-(captain ruling, pending user ratification - see AC-S5-6), made Publish persist the draft before
-snapshotting it, and added a 409 for a concurrent publish race
+Status: Approved 1 Sep 2026 - implementation starting. S3 DONE, review round
+closed, ready for PR - 1 Sep 2026 on branch `price-tag-r2-s3`: Phase 1
+browser-verified (starter path, template-load error+Retry, published-template
+regression); Phase 2 vitest red-first (46 tests across `request-tags.test.ts`
++ `RequestTagDesigner.test.tsx`); review fixes closed - set-line starter
+(`buildSetStarterBlock`), honest group binding via `bindingForLine` inside
+`starterTemplateFor` (not left to `tagForLine` to correct downstream),
+`STARTER_TEMPLATE_ID` constant, price-resolution failure gets the same
+explicit error+Retry as templates. Full `app/(protected)/dealer-kit` + lib
+suite green (762 tests), tsc/eslint clean on touched files. Lane B S5
+(template save/publish versions) delivered 2 Sep 2026, PR #486 open; review
+round 2 Sep 2026 fixed B1 (View mount-reset wiped unsaved drafts), replaced
+the Restore confirm dialog with an immediate-restore + Undo toast (captain
+ruling, pending user ratification - see AC-S5-6), made Publish persist the
+draft before snapshotting it, and added a 409 for a concurrent publish race.
+S6 (editor UX - fullscreen, live text reflow, ruler guides, per-block
+preview) branched from S5 with S3 merged in (pre-resolving #484-vs-#486),
+PR TBD.
 UAC: `documentation/plans/dealer-kit/price-tag-feedback-r2-acceptance-criteria.md`
 Predecessor: `documentation/plans/dealer-kit/PLAN-price-tag-request.md` (shipped, PR #289)
 
