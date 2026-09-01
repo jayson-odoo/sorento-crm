@@ -3331,6 +3331,34 @@ describe('BoardCellBreakdownDialog: S3 suggestion sentence, sticky toolbar, line
     expect(screen.getByTestId('stock-jump-document').textContent).toBe('SPO 202609-0041');
   });
 
+  it('AC-4.5: a use-incoming (step 1 water, no donor) source links and jumps its SPO the same way a borrow-incoming one does', () => {
+    // S4 task 3: step 1's own/other-group water now carries `supply_document` too (it used
+    // to be step 3 only), and it names nobody - a FREE document is taken, not borrowed, so
+    // there is no donor button, only the document one.
+    render(
+      dialogFor(
+        cellWithSource({
+          kind: 'timely_spo',
+          rung: 'group_take',
+          reason:
+            'BRW-BB has 15 free outside the BB group, arriving 6 Sep 2026 (SPO 202609-0041), and free stock is owed to nobody',
+          supply_document: 'SPO 202609-0041',
+          supply_key: 'spo:0f2b',
+          arrival_date: '2026-09-06',
+        }),
+      ),
+    );
+
+    expect(screen.getByTestId('suggestion-document-link').textContent).toBe(
+      'SPO 202609-0041',
+    );
+    expect(screen.getByTestId('stock-jump-document').textContent).toBe(
+      'SPO 202609-0041',
+    );
+    expect(screen.queryByTestId('stock-jump-donor')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('suggestion-donor-link')).not.toBeInTheDocument();
+  });
+
   it('no sentence and no Donor/document buttons when the suggestion names neither', () => {
     render(dialogFor(cellOf([demand()])));
 

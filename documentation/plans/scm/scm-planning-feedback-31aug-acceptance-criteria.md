@@ -73,3 +73,18 @@ land as pytest, S3 as vitest + a recorded agent-browser run.
 - AC-3.13 In a Borrow-incoming suggestion, the waiting order (the SPO's donor) is a link
   and a Donor jump target exactly like an on-hand borrow's donor; both the SO link and the
   SPO document link work from one sentence.
+
+## S4 - PO never supplies planning (1 Sep)
+
+- AC-4.1 A unit whose only cover at any rung is PO-backed receives no offer from steps 1-4
+  and lands on Buy; no option, suggestion, or composition anywhere dates itself off a PO.
+- AC-4.2 A unit covered by an SPO (own group or another group's free pile) behaves as
+  before; the sentence names the SPO and its arrival.
+- AC-4.3 Assignment outputs, Stock Debt view, and the PO qty column are unchanged by the
+  exclusion (asserted the AC-1.4 way).
+- AC-4.4 The chosen step-1 option row's label matches the composition: "Use incoming"
+  when the cover is on the water, and it names the lending group when cross-group; the
+  board card and the option row can no longer disagree.
+- AC-4.5 The use-incoming SPO document is a link with the S3 jump behaviour, and the SPO
+  leg appears in that location's expansion.
+- AC-4.6 PR body records the rerun probe: SO381895 category counts before and after.

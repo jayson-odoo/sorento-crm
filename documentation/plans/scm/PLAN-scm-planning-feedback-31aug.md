@@ -1,6 +1,6 @@
 # PLAN: Fulfilment planning feedback batch, 31 Aug (incoming = SPO only, transfer charge configurable, lightbox navigation)
 
-Status: IN REVIEW - S1+S2+S3 built and browser-verified, Phase 3 findings being fixed
+Status: S1-S3 MERGED (#451). S4 in progress on feat/scm-po-never-supplies-planning.
 Captain rulings: 31 Aug 2026 production walk-through (screenshots on the session)
 Lane: scm-planning-feedback worktree, FE :3100 / BE :8100
 UAC: `scm-planning-feedback-31aug-acceptance-criteria.md` (same folder)
@@ -135,3 +135,26 @@ Suggested: mockup review -> S3 FE mock -> S1 -> S2 -> S3 wiring -> review.
 - Renaming the stock table's "PO qty" column (still useful context; not an offer).
 - Any change to the assignment/netting or Stock Debt reads of purchase orders.
 - SPO-into-purchase_orders direction (separate, unbuilt, needs its own plan).
+
+## S4 - PO supplies nothing in fulfilment planning (captain ruling, 1 Sep)
+
+Trigger: on the merged build the captain hit "Use incoming 15 from BRW-BB, arriving 6 Sep"
+with no incoming row anywhere - the 6 Sep was a PO's computed arrival counted into the
+other-group FREE pile by `_other_group_free_at_own_date` (any event kind). S1 cured only
+step 3. Ruling: **incoming is strictly SPO; a PO event may not supply any walk offer.**
+Chosen over keep-but-relabel with the trade-off stated: a line only a PO covers now falls
+through to pool/Buy even when the PO would land sooner.
+
+1. **Engine:** no rung of `walk_line`'s inputs may carry a PO event - step 1's water halves
+   (own draw AND the other-group free offer), step 3 (done in S1), step 4's pool reads.
+   The ASSIGNMENT keeps netting POs (R11, Stock Debt view, PO qty column, SPO-cut-from-PO)
+   - display and book-keeping, never an offer. State the impact by rerunning the AC-1.5
+   probe: category counts before/after on SO381895.
+2. **Options table label follows the composition** (captain screenshot: suggestion "Use
+   incoming" beside chosen option "Use our locations"). The step-1 option row states what
+   was actually composed - own floor = "Use our locations", on-the-water = "Use incoming",
+   cross-group named - mirroring R41's card vocabulary.
+3. **Use-incoming names and links its SPO** (carried over from the S3 review): the
+   sentence carries the SPO number + arrival, the FE renders the same link/jump as
+   borrow-incoming, and the SPO leg is present in the location expansion so the jump has a
+   row to land on.
