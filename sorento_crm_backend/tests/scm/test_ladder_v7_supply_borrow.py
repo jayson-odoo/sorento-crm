@@ -360,10 +360,13 @@ def test_an_spo_a_later_order_is_waiting_on_is_borrowed_whole_and_names_its_debt
     assert chosen[0]["debt_so_number"] == donor_number
 
 
-def test_a_po_line_a_later_order_holds_reads_as_on_order_with_its_computed_arrival():
-    """AC-S4-1, second half (R27, R29): a PO LINE is ON ORDER, dated `issue + lead`, and it
-    says so - "on order", the document with its line, and "arriving about" the day the goods
-    would actually land rather than the SO date the buyer typed against it."""
+def test_a_po_line_a_later_order_holds_is_never_offered_and_the_unit_buys():
+    """AC-S4-1, second half - RETIRED 31 Aug (`PLAN-scm-planning-feedback-31aug.md` S1,
+    R-A, `scm-planning-feedback-31aug-acceptance-criteria.md` AC-1.1): a PO line is ON
+    ORDER, not arriving, and the captain's own production row (`202607-S0067`, a real PO)
+    is what "Borrow incoming" must never name again. A PO a later order holds is not a
+    step-3 candidate at all, whatever its computed arrival, and the unit falls to Buy.
+    """
     with blank_session() as db:
         company_id, eling, project, product = _world(db)
         _group, sites = _group_sites(db)
@@ -376,8 +379,7 @@ def test_a_po_line_a_later_order_holds_reads_as_on_order_with_its_computed_arriv
         po, po_lines = _po(
             db, product, donor_bin, qty=20, issue_date=issue, lead_days=LEAD_DAYS,
         )
-        arrives = issue + timedelta(days=LEAD_DAYS)
-        donor_so, _donor_core, _donor_mirror, _link = _donor_holding(
+        _donor_holding(
             db, company_id, project, product, donor_bin, qty=20, days=DONOR_DAY,
             actor=eling, po_line=po_lines[0],
             so_number=f"ZZTSO-DONOR{_uid()[:4]}",
@@ -389,17 +391,10 @@ def test_a_po_line_a_later_order_holds_reads_as_on_order_with_its_computed_arriv
         )
         components = _components(ProjectSupplyService(db).proposal_for(order))
         po_number = po.po_number
-        po_line_id = po_lines[0].id
-        donor_number = donor_so.so_number
 
-    borrowed = _rung(components, "supply_borrow")
-    assert [(c["kind"], c["qty"]) for c in borrowed] == [("borrow", "20")]
-    assert borrowed[0]["supply_key"] == f"po:{po_line_id}"
-    assert borrowed[0]["supply_document"] == f"PO {po_number} line 1"
-    assert borrowed[0]["reason"].startswith(
-        f"Borrow 20 on order (PO {po_number} line 1, arriving about "
-        f"{date_text(arrives)}) from {donor_number}"
-    )
+    assert _rung(components, "supply_borrow") == []
+    assert [(c["kind"], c["qty"]) for c in components] == [("buy", "20")]
+    assert po_number not in components[0]["reason"]
 
 
 def test_a_free_document_is_taken_rather_than_borrowed_and_owes_nobody():
@@ -465,9 +460,10 @@ def test_the_nearest_arriving_spo_is_taken_first():
     assert [c["supply_key"] for c in borrowed] == [f"spo:{nearest_id}"]
 
 
-def test_a_po_is_reached_only_when_no_single_spo_covers_the_unit():
-    """AC-S4-2, second clause (R35): an SPO that covers PART of the unit is not offered at
-    all, and the PO that covers the whole of it is - 3b after 3a, never 3a plus 3b."""
+def test_a_po_that_would_have_covered_the_unit_is_never_reached():
+    """AC-S4-2, second clause - RETIRED 31 Aug (S1, R-A): an SPO that covers PART of the
+    unit is not offered at all (R33 stands), and there is no PO fallback to reach for the
+    rest any more - the unit falls straight to Buy."""
     with blank_session() as db:
         company_id, _eling, project, product = _world(db)
         _group, sites = _group_sites(db)
@@ -479,7 +475,7 @@ def test_a_po_is_reached_only_when_no_single_spo_covers_the_unit():
         _spo(db, product, other, qty=5, arrives=date.today() + timedelta(days=LATE_ARRIVAL_DAY))
         # Landing two days after the SPO, and still before a purchase raised today would.
         issue = date.today() + timedelta(days=LATE_ARRIVAL_DAY + 2 - LEAD_DAYS)
-        _po_doc, po_lines = _po(
+        _po(
             db, product, other, qty=30, issue_date=issue, lead_days=LEAD_DAYS,
         )
 
@@ -488,10 +484,9 @@ def test_a_po_is_reached_only_when_no_single_spo_covers_the_unit():
             required_date=date.today() + timedelta(days=ASKER_DAY),
         )
         components = _components(ProjectSupplyService(db).proposal_for(order))
-        po_line_id = po_lines[0].id
 
-    borrowed = _rung(components, "supply_borrow")
-    assert [(c["qty"], c["supply_key"]) for c in borrowed] == [("30", f"po:{po_line_id}")]
+    assert _rung(components, "supply_borrow") == []
+    assert [(c["kind"], c["qty"]) for c in components] == [("buy", "30")]
 
 
 def test_an_spo_of_five_beside_a_po_of_seven_covers_no_unit_of_twelve():
@@ -591,14 +586,13 @@ JAY_PO_ISSUE = date(2026, 8, 18)
 JAY_LEAD = 90
 
 
-def test_jay_takes_the_whole_po_because_it_beats_buying_and_leaves_the_on_hand_free():
-    """AC-S4-2b, the captain's row, with its own numbers.
-
-    JAY needs 32 by 26 October 2026. No SPO. PO 202608-S0041 holds 100 free, issued 18
-    August with a 90-day lead, so it lands 16 November - 21 days after JAY needs it, and 11
-    days before a purchase raised today would land (27 November). It is taken WHOLE, and the
-    16 on hand stays free: a step covers the whole unit or gives nothing, and sources never
-    combine across two steps (R10/R33).
+def test_jay_no_longer_reaches_the_po_and_buys_instead():
+    """AC-S4-2b - RETIRED 31 Aug (`PLAN-scm-planning-feedback-31aug.md` S1, R-A). This IS
+    the captain's own production row: `202608-S0041` (this test's own stand-in for the real
+    `202607-S0067`) is a `purchase_orders` line, not an SPO - "on order", not "arriving" -
+    and the captain's ruling on the real one was that OFFERING it as "Borrow incoming" is
+    the defect. JAY's 32 no longer reaches the PO at all; the 16 on hand stays free (one
+    step covers the whole unit or gives nothing, R10/R33) and the whole 32 buys.
     """
     with blank_session() as db:
         company_id, _eling, project, product = _world(db)
@@ -628,18 +622,17 @@ def test_jay_takes_the_whole_po_because_it_beats_buying_and_leaves_the_on_hand_f
         options = composed[str(line.id)][4]
 
     assert [(c.kind, qty_text(c.qty), c.rung) for c in components] == [
-        ("borrow", "32", "supply_borrow")
+        ("buy", "32", "buy")
     ]
-    assert components[0].arrival_date == date(2026, 11, 16)
     assert not any(c.rung == "group_take" for c in components), (
         "the 16 on hand stays free - one step covers the whole unit or gives nothing, "
         "and sources never combine across two"
     )
 
     by_step = {option.step: option for option in options}
-    assert by_step["supply_borrow"].whole is True
-    assert by_step["supply_borrow"].fulfil_date == date(2026, 11, 16)
-    assert by_step["supply_borrow"].days_late == 21
+    assert by_step["supply_borrow"].whole is False, "the PO is never a step-3 candidate"
+    assert by_step["supply_borrow"].fulfil_date is None
+    assert by_step["buy"].whole is True
     assert by_step["buy"].fulfil_date == date(2026, 11, 27)
     assert by_step["buy"].days_late == 32
     assert by_step["use"].whole is False, "16 on hand is not the whole of 32"

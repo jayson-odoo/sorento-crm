@@ -14,6 +14,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { SpecProposalReview } from '@/components/spec-proposals';
@@ -262,13 +263,27 @@ export function ProductProposalGroup({
     >
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
-          <Link
-            href={`/master-data-management/products/${group.product_id}`}
-            className="font-mono text-sm font-semibold text-foreground hover:underline"
-            title={group.product_code}
-          >
-            {group.product_code}
-          </Link>
+          <div className="flex flex-wrap items-center gap-2">
+            <Link
+              href={`/master-data-management/products/${group.product_id}`}
+              className="font-mono text-sm font-semibold text-foreground hover:underline"
+              title={group.product_code}
+            >
+              {group.product_code}
+            </Link>
+            {group.viaProductCode && (
+              // The card that filled this group's gaps was printed under a
+              // different code (PLAN-flyer-family-proposals.md, R1) - this is
+              // the only place on the row that says so.
+              <Badge
+                variant="secondary"
+                className="shrink-0 font-mono text-2xs font-normal"
+                data-flyer-spec-via={group.viaProductCode}
+              >
+                via {group.viaProductCode}
+              </Badge>
+            )}
+          </div>
           <p className="min-w-0 break-words text-sm text-muted-foreground">
             {group.product_name}
           </p>

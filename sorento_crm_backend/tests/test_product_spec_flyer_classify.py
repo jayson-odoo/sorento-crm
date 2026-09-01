@@ -15,7 +15,7 @@ pinned, in the order the plan states it:
     equal after `_canonical_entry`               -> "unchanged"
     stored source in AUTHORED_SOURCES            -> "conflict"
     no stored entry                              -> "new"
-    key in `_DESCRIPTION_FIRST_KEYS`              -> "conflict"
+    key in `description_first_keys()`             -> "conflict"
     else                                          -> "change"
 
 The two regression tests at the bottom pin that `extract_spec_proposals`
@@ -37,7 +37,7 @@ from app.models.company import Company
 from app.models.product import Brand, Product, ProductCategory, UnitOfMeasure
 from app.models.product_spec import ProductSpecifications
 from app.services.product_class_signal import backfill_category_signals
-from app.services.product_spec_derivation import _DESCRIPTION_FIRST_KEYS, derive_for_code
+from app.services.product_spec_derivation import derive_for_code, description_first_keys
 from app.services.product_spec_extract import classify_spec_proposal, extract_spec_proposals
 from app.services.product_spec_registry import seed_spec_registry
 from app.services.product_spec_write import AUTHORED_SOURCES
@@ -122,7 +122,7 @@ def test_a_description_first_key_with_a_differing_derived_value_classifies_as_co
     """`dim_length` is description-first: the master's own description beats a
     flyer's rounded figure, so a differing derived value is a conflict a reviewer
     must confirm rather than a plain gap-fill."""
-    assert "dim_length" in _DESCRIPTION_FIRST_KEYS
+    assert "dim_length" in description_first_keys()
     proposed = {"value": 680, "unit": "mm"}
     stored = {"value": 700, "unit": "mm"}
     stored_stamp = {"source": "derived"}
@@ -135,7 +135,7 @@ def test_a_description_first_key_with_a_differing_derived_value_classifies_as_co
 def test_a_plain_differing_derived_value_classifies_as_change():
     """`finish` is not description-first, so a differing derived value is a plain
     gap-fill/correction, not something needing confirmation."""
-    assert "finish" not in _DESCRIPTION_FIRST_KEYS
+    assert "finish" not in description_first_keys()
     proposed = {"value": "chrome"}
     stored = {"value": "black"}
     stored_stamp = {"source": "derived"}

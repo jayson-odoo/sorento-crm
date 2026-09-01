@@ -62,10 +62,16 @@ _ADMIN_ROLE = "9e2d5a41-3f86-5c19-b704-6d1a8c3e7b52"
 _EDITOR_ID = "4b8a1e37-6c92-5d40-8f13-2a7e9b5c0d68"
 _EDITOR_ROLE = "7d3c8f15-2a49-5b67-9e08-1c4b6d3a8f29"
 _NOPERM_ID = "6a4d9c28-1b75-5f39-8c02-3e7b1a5d4f60"
+# Holds `dealer_kit.page.view` AND `master_data.products.edit` - the pair
+# adopting a code needs (PLAN-flyer-code-adopt.md). Not the editor above: an
+# editor may draft a catalogue but may not write the product master.
+_CURATOR_ID = "8f5c1a93-4d67-5e02-b839-6c1d8a4f7e93"
+_CURATOR_ROLE = "3a9e6c15-8b42-5d70-9f16-4c2b7a5e8d61"
 
 
 def _seed_roles(db) -> None:
-    """A superadmin, an editor holding view+edit, and a stranger holding nothing."""
+    """A superadmin, an editor holding view+edit, a curator who may also write
+    the product master, and a stranger holding nothing."""
     from app.models.user import (
         User,
         UserPermission,
@@ -94,26 +100,47 @@ def _seed_roles(db) -> None:
             is_default=False,
         )
     )
+    db.add(
+        UserRole(
+            id=_CURATOR_ROLE,
+            slug="zzt_flyer_curator",
+            name="ZZT Flyer Curator",
+            description="Reads flyers and adopts printed codes onto products",
+            is_protected=False,
+            is_default=False,
+        )
+    )
     db.add(User(id=_ADMIN_ID, email="zzt-fr-admin@test.com", name="FR Admin", status="ACTIVE"))
     db.add(User(id=_EDITOR_ID, email="zzt-fr-editor@test.com", name="FR Editor", status="ACTIVE"))
+    db.add(
+        User(id=_CURATOR_ID, email="zzt-fr-curator@test.com", name="FR Curator", status="ACTIVE")
+    )
     db.add(User(id=_NOPERM_ID, email="zzt-fr-out@test.com", name="FR Outsider", status="ACTIVE"))
     db.flush()
 
     db.add(UserRoleAssignment(user_id=_ADMIN_ID, role_id=_ADMIN_ROLE))
     db.add(UserRoleAssignment(user_id=_EDITOR_ID, role_id=_EDITOR_ROLE))
+    db.add(UserRoleAssignment(user_id=_CURATOR_ID, role_id=_CURATOR_ROLE))
 
     # The blank schema has no permission rows, so the ones a migration seeds in a
     # real database are created here. No NEW slug: reading a flyer is drafting a
     # catalogue, and a fourth slug would need a grant sweep before anybody held it.
-    granted = ("dealer_kit.page.view", "dealer_kit.page.edit")
-    for slug in granted + ("dealer_kit.page.publish",):
+    # `master_data.products.edit` is the second half of adopting a code
+    # (PLAN-flyer-code-adopt.md) - the editor never holds it, the curator does.
+    grants = {
+        "dealer_kit.page.view": (_EDITOR_ROLE, _CURATOR_ROLE),
+        "dealer_kit.page.edit": (_EDITOR_ROLE,),
+        "dealer_kit.page.publish": (),
+        "master_data.products.edit": (_CURATOR_ROLE,),
+    }
+    for slug, role_ids in grants.items():
         perm_id = str(uuid.uuid4())
         db.add(UserPermission(id=perm_id, slug=slug, name=slug, description=""))
         db.flush()
-        if slug in granted:
+        for role_id in role_ids:
             db.add(
                 UserRolePermission(
-                    id=str(uuid.uuid4()), role_id=_EDITOR_ROLE, permission_id=perm_id
+                    id=str(uuid.uuid4()), role_id=role_id, permission_id=perm_id
                 )
             )
     db.commit()
@@ -966,3 +993,510 @@ class TestHeadings:
 
         assert rows
         assert all("headings" not in row for row in rows)
+
+
+# --------------------------------------------------------------------------- #
+# Adopting a printed code as an existing product (PLAN-flyer-code-adopt.md, S1)
+# --------------------------------------------------------------------------- #
+
+# Printed on the fixture flyer (flyer_golden.json). No product is created for
+# either of these unless a test says so, so both start UNMATCHED. SRTJC8037
+# also prints a size, which is what makes it double as the dimension-candidate
+# check (AC-A.2) without a second fixture code.
+UNMATCHED_A = "SRTJC8037"
+UNMATCHED_B = "SRTWC286-SH"
+
+
+def _adopt(client: TestClient, reading_id: str, code: str, product_id: str):
+    return client.put(
+        f"/api/v1/dealer-kit/flyer-readings/{reading_id}/code-overrides/{code}",
+        json={"productId": product_id},
+    )
+
+
+def _undo(client: TestClient, reading_id: str, code: str):
+    return client.delete(
+        f"/api/v1/dealer-kit/flyer-readings/{reading_id}/code-overrides/{code}"
+    )
+
+
+def _matched_entry(body: dict, code: str) -> dict | None:
+    return next((row for row in body["report"]["matched"] if row["code"] == code), None)
+
+
+def _unmatched_codes(body: dict) -> list[str]:
+    return [row["code"] for row in body["report"]["unmatched"]]
+
+
+class TestAdoptCode:
+    """AC-A.1, A.3, A.4, A.8.
+
+    Every reading is uploaded and read as the default (superadmin) principal,
+    then `_as(_CURATOR_ID)` switches to the pair adopting a code needs
+    (`dealer_kit.page.view` + `master_data.products.edit`) for the write - a
+    curator holds no `dealer_kit.page.edit` and could not upload a flyer at
+    all, exactly as AC-A.5 says a viewer cannot write.
+    """
+
+    def test_an_unmatched_code_becomes_matched_and_adopted(self, api) -> None:
+        db, _as, _scope = api
+        product = _product(db, "ZZTFRADOPT1")
+
+        with TestClient(app) as c:
+            reading_id = _read_id(c)
+            _as(_CURATOR_ID)
+            res = _adopt(c, reading_id, UNMATCHED_A, product.id)
+
+        assert res.status_code == 200, res.text
+        body = res.json()
+        entry = _matched_entry(body, UNMATCHED_A)
+        assert entry is not None
+        assert entry["productId"] == product.id
+        assert entry["productCode"] == product.product_code
+        # AC-A.8: `adopted` and `codeOverridesChangedAt` reach the wire.
+        assert entry["adopted"] is True
+        assert entry["pages"]
+        assert UNMATCHED_A not in _unmatched_codes(body)
+        assert body["codeOverridesChangedAt"] is not None
+
+    def test_a_real_match_is_never_flagged_adopted(self, api) -> None:
+        db, _as, _scope = api
+        _product(db, UNMATCHED_A)
+
+        with TestClient(app) as c:
+            reading_id = _read_id(c)
+            body = c.get(f"/api/v1/dealer-kit/flyer-readings/{reading_id}").json()
+
+        assert _matched_entry(body, UNMATCHED_A)["adopted"] is False
+
+    def test_the_adopted_product_becomes_a_dimension_candidate(self, api) -> None:
+        # AC-A.2. The fixture prints a size under SRTJC8037 (verified against
+        # THIRD_MM in test_dealer_kit_flyer_dimensions.py); the same builder
+        # that reviews a real match's size reviews an adopted one, unchanged.
+        db, _as, _scope = api
+        product = _product(db, "ZZTFRADOPT2")
+
+        with TestClient(app) as c:
+            reading_id = _read_id(c)
+            _as(_CURATOR_ID)
+            _adopt(c, reading_id, UNMATCHED_A, product.id)
+            body = c.get(f"/api/v1/dealer-kit/flyer-readings/{reading_id}").json()
+
+        candidates = body["report"]["dimensionCandidates"]
+        assert any(row["productId"] == product.id for row in candidates)
+
+    def test_an_adopted_product_can_be_reported_not_promoted(self, api) -> None:
+        # AC-A.2. `not_promoted` reads `matched`, and an adopted entry is one.
+        db, _as, _scope = api
+        adopted_product = _product(db, "ZZTFRADOPT3")
+        elsewhere = _product(db, "ZZTFRADOPT3B")
+        promotion_id = _promotion(db, elsewhere)
+
+        with TestClient(app) as c:
+            reading_id = _read_id(c)
+            _as(_CURATOR_ID)
+            _adopt(c, reading_id, UNMATCHED_A, adopted_product.id)
+            body = c.get(
+                f"/api/v1/dealer-kit/flyer-readings/{reading_id}",
+                params={"promotionId": promotion_id},
+            ).json()
+
+        assert adopted_product.id in [
+            row["productId"] for row in body["report"]["notPromoted"]
+        ]
+
+    def test_the_put_itself_answers_against_the_promotion_asked_for(self, api) -> None:
+        # BLOCKER 1 (S1 review): the PUT accepts `promotionId` exactly like
+        # the GET, so the ONE response the frontend swaps into its cache is
+        # already computed against the promotion on screen - not a
+        # promotion-blind one that a second round trip would have to correct.
+        db, _as, _scope = api
+        adopted_product = _product(db, "ZZTFRADOPT3C")
+        elsewhere = _product(db, "ZZTFRADOPT3D")
+        promotion_id = _promotion(db, elsewhere)
+
+        with TestClient(app) as c:
+            reading_id = _read_id(c)
+            _as(_CURATOR_ID)
+            res = c.put(
+                f"/api/v1/dealer-kit/flyer-readings/{reading_id}/code-overrides/{UNMATCHED_A}",
+                params={"promotionId": promotion_id},
+                json={"productId": adopted_product.id},
+            )
+
+        assert res.status_code == 200, res.text
+        body = res.json()
+        assert body["report"]["promotionId"] == promotion_id
+        assert adopted_product.id in [
+            row["productId"] for row in body["report"]["notPromoted"]
+        ]
+
+    def test_any_product_may_be_chosen_not_only_a_suggestion(self, api) -> None:
+        # AC-A.3. The server has no notion of "the suggestion" at all - any
+        # product in company scope is accepted.
+        db, _as, _scope = api
+        unrelated = _product(db, "ZZTFRUNRELATED")
+
+        with TestClient(app) as c:
+            reading_id = _read_id(c)
+            _as(_CURATOR_ID)
+            res = _adopt(c, reading_id, UNMATCHED_A, unrelated.id)
+
+        assert res.status_code == 200, res.text
+        assert _matched_entry(res.json(), UNMATCHED_A)["productId"] == unrelated.id
+
+    def test_re_adopting_replaces_and_frees_the_old_product(self, api) -> None:
+        # AC-A.4.
+        db, _as, _scope = api
+        first = _product(db, "ZZTFRADOPT4")
+        second = _product(db, "ZZTFRADOPT5")
+
+        with TestClient(app) as c:
+            reading_id = _read_id(c)
+            _as(_CURATOR_ID)
+            _adopt(c, reading_id, UNMATCHED_A, first.id)
+            res = _adopt(c, reading_id, UNMATCHED_A, second.id)
+            # `first` is free again: a DIFFERENT code may now adopt it.
+            freed = _adopt(c, reading_id, UNMATCHED_B, first.id)
+
+        assert res.status_code == 200, res.text
+        assert _matched_entry(res.json(), UNMATCHED_A)["productId"] == second.id
+        assert freed.status_code == 200, freed.text
+        assert _matched_entry(freed.json(), UNMATCHED_B)["productId"] == first.id
+
+
+class TestAdoptRefusals:
+    """AC-A.5, in the words a reviewer can act on."""
+
+    def test_a_code_not_printed_here_is_404(self, api) -> None:
+        db, _as, _scope = api
+        product = _product(db, "ZZTFRADOPT6")
+
+        with TestClient(app) as c:
+            reading_id = _read_id(c)
+            _as(_CURATOR_ID)
+            res = _adopt(c, reading_id, "ZZTNOTPRINTED", product.id)
+
+        assert res.status_code == 404, res.text
+        assert res.json()["code"] == "flyer_code_not_printed"
+
+    def test_a_code_that_already_matches_is_refused(self, api) -> None:
+        db, _as, _scope = api
+        _product(db, UNMATCHED_A)  # resolves by itself
+        elsewhere = _product(db, "ZZTFRADOPT7")
+
+        with TestClient(app) as c:
+            reading_id = _read_id(c)
+            _as(_CURATOR_ID)
+            res = _adopt(c, reading_id, UNMATCHED_A, elsewhere.id)
+
+        assert res.status_code == 409, res.text
+        assert res.json()["code"] == "flyer_code_already_matched"
+        assert UNMATCHED_A in res.json()["message"]
+
+    def test_an_unknown_product_id_is_404(self, api) -> None:
+        db, _as, _scope = api
+
+        with TestClient(app) as c:
+            reading_id = _read_id(c)
+            _as(_CURATOR_ID)
+            res = _adopt(c, reading_id, UNMATCHED_A, str(uuid.uuid4()))
+
+        assert res.status_code == 404, res.text
+        assert res.json()["code"] == "flyer_adopt_product_not_found"
+
+    def test_a_product_from_another_company_is_not_found(self, api) -> None:
+        db, _as, _scope = api
+
+        with TestClient(app) as c:
+            reading_id = _read_id(c)
+
+        elsewhere = _company(db)
+        _scope(elsewhere)
+        outside_product = _product(db, "ZZTFRADOPT8")
+        _scope(_SORENTO)
+
+        with TestClient(app) as c:
+            _as(_CURATOR_ID)
+            res = _adopt(c, reading_id, UNMATCHED_A, outside_product.id)
+
+        assert res.status_code == 404, res.text
+        assert res.json()["code"] == "flyer_adopt_product_not_found"
+
+    def test_the_target_product_is_refused_when_another_code_already_holds_it(
+        self, api
+    ) -> None:
+        # R1 - one product, one card. Names the OTHER code and its page.
+        db, _as, _scope = api
+        held_by = _product(db, PRINTED_CODE)  # a real match
+
+        with TestClient(app) as c:
+            reading_id = _read_id(c)
+            _as(_CURATOR_ID)
+            res = _adopt(c, reading_id, UNMATCHED_A, held_by.id)
+
+        assert res.status_code == 409, res.text
+        assert res.json()["code"] == "flyer_adopt_target_taken"
+        assert PRINTED_CODE in res.json()["message"]
+
+    def test_a_target_already_adopted_by_another_code_is_also_refused(self, api) -> None:
+        db, _as, _scope = api
+        shared = _product(db, "ZZTFRADOPT9")
+
+        with TestClient(app) as c:
+            reading_id = _read_id(c)
+            _as(_CURATOR_ID)
+            _adopt(c, reading_id, UNMATCHED_A, shared.id)
+            res = _adopt(c, reading_id, UNMATCHED_B, shared.id)
+
+        assert res.status_code == 409, res.text
+        assert res.json()["code"] == "flyer_adopt_target_taken"
+        assert UNMATCHED_A in res.json()["message"]
+
+    def test_a_still_processing_reading_refuses_adoption(self, api) -> None:
+        db, _as, _scope = api
+        product = _product(db, "ZZTFRADOPT10")
+
+        with TestClient(app) as c:
+            reading_id = _upload(c).json()["id"]  # left `processing`
+            _as(_CURATOR_ID)
+            res = _adopt(c, reading_id, UNMATCHED_A, product.id)
+
+        assert res.status_code == 409, res.text
+        assert res.json()["code"] == "FLYER_NOT_READ_YET"
+
+    def test_view_alone_cannot_adopt(self, api) -> None:
+        # `dealer_kit.page.view` reads the report; it does not write the master.
+        db, _as, _scope = api
+        product = _product(db, "ZZTFRADOPT11")
+
+        with TestClient(app) as c:
+            reading_id = _read_id(c)
+
+        _as(_EDITOR_ID)
+        with TestClient(app) as c:
+            res = _adopt(c, reading_id, UNMATCHED_A, product.id)
+
+        assert res.status_code == 403, res.text
+
+    def test_a_stranger_cannot_adopt_or_undo(self, api) -> None:
+        db, _as, _scope = api
+        product = _product(db, "ZZTFRADOPT12")
+
+        with TestClient(app) as c:
+            reading_id = _read_id(c)
+
+        _as(_NOPERM_ID)
+        with TestClient(app) as c:
+            assert _adopt(c, reading_id, UNMATCHED_A, product.id).status_code == 403
+            assert _undo(c, reading_id, UNMATCHED_A).status_code == 403
+
+
+class TestUndoAdoptCode:
+    """AC-B.1, B.2."""
+
+    def test_undo_returns_the_code_to_unmatched(self, api) -> None:
+        db, _as, _scope = api
+        product = _product(db, "ZZTFRADOPT13")
+
+        with TestClient(app) as c:
+            reading_id = _read_id(c)
+            _as(_CURATOR_ID)
+            _adopt(c, reading_id, UNMATCHED_A, product.id)
+            res = _undo(c, reading_id, UNMATCHED_A)
+
+        assert res.status_code == 200, res.text
+        body = res.json()
+        assert _matched_entry(body, UNMATCHED_A) is None
+        assert UNMATCHED_A in _unmatched_codes(body)
+        assert body["codeOverridesChangedAt"] is not None
+
+    def test_the_delete_itself_answers_against_the_promotion_asked_for(self, api) -> None:
+        # Same fix as the PUT, so the response the frontend swaps in after an
+        # Undo is computed against the promotion it was already looking at.
+        db, _as, _scope = api
+        product = _product(db, "ZZTFRADOPT13B")
+        elsewhere = _product(db, "ZZTFRADOPT13C")
+        promotion_id = _promotion(db, elsewhere)
+
+        with TestClient(app) as c:
+            reading_id = _read_id(c)
+            _as(_CURATOR_ID)
+            _adopt(c, reading_id, UNMATCHED_A, product.id)
+            res = c.delete(
+                f"/api/v1/dealer-kit/flyer-readings/{reading_id}/code-overrides/{UNMATCHED_A}",
+                params={"promotionId": promotion_id},
+            )
+
+        assert res.status_code == 200, res.text
+        assert res.json()["report"]["promotionId"] == promotion_id
+
+    def test_undoing_a_code_never_adopted_is_404(self, api) -> None:
+        db, _as, _scope = api
+
+        with TestClient(app) as c:
+            reading_id = _read_id(c)
+            _as(_CURATOR_ID)
+            res = _undo(c, reading_id, UNMATCHED_A)
+
+        assert res.status_code == 404, res.text
+        assert res.json()["code"] == "flyer_code_not_adopted"
+
+    def test_undo_does_not_touch_the_product(self, api) -> None:
+        # AC-B.2. Nothing about the product row, or a spec a human already set
+        # on it, changes - the guarantee this test pins is narrower than a
+        # spec-proposal BATCH's rows (S2's concern, #422): this is only the
+        # product and its `product_specifications` row, untouched by adopt OR
+        # undo either way.
+        db, _as, _scope = api
+        product = _product(db, "ZZTFRADOPT14")
+
+        from app.models.product_spec import ProductSpecifications
+
+        spec = ProductSpecifications(
+            id=str(uuid.uuid4()),
+            product_id=product.id,
+            values={"material": {"value": "ceramic"}},
+            provenance={"material": {"source": "human"}},
+        )
+        db.add(spec)
+        db.commit()
+
+        with TestClient(app) as c:
+            reading_id = _read_id(c)
+            _as(_CURATOR_ID)
+            _adopt(c, reading_id, UNMATCHED_A, product.id)
+            _undo(c, reading_id, UNMATCHED_A)
+
+        from app.models.product import Product
+
+        db.expire_all()
+        fresh = db.query(Product).filter(Product.id == product.id).one()
+        assert fresh.product_name == product.product_name
+        assert fresh.product_code == product.product_code
+
+        fresh_spec = (
+            db.query(ProductSpecifications)
+            .filter(ProductSpecifications.product_id == product.id)
+            .one()
+        )
+        assert fresh_spec.values == {"material": {"value": "ceramic"}}
+        assert fresh_spec.provenance == {"material": {"source": "human"}}
+
+
+def _park_undo(c: TestClient, reading_id: str, code: str):
+    """The generic pending-actions POST, exactly as the Undo button sends it."""
+    return c.post(
+        "/api/v1/pending-actions",
+        json={
+            "action_key": "flyer_code_adoption.undo",
+            "entity_type": "flyer_code_adoption",
+            "entity_id": f"{reading_id}:{code}",
+            "payload": {},
+        },
+    )
+
+
+def _lapse_and_poll(c: TestClient, db, reading_id: str, code: str, action_id: str):
+    """Move the window into the past and let the lazy commit on GET apply it -
+    the same round trip a countdown toast's own poll makes (`pending_actions.py`)."""
+    from datetime import datetime, timedelta
+
+    from app.models.sla import SlaFormAction
+
+    db.query(SlaFormAction).filter(SlaFormAction.id == action_id).update(
+        {"commit_at": datetime.utcnow() - timedelta(seconds=1)},
+        synchronize_session=False,
+    )
+    db.commit()
+    return c.get(
+        "/api/v1/pending-actions/current",
+        params={"entity_type": "flyer_code_adoption", "entity_id": f"{reading_id}:{code}"},
+    )
+
+
+class TestUndoAdoptCodeDeferredAction:
+    """The deferred path (AC-B.3), through `/pending-actions` rather than the
+    direct DELETE `TestUndoAdoptCode` above already covers - the countdown
+    button's own round trip, over `record_actions._undo_flyer_code_adopt`.
+
+    S1 review, 31 Aug: this handler used to read `reading_id`/`printed_code`
+    straight off the payload rather than off the entity id (defect 2), which
+    the registry contract test (`test_record_actions_s6b.py`) catches with an
+    empty payload. This exercises it with the FULL, real payload instead - the
+    one the button actually sends - and drives TWO adopt/undo cycles on the
+    same code, because a reviewer's browser run found the second undo landing
+    as `committed` with no error yet leaving the code adopted.
+    """
+
+    def test_the_deferred_undo_clears_the_code_when_its_window_lapses(self, api) -> None:
+        db, _as, _scope = api
+        product = _product(db, "ZZTFRADOPTD1")
+
+        with TestClient(app) as c:
+            reading_id = _read_id(c)
+            _as(_CURATOR_ID)
+            assert _adopt(c, reading_id, UNMATCHED_A, product.id).status_code == 200
+
+            parked = _park_undo(c, reading_id, UNMATCHED_A)
+            assert parked.status_code == 202, parked.text
+
+            polled = _lapse_and_poll(c, db, reading_id, UNMATCHED_A, parked.json()["id"])
+            outcome = polled.json()["last_outcome"]
+            assert outcome["status"] == "committed", outcome
+            assert outcome["error_text"] is None
+
+            body = c.get(f"/api/v1/dealer-kit/flyer-readings/{reading_id}").json()
+
+        assert _matched_entry(body, UNMATCHED_A) is None
+        assert UNMATCHED_A in _unmatched_codes(body)
+
+    def test_a_second_cycle_on_the_same_code_also_clears_it(self, api) -> None:
+        """The exact sequence from the browser run: adopt, undo (deferred),
+        re-adopt the SAME code to the SAME product, undo (deferred) again."""
+        db, _as, _scope = api
+        product = _product(db, "ZZTFRADOPTD2")
+
+        with TestClient(app) as c:
+            reading_id = _read_id(c)
+            _as(_CURATOR_ID)
+
+            assert _adopt(c, reading_id, UNMATCHED_A, product.id).status_code == 200
+            parked1 = _park_undo(c, reading_id, UNMATCHED_A)
+            assert parked1.status_code == 202, parked1.text
+            outcome1 = _lapse_and_poll(
+                c, db, reading_id, UNMATCHED_A, parked1.json()["id"]
+            ).json()["last_outcome"]
+            assert outcome1["status"] == "committed", outcome1
+
+            from app.models.dealer_kit import FlyerReadingRecord
+
+            db.expire_all()
+            record = (
+                db.query(FlyerReadingRecord).filter(FlyerReadingRecord.id == reading_id).one()
+            )
+            assert UNMATCHED_A not in (record.code_overrides or {})
+            changed_after_undo_1 = record.code_overrides_changed_at
+
+            assert _adopt(c, reading_id, UNMATCHED_A, product.id).status_code == 200
+            parked2 = _park_undo(c, reading_id, UNMATCHED_A)
+            assert parked2.status_code == 202, parked2.text
+            assert parked2.json()["id"] != parked1.json()["id"]
+
+            outcome2 = _lapse_and_poll(
+                c, db, reading_id, UNMATCHED_A, parked2.json()["id"]
+            ).json()["last_outcome"]
+            assert outcome2["status"] == "committed", outcome2
+            assert outcome2["error_text"] is None
+            assert outcome2["id"] == parked2.json()["id"]
+
+            body = c.get(f"/api/v1/dealer-kit/flyer-readings/{reading_id}").json()
+
+        db.expire_all()
+        record = db.query(FlyerReadingRecord).filter(FlyerReadingRecord.id == reading_id).one()
+        assert UNMATCHED_A not in (record.code_overrides or {})
+        assert record.code_overrides_changed_at != changed_after_undo_1
+
+        assert _matched_entry(body, UNMATCHED_A) is None
+        assert UNMATCHED_A in _unmatched_codes(body)
+        assert body["codeOverridesChangedAt"] is not None

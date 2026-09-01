@@ -179,13 +179,17 @@ def policy_weights(policy: Optional[PriorityPolicy]) -> tuple[dict, dict]:
 #: reason 385 states.
 DEFAULT_TBA_DATE_FROM = date(2029, 1, 1)
 
-#: What `reorder_coverage_until` / `tba_date_from` answer for a policy-less database.
-#: `reorder_coverage_until` defaults to None - a fresh install has no coverage limit set,
-#: never a guessed date. `tba_date_from` cannot default to None: the column is NOT NULL and
-#: "no TBA line" would let a 2030 placeholder compete for real stock.
+#: What `reorder_coverage_until` / `tba_date_from` / `transfer_days` answer for a
+#: policy-less database. `reorder_coverage_until` defaults to None - a fresh install has no
+#: coverage limit set, never a guessed date. `tba_date_from` cannot default to None: the
+#: column is NOT NULL and "no TBA line" would let a 2030 placeholder compete for real stock.
+#: `transfer_days` is 0 (31 Aug ruling, R-B): the flat 2-day transfer charge
+#: `front_planning_engine.TRANSFER_DAYS` used to hard-code is retired, and an unconfigured
+#: install charges nothing rather than guessing a number nobody set.
 FULFILMENT_SETTINGS_DEFAULTS = {
     "reorder_coverage_until": None,
     "tba_date_from": DEFAULT_TBA_DATE_FROM,
+    "transfer_days": 0,
 }
 
 #: What the admin screen shows when NO policy has ever been activated (a database that
@@ -197,16 +201,23 @@ _NO_POLICY_NAME = "Fulfilment priority (no policy activated yet)"
 
 
 def fulfilment_settings(policy: Optional[PriorityPolicy]) -> dict:
-    """`{reorder_coverage_until, tba_date_from}` for a policy, or the documented default.
+    """`{reorder_coverage_until, tba_date_from, transfer_days}` for a policy, or the
+    documented default.
 
-    A sibling of `policy_weights` for the ladder's two calendar dates: one place reads them
-    off the active row, so the admin screen and the engine cannot come to different views of
-    how far purchasing covers and where TBA starts."""
+    A sibling of `policy_weights` for the ladder's calendar dates and its transfer charge:
+    one place reads them off the active row, so the admin screen and the engine cannot come
+    to different views of how far purchasing covers, where TBA starts, and what a bin
+    transfer costs. `transfer_days` is read None-safe - a row written before migration
+    451 (or a database still mid-migration on another branch) reads 0, the same as an
+    unconfigured install, rather than raising."""
     if policy is None:
         return dict(FULFILMENT_SETTINGS_DEFAULTS)
     return {
         "reorder_coverage_until": policy.reorder_coverage_until,
         "tba_date_from": policy.tba_date_from or DEFAULT_TBA_DATE_FROM,
+        "transfer_days": (
+            int(policy.transfer_days) if policy.transfer_days is not None else 0
+        ),
     }
 
 
@@ -287,6 +298,7 @@ def create_revision(
     demand_class_weights: Mapping[str, float],
     reorder_coverage_until: Optional[date],
     tba_date_from: Optional[date] = None,
+    transfer_days: Optional[int] = None,
     notes: Optional[str] = None,
 ) -> PriorityPolicy:
     """Write a NEW policy revision and activate it. Never mutates an old row.
@@ -321,6 +333,7 @@ def create_revision(
         demand_class_weights=dict(demand_class_weights),
         reorder_coverage_until=reorder_coverage_until,
         tba_date_from=tba_date_from or DEFAULT_TBA_DATE_FROM,
+        transfer_days=transfer_days if transfer_days is not None else 0,
         notes=notes,
     )
     savepoint = db.begin_nested()
@@ -371,6 +384,12 @@ def save_fulfilment_priority(db: Session, body) -> PriorityPolicy:
             message="TBA date from must be today or later.",
             code="tba_date_from_in_the_past",
         )
+    if body.transfer_days is not None and body.transfer_days < 0:
+        raise AppException(
+            status_code=422,
+            message="Transfer days must be zero or greater.",
+            code="transfer_days_negative",
+        )
     return create_revision(
         db,
         name=current.name if current is not None else FAIR_POLICY_NAME,
@@ -385,6 +404,14 @@ def save_fulfilment_priority(db: Session, body) -> PriorityPolicy:
             body.tba_date_from
             if body.tba_date_from is not None
             else (current.tba_date_from if current is not None else None)
+        ),
+        # Same "not said, so unchanged" shape as `tba_date_from` - an omitted value keeps
+        # the active revision's own, and a fresh install with no active revision gets the
+        # column default of 0 through `create_revision`.
+        transfer_days=(
+            body.transfer_days
+            if body.transfer_days is not None
+            else (current.transfer_days if current is not None else None)
         ),
         notes=current.notes if current is not None else None,
     )

@@ -1285,9 +1285,8 @@ describe('BoardCellBreakdownDialog: the family lightbox, and its two tabs', () =
     getStockDetail.mockReturnValue(new Promise(() => {}));
     renderGrouped();
 
-    // The SET's own chevron, on the subtotal row - the pile the ladder's first step draws.
-    fireEvent.click(screen.getByTestId('stock-set-expand-BB'));
-
+    // AC-3.1: the dialog lands on "This line" - the own-location set - without a click, so
+    // the drill is open before the chevron is ever pressed.
     expect(
       await screen.findByTestId('stock-set-expansion-BB'),
     ).toBeInTheDocument();
@@ -1296,6 +1295,14 @@ describe('BoardCellBreakdownDialog: the family lightbox, and its two tabs', () =
     expect(panel.contains(screen.getByTestId('stock-set-expansion-BB'))).toBe(
       true,
     );
+
+    // The SET's own chevron still toggles it, the same mechanism the auto-land itself uses.
+    fireEvent.click(screen.getByTestId('stock-set-expand-BB'));
+    expect(screen.queryByTestId('stock-set-expansion-BB')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('stock-set-expand-BB'));
+    expect(
+      await screen.findByTestId('stock-set-expansion-BB'),
+    ).toBeInTheDocument();
   });
 
   it('keeps the per-location drill working on the same tab', async () => {
@@ -2411,7 +2418,7 @@ describe('BoardCellBreakdownDialog: the stock expansions belong to the cell', ()
     );
   }
 
-  it('closes an open expansion when the dialog is pointed at another cell', async () => {
+  it('re-lands on its own line for the NEW cell, not the old one\'s leftover panel (AC-3.1)', async () => {
     // Left in flight on purpose: what is under test is which cell the expansion belongs to, and
     // the documents themselves are `StockDocumentsPanel`'s own suite.
     getStockDetail.mockReturnValue(new Promise(() => {}));
@@ -2420,17 +2427,23 @@ describe('BoardCellBreakdownDialog: the stock expansions belong to the cell', ()
       dialogFor(stockedCell('WESERP10B', '2026-08-31')),
     );
 
-    fireEvent.click(screen.getByTestId('stock-expand-BRW-BB'));
+    // AC-3.1: the FIRST cell lands on "This line" without a click - the own-location section
+    // is already expanded when the dialog opens.
     expect(
       await screen.findByTestId('stock-expansion-BRW-BB'),
     ).toBeInTheDocument();
+    const queriesForFirstCell = getStockDetail.mock.calls.length;
+    expect(queriesForFirstCell).toBeGreaterThan(0);
 
     rerender(dialogFor(stockedCell('B2155-NL-BLUE', '2026-09-28')));
 
+    // `CellStockTable` remounted (keyed by the cell), so this is a FRESH panel landing on the
+    // NEW cell's own line - the same auto-land AC-3.1 asks for on every open - rather than the
+    // first cell's documents surviving, stale, under the new cell's row.
     expect(
-      screen.queryByTestId('stock-expansion-BRW-BB'),
-    ).not.toBeInTheDocument();
-    expect(screen.getByTestId('cell-location-BRW-BB')).toBeInTheDocument();
+      await screen.findByTestId('stock-expansion-BRW-BB'),
+    ).toBeInTheDocument();
+    expect(getStockDetail.mock.calls.length).toBeGreaterThan(queriesForFirstCell);
   });
 });
 
@@ -3209,5 +3222,175 @@ describe('sourceAt names the DONOR for every borrow that has one', () => {
         reason: 'because',
       } as never),
     ).toBe(' at BRW');
+  });
+});
+
+/**
+ * S3 (PLAN-scm-planning-feedback-31aug): the suggestion sentence's donor/document links, the
+ * sticky toolbar's conditional buttons, and the Contributing lines search.
+ */
+describe('BoardCellBreakdownDialog: S3 suggestion sentence, sticky toolbar, lines search', () => {
+  function cellWithSource(source: Record<string, unknown>): BoardCell {
+    const cell = cellOf([demand()]);
+    const contribution = {
+      ...cell.contributions[0],
+      sources: [{ kind: 'borrow', qty: '30', location: 'BRW', reason: '', ...source }],
+    };
+    return {
+      ...cell,
+      contributions: [contribution],
+      locations: [
+        { ...cell.locations[0], location: 'BRW-BB', product_id: 'prod-1', warehouse_id: 'wh-1' },
+        {
+          location: 'BRW',
+          where: 'site_pool',
+          net_of: 'pools',
+          net: '1716',
+          product_id: 'prod-1',
+          warehouse_id: 'wh-2',
+          qty: '0',
+        },
+      ],
+    } as unknown as BoardCell;
+  }
+
+  function dialogFor(cell: BoardCell) {
+    return (
+      <QueryClientProvider
+        client={
+          new QueryClient({
+            defaultOptions: { queries: { retry: false, gcTime: 0 } },
+          })
+        }
+      >
+        <BoardCellBreakdownDialog
+          cell={cell}
+          bucketLabel="31 Aug 2026"
+          draft={{}}
+          onDecide={vi.fn()}
+          onClose={vi.fn()}
+        />
+      </QueryClientProvider>
+    );
+  }
+
+  beforeEach(() => {
+    // Left in flight on purpose - the documents themselves are `StockDocumentsPanel`'s suite.
+    getStockDetail.mockReturnValue(new Promise(() => {}));
+  });
+
+  it('AC-3.3: the donor SO number in the suggestion sentence is a clickable link', () => {
+    render(
+      dialogFor(
+        cellWithSource({
+          reason:
+            'Borrow 30 on hand at pool BRW from SO401624, due 7 Jun 2027; its debt lands in Jun 2027.',
+          donor_so_number: 'SO401624',
+        }),
+      ),
+    );
+
+    expect(screen.getByTestId('cell-suggestion-sentence')).toBeInTheDocument();
+    const link = screen.getByTestId('suggestion-donor-link');
+    expect(link.textContent).toBe('SO401624');
+    expect(link.tagName).toBe('BUTTON');
+  });
+
+  it('AC-3.2/3.9: the Donor toolbar button renders only when the suggestion names one', () => {
+    render(
+      dialogFor(
+        cellWithSource({
+          reason: 'Borrow 30 on hand at pool BRW from SO401624.',
+          donor_so_number: 'SO401624',
+        }),
+      ),
+    );
+
+    expect(screen.getByTestId('stock-jump-this-line')).toBeInTheDocument();
+    expect(screen.getByTestId('stock-jump-donor')).toBeInTheDocument();
+    expect(screen.queryByTestId('stock-jump-document')).not.toBeInTheDocument();
+  });
+
+  it('AC-3.4/3.13: the SPO number AND the waiting order both link from one sentence', () => {
+    render(
+      dialogFor(
+        cellWithSource({
+          reason:
+            'Borrow 30 arriving 20 Oct 2026 (SPO 202609-0041) from SO397460 line 2; its debt lands in Jul 2027.',
+          donor_so_number: 'SO397460',
+          supply_document: 'SPO 202609-0041',
+        }),
+      ),
+    );
+
+    expect(screen.getByTestId('suggestion-donor-link').textContent).toBe('SO397460');
+    expect(screen.getByTestId('suggestion-document-link').textContent).toBe(
+      'SPO 202609-0041',
+    );
+    expect(screen.getByTestId('stock-jump-donor')).toBeInTheDocument();
+    expect(screen.getByTestId('stock-jump-document').textContent).toBe('SPO 202609-0041');
+  });
+
+  it('no sentence and no Donor/document buttons when the suggestion names neither', () => {
+    render(dialogFor(cellOf([demand()])));
+
+    expect(screen.queryByTestId('cell-suggestion-sentence')).not.toBeInTheDocument();
+    expect(screen.getByTestId('stock-jump-this-line')).toBeInTheDocument();
+    expect(screen.queryByTestId('stock-jump-donor')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('stock-jump-document')).not.toBeInTheDocument();
+  });
+
+  it('AC-3.5: the Contributing lines search filters by SO number', async () => {
+    renderDialog([
+      demand({ line_no: 1 }),
+      demand({
+        line_no: 2,
+        so_number: 'SO398322',
+        sales_order_id: 'so-b',
+        customer_name: 'ANOTHER CUSTOMER SDN BHD',
+      }),
+    ]);
+
+    openLines();
+    expect(screen.getByText('SO403340')).toBeInTheDocument();
+    expect(screen.getByText('SO398322')).toBeInTheDocument();
+
+    fireEvent.change(
+      screen.getByPlaceholderText('Search SO number, customer, agent'),
+      { target: { value: 'SO398322' } },
+    );
+
+    await waitFor(() => expect(screen.queryByText('SO403340')).not.toBeInTheDocument());
+    expect(screen.getByText('SO398322')).toBeInTheDocument();
+  });
+
+  it('AC-3.5: an empty state names the search miss, distinct from the ordinary empty state', async () => {
+    renderDialog([demand()]);
+    openLines();
+
+    fireEvent.change(
+      screen.getByPlaceholderText('Search SO number, customer, agent'),
+      { target: { value: 'no such order anywhere' } },
+    );
+
+    await waitFor(() =>
+      expect(screen.getByText('No line matches your search')).toBeInTheDocument(),
+    );
+  });
+
+  it('AC-3.5: clearing the search restores every line', async () => {
+    renderDialog([
+      demand({ line_no: 1 }),
+      demand({ line_no: 2, so_number: 'SO398322', sales_order_id: 'so-b' }),
+    ]);
+    openLines();
+
+    const search = screen.getByPlaceholderText('Search SO number, customer, agent');
+    fireEvent.change(search, { target: { value: 'SO398322' } });
+    await waitFor(() => expect(screen.queryByText('SO403340')).not.toBeInTheDocument());
+
+    fireEvent.change(search, { target: { value: '' } });
+    await waitFor(() => expect(screen.getByText('SO403340')).toBeInTheDocument());
+    expect(screen.getByText('SO398322')).toBeInTheDocument();
   });
 });

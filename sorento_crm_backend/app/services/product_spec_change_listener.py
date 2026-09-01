@@ -99,6 +99,7 @@ def _rederive_inline(codes: set[str]) -> None:
     try:
         from app.database import SessionLocal
         from app.services.product_spec_derivation import (
+            configured_max_values,
             configured_rules,
             configured_scopes,
             derive_for_code,
@@ -112,12 +113,14 @@ def _rederive_inline(codes: set[str]) -> None:
                 # answer cannot change part-way through a run.
                 rules_by_key = configured_rules(db)
                 scopes_by_key = configured_scopes(db)
+                max_values = configured_max_values(db)
                 for code in codes:
                     derive_for_code(
                         db,
                         code,
                         rules_by_key=rules_by_key,
                         scopes_by_key=scopes_by_key,
+                        max_values=max_values,
                     )
                 db.commit()
     except Exception:  # pragma: no cover - defensive by design

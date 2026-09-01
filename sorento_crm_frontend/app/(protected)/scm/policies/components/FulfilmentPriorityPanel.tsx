@@ -4,7 +4,14 @@ import { useEffect, useState } from 'react';
 import { LoaderCircle } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardFooter, CardHeader, CardHeading, CardTitle } from '@/components/ui/card';
+import {
+  Card,
+  CardContent,
+  CardFooter,
+  CardHeader,
+  CardHeading,
+  CardTitle,
+} from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -15,13 +22,18 @@ import {
   fulfilmentFactorLabel,
 } from '../lib/labels';
 import { DEFAULT_TBA_DATE_FROM } from '../types/policy.types';
-import { useFulfilmentPriority, useSaveFulfilmentPriority } from '../hooks/usePolicies';
+import {
+  useFulfilmentPriority,
+  useSaveFulfilmentPriority,
+} from '../hooks/usePolicies';
 
 /** Local calendar day as `YYYY-MM-DD`, so the mirror of the backend check reads the same
  *  date the user sees in the picker rather than a UTC-shifted one. */
 function todayIso(): string {
   const now = new Date();
-  return new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+  return new Date(now.getTime() - now.getTimezoneOffset() * 60000)
+    .toISOString()
+    .slice(0, 10);
 }
 
 /**
@@ -52,6 +64,7 @@ export function FulfilmentPriorityPanel() {
   const [classWeights, setClassWeights] = useState<Record<string, string>>({});
   const [reorderCoverageUntil, setReorderCoverageUntil] = useState('');
   const [tbaDateFrom, setTbaDateFrom] = useState('');
+  const [transferDays, setTransferDays] = useState('0');
   const [formError, setFormError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -80,6 +93,7 @@ export function FulfilmentPriorityPanel() {
 
     setReorderCoverageUntil(data.reorder_coverage_until ?? '');
     setTbaDateFrom(data.tba_date_from);
+    setTransferDays(String(data.transfer_days ?? 0));
   }, [data]);
 
   const onSave = async () => {
@@ -104,7 +118,9 @@ export function FulfilmentPriorityPanel() {
     for (const key of FULFILMENT_CLASS_ORDER) {
       const value = Number(classWeights[key]);
       if (!Number.isFinite(value) || value < 0) {
-        setFormError(`${FULFILMENT_CLASS_LABEL[key]} weight must be 0 or more.`);
+        setFormError(
+          `${FULFILMENT_CLASS_LABEL[key]} weight must be 0 or more.`,
+        );
         return;
       }
       parsedClasses[key] = value;
@@ -130,6 +146,16 @@ export function FulfilmentPriorityPanel() {
       setFormError('TBA date from must be today or later.');
       return;
     }
+
+    // R-B (31 Aug ruling): 0 by default, and never negative - the backend's own
+    // `transfer_days_negative` coded 422 mirrored here so the message sits beside the
+    // field instead of arriving as a toast after a round trip.
+    const parsedTransferDays = Number(transferDays);
+    if (!Number.isFinite(parsedTransferDays) || parsedTransferDays < 0) {
+      setFormError('Transfer days between bins must be 0 or more.');
+      return;
+    }
+
     setFormError(null);
     try {
       await save.mutateAsync({
@@ -137,6 +163,7 @@ export function FulfilmentPriorityPanel() {
         demand_class_weights: parsedClasses,
         reorder_coverage_until: reorderCoverageUntil || null,
         tba_date_from: tba,
+        transfer_days: Math.trunc(parsedTransferDays),
       });
     } catch {
       // Already toasted by the mutation's own onError; this only stops the rejection
@@ -155,15 +182,17 @@ export function FulfilmentPriorityPanel() {
         {!data?.exists && !isLoading ? (
           <Alert>
             <AlertDescription>
-              No fulfilment priority has been activated yet - the seeded defaults below are
-              shown. Save to activate them.
+              No fulfilment priority has been activated yet - the seeded
+              defaults below are shown. Save to activate them.
             </AlertDescription>
           </Alert>
         ) : null}
 
         {isError ? (
           <Alert variant="destructive">
-            <AlertDescription>Failed to load the fulfilment priority policy.</AlertDescription>
+            <AlertDescription>
+              Failed to load the fulfilment priority policy.
+            </AlertDescription>
           </Alert>
         ) : null}
 
@@ -186,7 +215,10 @@ export function FulfilmentPriorityPanel() {
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 {FULFILMENT_FACTOR_ORDER.map((key) => (
                   <div key={key}>
-                    <Label htmlFor={`fulfilment-factor-${key}`} className="mb-1 block">
+                    <Label
+                      htmlFor={`fulfilment-factor-${key}`}
+                      className="mb-1 block"
+                    >
                       {fulfilmentFactorLabel(key)}
                     </Label>
                     <Input
@@ -198,7 +230,10 @@ export function FulfilmentPriorityPanel() {
                       inputMode="decimal"
                       value={factors[key] ?? ''}
                       onChange={(e) =>
-                        setFactors((prev) => ({ ...prev, [key]: e.target.value }))
+                        setFactors((prev) => ({
+                          ...prev,
+                          [key]: e.target.value,
+                        }))
                       }
                     />
                   </div>
@@ -211,7 +246,10 @@ export function FulfilmentPriorityPanel() {
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 {FULFILMENT_CLASS_ORDER.map((key) => (
                   <div key={key}>
-                    <Label htmlFor={`fulfilment-class-${key}`} className="mb-1 block">
+                    <Label
+                      htmlFor={`fulfilment-class-${key}`}
+                      className="mb-1 block"
+                    >
                       {FULFILMENT_CLASS_LABEL[key]}
                     </Label>
                     <Input
@@ -223,7 +261,10 @@ export function FulfilmentPriorityPanel() {
                       inputMode="decimal"
                       value={classWeights[key] ?? ''}
                       onChange={(e) =>
-                        setClassWeights((prev) => ({ ...prev, [key]: e.target.value }))
+                        setClassWeights((prev) => ({
+                          ...prev,
+                          [key]: e.target.value,
+                        }))
                       }
                     />
                   </div>
@@ -235,7 +276,10 @@ export function FulfilmentPriorityPanel() {
               <h4 className="mb-3 text-sm font-medium">Coverage dates</h4>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
-                  <Label htmlFor="fulfilment-coverage-until" className="mb-1 block">
+                  <Label
+                    htmlFor="fulfilment-coverage-until"
+                    className="mb-1 block"
+                  >
                     Purchasing covers demand until
                   </Label>
                   <div className="flex items-center gap-2">
@@ -262,7 +306,10 @@ export function FulfilmentPriorityPanel() {
                   </p>
                 </div>
                 <div>
-                  <Label htmlFor="fulfilment-tba-date-from" className="mb-1 block">
+                  <Label
+                    htmlFor="fulfilment-tba-date-from"
+                    className="mb-1 block"
+                  >
                     TBA date from
                   </Label>
                   <div className="flex items-center gap-2">
@@ -287,12 +334,45 @@ export function FulfilmentPriorityPanel() {
                 </div>
               </div>
             </div>
+
+            <div>
+              <h4 className="mb-3 text-sm font-medium">Transfer cost</h4>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div>
+                  <Label
+                    htmlFor="fulfilment-transfer-days"
+                    className="mb-1 block"
+                  >
+                    Transfer days between bins
+                  </Label>
+                  <Input
+                    id="fulfilment-transfer-days"
+                    type="number"
+                    min={0}
+                    step={1}
+                    inputMode="numeric"
+                    value={transferDays}
+                    onChange={(e) => setTransferDays(e.target.value)}
+                    className="w-full"
+                  />
+                  <p className="mt-1 text-2xs text-muted-foreground">
+                    Added to a non-own-location option's fulfil date. 0 charges
+                    nothing.
+                  </p>
+                </div>
+              </div>
+            </div>
           </>
         )}
       </CardContent>
       <CardFooter className="justify-end">
-        <Button onClick={() => void onSave()} disabled={isLoading || save.isPending}>
-          {save.isPending ? <LoaderCircle className="size-4 animate-spin" /> : null}
+        <Button
+          onClick={() => void onSave()}
+          disabled={isLoading || save.isPending}
+        >
+          {save.isPending ? (
+            <LoaderCircle className="size-4 animate-spin" />
+          ) : null}
           Save fulfilment priority
         </Button>
       </CardFooter>

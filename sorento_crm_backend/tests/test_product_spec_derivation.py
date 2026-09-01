@@ -541,6 +541,23 @@ def test_non_finish_suffixes_yield_nothing(db, code):
 
 
 # --------------------------------------------------------------------------- #
+# seat_material, from the code as a fallback (PLAN-flyer-family-proposals.md S1
+# measurement, 31 Aug 2026: one live `-UF` product carries no description at all)
+# --------------------------------------------------------------------------- #
+def test_seat_material_falls_back_to_the_code_when_the_description_is_silent(db):
+    _product(db, "ZZTWC-CODEUF-UF", "SORENTO ONE PIECE WC")
+    derive_for_code(db, "ZZTWC-CODEUF-UF")
+    assert _value(db, "ZZTWC-CODEUF-UF", "seat_material") == "uf"
+
+
+def test_seat_material_from_the_description_beats_the_code(db):
+    """The code says UF; the description says DUROPLAST. Words win (source-major)."""
+    _product(db, "ZZTWC-CODEUF-DUR-UF", "SORENTO ONE PIECE WC DUROPLAST SEAT COVER")
+    derive_for_code(db, "ZZTWC-CODEUF-DUR-UF")
+    assert _value(db, "ZZTWC-CODEUF-DUR-UF", "seat_material") == "duroplast"
+
+
+# --------------------------------------------------------------------------- #
 # accessory discriminator (AC-T0c-14)
 # --------------------------------------------------------------------------- #
 
@@ -967,3 +984,416 @@ def test_the_code_suffix_still_answers_when_no_text_does(db):
     derive_for_code(db, "ZZT-SRC-3-GY")
 
     assert _value(db, "ZZT-SRC-3-GY", "finish") == "grey"
+
+
+# --------------------------------------------------------------------------- #
+# Every reader is a rule row (#425, AC-A.1 .. AC-A.5)
+#
+# `derive()` used to run four readers before it looked at any rule: the class off the
+# category, the brand off the product's own field, the `L x W x H` block with its
+# round/square gate, and the plausibility cap. None of them appeared on the screen that
+# lists "how this is read", so `SRTWC8354-SH-P` showed "the rules now read 180 mm" with
+# no rule on the page that could have read it. They are ordinary rows now.
+# --------------------------------------------------------------------------- #
+def _rows(spec_key: str) -> list[tuple]:
+    """The shipped rules for a key, as (match, capture, gate, builder kind)."""
+    from app.services.product_spec_derivation import shipped_rules
+
+    out = []
+    for rule in shipped_rules().get(spec_key) or []:
+        gate = (
+            ("unless", tuple(sorted(rule["unless"].get("shape", []))))
+            if rule.get("unless")
+            else ("when", tuple(sorted(rule["applies_when"].get("shape", []))))
+            if rule.get("applies_when")
+            else None
+        )
+        out.append(
+            (
+                rule.get("match"),
+                rule.get("capture"),
+                rule.get("source"),
+                gate,
+                (rule.get("builder") or {}).get("kind"),
+            )
+        )
+    return out
+
+
+ROUND = ("round", "square")
+
+
+def test_the_column_the_size_triple_and_the_lone_size_are_shipped_rules(db):
+    """AC-A.1 - dim_length, in the order the engine has always run them.
+
+    R5: the column, then `L x W x H`, then the lone size, then anything anybody adds.
+    """
+    assert _rows("dim_length") == [
+        ("from_field", None, None, ("unless", ROUND), "from_field"),
+        ("regex", 1, "description", ("unless", ROUND), "size_triple"),
+        # The lone size is a pattern row, not a `number before MM` sentence: the
+        # sentence compiles to `(\d+(?:\.\d+)?)`, which reads `GLASS SHELF 8MM` as an
+        # 8 mm long shelf. Three live codes, so the shipped row keeps the 2-to-4 digit
+        # form it has always had and the screen shows it as a pattern.
+        ("regex", 1, "size_text", ("unless", ROUND), None),
+        ("regex", 1, "flyer", None, None),
+    ]
+    from app.services.product_spec_derivation import _DIM_RE, _SINGLE_DIM_RE, shipped_rules
+
+    rules = shipped_rules()["dim_length"]
+    assert rules[0]["pattern"] == "column:dimensions_length"
+    assert rules[1]["pattern"] == _DIM_RE.pattern
+    assert rules[2]["pattern"] == _SINGLE_DIM_RE.pattern
+
+
+def test_the_width_height_thickness_and_diameter_readers_are_shipped_rules(db):
+    assert _rows("dim_width") == [
+        ("from_field", None, None, ("unless", ROUND), "from_field"),
+        ("regex", 2, "description", ("unless", ROUND), "size_triple"),
+        ("regex", 1, "flyer", None, None),
+    ]
+    assert _rows("dim_height") == [
+        ("from_field", None, None, ("unless", ROUND), "from_field"),
+        ("regex", 3, "description", ("unless", ROUND), "size_triple"),
+        ("regex", 1, "flyer", None, None),
+    ]
+    # A round product's columns are mis-keyed, so 407 is a diameter and the second and
+    # third numbers are its depth and thickness - never a width and a height.
+    assert _rows("diameter") == [("regex", 1, "description", ("when", ROUND), "size_triple")]
+    assert _rows("depth") == [("regex", 2, "description", ("when", ROUND), "size_triple")]
+    assert _rows("thickness") == [
+        ("regex", 4, "description", ("unless", ROUND), "size_triple"),
+        ("regex", 3, "description", ("when", ROUND), "size_triple"),
+    ]
+
+
+def test_the_class_and_brand_readers_are_shipped_rules(db):
+    """The name head and the category sit UNDER the noun rows, which is where they ran.
+
+    Order matters more here than anywhere else. 20,697 of 23,063 live products sit in a
+    category carrying a class, so a category row above the name head would re-class the
+    whole catalogue on the strength of a filing code.
+    """
+    class_rows = _rows("class")
+    assert {row[0] for row in class_rows[:-2]} == {"ends_with"}
+    assert class_rows[-2] == ("name_head", None, None, None, "name_head")
+    assert class_rows[-1] == ("from_field", None, None, None, "from_field")
+    assert _rows("brand") == [("from_field", None, None, None, "from_field")]
+
+    from app.services.product_spec_derivation import shipped_rules
+
+    assert shipped_rules()["class"][-1]["pattern"] == "category"
+    assert shipped_rules()["brand"][0]["pattern"] == "brand"
+
+
+def test_removing_the_lone_size_rule_removes_the_reader(db):
+    """AC-A.3 - a reader that is a row can be taken away, and then it does not fire."""
+    from app.services.product_spec_derivation import shipped_rules
+
+    _product(db, "ZZT-A3-1", "MARBLE TOP BASIN (800MM) ZZT-A3-1", brand="brand")
+    kept = [
+        rule
+        for rule in shipped_rules()["dim_length"]
+        if not (rule.get("source") == "size_text")
+    ]
+
+    derive_for_code(db, "ZZT-A3-1", rules_by_key={"dim_length": kept})
+
+    assert _value(db, "ZZT-A3-1", "dim_length") is None
+
+
+def test_removing_the_category_rule_leaves_the_class_to_the_name_head(db):
+    from app.services.product_spec_derivation import shipped_rules
+
+    # An SRT-KS category (Kitchen Sink) on a product whose name says squatting pan.
+    _product(db, "ZZT-A3-2", "SORENTO SQUATTING PAN ZZT-A3-2", brand="brand")
+    kept = [rule for rule in shipped_rules()["class"] if rule["match"] != "from_field"]
+
+    derive_for_code(db, "ZZT-A3-2", rules_by_key={"class": kept})
+
+    assert _value(db, "ZZT-A3-2", "class") == "Squatting Pan"
+
+    # ... and with the name head gone too, a category-classed product has no class.
+    _product(db, "ZZT-A3-3", "SORENTO WASHING TROUGH ZZT-A3-3", brand="brand")
+    derive_for_code(
+        db,
+        "ZZT-A3-3",
+        rules_by_key={"class": [r for r in kept if r["match"] != "name_head"]},
+    )
+    assert _value(db, "ZZT-A3-3", "class") is None
+
+
+def test_removing_the_brand_rule_removes_the_brand(db):
+    _product(db, "ZZT-A3-4", "SORENTO S/STEEL KITCHEN SINK ZZT-A3-4", brand="brand")
+
+    derive_for_code(db, "ZZT-A3-4", rules_by_key={"brand": []})
+
+    assert _value(db, "ZZT-A3-4", "brand") is None
+
+
+def test_order_is_priority_across_the_column_and_the_text(db):
+    """AC-A.4 - a text row above the column row wins, and the column still speaks up.
+
+    The column outranking the text is a default, not a law of nature. Moved below a
+    text row it loses - and the disagreement is still flagged, so curated data is never
+    silently outranked.
+    """
+    from app.services.product_spec_derivation import shipped_rules
+
+    _product(
+        db,
+        "ZZT-A4-1",
+        "SORENTO KITCHEN SINK L 300 X 200 X 100MM ZZT-A4-1",
+        brand="brand",
+        length=Decimal("700"),
+    )
+    shipped = shipped_rules()["dim_length"]
+    column = [rule for rule in shipped if rule["match"] == "from_field"]
+    text = [rule for rule in shipped if rule["match"] != "from_field"]
+
+    derive_for_code(db, "ZZT-A4-1", rules_by_key={"dim_length": text + column})
+
+    assert _value(db, "ZZT-A4-1", "dim_length") == 300
+    flagged = [
+        row
+        for row in db.query(ProductSpecException)
+        .filter(ProductSpecException.product_code == "ZZT-A4-1")
+        .all()
+        if row.reason == "column_conflict"
+    ]
+    assert flagged and flagged[0].stored == {"value": 700.0}
+
+
+def test_the_plausibility_cap_is_a_per_key_field(db):
+    """AC-A.5 - `max_value` on the key, seeded 5000 on millimetre keys, blank = no cap.
+
+    "540X440180MM" is a separator typo in the live master, not a 440-metre sink.
+    """
+    _product(db, "ZZT-A5-1", "SORENTO KITCHEN SINK 540X440180MM ZZT-A5-1", brand="brand")
+
+    derive_for_code(db, "ZZT-A5-1", max_values={"dim_width": 5000})
+
+    assert _value(db, "ZZT-A5-1", "dim_width") is None
+    assert "implausible_dimension" in _exceptions(db, "ZZT-A5-1")
+
+    _product(db, "ZZT-A5-2", "SORENTO KITCHEN SINK 540X440180MM ZZT-A5-2", brand="brand")
+    derive_for_code(db, "ZZT-A5-2", max_values={})
+
+    assert _value(db, "ZZT-A5-2", "dim_width") == 440180
+    assert "implausible_dimension" not in _exceptions(db, "ZZT-A5-2")
+
+
+def test_a_column_a_person_filled_in_is_never_called_implausible(db):
+    """The cap judges text. Four live products carry a column above 5000, and a person
+    typed those - a number in the master is data, not a separator typo."""
+    _product(db, "ZZT-A5-3", "SORENTO SHOWER HOSE ZZT-A5-3", brand="brand", length=Decimal("370000"))
+
+    derive_for_code(db, "ZZT-A5-3", max_values={"dim_length": 5000})
+
+    assert _value(db, "ZZT-A5-3", "dim_length") == 370000
+
+
+# --------------------------------------------------------------------------- #
+# S1 - the cap is uniform now: EVERY firing row is checked against it, where main
+# checked only the rectangular length/width/height triple. Measured on the dev DB
+# (read-only, 31 Aug): 0 of 23,063 active products cross this delta - main already
+# capped the cases the live catalogue actually has (a mis-parsed separator landing
+# in length or width). These three are the shapes of row main let through
+# uncapped, pinned directly rather than by a live code (AC-A.2 amended in the UAC).
+# --------------------------------------------------------------------------- #
+def test_thickness_above_the_cap_on_a_round_product_is_dropped_and_flagged(db):
+    """Main set `thickness` (capture 3 when round) with no cap at all - only
+    `diameter`/`dim_length`/`dim_width`/`dim_height` were ever compared to
+    `MAX_PLAUSIBLE_MM`. A 6000mm thickness is as implausible as a 6000mm length."""
+    _product(db, "ZZT-S1-1", "CONCRETE ROUND BASIN (407X120X6000MM)")
+    derive_for_code(db, "ZZT-S1-1")
+
+    assert _value(db, "ZZT-S1-1", "diameter") == 407
+    assert _value(db, "ZZT-S1-1", "depth") == 120
+    assert _value(db, "ZZT-S1-1", "thickness") is None
+    assert "implausible_dimension" in _exceptions(db, "ZZT-S1-1")
+
+
+def test_the_fourth_number_above_the_cap_on_a_rectangular_product_is_dropped_and_flagged(db):
+    """Main capped `dim_length`/`dim_width`/`dim_height` (the `zip` over the first
+    three numbers) but stored the fourth (`thickness`) unconditionally."""
+    _product(db, "ZZT-S1-2", "SORENTO BASIN 300X200X100X6000MM")
+    derive_for_code(db, "ZZT-S1-2")
+
+    assert _value(db, "ZZT-S1-2", "dim_length") == 300
+    assert _value(db, "ZZT-S1-2", "dim_width") == 200
+    assert _value(db, "ZZT-S1-2", "dim_height") == 100
+    assert _value(db, "ZZT-S1-2", "thickness") is None
+    assert "implausible_dimension" in _exceptions(db, "ZZT-S1-2")
+
+
+def test_a_lone_size_above_the_cap_is_dropped_and_flagged(db):
+    """Main's lone-size branch was `if lone[0] <= MAX_PLAUSIBLE_MM: described[...] =
+    lone` with no `else` - an over-cap lone size was silently dropped, never flagged.
+    The uniform cap flags it exactly as it flags every other reading."""
+    _product(db, "ZZT-S1-3", "SORENTO SHOWER HOSE 6000MM")
+    derive_for_code(db, "ZZT-S1-3")
+
+    assert _value(db, "ZZT-S1-3", "dim_length") is None
+    assert "implausible_dimension" in _exceptions(db, "ZZT-S1-3")
+
+
+# --------------------------------------------------------------------------- #
+# B3 - `from_field column:<name>` on a non-numeric column reads nothing rather
+# than crashing derivation for the whole catalogue.
+#
+# `_validate_rules` refuses this shape at save time now, so a NEW rule cannot carry
+# it - but a row written before that guard existed (or one that reaches `derive()`
+# through any other path) must still fail SAFE.
+# --------------------------------------------------------------------------- #
+def test_a_from_field_row_on_a_text_column_reads_nothing_and_does_not_raise(db):
+    _product(db, "ZZT-B3-1", "SORENTO KITCHEN SINK ZZT-B3-1", brand="brand")
+
+    # `currency` is a real `Product` column and it is text ("MYR"), not a number -
+    # `_number(str(raw))` used to be an unguarded `float()`.
+    result = derive_for_code(
+        db,
+        "ZZT-B3-1",
+        rules_by_key={"zzt_bad_field": [{"match": "from_field", "pattern": "column:currency"}]},
+    )
+
+    assert result["exceptions"] == 0, "one bad row must not raise out of derive()"
+    assert _value(db, "ZZT-B3-1", "zzt_bad_field") is None
+
+
+def test_from_field_choices_is_the_numeric_product_columns_plus_category_and_brand(db):
+    """The whitelist `_validate_rules` enforces (B3, `spec_registry_bad_rule`) - the
+    HTTP-level refusal is `test_a_from_field_rule_naming_a_text_column_is_refused` in
+    `tests/test_spec_registry_pr2_routes.py`; this pins the whitelist itself against
+    the live `Product` model."""
+    from app.services.product_spec_registry import from_field_choices, numeric_product_columns
+
+    assert "column:currency" not in from_field_choices()
+    assert "currency" not in numeric_product_columns()
+    assert "column:dimensions_length" in from_field_choices()
+    assert "dimensions_length" in numeric_product_columns()
+
+
+# --------------------------------------------------------------------------- #
+# AC-A.8 - the sentence kinds compile to exactly one engine rule each
+#
+# The editor builds rules from sentences and compiles them client-side; the server
+# recompiles the same sentence and refuses a mismatch. Both compilers are pinned to
+# this table, so "Number before MM" cannot mean two different patterns on the two
+# sides of the wire.
+# --------------------------------------------------------------------------- #
+_SENTENCES = [
+    (
+        {"kind": "number_after", "word": "L"},
+        {"match": "regex", "pattern": r"\bL\s*(\d+(?:\.\d+)?)", "capture": 1},
+        "SORENTO SINK L 300 X 200",
+        300,
+    ),
+    (
+        {"kind": "number_before", "word": "MM"},
+        {
+            "match": "regex",
+            "pattern": r"(?<![A-Z0-9X])(\d+(?:\.\d+)?)\s*MM\b",
+            "capture": 1,
+        },
+        "MARBLE TOP BASIN (800MM)",
+        800,
+    ),
+    (
+        {"kind": "number_between", "from": "S-TRAP", "to": "MM"},
+        {
+            "match": "regex",
+            "pattern": r"S-TRAP\s*[:,]?\s*(\d+(?:\.\d+)?)\s*MM",
+            "capture": 1,
+        },
+        "ONE PIECE WC (S-TRAP 300MM)",
+        300,
+    ),
+    (
+        {"kind": "text_contains", "word": "RIMLESS", "value": True},
+        {"match": "contains", "pattern": "RIMLESS", "value": True},
+        "SORENTO RIMLESS WC",
+        True,
+    ),
+    (
+        {"kind": "text_ends_with", "word": "SQUATTING PAN", "value": "Squatting Pan"},
+        {"match": "ends_with", "pattern": "SQUATTING PAN", "value": "Squatting Pan"},
+        "SORENTO SQUATTING PAN",
+        "Squatting Pan",
+    ),
+    (
+        {"kind": "word_present", "word": "THERMOSTATIC"},
+        {"match": "present", "pattern": "THERMOSTATIC", "value": True},
+        "SHOWER SET THERMOSTATIC",
+        True,
+    ),
+    (
+        {"kind": "code_contains", "word": "SRTSC", "value": "Seat Cover"},
+        {"match": "code_contains", "pattern": "SRTSC", "value": "Seat Cover"},
+        None,
+        "Seat Cover",
+    ),
+    (
+        {"kind": "code_starts_with", "word": "SRT", "value": "Sorento"},
+        {"match": "code_starts_with", "pattern": "SRT", "value": "Sorento"},
+        None,
+        "Sorento",
+    ),
+    (
+        {"kind": "code_ends_with", "word": "UF", "value": "uf"},
+        {"match": "code_suffix", "pattern": "UF", "value": "uf"},
+        None,
+        "uf",
+    ),
+    (
+        {"kind": "from_field", "field": "brand"},
+        {"match": "from_field", "pattern": "brand"},
+        None,
+        None,
+    ),
+    (
+        {"kind": "size_triple", "position": 2},
+        {"match": "regex", "pattern": None, "capture": 2},
+        "SORENTO SINK 800X400X200MM",
+        400,
+    ),
+    (
+        {"kind": "name_head", "field": None},
+        {"match": "name_head", "pattern": "class_tail"},
+        None,
+        None,
+    ),
+]
+
+
+@pytest.mark.parametrize("builder,expected,text,reads", _SENTENCES)
+def test_a_sentence_compiles_to_one_engine_rule(builder, expected, text, reads):
+    from app.services.product_spec_derivation import _DIM_RE, _rule_matches
+    from app.services.product_spec_registry import compile_builder
+
+    compiled = compile_builder(builder)
+    if expected["pattern"] is None:
+        expected = {**expected, "pattern": _DIM_RE.pattern}
+    for field, value in expected.items():
+        assert compiled.get(field) == value, f"{builder['kind']}.{field}"
+
+    if text is None:
+        return
+    texts = {"description": text.upper(), "flyer": "", "class_tail": "", "size_text": text.upper()}
+    hit = _rule_matches(compiled, texts, "SRTSC1234-UF")
+    assert hit is not None, f"{builder['kind']} read nothing from {text!r}"
+    assert hit[0] == reads
+
+
+def test_a_code_sentence_reads_the_code(db):
+    from app.services.product_spec_derivation import _rule_matches
+    from app.services.product_spec_registry import compile_builder
+
+    texts = {"description": "", "flyer": "", "class_tail": "", "size_text": ""}
+    for builder, reads in (
+        ({"kind": "code_contains", "word": "SRTSC", "value": "Seat Cover"}, "Seat Cover"),
+        ({"kind": "code_starts_with", "word": "SRT", "value": "Sorento"}, "Sorento"),
+        ({"kind": "code_ends_with", "word": "UF", "value": "uf"}, "uf"),
+    ):
+        hit = _rule_matches(compile_builder(builder), texts, "SRTSC1234-UF")
+        assert hit is not None and hit[0] == reads, builder["kind"]

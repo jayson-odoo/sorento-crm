@@ -4,7 +4,6 @@ import * as React from 'react';
 import Link from 'next/link';
 import { ColumnDef } from '@tanstack/react-table';
 import { PackageSearch } from 'lucide-react';
-import { Button } from '@/components/ui/button';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
@@ -12,6 +11,24 @@ import { formatDateInMalaysia } from '@/lib/helpers';
 import { PanelDataGrid } from '../../_shared/components/PanelDataGrid';
 import { useStockDetail } from '../../_shared/hooks/useFulfilmentPlanning';
 import { fromMinor, toMinor } from '../../_shared/lib/supplyComposition';
+import type {
+  StockDocumentMatch,
+  StockDonorMatch,
+  StockJumpTarget,
+} from '../../_shared/types/fulfilmentPlanning.types';
+
+/**
+ * "SPO 202609-0041" against a raw `202609-0041`, or a raw number that already carries its
+ * own "SPO-" prefix against itself: the engine's sentence always names the document with a
+ * leading "SPO" (`front_planning_engine._named`), the drill's own `spo_number` does not
+ * always. Stripped and cased down on both sides so either shape matches the other.
+ */
+function normalizeSpoNumber(value: string | null | undefined): string {
+  return (value ?? '')
+    .trim()
+    .toUpperCase()
+    .replace(/^SPO[\s-]*/, '');
+}
 
 /**
  * What the numbers on one location row are made of - AutoCount's "Stock Status with Detail".
@@ -54,6 +71,10 @@ export function StockDocumentsPanel({
   warehouseId,
   group,
   lineIds = [],
+  donor,
+  documentInfo,
+  filterText,
+  jumpTarget,
 }: {
   productId: string;
   /** One bin. Omitted for a group read, where the set is the answer. */
@@ -65,6 +86,19 @@ export function StockDocumentsPanel({
    * see where their own claim sits among the documents ahead of and behind it.
    */
   lineIds?: string[];
+  /**
+   * Every donor the active suggestion names (AC-3.3/3.13). Badged "Donor" on EVERY row of
+   * this panel that matches ANY of them - a step-2 combine can draw from several donors on
+   * one line (R35), and a list-of-one just badges the one it always did. Most panels hold
+   * none of it, and simply render nothing extra.
+   */
+  donor?: StockDonorMatch[] | null;
+  /** The SPO the active suggestion names (AC-3.4). Badged "This document" wherever it matches. */
+  documentInfo?: StockDocumentMatch | null;
+  /** The sticky toolbar's search (AC-3.5): SO number, customer, agent. */
+  filterText?: string;
+  /** A jump `CellStockTable` raised. Only the panel holding the matching row acts on it. */
+  jumpTarget?: StockJumpTarget | null;
 }) {
   const detail = useStockDetail(productId, warehouseId ?? null, lineIds, group);
   const isGroup = Boolean(group);
@@ -96,6 +130,19 @@ export function StockDocumentsPanel({
         balance: null,
         line_id: order.line_id ?? null,
         is_this_line: Boolean(order.is_this_line),
+        // AC-3.3/3.13: the donor the active suggestion named, by its own core line id where
+        // the suggestion carried one - two lines of one donor SO would otherwise both light
+        // up - falling back to the SO number for the shapes that only carry that. EVERY
+        // donor in the list gets a chance to match, not only the first (review round, S3) -
+        // a step-2 combine can name several on one line (R35).
+        is_donor: Boolean(
+          donor?.some((match) =>
+            match.lineId
+              ? order.line_id === match.lineId
+              : order.so_number === match.soNumber,
+          ),
+        ),
+        is_document: false,
       })),
       ...data.incoming.map((leg, index) => ({
         key: `spo-${index}-${leg.spo_number}`,
@@ -114,6 +161,14 @@ export function StockDocumentsPanel({
         balance: null,
         line_id: null,
         is_this_line: false,
+        is_donor: false,
+        // AC-3.4: the SPO the active suggestion named. Normalised on both sides - the
+        // engine's sentence always says "SPO ...", the drill's own number does not always.
+        is_document: Boolean(
+          documentInfo &&
+          normalizeSpoNumber(leg.spo_number) ===
+            normalizeSpoNumber(documentInfo.spoNumber),
+        ),
       })),
     ];
     if (!isGroup) return documents;
@@ -139,6 +194,8 @@ export function StockDocumentsPanel({
         balance: null,
         line_id: null,
         is_this_line: false,
+        is_donor: false,
+        is_document: false,
       })),
     );
 
@@ -165,6 +222,8 @@ export function StockDocumentsPanel({
         balance: null,
         line_id: null,
         is_this_line: false,
+        is_donor: false,
+        is_document: false,
       }));
 
     documents.sort(compareByEngineDate);
@@ -173,16 +232,145 @@ export function StockDocumentsPanel({
       running += row.delta;
       return { ...row, balance: fromMinor(running) };
     });
-  }, [detail.data, isGroup]);
+  }, [detail.data, isGroup, donor, documentInfo]);
 
-  const hasMyLine = rows.some((row) => row.is_this_line);
+  /**
+   * The rows the sticky toolbar's search leaves standing (AC-3.5): SO number, customer or
+   * agent, case-insensitively, client-side - the same rows the position above already holds,
+   * never a second fetch. Applied AFTER the group walk builds the running balance, so a
+   * filtered ledger keeps the balance each visible row actually landed on rather than one
+   * recomputed over a narrower list.
+   */
+  const visibleRows = React.useMemo(() => {
+    const needle = (filterText ?? '').trim().toLowerCase();
+    if (!needle) return rows;
+    return rows.filter((row) =>
+      [row.doc_no, row.party, row.agent_code]
+        .filter((value): value is string => Boolean(value))
+        .some((value) => value.toLowerCase().includes(needle)),
+    );
+  }, [rows, filterText]);
+
+  /**
+   * The jump's own watch state, held in a REF rather than closed over by the effect below
+   * (review round, S3): the effect is keyed on `jumpTarget`'s own identity alone now, so a
+   * still-pending MutationObserver from an EARLIER jump has to be reachable and disconnectable
+   * from the start of a later run, not just from that earlier run's own cleanup.
+   */
+  const jumpWatchRef = React.useRef<{
+    observer: MutationObserver | null;
+    flashTimer: number | undefined;
+  }>({ observer: null, flashTimer: undefined });
+
+  // The jump (AC-3.1/3.3/3.4): scroll to and briefly flash whichever row this panel holds
+  // that the target names. Every open panel gets the same signal broadcast down from
+  // `CellStockTable` and only the one holding a match does anything - the alternative is
+  // addressing a jump to a panel that has not been told it is the one that matters, which
+  // this component cannot know from outside the query it owns.
+  //
+  // WAITS FOR THE ROW'S OWN NODE, not merely for `visibleRows` to hold data (AC-3.1 auto-land
+  // fix, S3 bug-fix round). `PanelDataGrid` carries its OWN async gate - the shared listing's
+  // column-preference fetch - so the tick where `detail.isLoading` turns false and this data
+  // exists is NOT the tick the `<tr>` actually lands in `panelRef`'s subtree; measured live,
+  // the auto-land on a cell's OWN mount fired against zero rows in the DOM (`rowCount: 113`
+  // in this hook, `hasAnchor: false` in the grid) while the identical jump from the "My line"
+  // button - pressed after that second render had already happened - found it immediately.
+  // A `MutationObserver` reacts to the node actually arriving rather than to a timer or to
+  // one extra assumed tick, so it is correct regardless of how many renders the grid needs -
+  // including the render that only finishes loading AFTER this effect first runs, so
+  // `detail.isLoading` is not read here at all: the observer keeps watching through it.
+  //
+  // DRIVEN OFF `jumpTarget`'s OWN IDENTITY ALONE (review round, S3 bug-fix). `visibleRows`
+  // used to sit in this dependency list, on the reasoning that a filtered ledger should
+  // re-arm the watch once its target actually exists. What it actually did: `donorMatch`/
+  // `documentMatch` were built as fresh object literals in `BoardCellBreakdownDialog` on
+  // every render, so `visibleRows` (built from `rows`, which closes over `donor`/
+  // `documentInfo`) got a new identity on every keystroke of the STICKY SEARCH, even though
+  // the search had not settled and the filtered set had not actually changed - which re-ran
+  // this effect, found the SAME row already painted, and re-scrolled to and re-flashed it on
+  // every keystroke. `jumpTarget` itself already only changes when a jump is actually
+  // requested (`CellStockTable`'s `activeJump` state), so keying on it - and on nothing a
+  // render can jostle - is what makes typing never scroll.
+  React.useEffect(() => {
+    if (!jumpTarget) return;
+    const panel = panelRef.current;
+    if (!panel) return;
+    const testId =
+      jumpTarget.kind === 'this-line'
+        ? 'stock-document-this-line'
+        : jumpTarget.kind === 'donor'
+          ? 'stock-document-donor'
+          : 'stock-document-this-document';
+
+    const watch = jumpWatchRef.current;
+    // A watch still pending from an earlier jump loses the race the moment a NEW one is
+    // requested - only the jump just asked for gets to land.
+    watch.observer?.disconnect();
+    watch.observer = null;
+    window.clearTimeout(watch.flashTimer);
+
+    const findRow = (): HTMLElement | null => {
+      const anchor = panel.querySelector(`[data-testid="${testId}"]`);
+      return anchor?.closest('tr') ?? null;
+    };
+
+    const land = (row: HTMLElement) => {
+      // Idempotent: nothing further to watch for once a row has actually landed.
+      watch.observer?.disconnect();
+      watch.observer = null;
+      if (typeof row.scrollIntoView === 'function')
+        row.scrollIntoView({ block: 'center' });
+      // A single fading pulse, never a persistent second selection colour (AC-3.11) - the
+      // CSS class is disabled outright under `prefers-reduced-motion` (styles.css).
+      //
+      // REMOVED BEFORE IT IS RE-ADDED, with a reflow forced in between (review round, S3):
+      // `classList.add` on a class the row already carries is a no-op, so a second jump to
+      // the SAME row inside the 1.5s window - two quick presses of "My line" - left the
+      // class already present and the animation never restarted. Reading `offsetWidth`
+      // forces the browser to flush the removal before the class goes back on, which is
+      // what makes the animation actually replay from its first frame.
+      row.classList.remove('jump-flash');
+      void row.offsetWidth;
+      row.classList.add('jump-flash');
+      watch.flashTimer = window.setTimeout(
+        () => row.classList.remove('jump-flash'),
+        1500,
+      );
+    };
+
+    const already = findRow();
+    if (already) {
+      land(already);
+      return () => window.clearTimeout(watch.flashTimer);
+    }
+
+    // Not there yet - the grid's own render (and its own async gate) has not caught up with
+    // this jump. Watch for it to land rather than guessing a delay.
+    const observer = new MutationObserver(() => {
+      const row = findRow();
+      if (!row) return;
+      land(row);
+    });
+    observer.observe(panel, { childList: true, subtree: true });
+    watch.observer = observer;
+    return () => {
+      observer.disconnect();
+      if (watch.observer === observer) watch.observer = null;
+      window.clearTimeout(watch.flashTimer);
+    };
+    // Deliberately NOT `jumpTarget` itself - see the module doc above. `kind`/`nonce` are
+    // the whole of what a jump IS; nothing else may re-run this effect.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jumpTarget?.kind, jumpTarget?.nonce]);
 
   const columns = React.useMemo<ColumnDef<StockDetailRow>[]>(() => {
     const list: ColumnDef<StockDetailRow>[] = [
       {
         id: 'doc_type',
         accessorFn: (row) => row.doc_type,
-        header: ({ column }) => <DataGridColumnHeader title="Type" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Type" column={column} />
+        ),
         cell: ({ row }) => (
           <span className={cn('text-sm font-medium', emphasis(row.original))}>
             {row.original.doc_type}
@@ -197,7 +385,9 @@ export function StockDocumentsPanel({
       {
         id: 'doc_no',
         accessorFn: (row) => row.doc_no,
-        header: ({ column }) => <DataGridColumnHeader title="Document" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Document" column={column} />
+        ),
         cell: ({ row }) => (
           <span className="flex min-w-0 items-center gap-1.5">
             {row.original.sales_order_id ? (
@@ -213,7 +403,10 @@ export function StockDocumentsPanel({
               </Link>
             ) : (
               <span
-                className={cn('truncate text-sm font-medium', emphasis(row.original))}
+                className={cn(
+                  'truncate text-sm font-medium',
+                  emphasis(row.original),
+                )}
                 title={row.original.doc_no}
               >
                 {row.original.doc_no}
@@ -228,6 +421,26 @@ export function StockDocumentsPanel({
                 className="shrink-0 rounded bg-primary/10 px-1 text-[10px] font-medium text-primary"
               >
                 This line
+              </span>
+            ) : null}
+            {/* AC-3.3/3.13: the order the suggestion is borrowing FROM. Coexists with "This
+                line" (AC-3.3) - a donor could in principle be a different line of the same
+                order this drawer was opened for. */}
+            {row.original.is_donor ? (
+              <span
+                data-testid="stock-document-donor"
+                className="shrink-0 rounded bg-amber-500/10 px-1 text-[10px] font-medium text-amber-700 dark:text-amber-400"
+              >
+                Donor
+              </span>
+            ) : null}
+            {/* AC-3.4: the SPO the suggestion is borrowing/using. */}
+            {row.original.is_document ? (
+              <span
+                data-testid="stock-document-this-document"
+                className="shrink-0 rounded bg-emerald-500/10 px-1 text-[10px] font-medium text-emerald-700 dark:text-emerald-400"
+              >
+                This document
               </span>
             ) : null}
           </span>
@@ -248,7 +461,8 @@ export function StockDocumentsPanel({
             title={row.original.party ?? ''}
           >
             {row.original.party ||
-              (row.original.doc_type === 'S/O' || row.original.doc_type === 'SPO'
+              (row.original.doc_type === 'S/O' ||
+              row.original.doc_type === 'SPO'
                 ? 'Not recorded'
                 : '-')}
           </span>
@@ -262,10 +476,15 @@ export function StockDocumentsPanel({
         // reads "-" there rather than a guess.
         id: 'agent_code',
         accessorFn: (row) => row.agent_code ?? '',
-        header: ({ column }) => <DataGridColumnHeader title="Agent" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Agent" column={column} />
+        ),
         cell: ({ row }) => (
           <span
-            className={cn('block truncate text-sm tabular-nums', emphasis(row.original))}
+            className={cn(
+              'block truncate text-sm tabular-nums',
+              emphasis(row.original),
+            )}
           >
             {row.original.agent_code ?? '-'}
           </span>
@@ -284,12 +503,19 @@ export function StockDocumentsPanel({
       list.push({
         id: 'doc_date',
         accessorFn: (row) => row.doc_date ?? '',
-        header: ({ column }) => <DataGridColumnHeader title="Doc date" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Doc date" column={column} />
+        ),
         cell: ({ row }) => (
           <span
-            className={cn('block truncate text-sm tabular-nums', emphasis(row.original))}
+            className={cn(
+              'block truncate text-sm tabular-nums',
+              emphasis(row.original),
+            )}
           >
-            {row.original.doc_date ? formatDateInMalaysia(row.original.doc_date) : 'Not stated'}
+            {row.original.doc_date
+              ? formatDateInMalaysia(row.original.doc_date)
+              : 'Not stated'}
           </span>
         ),
         size: 120,
@@ -305,7 +531,12 @@ export function StockDocumentsPanel({
         <DataGridColumnHeader title="Delivery / expected" column={column} />
       ),
       cell: ({ row }) => (
-        <span className={cn('block truncate text-sm tabular-nums', emphasis(row.original))}>
+        <span
+          className={cn(
+            'block truncate text-sm tabular-nums',
+            emphasis(row.original),
+          )}
+        >
           {row.original.due_date
             ? formatDateInMalaysia(row.original.due_date)
             : row.original.doc_type === 'On hand'
@@ -330,7 +561,9 @@ export function StockDocumentsPanel({
       list.push({
         id: 'location',
         accessorFn: (row) => row.location ?? '',
-        header: ({ column }) => <DataGridColumnHeader title="Bin" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Bin" column={column} />
+        ),
         cell: ({ row }) => (
           <span
             className={cn('block truncate text-sm', emphasis(row.original))}
@@ -348,10 +581,15 @@ export function StockDocumentsPanel({
     list.push({
       id: 'qty',
       accessorFn: (row) => Number(row.qty || 0),
-      header: ({ column }) => <DataGridColumnHeader title="Quantity" column={column} />,
+      header: ({ column }) => (
+        <DataGridColumnHeader title="Quantity" column={column} />
+      ),
       cell: ({ row }) => (
         <span
-          className={cn('block truncate text-sm tabular-nums', emphasis(row.original))}
+          className={cn(
+            'block truncate text-sm tabular-nums',
+            emphasis(row.original),
+          )}
         >
           {row.original.qty}
         </span>
@@ -396,9 +634,15 @@ export function StockDocumentsPanel({
         // list: THIS cell's own demand (the subtotal adds it back, because a line does not
         // compete with itself) and any hold taken from outside the group.
         footer: () => {
-          const closing = rows.length > 0 ? rows[rows.length - 1].balance : null;
+          const closing =
+            rows.length > 0 ? rows[rows.length - 1].balance : null;
           return (
-            <span className={cn('tabular-nums', isNegative(closing) && 'text-destructive')}>
+            <span
+              className={cn(
+                'tabular-nums',
+                isNegative(closing) && 'text-destructive',
+              )}
+            >
               {closing ?? '-'}
             </span>
           );
@@ -435,13 +679,34 @@ export function StockDocumentsPanel({
         </div>
       ) : rows.length === 0 ? (
         <div className="py-8 text-center">
-          <PackageSearch className="mx-auto size-6 text-muted-foreground" aria-hidden />
-          <h3 className="mt-2 text-sm font-semibold">Nothing is claiming this stock</h3>
+          <PackageSearch
+            className="mx-auto size-6 text-muted-foreground"
+            aria-hidden
+          />
+          <h3 className="mt-2 text-sm font-semibold">
+            Nothing is claiming this stock
+          </h3>
+        </div>
+      ) : visibleRows.length === 0 ? (
+        // AC-3.5: a search that matches nothing is a DIFFERENT answer from "nothing is
+        // claiming this stock" - the position still holds every row above, the search just
+        // named none of them.
+        <div
+          data-testid="stock-documents-search-empty"
+          className="py-8 text-center"
+        >
+          <PackageSearch
+            className="mx-auto size-6 text-muted-foreground"
+            aria-hidden
+          />
+          <h3 className="mt-2 text-sm font-semibold">
+            No document matches your search
+          </h3>
         </div>
       ) : (
         <PanelDataGrid<StockDetailRow>
           columns={columns}
-          rows={rows}
+          rows={visibleRows}
           getRowId={(row) => row.key}
           listingKey={
             isGroup
@@ -451,27 +716,11 @@ export function StockDocumentsPanel({
           // The group reading is a RUNNING balance, so its order is the arithmetic: re-sorting
           // it by customer would leave a column of numbers that add up to nothing.
           sortable={!isGroup}
-          toolbar={
-            isGroup && hasMyLine ? (
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                data-testid="stock-documents-my-line"
-                onClick={() => {
-                  const anchor = panelRef.current?.querySelector(
-                    '[data-testid="stock-document-this-line"]',
-                  );
-                  const row = anchor?.closest('tr');
-                  if (row && typeof row.scrollIntoView === 'function') {
-                    row.scrollIntoView({ block: 'center' });
-                  }
-                }}
-              >
-                My line
-              </Button>
-            ) : undefined
-          }
+          // NO LOCAL "My line" TOOLBAR (retired, review round S3). This panel used to carry
+          // its own, scrolling straight to the row with no flash - a second "My line" that
+          // duplicated the sticky toolbar's own button (`BoardCellBreakdownDialog`), which
+          // already reaches this exact row through `jumpTarget` and lands it WITH the flash.
+          // Two buttons doing the same job, one of them worse, is not a second feature.
           emptyTitle="Nothing is claiming this stock"
           // The live book tops out at 501 rows for one product and location, which is one page:
           // paging it would hide the total that makes the header checkable.
@@ -488,7 +737,10 @@ export function StockDocumentsPanel({
  * `supply_assignment` walks, so a container cleared in the morning covers a despatch due the
  * same day. A document with no date lists last: "not stated" is not "wanted immediately".
  */
-function compareByEngineDate(left: StockDetailRow, right: StockDetailRow): number {
+function compareByEngineDate(
+  left: StockDetailRow,
+  right: StockDetailRow,
+): number {
   const leftDate = left.due_date ?? '';
   const rightDate = right.due_date ?? '';
   if (!leftDate !== !rightDate) return leftDate ? -1 : 1;
@@ -530,4 +782,8 @@ interface StockDetailRow {
   line_id: string | null;
   /** One of the lines this drawer is planning (R5). */
   is_this_line: boolean;
+  /** The order the active suggestion is borrowing from (AC-3.3/3.13). */
+  is_donor: boolean;
+  /** The SPO the active suggestion is borrowing/using (AC-3.4). */
+  is_document: boolean;
 }

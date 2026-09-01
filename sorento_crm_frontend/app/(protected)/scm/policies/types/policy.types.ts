@@ -159,6 +159,10 @@ export interface FulfilmentPriorityPolicy {
    *  covered, and never donates. `YYYY-MM-DD`, NOT NULL on the backend - `Reset` on the
    *  panel restores `DEFAULT_TBA_DATE_FROM`. (Borrow ladder v7.1 R20 / AC-S1-2.) */
   tba_date_from: string;
+  /** Days charged onto a non-own-location option's fulfil date, so a pool take that is not
+   *  free reads a realistic day rather than the same day as an own-location one (31 Aug
+   *  ruling R-B, migration 451). Default 0: no charge until a tenant configures one. */
+  transfer_days: number;
   /** False only on a database that has never activated a fulfilment-priority policy. */
   exists: boolean;
 }

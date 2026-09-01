@@ -23,8 +23,11 @@ was never tuned against.
 """
 from __future__ import annotations
 
+import json
+import os
 import uuid
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 
@@ -47,6 +50,12 @@ from tests._pg_fixture import blank_session
 
 _REFS: dict = {}
 _USER = {"id": str(uuid.uuid4()), "email": "zzt-flyjob@zzt.test"}
+
+# Three pages cut from the real 2025-2026 A3 flyer, and the base rows they produce.
+_FLYER_FIXTURE = Path(__file__).parent / "fixtures" / "dealer_kit" / "flyer_sample.pdf"
+_BASE_ROWS_GOLDEN = (
+    Path(__file__).parent / "fixtures" / "dealer_kit" / "flyer_base_rows_golden.json"
+)
 
 
 @pytest.fixture
@@ -461,6 +470,476 @@ def test_repropose_deletes_old_rows_and_recomputes_against_the_current_master(db
 
 
 # --------------------------------------------------------------------------- #
+# PLAN-flyer-family-proposals.md - one card speaks for its code family
+# --------------------------------------------------------------------------- #
+def test_family_siblings_get_rows_from_the_bases_card_but_xy_1_does_not(db):
+    """AC-A.1: `X`, `X-UF`, `X-UF-300` all get rows from `X`'s card; `XY-1` - no
+    dash after `X` - is not a sibling and gets nothing. `via_product_code` names
+    the base on a sibling's rows and is null on the base's own."""
+    from app.services.product_spec_flyer_ingest import run_propose
+
+    _product(db, "ZZT-FAM1-X", "SORENTO ONE PIECE WC ZZT-FAM1-X")
+    _product(db, "ZZT-FAM1-X-UF", "SORENTO ONE PIECE WC ZZT-FAM1-X-UF")
+    _product(db, "ZZT-FAM1-X-UF-300", "SORENTO ONE PIECE WC ZZT-FAM1-X-UF-300")
+    _product(db, "ZZT-FAM1-XY-1", "SORENTO ONE PIECE WC ZZT-FAM1-XY-1")
+    reading = _reading(db, cards=[_card("ZZT-FAM1-X", "Twister Flushing")])
+    batch = _batch_row(db, reading)
+    db.commit()
+
+    run_propose(db, batch.id)
+
+    rows = _by_product_key(_proposals_for(db, batch.id))
+    assert ("ZZT-FAM1-X", "flush_type") in rows
+    assert ("ZZT-FAM1-X-UF", "flush_type") in rows
+    assert ("ZZT-FAM1-X-UF-300", "flush_type") in rows
+    assert ("ZZT-FAM1-XY-1", "flush_type") not in rows
+
+    assert rows[("ZZT-FAM1-X", "flush_type")].via_product_code is None
+    assert rows[("ZZT-FAM1-X-UF", "flush_type")].via_product_code == "ZZT-FAM1-X"
+    sibling_row = rows[("ZZT-FAM1-X-UF-300", "flush_type")]
+    assert sibling_row.via_product_code == "ZZT-FAM1-X"
+    assert sibling_row.pages == [1], "a sibling's pages are the card's pages"
+
+
+def test_a_sibling_under_another_company_gets_no_rows(db):
+    """AC-A.2: the sibling lookup is company-scoped, like every other product read."""
+    from app.services.product_spec_flyer_ingest import run_propose
+
+    other = Company(
+        id=str(uuid.uuid4()),
+        name=f"ZZT Family Other Co {uuid.uuid4().hex[:8]}",
+        code=f"ZF{uuid.uuid4().hex[:6]}",
+    )
+    db.add(other)
+    db.flush()
+
+    _product(db, "ZZT-FAM2-X", "SORENTO ONE PIECE WC ZZT-FAM2-X")
+    foreign = Product(
+        id=str(uuid.uuid4()),
+        product_code="ZZT-FAM2-X-OTHERCO",
+        product_name="ZZT-FAM2-X-OTHERCO",
+        description="SORENTO ONE PIECE WC ZZT-FAM2-X-OTHERCO",
+        category_id=_REFS["cat"],
+        base_uom_id=_REFS["uom"],
+        brand_id=_REFS["brand"],
+        list_price=Decimal("1.00"),
+        company_id=other.id,
+    )
+    db.add(foreign)
+    db.flush()
+
+    reading = _reading(db, cards=[_card("ZZT-FAM2-X", "Twister Flushing")])
+    batch = _batch_row(db, reading)
+    db.commit()
+
+    run_propose(db, batch.id)
+
+    rows = _by_product_key(_proposals_for(db, batch.id))
+    assert ("ZZT-FAM2-X", "flush_type") in rows
+    assert ("ZZT-FAM2-X-OTHERCO", "flush_type") not in rows
+
+
+def test_a_siblings_own_reading_wins_over_the_card_but_dims_still_come_from_it(db):
+    """AC-A.3: the sibling's own code (`-UF`) says the seat is UF and its own
+    description states a 300mm trap - the card's PP / 200mm claims for those two
+    keys never become rows. Dimensions and flush type, which the sibling's own
+    reading says nothing about, DO come from the card."""
+    from app.services.product_spec_flyer_ingest import run_propose
+
+    _product(db, "ZZT-FAM3-X", "SORENTO ONE PIECE WC ZZT-FAM3-X")
+    _product(
+        db,
+        "ZZT-FAM3-X-UF-300",
+        "SORENTO ONE PIECE WC (S-TRAP 300MM) ZZT-FAM3-X-UF-300",
+    )
+    reading = _reading(
+        db,
+        cards=[
+            _card(
+                "ZZT-FAM3-X",
+                "Twister Flushing. D: L700xW370xH735mm. S-Trap: 200mm. *PP Seat Cover",
+            )
+        ],
+    )
+    batch = _batch_row(db, reading)
+    db.commit()
+
+    run_propose(db, batch.id)
+
+    rows = _by_product_key(_proposals_for(db, batch.id))
+
+    # The base is unaffected (AC-A.5 in miniature): every key the card states lands.
+    for key in ("flush_type", "dim_length", "dim_width", "dim_height", "trap_length", "seat_material"):
+        assert ("ZZT-FAM3-X", key) in rows, f"base missing {key}"
+
+    sib_keys = {key for (code, key) in rows if code == "ZZT-FAM3-X-UF-300"}
+    assert "dim_length" in sib_keys and rows[("ZZT-FAM3-X-UF-300", "dim_length")].value == 700
+    assert "dim_width" in sib_keys and rows[("ZZT-FAM3-X-UF-300", "dim_width")].value == 370
+    assert "dim_height" in sib_keys and rows[("ZZT-FAM3-X-UF-300", "dim_height")].value == 735
+    assert "flush_type" in sib_keys
+
+    # The sibling's own reading (its code says UF, its description says 300mm)
+    # wins: the card is silent on these two keys for this product.
+    assert "seat_material" not in sib_keys
+    assert "trap_length" not in sib_keys
+
+
+def test_a_siblings_hand_set_value_still_conflicts_with_the_card(db):
+    """AC-A.4: the family filter never interferes with the ordinary conflict path -
+    a value a person set by hand on the sibling still conflicts with the card,
+    exactly as it would on the base."""
+    from app.services.product_spec_flyer_ingest import run_propose
+
+    _product(db, "ZZT-FAM4-X", "SORENTO ONE PIECE WC ZZT-FAM4-X")
+    _product(db, "ZZT-FAM4-X-150", "SORENTO ONE PIECE WC ZZT-FAM4-X-150")
+    db.commit()
+    derive_for_code(db, "ZZT-FAM4-X-150", commit=True)
+    apply_spec_values(
+        db,
+        "ZZT-FAM4-X-150",
+        [{"spec_key": "dim_height", "op": "set", "value": 740, "source": "human"}],
+        actor=_USER,
+    )
+
+    reading = _reading(
+        db, cards=[_card("ZZT-FAM4-X", "D: L700xW370xH735mm")]
+    )
+    batch = _batch_row(db, reading)
+    db.commit()
+
+    run_propose(db, batch.id)
+
+    rows = _by_product_key(_proposals_for(db, batch.id))
+    sib_row = rows[("ZZT-FAM4-X-150", "dim_height")]
+    assert sib_row.kind == "conflict"
+    assert sib_row.stored_value == 740
+    assert sib_row.stored_source == "human"
+
+
+def test_family_counts_include_siblings_and_via_count(db):
+    """AC-A.9: `product_count` counts the base and its siblings; `via_count` is
+    how many of them are siblings."""
+    from app.services.product_spec_flyer_ingest import run_propose
+
+    _product(db, "ZZT-FAM5-X", "SORENTO ONE PIECE WC ZZT-FAM5-X")
+    _product(db, "ZZT-FAM5-X-150", "SORENTO ONE PIECE WC ZZT-FAM5-X-150")
+    _product(db, "ZZT-FAM5-X-UF-300", "SORENTO ONE PIECE WC ZZT-FAM5-X-UF-300")
+    reading = _reading(db, cards=[_card("ZZT-FAM5-X", "Twister Flushing")])
+    batch = _batch_row(db, reading)
+    db.commit()
+
+    run_propose(db, batch.id)
+    db.refresh(batch)
+
+    assert batch.product_count == 3
+    assert batch.via_count == 2
+
+
+def test_family_resolution_is_one_statement_per_pass(db):
+    """AC-A.10: the sibling lookup is ONE statement for the whole pass, not one
+    per matched code - measured with a `before_cursor_execute` counter over five
+    bases, each with its own siblings."""
+    from sqlalchemy import event
+
+    from app.services.product_spec_flyer_ingest import run_propose
+
+    cards = []
+    for i in range(5):
+        base_code = f"ZZT-FAM6-X{i}"
+        _product(db, base_code, f"SORENTO ONE PIECE WC {base_code}")
+        _product(db, f"{base_code}-150", f"SORENTO ONE PIECE WC {base_code}-150")
+        _product(db, f"{base_code}-UF-300", f"SORENTO ONE PIECE WC {base_code}-UF-300")
+        cards.append(_card(base_code, "Twister Flushing"))
+    reading = _reading(db, cards=cards)
+    batch = _batch_row(db, reading)
+    db.commit()
+
+    statements: list[str] = []
+
+    def _count(conn, cursor, statement, params, context, executemany):
+        lowered = statement.lower()
+        # `substr(...) = code || '-'` is the prefix comparison `_siblings` joins
+        # on; it replaced a LIKE so a product code carrying `_` cannot behave
+        # as a wildcard.
+        if "unnest" in lowered and "substr" in lowered and "products" in lowered:
+            statements.append(statement)
+
+    event.listen(db.bind, "before_cursor_execute", _count)
+    try:
+        run_propose(db, batch.id)
+    finally:
+        event.remove(db.bind, "before_cursor_execute", _count)
+
+    assert len(statements) == 1, f"expected 1 sibling-resolution statement, got {len(statements)}"
+
+
+def test_a_base_code_carrying_an_underscore_does_not_wildcard_into_a_stranger(db):
+    """The prefix join is a comparison, not a pattern. `_` is a single-character
+    wildcard in SQL `LIKE`, so a printed `ZZT_FAM10` matched `ZZTXFAM10-P` as
+    well as its own family - and a product code is data, not a pattern."""
+    from app.services.product_spec_flyer_ingest import run_propose
+
+    _product(db, "ZZT_FAM10", "SORENTO ONE PIECE WC ZZT_FAM10")
+    _product(db, "ZZT_FAM10-P", "SORENTO ONE PIECE WC ZZT_FAM10-P")
+    _product(db, "ZZTXFAM10-P", "SORENTO ONE PIECE WC ZZTXFAM10-P")
+    reading = _reading(db, cards=[_card("ZZT_FAM10", "Twister Flushing")])
+    batch = _batch_row(db, reading)
+    db.commit()
+
+    run_propose(db, batch.id)
+
+    rows = _by_product_key(_proposals_for(db, batch.id))
+    assert rows[("ZZT_FAM10-P", "flush_type")].via_product_code == "ZZT_FAM10"
+    assert ("ZZTXFAM10-P", "flush_type") not in rows
+
+
+def test_a_siblings_hand_set_conflict_survives_even_on_a_key_it_reads_itself(db):
+    """R4 beats R2 (captain, 31 Aug): the family filter drops the card's `new` and
+    `change` proposals for a key the sibling answers itself, but NOT a `conflict`.
+    A conflict is not the card speaking about the key - it is a report that a
+    person set this value by hand and the card disagrees, and that question is
+    worth asking whether or not the sibling's description can also read it."""
+    from app.services.product_spec_flyer_ingest import run_propose
+
+    _product(db, "ZZT-FAM11-X", "SORENTO ONE PIECE WC ZZT-FAM11-X")
+    _product(
+        db,
+        "ZZT-FAM11-X-300",
+        "SORENTO ONE PIECE WC (S-TRAP 300MM) ZZT-FAM11-X-300",
+    )
+    db.commit()
+    derive_for_code(db, "ZZT-FAM11-X-300", commit=True)
+    apply_spec_values(
+        db,
+        "ZZT-FAM11-X-300",
+        [{"spec_key": "trap_length", "op": "set", "value": 250, "source": "human"}],
+        actor=_USER,
+    )
+
+    reading = _reading(db, cards=[_card("ZZT-FAM11-X", "S-Trap: 200mm")])
+    batch = _batch_row(db, reading)
+    db.commit()
+
+    run_propose(db, batch.id)
+
+    rows = _by_product_key(_proposals_for(db, batch.id))
+    row = rows[("ZZT-FAM11-X-300", "trap_length")]
+    assert row.kind == "conflict"
+    assert row.stored_value == 250
+    assert row.stored_source == "human"
+    assert row.via_product_code == "ZZT-FAM11-X"
+
+
+def test_a_fresh_pass_puts_via_count_back_to_zero_with_the_rest(db):
+    """A recompute resets every count on the batch. `via_count` is one of them:
+    a settled batch that kept an old 7 would describe rows it can no longer name,
+    which is the reason `_reset` exists at all."""
+    from app.services.product_spec_flyer_ingest import _reset
+
+    reading = _reading(db, cards=[])
+    batch = _batch_row(db, reading, status="proposed")
+    batch.via_count = 7
+    batch.product_count = 9
+    db.flush()
+
+    _reset(batch)
+
+    assert batch.via_count == 0
+    assert batch.product_count == 0
+
+
+def test_grouped_proposals_puts_each_base_ahead_of_its_own_siblings(db):
+    """AC-B.1: a sibling sorts under the card it was read from, not under its own
+    name. `ZZT-FAM12-A-5` has its own card, so plain alphabetical order would
+    push it BETWEEN `ZZT-FAM12-A` and that base's own sibling `ZZT-FAM12-A-9`,
+    and the review screen would read as one family broken in half."""
+    from app.services.product_spec_flyer_ingest import grouped_proposals, run_propose
+
+    _product(db, "ZZT-FAM12-A", "SORENTO ONE PIECE WC ZZT-FAM12-A")
+    _product(db, "ZZT-FAM12-A-5", "SORENTO ONE PIECE WC ZZT-FAM12-A-5")
+    _product(db, "ZZT-FAM12-A-9", "SORENTO ONE PIECE WC ZZT-FAM12-A-9")
+    reading = _reading(
+        db,
+        cards=[
+            _card("ZZT-FAM12-A", "Twister Flushing"),
+            _card("ZZT-FAM12-A-5", "Twister Flushing"),
+        ],
+    )
+    batch = _batch_row(db, reading)
+    db.commit()
+
+    run_propose(db, batch.id)
+    db.refresh(batch)
+
+    order = [group["product_code"] for group in grouped_proposals(db, batch)]
+    assert order == ["ZZT-FAM12-A", "ZZT-FAM12-A-9", "ZZT-FAM12-A-5"]
+    vias = {group["product_code"]: group["via_product_code"] for group in grouped_proposals(db, batch)}
+    assert vias["ZZT-FAM12-A"] is None
+    assert vias["ZZT-FAM12-A-5"] is None, "a printed code is nobody's sibling"
+    assert vias["ZZT-FAM12-A-9"] == "ZZT-FAM12-A"
+
+
+def test_a_siblings_own_reading_covers_its_product_master_columns_too(db):
+    """R2, under the engine #447 shipped: "the sibling's own reading" is the WHOLE
+    of what the catalogue would derive for it, columns included, because a column
+    is a rule row now. So a length a merchandiser typed into the product master
+    silences the card on that key, exactly as its description does."""
+    from app.services.product_spec_flyer_ingest import run_propose
+
+    _product(db, "ZZT-FAM13-X", "SORENTO ONE PIECE WC ZZT-FAM13-X")
+    sibling = _product(db, "ZZT-FAM13-X-150", "SORENTO ONE PIECE WC ZZT-FAM13-X-150")
+    sibling.dimensions_length = Decimal("800")
+    db.flush()
+
+    reading = _reading(db, cards=[_card("ZZT-FAM13-X", "D: L700xW370xH735mm")])
+    batch = _batch_row(db, reading)
+    db.commit()
+
+    run_propose(db, batch.id)
+
+    rows = _by_product_key(_proposals_for(db, batch.id))
+    assert rows[("ZZT-FAM13-X", "dim_length")].value == 700, "the base still reads the card"
+    sib_keys = {key for (code, key) in rows if code == "ZZT-FAM13-X-150"}
+    assert "dim_length" not in sib_keys, "the product master's own 800 stands"
+    assert "dim_width" in sib_keys, "a key the master is silent on still comes from the card"
+
+
+def test_the_siblings_own_reading_derives_with_its_real_category_and_the_caps(db):
+    """The own reading has to be the reading the CATALOGUE would make, or the card
+    fills a gap the catalogue does not have. `derive_for_code` passes the product's
+    category row and the configured `max_value`s; deriving with `None` for either
+    here would answer `class` differently and stop dropping implausible numbers."""
+    import app.services.product_spec_flyer_ingest as ingest
+    from app.services.product_spec_derivation import configured_max_values
+
+    _product(db, "ZZT-FAM14-X", "SORENTO ONE PIECE WC ZZT-FAM14-X")
+    sibling = _product(db, "ZZT-FAM14-X-150", "SORENTO ONE PIECE WC ZZT-FAM14-X-150")
+    reading = _reading(db, cards=[_card("ZZT-FAM14-X", "D: L700xW370xH735mm")])
+    batch = _batch_row(db, reading)
+    db.commit()
+
+    expected_caps = configured_max_values(db)
+    assert expected_caps, "fixture assumption: the seeded registry carries caps"
+
+    seen: list[tuple] = []
+    real = ingest.derive
+
+    def _record(product, category, **kwargs):
+        seen.append((product.product_code, category, kwargs.get("max_values")))
+        return real(product, category, **kwargs)
+
+    ingest.derive = _record
+    try:
+        ingest.run_propose(db, batch.id)
+    finally:
+        ingest.derive = real
+
+    assert [code for code, _, _ in seen] == [sibling.product_code]
+    _, category, max_values = seen[0]
+    assert category is not None and category.id == _REFS["cat"]
+    assert max_values == expected_caps
+
+
+# --------------------------------------------------------------------------- #
+# AC-A.5 - the base is unchanged, pinned on the real flyer
+# --------------------------------------------------------------------------- #
+def test_base_rows_on_the_real_flyer_match_the_checked_in_golden(db):
+    """AC-A.5: the family feature adds sibling rows and changes NOTHING about the
+    rows a printed code produces for itself.
+
+    Measured on `tests/fixtures/dealer_kit/flyer_sample.pdf` - three pages cut
+    from the real 2025-2026 A3 flyer, 43 cards - because the point of this test is
+    that real card text keeps reading the way it read. `SRTWC8354-SH` is given two
+    siblings so the family path is genuinely running while the base rows are
+    snapshotted; a golden taken with the feature switched off would prove nothing
+    about the feature being on.
+
+    Regenerate ONLY with a reason, and say the reason in the commit:
+    `REBLESS_FLYER_BASE_GOLDEN=1 pytest tests/test_product_spec_flyer_ingest_service.py -k golden`
+    """
+    from app.services.dealer_kit.flyer_extraction import extract_flyer
+    from app.services.product_spec_flyer_ingest import run_propose
+
+    reading = extract_flyer(_FLYER_FIXTURE.read_bytes())
+    # A code can be printed on more than one page (FG-CW06 is on 1 and 2), and it
+    # is still one product.
+    seen: set[str] = set()
+    for card in [card for page in reading.pages for card in page.cards]:
+        if card.code in seen:
+            continue
+        seen.add(card.code)
+        _product(db, card.code, card.code)
+    for suffix in ("-150", "-UF"):
+        _product(
+            db,
+            f"SRTWC8354-SH{suffix}",
+            f"SORENTO ONE PIECE WC SRTWC8354-SH{suffix}",
+        )
+
+    record = FlyerReadingRecord(
+        id=str(uuid.uuid4()),
+        filename="flyer_sample.pdf",
+        byte_size=1,
+        sha256=uuid.uuid4().hex,
+        reading_json=dk_svc.serialise(reading),
+        status="done",
+    )
+    db.add(record)
+    db.flush()
+    batch = _batch_row(db, record)
+    db.commit()
+
+    run_propose(db, batch.id)
+
+    rows = _proposals_for(db, batch.id)
+    assert any(row.via_product_code for row in rows), (
+        "the family path must be ACTIVE while the base rows are measured"
+    )
+
+    snapshot = sorted(
+        (
+            {
+                "product_code": row.product_code,
+                "spec_key": row.spec_key,
+                "value": row.value,
+                "unit": row.unit,
+                "kind": row.kind,
+                "pages": list(row.pages or []),
+                "via_product_code": row.via_product_code,
+            }
+            for row in rows
+            if row.via_product_code is None
+        ),
+        key=lambda entry: (entry["product_code"], entry["spec_key"]),
+    )
+
+    if os.environ.get("REBLESS_FLYER_BASE_GOLDEN"):
+        _BASE_ROWS_GOLDEN.write_text(
+            json.dumps(
+                {
+                    "_about": [
+                        "Every BASE proposal row the pass writes for",
+                        "tests/fixtures/dealer_kit/flyer_sample.pdf, with the family",
+                        "feature ACTIVE (SRTWC8354-SH has two siblings seeded).",
+                        "AC-A.5 of flyer-family-proposals-acceptance-criteria.md: a",
+                        "printed code's own rows are what they were before the feature.",
+                        "A diff here is a change to what the flyer pass reads, and it",
+                        "is either the point of the change or a defect - never noise.",
+                    ],
+                    "fixture": "flyer_sample.pdf",
+                    "rows": snapshot,
+                },
+                indent=1,
+            )
+            + "\n"
+        )
+
+    expected = json.loads(_BASE_ROWS_GOLDEN.read_text())["rows"]
+    assert len(snapshot) == len(expected)
+    assert snapshot == expected
+
+
+# --------------------------------------------------------------------------- #
 # Company scope - a batch belongs to the company whose flyer it was read from
 # --------------------------------------------------------------------------- #
 def test_a_batch_is_only_visible_under_its_own_companys_scope(db):
@@ -616,3 +1095,197 @@ def test_start_batch_answers_409_when_a_concurrent_press_won_the_insert(db, monk
     )
     assert [str(row.id) for row in rows] == [str(winner.id)], "one batch per reading, the winner's"
     assert rows[0].status == "proposing"
+
+
+# --------------------------------------------------------------------------- #
+# AC-C.1..C.3 - `PLAN-flyer-code-adopt.md`: propose follows an adoption, and
+# never rewrites what a reviewer already decided on a settled batch.
+#
+# No production code changes these three: `report_for` already threads
+# `record.code_overrides` through `match_reading` (S1), and `_propose` already
+# keys card text by `entry.code` - the PRINTED code - regardless of whether
+# that entry resolved on its own or by adoption. These tests exist to pin that
+# fact so a later refactor of either module cannot break it silently.
+# --------------------------------------------------------------------------- #
+def test_adopt_then_propose_writes_rows_for_the_adopted_product_from_its_printed_card(db):
+    """AC-C.1: adopt X as P, then a pass reads X's card and writes to P."""
+    from app.services.product_spec_flyer_ingest import run_propose
+
+    product = _product(db, "ZZT-FLYJOB-ADOPTP", "SORENTO ONE PIECE WC ZZT-FLYJOB-ADOPTP")
+    db.commit()
+    derive_for_code(db, "ZZT-FLYJOB-ADOPTP", commit=True)
+
+    reading = _reading(
+        db, cards=[_card("ZZT-FLYJOB-ADOPTX", "Washdown. S-Trap outlet 250mm")]
+    )
+    db.commit()
+
+    dk_svc.adopt_code(
+        db, reading, printed_code="ZZT-FLYJOB-ADOPTX", product_id=product.id
+    )
+
+    batch = _batch_row(db, reading)
+    db.commit()
+
+    run_propose(db, batch.id)
+
+    rows = _by_product_key(_proposals_for(db, batch.id))
+    row = rows[("ZZT-FLYJOB-ADOPTP", "trap_type")]
+    assert row.value == "s_trap"
+    assert row.product_id == product.id
+    assert row.product_code == "ZZT-FLYJOB-ADOPTP"
+    assert row.pages == [1], "X's pages, not P's - P was never printed"
+    assert row.origin == "flyer", "the same source as any matched card, not manual"
+    assert row.evidence, "the printed words, exactly as any matched card gets"
+
+
+def test_undo_before_a_pass_writes_no_rows_for_the_undone_product(db):
+    """AC-C.2: adopt X as P, undo, THEN a pass runs - no row names P."""
+    from app.services.product_spec_flyer_ingest import run_propose
+
+    product = _product(db, "ZZT-FLYJOB-UNDOP", "SORENTO ONE PIECE WC ZZT-FLYJOB-UNDOP")
+    db.commit()
+    derive_for_code(db, "ZZT-FLYJOB-UNDOP", commit=True)
+
+    reading = _reading(
+        db, cards=[_card("ZZT-FLYJOB-UNDOX", "Washdown. S-Trap outlet 250mm")]
+    )
+    db.commit()
+
+    dk_svc.adopt_code(
+        db, reading, printed_code="ZZT-FLYJOB-UNDOX", product_id=product.id
+    )
+    dk_svc.unadopt_code(db, reading, printed_code="ZZT-FLYJOB-UNDOX")
+
+    batch = _batch_row(db, reading)
+    db.commit()
+
+    run_propose(db, batch.id)
+
+    rows = _proposals_for(db, batch.id)
+    assert rows == [], "the code is unmatched again, so its card is ignored, exactly like any unmatched code"
+
+
+def _row_snapshot(rows: list[ProductSpecFlyerProposal]) -> list[dict]:
+    """Every field a reviewer's edit or dismissal could touch, by row id, in a
+    stable order - so the comparison catches ANY change, not just the ones this
+    test remembered to name."""
+    return sorted(
+        (
+            {
+                "id": str(row.id),
+                "batch_id": str(row.batch_id),
+                "product_id": str(row.product_id),
+                "product_code": row.product_code,
+                "pages": row.pages,
+                "spec_key": row.spec_key,
+                "value": row.value,
+                "unit": row.unit,
+                "evidence": row.evidence,
+                "kind": row.kind,
+                "stored_value": row.stored_value,
+                "stored_unit": row.stored_unit,
+                "stored_source": row.stored_source,
+                "origin": row.origin,
+                "edited_at": row.edited_at,
+                "edited_by": row.edited_by,
+                "outcome": row.outcome,
+                "applied_at": row.applied_at,
+                "applied_by": row.applied_by,
+                "created_at": row.created_at,
+            }
+            for row in rows
+        ),
+        key=lambda item: item["id"],
+    )
+
+
+def test_adopt_and_undo_never_touch_a_settled_batchs_rows_edits_or_dismissals(db):
+    """AC-C.3: a settled batch with one edited row and one dismissed row is
+    byte-for-byte unchanged by adopting, or undoing, a DIFFERENT code on the
+    same reading."""
+    from app.services.product_spec_flyer_ingest import (
+        delete_proposal,
+        edit_proposal,
+        run_propose,
+    )
+
+    product_a = _product(db, "ZZT-FLYJOB-C3-A", "SORENTO ONE PIECE WC ZZT-FLYJOB-C3-A")
+    product_b = _product(
+        db, "ZZT-FLYJOB-C3-B", "SORENTO CERAMIC ART BASIN ONLY BLACK ZZT-FLYJOB-C3-B"
+    )
+    product_c = _product(db, "ZZT-FLYJOB-C3-C", "SORENTO ONE PIECE WC ZZT-FLYJOB-C3-C")
+    db.commit()
+    derive_for_code(db, "ZZT-FLYJOB-C3-A", commit=True)
+    derive_for_code(db, "ZZT-FLYJOB-C3-B", commit=True)
+    derive_for_code(db, "ZZT-FLYJOB-C3-C", commit=True)
+
+    reading = _reading(
+        db,
+        cards=[
+            _card("ZZT-FLYJOB-C3-A", "Washdown. S-Trap outlet 250mm"),
+            _card("ZZT-FLYJOB-C3-B", "Chrome finish"),
+            # Unmatched at propose time - adopted only after the batch settles.
+            _card("ZZT-FLYJOB-C3-UNMATCHED", "Two year warranty. Please contact your dealer."),
+        ],
+    )
+    batch = _batch_row(db, reading)
+    db.commit()
+
+    run_propose(db, batch.id)
+    db.refresh(batch)
+    assert batch.status == "proposed"
+
+    rows = _by_product_key(_proposals_for(db, batch.id))
+    edited_row = rows[("ZZT-FLYJOB-C3-A", "trap_type")]
+    dismissed_row = rows[("ZZT-FLYJOB-C3-B", "finish")]
+
+    edit_proposal(db, batch, edited_row, value="p_trap", user=_USER)
+    delete_proposal(db, batch, dismissed_row)
+
+    before_rows = _row_snapshot(_proposals_for(db, batch.id))
+    assert dismissed_row.id not in {row["id"] for row in before_rows}
+    before_batch = {
+        "status": batch.status,
+        "proposal_count": batch.proposal_count,
+        "product_count": batch.product_count,
+        "new_count": batch.new_count,
+        "change_count": batch.change_count,
+        "conflict_count": batch.conflict_count,
+        "unchanged_count": batch.unchanged_count,
+        "suppressed_count": batch.suppressed_count,
+        "applied_count": batch.applied_count,
+        "finished_at": batch.finished_at,
+    }
+
+    dk_svc.adopt_code(
+        db,
+        reading,
+        printed_code="ZZT-FLYJOB-C3-UNMATCHED",
+        product_id=product_c.id,
+    )
+    # Each half on its own: an adopt that corrupted the batch and an undo that
+    # happened to put it back would pass a single comparison after the pair.
+    db.expire_all()
+    assert _row_snapshot(_proposals_for(db, batch.id)) == before_rows
+
+    dk_svc.unadopt_code(db, reading, printed_code="ZZT-FLYJOB-C3-UNMATCHED")
+
+    db.expire_all()
+    after_rows = _row_snapshot(_proposals_for(db, batch.id))
+    assert after_rows == before_rows
+
+    batch = db.query(ProductSpecFlyerBatch).filter_by(id=batch.id).one()
+    after_batch = {
+        "status": batch.status,
+        "proposal_count": batch.proposal_count,
+        "product_count": batch.product_count,
+        "new_count": batch.new_count,
+        "change_count": batch.change_count,
+        "conflict_count": batch.conflict_count,
+        "unchanged_count": batch.unchanged_count,
+        "suppressed_count": batch.suppressed_count,
+        "applied_count": batch.applied_count,
+        "finished_at": batch.finished_at,
+    }
+    assert after_batch == before_batch

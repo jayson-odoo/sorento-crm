@@ -738,6 +738,12 @@ class PriorityPolicy(Base):
         Date, nullable=False, default=date(2029, 1, 1),
         server_default=text("'2029-01-01'::date"),
     )
+    # The flat 2-day transfer charge (`front_planning_engine.TRANSFER_DAYS`) retired 31 Aug
+    # (R-B): an option whose stock is not already at the asking line's own bin used to be
+    # charged a hard-coded 2 days, and the captain asked for it to be configurable, default
+    # 0. Migration 451. NOT NULL - an unconfigured install charges nothing rather than
+    # falling back to a guessed number.
+    transfer_days = Column(Integer, nullable=False, default=0, server_default=text("0"))
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(
         DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False

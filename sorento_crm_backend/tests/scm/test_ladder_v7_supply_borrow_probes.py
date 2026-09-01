@@ -379,12 +379,15 @@ def test_a_decided_donors_document_moves_and_its_revision_is_reissued_minus_that
 
 
 def test_the_placement_still_writes_when_the_askers_own_group_is_in_deficit():
-    """PLAN 3.3's closing paragraph: the link is written through `place_on_po_allocations`'
-    MANUAL reading, which ladder v4's group-deficit rule (`_groups_in_deficit`) does not
-    gate - "a group in deficit is the ordinary case for the very unit this step is
-    borrowing for". If a future change accidentally routed this write through the
-    AUTOMATIC reading instead, a PO-line borrow at a group already short of its own backlog
-    would silently write nothing.
+    """PLAN 3.3's closing paragraph: the link the AUTOMATIC step-3 reading writes on
+    Confirm is not gated by ladder v4's group-deficit rule (`_groups_in_deficit`) -
+    "a group in deficit is the ordinary case for the very unit this step is borrowing for".
+
+    Document swapped PO -> SPO 31 Aug (`PLAN-scm-planning-feedback-31aug.md` S1, R-A): a PO
+    is no longer offered by step 3 at all, so the donor-held document a deficit-group asker
+    can still borrow through the AUTOMATIC reading is an SPO. Unlike a PO, an open SPO
+    counts in `group_net` regardless of who holds it, so the fixture's deficit assertion
+    reads the net as computed rather than adding the document's qty back by hand.
     """
     with blank_session() as db:
         company_id, eling, project, product = _world(db)
@@ -392,24 +395,25 @@ def test_the_placement_still_writes_when_the_askers_own_group_is_in_deficit():
         own, _pool = sites["BRW"]
         # A SIBLING SITE of the asker's OWN ownership group (`group_of_warehouse_code`
         # reads the suffix, which both sites share), not an ungrouped warehouse: the
-        # deficit gate keys off the GROUP, and `_groups_in_deficit` skips a PO line whose
+        # deficit gate keys off the GROUP, and `_groups_in_deficit` skips a document whose
         # warehouse carries no group at all (every OTHER S4 fixture's `other`/`donor_bin`
         # is ungrouped for exactly that reason, so none of them exercises this gate).
         donor_bin, _pool2 = sites["MWH"]
+        # The PO fixture this test used to seed a `ProductSupplier` lead time as a side
+        # effect (`_po`'s own `lead_days`); the SPO fixture does not, so it is set
+        # explicitly - without it the product falls back to the 90-day default lead,
+        # which pushes the donor's window past `DONOR_DAY` and makes it ineligible.
+        _lead_time(db, product, LEAD_DAYS)
         _policy(db)
 
-        # A later order at the SAME group HOLDS the PO through a placement, its own SO_QTY
-        # counting against the group same as the asker's - with no on-hand and no SPO
-        # anywhere in the group, the group's plain net is already negative before the PO's
-        # own (uncounted, since `net` is SPO not PO) balance is added back.
-        issue = date.today() + timedelta(days=LATE_ARRIVAL_DAY - LEAD_DAYS)
-        _po_doc, po_lines = _po(
-            db, product, donor_bin, qty=30, issue_date=issue, lead_days=LEAD_DAYS,
-        )
+        # A later order at the SAME group HOLDS the SPO through a placement, its own
+        # SO_QTY counting against the group same as the asker's.
+        arrives = date.today() + timedelta(days=LATE_ARRIVAL_DAY)
+        allocation = _spo(db, product, donor_bin, qty=30, arrives=arrives)
         agent = _agent(db, f"ZZTDEF{_uid()[:4]}")
         donor_so, _donor_core, _donor_mirror, _link = _donor_holding(
             db, company_id, project, product, donor_bin, qty=30, days=DONOR_DAY,
-            actor=eling, po_line=po_lines[0],
+            actor=eling, allocation=allocation,
             so_number=f"ZZTSO-DEFICIT{_uid()[:4]}", agent_id=agent.id,
         )
 
@@ -423,7 +427,7 @@ def test_the_placement_still_writes_when_the_askers_own_group_is_in_deficit():
         net_before = netting_for_products(db, [str(product.id)]).group_net(
             str(product.id), _group
         ).net
-        assert net_before + Decimal("30") < 0, (
+        assert net_before < 0, (
             "fixture must actually put the group in deficit before asserting the write "
             "survives it",
             net_before,
@@ -433,7 +437,7 @@ def test_the_placement_still_writes_when_the_askers_own_group_is_in_deficit():
 
         links = (
             db.query(OrderInquiryLink)
-            .filter(OrderInquiryLink.po_line_id == po_lines[0].id)
+            .filter(OrderInquiryLink.spo_allocation_id == allocation.id)
             .all()
         )
         rows = (

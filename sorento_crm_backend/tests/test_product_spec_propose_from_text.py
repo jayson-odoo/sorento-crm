@@ -33,10 +33,10 @@ from app.models.product import Brand, Product, ProductCategory, UnitOfMeasure
 from app.models.product_spec import ProductFlyerText, ProductSpecifications
 from app.services.product_class_signal import backfill_category_signals
 from app.services.product_spec_derivation import (
-    _DESCRIPTION_FIRST_KEYS,
     _input_hash,
     derive,
     derive_for_code,
+    description_first_keys,
     propose_from_text,
 )
 from tests._pg_fixture import blank_session
@@ -157,7 +157,7 @@ def test_description_first_is_true_only_for_the_description_first_keys():
     by_key = _by_key(proposals)
 
     for key, item in by_key.items():
-        assert item["description_first"] == (key in _DESCRIPTION_FIRST_KEYS), key
+        assert item["description_first"] == (key in description_first_keys()), key
 
 
 # --------------------------------------------------------------------------- #

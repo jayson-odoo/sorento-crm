@@ -40,9 +40,11 @@ _FINGERPRINT_KEY = "_derived_rules_fingerprint"
 def rules_fingerprint(db: Session) -> str:
     """A stable hash of how every key is read. Changes when any of it is edited.
 
-    Covers the rules AND the scope, because both decide what a product ends up
-    carrying: narrowing `has_drainer` to Kitchen Sink changes 74 rows without touching
-    a single rule, and the screen has to say the catalogue is out of date for that too.
+    Covers the rules, the scope AND the cap, because all three decide what a product
+    ends up carrying: narrowing `has_drainer` to Kitchen Sink changes 74 rows without
+    touching a single rule, and dropping `dim_length`'s cap from 5000 to 500 changes
+    every reading over 500 without touching a rule OR a scope - the screen has to say
+    the catalogue is out of date for that too (S2).
     """
     import hashlib
 
@@ -51,12 +53,16 @@ def rules_fingerprint(db: Session) -> str:
             ProductSpecRegistry.spec_key,
             ProductSpecRegistry.derivation_rules,
             ProductSpecRegistry.applies_when,
+            ProductSpecRegistry.max_value,
         )
         .order_by(ProductSpecRegistry.spec_key)
         .all()
     )
     payload = json.dumps(
-        {key: {"rules": rules, "scope": scope} for key, rules, scope in rows},
+        {
+            key: {"rules": rules, "scope": scope, "max_value": str(max_value)}
+            for key, rules, scope, max_value in rows
+        },
         sort_keys=True,
         default=str,
     )

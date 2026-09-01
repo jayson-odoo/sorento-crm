@@ -747,3 +747,29 @@ def test_a_release_can_correct_a_rule_it_shipped(db):
     assert "SCREW" not in patterns, "the superseded seed rule survived and still fires first"
     assert any("W/O" in p for p in patterns), "the corrected rule was not installed"
     assert "MOUNTING KIT" in patterns, "a human's own rule must never be removed by a seed"
+
+
+def test_the_rules_fingerprint_moves_when_max_value_changes(db):
+    """S2: `catalogue-status` compares this fingerprint against the one stored at the
+    last re-derive to say "the rules have changed since this was last read" -
+    dropping `dim_length`'s cap from 5000 to 500 changes every reading over 500
+    without touching a rule or a scope, and the screen has to say so too."""
+    from app.services.product_spec_rederive import rules_fingerprint
+
+    row = ProductSpecRegistry(
+        spec_key="zzt_fingerprint_key",
+        label="ZZT",
+        data_type="numeric",
+        unit="mm",
+        max_value=5000,
+    )
+    db.add(row)
+    db.flush()
+
+    before = rules_fingerprint(db)
+
+    row.max_value = 500
+    db.flush()
+    after = rules_fingerprint(db)
+
+    assert before != after

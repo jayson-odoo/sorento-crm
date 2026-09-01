@@ -899,6 +899,61 @@ for _key, _entity, _fn, _label in (
     )
 
 
+def _undo_flyer_code_adopt(db: Session, payload: dict):
+    """"This printed code is NOT that product" - undoing an adoption (D7, S1).
+
+    There is no row of its own to key a pending action on: the thing being
+    detached is one entry inside a reading's `code_overrides` JSONB map, not a
+    record with an id. So the entity id names BOTH (`<reading id>:<printed
+    code>`), the same shape `_clear_product_spec_value` above uses for a
+    product's spec value - and like that one, this reads BOTH out of the id
+    rather than trusting separate payload fields, which is what
+    `test_every_handler_resolves_its_service_import` drives every handler
+    with (no `reading_id`/`printed_code` keys, only a bare `entity_id`).
+
+    A reading id is a fixed 36-char UUID, so this SLICES at that width rather
+    than splitting on the first ':' - a printed code never contains one, but
+    slicing also never raises on an entity id that has no colon at all (the
+    harness's bare-uuid stand-in), where a `str.split(":", 1)` unpack would
+    raise `ValueError` before ever reaching `db` and fail that test for the
+    wrong reason.
+
+    Same service call the DELETE route makes (`flyer_reading_service.
+    unadopt_code`) - the deferred path changes WHEN this runs, never what it
+    does.
+    """
+    from app.services.dealer_kit import flyer_reading_service
+
+    entity_id = _entity_id(payload)
+    reading_id, printed_code = entity_id[:36], entity_id[37:]
+    record = flyer_reading_service.get_reading(db, reading_id)
+    return flyer_reading_service.unadopt_code(db, record, printed_code=printed_code)
+
+
+register(
+    FormAction(
+        key="flyer_code_adoption.undo",
+        entity_types=("flyer_code_adoption",),
+        execute=_undo_flyer_code_adopt,
+        # Reversible, not destructive: re-adopting the same code afterwards
+        # writes the same key back (AC-A.4), and nothing already applied to
+        # the product is touched either way the window resolves (R2).
+        window=WINDOW_REVERSIBLE,
+        # `master_data.products.edit` only - the direct DELETE route also
+        # requires `dealer_kit.page.view`, and this generic route checks ONE
+        # slug. Narrowing that pair to its write half is a deliberate,
+        # reviewed call for this action: `products.edit` is the permission
+        # that actually authorises the write (which product a code means),
+        # `page.view` scopes which readings a caller may look at, and this
+        # path is reached from the button on a reading the caller is already
+        # looking at, gated by the page's own view permission before the
+        # button ever renders.
+        permission="master_data.products.edit",
+        label="Undo code adoption",
+    )
+)
+
+
 # ----- SCM ------------------------------------------------------------------------------
 
 

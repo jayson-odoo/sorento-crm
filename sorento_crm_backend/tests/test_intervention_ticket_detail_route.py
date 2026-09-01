@@ -21,7 +21,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 
-from app.models.access import AccessAgent, AgentTeam, RespondContact, Team
+from app.models.access import AccessAgent, AgentTeam, RespondContact, Team, TeamMember
 from app.models.sla import SLAPolicy, SLAPolicyTier
 from app.models.user import User
 from app.schemas.sla import ConversationSLATrackingCreate
@@ -182,6 +182,7 @@ def test_happy_path_assignee_gets_the_drawer_contract(client, db):
     assert body["source_message_id"] == "wamid.msg-1"
     assert body["can_send"] is True
     assert body["can_resolve"] is True
+    assert body["is_assignee"] is True
     assert body["send_capabilities"] == ["text", "attachment"]
     assert "window" in body
     assert "chat_template" in body
@@ -265,3 +266,98 @@ def test_ticket_detail_route_offloads_to_a_threadpool(client, db, monkeypatch):
 
     assert resp.status_code == 200, resp.text
     assert calls, "GET .../ticket must offload via run_in_threadpool, not call it inline"
+
+
+# --------------------------------------------------------------------------- #
+# Assignee-only resolve (My Team can now open the drawer via the row-click
+# fix - a visible teammate must not also be able to CLOSE someone else's
+# clock from it). Mirrors can_user_act_on_tracking's visibility rule: a
+# teammate is added to the SAME team as the assignee via TeamMember (a
+# separate table from AgentTeam, which only routes the ticket itself).
+# --------------------------------------------------------------------------- #
+
+
+def _add_teammate(db, seed) -> str:
+    teammate_id = str(uuid.uuid4())
+    db.add(User(id=teammate_id, email="teammate@test.com", name="Team Mate"))
+    db.commit()
+    # AgentTeam already points seed["team_id"]-equivalent at the assignee's
+    # routing team; TeamMember is the separate visibility table both
+    # can_user_act_on_tracking and _visible_team_ids read.
+    team_id = db.query(AgentTeam).filter(
+        AgentTeam.code == seed["team_set_code"]
+    ).first().team_id
+    db.add(TeamMember(id=str(uuid.uuid4()), team_id=team_id, user_id=teammate_id))
+    db.add(TeamMember(id=str(uuid.uuid4()), team_id=team_id, user_id=seed["assignee_id"]))
+    db.commit()
+    return teammate_id
+
+
+def test_can_resolve_is_false_for_a_visible_non_assignee_teammate(client, db):
+    seed = _seed(db)
+    tracking = _create_ticket(db, seed)
+    teammate_id = _add_teammate(db, seed)
+    _act_as(teammate_id)
+
+    resp = client.get(f"{BASE}/{tracking.id}/ticket")
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    # Visible (My Team can open the drawer), but not resolvable - reading is
+    # wider than resolving.
+    assert body["can_resolve"] is False
+    assert body["assignee_name"] == "Agent One"
+    # Drives the drawer's Takeover affordance: a viewer with no team-visible
+    # queue for the assignee gets None here rather than a wrong team.
+    assert body["is_assignee"] is False
+
+
+def test_resolve_route_blocks_a_visible_non_assignee_teammate(client, db, monkeypatch):
+    monkeypatch.setattr(
+        UserPermissionService, "check_user_has_permission", lambda self, uid, slug: True
+    )
+    seed = _seed(db)
+    tracking = _create_ticket(db, seed)
+    teammate_id = _add_teammate(db, seed)
+    _act_as(teammate_id)
+
+    resp = client.post(f"{BASE}/{tracking.id}/resolve")
+
+    assert resp.status_code == 400, resp.text
+    db.expire_all()
+    assert (
+        ConversationSLATrackingService(db).get_tracking(str(tracking.id)).is_resolved
+        is False
+    )
+
+
+def test_resolve_route_allows_the_assignee(client, db, monkeypatch):
+    monkeypatch.setattr(
+        UserPermissionService, "check_user_has_permission", lambda self, uid, slug: True
+    )
+    seed = _seed(db)
+    tracking = _create_ticket(db, seed)
+    _act_as(seed["assignee_id"])
+
+    resp = client.post(f"{BASE}/{tracking.id}/resolve")
+
+    assert resp.status_code == 200, resp.text
+
+
+def test_resolve_route_allows_an_admin_who_is_not_the_assignee(client, db, monkeypatch):
+    monkeypatch.setattr(
+        UserPermissionService, "check_user_has_permission", lambda self, uid, slug: True
+    )
+    seed = _seed(db)
+    tracking = _create_ticket(db, seed)
+    teammate_id = _add_teammate(db, seed)
+    monkeypatch.setattr(
+        UserPermissionService,
+        "get_user_role_slugs",
+        lambda self, uid: {"admin"} if str(uid) == teammate_id else set(),
+    )
+    _act_as(teammate_id)
+
+    resp = client.post(f"{BASE}/{tracking.id}/resolve")
+
+    assert resp.status_code == 200, resp.text

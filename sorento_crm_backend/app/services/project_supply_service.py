@@ -1305,6 +1305,7 @@ class ProjectSupplyService:
             as_of=as_of,
             lead_time_days=self._lead_time_days(fact.product_id),
             fulfilment_location=fact.own_code,
+            transfer_days=int(self._fulfilment_settings().get("transfer_days") or 0),
             group_code=fact.group_code,
             is_dealer_hot_selling=fact.is_dealer_hot_selling,
             is_project_hot_selling=fact.is_project_hot_selling,
@@ -2470,11 +2471,21 @@ class ProjectSupplyService:
         supply_left: Optional[MutableMapping[str, Decimal]] = None,
         need: Optional[Decimal] = None,
     ) -> List[Dict[str, Any]]:
-        """Step 3 (R27, R30, R32, R33, R35): the ONE document that covers the whole unit.
+        """Step 3 (R32, R33): the ONE document that covers the whole unit.
 
-        A supply event - an SPO allocation, or a purchase-order line net of the SPO cut from
-        it - is a candidate when it is ELIGIBLE and when the whole of this unit can be met
-        off it alone. Everything else about the step follows from those two words.
+        A supply event - an SPO allocation - is a candidate when it is ELIGIBLE and when the
+        whole of this unit can be met off it alone. Everything else about the step follows
+        from those two words.
+
+        **Incoming means SPO** (31 Aug ruling, R-A, retiring R27/R29/R30/R35's PO half). A
+        PO is still ON ORDER with a computed date, not goods on the water, and "Borrow
+        incoming"/"Use incoming" must never name one - the captain's own production row
+        named `202607-S0067`, a real PO issued with no expected date, as the thing a
+        planner was told to borrow. A unit only a PO could cover falls through to the pool
+        step and then to Buy; that is the point, not a regression. The ASSIGNMENT still
+        reads purchase orders - the SPO cut out of a PO is still netted (`_po_rows`), the
+        stock table's "PO qty" column is unchanged, and Stock Debt reads the same rows -
+        only this step stops OFFERING one.
 
         **Eligible** (R32): it arrives by the asker's own date, OR before a fresh purchase
         raised today would land (`as_of + lead`). The second half is the captain's, on
@@ -2482,15 +2493,15 @@ class ProjectSupplyService:
         it is the earliest thing the ladder still has.
 
         **One document, whole** (R33): the quantity available off ONE event has to cover the
-        unit. An SPO of 5 beside a PO of 7 does not cover a unit of 12, and the walk moves
+        unit. An SPO of 5 beside an SPO of 7 does not cover a unit of 12, and the walk moves
         on rather than promising one delivery on two dates. That is why this returns the
         rows of a single document and not a merged list - the engine walks what it is given,
         and a flat list of every eligible document would let it combine them.
 
-        **SPO before PO, and a PO only when no single SPO covers** (R27, R30, R35). An SPO
-        is ARRIVING; a PO is still ON ORDER, and the SPO placed on it is already netted out
-        of it (`_po_rows`). Nearest arrival first inside each family, then R19's donor order
-        so two documents landing the same day are broken the way every other donor list is.
+        **Nearest arrival wins.** Every candidate here is an SPO - ARRIVING, cut from a
+        purchase order and put on a shipment - so the ordering is nearest arrival first,
+        then R19's donor order so two documents landing the same day are broken the way
+        every other donor list is.
 
         **What is available off one document** is three things added together: what nobody
         has been promised (`free` in the assignment), what the walk has ALREADY GIVEN THIS
@@ -2561,7 +2572,7 @@ class ProjectSupplyService:
                 # availability, which is what this step measures.
                 for item in row.assigned:
                     event = item.event
-                    if event.kind not in (SA_KIND_SPO, SA_KIND_PO) or event.is_pool:
+                    if event.kind != SA_KIND_SPO or event.is_pool:
                         continue
                     mine_by_event[str(event.key)] = mine_by_event.get(
                         str(event.key), _ZERO
@@ -2574,7 +2585,7 @@ class ProjectSupplyService:
             donor_group = sales_agent_service.group_of_warehouse_code(row.line.warehouse)
             for item in row.assigned:
                 event = item.event
-                if event.kind not in (SA_KIND_SPO, SA_KIND_PO) or event.is_pool:
+                if event.kind != SA_KIND_SPO or event.is_pool:
                     continue
                 qty = max(_dec(item.qty), _ZERO)
                 if qty <= _ZERO:
@@ -2598,7 +2609,7 @@ class ProjectSupplyService:
 
         documents: List[Tuple[tuple, str, List[Dict[str, Any]]]] = []
         for event in result.supply:
-            if event.kind not in (SA_KIND_SPO, SA_KIND_PO) or event.is_pool:
+            if event.kind != SA_KIND_SPO or event.is_pool:
                 continue
             if not event.warehouse:
                 # NOT A DOCUMENT THIS STEP MAY NAME. `assign()` honours a pinned hold whose
@@ -2643,9 +2654,10 @@ class ProjectSupplyService:
             documents.append(
                 (
                     (
-                        # SPO before PO (R27, R35), then nearest arrival, then R19's donor
-                        # order, then the document itself so two runs cannot disagree.
-                        0 if event.kind == SA_KIND_SPO else 1,
+                        # Nearest arrival, then R19's donor order, then the document itself
+                        # so two runs cannot disagree. R27/R35's SPO-before-PO ordering is
+                        # retired with the PO half of this step (31 Aug ruling, R-A): every
+                        # candidate reaching here is already an SPO.
                         arrival,
                         min(
                             (self._donor_order(entry) for entry in held),

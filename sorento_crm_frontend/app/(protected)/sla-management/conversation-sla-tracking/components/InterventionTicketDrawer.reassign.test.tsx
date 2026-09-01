@@ -55,8 +55,10 @@ const USERS = [
   { id: 'u-2', name: 'Ben Lim', email: 'ben@sorento.test', respond_linked: false },
 ];
 const reassignMutate = vi.fn();
+const takeoverMutate = vi.fn();
 vi.mock('../hooks/useTeamPendingSLA', () => ({
   useReassignSLATracking: () => ({ mutate: reassignMutate, isPending: false }),
+  useTakeoverSLATracking: () => ({ mutate: takeoverMutate, isPending: false }),
   useVisibleUsers: () => ({ data: USERS, isLoading: false, error: null }),
 }));
 
@@ -100,6 +102,8 @@ function makeTicket(over: Partial<InterventionTicketDetail> = {}): InterventionT
     resolved_at: null,
     can_send: true,
     can_resolve: true,
+    is_assignee: true,
+    assignee_team_id: 'team-1',
     send_capabilities: ['text', 'attachment'],
     window: { open: true, expires_at: null },
     chat_template: null,

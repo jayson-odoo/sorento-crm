@@ -402,6 +402,9 @@ class MatchedCodeOut(BaseModel):
     # Every page it was printed on, not just the first. A reviewer is holding the
     # flyer, and "it is wrong somewhere" is not a correction anybody can make.
     pages: list[int] = Field(default_factory=list)
+    # True when a reviewer said "this is that product" (`adopt_code`) rather
+    # than the master already agreeing on its own (PLAN-flyer-code-adopt.md).
+    adopted: bool = False
 
 
 class UnmatchedCodeOut(BaseModel):
@@ -528,6 +531,12 @@ class FlyerReadingOut(FlyerReadingSummary):
 
     report: MatchReportOut
     headings: list[PageHeadingOut] = Field(default_factory=list)
+    # Null until the first adoption. Compared against a spec proposal batch's
+    # `createdAt` to show the "propose again" hint (AC-C.4, S2) - the only
+    # reason it is a timestamp rather than a boolean.
+    code_overrides_changed_at: Optional[datetime] = Field(
+        default=None, serialization_alias="codeOverridesChangedAt"
+    )
 
 
 class FlyerReadingFromAttachmentIn(BaseModel):
@@ -713,6 +722,23 @@ class DimensionApplyOut(BaseModel):
     refused: list[RefusedDimensionOut] = Field(default_factory=list)
     applied_count: int = Field(default=0, serialization_alias="appliedCount")
     refused_count: int = Field(default=0, serialization_alias="refusedCount")
+
+
+# ---------------------------------------------------------------------------
+# Adopting a printed code as an existing product (PLAN-flyer-code-adopt.md, S1)
+# ---------------------------------------------------------------------------
+
+
+class CodeOverrideIn(BaseModel):
+    """Which product a printed code IS. Nothing else is asked for.
+
+    The dialog's suggestion is a default in the FRONTEND only - the server has
+    no opinion on which product is chosen (R4).
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    product_id: UUID = Field(validation_alias="productId")
 
 
 class SelectionCreate(BaseModel):
@@ -989,6 +1015,10 @@ class FlyerSpecBatchOut(BaseModel):
     unchanged_count: int = 0
     suppressed_count: int = 0
     applied_count: int = 0
+    # How many of `product_count` came from a family card rather than their own
+    # printed code (PLAN-flyer-family-proposals.md, AC-A.9). Zero on a batch
+    # with no families.
+    via_count: int = 0
 
     read_at: Optional[datetime] = None
     created_at: Optional[datetime] = None
@@ -1040,6 +1070,10 @@ class FlyerSpecProductGroupOut(BaseModel):
     product_code: str
     product_name: str
     pages: list[int] = Field(default_factory=list)
+    # The printed code whose card filled this group's gaps, when this product was
+    # never itself printed on the flyer (PLAN-flyer-family-proposals.md R1). Null
+    # on the base itself and on any product proposed from its own card.
+    via_product_code: Optional[str] = None
     proposals: list[FlyerSpecProposalOut] = Field(default_factory=list)
 
 

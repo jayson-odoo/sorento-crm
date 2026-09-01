@@ -201,6 +201,7 @@ def _proposal(
     stored_source=None,
     pages=(1,),
     origin: str | None = None,
+    via_product_code: str | None = None,
 ) -> ProductSpecFlyerProposal:
     kwargs: dict = {}
     if origin is not None:
@@ -224,6 +225,7 @@ def _proposal(
         stored_value=stored_value,
         stored_unit=stored_unit,
         stored_source=stored_source,
+        via_product_code=via_product_code,
         **kwargs,
     )
     db.add(row)
@@ -523,6 +525,40 @@ def test_get_proposals_groups_rows_by_product_for_a_proposed_batch(api, db):
     assert proposal["spec_key"] == "trap_type"
     assert proposal["value"] == "s_trap"
     assert proposal["kind"] == "new"
+
+
+# --------------------------------------------------------------------------- #
+# PLAN-flyer-family-proposals.md AC-A.8 - via_product_code / via_count on the wire
+# --------------------------------------------------------------------------- #
+def test_get_proposals_carries_via_product_code_null_on_the_base(api, db):
+    client, allow = api
+    allow.update({_VIEW, _EDIT})
+    base = _product(db, "ZZT-FLYRT-VIA1", "SORENTO ONE PIECE WC ZZT-FLYRT-VIA1")
+    sibling = _product(db, "ZZT-FLYRT-VIA1-UF", "SORENTO ONE PIECE WC ZZT-FLYRT-VIA1-UF")
+    reading = _reading(db, cards=[_card("ZZT-FLYRT-VIA1", "Twister Flushing")])
+    batch = _batch(
+        db, reading, status="proposed", proposal_count=2, product_count=2, new_count=2, via_count=1
+    )
+    _proposal(db, batch, base, spec_key="flush_type", value="twister", kind="new")
+    _proposal(
+        db,
+        batch,
+        sibling,
+        spec_key="flush_type",
+        value="twister",
+        kind="new",
+        via_product_code="ZZT-FLYRT-VIA1",
+    )
+    db.commit()
+
+    response = client.get(_GET_PROPOSALS.format(reading.id))
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["via_count"] == 1
+    groups_by_code = {g["product_code"]: g for g in body["groups"]}
+    assert groups_by_code["ZZT-FLYRT-VIA1"]["via_product_code"] is None
+    assert groups_by_code["ZZT-FLYRT-VIA1-UF"]["via_product_code"] == "ZZT-FLYRT-VIA1"
 
 
 # --------------------------------------------------------------------------- #
@@ -840,6 +876,53 @@ def test_apply_writes_through_exactly_one_call_per_product_with_flyer_provenance
     assert by_key["trap_type"]["evidence"] == "flyer ZZT-C3-Flyer.pdf: S-TRAP OUTLET"
     assert by_key["dim_length"]["unit"] == "mm"
     assert by_key["dim_length"]["evidence"] == "flyer ZZT-C3-Flyer.pdf: L680"
+
+
+# --------------------------------------------------------------------------- #
+# PLAN-flyer-family-proposals.md AC-A.6 - apply on a sibling row
+# --------------------------------------------------------------------------- #
+def test_apply_writes_a_sibling_row_with_the_card_named_in_its_evidence(api, db):
+    client, allow = api
+    allow.update({_VIEW, _EDIT})
+    _base = _product(db, "ZZT-FLYRT-VIA2", "SORENTO ONE PIECE WC ZZT-FLYRT-VIA2")
+    sibling = _product(
+        db, "ZZT-FLYRT-VIA2-UF-300", "SORENTO ONE PIECE WC ZZT-FLYRT-VIA2-UF-300"
+    )
+    db.commit()
+    derive_for_code(db, "ZZT-FLYRT-VIA2-UF-300", commit=True)
+
+    reading = _reading(
+        db,
+        filename="ZZT-VIA2-Flyer.pdf",
+        cards=[_card("ZZT-FLYRT-VIA2", "D: L700xW370xH735mm")],
+    )
+    batch = _batch(db, reading)
+    proposal = _proposal(
+        db,
+        batch,
+        sibling,
+        spec_key="dim_length",
+        value=700,
+        kind="new",
+        unit="mm",
+        evidence="L700",
+        via_product_code="ZZT-FLYRT-VIA2",
+    )
+    db.commit()
+
+    response = client.post(_APPLY.format(reading.id), json={"proposal_ids": [str(proposal.id)]})
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["refused"] == []
+    assert body["applied"][0]["product_code"] == "ZZT-FLYRT-VIA2-UF-300"
+
+    stored = _spec_of(db, sibling.id)
+    assert stored.values["dim_length"]["value"] == 700
+    assert stored.provenance["dim_length"]["source"] == "flyer"
+    evidence = stored.provenance["dim_length"]["evidence"]
+    assert "L700" in evidence
+    assert "(card ZZT-FLYRT-VIA2)" in evidence
 
 
 # --------------------------------------------------------------------------- #

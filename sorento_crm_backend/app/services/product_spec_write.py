@@ -394,6 +394,7 @@ def apply_spec_values(
     commit: bool = True,
     rules_by_key: dict[str, list[dict]] | None = None,
     scopes_by_key: dict[str, dict] | None = None,
+    max_values: dict[str, float] | None = None,
 ) -> dict:
     """Write what a person set onto every company copy of a code, then re-derive it.
 
@@ -401,7 +402,7 @@ def apply_spec_values(
     sentence rebuild and one verification diff PER KEY for what the user experienced as
     a single action, so a batch of one is the narrow case rather than the shape.
 
-    `rules_by_key` / `scopes_by_key` are handed straight to the re-derive. Left `None`
+    `rules_by_key` / `scopes_by_key` / `max_values` are handed straight to the re-derive. Left `None`
     (every caller writing ONE product) it loads them itself, exactly as before; a caller
     walking a whole flyer's worth of products in one transaction loads them ONCE and
     passes them, instead of re-reading the registry twice per product.
@@ -525,6 +526,7 @@ def apply_spec_values(
             commit=False,
             rules_by_key=rules_by_key,
             scopes_by_key=scopes_by_key,
+            max_values=max_values,
         )
 
     if commit:
