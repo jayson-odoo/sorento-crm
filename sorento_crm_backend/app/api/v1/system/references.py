@@ -1254,6 +1254,20 @@ class ResolveReferenceRequest(BaseModel):
         default=None,
         description="Optional pre-extracted tokens. If provided, resolver skips regex extraction.",
     )
+    raw_tokens: list[str] | None = Field(
+        default=None,
+        description=(
+            "Positionally parallel to `tokens`: `raw_tokens[i]` is the pre-fold "
+            "raw text (with spaces) that produced `tokens[i]` - e.g. "
+            "tokens=['SRTWB8004BASINTAP'], raw_tokens=['SRTWB8004 BASIN TAP']. "
+            "Ignored unless `tokens` is also given and both lists have equal "
+            "length. Used only by the server-side product head-code retry - "
+            "when a folded token exact-misses, the resolver re-probes the "
+            "leading code-shaped word of its raw text (e.g. n8n folds a "
+            "spoken/typed 'code + description' into one token before calling "
+            "resolve). Absent or null = response byte-identical to today."
+        ),
+    )
     match_mode: str = Field(
         default="or",
         description=(
@@ -1609,6 +1623,7 @@ def _resolve_input(
     domain_hint: str | None = None,
     entity_pins: dict[str, str] | None = None,
     limit: int | None = None,
+    raw_tokens: list[str] | None = None,
 ):
     mode = (match_mode or "or").strip().lower()
     if mode not in _ALLOWED_MATCH_MODES:
@@ -1767,6 +1782,11 @@ def _resolve_input(
                 cross_type_expand=cross_type_expand,
                 domain_hint=hint,
                 entity_pins=entity_pins,
+                # Only the primary (non-overridden) pass carries raw_tokens: a
+                # fallback re-run passes `tokens_override` (a different,
+                # unresolved-only token list) so raw_tokens no longer aligns
+                # positionally with it - see PLAN-resolver-head-code-retry.
+                raw_tokens=raw_tokens if tokens_override is None else None,
             ).as_dict()
         raw = _apply_promotion_access_levels_filter(db, raw, access_levels)
         # Promotion-domain hint: run the expander. It owns the dispatch:
@@ -2210,6 +2230,7 @@ def resolve_reference_post(
             domain_hint=payload.domain_hint,
             entity_pins=payload.entity_pins,
             limit=payload.limit,
+            raw_tokens=payload.raw_tokens,
         )
     except EntityPinMismatch as exc:
         raise AppException(
