@@ -5,8 +5,8 @@
  * attachment. Mounted inside AttachmentDetailModal's tabbed details card.
  *
  * Linked entities are always derived from the attachment object's
- * `linked_products / linked_promotions / linked_form / linked_packing_lists`
- * arrays (already returned by getAttachmentMetadata + kept fresh by the
+ * `linked_products / linked_promotions / linked_form / linked_packing_lists /
+ * linked_certificates` arrays (already returned by getAttachmentMetadata + kept fresh by the
  * Linkages tab's mutation hooks). The integration_log only contributes the
  * run status, timestamp, and error fields - its `response_payload` is
  * unreliable in the wild and we never trust it for entity rendering.
@@ -25,6 +25,7 @@ interface AttachmentLikeForLinked {
   linked_promotions?: { id: string; name: string }[] | null;
   linked_form?: { id: string; name: string } | null;
   linked_packing_lists?: { id: string; name: string }[] | null;
+  linked_certificates?: { id: string; name: string }[] | null;
 }
 
 interface Props {
@@ -36,7 +37,7 @@ interface Props {
   attachment?: AttachmentLikeForLinked | null;
 }
 
-function deriveLinkedFromAttachment(
+export function deriveLinkedFromAttachment(
   a: AttachmentLikeForLinked | null | undefined,
 ): LinkedEntity[] {
   if (!a) return [];
@@ -70,6 +71,14 @@ function deriveLinkedFromAttachment(
       entity_type: 'packing_list',
       entity_id: pl.id,
       display_name: pl.name || pl.id,
+      matched_by: 'manual_or_n8n',
+    });
+  }
+  for (const c of a.linked_certificates ?? []) {
+    out.push({
+      entity_type: 'certificate',
+      entity_id: c.id,
+      display_name: c.name || c.id,
       matched_by: 'manual_or_n8n',
     });
   }

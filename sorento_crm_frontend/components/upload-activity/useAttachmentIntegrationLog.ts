@@ -59,6 +59,34 @@ function asArray<T>(v: unknown): T[] {
   return Array.isArray(v) ? (v as T[]) : [];
 }
 
+// The n8n callback writes response_payload.linked with no schema guarantee -
+// entries have shown up in prod missing entity_type or entity_id. Drop
+// anything malformed rather than let a downstream .replace() crash on undefined.
+export function sanitizeLinked(v: unknown): LinkedEntity[] {
+  if (!Array.isArray(v)) return [];
+  const out: LinkedEntity[] = [];
+  for (const item of v) {
+    if (!item || typeof item !== 'object') continue;
+    const entry = item as Record<string, unknown>;
+    const entityType = entry.entity_type;
+    const entityId = entry.entity_id;
+    if (typeof entityType !== 'string' || entityType === '') continue;
+    if (typeof entityId !== 'string' || entityId === '') continue;
+    const displayName =
+      typeof entry.display_name === 'string' && entry.display_name !== ''
+        ? entry.display_name
+        : entityId;
+    const matchedBy = typeof entry.matched_by === 'string' ? entry.matched_by : 'unknown';
+    out.push({
+      entity_type: entityType,
+      entity_id: entityId,
+      display_name: displayName,
+      matched_by: matchedBy,
+    });
+  }
+  return out;
+}
+
 function mapStatus(
   log: RawIntegrationLog,
   payload: Record<string, unknown>,
@@ -127,7 +155,7 @@ export function useAttachmentIntegrationLog(attachmentId: string | null | undefi
       filename: '',
       status,
       summary: typeof payload.summary === 'string' ? payload.summary : '',
-      linked: asArray<LinkedEntity>(payload.linked),
+      linked: sanitizeLinked(payload.linked),
       unlinked_reasons: asArray<UnlinkedReason>(payload.unlinked_reasons),
       error_code: raw.error_code ?? null,
       error_message: raw.error_message ?? null,
