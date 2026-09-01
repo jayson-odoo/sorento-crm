@@ -295,6 +295,7 @@ The ones that bite most often, in one line each:
 - **Alembic: head revision id must be ≤ 32 chars**, and `down_revision` must chain onto a committed main head. Re-check `alembic heads` right before merging.
 - **Backend table names ≠ model class names.** `grep __tablename__` before writing raw SQL.
 - **NEVER use em-dashes or en-dashes in any writing** - code comments, commits, PR bodies, docs, chat.
+- **Migrations run against the LIVE prod DB during blue/green boot.** env.py enforces `lock_timeout` 5s / `statement_timeout` 15min; big index = `CREATE INDEX CONCURRENTLY`, backfill = out-of-band script, rewrite = expand-contract, and never bundle fast DDL with slow work in one file (lesson 96).
 
 ## Agent skills
 

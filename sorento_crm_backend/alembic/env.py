@@ -85,6 +85,37 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
+# DDL lock guards (1 Sep 2026 incident, lesson 96). ALTER TABLE takes ACCESS
+# EXCLUSIVE; when it queues behind a long-running transaction, every new query
+# on that table queues behind the waiting ALTER, so a "fast" migration stalls
+# live traffic for as long as the lock holder runs. lock_timeout makes the DDL
+# fail fast instead of damming production; the deploy aborts cleanly and can be
+# re-run in a quiet moment. statement_timeout is the backstop for the other
+# shape: DDL that acquires its lock instantly and then holds it while doing
+# real work on a big table (rewrite, non-concurrent index, in-migration
+# backfill). That shape must not be written at all (CONCURRENTLY / out-of-band
+# backfill / expand-contract); the timeout bounds the damage when it slips
+# through. Both are overridable per run, '0' disables.
+MIGRATION_LOCK_TIMEOUT = os.environ.get("ALEMBIC_LOCK_TIMEOUT", "5s")
+MIGRATION_STATEMENT_TIMEOUT = os.environ.get("ALEMBIC_STATEMENT_TIMEOUT", "15min")
+
+
+def _apply_lock_guards(connection) -> None:
+    from sqlalchemy import text
+
+    connection.execute(
+        text("SELECT set_config('lock_timeout', :v, false)"),
+        {"v": MIGRATION_LOCK_TIMEOUT},
+    )
+    connection.execute(
+        text("SELECT set_config('statement_timeout', :v, false)"),
+        {"v": MIGRATION_STATEMENT_TIMEOUT},
+    )
+    # set_config is transactional; commit so the session-level values survive
+    # into the transaction alembic opens for the migrations themselves.
+    connection.commit()
+
+
 def run_migrations_online() -> None:
     """Run migrations in 'online' mode."""
     connectable = engine_from_config(
@@ -94,6 +125,7 @@ def run_migrations_online() -> None:
     )
 
     with connectable.connect() as connection:
+        _apply_lock_guards(connection)
         context.configure(
             connection=connection,
             target_metadata=target_metadata,
