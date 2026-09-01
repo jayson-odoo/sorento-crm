@@ -32,7 +32,7 @@ from __future__ import annotations
 
 import io
 import uuid
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from urllib.parse import quote
 
@@ -598,6 +598,9 @@ def test_the_to_confirm_filter_is_awaiting_and_changed(api):
     awaiting.acknowledged_by = None
     awaiting.acknowledged_at = None
     changed.ack_state = ACK_CHANGED
+    # `changed_at IS NOT NULL` is what "changed" actually reads now (S3, review of
+    # PR #471) - the literal ack_state alone is not enough to be found by the filter.
+    changed.changed_at = datetime.utcnow()
     world.db.commit()
 
     body = client.get(LIST, params={"ack": "to_confirm", "limit": 200}).json()
@@ -1063,6 +1066,72 @@ def test_a_drafted_row_is_retired_when_its_line_leaves_the_revision(api):
         "the line the revision kept keeps its own draft"
     )
     assert kept is not None
+
+
+def test_a_manually_linked_row_survives_retire_when_its_line_leaves_the_revision(api):
+    """S1/S7 (review of PR #471). The other half of B3: `_cascade_only` is what decides
+    a row is retirable now, not `ack_state` - and a row a PERSON has manually linked
+    (`place_on_po`, not the raise-time cascade) is exactly what that check has to leave
+    alone. A retirement that swept it up anyway would take a promise a buyer made back
+    from them without asking."""
+    from app.services.project_supply_service import ProjectSupplyService
+
+    _client, world = api
+    po, po_line = _open_po_line(world, qty=50)
+    fixture = _raise_two_rows(api)
+    dropped = fixture["first"]["row"]
+    assert _links_of(world, dropped), "the raise-time cascade has to have linked it first"
+
+    # Take the cascade's own draft down and re-link it BY HAND - the same technique
+    # `test_auto_link_all_never_moves_a_manually_linked_rows_link` uses - so the row's one
+    # link is genuinely a person's choice rather than the walk's.
+    ProjectOrderInquiryService(world.db).unplace(str(dropped.id), actor_user_id=world.buyer)
+    world.db.commit()
+    ProjectOrderInquiryService(world.db).place_on_po(
+        str(dropped.id), str(po_line.id), actor_user_id=world.buyer
+    )
+    world.db.commit()
+
+    ProjectSupplyService(world.db).uncover_lines(
+        fixture["order"],
+        [str(fixture["first"]["line"].id)],
+        actor_user_id=world.cs_user,
+        reason="CS took the line back.",
+    )
+    world.db.commit()
+
+    world.db.refresh(dropped)
+    assert dropped.state != INQUIRY_CANCELLED, "a manual link is a promise, left exactly as it is"
+    assert _link_documents(world, dropped) == [po.po_number]
+
+
+def test_a_linkless_placed_row_is_skipped_by_retire_not_swept_up(api):
+    """S1/S7 (review of PR #471). `all()` over an EMPTY link list is vacuously True, which
+    used to read a row purchasing placed through a path that writes no link row (the
+    SO349754/WESERP10B shape - `_settle_row_in_place`'s own guard exists for the identical
+    reason) as "cascade-only" and free to retire. `_cascade_only` refuses an empty list
+    outright, so a linkless placed row is left standing when its line drops."""
+    from app.services.project_supply_service import ProjectSupplyService
+
+    _client, world = api
+    fixture = _raise_two_rows(api)
+    dropped = fixture["first"]["row"]
+    assert _links_of(world, dropped) == [], (
+        "linkless has to be true for this test to mean anything - no PO was ever opened"
+    )
+    dropped.state = INQUIRY_PLACED
+    world.db.commit()
+
+    ProjectSupplyService(world.db).uncover_lines(
+        fixture["order"],
+        [str(fixture["first"]["line"].id)],
+        actor_user_id=world.cs_user,
+        reason="CS took the line back.",
+    )
+    world.db.commit()
+
+    world.db.refresh(dropped)
+    assert dropped.state == INQUIRY_PLACED, "left standing, not retired out from under it"
 
 
 # ---------------------------------------------------------------------------

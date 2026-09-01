@@ -17,7 +17,7 @@ a blank scratch schema carries neither. Every row is seeded here behind the `ZZT
 from __future__ import annotations
 
 import uuid
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
 import pytest
@@ -328,7 +328,9 @@ def test_acknowledging_an_already_acknowledged_row_twice_never_moves_the_stamp(a
     with _as_purchasing(world) as buyer:
         first = buyer.post(ACK_URL, json={"row_ids": [str(row.id), str(row.id)]})
     assert first.status_code == 200, first.text
-    assert first.json()["acknowledged"] == 1, "one id repeated in a batch is one row"
+    # 0, not 1 (nit, review of PR #471): the row was ALREADY acknowledged (born-ack), so
+    # nothing TRANSITIONED - a repeated id inside the batch changes that not at all.
+    assert first.json()["acknowledged"] == 0, "already acknowledged, so nothing transitioned"
     world.db.commit()
 
     world.db.refresh(row)
@@ -558,6 +560,9 @@ def test_the_summary_ack_facet_carries_all_four_keys_by_name(api):
     awaiting["row"].acknowledged_by = None
     awaiting["row"].acknowledged_at = None
     to_change["row"].ack_state = ACK_CHANGED
+    # `changed_at IS NOT NULL` is what "changed" actually reads now (S3, review of
+    # PR #471) - the literal ack_state alone is not enough to be counted by the facet.
+    to_change["row"].changed_at = datetime.utcnow()
     world.db.commit()
 
     with _as_purchasing(world) as buyer:

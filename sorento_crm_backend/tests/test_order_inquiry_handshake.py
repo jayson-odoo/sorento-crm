@@ -404,7 +404,9 @@ def test_acknowledging_an_already_acknowledged_row_is_a_tolerant_no_op(api):
     world.db.commit()
 
     body = response.json()
-    assert body["acknowledged"] == 1
+    # 0, not 1 (nit, review of PR #471): the row was ALREADY acknowledged, so nothing
+    # TRANSITIONED - this press is a genuine no-op, and the count says so.
+    assert body["acknowledged"] == 0
     # Nothing left to link BY THIS PRESS: the raise-time cascade already placed it firmly.
     assert body["linked_rows"] == 0
 
@@ -417,9 +419,15 @@ def test_acknowledging_an_already_acknowledged_row_is_a_tolerant_no_op(api):
 
 
 def test_acknowledge_takes_a_batch_on_in_one_press(api):
+    """Both rows are born acknowledged already (S1), so a press over the pair is
+    tolerant of both - 0 TRANSITIONED, not 2, and neither row's stamp moves."""
     _client, world = api
     first = _raise_one_row(api, qty="4")
     second = _raise_one_row(api, qty="6")
+    stamps = {
+        str(fixture["row"].id): (fixture["row"].acknowledged_by, fixture["row"].acknowledged_at)
+        for fixture in (first, second)
+    }
 
     with _as_purchasing(world) as buyer:
         response = buyer.post(
@@ -428,10 +436,14 @@ def test_acknowledge_takes_a_batch_on_in_one_press(api):
         )
     assert response.status_code == 200, response.text
     world.db.commit()
-    assert response.json()["acknowledged"] == 2
+    assert response.json()["acknowledged"] == 0
     for fixture in (first, second):
         world.db.refresh(fixture["row"])
         assert fixture["row"].ack_state == ACK_ACKNOWLEDGED
+        assert (
+            fixture["row"].acknowledged_by,
+            fixture["row"].acknowledged_at,
+        ) == stamps[str(fixture["row"].id)]
 
 
 def test_acknowledging_a_rejected_row_is_refused(api):
@@ -967,7 +979,47 @@ def test_a_carried_line_that_nobody_manually_acknowledged_keeps_its_born_stamp(a
     assert carried.ack_state == ACK_ACKNOWLEDGED
     assert carried.acknowledged_by == born_by
     assert carried.acknowledged_at == born_at
-    assert carried.changed_at is None
+
+
+def test_a_carried_lines_own_link_survives_reconfirm_with_no_false_changed_stamp(api):
+    """B2 (review of PR #471). The other test above proves the carried line's stamp
+    holds when its row is `raised` and linkless - which `drafted` (`_settle_row_in_place`'s
+    own gate) never reaches, since that gate requires `placed`/`partly_linked`. A row the
+    raise-time cascade DID link IS `placed`, so it IS `drafted`, and a carried line's row
+    reaching `_settle_row_in_place` with `need == previous_qty` and no date change must
+    settle as a no-op: no `changed_at`, no rewritten note, no repeated `previous_qty`,
+    and the SAME link untouched - not a false "Was 10 -> Now 10" on a line the reconfirm
+    never named.
+    """
+    _client, world = api
+    po, _line = _open_po_line(world, qty=50)
+    fixture = _raise_two_rows(api)
+    first_row = fixture["first"]["row"]
+    assert first_row.state == "placed", "the raise-time cascade has to have linked it whole"
+    born_by, born_at = first_row.acknowledged_by, first_row.acknowledged_at
+    born_note = first_row.note
+    (first_link,) = _links_of(world, first_row)
+    first_link_id = str(first_link.id)
+
+    # CS confirms line 2 alone; line 1 is carried - the SAME need it already holds.
+    response = _confirm(
+        _client, fixture["order"].id, [_line_payload(fixture["second"]["line"].id, buy_qty="6")]
+    )
+    assert response.status_code == 200, response.text
+    world.db.commit()
+
+    carried = _order_row(world, fixture["first"]["line"])
+    assert str(carried.id) == str(first_row.id), "the same row, not a fresh one"
+    assert carried.ack_state == ACK_ACKNOWLEDGED
+    assert carried.acknowledged_by == born_by
+    assert carried.acknowledged_at == born_at
+    assert carried.changed_at is None, "nothing about this line changed"
+    assert carried.previous_qty is None, "a no-op settle writes no Was/Now"
+    assert carried.previous_delivery_date is None
+    assert carried.note == born_note, "no spurious 'Was 10 on ...' appended"
+    (surviving_link,) = _links_of(world, carried)
+    assert str(surviving_link.id) == first_link_id, "the same link, never re-dealt"
+    assert surviving_link.document == po.po_number
 
 
 def test_a_rejected_line_re_decided_raises_a_fresh_acknowledged_row(api):
@@ -1250,7 +1302,10 @@ def test_acknowledge_leaves_a_row_due_after_the_horizon_not_linked(api):
     world.db.commit()
 
     body = response.json()
-    assert body["acknowledged"] == 2
+    # 0, not 2 (nit, review of PR #471): both rows are born acknowledged already, so the
+    # press TRANSITIONS neither - it only runs the cascade, which is what this test is
+    # really about.
+    assert body["acknowledged"] == 0
     assert body["linked_rows"] == 1
     assert body["after_horizon"] == 1
     assert body["link_up_to"] == HORIZON.isoformat()

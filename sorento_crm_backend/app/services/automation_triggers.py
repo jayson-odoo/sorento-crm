@@ -438,13 +438,19 @@ register(
 )
 
 
-def _build_order_inquiry_link(so_number: Optional[str]) -> str:
+def build_order_inquiry_link(so_number: Optional[str]) -> str:
     """The Order Inquiries worklist, narrowed to the sales order the row belongs to.
 
     There is no per-row detail page (`documentation/plans/scm/PLAN-scm-oi-handshake.md`) -
     the worklist's own search IS the way in, exactly as `orderInquiryRowHref` reaches it
     from every other screen. A row with no SO number (a claim-only or free-standing row)
     gets the unfiltered list rather than a broken query string.
+
+    PUBLIC (nit, review of PR #471), unlike its `_build_*_link` siblings above: every one
+    of those is also called from ITS OWN trigger function inside this module, so the
+    underscore reads as "this module's own helper, imported elsewhere too". This one is
+    never called from in here - only from `project_order_inquiry_service.py` - so a
+    leading underscore promising module-private use was the wrong signal for what it is.
     """
     base = (settings.frontend_base_url or "").rstrip("/")
     path = "/project-sales/order-inquiries"
@@ -462,11 +468,15 @@ def _trigger_order_inquiry_changed_with_links(
 ) -> Iterable[TriggerMatch]:
     """Event-driven; pull-mode evaluation yields nothing.
 
-    Matches are produced via :meth:`AutomationService.dispatch_event` from
-    ``ProjectOrderInquiryService._settle_row_in_place`` (`PLAN-scm-reorder-oi-feedback-
-    1sep.md` S1, G6) - the moment a row CS has amended settles, is auto-acknowledged, AND
-    already carries a link. A linkless amendment fires nothing: purchasing has arranged
-    nothing yet, so there is nothing for this trigger to warn them a change moved.
+    Matches are produced via :meth:`ProjectOrderInquiryService._dispatch_changed_with_links`
+    (`PLAN-scm-reorder-oi-feedback-1sep.md` S1, G6), queued mid-transaction and drained
+    post-commit by ``_fire_pending_changed_with_links`` (S5, review of PR #471). Three
+    callers reach it, all sharing one rule - a row that already carries a link is amended
+    under purchasing: ``_settle_row_in_place`` on a quantity/date settle-in-place AND on
+    the need-drops-to-zero cancel that gives the link back (S4), and
+    ``_retire_uncovered_rows`` when a dropped line's cascade-linked row is retired on
+    supersede (S4). A linkless amendment fires nothing in any of the three: purchasing has
+    arranged nothing yet, so there is nothing for this trigger to warn them a change moved.
     """
     return []
 
