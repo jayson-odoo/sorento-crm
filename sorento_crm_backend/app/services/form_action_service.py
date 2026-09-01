@@ -282,7 +282,18 @@ class FormActionService:
         conditional UPDATE with a rowcount check is what makes the loser a no-op -
         checking `row.status` in Python would let both pass (AC-D-6).
 
-        The claim UPDATE is deliberately left UNCOMMITTED here: Postgres holds
+        The handler is resolved BEFORE the row is claimed, deliberately. Two
+        processes can share this table without sharing a registry - every dev
+        worktree points at one Postgres, and a rolling deploy briefly runs two
+        versions - so a process that has never heard of `row.action_key` must
+        leave the row exactly as it found it (PENDING) rather than claim it and
+        then fail to run it: claiming first stamps `status=COMMITTED` while
+        nothing has actually happened, and that status permanently stops any
+        other sweep from ever looking at the row again - a silent, unrecoverable
+        no-op the frontend reports as success (traced live: a folder's `Set
+        company -> Shared` read `committed` with the folder never touched).
+
+        The claim UPDATE is then deliberately left UNCOMMITTED: Postgres holds
         the row lock from the moment the statement runs, not from commit, so a
         concurrent claim attempt already blocks on it and re-reads `pending` as
         `committed` once we finally commit - AC-D-6 needs no commit of its own to
@@ -295,7 +306,22 @@ class FormActionService:
         transaction as the handler's own commit (or `_execute`'s rollback-then-
         refail on an exception): either both land, or neither does, and a crash
         before either leaves the row `pending` for the next sweep to pick up.
+
+        The two rules cover different failure modes and both are load-bearing: the
+        first stops a row being claimed by a process that cannot run it at all, the
+        second stops a claimed row being stamped done before its work is durable.
         """
+        try:
+            action = action_for(row.action_key)
+        except KeyError:
+            logger.warning(
+                "Form action %s has action_key %r, unregistered in this process; "
+                "leaving it pending for a process that has it.",
+                row.id,
+                row.action_key,
+            )
+            return False
+
         claimed = (
             self.db.query(SlaFormAction)
             .filter(
@@ -316,7 +342,6 @@ class FormActionService:
         # just wrote, visible to ourselves inside the same open transaction.
         self.db.refresh(row)
 
-        action = action_for(row.action_key)
         try:
             self._execute(row, action, already_claimed=True)
         except AppException as exc:

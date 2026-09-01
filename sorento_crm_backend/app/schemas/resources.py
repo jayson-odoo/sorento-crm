@@ -32,6 +32,13 @@ class AttachmentDirectoryResponse(AttachmentDirectoryBase):
 
     id: str
     created_at: datetime
+    # Owning company (R14 / AC-E3): same __company_shared__ contract as
+    # DriveFolderItem below - NULL is a legitimate Shared folder, not a
+    # missing value. Populated for free from the ORM row wherever a route
+    # returns one directly (from_attributes); the tree endpoint stamps it
+    # explicitly since it builds nodes from raw field values, not an ORM row.
+    company_id: Optional[str] = None
+    company_name: Optional[str] = None
 
 
 class AttachmentDirectoryTreeNode(AttachmentDirectoryResponse):
@@ -63,6 +70,9 @@ class AttachmentTypeBase(BaseModel):
     # is left out of the upload-activity drawer. A type n8n never answers would
     # otherwise show "Processing" forever, waiting on a reply that is not coming.
     triggers_n8n_webhook: bool = True
+    # When true, an upload of this type is written with company_id = NULL -
+    # visible to every company. Flipping this later touches no existing row.
+    is_shared: bool = False
 
 
 class AttachmentTypeCreate(AttachmentTypeBase):
@@ -79,6 +89,7 @@ class AttachmentTypeUpdate(BaseModel):
     is_certificate: Optional[bool] = None
     max_validity_months: Optional[int] = None
     triggers_n8n_webhook: Optional[bool] = None
+    is_shared: Optional[bool] = None
 
 
 class AttachmentTypeResponse(AttachmentTypeBase):
@@ -297,6 +308,14 @@ class LinkedEntityRef(BaseModel):
     name: str
     description: Optional[str] = None
     link_id: Optional[str] = None  # ProductAttachment/PromotionAttachment id for unlink; forms use id as form_id
+    # Populated for linked_products / linked_certificates on a SHARED
+    # attachment (PLAN-shared-brand-attachments.md S5, UAC group G): the
+    # entity's own company and whether it is the viewer's ACTIVE company.
+    # Left at the defaults (None / None / True) for every other linked list,
+    # so a single-company attachment's payload is unchanged (AC-G3).
+    company_id: Optional[str] = None
+    company_name: Optional[str] = None
+    in_scope: bool = True
 
 
 class AttachmentResponse(AttachmentBase):
@@ -408,6 +427,54 @@ class BulkAttachmentTypeResponse(BaseModel):
     attachment_type_id: str
 
 
+class BulkCompanyRequest(BaseModel):
+    """`Set company…` (PLAN-shared-brand-attachments R4/S2). At least one id
+    overall; `company_id: null` means Shared."""
+
+    attachment_ids: list[str] = []
+    directory_ids: list[str] = []
+    company_id: Optional[str] = None
+
+    @field_validator("attachment_ids", "directory_ids")
+    @classmethod
+    def _ids_are_uuids(cls, v: list[str]) -> list[str]:
+        # A malformed id reaching the ORM `IN (...)` filter raises a raw
+        # psycopg `invalid input syntax for type uuid` - an unhandled 500.
+        # Caught here instead, it is a 422 like every other bad request body.
+        for item in v:
+            try:
+                uuid.UUID(str(item))
+            except (ValueError, AttributeError, TypeError):
+                raise ValueError(f"{item!r} is not a valid UUID.")
+        return v
+
+    @field_validator("company_id")
+    @classmethod
+    def _company_id_is_uuid(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        try:
+            uuid.UUID(str(v))
+        except (ValueError, AttributeError, TypeError):
+            raise ValueError(f"{v!r} is not a valid UUID.")
+        return v
+
+    @model_validator(mode="after")
+    def at_least_one_id(self):
+        if not self.attachment_ids and not self.directory_ids:
+            raise ValueError("At least one attachment or directory ID is required.")
+        return self
+
+
+class BulkCompanyResponse(BaseModel):
+    updated_directories: int
+    updated_attachments: int
+    company_id: Optional[str] = None
+    links_added: int
+    links_removed: int
+    certificates_updated: int
+
+
 # ---------------------------------------------------------------------------
 # Unified Drive (folders + files in one server-sorted, server-paginated stream)
 # See docs/plans/PLAN-unified-drive-files.md (D11) + UAC D1/D2.
@@ -426,8 +493,14 @@ class DriveFolderItem(BaseModel):
     created_at: Optional[datetime] = None
     # Human-readable path to THIS folder's parent (shown as Location during search).
     directory_path: Optional[str] = None
+    # Owning company (R14 / AC-E3): a folder is __company_shared__ same as an
+    # attachment, so NULL is legitimate - both keys are explicit None, which
+    # the FE renders as "Shared", the same convention _stamp_company already
+    # uses for file rows.
+    company_id: Optional[str] = None
+    company_name: Optional[str] = None
 
-    @field_validator("id", "parent_id", mode="before")
+    @field_validator("id", "parent_id", "company_id", mode="before")
     @classmethod
     def _uuid_to_str(cls, v):
         if v is None:

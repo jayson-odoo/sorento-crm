@@ -56,9 +56,19 @@ CERTIFICATE_SOURCES = (CERTIFICATE_SOURCE_AI, CERTIFICATE_SOURCE_MANUAL)
 
 
 class Certificate(Base, CompanyScopedMixin):
-    """One certification identity, owned by a company."""
+    """One certification identity, owned by a company - or by none.
+
+    A certificate FOLLOWS its filed attachment's company (R5,
+    PLAN-shared-brand-attachments.md S6): a NULL ``company_id`` is a
+    deliberate shared certificate (one document, one expiry alert, both
+    companies' twins covered), not a legacy/unstamped row. Every write path
+    stamps ``company_id`` explicitly (``CertificateService._new_certificate``
+    / the ``bulk-company`` follow hook) rather than leaning on the
+    ``before_insert`` auto-stamp, which skips shared models entirely.
+    """
 
     __tablename__ = "certificates"
+    __company_shared__ = True
     __audit_track__ = True
     __audit_entity_type__ = "certificate"
     # Identity and lifecycle only. Notification watermarks churn on every
@@ -157,10 +167,18 @@ class Certificate(Base, CompanyScopedMixin):
         ),
         # Identity: the scheme is part of the key, so PPS/04124FC and
         # SPAN/04124FC stay two rows while "PPS 0119" / "PPS-0119" / "pps0119"
-        # collapse to one.
+        # collapse to one. company_id is coalesced to a sentinel zero-uuid
+        # (never a real company id) so two NULL-company (shared) certificates
+        # with the same identity cannot coexist - a plain unique index treats
+        # every NULL as distinct, which would let a shared certificate be
+        # re-filed indefinitely (PLAN-shared-brand-attachments S6, migration
+        # 449). The certificate-sharing logic that writes a NULL company_id -
+        # `AttachmentCompanyService._apply_certificate_follow` /
+        # `CertificateService._resolve_new_certificate_company_id` - is wired
+        # in the same slice this index landed in.
         Index(
             "uq_certificates_company_scheme_number",
-            "company_id",
+            text("coalesce(company_id, '00000000-0000-0000-0000-000000000000')"),
             text("upper(regexp_replace(scheme || certificate_number, '[^A-Za-z0-9]', '', 'g'))"),
             unique=True,
         ),

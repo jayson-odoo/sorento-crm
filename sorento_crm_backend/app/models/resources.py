@@ -12,6 +12,15 @@ class AttachmentDirectory(Base, CompanyScopedMixin):
     """Hierarchical folder for organizing attachments."""
     __tablename__ = "attachment_directories"
 
+    # Multi-company: a folder is shareable exactly like an attachment (PLAN
+    # shared-brand-attachments R17). NULL = shared across every company; the
+    # do_orm_execute filter reads it as `company_id IS NULL OR company_id IN
+    # scope` and the before_insert auto-stamp never overwrites an explicit
+    # NULL, so `AttachmentCompanyService` / the upload path can share a folder
+    # on purpose. Migration 449 drops the NOT NULL + DEFAULT this table
+    # carried since 305/306.
+    __company_shared__ = True
+
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     parent_id = Column(UUID(as_uuid=False), ForeignKey("attachment_directories.id", ondelete="CASCADE"), nullable=True)
     name = Column(String(255), nullable=False)
@@ -68,6 +77,11 @@ class AttachmentType(Base):
     # NULL = unlimited. Backs the plausibility check that flags a hallucinated
     # extraction date instead of swallowing it.
     max_validity_months = Column(Integer, nullable=True)
+    # When true, an upload of this type is written with company_id = NULL -
+    # visible to every company (PLAN-shared-brand-attachments R11). Flipping
+    # this later touches no existing row (R1); it only changes what the NEXT
+    # upload of this type does.
+    is_shared = Column(Boolean, default=False, nullable=False, server_default="false")
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
     # Two FK paths now link these tables: attachments.attachment_type_id (a file

@@ -57,7 +57,14 @@ tester seeds its own `ZZT-` twin products and `ZZT-` folders, never reads existi
   `unmatched` and no product is linked (no partial fan-out).
 - **AC-A5** `[BE]` Every pre-existing resolver test passes unchanged (tiers 1-4 untouched).
 - **AC-A6** `[BE]` Given `link-products` with `"ZZT-SRTBV - BRASS BALL VALVE"`, Then `linked`
-  lists the 9 products each with `via = "prefix"`, and `skipped_product_codes` is empty.
+  lists the 9 products each with `via = "prefix"`, `skipped_product_codes` and
+  `already_linked` are empty, asserted on the HTTP JSON body through `response_model`.
+- **AC-A7** `[BE]` Given the same family head sent to the packing-list ingest, the promotion
+  ingest and the single-code `POST /external/product-attachments`, Then it lands in
+  `skipped_product_codes` / `missing_codes` / 400 respectively: the tier is opt-in and only
+  the attachment link path passes `allow_prefix=True`.
+- **AC-A8** `[BE]` Given a family whose prefix matches 150 distinct codes as 300 twin rows
+  under the all-companies scope, Then it resolves (the cap counts distinct codes).
 
 ## Group B - `bulk-company` on files: twin linker
 
@@ -191,10 +198,15 @@ tester seeds its own `ZZT-` twin products and `ZZT-` folders, never reads existi
   file it is S (unchanged).
 - **AC-H6** `[BE]` The expiry sweep with a shared certificate near expiry produces one
   notification batch, not one per company.
-- **AC-H7** `[BE]` Alembic: id <= 32 chars, `down_revision` = the main head at branch time,
-  one head after upgrade; downgrade restores NOT NULL on `attachment_directories.company_id`
+- **AC-H7** `[BE]` Alembic: id <= 32 chars, `down_revision` = the main head (the migration
+  was written as `449_shared_brand_attach` on `448_merge_s6b_ptag` and renumbered to
+  `453_shared_brand_attach` on `452_transfer_days` when it was carried to main, so the
+  assertion reads the current head, not the branch-time one), one head after upgrade; downgrade restores NOT NULL on `attachment_directories.company_id`
   (after stamping NULL rows with the incumbent company), drops `is_shared`, restores the old
-  index.
+  index. (S4 correction: `certificates.company_id` also had a NOT NULL from migration 312,
+  missed when this AC was written - `Certificate.__company_shared__` needs it dropped in
+  `upgrade()` the same way, and downgrade restores it the same way, stamping any NULL
+  (shared) certificate to Sorento first.)
 
 ## Group I - End to end (agent-browser, sidebar navigation, one dev server)
 

@@ -1,6 +1,6 @@
 # PLAN: Shared brand attachments and folders across companies + product-code prefix tier
 
-**Status:** Grilled 2026-08-31 (rounds 1-4, R1-R21), lavish-reviewed + apple-design pass (R22-R27) the same day, captain said proceed. Issues: S1 #435 (PR A), S2 #436 (FE mock), S3 #437 (BE core), S4 #438 (BE linkages + certs), S5 #439 (review + browser). S1 + S2 coders spawned 31 Aug. S1 (PR A, resolver prefix tier) implemented and tested 31 Aug, branch `feat/shared-brand-S1-resolver-prefix`.
+**Status:** Grilled 2026-08-31 (rounds 1-4, R1-R21), lavish-reviewed + apple-design pass (R22-R27) the same day, captain said proceed. Issues: S1 #435 (PR A), S2 #436 (FE mock), S3 #437 (BE core), S4 #438 (BE linkages + certs), S5 #439 (review + browser). S1 + S2 coders spawned 31 Aug. S1 (PR A, resolver prefix tier) implemented and tested 31 Aug, branch `feat/shared-brand-S1-resolver-prefix`. S2 (FE) landed on main as #442. S3 (#443) and S4 (#445) were merged into their own stacked base branches rather than into main, so their backend never reached it; both are carried to main together on `feat/shared-brand-remerge` (1 Sep), with the migration renumbered 449 -> 453 onto `452_transfer_days`.
 **UAC:** `shared-brand-attachments-acceptance-criteria.md` (alongside; journey at its top).
 **Domain:** multi-company / resources / certificates. Touches the ONE product-code resolver.
 **Lane:** this session's port pair is :3100/:8100 (:3090 belongs to the spec lane).
@@ -168,12 +168,21 @@ Rule:
 deferred actions, and the engine calls the service at commit. The endpoint exists for the
 popup single-row Edit fallback, for tests, and for n8n-style callers.
 
-- Registry (`app/services/form_actions.py`): `attachment.set_company` (`entity_types=("attachment",)`)
-  and `attachment_directory.set_company` (`entity_types=("attachment_directory",)`), both
-  `window="reversible"`, `execute=lambda db, payload: AttachmentCompanyService(db).apply(...)`
+- Registry (`app/services/record_actions.py`, **not** `form_actions.py` - S3 coder correction:
+  `form_actions.py` is the form-SLA undo registry (PR/SI/CX/ticket pairs with `capture`/`invert`
+  snapshots); `record_actions.py` is where `product.delete`, `order.set_status` etc already live,
+  the exact "wrap an existing service method behind a deferred action, permission checked at
+  park time" shape this needs. Same underlying `FormAction`/`register` machinery either way, just
+  the file `product.delete` is precedent for.): `attachment.set_company`
+  (`entity_types=("attachment",)`) and `attachment_directory.set_company`
+  (`entity_types=("attachment_directory",)`), both `window=WINDOW_REVERSIBLE`,
+  `execute=lambda db, payload: AttachmentCompanyService(db).apply(...)`
   with `payload = {"company_id": str | None}`; the entity id is the target. A bulk selection
   is N pending actions (one per file / folder), exactly how `product.delete` bulk works
-  (`ProductsList.tsx` -> `useDeferredBulkAction`).
+  (`ProductsList.tsx` -> `useDeferredBulkAction`). `permission=OWN_RECORD` (record_actions.py's
+  "just signed in" sentinel), matching R13's "same guard as `PUT /attachments/{id}`" - the route
+  has no permission slug of its own; `AttachmentCompanyService` separately checks the target
+  company against the actor's grants (AC-B6).
 - **Request** `BulkCompanyRequest { attachment_ids: list[str] = [], directory_ids: list[str] = [], company_id: str | None }`
   (at least one id overall; `None` = shared). **Response**
   `BulkCompanyResponse { updated_directories: int, updated_attachments: int, company_id: str | None, links_added: int, links_removed: int, certificates_updated: int }`.
@@ -325,15 +334,22 @@ Two PRs so the tiny one ships first:
 
 Backend
 - alembic migration (one): `attachment_types.is_shared`; `attachment_directories.company_id`
-  nullable, default dropped; certificate identity index rebuilt. `down_revision` = the main
-  head at branch time, id <= 32 chars, `alembic heads` = one.
+  nullable, default dropped; certificate identity index rebuilt; `certificates.company_id`
+  nullable too (S4 correction: migration 312 gave it NOT NULL, missed when this plan was
+  written - `Certificate.__company_shared__` needs the same DROP NOT NULL / restore-with-
+  stamp pair `attachment_directories.company_id` gets). `down_revision` = the main
+  head at merge time, id <= 32 chars, `alembic heads` = one. Written as
+  `449_shared_brand_attach` on `448_merge_s6b_ptag`; renumbered to
+  `453_shared_brand_attach` on `452_transfer_days` when the stranded S3 + S4 work was
+  carried to main, since main had grown 449-452 in the meantime.
 - `app/models/resources.py` (`AttachmentDirectory.__company_shared__`, `AttachmentType.is_shared`),
   `app/models/certificate.py` (`__company_shared__`).
 - `app/schemas/resources.py`: `BulkCompanyRequest/Response`, `LinkedEntityRef` fields,
   `AttachmentTypeCreate/Update/Response.is_shared`, `company` filter.
 - `app/api/v1/resources/attachments.py`: `bulk-company` route; `company` query on `/` and
   `/drive`. `app/api/v1/resources/attachment_types.py`: `is_shared`.
-- `app/services/form_actions.py`: the two `set_company` registrations (R22).
+- `app/services/record_actions.py`: the two `set_company` registrations (R22; see the S3
+  coder correction under S2 above - not `form_actions.py`).
 - `app/services/attachment_company_service.py` (new): folder expansion, ancestor pull,
   twin linker, certificate follow, one transaction.
 - `app/services/resources_service.py`: upload rule (`is_shared` -> NULL + ancestor pull),

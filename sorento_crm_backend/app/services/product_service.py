@@ -2991,7 +2991,12 @@ class ProductAttachmentService:
             .first()
         )
 
-    def create_product_attachment(self, product_attachment_data: ProductAttachmentCreate, created_by: Optional[str] = None):
+    def create_product_attachment(
+        self,
+        product_attachment_data: ProductAttachmentCreate,
+        created_by: Optional[str] = None,
+        company_id: Optional[str] = None,
+    ):
         """Create or refresh a product attachment relationship.
 
         TCK-2026-000020: external n8n intake re-posts the same (product_id,
@@ -3000,6 +3005,15 @@ class ProductAttachmentService:
         sort_order / is_primary / access_levels instead of duplicate-rejecting.
         The returned row carries `_already_existed=True` so the route can
         echo it back to the caller.
+
+        `company_id` is a SERVER-SIDE keyword, never part of the request
+        schema (a client-settable company would let a signed-in user stamp a
+        link into a company they hold no grant for). Omitted, the
+        before_insert auto-stamp fills it from the session scope as before.
+        The one internal caller that needs it explicit is the n8n twin linker
+        (`_link_attachment_to_products_bulk`), which resolves a product under
+        an ALL-COMPANIES scope - without this, the Mocha twin's link would be
+        auto-stamped to the incumbent company instead of Mocha's own.
         """
         from sqlalchemy.orm import joinedload
 
@@ -3020,6 +3034,8 @@ class ProductAttachmentService:
                 if key in ("product_id", "attachment_id"):
                     continue
                 setattr(existing, key, value)
+            if company_id:
+                existing.company_id = company_id
             from datetime import datetime as _dt
             existing.updated_at = _dt.utcnow()
             self._apply_brochure_choice(existing, chosen)
@@ -3038,6 +3054,8 @@ class ProductAttachmentService:
         chosen = attachment_dict.pop("is_primary", None)
         if created_by:
             attachment_dict["created_by"] = created_by
+        if company_id:
+            attachment_dict["company_id"] = company_id
 
         product_attachment = ProductAttachment(**attachment_dict)
         self.db.add(product_attachment)
