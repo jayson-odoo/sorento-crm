@@ -1,6 +1,7 @@
 import { Metadata } from 'next';
 import { Container } from '@/components/common/container';
 import { PageHeader } from '@/components/common/PageHeader';
+import BackToList from '@/components/common/BackToList';
 import { SPODocumentDetail } from '../components/SPODocumentDetail';
 
 export const metadata: Metadata = {
@@ -23,11 +24,15 @@ export default async function SPODocumentDetailPage({
 
   return (
     <>
-      {/* No `actions` here (review nit / AC-5): Back lives on the record's own title
-          row inside `SPODocumentDetail`, alongside the status badge, Edit and the
-          pager - not split onto this page-level bar the way most detail pages do it. */}
+      {/* Back on the page-level toolbar row, top right (UAT AC-21) - the same spot
+          the Purchase Order form view puts it, not the record's own title row. */}
       <Container>
-        <PageHeader title="SPO Document" />
+        <PageHeader
+          title="SPO Document"
+          actions={
+            <BackToList listPath="/procurement-management/spo-allocations" label="Back to SPO Allocations" />
+          }
+        />
       </Container>
 
       <Container>

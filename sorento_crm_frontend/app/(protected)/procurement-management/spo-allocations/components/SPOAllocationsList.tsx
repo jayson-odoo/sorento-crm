@@ -23,7 +23,6 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Switch } from '@/components/ui/switch';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
@@ -80,7 +79,6 @@ export default function SPOAllocationsList() {
   const [stateFilter, setStateFilter] = useState<SPODocumentState>('outstanding');
   const [productFilter, setProductFilter] = useState('');
   const [warehouseFilter, setWarehouseFilter] = useState('');
-  const [overdueOnly, setOverdueOnly] = useState(false);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [importDialogOpen, setImportDialogOpen] = useState(false);
 
@@ -115,7 +113,6 @@ export default function SPOAllocationsList() {
     setStateFilter((state.filters.state as SPODocumentState) || 'outstanding');
     setProductFilter(state.filters.product_id ?? '');
     setWarehouseFilter(state.filters.warehouse_id ?? '');
-    setOverdueOnly(state.filters.overdue_only === 'true');
   });
 
   const { data, isLoading, isFetching, refetch } = useSPODocuments({
@@ -126,13 +123,12 @@ export default function SPOAllocationsList() {
     state: stateFilter,
     productId: productFilter || null,
     warehouseId: warehouseFilter || null,
-    overdueOnly,
   });
 
   useEffect(() => {
     setPagination((p) => ({ ...p, pageIndex: 0 }));
     setRowSelection({});
-  }, [searchQuery, stateFilter, productFilter, warehouseFilter, overdueOnly]);
+  }, [searchQuery, stateFilter, productFilter, warehouseFilter]);
 
   const rows = useMemo<SPODocumentRow[]>(() => data?.data ?? [], [data]);
 
@@ -144,10 +140,9 @@ export default function SPOAllocationsList() {
           state: stateFilter !== 'outstanding' ? stateFilter : undefined,
           product_id: productFilter || undefined,
           warehouse_id: warehouseFilter || undefined,
-          overdue_only: overdueOnly || undefined,
         },
       ),
-    [pagination.pageIndex, pagination.pageSize, sorting, searchQuery, stateFilter, productFilter, warehouseFilter, overdueOnly],
+    [pagination.pageIndex, pagination.pageSize, sorting, searchQuery, stateFilter, productFilter, warehouseFilter],
   );
 
   // Slash-encoded (Q7): an SPO number can carry a literal `/` (e.g. `SPO-2026/08-0061`),
@@ -300,7 +295,7 @@ export default function SPOAllocationsList() {
   const filtersActive = (productFilter ? 1 : 0) + (warehouseFilter ? 1 : 0);
 
   const emptyMessage =
-    filtersActive || searchQuery || overdueOnly || stateFilter !== 'outstanding' ? (
+    filtersActive || searchQuery || stateFilter !== 'outstanding' ? (
       'No SPO document matches this search and filter.'
     ) : (
       <span>No SPO allocations yet. Import the SPO book from the Actions menu, or create one.</span>
@@ -346,14 +341,10 @@ export default function SPOAllocationsList() {
                     Completed
                   </ToggleGroupItem>
                 </ToggleGroup>
-                {/* Overdue is a TOGGLE, not a tab (Q5) - glance-able beside the state
-                    tabs rather than buried in the Filters popover. */}
-                <div className="flex items-center gap-2">
-                  <Switch id="spo-overdue-only" checked={overdueOnly} onCheckedChange={setOverdueOnly} />
-                  <Label htmlFor="spo-overdue-only" className="text-sm font-normal">
-                    Overdue only
-                  </Label>
-                </div>
+                {/* Overdue-only toggle retired (UAT AC-4): worst_overdue_days is
+                    already a sortable column, and the query filter now reaches
+                    warehouse code and packing list number too (AC-25), which made
+                    the standalone toggle redundant. */}
               </>
             }
             filters={{

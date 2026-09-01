@@ -12,7 +12,6 @@ export interface UseSPODocumentsParams {
   state: SPODocumentState;
   productId: string | null;
   warehouseId: string | null;
-  overdueOnly: boolean;
 }
 
 /** The list's React Query key. The form view's pager rebuilds the SAME key from the URL
@@ -31,7 +30,6 @@ export function spoDocumentsListParamsFromUrl(params: ListPagerParams): UseSPODo
     state: (params.filters.state as SPODocumentState) || 'outstanding',
     productId: params.filters.product_id || null,
     warehouseId: params.filters.warehouse_id || null,
-    overdueOnly: params.filters.overdue_only === 'true',
   };
 }
 
@@ -45,7 +43,6 @@ async function fetchDocumentsPage(params: UseSPODocumentsParams) {
     state: params.state,
     product_id: params.productId,
     warehouse_id: params.warehouseId,
-    overdue_only: params.overdueOnly,
   });
 }
 

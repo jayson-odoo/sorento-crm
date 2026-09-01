@@ -5,7 +5,9 @@
  * Pins:
  *   - `listSPODocuments` builds the query string via `buildDataGridParams`
  *     (page/limit/sort/dir/query) plus the document filters (`state` default
- *     outstanding, `product_id`, `warehouse_id`, `overdue_only`) - AC-11.
+ *     outstanding, `product_id`, `warehouse_id`) - AC-11. `overdue_only` is NOT
+ *     among them any more (UAT batch, AC-4 retired) - the route still accepts it
+ *     for other callers, but this service never sends it.
  *   - `getSPODocument` GETs the slash-encoded path param, 404 -> null - AC-16.
  *   - every call surfaces the backend error via `extractApiError` on failure.
  *
@@ -77,7 +79,7 @@ describe('spoDocumentService - listSPODocuments (AC-11)', () => {
     expect(calledUrl().searchParams.get('state')).toBe('outstanding');
   });
 
-  it('composes state, product_id, warehouse_id and overdue_only on the query string', async () => {
+  it('composes state, product_id and warehouse_id on the query string', async () => {
     apiFetch.mockResolvedValue(ok({ data: [], pagination: { page: 1, total: 0 } }));
     await listSPODocuments({
       pageIndex: 0,
@@ -85,16 +87,14 @@ describe('spoDocumentService - listSPODocuments (AC-11)', () => {
       state: 'completed',
       product_id: 'prod-1',
       warehouse_id: 'wh-1',
-      overdue_only: true,
     });
     const u = calledUrl();
     expect(u.searchParams.get('state')).toBe('completed');
     expect(u.searchParams.get('product_id')).toBe('prod-1');
     expect(u.searchParams.get('warehouse_id')).toBe('wh-1');
-    expect(u.searchParams.get('overdue_only')).toBe('true');
   });
 
-  it('omits overdue_only, product_id and warehouse_id when unset', async () => {
+  it('never sends overdue_only (AC-4 retired) and omits product_id/warehouse_id when unset', async () => {
     apiFetch.mockResolvedValue(ok({ data: [], pagination: { page: 1, total: 0 } }));
     await listSPODocuments({ pageIndex: 0, pageSize: 25 });
     const u = calledUrl();

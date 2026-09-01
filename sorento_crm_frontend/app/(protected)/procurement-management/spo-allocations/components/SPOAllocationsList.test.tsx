@@ -189,35 +189,25 @@ describe('SPOAllocationsList - state tabs (AC-1)', () => {
   });
 });
 
-// ── AC-4: Overdue-only toggle composes with the active tab ──────────────────
+// AC-4 retired (UAT batch): the Overdue-only toggle came off the list toolbar.
+// `worst_overdue_days` stays a sortable/readable column (AC-2 below); the standalone
+// toggle and its `overdueOnly` param are gone from this list, its hook and its
+// service - the route still accepts `overdue_only` for other callers.
 
-describe('SPOAllocationsList - overdue-only toggle (AC-4)', () => {
-  it('sends overdueOnly: false by default', () => {
-    mockList([row()]);
-    renderList();
-    const last = useSPODocuments.mock.calls[useSPODocuments.mock.calls.length - 1][0];
-    expect(last).toMatchObject({ overdueOnly: false });
-  });
-
-  it('turning the toggle on sends overdueOnly: true while staying on the default (Outstanding) tab', () => {
+describe('SPOAllocationsList - overdue-only toggle retired (AC-4)', () => {
+  it('does not render an Overdue only switch', () => {
     mockList([row()]);
     renderList();
 
-    fireEvent.click(screen.getByRole('switch', { name: /Overdue only/i }));
-
-    const last = useSPODocuments.mock.calls[useSPODocuments.mock.calls.length - 1][0];
-    expect(last).toMatchObject({ state: 'outstanding', overdueOnly: true });
+    expect(screen.queryByRole('switch', { name: /Overdue only/i })).toBeNull();
   });
 
-  it('composes overdueOnly with a non-default tab (Completed)', () => {
-    mockList([row({ status: 'completed' })]);
+  it('never sends overdueOnly to useSPODocuments', () => {
+    mockList([row()]);
     renderList();
 
-    fireEvent.click(screen.getByRole('radio', { name: 'Completed' }));
-    fireEvent.click(screen.getByRole('switch', { name: /Overdue only/i }));
-
     const last = useSPODocuments.mock.calls[useSPODocuments.mock.calls.length - 1][0];
-    expect(last).toMatchObject({ state: 'completed', overdueOnly: true });
+    expect(last).not.toHaveProperty('overdueOnly');
   });
 });
 

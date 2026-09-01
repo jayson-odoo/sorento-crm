@@ -486,6 +486,45 @@ def test_product_and_warehouse_filters_match_lines_but_the_document_shows_every_
     assert matched_row["line_count"] == 2
 
 
+def test_query_matches_warehouse_code_and_packing_list_container_number(scm_app):
+    """AC-25 (UAT batch): the free-text search also finds a document by its
+    warehouse's CODE and by its packing list's container number - not just SPO
+    number or product. One doc findable ONLY by warehouse code, another findable
+    ONLY by container number."""
+    client, db = _client(scm_app)
+    chain = _chain(db)
+    product = _product(db, chain)
+    other_product = _product(db, chain)
+    supplier = _supplier(db)
+
+    findable_wh = _warehouse(db, active=True)
+    wh_doc = unique_code("SPO-BYWHCODE")
+    _line(db, spo_number=wh_doc, line_no=1, product=product, warehouse=findable_wh)
+
+    findable_shipment = _shipment(db, supplier=supplier)
+    findable_shipment.shipping_container_number = unique_code("CTN")
+    db.flush()
+    pl_doc = unique_code("SPO-BYPACKLIST")
+    _line(db, spo_number=pl_doc, line_no=1, product=other_product, shipment=findable_shipment)
+
+    unrelated_doc = unique_code("SPO-UNRELATEDQ")
+    _line(db, spo_number=unrelated_doc, line_no=1, product=other_product)
+
+    wh_result = client.get(DOCUMENTS_URL, params={
+        "state": "all", "query": findable_wh.warehouse_code, "limit": 100,
+    })
+    assert wh_result.status_code == 200, wh_result.text
+    wh_numbers = {row["spo_number"] for row in wh_result.json()["data"]}
+    assert wh_numbers == {wh_doc}
+
+    pl_result = client.get(DOCUMENTS_URL, params={
+        "state": "all", "query": findable_shipment.shipping_container_number, "limit": 100,
+    })
+    assert pl_result.status_code == 200, pl_result.text
+    pl_numbers = {row["spo_number"] for row in pl_result.json()["data"]}
+    assert pl_numbers == {pl_doc}
+
+
 def test_overdue_only_keeps_documents_with_a_late_outstanding_line(scm_app):
     client, db = _client(scm_app)
     chain = _chain(db)
@@ -622,6 +661,73 @@ def test_delete_document_is_scoped_to_the_callers_company(scm_app):
         .all()
     )
     assert [str(row[0]) for row in remaining] == [company_b]
+
+
+# =================================================================================== #
+# AC-24 (UAT batch): the Lines-tab line editors - product, warehouse, ETA and supplier
+# all write through the SAME `PUT /spo-allocations/{id}` (no new route), so this pins
+# the round trip at that endpoint and the document read agreeing with it afterwards.
+# =================================================================================== #
+
+
+ALLOCATION_URL = "/api/v1/procurement/spo-allocations"
+
+
+def test_document_line_declares_supplier_id_and_expected_date(scm_app):
+    """Drop-guard (LESSONS-LEARNT): `response_model` silently drops an undeclared
+    field - both are needed to SEED the Lines-tab editors (AC-24 parts 2/3)."""
+    client, db = _client(scm_app)
+    chain = _chain(db)
+    product = _product(db, chain)
+    supplier = _supplier(db)
+    expected = date.today() + timedelta(days=12)
+    doc = unique_code("SPO-LINEFIELDS")
+    _line(db, spo_number=doc, line_no=1, product=product, supplier=supplier,
+          expected_date=expected)
+
+    r = client.get(f"{DOCUMENTS_URL}/{doc}")
+    assert r.status_code == 200, r.text
+    line = r.json()["lines"][0]
+    assert line["supplier_id"] == supplier.id
+    assert line["expected_date"] == expected.isoformat()
+
+
+def test_update_allocation_round_trips_product_warehouse_eta_and_supplier(scm_app):
+    """AC-24 parts 1-3: product, warehouse, ETA (`expected_date`) and supplier all
+    persist through the existing update endpoint, and the document read (what the
+    Lines tab re-fetches after Save) reflects every one of them."""
+    client, db = _client(scm_app)
+    chain = _chain(db)
+    original_product = _product(db, chain)
+    new_product = _product(db, chain)
+    original_wh = _warehouse(db, active=True)
+    new_wh = _warehouse(db, active=True)
+    new_supplier = _supplier(db)
+    doc = unique_code("SPO-EDITLINE")
+    allocation = _line(db, spo_number=doc, line_no=1, product=original_product,
+                        warehouse=original_wh)
+
+    new_expected = date.today() + timedelta(days=21)
+    r = client.put(f"{ALLOCATION_URL}/{allocation.id}", json={
+        "product_id": new_product.id,
+        "warehouse_id": new_wh.id,
+        "expected_date": new_expected.isoformat(),
+        "supplier_id": new_supplier.id,
+    })
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["product_id"] == new_product.id
+    assert body["warehouse_id"] == new_wh.id
+    assert body["supplier_id"] == new_supplier.id
+    assert body["expected_date"] == new_expected.isoformat()
+
+    detail = client.get(f"{DOCUMENTS_URL}/{doc}")
+    assert detail.status_code == 200, detail.text
+    line = detail.json()["lines"][0]
+    assert line["product_id"] == new_product.id
+    assert line["warehouse_id"] == new_wh.id
+    assert line["supplier_id"] == new_supplier.id
+    assert line["expected_date"] == new_expected.isoformat()
 
 
 # =================================================================================== #

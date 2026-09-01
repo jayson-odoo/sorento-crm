@@ -442,6 +442,11 @@ class SPOAllocationUpdate(BaseModel):
     quantity_received: Optional[int] = None
     quantity_rejected: Optional[int] = None
     allocation_notes: Optional[str] = None
+    # The document form view's Lines-tab editors (PLAN-spo-investigation-grid.md UAT
+    # batch, AC-24 parts 2/3): the line's OWN ETA fallback and its OWN supplier,
+    # never the shipment's - those stay read-only, booked against the shipment record.
+    expected_date: Optional[date] = None
+    supplier_id: Optional[str] = None
 
 
 class BulkDeleteSPOAllocationsRequest(BaseModel):
@@ -575,6 +580,12 @@ class SPODocumentLine(BaseModel):
     overdue_days: int
     #: Shipment supplier when a shipment is booked, else the line's own supplier.
     supplier_name: Optional[str] = None
+    #: The line's OWN supplier (editable, UAT AC-24 part 3) - distinct from
+    #: `supplier_name`, which reads the shipment's supplier first when one is booked.
+    supplier_id: Optional[str] = None
+    #: The line's OWN expected date (editable, UAT AC-24 part 2) - the fallback arm of
+    #: the `arrival_date` coalesce, never the shipment's own ETA fields.
+    expected_date: Optional[date] = None
     #: `in_plan` | `pool` | `off` | `none` (plan Q4, UAC AC-14).
     planning_span: str
     receipt_status: str

@@ -2,15 +2,17 @@
 
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import Link from 'next/link';
-import { useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import {
   ColumnDef,
+  VisibilityState,
   getCoreRowModel,
   getPaginationRowModel,
   useReactTable,
 } from '@tanstack/react-table';
 import { toast } from 'sonner';
 import {
+  Columns3,
   FileText,
   Info,
   Link as LinkIcon,
@@ -22,9 +24,18 @@ import {
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardFooter, CardHeader, CardHeading, CardTable, CardTitle } from '@/components/ui/card';
+import {
+  Card,
+  CardFooter,
+  CardHeader,
+  CardHeading,
+  CardTable,
+  CardTitle,
+  CardToolbar,
+} from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
@@ -35,7 +46,8 @@ import { cn } from '@/lib/utils';
 import { formatStatusLabel } from '@/lib/status-badge';
 import { parseDetailSearch } from '@/lib/listNavQuery';
 import DetailActions from '@/components/common/DetailActions';
-import BackToList from '@/components/common/BackToList';
+import { useBackToListHref } from '@/components/common/BackToList';
+import { useDeferredAction } from '@/hooks/useDeferredAction';
 import { WarehouseCombobox } from './WarehouseCombobox';
 import { useSPODocument, spoDocumentsPagerQuery } from '../hooks/useSPODocuments';
 import { useUpdateSPOAllocation, useDeleteSPOAllocation } from '../hooks/useSPOAllocations';
@@ -49,6 +61,12 @@ import {
 import type { SPODocument, SPODocumentLine } from '../types/spoDocument.types';
 import { getWarehouses } from '@/app/(protected)/inventory-management/warehouses/services/warehouseService';
 import type { Warehouse } from '@/app/(protected)/inventory-management/warehouses/types/warehouse.types';
+import { getProducts } from '@/app/(protected)/master-data-management/products/services/productService';
+// Reused, not duplicated (UAT AC-24 parts 1/3): the same server-searched product and
+// supplier pickers the packing-list Lines tab already uses per line, and the GRN form
+// already reuses the product one across features.
+import { ProductComboboxSearchable } from '../../packing-lists/components/ProductComboboxSearchable';
+import { SupplierCombobox } from '../../packing-lists/components/SupplierCombobox';
 
 const DETAIL_PATH = '/procurement-management/spo-allocations';
 
@@ -57,18 +75,26 @@ function detailHref(spoNumber: string, search: string): string {
 }
 
 type LineDraft = {
+  product_id: string;
   warehouse_id: string;
   allocated_quantity: string;
   quantity_received: string;
   quantity_rejected: string;
+  // ETA and supplier editors (UAT AC-24 parts 2/3) - the line's OWN fields, never the
+  // shipment's own ETA/supplier, which stay read-only.
+  expected_date: string;
+  supplier_id: string;
 };
 
 function seedDraft(line: SPODocumentLine): LineDraft {
   return {
+    product_id: line.product_id ?? '',
     warehouse_id: line.warehouse_id ?? '',
     allocated_quantity: String(line.allocated_quantity),
     quantity_received: String(line.quantity_received),
     quantity_rejected: String(line.quantity_rejected),
+    expected_date: line.expected_date ?? '',
+    supplier_id: line.supplier_id ?? '',
   };
 }
 
@@ -89,6 +115,7 @@ function Field({ label, htmlFor, children }: { label: string; htmlFor?: string; 
 
 export function SPODocumentDetail({ spoNumber }: { spoNumber: string }) {
   const { data, isLoading, isError } = useSPODocument(spoNumber);
+  const router = useRouter();
   const searchParams = useSearchParams();
   const filters = useMemo(() => parseDetailSearch(searchParams), [searchParams]);
   const filterProductId = filters.filters.product_id || null;
@@ -96,14 +123,58 @@ export function SPODocumentDetail({ spoNumber }: { spoNumber: string }) {
 
   const doc = data ?? null;
 
+  // The active Header/Lines tab (UAT AC-22): a local echo of `?tab=`, the same
+  // "seed from the URL, resync on a genuinely new record" shape the edit-session
+  // reset below already uses for `isEditing`/`lineDrafts` - a PURELY url-derived
+  // value only updates once the mocked/real router actually re-renders this page,
+  // which a step via the pager does (new url, same component instance) but a raw
+  // click inside this render would not. `selectTab` still writes `?tab=lines` into
+  // the url (via `router.replace`), which is what the pager's own href-builder
+  // (`useListPager`'s `stepHref`) reads back and carries into the next/previous
+  // record's link - `header` is the default and never appears in the query string.
+  const [activeTab, setActiveTabState] = useState<'header' | 'lines'>(() =>
+    searchParams.get('tab') === 'lines' ? 'lines' : 'header',
+  );
+  const selectTab = (tab: 'header' | 'lines') => {
+    setActiveTabState(tab);
+    const next = new URLSearchParams(searchParams.toString());
+    if (tab === 'header') next.delete('tab');
+    else next.set('tab', tab);
+    router.replace(detailHref(spoNumber, next.toString()), { scroll: false });
+  };
+
   const [isEditing, setIsEditing] = useState(false);
   const [lineDrafts, setLineDrafts] = useState<Record<string, LineDraft>>({});
   const [removedLineIds, setRemovedLineIds] = useState<Set<string>>(new Set());
   const [supplierExpanded, setSupplierExpanded] = useState(false);
   const [saving, setSaving] = useState(false);
+  // Rejected and Overdue start hidden (UAT AC-23) - available through the Columns
+  // toggle, same DataGridColumnVisibility control the Purchase Order form view uses
+  // for its own line table.
+  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({
+    rejected: false,
+    overdue: false,
+  });
 
   const updateLineMutation = useUpdateSPOAllocation();
   const deleteLineMutation = useDeleteSPOAllocation();
+
+  const backHref = useBackToListHref(DETAIL_PATH);
+  // Delete document, from the gear (UAT AC-26): the SAME `spo_document.delete`
+  // pending action the list's bulk delete parks, one countdown, no confirm dialog
+  // (D7) - `entityId` is the SPO number itself, spo_document's own registry key.
+  const deletion = useDeferredAction({
+    actionKey: 'spo_document.delete',
+    entityType: 'spo_document',
+    entityId: spoNumber,
+    verb: 'Deleting',
+    subject: spoNumber,
+    surface: 'inline',
+    watchFromMount: true,
+    successMessage: 'SPO document deleted',
+    invalidateKeys: [['spo-allocations']],
+    onCommitted: () => router.push(backHref),
+  });
 
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   useEffect(() => {
@@ -112,13 +183,37 @@ export function SPODocumentDetail({ spoNumber }: { spoNumber: string }) {
     );
   }, []);
 
+  // Server-searched, so any product in the catalogue is reachable from a line editor
+  // (UAT AC-24 part 1), the same `getProducts` call the list's own product filter
+  // makes - never a capped local list (standing rule).
+  const fetchProducts = async (query: string, pageIndex: number) => {
+    const res = await getProducts({
+      pageIndex,
+      pageSize: 50,
+      sorting: [],
+      searchQuery: query,
+      status: 'active',
+    });
+    return { data: res.data ?? [] };
+  };
+
   // Stepping to a neighbouring document (the pager, or Back then another row) must not
-  // carry the previous document's edit session along with it.
+  // carry the previous document's edit session along with it. The active tab
+  // RESYNCS from the new url instead of resetting outright (AC-22): the pager's own
+  // link already carries `?tab=lines` forward when that is where the user was, so
+  // reading it back here is what "the pager preserves the active tab" means - a row
+  // clicked fresh off the list carries no `tab` param and lands back on Header.
   useEffect(() => {
     setIsEditing(false);
     setLineDrafts({});
     setRemovedLineIds(new Set());
     setSupplierExpanded(false);
+    setActiveTabState(searchParams.get('tab') === 'lines' ? 'lines' : 'header');
+    // Deliberately `[spoNumber]` only: `searchParams` changes together with
+    // `spoNumber` on a real navigation (both come from the same new url), and
+    // re-running this on every other `searchParams` change (typing in a list
+    // filter elsewhere on the page) would wipe an in-progress edit for no reason.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [spoNumber]);
 
   const beginEdit = (d: SPODocument) => {
@@ -157,10 +252,13 @@ export function SPODocumentDetail({ spoNumber }: { spoNumber: string }) {
           const draft = lineDrafts[l.id];
           const seed = seedDraft(l);
           return (
+            draft.product_id !== seed.product_id ||
             draft.warehouse_id !== seed.warehouse_id ||
             draft.allocated_quantity !== seed.allocated_quantity ||
             draft.quantity_received !== seed.quantity_received ||
-            draft.quantity_rejected !== seed.quantity_rejected
+            draft.quantity_rejected !== seed.quantity_rejected ||
+            draft.expected_date !== seed.expected_date ||
+            draft.supplier_id !== seed.supplier_id
           );
         });
 
@@ -169,10 +267,13 @@ export function SPODocumentDetail({ spoNumber }: { spoNumber: string }) {
           updateLineMutation.mutateAsync({
             id: l.id,
             data: {
+              product_id: lineDrafts[l.id].product_id || undefined,
               warehouse_id: lineDrafts[l.id].warehouse_id || null,
               allocated_quantity: Number(lineDrafts[l.id].allocated_quantity) || 0,
               quantity_received: Number(lineDrafts[l.id].quantity_received) || 0,
               quantity_rejected: Number(lineDrafts[l.id].quantity_rejected) || 0,
+              expected_date: lineDrafts[l.id].expected_date || null,
+              supplier_id: lineDrafts[l.id].supplier_id || null,
             },
           }),
         ),
@@ -234,6 +335,19 @@ export function SPODocumentDetail({ spoNumber }: { spoNumber: string }) {
           const line = row.original;
           const matches = isMatchingLine(line);
           const removed = removedLineIds.has(line.id);
+          if (isEditing) {
+            const draft = lineDrafts[line.id];
+            return (
+              <ProductComboboxSearchable
+                value={draft?.product_id ?? ''}
+                onChange={(v) =>
+                  setLineDrafts((prev) => ({ ...prev, [line.id]: { ...seedDraft(line), ...prev[line.id], product_id: v } }))
+                }
+                fetchProducts={fetchProducts}
+                productFallback={line.product}
+              />
+            );
+          }
           return (
             <div className={cn('flex items-start gap-2', removed && 'opacity-50')}>
               {matches ? (
@@ -274,7 +388,11 @@ export function SPODocumentDetail({ spoNumber }: { spoNumber: string }) {
                 warehouses={warehouses}
                 warehouseFallback={line.warehouse}
                 placeholder="No warehouse"
-                className="h-8"
+                // NOT a fixed height (UAT AC-24 part 1 bug fix): `SearchableSelect`'s
+                // trigger deliberately wraps a long label rather than truncating it
+                // (`selectTriggerVariants`'s own doc comment) - forcing `h-8` here
+                // clipped the second line instead of letting the control grow, which
+                // is what read as the label rendering twice ("BRW-SYNT - BRW-S...").
                 clearable
               />
             );
@@ -401,9 +519,63 @@ export function SPODocumentDetail({ spoNumber }: { spoNumber: string }) {
             }
           />
         ),
-        cell: ({ row }) => fmtEta(row.original.arrival_date),
-        size: 110,
+        cell: ({ row }) => {
+          const line = row.original;
+          if (isEditing) {
+            const draft = lineDrafts[line.id];
+            return (
+              <Input
+                type="date"
+                aria-label={`ETA on ${line.product?.product_code ?? line.id}`}
+                value={draft?.expected_date ?? (line.expected_date ?? '')}
+                onChange={(e) =>
+                  setLineDrafts((prev) => ({
+                    ...prev,
+                    [line.id]: { ...seedDraft(line), ...prev[line.id], expected_date: e.target.value },
+                  }))
+                }
+                className="h-8"
+              />
+            );
+          }
+          return fmtEta(line.arrival_date);
+        },
+        size: 150,
         meta: { headerTitle: 'ETA' },
+      },
+      {
+        id: 'supplier',
+        accessorFn: (l) => l.supplier_name ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Supplier" column={column} />,
+        cell: ({ row }) => {
+          const line = row.original;
+          if (isEditing) {
+            const draft = lineDrafts[line.id];
+            return (
+              <SupplierCombobox
+                value={draft?.supplier_id ?? ''}
+                onChange={(v) =>
+                  setLineDrafts((prev) => ({ ...prev, [line.id]: { ...seedDraft(line), ...prev[line.id], supplier_id: v } }))
+                }
+                // Best-effort label for a value not yet in the search results: the
+                // line's own `supplier_id` may differ from the DISPLAYED
+                // `supplier_name` when a shipment is booked (that field prefers the
+                // shipment's supplier) - opening the picker and searching resolves
+                // the exact name.
+                supplierFallback={
+                  line.supplier_id
+                    ? { id: line.supplier_id, supplier_code: '', supplier_name: line.supplier_name ?? '' }
+                    : null
+                }
+                placeholder="No supplier"
+                clearable
+              />
+            );
+          }
+          return line.supplier_name || <span className="text-muted-foreground">-</span>;
+        },
+        size: 170,
+        meta: { headerTitle: 'Supplier' },
       },
       {
         id: 'overdue',
@@ -499,18 +671,20 @@ export function SPODocumentDetail({ spoNumber }: { spoNumber: string }) {
     columns,
     data: visibleLines,
     getRowId: (row) => row.id,
+    state: { columnVisibility },
+    onColumnVisibilityChange: setColumnVisibility,
     getCoreRowModel: getCoreRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
     columnResizeMode: 'onChange',
     enableColumnResizing: true,
   });
 
-  const backLink = <BackToList listPath={DETAIL_PATH} label="Back to SPO Allocations" />;
+  // Back lives on the PAGE-level header row now (UAT AC-21, page.tsx), the same spot
+  // the Purchase Order form view puts it - not here any more.
 
   if (isLoading && !doc) {
     return (
       <div className="space-y-4">
-        <div className="flex justify-end">{backLink}</div>
         <Skeleton className="h-32 w-full rounded-xl" />
         <Skeleton className="h-64 w-full rounded-xl" />
       </div>
@@ -520,7 +694,6 @@ export function SPODocumentDetail({ spoNumber }: { spoNumber: string }) {
   if (isError || !doc) {
     return (
       <div className="space-y-4">
-        <div className="flex justify-end">{backLink}</div>
         <Card className="flex flex-col items-center gap-3 p-10 text-center">
           <div className="text-sm font-semibold">SPO document not found</div>
           <p className="max-w-md text-sm text-muted-foreground">
@@ -538,12 +711,10 @@ export function SPODocumentDetail({ spoNumber }: { spoNumber: string }) {
     <div className="space-y-4">
       <Card>
         <CardHeader className="block py-4">
-          {/* Back, the number, the status badge, Edit and the pager all read as ONE
-              title row (review nit / AC-5) - not split across a page-level breadcrumb
-              and this card the way most detail pages do it. */}
+          {/* The number, the status badge, Edit and the pager read as ONE title row
+              (review nit / AC-5); Back moved to the page-level header (UAT AC-21). */}
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div className="flex min-w-0 flex-wrap items-center gap-3">
-              {backLink}
               <CardTitle className="text-lg">{doc.spo_number}</CardTitle>
               <Badge variant={statusPill.variant} appearance="light" size="md">
                 {statusPill.label}
@@ -569,6 +740,20 @@ export function SPODocumentDetail({ spoNumber }: { spoNumber: string }) {
                   ariaLabel: 'SPO document',
                 }}
                 gearLabel="SPO document options"
+                // Delete document, from the gear (UAT AC-26) - the same deferred,
+                // no-confirm-dialog pattern (D7) every other destructive action uses;
+                // the countdown takes the Edit button's spot while it runs.
+                actions={[
+                  {
+                    key: 'spo_document.delete',
+                    label: 'Delete document',
+                    icon: Trash2,
+                    kind: 'destructive',
+                    disabled: deletion.isPending,
+                    run: () => deletion.start(),
+                  },
+                ]}
+                pendingAction={deletion.countdown}
                 primary={
                   <Button variant="primary" size="sm" className="gap-1.5" onClick={() => beginEdit(doc)}>
                     <SquarePen className="size-4" />
@@ -581,7 +766,7 @@ export function SPODocumentDetail({ spoNumber }: { spoNumber: string }) {
         </CardHeader>
       </Card>
 
-      <Tabs defaultValue="header" className="w-full">
+      <Tabs value={activeTab} onValueChange={(v) => selectTab(v as 'header' | 'lines')} className="w-full">
         <TabsList variant="line" className="mb-4 w-full justify-start overflow-x-auto">
           <TabsTrigger value="header">
             <FileText />
@@ -642,7 +827,7 @@ export function SPODocumentDetail({ spoNumber }: { spoNumber: string }) {
             table={table}
             recordCount={visibleLines.length}
             isLoading={false}
-            tableLayout={{ width: 'fixed', columnsResizable: true }}
+            tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
             emptyMessage="This SPO document has no lines."
             // A real key, not the pathname fallback (review S2): every document's URL is
             // different, so a per-pathname key would fragment one reader's column prefs
@@ -650,10 +835,24 @@ export function SPODocumentDetail({ spoNumber }: { spoNumber: string }) {
             listingKey="procurement.spo_allocations.view::spo-document-lines"
           >
             <Card>
-              <CardHeader>
+              <CardHeader className="flex-wrap gap-3">
                 <CardHeading>
                   <CardTitle>Lines</CardTitle>
                 </CardHeading>
+                {/* Rejected and Overdue start hidden (UAT AC-23) - reachable here,
+                    the same Columns control the Purchase Order form view's line
+                    table already uses. */}
+                <CardToolbar className="flex-wrap">
+                  <DataGridColumnVisibility
+                    table={table}
+                    trigger={
+                      <Button variant="outline" size="sm" className="gap-1.5">
+                        <Columns3 className="size-4" />
+                        Columns
+                      </Button>
+                    }
+                  />
+                </CardToolbar>
               </CardHeader>
               <CardTable>
                 <DataGridTable />

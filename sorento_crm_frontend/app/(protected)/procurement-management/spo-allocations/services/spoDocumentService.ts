@@ -7,11 +7,13 @@
  *
  * `GET /api/v1/procurement/spo-allocations/documents`
  *   Paged header rows grouped by `spo_number`, aggregated in SQL. Query params:
- *   `page`, `limit`, `sort`, `dir`, `query` (SPO number / product contains), `state`
- *   (all|outstanding|completed, default outstanding), `product_id`, `warehouse_id`,
- *   `overdue_only`. Response: `{ data: SPODocumentRow[], pagination: {total,page,limit},
- *   empty }`. Filters match LINES; a document is included when >=1 of its lines
- *   matches (Q10). Needs `procurement.spo_allocations.view`.
+ *   `page`, `limit`, `sort`, `dir`, `query` (SPO number / product / warehouse code /
+ *   packing list or container number contains), `state` (all|outstanding|completed,
+ *   default outstanding), `product_id`, `warehouse_id`. The route still accepts
+ *   `overdue_only`, but nothing here sends it (AC-4 retired, UAT batch - the toggle
+ *   came off the list toolbar). Response: `{ data: SPODocumentRow[], pagination:
+ *   {total,page,limit}, empty }`. Filters match LINES; a document is included when
+ *   >=1 of its lines matches (Q10). Needs `procurement.spo_allocations.view`.
  *
  * `GET /api/v1/procurement/spo-allocations/documents/{spo_number}`
  *   The header rollup + every line, computed fields included (`SPODocumentLine`).
@@ -58,7 +60,6 @@ export async function listSPODocuments(
       state: params.state ?? 'outstanding',
       product_id: params.product_id ?? undefined,
       warehouse_id: params.warehouse_id ?? undefined,
-      overdue_only: params.overdue_only ? 'true' : undefined,
     },
   );
 

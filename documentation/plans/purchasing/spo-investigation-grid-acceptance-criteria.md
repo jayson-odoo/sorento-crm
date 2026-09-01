@@ -1,7 +1,7 @@
 # UAC: SPO document list + form view
 
 Plan: PLAN-spo-investigation-grid.md
-Status: APPROVED 1 Sep 2026 - GO
+Status: APPROVED 1 Sep 2026 - GO; UAT batch (AC-21..AC-26) added 1 Sep evening
 
 ## Journey
 
@@ -22,8 +22,11 @@ leaves with a number and a reason instead of a SQL session.
   (amber when > 0).
 - AC-3 [FE] Given product and/or warehouse filters set, then only documents holding a
   matching line remain. No totals strip is rendered (markup ruling 1 Sep).
-- AC-4 [FE] Given the Overdue toggle on, then only documents with an outstanding line
-  past its ETA remain; the toggle composes with tabs and filters.
+- ~~AC-4 [FE] Given the Overdue toggle on...~~ **RETIRED 1 Sep evening (UAT batch)**:
+  the toggle comes off the list toolbar entirely - `worst_overdue_days` is already a
+  sortable column and AC-25 widens `query` far enough that the standalone toggle is
+  redundant. The backend `overdue_only` param stays for other callers; nothing
+  FE-side sends it.
 - AC-5 [FE] Given a row click, then the form view opens at
   `/procurement-management/spo-allocations/<spo_number>` (slash-encoded path param, no
   UUIDs on screen). The title row carries: a Back to SPO Allocations link, the status
@@ -91,3 +94,41 @@ leaves with a number and a reason instead of a SQL session.
 - AC-20 [T] /code-review pass + PR-CHECKLIST; DoD gate: real data verified, no new
   permission needed (existing spo-allocations view slug) or grant sweep run if one is
   added; no orphaned references to the retired route.
+
+## UAT batch (1 Sep evening) - AC-21..AC-26, AC-4 retired
+
+- AC-21 [FE] Given the form view, then Back sits on the page-level header row, top
+  right - the same placement/markup as the Purchase Order form view
+  (`PageHeader`'s `actions` slot, `BackToList`) - not on the record's own title card.
+- AC-22 [FE] Given I am on the Lines tab and step to the next/previous document via
+  the pager, then I land on the Lines tab there too (`?tab=lines` carried in the
+  pager's own link); a document opened fresh from the list (no `tab` param) starts
+  on Header.
+- AC-23 [FE] Given the Lines tab, then a Columns visibility control (same affordance
+  the list uses) is present; Rejected and Overdue are hidden by default and
+  reachable through it; every other Lines column keeps its explicit size + truncate.
+- AC-24 [FE][BE][T] Given Edit on the form view, then:
+  1. the Warehouse combobox renders cleanly at its column width (no clipped/doubled
+     label) - the fixed-height override that fought `SearchableSelect`'s wrap
+     behaviour is gone from every combobox in this grid.
+  2. Product is editable via a server-searched `SearchableSelect`
+     (`ProductComboboxSearchable`, the same `getProducts` pattern the list's own
+     product filter uses) and persists through the existing update mutation.
+  3. ETA (the line's own `expected_date`) is editable via a date input and persists
+     through the same mutation; a pytest asserts the round trip
+     (`PUT /spo-allocations/{id}` -> `GET .../documents/{spo_number}`).
+  4. Supplier is editable per line via a server-searched `SearchableSelect`
+     (`SupplierCombobox`, reused - no per-feature `getSuppliers` duplicate) and
+     persists through the same mutation; a pytest asserts the round trip.
+     `SPOAllocationUpdate` and `SPODocumentLine` both declare `expected_date` and
+     `supplier_id` (drop-guard test for the response fields).
+- AC-25 [BE][T] `GET /spo-allocations/documents`'s `query` filter also matches a
+  line's warehouse CODE and its packing list's shipment/container number, in
+  addition to SPO number and product; pytest seeds one document findable only by
+  its warehouse code and another findable only by its packing-list/container
+  number.
+- AC-26 [FE][T] Given the form view's title row, then a gear icon dropdown offers
+  "Delete document"; selecting it parks the SAME `spo_document.delete` pending
+  action the list's bulk delete uses (single `entityId` = the spo_number, no
+  confirm dialog, D7) and routes back to the list on commit; vitest pins the wiring
+  (action key, entity, `start()` call) and that Cancel/no-selection deletes nothing.

@@ -1,6 +1,6 @@
 # PLAN: SPO document list + form view (investigation touch-up)
 
-Status: DELIVERED 1 Sep 2026 - S1-S3 complete, PR open
+Status: DELIVERED 1 Sep 2026 - S1-S3 complete + UAT batch (below), PR open
 Date: 2026-09-01
 Domain: purchasing (procurement-management/spo-allocations)
 Trigger: captain, 1 Sep 2026 - "the UI of spo allocations is very hard to use, very hard
@@ -184,3 +184,56 @@ in S2; (3) Lines-tab edit covers Warehouse/Allocated/Received/Rejected, not Prod
 Phase 1 FE-first against a mocked service (document list + form view shapes tuned),
 verify in browser -> Phase 2 backend endpoints test-first, swap mock at the service
 boundary -> Phase 3 /code-review -> DoD gate. One lane, one PR unless review splits it.
+
+## Captain's UAT rulings (1 Sep evening)
+
+A hands-on pass over S1-S3 in the browser surfaced eight fixes, all against the SAME
+document list + form view - no new screens. Rulings (AC-21..AC-26 below; AC-4 retired):
+
+- **Back button placement (AC-21).** The form view's Back link moves off the record's
+  own title row and onto the page-level header, top right - exactly the Purchase
+  Order form view's layout (`app/(protected)/scm/purchase-orders/[id]/page.tsx`:
+  `PageHeader`'s `actions` slot carries `BackToList`). `SPODocumentDetail`'s own
+  title row keeps the number, status badge, pager and Edit; it stops rendering Back.
+- **Pager keeps the active tab (AC-22).** The Header/Lines tab rides in the url as
+  `?tab=lines` (omitted for the default, Header); the pager's own link-builder reads
+  it back off the CURRENT url and carries it into the next/previous record's link,
+  so stepping through the list does not bounce the reader back to Header.
+- **Overdue-only toggle retired (AC-4 retired).** Comes off the list toolbar
+  entirely - `worst_overdue_days` is already a sortable column, and AC-25 widens the
+  free-text search far enough that the standalone toggle stopped earning its place.
+  The backend query param stays (other callers), but nothing FE-side sends it any
+  more.
+- **Lines grid gets a Columns control (AC-23).** Same `DataGridColumnVisibility`
+  affordance the list already offers, applied to the Lines tab's DataGrid; Rejected
+  and Overdue start HIDDEN (toggle them back on), every other column stays visible.
+- **Line editors, three fixes (AC-24).**
+  1. The Warehouse combobox's fixed `h-8` height fought `SearchableSelect`'s
+     intentional "wrap, never truncate" trigger (`select-trigger-variants.ts`'s own
+     doc comment) - the wrapped second line was clipped by the fixed height, which
+     read as the label rendering twice. Fix: drop the fixed height override
+     everywhere a `SearchableSelect`-based picker sits in this grid.
+  2. Product becomes editable in edit mode: `ProductComboboxSearchable` (server
+     search, reused from `packing-lists/components/`, the same one GRN already
+     reuses), writing `SPOAllocation.product_id` through the existing update
+     mutation (`product_id` was already on `SPOAllocationUpdate`).
+  3. ETA becomes editable: the line's OWN `expected_date` via a date input,
+     persisted through the same mutation. `expected_date` and `supplier_id` were
+     added to `SPOAllocationUpdate` (backend) and to `SPODocumentLine`'s response
+     (drop-guard).
+  4. Supplier becomes editable per line: a new Supplier column, `SupplierCombobox`
+     (reused from `packing-lists/components/`, server search over
+     `searchSuppliersForSelect`), writing `SPOAllocation.supplier_id`.
+- **List search widened (AC-25).** `GET /spo-allocations/documents`'s `query` filter
+  now also matches a line's WAREHOUSE code and its packing list's shipment/container
+  number, not just SPO number and product - the same relationship path the Lines
+  tab's Packing List column already reads.
+- **Gear delete on the form view (AC-26).** The title row gains a gear dropdown
+  (`DetailActions`' `actions` prop, one item: "Delete document", destructive) that
+  parks the SAME `spo_document.delete` pending action the list's bulk delete already
+  uses (`useDeferredAction`, single-entity form of the deferred-delete pattern, D7) -
+  no confirm dialog, countdown takes the Edit button's spot, routes back to the list
+  on commit.
+
+No schema change, no new routes beyond the update schema fields above; `GET
+/spo-allocations/documents` and `.../documents/{spo_number}` are otherwise unchanged.

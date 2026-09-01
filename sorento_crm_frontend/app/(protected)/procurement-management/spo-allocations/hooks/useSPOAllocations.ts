@@ -53,7 +53,11 @@ export function useUpdateSPOAllocation() {
       data,
     }: {
       id: string;
-      data: Omit<Partial<SPOAllocationFormData>, 'warehouse_id'> & { warehouse_id?: string | null };
+      data: Omit<Partial<SPOAllocationFormData>, 'warehouse_id' | 'supplier_id' | 'expected_date'> & {
+        warehouse_id?: string | null;
+        supplier_id?: string | null;
+        expected_date?: string | null;
+      };
     }) => updateSPOAllocation(id, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['spo-allocations'] });

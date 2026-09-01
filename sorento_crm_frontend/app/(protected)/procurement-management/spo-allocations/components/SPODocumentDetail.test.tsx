@@ -35,11 +35,13 @@ if (!window.matchMedia) {
 Element.prototype.scrollIntoView = vi.fn();
 
 let searchParams = new URLSearchParams();
+const routerPush = vi.fn();
+const routerReplace = vi.fn();
 vi.mock('@/components/common/ListPager', () => ({ __esModule: true, default: () => null }));
 
 vi.mock('next/navigation', () => ({
   usePathname: () => '/procurement-management/spo-allocations/SPO-2026%2F08-0061',
-  useRouter: () => ({ push: vi.fn() }),
+  useRouter: () => ({ push: routerPush, replace: routerReplace }),
   useSearchParams: () => searchParams,
 }));
 
@@ -60,6 +62,17 @@ vi.mock(
   () => ({ getWarehouses: vi.fn(async () => ({ data: [], pagination: { total: 0 } })) }),
 );
 
+// Server search back-ends for the Lines-tab editors (UAT AC-24 parts 1/3) - only
+// called once a picker's popover is OPENED, which none of these tests do; mocked
+// anyway so nothing here can make a real network call.
+vi.mock(
+  '@/app/(protected)/master-data-management/products/services/productService',
+  () => ({ getProducts: vi.fn(async () => ({ data: [], pagination: { total: 0 } })) }),
+);
+vi.mock('../../suppliers/services/supplierService', () => ({
+  searchSuppliersForSelect: vi.fn(async () => []),
+}));
+
 // Save (review B2) calls the REAL per-line mutations - `updateSPOAllocation` /
 // `deleteSPOAllocation` have their own service-level tests, so only the WIRING is
 // pinned here: which id, which fields, which line goes to which mutation.
@@ -68,6 +81,27 @@ const deleteMutateAsync = vi.fn();
 vi.mock('../hooks/useSPOAllocations', () => ({
   useUpdateSPOAllocation: () => ({ mutateAsync: updateMutateAsync }),
   useDeleteSPOAllocation: () => ({ mutateAsync: deleteMutateAsync }),
+}));
+
+// The engine (park/countdown/commit) is `hooks/useDeferredAction.test.tsx`'s job -
+// this only pins that the gear's Delete document (UAT AC-26) wires the right
+// action key, entity and starts it.
+const deletionStart = vi.fn();
+const useDeferredActionInput = vi.fn();
+let deletionCountdown: React.ReactNode = null;
+let deletionIsPending = false;
+vi.mock('@/hooks/useDeferredAction', () => ({
+  useDeferredAction: (input: unknown) => {
+    useDeferredActionInput(input);
+    return {
+      pending: null,
+      isPending: deletionIsPending,
+      isBlocked: false,
+      start: deletionStart,
+      cancel: vi.fn(),
+      countdown: deletionCountdown,
+    };
+  },
 }));
 
 import { SPODocumentDetail } from './SPODocumentDetail';
@@ -88,6 +122,8 @@ function line(over: Partial<SPODocumentLine> = {}): SPODocumentLine {
     arrival_date: '2026-08-15',
     overdue_days: 0,
     supplier_name: 'Acme Sanitary',
+    supplier_id: 'sup-1',
+    expected_date: '2026-08-15',
     planning_span: 'in_plan',
     receipt_status: 'open',
     outstanding: true,
@@ -125,12 +161,20 @@ function openTab(name: 'Header' | 'Lines') {
   fireEvent.mouseDown(screen.getByRole('tab', { name }), { button: 0, ctrlKey: false });
 }
 
+/** Radix opens the gear on pointerdown, not click. */
+function openGear() {
+  const trigger = screen.getByRole('button', { name: 'SPO document options' });
+  fireEvent.pointerDown(trigger, new MouseEvent('pointerdown', { bubbles: true, button: 0 }));
+}
+
 beforeEach(() => {
   cleanup();
   vi.clearAllMocks();
   searchParams = new URLSearchParams();
   updateMutateAsync.mockResolvedValue(undefined);
   deleteMutateAsync.mockResolvedValue(undefined);
+  deletionCountdown = null;
+  deletionIsPending = false;
 });
 
 describe('SPODocumentDetail - status pill (AC-2, AC-6)', () => {
@@ -279,7 +323,7 @@ describe('SPODocumentDetail - highlight on URL filter (AC-7)', () => {
 });
 
 describe('SPODocumentDetail - Edit/Save calls the real mutations (review B2)', () => {
-  it('Save PUTs only the line whose draft changed, with the four editable fields', async () => {
+  it('Save PUTs only the line whose draft changed, with every editable field (UAT AC-24)', async () => {
     useSPODocument.mockReturnValue({ data: doc(), isLoading: false, isError: false });
     renderDetail();
 
@@ -294,13 +338,34 @@ describe('SPODocumentDetail - Edit/Save calls the real mutations (review B2)', (
     expect(updateMutateAsync).toHaveBeenCalledWith({
       id: 'line-1',
       data: {
+        product_id: 'prod-1',
         warehouse_id: 'wh-1',
         allocated_quantity: 350,
         quantity_received: 100,
         quantity_rejected: 0,
+        expected_date: '2026-08-15',
+        supplier_id: 'sup-1',
       },
     });
     expect(deleteMutateAsync).not.toHaveBeenCalled();
+  });
+
+  it('Save carries a changed ETA through to the update payload (UAT AC-24 part 2)', async () => {
+    useSPODocument.mockReturnValue({ data: doc(), isLoading: false, isError: false });
+    renderDetail();
+
+    fireEvent.click(screen.getByRole('button', { name: /^Edit$/i }));
+    openTab('Lines');
+
+    const etaInput = screen.getByLabelText('ETA on CW-BASIN-450');
+    fireEvent.change(etaInput, { target: { value: '2026-09-01' } });
+
+    await fireEvent.click(screen.getByRole('button', { name: /^Save$/i }));
+
+    expect(updateMutateAsync).toHaveBeenCalledWith({
+      id: 'line-1',
+      data: expect.objectContaining({ expected_date: '2026-09-01' }),
+    });
   });
 
   it('Save leaves an untouched line alone and DELETEs a removed one', async () => {
@@ -336,5 +401,109 @@ describe('SPODocumentDetail - Edit/Save calls the real mutations (review B2)', (
 
     expect(updateMutateAsync).not.toHaveBeenCalled();
     expect(deleteMutateAsync).not.toHaveBeenCalled();
+  });
+});
+
+describe('SPODocumentDetail - Back moved to the page header (UAT AC-21)', () => {
+  it('no longer renders its own Back link - the page-level PageHeader owns it', () => {
+    useSPODocument.mockReturnValue({ data: doc(), isLoading: false, isError: false });
+    renderDetail();
+
+    expect(screen.queryByText(/Back to SPO Allocations/i)).toBeNull();
+  });
+});
+
+describe('SPODocumentDetail - the active tab lives in the URL (UAT AC-22)', () => {
+  it('opening the Lines tab writes ?tab=lines, so the pager carries it forward', () => {
+    useSPODocument.mockReturnValue({ data: doc(), isLoading: false, isError: false });
+    renderDetail();
+
+    openTab('Lines');
+
+    expect(routerReplace).toHaveBeenCalledWith(
+      expect.stringContaining('tab=lines'),
+      expect.objectContaining({ scroll: false }),
+    );
+  });
+
+  it('starts on the Lines tab when the url already carries ?tab=lines', () => {
+    searchParams = new URLSearchParams('tab=lines');
+    useSPODocument.mockReturnValue({ data: doc(), isLoading: false, isError: false });
+    renderDetail();
+
+    expect(screen.getByRole('tab', { name: 'Lines' })).toHaveAttribute('data-state', 'active');
+    expect(screen.getByRole('tab', { name: 'Header' })).toHaveAttribute('data-state', 'inactive');
+  });
+
+  it('switching back to Header drops the tab param from the url', () => {
+    searchParams = new URLSearchParams('tab=lines');
+    useSPODocument.mockReturnValue({ data: doc(), isLoading: false, isError: false });
+    renderDetail();
+
+    openTab('Header');
+
+    const [href] = routerReplace.mock.calls[0];
+    expect(href as string).not.toContain('tab=');
+  });
+});
+
+describe('SPODocumentDetail - Lines Columns control, Rejected/Overdue hidden by default (UAT AC-23)', () => {
+  it('offers a Columns control on the Lines tab', () => {
+    useSPODocument.mockReturnValue({ data: doc(), isLoading: false, isError: false });
+    renderDetail();
+    openTab('Lines');
+
+    expect(screen.getByRole('button', { name: /columns/i })).toBeInTheDocument();
+  });
+
+  it('does not render the Rejected or Overdue columns until toggled on', () => {
+    useSPODocument.mockReturnValue({ data: doc(), isLoading: false, isError: false });
+    renderDetail();
+    openTab('Lines');
+
+    expect(screen.queryByText('Rejected')).toBeNull();
+    expect(screen.queryByText('Overdue')).toBeNull();
+    // Every other Lines column stays visible.
+    expect(screen.getByText('Balance')).toBeInTheDocument();
+  });
+});
+
+describe('SPODocumentDetail - gear Delete document (UAT AC-26)', () => {
+  it('parks the spo_document.delete pending action for this spo_number', () => {
+    useSPODocument.mockReturnValue({ data: doc(), isLoading: false, isError: false });
+    renderDetail();
+
+    openGear();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Delete document' }));
+
+    expect(deletionStart).toHaveBeenCalledTimes(1);
+    const input = useDeferredActionInput.mock.calls[0][0] as {
+      actionKey: string;
+      entityType: string;
+      entityId: string;
+    };
+    expect(input.actionKey).toBe('spo_document.delete');
+    expect(input.entityType).toBe('spo_document');
+    expect(input.entityId).toBe('SPO-2026/08-0061');
+  });
+
+  it('cancel never deletes anything - only start() does', () => {
+    useSPODocument.mockReturnValue({ data: doc(), isLoading: false, isError: false });
+    renderDetail();
+
+    openGear();
+    // Closing the menu without selecting the item.
+    fireEvent.keyDown(document.activeElement || document.body, { key: 'Escape' });
+
+    expect(deletionStart).not.toHaveBeenCalled();
+  });
+
+  it('shows the countdown in place of Edit while the deletion is pending', () => {
+    deletionCountdown = <button type="button">Deleting in 8s</button>;
+    useSPODocument.mockReturnValue({ data: doc(), isLoading: false, isError: false });
+    renderDetail();
+
+    expect(screen.getByText('Deleting in 8s')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Edit$/i })).toBeNull();
   });
 });

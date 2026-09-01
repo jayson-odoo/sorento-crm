@@ -1930,10 +1930,25 @@ class SPOAllocationService:
                         Product.product_name.ilike(f"%{q_str}%"),
                     )
                 )
+                # Same shape as `matching_product_ids` (AC-25): a nested, UNCORRELATED
+                # `id IN (SELECT ...)` needs no alias, unlike a join, which is why
+                # `Warehouse`/`InboundShipment` stay unaliased here too (see the
+                # `Product` comment above this block for the company-scope reason).
+                matching_warehouse_ids = select(Warehouse.id).where(
+                    Warehouse.warehouse_code.ilike(f"%{q_str}%")
+                )
+                matching_shipment_ids = select(InboundShipment.id).where(
+                    or_(
+                        InboundShipment.shipment_number.ilike(f"%{q_str}%"),
+                        InboundShipment.shipping_container_number.ilike(f"%{q_str}%"),
+                    )
+                )
                 match_conditions.append(
                     or_(
                         MatchLine.spo_number.ilike(f"%{q_str}%"),
                         MatchLine.product_id.in_(matching_product_ids),
+                        MatchLine.warehouse_id.in_(matching_warehouse_ids),
+                        MatchLine.inbound_shipment_id.in_(matching_shipment_ids),
                     )
                 )
             match_filter = select(MatchLine.id).where(*match_conditions).exists()
@@ -2181,6 +2196,8 @@ class SPOAllocationService:
                     arrival_date=arrival,
                     overdue_days=overdue_days,
                     supplier_name=supplier_name,
+                    supplier_id=str(allocation.supplier_id) if allocation.supplier_id else None,
+                    expected_date=allocation.expected_date,
                     planning_span=planning_span,
                     receipt_status=allocation.receipt_status or "pending",
                     outstanding=outstanding,

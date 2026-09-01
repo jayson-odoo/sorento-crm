@@ -61,6 +61,12 @@ export interface SPODocumentLine {
   overdue_days: number;
   /** Shipment supplier when a shipment is booked, else the line's own supplier. */
   supplier_name: string | null;
+  /** The line's OWN supplier (editable, UAT AC-24 part 3) - distinct from
+   *  `supplier_name`, which reads the shipment's supplier first when one is booked. */
+  supplier_id: string | null;
+  /** The line's OWN expected date (editable, UAT AC-24 part 2) - the fallback arm of
+   *  the `arrival_date` coalesce, never the shipment's own ETA fields. */
+  expected_date: string | null;
   planning_span: PlanningSpan;
   receipt_status: string;
   /** Whether this line still counts as incoming supply (`open_incoming_clauses` + balance
@@ -89,10 +95,13 @@ export interface SPODocument {
 }
 
 /** The document list's filters, matching the Phase 2 endpoint's own query params
- *  (plan S1: `state`, `product_id`, `warehouse_id`, `overdue_only`, `query`). */
+ *  (plan S1: `state`, `product_id`, `warehouse_id`, `query`).
+ *
+ *  `overdue_only` is a BACKEND param only since the UAT batch (AC-4 retired): the
+ *  toggle came off the list toolbar, so nothing FE-side sends it any more - the
+ *  route still accepts it for other callers (MCP, future use). */
 export interface SPODocumentListFilters {
   state?: SPODocumentState;
   product_id?: string | null;
   warehouse_id?: string | null;
-  overdue_only?: boolean | null;
 }
