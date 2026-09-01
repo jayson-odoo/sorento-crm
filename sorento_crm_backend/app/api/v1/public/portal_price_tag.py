@@ -357,15 +357,19 @@ def portal_lookup_promotions(
     token: PortalToken = Depends(get_portal_token),
     db: Session = Depends(get_db),
 ):
-    """Active-window promotions for the portal form's promotion dropdown (S4, #477).
+    """Active-window, audience-gated promotions for the portal form's promotion
+    dropdown (S4, #477).
 
     Gated the same way as every other price tag route: a contact who cannot see
-    the form cannot browse the promotion book through it either.
+    the form cannot browse the promotion book through it either. Beyond that,
+    the promotions returned are only the ones this contact's own access codes
+    are entitled to (``PriceTagRequestService.lookup_promotions``) - the same
+    audience rule a promotion's price is gated by everywhere else.
     """
     _assert_visible(db, token.contact_id)
     return [
         PromotionLookupItem(**item)
-        for item in PriceTagRequestService.lookup_promotions(db, q)
+        for item in PriceTagRequestService.lookup_promotions(db, token.contact_id, q)
     ]
 
 

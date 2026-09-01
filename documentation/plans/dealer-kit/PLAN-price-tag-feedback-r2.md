@@ -1,6 +1,6 @@
 # PLAN - Price Tag Feedback R2
 
-Status: Approved 1 Sep 2026 - implementation starting. S4 (portal promotions lookup) DONE, ready for PR - 1 Sep 2026 on branch `price-tag-r2-s4`: `GET /portal/lookups/promotions` on the portal price-tag router (active-window + company scope mirrors resolve_prices' _offer_prices), `lookupPromotions` wired FE-side, SearchableSelect stays clearable. pytest test-first (7 new tests, all portal/price-tag suites green - 89 tests); browser-verified end to end on a fresh :3131 FE / :8131 BE pair (own backend, since the endpoint is new code) - real promotions load, search filters, selection submits promotion_id, verified on the created request, fixtures cleaned up.
+Status: Approved 1 Sep 2026 - implementation starting. S4 (portal promotions lookup) DONE, ready for PR - 1 Sep 2026 on branch `price-tag-r2-s4`: `GET /portal/lookups/promotions` on the portal price-tag router. The active-window rule (active-window + company scope) mirrors `resolve_prices`' `_offer_prices`; the AUDIENCE gate is applied separately (a contact's own access codes vs. `Promotion.access_levels`, fail closed on an empty list either side - review-fixed 1 Sep after the first cut shipped without it), `lookupPromotions` wired FE-side, SearchableSelect stays clearable. pytest test-first, all portal/price-tag suites green (95 tests). Browser evidence covered the window rule and the FE's client-side dropdown filtering (the form calls `lookupPromotions()` once with no `q`); the endpoint's `q` param and the audience gate are covered by pytest only, not re-verified in the browser.
 UAC: `documentation/plans/dealer-kit/price-tag-feedback-r2-acceptance-criteria.md`
 Predecessor: `documentation/plans/dealer-kit/PLAN-price-tag-request.md` (shipped, PR #289)
 
@@ -111,7 +111,12 @@ response's attachments with the standard preview/download, no upload.
 
 - BE: `GET /portal/lookups/promotions?q=` on the portal price-tag router -
   active promotions only (window current), `{id, name}`, token-gated, same shape
-  as other lookups.
+  as other lookups. The window rule mirrors `resolve_prices`' `_offer_prices`;
+  results are also gated by audience - only promotions whose `access_levels`
+  overlap the requesting contact's own access codes come back, fail closed on
+  an empty list on either side (own logic, not a call into `_may_see_offer`:
+  that helper's empty-viewer-codes fallback to the public access code is for
+  the anonymous public catalogue, which a portal contact never is).
 - FE: `lookupPromotions` calls it; SearchableSelect stays clearable.
 
 ## Lane B
