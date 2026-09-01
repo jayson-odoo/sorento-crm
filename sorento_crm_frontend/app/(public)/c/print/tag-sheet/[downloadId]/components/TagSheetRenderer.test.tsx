@@ -318,3 +318,97 @@ describe('bound text and pictures on the print page', () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// Barcode layer on the print page (AC-S7-3, AC-S7-4, AC-S7-6)
+// ---------------------------------------------------------------------------
+
+describe('barcode on the print page', () => {
+  // Checksum-valid, same value the browser-verification run seeds onto a
+  // real ZZT- test product.
+  const VALID_EAN13 = '4006381333931';
+
+  function barcodeLayer(showCode = true): TagLayer {
+    return layer({
+      id: 'bc1',
+      type: 'barcode',
+      slot_binding: 'barcode',
+      width_mm: 40,
+      height_mm: 22,
+      props: { kind: 'barcode', show_code: showCode },
+    });
+  }
+
+  it('draws the label plate: product-code strip and guard-split human-readable digits', () => {
+    render(
+      <TagSheetRenderer
+        doc={docWith([barcodeLayer()])}
+        resolvedData={{ [LINE_ID]: resolved({ barcode: VALID_EAN13 }) }}
+        assets={{}}
+        images={{}}
+      />,
+    );
+
+    expect(screen.getByText('SK-1234')).toBeInTheDocument();
+    // Guard-split: digit, group of 6, group of 6 - the same shape
+    // `humanReadableBarcode` pins in lib/dealer-kit/barcode.test.ts, so the
+    // print DOM cannot drift from the editor's own preview.
+    expect(screen.getByText('4 006381 333931')).toBeInTheDocument();
+  });
+
+  it('omits the product-code strip when show_code is off', () => {
+    render(
+      <TagSheetRenderer
+        doc={docWith([barcodeLayer(false)])}
+        resolvedData={{ [LINE_ID]: resolved({ barcode: VALID_EAN13 }) }}
+        assets={{}}
+        images={{}}
+      />,
+    );
+
+    expect(screen.queryByText('SK-1234')).not.toBeInTheDocument();
+    expect(screen.getByText('4 006381 333931')).toBeInTheDocument();
+  });
+
+  it('prints a Code128 value plain, with no guard split', () => {
+    render(
+      <TagSheetRenderer
+        doc={docWith([barcodeLayer()])}
+        resolvedData={{ [LINE_ID]: resolved({ barcode: 'SKU-NOT-EAN' }) }}
+        assets={{}}
+        images={{}}
+      />,
+    );
+
+    expect(screen.getByText('SKU-NOT-EAN')).toBeInTheDocument();
+  });
+
+  it('draws nothing at all when the line carries no barcode (AC-S7-3)', () => {
+    const { container } = render(
+      <TagSheetRenderer
+        doc={docWith([barcodeLayer()])}
+        resolvedData={{ [LINE_ID]: resolved({ barcode: null }) }}
+        assets={{}}
+        images={{}}
+      />,
+    );
+
+    // Not the editor's dashed placeholder - nothing, because a physical tag
+    // has no business printing "no data yet" language.
+    expect(container.querySelector('[style*="border-radius"]')).toBeNull();
+    expect(container.textContent).not.toContain('SK-1234');
+  });
+
+  it('draws nothing for an empty-string barcode either', () => {
+    const { container } = render(
+      <TagSheetRenderer
+        doc={docWith([barcodeLayer()])}
+        resolvedData={{ [LINE_ID]: resolved({ barcode: '' }) }}
+        assets={{}}
+        images={{}}
+      />,
+    );
+
+    expect(container.querySelector('[style*="border-radius"]')).toBeNull();
+  });
+});

@@ -52,6 +52,7 @@ const PRODUCT_SLOTS: SlotBinding[] = [
   'sell_price',
   'set_members',
   'included_accessories',
+  'barcode',
 ];
 
 /** The `binding` a group carries. Null in the document means "not bindable". */
