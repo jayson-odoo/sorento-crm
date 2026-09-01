@@ -181,6 +181,9 @@ class CertificateProductResponse(BaseModel):
     product_id: str
     product_code: Optional[str] = None
     product_name: Optional[str] = None
+    # The product's owning company. "Shared" for a null-company product,
+    # None when the product row is gone (dangling product_id).
+    company_name: Optional[str] = None
     source: str
     created_at: Optional[datetime] = None
     created_by: Optional[str] = None

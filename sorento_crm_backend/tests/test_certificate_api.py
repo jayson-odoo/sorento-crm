@@ -378,6 +378,63 @@ def test_add_and_remove_covered_product(env):
     assert env.projection(attachment.id) == []
 
 
+def test_covered_products_include_company_name(env):
+    """The Products tab must show every coverage row with a Company column -
+    not just the ones matching the viewer's company scope (captain's ruling,
+    1 Sep 2026). ``response_model`` silently drops undeclared fields, so this
+    asserts ``company_name`` lands in the ROUTE json, not just the service
+    return."""
+    from app.models.company import Company
+
+    mocha_id = "00000000-0000-0000-0000-000000000002"
+    if env.db.query(Company).filter(Company.id == mocha_id).first() is None:
+        env.db.add(Company(id=mocha_id, name=f"{MARKER} Mocha", code=unique_code("MCH")[:20]))
+        env.db.flush()
+
+    attachment_type = env.attachment_type(is_certificate=True, name="Certification")
+    attachment = env.attachment(attachment_type, "companycol")
+    sorento_product = env.product("COMPCOLA")
+    mocha_product = Product(
+        product_code=unique_code(f"{MARKER}-COMPCOLB"),
+        product_name=f"{MARKER} compcol b",
+        category_id=env._category.id,
+        base_uom_id=env._uom.id,
+        list_price=10,
+        company_id=mocha_id,
+    )
+    env.db.add(mocha_product)
+    env.db.flush()
+
+    created = _create(
+        env,
+        certificate_number="COMPCOL 1",
+        attachment_id=str(attachment.id),
+        product_ids=[str(sorento_product.id)],
+        valid_until=(TODAY + timedelta(days=400)).isoformat(),
+    )
+    # AI extraction can also write coverage for the OTHER company's product -
+    # add_coverage's own lookup is scoped, so this mirrors that path directly
+    # rather than going through the endpoint.
+    env.db.add(
+        CertificateProduct(
+            certificate_id=created["id"],
+            product_id=str(mocha_product.id),
+            source=CERTIFICATE_SOURCE_AI,
+        )
+    )
+    env.db.commit()
+
+    detail = env.client.get(f"{BASE}/{created['id']}")
+    assert detail.status_code == 200, detail.text
+    by_product = {row["product_id"]: row for row in detail.json()["products"]}
+    assert len(by_product) == 2
+    # No blank rows: the other company's product still resolves code/name.
+    assert by_product[str(sorento_product.id)]["product_code"] == sorento_product.product_code
+    assert by_product[str(sorento_product.id)]["company_name"] == "Sorento"
+    assert by_product[str(mocha_product.id)]["product_code"] == mocha_product.product_code
+    assert by_product[str(mocha_product.id)]["company_name"] == f"{MARKER} Mocha"
+
+
 def test_remove_coverage_from_another_certificate_is_404(env):
     """certificate_products is not company-scoped, so the row is resolved through
     its certificate - a coverage id belonging elsewhere must not delete."""

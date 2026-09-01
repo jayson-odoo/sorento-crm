@@ -509,6 +509,88 @@ def test_manual_coverage_add_and_remove_moves_the_projection(db, chain):
     assert {str(r.product_id) for r in _projection(db, attachment.id)} == {str(added.id)}
 
 
+def test_serialize_coverage_resolves_cross_company_and_shared_products(db, chain):
+    """Coverage rows point at products from BOTH companies - AI document
+    extraction matches codes across companies - and can point at a shared
+    product (``company_id`` NULL). Scoped to Sorento only, every row must
+    still resolve code/name/company_name; the OTHER company's product used
+    to come back blank (product_code=None) because the outer join was
+    filtered by the caller's ambient scope."""
+    from app.models.base import set_company_scope
+    from app.models.company import Company
+    from app.services.company_scope import DEFAULT_COMPANY_ID
+
+    mocha_id = "00000000-0000-0000-0000-000000000002"
+    mocha = Company(id=mocha_id, name=f"{MARKER} Mocha", code=unique_code("MCH")[:20])
+    db.add(mocha)
+    db.flush()
+
+    product_sorento = _product(db, chain, "COMPANY-A")
+    product_mocha = Product(
+        product_code=unique_code(f"{MARKER}-COMPANY-B"),
+        product_name=f"{MARKER} company b",
+        category_id=chain["category"].id,
+        base_uom_id=chain["uom"].id,
+        list_price=10,
+        company_id=mocha_id,
+    )
+    db.add(product_mocha)
+    product_shared = _product(db, chain, "SHARED")
+    # The before_insert auto-stamp fills an unset company_id from the ambient
+    # scope, so a genuinely shared row (company_id NULL) has to be forced in
+    # afterwards - an UPDATE, which the stamp hook (before_insert only) never
+    # touches.
+    product_shared.company_id = None
+    db.flush()
+
+    service = CertificateService(db)
+    cert: Any = service.upsert_from_extraction(
+        scheme=f"{MARKER}PPS",
+        certificate_number="CROSSCO-1",
+        attachment_id=_attachment(db, chain, "crossco").id,
+        valid_until=date(2029, 1, 1),
+        product_ids=[product_sorento.id],
+    )
+    # add_coverage resolves products through the ambient (Sorento) scope, so a
+    # cross-company / shared row is written directly - matching how the AI
+    # extraction path (which runs under company_scope(db, None)) would leave it.
+    db.add_all(
+        [
+            CertificateProduct(
+                certificate_id=cert.id,
+                product_id=product_mocha.id,
+                source=CERTIFICATE_SOURCE_AI,
+            ),
+            CertificateProduct(
+                certificate_id=cert.id,
+                product_id=product_shared.id,
+                source=CERTIFICATE_SOURCE_AI,
+            ),
+        ]
+    )
+    db.commit()
+
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+    rows = service.serialize_coverage(cert.id)
+
+    by_product = {r.product_id: r for r in rows}
+    assert len(rows) == 3
+    sorento_row = by_product[str(product_sorento.id)]
+    assert sorento_row.product_code == product_sorento.product_code
+    assert sorento_row.product_name == product_sorento.product_name
+    assert sorento_row.company_name == "Sorento"
+
+    mocha_row = by_product[str(product_mocha.id)]
+    assert mocha_row.product_code == product_mocha.product_code
+    assert mocha_row.product_name == product_mocha.product_name
+    assert mocha_row.company_name == mocha.name
+
+    shared_row = by_product[str(product_shared.id)]
+    assert shared_row.product_code == product_shared.product_code
+    assert shared_row.product_name == product_shared.product_name
+    assert shared_row.company_name == "Shared"
+
+
 def test_set_coverage_keeps_the_source_of_rows_it_did_not_create(db, chain):
     service = CertificateService(db)
     kept = _product(db, chain, "KEPT")
