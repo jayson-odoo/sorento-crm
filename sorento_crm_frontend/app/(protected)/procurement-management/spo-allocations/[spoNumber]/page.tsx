@@ -1,0 +1,38 @@
+import { Metadata } from 'next';
+import { Container } from '@/components/common/container';
+import { PageHeader } from '@/components/common/PageHeader';
+import { SPODocumentDetail } from '../components/SPODocumentDetail';
+
+export const metadata: Metadata = {
+  title: 'SPO Document',
+  description: 'SPO document detail - header and lines, with plan visibility per line.',
+};
+
+export default async function SPODocumentDetailPage({
+  params,
+}: {
+  // Still ENCODED on arrival (Q7): the ASGI/Starlette side needs `:path` to accept a
+  // literal slash in an SPO number, but on the FE side a Next.js dynamic segment
+  // (`[spoNumber]`) reads its own param raw, undecoded - so `SPO-2026%2F08-0061`
+  // shows up here exactly as the link built it, and this route owns the ONE decode
+  // (`SPODocumentDetail` and everything under it hold the decoded value).
+  params: Promise<{ spoNumber: string }>;
+}) {
+  const { spoNumber: rawSpoNumber } = await params;
+  const spoNumber = decodeURIComponent(rawSpoNumber);
+
+  return (
+    <>
+      {/* No `actions` here (review nit / AC-5): Back lives on the record's own title
+          row inside `SPODocumentDetail`, alongside the status badge, Edit and the
+          pager - not split onto this page-level bar the way most detail pages do it. */}
+      <Container>
+        <PageHeader title="SPO Document" />
+      </Container>
+
+      <Container>
+        <SPODocumentDetail spoNumber={spoNumber} />
+      </Container>
+    </>
+  );
+}

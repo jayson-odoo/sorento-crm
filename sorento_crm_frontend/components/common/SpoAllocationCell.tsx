@@ -17,7 +17,13 @@ export type SpoAllocationCellProps = {
  * table and the Picking Lines listing so the three states below cannot drift
  * apart between them.
  *
- * 1. matched   -> a link to the allocation, labelled with its SPO number.
+ * 1. matched   -> a link to the SPO DOCUMENT (the allocation's `spo_number`,
+ *                 slash-encoded, same as `PackingListLinesTab.tsx`) - never the
+ *                 allocation's own uuid, which the standalone per-allocation
+ *                 detail route (retired, PLAN-spo-investigation-grid.md) used to
+ *                 take. A matched allocation with no `spo_number` of its own
+ *                 (data gap) renders the same label with no link - there is no
+ *                 document for it to open.
  * 2. stated    -> the SPO number the sheet claimed, muted, plus an "Unmatched"
  *                 badge. A dash here would read as "the sheet said nothing",
  *                 which is false and sends the user hunting.
@@ -31,10 +37,18 @@ export function SpoAllocationCell({
   const stated = statedSpoNumber?.trim() || '';
 
   if (allocation) {
-    const label = allocation.spo_number?.trim() || stated || 'SPO allocation';
+    const spoNumber = allocation.spo_number?.trim() || '';
+    const label = spoNumber || stated || 'SPO allocation';
+    if (!spoNumber) {
+      return (
+        <span className={cn('font-medium truncate', className)} title={label}>
+          {label}
+        </span>
+      );
+    }
     return (
       <Link
-        href={`/procurement-management/spo-allocations/${allocation.id}`}
+        href={`/procurement-management/spo-allocations/${encodeURIComponent(spoNumber)}`}
         className={cn('text-primary hover:underline font-medium truncate', className)}
         title={label}
       >

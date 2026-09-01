@@ -16,6 +16,10 @@ interface WarehouseComboboxProps {
   placeholder?: string;
   disabled?: boolean;
   className?: string;
+  /** Every optional select is clearable (ADR standard) - off by default so a REQUIRED
+   *  warehouse picker (e.g. the create-allocation form) does not grow a clear affordance
+   *  it has no use for. */
+  clearable?: boolean;
 }
 
 const label = (w: WarehouseOption) =>
@@ -33,6 +37,7 @@ export function WarehouseCombobox({
   placeholder = 'Select warehouse',
   disabled,
   className,
+  clearable = false,
 }: WarehouseComboboxProps) {
   const options = [
     ...warehouses,
@@ -49,6 +54,7 @@ export function WarehouseCombobox({
       onChange={onChange}
       disabled={disabled}
       placeholder={placeholder}
+      clearable={clearable}
       emptyMessage="No warehouse found."
       triggerClassName={className}
       options={options.map((w) => ({

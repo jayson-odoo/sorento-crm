@@ -449,6 +449,16 @@ def _delete_warehouse(db: Session, payload: dict):
     return WarehouseService(db).delete_warehouse(_entity_id(payload))
 
 
+def _delete_spo_document(db: Session, payload: dict):
+    from app.services.procurement_service import SPOAllocationService
+
+    # `entity_id` is the SPO NUMBER, not a uuid - `spo_allocations` has no document
+    # row of its own (PLAN-spo-investigation-grid.md), so the "document" this deletes
+    # is every line sharing that number, and only the caller's own company's lines
+    # (see `delete_document`'s docstring for why the company scoping lives there).
+    return SPOAllocationService(db).delete_document(_entity_id(payload))
+
+
 def _delete_integration(db: Session, payload: dict):
     from app.services.integration_admin_service import IntegrationAdminService
 
@@ -501,6 +511,17 @@ register(
         window=WINDOW_DESTRUCTIVE,
         permission="inventory.warehouses.delete",
         label="Delete warehouse",
+    )
+)
+
+register(
+    FormAction(
+        key="spo_document.delete",
+        entity_types=("spo_document",),
+        execute=_delete_spo_document,
+        window=WINDOW_DESTRUCTIVE,
+        permission="procurement.spo_allocations.delete",
+        label="Delete SPO document",
     )
 )
 

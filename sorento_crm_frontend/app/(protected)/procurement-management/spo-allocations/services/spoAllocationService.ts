@@ -162,7 +162,13 @@ export async function createSPOAllocation(
 
 export async function updateSPOAllocation(
   id: string,
-  data: Partial<SPOAllocationFormData>,
+  // `Omit` + re-add, not `&`: intersecting `warehouse_id?: string` with `string | null`
+  // collapses back to `string | undefined` (TS distributes the intersection member-wise
+  // and `null` survives in neither side), which is not what widening it was for. The
+  // document form view's Lines-tab edit (`SPODocumentDetail`) clears a line's warehouse
+  // back to "no location" the same way `SPOAllocationUpdate` (backend) already accepts
+  // it - `null`, not an empty string.
+  data: Omit<Partial<SPOAllocationFormData>, 'warehouse_id'> & { warehouse_id?: string | null },
 ): Promise<SPOAllocation> {
   const response = await apiFetch(`/api/v1/procurement/spo-allocations/${id}`, {
     method: 'PUT',
