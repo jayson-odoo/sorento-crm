@@ -210,6 +210,12 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   const [saving, setSaving] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [request, setRequest] = useState<PriceTagRequestDetail | null>(null);
+  // The id a create call answered with, held in STATE rather than trusted to
+  // live only in the `requestId` prop (the route param) - a retry after
+  // create-succeeded-but-flushPendingFiles-failed never gets a fresh prop, so
+  // without this the next Save Draft/Submit click saw `isNew` again and
+  // created a second row for the same draft.
+  const [createdRequestId, setCreatedRequestId] = useState<string | null>(null);
 
   // ---- Lookup data ----
   const [debtors, setDebtors] = useState<DebtorOption[]>([]);
@@ -252,6 +258,9 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   const isDraft = Boolean(request?.portal_draft_at);
   const isEditable = isNew || isDraft;
   const isProofReady = request?.status === 'proof_ready';
+  // The id to save/flush against: the route param when one exists, else
+  // whatever a create call in THIS session already answered with.
+  const effectiveId = requestId ?? createdRequestId ?? undefined;
 
   // ---- Load lookups ----
   useEffect(() => {
@@ -567,10 +576,14 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         lines: payloadLines(),
       };
       // An open draft is UPDATED, not created again: saving twice used to leave
-      // the salesperson with two rows and no way to tell them apart.
-      const saved = requestId
-        ? await updateRequest(requestId, payload)
+      // the salesperson with two rows and no way to tell them apart - and so
+      // does a RETRY after the create half of a previous attempt succeeded
+      // but the attachment flush after it failed, which is why this checks
+      // `effectiveId` (state) rather than only the `requestId` prop.
+      const saved = effectiveId
+        ? await updateRequest(effectiveId, payload)
         : await createRequest(payload);
+      if (!effectiveId) setCreatedRequestId(saved.id);
       await flushPendingFiles(saved.id);
       toast.success('Draft saved');
       router.push(`${portalBase(slug)}?type=price_tag_request`);
@@ -583,7 +596,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       setSaving(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [requestId, debtorCode, debtors, promotionId, neededByDate, notes, lines, flushPendingFiles, router, slug]);
+  }, [effectiveId, debtorCode, debtors, promotionId, neededByDate, notes, lines, flushPendingFiles, router, slug]);
 
   // ---- Delete draft ----
   const handleDeleteDraft = useCallback(async () => {
@@ -623,14 +636,21 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     setLines((prev) => prev.map((l) => ({ ...l, guard_error: null })));
     try {
       const debtor = debtors.find((d) => d.code === debtorCode);
-      const created = await createRequest({
+      const payload = {
         debtor_code: debtorCode,
         debtor_name: debtor?.name ?? debtorCode,
         promotion_id: promotionId || null,
         needed_by_date: neededByDate,
         notes: notes || null,
         lines: payloadLines(),
-      });
+      };
+      // Same reasoning as Save Draft: a retry after a create succeeded but the
+      // attachment flush after it failed must update that row, not create a
+      // second one.
+      const created = effectiveId
+        ? await updateRequest(effectiveId, payload)
+        : await createRequest(payload);
+      if (!effectiveId) setCreatedRequestId(created.id);
       await flushPendingFiles(created.id);
       await submitRequest(created.id);
       toast.success('Request submitted');
@@ -655,7 +675,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       setSubmitting(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [collectProblems, applyFieldErrors, debtorCode, debtors, promotionId, neededByDate, notes, lines, flushPendingFiles, router, slug]);
+  }, [collectProblems, applyFieldErrors, effectiveId, debtorCode, debtors, promotionId, neededByDate, notes, lines, flushPendingFiles, router, slug]);
 
   // ---- Approve proof ----
   const handleApprove = useCallback(async () => {
@@ -984,7 +1004,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
               (this request already has an id) a drop uploads immediately. */}
           <AttachmentDropzone
             kind="price_tag_request"
-            submissionId={requestId ?? null}
+            submissionId={effectiveId ?? null}
             attachments={attachments}
             onChange={setAttachments}
             disabled={saving || submitting || deleting}

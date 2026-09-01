@@ -52,6 +52,22 @@ vi.mock('@/components/ui/dropdown-menu', () => ({
   ),
 }));
 
+// The real modal pulls in embla-carousel, which needs layout APIs jsdom
+// lacks. A thin stand-in that surfaces the `items` prop is enough to prove
+// what the card WIRED into it (AC-S1-6): attachment_id on downloadUrl,
+// link_id as the item id.
+const previewPropsSpy = vi.fn();
+vi.mock('@/components/common/AttachmentPreviewModal', () => ({
+  __esModule: true,
+  default: (props: {
+    open: boolean;
+    items: { id: string; name: string; downloadUrl?: string }[];
+  }) => {
+    previewPropsSpy(props);
+    return null;
+  },
+}));
+
 vi.mock('../../services/priceTagRequestService', () => ({
   getPriceTagRequest: vi.fn(),
   claimPriceTagRequest: vi.fn(),
@@ -67,6 +83,7 @@ import {
 } from '../../services/priceTagRequestService';
 import PriceTagRequestDetail from './PriceTagRequestDetail';
 import { priceTagActions } from './priceTagRequestActions';
+import { formatDateTimeInMalaysia } from '@/lib/helpers';
 
 const mockGet = vi.mocked(getPriceTagRequest);
 const mockList = vi.mocked(listPriceTagRequests);
@@ -250,5 +267,49 @@ describe('PriceTagRequestDetail', () => {
     await waitFor(() => {
       expect(screen.getByText('Void this request?')).toBeTruthy();
     });
+  });
+
+  // AC-S1-6: the response's attachments carry `entity_attachment_service
+  // .list_attachments_for_entity`'s shape (link_id/attachment_id/filename/
+  // size/url/content_type/uploaded_at/...), NOT the old ad-hoc {id, created_at}
+  // one - a drift the type checker could not catch because the field was
+  // typed `list[dict]` on the wire. Wrong keys read as "download does
+  // nothing, date is blank", not a crash, so this has to be asserted.
+  it('reads the real attachment shape: attachment_id on the download url, uploaded_at for the date', async () => {
+    const uploadedAt = '2026-08-30T03:15:00Z';
+    mockGet.mockResolvedValue(
+      requestWith({
+        attachments: [
+          {
+            link_id: 'link-1',
+            attachment_id: 'att-1',
+            filename: 'ZZT-po.pdf',
+            size: 2048,
+            url: 'https://cdn.test/zzt-po.pdf',
+            content_type: 'application/pdf',
+            uploaded_at: uploadedAt,
+            uploader_kind: 'contact',
+            uploaded_by_name: 'Sales Sam',
+            uploaded_by_role: 'contact',
+            can_unlink: true,
+          },
+        ],
+      }),
+    );
+    renderDetail();
+
+    expect(await screen.findByText('ZZT-po.pdf')).toBeInTheDocument();
+    expect(
+      screen.getByText(formatDateTimeInMalaysia(uploadedAt)),
+    ).toBeInTheDocument();
+
+    expect(previewPropsSpy).toHaveBeenCalled();
+    const items = previewPropsSpy.mock.calls.at(-1)?.[0].items;
+    expect(items).toEqual([
+      expect.objectContaining({
+        id: 'link-1',
+        downloadUrl: expect.stringContaining('att-1'),
+      }),
+    ]);
   });
 });

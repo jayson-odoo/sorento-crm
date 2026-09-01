@@ -1,6 +1,6 @@
 # PLAN - Price Tag Feedback R2
 
-Status: Approved 1 Sep 2026 - implementation starting
+Status: Lane A S1 in review fixes
 UAC: `documentation/plans/dealer-kit/price-tag-feedback-r2-acceptance-criteria.md`
 Predecessor: `documentation/plans/dealer-kit/PLAN-price-tag-request.md` (shipped, PR #289)
 

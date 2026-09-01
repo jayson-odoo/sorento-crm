@@ -102,6 +102,32 @@ class PriceTagRequestUpdate(BaseModel):
     lines: Optional[list[PriceTagRequestLineCreate]] = None
 
 
+class PriceTagRequestAttachment(BaseModel):
+    """One row of ``entity_attachment_service.list_attachments_for_entity``'s
+    output, typed rather than left as a bare ``dict`` - an untyped field is
+    exactly how the CRM FE's own copy of this shape (`priceTagRequestService
+    .ts`) drifted from the real one (id/created_at that were never sent) with
+    nothing catching it. Both the CRM and the portal detail routes answer with
+    this shape (D49); the portal side additionally needs uploader attribution
+    to gate its own unlink control, which is why every field the service emits
+    is declared here too rather than trimmed to what the CRM screen shows.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    link_id: str
+    attachment_id: str
+    filename: Optional[str] = None
+    size: Optional[int] = None
+    url: Optional[str] = None
+    content_type: Optional[str] = None
+    uploaded_at: Optional[str] = None
+    uploader_kind: Optional[str] = None
+    uploaded_by_name: str = "Unknown"
+    uploaded_by_role: str = "unknown"
+    can_unlink: bool = True
+
+
 class PriceTagRequestResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -145,7 +171,7 @@ class PriceTagRequestResponse(BaseModel):
     # detail routes (D49) - declared here for the same reason as the four
     # fields above it: an undeclared field is dropped by ``response_model``
     # without a word (AC-S1-5).
-    attachments: list[dict] = Field(default_factory=list)
+    attachments: list[PriceTagRequestAttachment] = Field(default_factory=list)
 
 
 class PriceTagRequestListItem(BaseModel):

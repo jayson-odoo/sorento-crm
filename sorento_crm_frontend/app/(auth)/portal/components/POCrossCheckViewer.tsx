@@ -15,6 +15,20 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import type { PortalAttachment } from '../lib/portal-client';
 
+// Same idiom as AttachmentDropzone's isImageAttachment/isVideoAttachment: a
+// row uploaded before the portal upload route carried content_type through
+// (or any other legacy row with a NULL mime_type) still has to classify by
+// filename extension, or it falls to the generic file row forever.
+function isPdfAttachment(a: PortalAttachment): boolean {
+  if (a.content_type === 'application/pdf') return true;
+  return /\.pdf$/i.test(a.filename ?? '');
+}
+
+function isImageAttachment(a: PortalAttachment): boolean {
+  if (a.content_type?.startsWith('image/')) return true;
+  return /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(a.filename ?? '');
+}
+
 interface LineWithPrice {
   id: string;
   code: string;
@@ -63,8 +77,8 @@ export default function POCrossCheckViewer({
               <div className="space-y-2">
                 {attachments.map((att) => {
                   const filename = att.filename || 'Attachment';
-                  const isPdf = att.content_type === 'application/pdf';
-                  const isImage = att.content_type?.startsWith('image/');
+                  const isPdf = isPdfAttachment(att);
+                  const isImage = isImageAttachment(att);
                   return (
                     <div
                       key={att.link_id}

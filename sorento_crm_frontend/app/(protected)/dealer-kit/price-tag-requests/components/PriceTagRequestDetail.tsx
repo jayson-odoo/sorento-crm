@@ -228,10 +228,10 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
   const attachmentPreviewItems: AttachmentPreviewItem[] = useMemo(
     () =>
       (request?.attachments ?? []).map((att) => ({
-        id: att.id,
+        id: att.link_id,
         name: att.filename || 'Attachment',
         url: att.url ?? '',
-        downloadUrl: `/api/v1/resource-management/attachments/${att.id}/download`,
+        downloadUrl: `/api/v1/resource-management/attachments/${att.attachment_id}/download`,
       })),
     [request?.attachments],
   );
@@ -510,7 +510,7 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
             <div className="space-y-1">
               {attachments.map((att, idx) => (
                 <button
-                  key={att.id}
+                  key={att.link_id}
                   type="button"
                   onClick={() => {
                     setPreviewIndex(idx);
@@ -520,12 +520,12 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
                 >
                   <div className="flex items-center min-w-0">
                     <FileText className="size-4 mr-2 text-muted-foreground shrink-0" />
-                    <span className="truncate" title={att.filename}>
-                      {att.filename}
+                    <span className="truncate" title={att.filename ?? undefined}>
+                      {att.filename || 'Attachment'}
                     </span>
                   </div>
                   <span className="text-xs text-muted-foreground ml-2 shrink-0">
-                    {formatDateTimeInMalaysia(att.created_at)}
+                    {att.uploaded_at ? formatDateTimeInMalaysia(att.uploaded_at) : '-'}
                   </span>
                 </button>
               ))}

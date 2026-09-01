@@ -720,13 +720,37 @@ def _check_attachment_kind(kind: str) -> str:
     return k
 
 
+def _require_price_tag_request_visible(db: Session, contact_id: str) -> None:
+    """Mirrors ``_assert_visible`` in portal_price_tag.py. The attachment
+    routes are a second surface onto the same form, so revoking a contact's
+    price_tag_request grant has to close both, not just the dedicated CRUD
+    router's own routes."""
+    from app.services.portal_form_visibility_service import resolve_visible_form_types
+
+    visible = resolve_visible_form_types(db, contact_id)
+    if "price_tag_request" not in visible:
+        raise AppException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            message="Price tag request is not available for your account.",
+            code="FORM_TYPE_NOT_VISIBLE",
+        )
+
+
 def _require_own_price_tag_request(db: Session, token: PortalToken, submission_id: str) -> None:
     """The contact's own price tag request, or a 404 - mirrors
     ``_require_own_request`` in portal_price_tag.py. The attachment routes check
     ownership here instead of ``PortalService.get_submission``, which does not
-    know about price_tag_request."""
+    know about price_tag_request.
+
+    Validates the id is a UUID before it reaches the query: ``PriceTagRequest
+    .id`` is a UUID column, and a malformed value (not just a wrong-but-valid
+    one) has to answer the same 404 a genuinely missing row would, not a 500
+    from Postgres refusing to compare a UUID column to garbage.
+    """
     from app.models.price_tag import PriceTagRequest
 
+    submission_id = validate_uuid_path(submission_id, resource="Price tag request")
+    _require_price_tag_request_visible(db, token.contact_id)
     row = db.query(PriceTagRequest).filter(PriceTagRequest.id == submission_id).first()
     if row is None or str(row.contact_id) != str(token.contact_id):
         raise handle_not_found("Price tag request", submission_id)
@@ -1063,6 +1087,25 @@ def _ext(filename: Optional[str], content_type: Optional[str]) -> str:
     return ""
 
 
+# attachments.mime_type is VARCHAR(100). `file.content_type` is whatever the
+# UPLOADER's browser/OS sends - Content-Type can carry `; charset=...` /
+# `; boundary=...` / `; name="..."` parameters, or simply be malformed, and
+# nothing here controls its length. Postgres raises on overflow rather than
+# truncating, so an oversized value 500s every kind's upload, not just
+# price_tag_request's.
+_MIME_TYPE_MAX_LEN = 100
+
+
+def _normalize_mime_type(content_type: Optional[str]) -> Optional[str]:
+    """Just `type/subtype`, capped to the column width. Never raises."""
+    if not content_type:
+        return None
+    base = content_type.split(";", 1)[0].strip()
+    if not base:
+        return None
+    return base[:_MIME_TYPE_MAX_LEN]
+
+
 def _check_quota(
     db: Session,
     attachment_type: AttachmentType,
@@ -1335,7 +1378,9 @@ async def portal_upload_attachment(
         # and every reader of it - the PO cross-check PDF/image branch
         # included - always fell to the generic file row. AC-S1-5 needs a real
         # content_type, so it is fixed here rather than worked around per kind.
-        mime_type=file.content_type,
+        # Normalized (type/subtype, capped) - the raw header is caller-
+        # controlled and the column is VARCHAR(100).
+        mime_type=_normalize_mime_type(file.content_type),
     )
     # Uploader attribution (UAC B1): create_attachment_and_link has no fields
     # for this, so stamp the freshly created row directly, in the same

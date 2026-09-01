@@ -78,12 +78,20 @@ def client(monkeypatch):
             app.dependency_overrides.clear()
 
 
-def _contact(db: Session, *, name: str = "ZZT Contact") -> RespondContact:
+def _contact(
+    db: Session, *, name: str = "ZZT Contact", visible: bool = True
+) -> RespondContact:
+    """A portal contact. ``visible=True`` (the default - most tests in this
+    file are about OWNERSHIP, not visibility) grants price_tag_request access
+    the same way a real access-type assignment would; pass ``visible=False``
+    for the tests that are specifically about a contact who lacks it."""
     contact = RespondContact(
         id=str(uuid.uuid4()), phone_number=f"+60{uuid.uuid4().hex[:9]}", name=name
     )
     db.add(contact)
     db.flush()
+    if visible:
+        _grant_price_tag_visibility(db, contact.id)
     return contact
 
 
@@ -210,6 +218,32 @@ class TestUpload:
         assert att.uploader_kind == "contact"
         assert att.uploaded_by_contact_id == contact.id
 
+    def test_upload_with_an_oversized_content_type_does_not_crash(self, client):
+        """attachments.mime_type is VARCHAR(100) and the Content-Type header is
+        caller-controlled - an oversized value must not 500 (or crash the
+        whole upload) on any kind, price_tag_request included."""
+        c, db = client
+        contact = _contact(db)
+        token = _token(db, contact)
+        req = _request(db, contact.id)
+
+        oversized_content_type = "application/pdf; name=\"" + ("z" * 200) + ".pdf\""
+        assert len(oversized_content_type) > 100
+
+        res = c.post(
+            _ATTACHMENTS_BASE,
+            data={"kind": "price_tag_request", "submission_id": req.id},
+            files={"file": ("po.pdf", io.BytesIO(b"x"), oversized_content_type)},
+            headers={"X-Portal-Token": token.token},
+        )
+
+        assert res.status_code == 200, res.text
+        stored_content_type = res.json()["content_type"]
+        assert stored_content_type is not None
+        assert len(stored_content_type) <= 100
+        # The type/subtype survives; only the parameters are cut.
+        assert stored_content_type.startswith("application/pdf")
+
     def test_upload_refuses_a_request_the_contact_does_not_own_with_404(self, client):
         """AC-S1-4: not-owned is 404, never 403 - the route must not confirm an
         id the token has no claim on."""
@@ -236,6 +270,20 @@ class TestUpload:
         res = c.post(
             _ATTACHMENTS_BASE,
             data={"kind": "price_tag_request", "submission_id": str(uuid.uuid4())},
+            files={"file": ("po.pdf", io.BytesIO(b"x"), "application/pdf")},
+            headers={"X-Portal-Token": token.token},
+        )
+
+        assert res.status_code == 404, res.text
+
+    def test_upload_refuses_a_malformed_submission_id_with_404_not_500(self, client):
+        c, db = client
+        contact = _contact(db)
+        token = _token(db, contact)
+
+        res = c.post(
+            _ATTACHMENTS_BASE,
+            data={"kind": "price_tag_request", "submission_id": "not-a-uuid"},
             files={"file": ("po.pdf", io.BytesIO(b"x"), "application/pdf")},
             headers={"X-Portal-Token": token.token},
         )
@@ -390,6 +438,59 @@ class TestDownload:
 
 
 # ---------------------------------------------------------------------------
+# Visibility gate parity with portal_price_tag.py's dedicated CRUD routes:
+# revoking a contact's price_tag_request grant has to close the attachment
+# routes too, not just the ones portal_price_tag.py itself owns.
+# ---------------------------------------------------------------------------
+
+
+class TestVisibilityGate:
+    def test_upload_is_refused_without_the_form_type_grant(self, client):
+        c, db = client
+        contact = _contact(db, visible=False)
+        token = _token(db, contact)
+        req = _request(db, contact.id)
+
+        res = c.post(
+            _ATTACHMENTS_BASE,
+            data={"kind": "price_tag_request", "submission_id": req.id},
+            files={"file": ("po.pdf", io.BytesIO(b"x"), "application/pdf")},
+            headers={"X-Portal-Token": token.token},
+        )
+
+        assert res.status_code == 403, res.text
+
+    def test_list_is_refused_without_the_form_type_grant(self, client):
+        c, db = client
+        contact = _contact(db, visible=False)
+        token = _token(db, contact)
+        req = _request(db, contact.id)
+
+        res = c.get(
+            _ATTACHMENTS_BASE,
+            params={"kind": "price_tag_request", "submission_id": req.id},
+            headers={"X-Portal-Token": token.token},
+        )
+
+        assert res.status_code == 403, res.text
+
+    def test_delete_is_refused_without_the_form_type_grant(self, client):
+        c, db = client
+        contact = _contact(db, visible=False)
+        token = _token(db, contact)
+        req = _request(db, contact.id)
+        link_id, _attachment_id = _link_attachment(
+            db, req.id, uploader_kind="contact", uploaded_by_contact_id=contact.id
+        )
+
+        res = c.delete(
+            f"{_ATTACHMENTS_BASE}/{link_id}", headers={"X-Portal-Token": token.token}
+        )
+
+        assert res.status_code == 403, res.text
+
+
+# ---------------------------------------------------------------------------
 # AC-S1-5 (portal half): the detail route answers with real attachments
 # ---------------------------------------------------------------------------
 
@@ -398,7 +499,6 @@ class TestPortalDetailCarriesAttachments:
     def test_the_detail_route_lists_uploaded_attachments(self, client):
         c, db = client
         contact = _contact(db)
-        _grant_price_tag_visibility(db, contact.id)
         token = _token(db, contact)
         req = _request(db, contact.id)
         _link_attachment(
@@ -421,7 +521,6 @@ class TestPortalDetailCarriesAttachments:
     def test_a_request_with_no_attachments_still_answers_with_an_empty_list(self, client):
         c, db = client
         contact = _contact(db)
-        _grant_price_tag_visibility(db, contact.id)
         token = _token(db, contact)
         req = _request(db, contact.id)
 

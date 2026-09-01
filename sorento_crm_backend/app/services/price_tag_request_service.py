@@ -510,7 +510,7 @@ class PriceTagRequestService:
         ever disagreeing about what this request's PO files look like
         (PLAN-price-tag-feedback-r2 S1).
         """
-        from app.schemas.price_tag import PriceTagRequestResponse
+        from app.schemas.price_tag import PriceTagRequestAttachment, PriceTagRequestResponse
         from app.services.dealer_kit import tag_data_service
         from app.services.entity_attachment_service import list_attachments_for_entity
 
@@ -531,7 +531,10 @@ class PriceTagRequestService:
             line.list_price = None if row["list_price"] is None else float(row["list_price"])
             line.sell_price = None if row["sell_price"] is None else float(row["sell_price"])
 
-        response.attachments = list_attachments_for_entity(db, "price_tag_request", request.id)
+        response.attachments = [
+            PriceTagRequestAttachment(**row)
+            for row in list_attachments_for_entity(db, "price_tag_request", request.id)
+        ]
 
         # The header's names, from the same resolver the listing uses so the two
         # screens cannot disagree about who claimed a request.

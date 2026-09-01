@@ -30,6 +30,10 @@ vi.mock('../lib/price-tag-request-service', () => ({
   requestChanges: vi.fn(),
 }));
 
+vi.mock('../lib/portal-client', () => ({
+  uploadAttachment: vi.fn(),
+}));
+
 vi.mock('@/components/common/SearchableSelect', () => ({
   SearchableSelect: (props: {
     id?: string;
@@ -106,7 +110,9 @@ import {
   lookupDebtors,
   lookupTagItems,
   submitRequest,
+  updateRequest,
 } from '../lib/price-tag-request-service';
+import { uploadAttachment } from '../lib/portal-client';
 import { PriceTagRequestForm } from './PriceTagRequestForm';
 
 const DEBTORS = [{ code: 'ZZTD01', name: 'ZZT Dealer Sdn Bhd' }];
@@ -121,6 +127,7 @@ beforeEach(() => {
   asMock(lookupDebtors).mockResolvedValue(DEBTORS);
   asMock(lookupTagItems).mockResolvedValue(ITEMS);
   asMock(createRequest).mockResolvedValue({ id: 'req-1' });
+  asMock(updateRequest).mockResolvedValue({ id: 'req-1' });
   asMock(submitRequest).mockResolvedValue({ status: 'new' });
 });
 
@@ -189,6 +196,31 @@ describe('Save Draft validates nothing (D48a)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Attach PO file' }));
 
     expect(screen.getByRole('button', { name: /Save Draft/ })).not.toBeDisabled();
+  });
+
+  it('a retry after create-succeeded-but-flush-failed updates, it does not re-create', async () => {
+    // Regression: the created row's id lived only in the `requestId` PROP
+    // (the route param), which a retry never gets - Save Draft always looked
+    // at `requestId` to decide create-vs-update, so a create that succeeded
+    // right before an upload failure was invisible to the next click, and it
+    // created a second row.
+    asMock(uploadAttachment).mockRejectedValue(new Error('network blip'));
+
+    render(<PriceTagRequestForm />);
+    await screen.findByLabelText('Debtor');
+    fireEvent.click(screen.getByRole('button', { name: 'Attach PO file' }));
+
+    fireEvent.click(screen.getByRole('button', { name: /Save Draft/ }));
+    await waitFor(() => expect(createRequest).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(uploadAttachment).toHaveBeenCalledTimes(1));
+
+    // Retry: the same click, now that the draft already exists server-side.
+    fireEvent.click(screen.getByRole('button', { name: /Save Draft/ }));
+    await waitFor(() => expect(uploadAttachment).toHaveBeenCalledTimes(2));
+
+    expect(createRequest).toHaveBeenCalledTimes(1);
+    expect(updateRequest).toHaveBeenCalledTimes(1);
+    expect(asMock(updateRequest).mock.calls[0][0]).toBe('req-1');
   });
 });
 
