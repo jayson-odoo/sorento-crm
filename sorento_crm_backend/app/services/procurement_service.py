@@ -2247,6 +2247,10 @@ class SPOAllocationService:
             balance=balance_sum,
             line_count=len(lines),
             lines=lines,
+            # The GRNs received against this document - the retired per-allocation
+            # page's Related Documents capability, now at its natural (document)
+            # grain. Same key-matched reader the old page used.
+            linked_grns=self.get_linked_grns_for_spo(spo_number),
         )
 
     def delete_document(self, spo_number: str) -> dict:

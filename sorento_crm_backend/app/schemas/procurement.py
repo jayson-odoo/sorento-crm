@@ -634,6 +634,10 @@ class SPODocument(BaseModel):
     balance: int
     line_count: int
     lines: List[SPODocumentLine]
+    # The GRNs received against this SPO number (variant formats matched by key),
+    # so a Completed document can answer "received on WHICH goods receipt" - the
+    # capability the retired per-allocation page's Related Documents panel carried.
+    linked_grns: List[LinkedGRNSimple] = []
 
 
 class PickingLineBase(BaseModel):

@@ -138,6 +138,7 @@ function doc(over: Partial<SPODocument> = {}): SPODocument {
     doc_date: '2026-08-01',
     supplier_name: 'Acme Sanitary',
     supplier_extra_count: 0,
+    linked_grns: [],
     status: 'outstanding',
     total_allocated: 300,
     total_received: 100,
