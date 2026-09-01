@@ -1,6 +1,6 @@
 # PLAN: Shared brand attachments and folders across companies + product-code prefix tier
 
-**Status:** Grilled 2026-08-31 (rounds 1-4, R1-R21), lavish-reviewed + apple-design pass (R22-R27) the same day, captain said proceed. Issues: S1 #435 (PR A), S2 #436 (FE mock), S3 #437 (BE core), S4 #438 (BE linkages + certs), S5 #439 (review + browser). S1 + S2 coders spawned 31 Aug. S1 (PR A, resolver prefix tier) implemented and tested 31 Aug, branch `feat/shared-brand-S1-resolver-prefix`.
+**Status:** Grilled 2026-08-31 (rounds 1-4, R1-R21), lavish-reviewed + apple-design pass (R22-R27) the same day, captain said proceed. Issues: S1 #435 (PR A), S2 #436 (FE mock), S3 #437 (BE core), S4 #438 (BE linkages + certs), S5 #439 (review + browser). S1 + S2 coders spawned 31 Aug. S1 (PR A, resolver prefix tier) implemented and tested 31 Aug, branch `feat/shared-brand-S1-resolver-prefix`. S2 (FE) landed on main as #442. S3 (#443) and S4 (#445) were merged into their own stacked base branches rather than into main, so their backend never reached it; both are carried to main together on `feat/shared-brand-remerge` (1 Sep), with the migration renumbered 449 -> 453 onto `452_transfer_days`.
 **UAC:** `shared-brand-attachments-acceptance-criteria.md` (alongside; journey at its top).
 **Domain:** multi-company / resources / certificates. Touches the ONE product-code resolver.
 **Lane:** this session's port pair is :3100/:8100 (:3090 belongs to the spec lane).
@@ -338,7 +338,10 @@ Backend
   nullable too (S4 correction: migration 312 gave it NOT NULL, missed when this plan was
   written - `Certificate.__company_shared__` needs the same DROP NOT NULL / restore-with-
   stamp pair `attachment_directories.company_id` gets). `down_revision` = the main
-  head at branch time, id <= 32 chars, `alembic heads` = one.
+  head at merge time, id <= 32 chars, `alembic heads` = one. Written as
+  `449_shared_brand_attach` on `448_merge_s6b_ptag`; renumbered to
+  `453_shared_brand_attach` on `452_transfer_days` when the stranded S3 + S4 work was
+  carried to main, since main had grown 449-452 in the meantime.
 - `app/models/resources.py` (`AttachmentDirectory.__company_shared__`, `AttachmentType.is_shared`),
   `app/models/certificate.py` (`__company_shared__`).
 - `app/schemas/resources.py`: `BulkCompanyRequest/Response`, `LinkedEntityRef` fields,

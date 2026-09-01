@@ -24,14 +24,22 @@ same PR and none has a dependency on the others:
    filed attachment's company), and Postgres has to allow writing one. The
    ORM column was already permissive for the test schema, same as piece 2.
 
-Revision ID: 449_shared_brand_attach
-Revises: 448_merge_s6b_ptag
+Written as ``449_shared_brand_attach`` on ``448_merge_s6b_ptag``. PRs #443 and
+#445 were merged into their own stacked bases rather than into main, so this
+file never reached main while main grew 449 -> 452; it is renumbered and
+re-parented onto ``452_transfer_days`` so the graph keeps one head. Nothing in
+it depends on 449-452 (they touch dealer-kit, spec and SCM tables only) and
+every step is already guarded, so replaying it is a no-op wherever it was
+applied by hand.
+
+Revision ID: 453_shared_brand_attach
+Revises: 452_transfer_days
 """
 from alembic import op
 import sqlalchemy as sa
 
-revision = "449_shared_brand_attach"
-down_revision = "448_merge_s6b_ptag"
+revision = "453_shared_brand_attach"
+down_revision = "452_transfer_days"
 branch_labels = None
 depends_on = None
 

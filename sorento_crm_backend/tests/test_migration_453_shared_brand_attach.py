@@ -1,4 +1,4 @@
-"""AC-H7 - migration 449, run directly rather than asserted against the live DB.
+"""AC-H7 - migration 453, run directly rather than asserted against the live DB.
 
 `documentation/plans/multi-company/shared-brand-attachments-acceptance-criteria.md`
 AC-H7: id <= 32 chars, `down_revision` is the main head at branch time, one
@@ -20,7 +20,7 @@ below asserts the NOT NULL rejection rather than the old duplicate-NULL
 behaviour it can no longer produce.
 
 `tests/test_alembic_revision_ids.py` already asserts id-length and
-single-head GRAPH-WIDE; this file is the one that actually EXECUTES 449's
+single-head GRAPH-WIDE; this file is the one that actually EXECUTES 453's
 `upgrade()`/`downgrade()` on a scratch schema, the way
 `tests/test_migration_320_company_routing.py` does for its migration -
 running the function is what proves the guard logic (stamp-before-NOT-NULL,
@@ -50,14 +50,14 @@ from sqlalchemy.exc import IntegrityError
 from tests._pg_fixture import blank_session
 
 SORENTO = "00000000-0000-0000-0000-000000000001"
-REVISION_ID = "449_shared_brand_attach"
+REVISION_ID = "453_shared_brand_attach"
 MIGRATION = (
     Path(__file__).resolve().parents[1] / "alembic" / "versions" / f"{REVISION_ID}.py"
 )
 
 
 def _load_migration():
-    spec = importlib.util.spec_from_file_location("m449", MIGRATION)
+    spec = importlib.util.spec_from_file_location("m453", MIGRATION)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -106,13 +106,13 @@ def test_revision_id_fits_the_32_char_column():
 
 def test_down_revision_is_the_main_head_at_branch_time():
     module = _load_migration()
-    assert module.down_revision == "448_merge_s6b_ptag"
+    assert module.down_revision == "452_transfer_days"
 
 
-def test_449_is_the_single_head_of_the_whole_graph():
+def test_453_is_the_single_head_of_the_whole_graph():
     heads = _script_directory().get_heads()
     assert heads == [REVISION_ID], (
-        f"449 must be the ONLY head after upgrade; found {heads}"
+        f"453 must be the ONLY head after upgrade; found {heads}"
     )
 
 

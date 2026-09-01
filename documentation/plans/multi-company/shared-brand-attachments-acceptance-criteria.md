@@ -198,8 +198,10 @@ tester seeds its own `ZZT-` twin products and `ZZT-` folders, never reads existi
   file it is S (unchanged).
 - **AC-H6** `[BE]` The expiry sweep with a shared certificate near expiry produces one
   notification batch, not one per company.
-- **AC-H7** `[BE]` Alembic: id <= 32 chars, `down_revision` = the main head at branch time,
-  one head after upgrade; downgrade restores NOT NULL on `attachment_directories.company_id`
+- **AC-H7** `[BE]` Alembic: id <= 32 chars, `down_revision` = the main head (the migration
+  was written as `449_shared_brand_attach` on `448_merge_s6b_ptag` and renumbered to
+  `453_shared_brand_attach` on `452_transfer_days` when it was carried to main, so the
+  assertion reads the current head, not the branch-time one), one head after upgrade; downgrade restores NOT NULL on `attachment_directories.company_id`
   (after stamping NULL rows with the incumbent company), drops `is_shared`, restores the old
   index. (S4 correction: `certificates.company_id` also had a NOT NULL from migration 312,
   missed when this AC was written - `Certificate.__company_shared__` needs it dropped in

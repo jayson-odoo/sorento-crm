@@ -13,7 +13,7 @@ follows its filed attachment's company.
   session's write scope.
 - H6: the expiry-sweep trigger returns ONE match for a shared certificate,
   never one per company.
-- H7: alembic hygiene for migration 449.
+- H7: alembic hygiene for migration 453.
 
 Postgres only, own seeded `ZZT-` chain (`blank_session`, ZZT- codes).
 """
