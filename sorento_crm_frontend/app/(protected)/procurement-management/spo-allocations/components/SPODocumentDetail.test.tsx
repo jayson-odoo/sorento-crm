@@ -128,6 +128,7 @@ function line(over: Partial<SPODocumentLine> = {}): SPODocumentLine {
     receipt_status: 'open',
     outstanding: true,
     inbound_shipment: null,
+    grns: [],
     ...over,
   };
 }

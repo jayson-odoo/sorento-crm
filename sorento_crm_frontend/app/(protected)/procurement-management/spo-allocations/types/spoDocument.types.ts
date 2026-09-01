@@ -78,6 +78,8 @@ export interface SPODocumentLine {
     shipping_container_number?: string | null;
   } | null;
   line_status?: string | null;
+  /** GRNs whose picking lines name this allocation directly (sparse on live data). */
+  grns: LinkedGRNRef[];
 }
 
 /** The document form view's payload: header rollup + every line (UAC AC-6). */

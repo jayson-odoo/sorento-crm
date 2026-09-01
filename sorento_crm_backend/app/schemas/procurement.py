@@ -593,6 +593,10 @@ class SPODocumentLine(BaseModel):
     outstanding: bool
     inbound_shipment: Optional[InboundShipmentSimple] = None
     line_status: Optional[str] = None
+    #: The GRNs whose picking lines name THIS allocation (`picking_lines.spo_allocation_id`).
+    #: Sparse on live data (the weak-matcher backfill) - the Received cell falls back to the
+    #: document's key-matched `linked_grns` when this is empty.
+    grns: List[LinkedGRNSimple] = []
 
     class Config:
         from_attributes = True
