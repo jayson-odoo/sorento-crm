@@ -109,10 +109,28 @@ def test_down_revision_is_the_main_head_at_branch_time():
     assert module.down_revision == "452_transfer_days"
 
 
-def test_453_is_the_single_head_of_the_whole_graph():
-    heads = _script_directory().get_heads()
-    assert heads == [REVISION_ID], (
-        f"453 must be the ONLY head after upgrade; found {heads}"
+def test_452_has_exactly_one_child_453_never_a_parallel_fork():
+    """453's OWN invariant at its own point in the graph - NOT the whole graph's
+    single-head state, which is a moving target every subsequent migration is
+    entitled to extend.
+
+    This used to read `heads == [REVISION_ID]` ("453 must be the ONLY head"),
+    which was true only on the day 453 was the newest migration on `main` and
+    breaks for EVERY migration that (correctly) chains after it since - not a
+    defect in 453, and not a defect in whatever lands after it either. The
+    graph-wide "exactly one head, whatever it is today" check already lives at
+    `tests/test_alembic_revision_ids.py::test_migration_graph_has_a_single_head`
+    and needs no duplicate here. What's actually 453's own to guard is narrower:
+    nothing ELSE also claims `452_transfer_days` as its parent (a genuine merge-
+    caused fork at 453's own branch point), which stays true regardless of how
+    long the chain grows past it.
+    """
+    siblings = [
+        rev.revision for rev in _script_directory().walk_revisions()
+        if rev.down_revision == "452_transfer_days"
+    ]
+    assert siblings == [REVISION_ID], (
+        f"452_transfer_days must have exactly one child (453) - found {siblings}"
     )
 
 
