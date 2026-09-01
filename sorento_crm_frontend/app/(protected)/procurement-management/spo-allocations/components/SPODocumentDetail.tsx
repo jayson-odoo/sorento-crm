@@ -38,6 +38,7 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
+import { Dialog, DialogBody, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -58,7 +59,7 @@ import {
   planningSpanBadge,
   spoDocumentStatusPill,
 } from '../lib/spoDocumentStatus';
-import type { SPODocument, SPODocumentLine } from '../types/spoDocument.types';
+import type { LinkedGRNRef, SPODocument, SPODocumentLine } from '../types/spoDocument.types';
 import { getWarehouses } from '@/app/(protected)/inventory-management/warehouses/services/warehouseService';
 import type { Warehouse } from '@/app/(protected)/inventory-management/warehouses/types/warehouse.types';
 import { getProducts } from '@/app/(protected)/master-data-management/products/services/productService';
@@ -96,6 +97,12 @@ function seedDraft(line: SPODocumentLine): LineDraft {
     expected_date: line.expected_date ?? '',
     supplier_id: line.supplier_id ?? '',
   };
+}
+
+// Picking number + status, in one tooltip - the icon carries no visible label of its
+// own (captain's correction), so the detail lives in `title` instead.
+function grnLinkTitle(grn: LinkedGRNRef): string | undefined {
+  return [grn.picking_number, grn.picking_status].filter(Boolean).join(' - ') || undefined;
 }
 
 function Field({ label, htmlFor, children }: { label: string; htmlFor?: string; children: ReactNode }) {
@@ -148,6 +155,10 @@ export function SPODocumentDetail({ spoNumber }: { spoNumber: string }) {
   const [removedLineIds, setRemovedLineIds] = useState<Set<string>>(new Set());
   const [supplierExpanded, setSupplierExpanded] = useState(false);
   const [saving, setSaving] = useState(false);
+  // The Received cell's multi-GRN lightbox (captain's ruling: a Dialog, not a
+  // Popover, matching the apple-alignment "popups = lightbox" standard) - which
+  // line's GRNs are showing, or null when closed.
+  const [grnDialogReceipts, setGrnDialogReceipts] = useState<LinkedGRNRef[] | null>(null);
   // Rejected and Overdue start hidden (UAT AC-23) - available through the Columns
   // toggle, same DataGridColumnVisibility control the Purchase Order form view uses
   // for its own line table.
@@ -457,9 +468,50 @@ export function SPODocumentDetail({ spoNumber }: { spoNumber: string }) {
               />
             );
           }
-          return fmtQty(line.quantity_received);
+          // The GRN(s) behind the received figure (the retired page's linkage): the
+          // picking lines naming THIS allocation where the matcher linked them, else
+          // the document's key-matched receipts for a line that has received stock.
+          const receipts =
+            line.grns.length > 0
+              ? line.grns
+              : line.quantity_received > 0
+                ? (doc?.linked_grns ?? [])
+                : [];
+          return (
+            <div className="flex items-center justify-end gap-1.5">
+              <span>{fmtQty(line.quantity_received)}</span>
+              {receipts.length === 1 ? (
+                // The Packing List column's exact grammar (icon beside the value,
+                // title carries the detail) - one GRN links straight through.
+                <Link
+                  href={`/procurement-management/grn/${receipts[0].id}`}
+                  className="text-primary hover:underline"
+                  title={grnLinkTitle(receipts[0])}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <LinkIcon className="size-3 shrink-0" />
+                </Link>
+              ) : receipts.length > 1 ? (
+                // Two or more GRNs matched this line: the same icon, but it opens
+                // the lightbox listing every GRN as its own row (captain's ruling -
+                // a Dialog, not a Popover, per the apple-alignment "popups = lightbox"
+                // standard other SCM screens already follow).
+                <button
+                  type="button"
+                  className="text-primary hover:underline"
+                  title={`${receipts.length} goods receipts`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setGrnDialogReceipts(receipts);
+                  }}
+                >
+                  <LinkIcon className="size-3 shrink-0" />
+                </button>
+              ) : null}
+            </div>
+          );
         },
-        size: 110,
+        size: 130,
         meta: { headerTitle: 'Received', headerClassName: 'text-right', cellClassName: 'text-right tabular-nums' },
       },
       {
@@ -665,9 +717,10 @@ export function SPODocumentDetail({ spoNumber }: { spoNumber: string }) {
       },
     ],
     // `isEditing` / `lineDrafts` / `removedLineIds` / `warehouses` drive the editable
-    // cells; `filterProductId` / `filterWarehouseId` drive the highlight dot.
+    // cells; `filterProductId` / `filterWarehouseId` drive the highlight dot; `doc`
+    // feeds the Received cell's document-level GRN fallback.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [isEditing, lineDrafts, removedLineIds, warehouses, filterProductId, filterWarehouseId],
+    [isEditing, lineDrafts, removedLineIds, warehouses, filterProductId, filterWarehouseId, doc],
   );
 
   const table = useReactTable({
@@ -815,6 +868,34 @@ export function SPODocumentDetail({ spoNumber }: { spoNumber: string }) {
               <Field label="Received">{fmtQty(doc.total_received)}</Field>
               <Field label="Balance">{fmtQty(doc.balance)}</Field>
               <Field label="Line count">{fmtQty(doc.line_count)}</Field>
+              <Field label="Goods receipts">
+                {doc.linked_grns.length === 0 ? (
+                  <span className="text-muted-foreground">None received yet</span>
+                ) : (
+                  <ul className="space-y-0.5">
+                    {doc.linked_grns.map((grn) => (
+                      <li key={grn.id} className="flex items-center gap-2">
+                        <Link
+                          href={`/procurement-management/grn/${grn.id}`}
+                          className="text-primary hover:underline"
+                        >
+                          {grn.picking_number || 'GRN'}
+                        </Link>
+                        {grn.picking_date ? (
+                          <span className="text-xs font-normal text-muted-foreground">
+                            {fmtEta(grn.picking_date)}
+                          </span>
+                        ) : null}
+                        {grn.picking_status ? (
+                          <Badge variant="outline" size="sm" className="font-normal">
+                            {grn.picking_status}
+                          </Badge>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </Field>
             </section>
           </Card>
         </TabsContent>
@@ -867,6 +948,46 @@ export function SPODocumentDetail({ spoNumber }: { spoNumber: string }) {
           </DataGrid>
         </TabsContent>
       </Tabs>
+
+      {/* The Received cell's multi-GRN lightbox (captain's ruling) - the same
+          picking number / date / status shape the Header tab's own "Goods
+          receipts" field already renders, just for one line's GRNs. */}
+      <Dialog
+        open={grnDialogReceipts !== null}
+        onOpenChange={(next) => !next && setGrnDialogReceipts(null)}
+      >
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Goods receipts for {doc.spo_number}</DialogTitle>
+          </DialogHeader>
+          <DialogBody>
+            <ul className="space-y-1.5">
+              {(grnDialogReceipts ?? []).map((grn) => (
+                <li key={grn.id} className="flex flex-wrap items-center gap-2">
+                  <Link
+                    href={`/procurement-management/grn/${grn.id}`}
+                    className="flex items-center gap-1 text-primary hover:underline"
+                    onClick={() => setGrnDialogReceipts(null)}
+                  >
+                    <LinkIcon className="size-3 shrink-0" />
+                    {grn.picking_number || 'GRN'}
+                  </Link>
+                  {grn.picking_date ? (
+                    <span className="text-xs font-normal text-muted-foreground">
+                      {fmtEta(grn.picking_date)}
+                    </span>
+                  ) : null}
+                  {grn.picking_status ? (
+                    <Badge variant="outline" size="sm" className="font-normal">
+                      {grn.picking_status}
+                    </Badge>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          </DialogBody>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

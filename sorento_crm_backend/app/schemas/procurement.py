@@ -593,6 +593,10 @@ class SPODocumentLine(BaseModel):
     outstanding: bool
     inbound_shipment: Optional[InboundShipmentSimple] = None
     line_status: Optional[str] = None
+    #: The GRNs whose picking lines name THIS allocation (`picking_lines.spo_allocation_id`).
+    #: Sparse on live data (the weak-matcher backfill) - the Received cell falls back to the
+    #: document's key-matched `linked_grns` when this is empty.
+    grns: List[LinkedGRNSimple] = []
 
     class Config:
         from_attributes = True
@@ -634,6 +638,10 @@ class SPODocument(BaseModel):
     balance: int
     line_count: int
     lines: List[SPODocumentLine]
+    # The GRNs received against this SPO number (variant formats matched by key),
+    # so a Completed document can answer "received on WHICH goods receipt" - the
+    # capability the retired per-allocation page's Related Documents panel carried.
+    linked_grns: List[LinkedGRNSimple] = []
 
 
 class PickingLineBase(BaseModel):

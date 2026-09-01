@@ -128,6 +128,7 @@ function line(over: Partial<SPODocumentLine> = {}): SPODocumentLine {
     receipt_status: 'open',
     outstanding: true,
     inbound_shipment: null,
+    grns: [],
     ...over,
   };
 }
@@ -138,6 +139,7 @@ function doc(over: Partial<SPODocument> = {}): SPODocument {
     doc_date: '2026-08-01',
     supplier_name: 'Acme Sanitary',
     supplier_extra_count: 0,
+    linked_grns: [],
     status: 'outstanding',
     total_allocated: 300,
     total_received: 100,
