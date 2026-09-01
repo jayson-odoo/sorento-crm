@@ -307,7 +307,7 @@ def _product_columns(payload: Any, db: Session, company_id: str) -> dict[str, An
     if uom_id is None:
         raise MissingReference("uom_code", payload.uom_code)
 
-    return {
+    columns: dict[str, Any] = {
         "product_code": payload.code,
         "product_name": payload.name,
         "description": payload.description,
@@ -317,6 +317,14 @@ def _product_columns(payload: Any, db: Session, company_id: str) -> dict[str, An
         "cost_price": payload.cost_price,
         "is_active": payload.is_active,
     }
+    # D14: `barcode` is CRM-owned. Only written when the incoming value is
+    # non-empty - the key is left OUT of the dict otherwise, so `_update`'s
+    # blind `SET col = :col` never touches it and a manually entered barcode
+    # (or one from an earlier sync) survives a push that carries none. On
+    # CREATE the same omission leaves the column at its NULL default.
+    if payload.bar_code:
+        columns["barcode"] = payload.bar_code
+    return columns
 
 
 def _sales_agent_columns(payload: Any, db: Session, company_id: str) -> dict[str, Any]:
