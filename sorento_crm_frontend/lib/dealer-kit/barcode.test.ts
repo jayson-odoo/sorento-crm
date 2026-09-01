@@ -9,9 +9,11 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  barcodePlateGeometry,
   barcodeSymbologyFor,
   humanReadableBarcode,
   isValidEAN13,
+  MM_TO_PT,
 } from './barcode';
 
 // Real, checksum-valid EAN-13 values.
@@ -77,5 +79,65 @@ describe('humanReadableBarcode', () => {
 
   it('trims surrounding whitespace either way', () => {
     expect(humanReadableBarcode(`  ${VALID_EAN13}  `, 'EAN13')).toBe('4 006381 333931');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Label plate geometry (review fix: the print page treated this bug's origin
+// - a canvas-pixel floor - as millimetres, which forced an oversized font and
+// squeezed the bars into a fraction of the plate; AC-S7-4/6).
+// ---------------------------------------------------------------------------
+
+describe('barcodePlateGeometry', () => {
+  // A real plate size: the default the toolbar's "Add Barcode" inserts at.
+  const WIDTH_MM = 40;
+  const HEIGHT_MM = 22;
+
+  it('bands the plate into strip / bars / human-readable, all in mm of plate', () => {
+    const geo = barcodePlateGeometry(WIDTH_MM, HEIGHT_MM, true);
+
+    expect(geo.stripHeight_mm).toBeCloseTo(22 * 0.18, 5); // 3.96
+    expect(geo.humanHeight_mm).toBeCloseTo(22 * 0.16, 5); // 3.52
+    expect(geo.barsY_mm).toBeCloseTo(geo.stripHeight_mm, 5);
+    expect(geo.barsHeight_mm).toBeCloseTo(
+      HEIGHT_MM - geo.stripHeight_mm - geo.humanHeight_mm,
+      5,
+    ); // 14.52
+    expect(geo.barsX_mm).toBeCloseTo(40 * 0.06, 5); // 2.4
+    expect(geo.barsWidth_mm).toBeCloseTo(40 * 0.88, 5); // 35.2
+    expect(geo.cornerRadius_mm).toBeCloseTo(22 * 0.06, 5); // 1.32, min(w,h)
+  });
+
+  it('zeroes the strip band and its font when the strip is hidden', () => {
+    const geo = barcodePlateGeometry(WIDTH_MM, HEIGHT_MM, false);
+
+    expect(geo.stripHeight_mm).toBe(0);
+    expect(geo.barsY_mm).toBe(0);
+    expect(geo.stripFontSize_mm).toBe(0);
+    // The bars band grows to fill the space the strip gave up.
+    expect(geo.barsHeight_mm).toBeCloseTo(HEIGHT_MM - geo.humanHeight_mm, 5);
+  });
+
+  it('sizes font in mm of plate, well under the old 6mm-floor bug and never zero', () => {
+    const geo = barcodePlateGeometry(WIDTH_MM, HEIGHT_MM, true);
+
+    // strip band is 3.96mm; ratio-derived font (2.376mm) clears the 2mm floor,
+    // so the floor is NOT what is driving the number - the old bug forced
+    // every plate onto a fixed 6mm (~17pt) floor regardless of band size.
+    expect(geo.stripFontSize_mm).toBeCloseTo(3.96 * 0.6, 5);
+    expect(geo.stripFontSize_mm).toBeLessThan(6);
+    expect(geo.humanFontSize_mm).toBeCloseTo(3.52 * 0.6, 5);
+    expect(geo.humanFontSize_mm).toBeLessThan(6);
+  });
+
+  it('floors the font at 2mm of plate for a plate too small for the ratio', () => {
+    const geo = barcodePlateGeometry(10, 6, true); // tiny plate: bands ~1mm
+
+    expect(geo.stripFontSize_mm).toBe(2);
+    expect(geo.humanFontSize_mm).toBe(2);
+  });
+
+  it('converts mm to pt at the fixed CSS factor', () => {
+    expect(MM_TO_PT).toBeCloseTo(2.8346, 4);
   });
 });

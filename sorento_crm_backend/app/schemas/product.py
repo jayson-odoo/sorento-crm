@@ -172,6 +172,16 @@ class ProductBase(BaseModel):
         s = str(v).strip().upper()
         return s or "MYR"
 
+    @field_validator("barcode", mode="before")
+    @classmethod
+    def normalize_barcode(cls, v):
+        """Blank normalizes to None, same rule `normalize_currency` uses for an
+        empty value - a cleared field is unset, not a stored empty string."""
+        if v is None:
+            return None
+        s = str(v).strip()
+        return s or None
+
 
 class ProductCreate(ProductBase):
     pass
@@ -217,6 +227,16 @@ class ProductUpdate(BaseModel):
         if isinstance(v, str):
             return v.strip()
         return v
+
+    @field_validator("barcode", mode="before")
+    @classmethod
+    def normalize_barcode(cls, v):
+        """Blank normalizes to None, same rule `normalize_currency` uses for an
+        empty value - a cleared field is unset, not a stored empty string."""
+        if v is None:
+            return None
+        s = str(v).strip()
+        return s or None
 
     @field_validator("list_price", "cost_price", "invoice_price", mode="after")
     @classmethod

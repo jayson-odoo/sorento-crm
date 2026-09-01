@@ -139,6 +139,20 @@ def test_put_sets_the_barcode(api, world, db):
     assert detail.json()["barcode"] == "5551112223334"
 
 
+def test_put_with_empty_string_clears_the_barcode(api, world, db):
+    """An explicit "" is a clear, not a stored empty string - `ProductUpdate`
+    normalizes it to None the same way `normalize_currency` treats blank."""
+    pid = world["product"](f"{STEM}-CLEAR", barcode="1112223334445")
+    db.commit()
+
+    res = api.put(f"/api/v1/master-data/products/{pid}", json={"barcode": ""})
+    assert res.status_code == 200, res.text
+    assert res.json()["barcode"] is None
+
+    detail = api.get(f"/api/v1/master-data/products/{pid}")
+    assert detail.json()["barcode"] is None
+
+
 def test_put_without_barcode_leaves_it_untouched(api, world, db):
     """`exclude_unset` on the update: omitting the field is not the same as
     clearing it - the same rule the rest of ProductUpdate follows."""

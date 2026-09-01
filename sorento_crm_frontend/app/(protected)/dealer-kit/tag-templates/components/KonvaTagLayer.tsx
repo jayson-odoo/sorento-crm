@@ -21,7 +21,11 @@ import type { TagLayer, TagLayerProps } from '@/lib/dealer-kit/tag-template-type
 import type { PriceBadgeInput } from '@/lib/dealer-kit/price-badge';
 import { priceBadgeParts } from '@/lib/dealer-kit/price-badge';
 import type { TagLayerDisplay } from '@/lib/dealer-kit/product-block';
-import { barcodeSymbologyFor, humanReadableBarcode } from '@/lib/dealer-kit/barcode';
+import {
+  barcodePlateGeometry,
+  barcodeSymbologyFor,
+  humanReadableBarcode,
+} from '@/lib/dealer-kit/barcode';
 
 // `TagLayerDisplay` is resolved by whoever owns the data (the editor, the
 // designer) and handed DOWN: the canvas draws layers and knows nothing about
@@ -327,6 +331,7 @@ function LayerContent({
         <BarcodeContent
           w={w}
           h={h}
+          scale={scale}
           showCode={props.show_code}
           value={display?.text ?? null}
           code={display?.code ?? null}
@@ -499,6 +504,15 @@ function ImageContent({
 // Barcode (D18, S7)
 // ---------------------------------------------------------------------------
 
+/** Whether the offscreen canvas has been drawn, is still to be drawn, or
+ * `jsbarcode` threw drawing it. Distinct from `pending` so the renderer can
+ * tell "still loading" apart from "cannot encode this value" - the two used
+ * to share one `null`, which drew "Loading" forever on a genuine failure. */
+type BarcodeCanvasState =
+  | { status: 'pending' }
+  | { status: 'failed' }
+  | { status: 'ready'; canvas: HTMLCanvasElement };
+
 /**
  * Generates the bars onto an offscreen canvas via `jsbarcode`, the same
  * symbology decision `humanReadableBarcode` and the print page's DOM
@@ -506,13 +520,13 @@ function ImageContent({
  * as an Image's `image` prop, so the generated canvas is used directly -
  * no data-URL round trip.
  */
-function useBarcodeCanvas(value: string | null): HTMLCanvasElement | null {
-  const [canvas, setCanvas] = useState<HTMLCanvasElement | null>(null);
+function useBarcodeCanvas(value: string | null): BarcodeCanvasState {
+  const [state, setState] = useState<BarcodeCanvasState>({ status: 'pending' });
 
   useEffect(() => {
     const symbology = barcodeSymbologyFor(value);
     if (!symbology || !value) {
-      setCanvas(null);
+      setState({ status: 'pending' });
       return;
     }
     const element = document.createElement('canvas');
@@ -523,13 +537,13 @@ function useBarcodeCanvas(value: string | null): HTMLCanvasElement | null {
         margin: 0,
         height: 160,
       });
-      setCanvas(element);
+      setState({ status: 'ready', canvas: element });
     } catch {
-      setCanvas(null);
+      setState({ status: 'failed' });
     }
   }, [value]);
 
-  return canvas;
+  return state;
 }
 
 /**
@@ -537,23 +551,28 @@ function useBarcodeCanvas(value: string | null): HTMLCanvasElement | null {
  * product-code strip on top, the bars, then the guard-split human-readable
  * digits. Empty binding draws the same dashed placeholder every unbound
  * slot draws, so a designer sees the same "nothing here yet" language across
- * layer types.
+ * layer types. Band heights, padding and font sizes come from
+ * `barcodePlateGeometry` (mm of plate), converted to canvas px by `scale` -
+ * the SAME numbers the print page reaches by converting to `pt` instead, so
+ * the two cannot draw a differently-proportioned plate.
  */
 function BarcodeContent({
   w,
   h,
+  scale,
   showCode,
   value,
   code,
 }: {
   w: number;
   h: number;
+  scale: number;
   showCode: boolean;
   value: string | null;
   code: string | null | undefined;
 }) {
   const symbology = barcodeSymbologyFor(value);
-  const bars = useBarcodeCanvas(value);
+  const barsState = useBarcodeCanvas(value);
 
   if (!value || !symbology) {
     return (
@@ -579,14 +598,15 @@ function BarcodeContent({
     );
   }
 
-  const strip = showCode && code ? h * 0.18 : 0;
-  const humanH = h * 0.16;
-  const barsY = strip;
-  const barsH = Math.max(0, h - strip - humanH);
+  const geo = barcodePlateGeometry(px2mm(w, scale), px2mm(h, scale), showCode && !!code);
+  const strip = mm2px(geo.stripHeight_mm, scale);
+  const humanH = mm2px(geo.humanHeight_mm, scale);
+  const barsY = mm2px(geo.barsY_mm, scale);
+  const barsH = mm2px(geo.barsHeight_mm, scale);
 
   return (
     <>
-      <Rect width={w} height={h} fill="#ffffff" cornerRadius={Math.min(w, h) * 0.06} />
+      <Rect width={w} height={h} fill="#ffffff" cornerRadius={mm2px(geo.cornerRadius_mm, scale)} />
       {strip > 0 && (
         <>
           <Rect width={w} height={strip} fill="#000000" />
@@ -596,20 +616,43 @@ function BarcodeContent({
             text={code ?? ''}
             align="center"
             verticalAlign="middle"
-            fontSize={Math.max(6, strip * 0.6)}
+            fontSize={mm2px(geo.stripFontSize_mm, scale)}
             fontStyle="bold"
             fill="#ffffff"
           />
         </>
       )}
-      {bars ? (
+      {barsState.status === 'ready' ? (
         <KonvaImage
-          image={bars}
-          x={w * 0.06}
+          image={barsState.canvas}
+          x={mm2px(geo.barsX_mm, scale)}
           y={barsY}
-          width={w * 0.88}
+          width={mm2px(geo.barsWidth_mm, scale)}
           height={barsH}
         />
+      ) : barsState.status === 'failed' ? (
+        <>
+          <Rect
+            x={mm2px(geo.barsX_mm, scale)}
+            y={barsY}
+            width={mm2px(geo.barsWidth_mm, scale)}
+            height={barsH}
+            fill="transparent"
+            stroke="#dc2626"
+            strokeWidth={1}
+            dash={[4, 4]}
+          />
+          <Text
+            width={w}
+            y={barsY}
+            height={barsH}
+            text="cannot encode"
+            align="center"
+            verticalAlign="middle"
+            fontSize={9}
+            fill="#dc2626"
+          />
+        </>
       ) : (
         <Text
           width={w}
@@ -629,7 +672,7 @@ function BarcodeContent({
         text={humanReadableBarcode(value, symbology)}
         align="center"
         verticalAlign="middle"
-        fontSize={Math.max(6, humanH * 0.6)}
+        fontSize={mm2px(geo.humanFontSize_mm, scale)}
         fontFamily="monospace"
         fill="#000000"
       />

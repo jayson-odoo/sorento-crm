@@ -104,6 +104,7 @@
     "@types/three": "^0.185.1",
     "@vitejs/plugin-react": "^6.0.1",
     "autoprefixer": "^10.4.21",
+    "canvas": "3.2.3",
     "eslint": "^9.30.0",
     "eslint-config-next": "15.3.4",
     "eslint-config-prettier": "^10.1.5",
