@@ -243,3 +243,49 @@ def test_needs_level_names_only_the_committed_pool_member(scm_app):
         f"only the committed member should be named, got {len(needs_level)}: {recs}"
     )
     assert needs_level[0]["warehouse_id"] == bin_
+
+
+# --------------------------------------------------------------------------- AC-2.1 / _emit_cell
+
+def test_a_second_uncommitted_location_emits_nothing_but_stays_in_the_run(scm_app):
+    """`_emit_cell`'s location-grain gate on the DEFAULT (`reorder_point`, non-pooled,
+    non-product-wide) basis - the ordinary case, no classification override needed. A
+    second location of a committed product, carrying none of the commitment itself:
+
+    (a) emits NO row of its own - it does not answer for demand that is not its own.
+    (b) still counts IN SIZING: product-grain admission (2 Sep) keeps it in
+        `_planning_rows` with its real on-hand, rather than dropping it from the run's
+        own math the way row-grain admission (rejected) did. This is what makes a
+        pooled or product-wide basis for the SAME product able to net against it, had
+        the buyer configured either - the location's stock was never invisible, only
+        its OWN recommendation row is withheld.
+    """
+    _, db, _, _ = scm_app
+    committed_wh = _mk_warehouse(db, "ZZTAC6-COMMITTED")
+    quiet_wh = _mk_warehouse(db, "ZZTAC6-QUIET")
+    pid = _mk_product(db, "ZZTAC6-P")
+    _mk_stock(db, pid, committed_wh, 5)     # low net -> triggers a buy
+    _mk_stock(db, pid, quiet_wh, 40)        # real stock, zero committed
+    _mk_demand(db, pid, committed_wh, 10.0)
+    _mk_demand(db, pid, quiet_wh, 0.0)
+    _mk_committed(db, pid, committed_wh, qty=3)
+    _link(db, pid, _mk_supplier(db, "ZZTAC6 Supplier"))
+    db.flush()
+
+    created = svc.create_run(db, ["ZZTAC6-COMMITTED", "ZZTAC6-QUIET"], "warehouse",
+                             enqueue=False)
+    svc.run_reorder(created["run_id"], db=db)
+
+    recs = _recs(db, created["run_id"], pid)
+    assert not [r for r in recs if r["warehouse_id"] == quiet_wh], (
+        "(a) the uncommitted location must emit no row of its own"
+    )
+    assert [r for r in recs
+            if r["warehouse_id"] == committed_wh and r["rec_type"] == "buy"], (
+        "the committed location's own buy must be unaffected"
+    )
+
+    # (b) still visible to the run's own math, not dropped from it.
+    rows = svc._planning_rows(db, [committed_wh, quiet_wh])
+    quiet_row = next(r for r in rows if str(r["warehouse_id"]) == quiet_wh)
+    assert float(quiet_row["quantity_on_hand"]) == 40.0

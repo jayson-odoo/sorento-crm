@@ -280,6 +280,12 @@ def test_network_run_allocation_sums_to_buy_qty(scm_app):
     assert all(a.get("warehouse_code") for a in alloc)  # codes frozen, no bare UUIDs
 
 
+@pytest.mark.xfail(
+    reason="pre-existing #1/#4 network ROP/OUP netting bug, tracked as GH #495 - "
+    "restored to visibility by product-grain admission (2 Sep); remove this marker "
+    "(and drop the now-vacuous docstring caveat) once #495 is closed",
+    strict=True,
+)
 def test_network_run_no_buy_when_net_above_rop_below_oup(scm_app):
     """#1/#4: a network reorder_point aggregate whose net sits ABOVE ROP but BELOW OUP
     must NOT emit a buy (sizing OUP-net>0 is not a trigger). agg_demand=10, safety 7,
@@ -287,7 +293,15 @@ def test_network_run_no_buy_when_net_above_rop_below_oup(scm_app):
 
     G1: committed demand admits the SKU to the run (like its six siblings above) - 1 unit
     at EACH location, so agg_net drops from the uncommitted 500 to 498 and stays inside
-    the band; the arithmetic under test is otherwise untouched."""
+    the band; the arithmetic under test is otherwise untouched.
+
+    XFAIL, strict (GH #495): the row-grain admission cut of S2 masked this pre-existing
+    bug by excluding the SKU from the run entirely (no committed demand -> 0 buys,
+    trivially satisfying `buys == 0` for the wrong reason). Product-grain admission
+    restores the SKU to the run and this assertion is genuinely live again - and
+    genuinely fails. `strict=True` turns an unexpected pass into a hard failure, so
+    fixing #495 forces this marker to be removed rather than leaving a silent XPASS.
+    """
     _, db, _, _ = scm_app
     wa = _mk_warehouse(db, "M3W-BANDA")
     wb = _mk_warehouse(db, "M3W-BANDB")
@@ -308,25 +322,18 @@ def test_network_run_no_buy_when_net_above_rop_below_oup(scm_app):
         "SELECT count(*) FROM scm.reorder_recommendation "
         "WHERE run_id = :id AND product_id = :p AND rec_type = 'buy'"
     ), {"id": created["run_id"], "p": pid}).scalar()
-    # #1/#4 is a real, PRE-EXISTING network ROP/OUP netting bug (unrelated to this
-    # slice): the row-grain admission cut of S2 masked it by excluding this SKU from
-    # the run entirely (no committed demand -> 0 buys, trivially satisfying `buys == 0`
-    # for the wrong reason). Product-grain admission restores the SKU to the run and
-    # this assertion is live again - xfail rather than a silently-passing assertion
-    # that can never fail, filed as GH #495 for the netting bug itself.
-    if buys != 0:
-        pytest.xfail(
-            "pre-existing #1/#4 network ROP/OUP netting bug, tracked as GH #495 - "
-            f"expected 0 buys inside the ROP/OUP band, got {buys}"
-        )
+    assert buys == 0, "net above ROP but below OUP must not trigger a network buy"
 
 
 def test_dead_cell_does_not_also_emit_a_buy(scm_app):
     """#8, superseded by G2 (`PLAN-scm-reorder-oi-feedback-1sep.md`, 1 Sep 2026):
     disposition/dead-stock rows leave the plan ENTIRELY now (no `disposition` rec at
     all), and the #8 gate that used to suppress a contradictory buy on that cell is
-    unchanged underneath - a dead cell still emits no buy. So a cell classified dead
-    emits NOTHING."""
+    unchanged underneath - a dead cell still emits no buy. But the cell here still
+    carries committed demand (AC-2.3's amended sentence, 2 Sep): silently dropping
+    demand somebody is owed would be a worse outcome than #8's contradiction, so
+    `_emit_cell` emits `covered` instead of nothing - "use this stock instead of
+    buying", the same suggestion any other untriggered cell states."""
     _, db, _, _ = scm_app
     wid = _mk_warehouse(db, "M3W-DEAD")
     pid = _mk_product(db, "M3P-DEAD")
@@ -346,6 +353,9 @@ def test_dead_cell_does_not_also_emit_a_buy(scm_app):
     types = [r["rec_type"] for r in rows]
     assert "disposition" not in types, "G2: disposition rows leave the plan entirely"
     assert "buy" not in types, "a dead cell must not also emit a buy rec"
+    assert "covered" in types, (
+        "the cell's committed demand must not vanish silently - it states covered instead"
+    )
 
 
 def test_no_supplier_sku_emits_exception(scm_app):

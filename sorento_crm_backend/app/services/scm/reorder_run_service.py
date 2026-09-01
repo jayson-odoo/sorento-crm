@@ -594,10 +594,14 @@ def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
     # basis) keeps every location's on-hand/on-order in its net - a location with none of
     # the committed demand itself is still real SUPPLY an aggregate is entitled to see.
     # WHICH locations get their OWN recommendation row is a separate, LOCATION question,
-    # answered at EMISSION time by each location-grain emitter (`_emit_cell`, the
-    # per-member loops in `_emit_pool` / `_plan_network`): a location with zero committed
-    # demand of its own still emits nothing there on a location-grain basis - it just does
-    # not lose its stock from the run's math to get there.
+    # and the gate differs by shape: `_emit_cell` (a non-pooled location) withholds its
+    # WHOLE cell - buy, covered, needs_level alike - for zero committed demand of its
+    # own; `_emit_pool`'s `unset` loop withholds `needs_level` ONLY, per member (the
+    # pool's own buy/covered stay POOL-level, unfiltered by one member's commitment -
+    # that visibility is the fix). `_plan_network` carries no such gate at all - see the
+    # comment above `policy_type` in `_plan_network` for why the reorder_level branch it
+    # would have gated is unreachable there. Either way, a location does not lose its
+    # stock from the run's math just to get to "no row of its own".
     #
     # A row-grain gate (this slice's first cut) stripped 76,098 on-hand + 14,475 on-order
     # units from 298 in-plan products' aggregates on the dev-DB full-network run: 55
@@ -703,11 +707,12 @@ def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
         # G10: a named product is buyer intent, not merely "let it into the run" - a
         # buyer who typed a SKU into Start Plan wants the SAME evaluation this product
         # got before G1 existed (forecast/stock trigger, unrelated to committed demand),
-        # so its rows are exempt from the LOCATION-grain committed gate too
-        # (`_emit_cell`, the per-member loops in `_emit_pool` / `_plan_network`) - not
-        # just from the product-grain admission gate above. Stamped onto the row rather
-        # than threaded as a parameter through every emitter, the same pattern
-        # `_apply_unlocated_demand` / `_apply_project_supply_reduction` already use.
+        # so its rows are exempt from the LOCATION-grain gate too - `_emit_cell`'s
+        # whole-cell withhold and `_emit_pool`'s `unset` (`needs_level`) loop both read
+        # this flag - not just from the product-grain admission gate above. Stamped onto
+        # the row rather than threaded as a parameter through every emitter, the same
+        # pattern `_apply_unlocated_demand` / `_apply_project_supply_reduction` already
+        # use.
         for r in out:
             r["committed_gate_exempt"] = True
     return out
@@ -1454,7 +1459,11 @@ def _emit_pool(db: Session, run_id: str, pool_id: str,
     # gate `_emit_cell` applies for the single-member case (G10-named products exempt,
     # `committed_gate_exempt`).
     for r, c in unset:
-        if not (float(r.get("committed") or 0.0) > 0 or r.get("committed_gate_exempt")):
+        # `c["committed"]` (the frozen cell), not `r["committed"]` (the raw row) - one
+        # reading of the fact, matching `_emit_cell`'s gate below; `_compute_cell` builds
+        # `c["committed"]` straight off `r["committed"]`, so the two never disagreed, but
+        # one canonical read is fewer places for that to stop being true.
+        if not (float(c.get("committed") or 0.0) > 0 or r.get("committed_gate_exempt")):
             continue
         recs.append(_build_rec(run_id, "needs_level", r, c,
                                warehouse_id=str(r["warehouse_id"]),
@@ -2119,21 +2128,16 @@ def _plan_network(db: Session, run_id: str, rows: list[dict], policies: list[dic
                           for r, c in zip(prows, computed)}
         network_project_need = sum(project_by_wid.values())
         policy_type = policy.get("policy_type") or "reorder_point"
-        # S10 - same rule as the pool path: the network target is the sum of the levels the
-        # buyer owns, and a location with no level is named rather than guessed at.
-        net_levels = None
-        # Collected here, emitted after the network has been sized, so each row can carry
-        # the network's own basis; they still come first in this product's rows.
-        unset_levels: list[tuple[dict, dict]] = []
-        if policy_type == "reorder_level":
-            net_levels = {str(r["warehouse_id"]): c.get("reorder_level")
-                          for r, c in zip(prows, computed)}
-            unset_levels = [(r, c) for r, c in zip(prows, computed)
-                            if c.get("reorder_level") is None]
-
+        # NEVER 'reorder_level' here: `policy` is resolved the SAME way (product_id,
+        # warehouse_id=None) `_is_product_level_basis` already resolved it above, and a
+        # 'reorder_level' answer there already sent this product to `_emit_product` and
+        # `continue`d past this whole branch. So this scope carries no per-member level
+        # concept (`net_levels` / `unset_levels` / a `needs_level` row) to gate at all -
+        # removed 2 Sep, the code was dead since the per-product reorder_level basis
+        # landed (27 Aug) and unreachable by construction, not merely untested.
         agg = eng.aggregate_network(wh_inputs, lead_time_days=lead, safety_days=safety_days,
                                     review_days=review_days, moq=moq,
-                                    order_multiple=order_multiple, levels=net_levels)
+                                    order_multiple=order_multiple, levels=None)
 
         # Gate the network buy on the SAME policy trigger as per-warehouse, computed on
         # the AGGREGATE (net vs agg-ROP / agg-min / agg-OUP). Sizing the buy is NOT a
@@ -2148,10 +2152,11 @@ def _plan_network(db: Session, run_id: str, rows: list[dict], policies: list[dic
         else:
             target_oup = float(agg["order_up_to"])
         # on_cadence=True: every run is a review cadence in M3 (see per-warehouse note).
+        # reorder_level=None: this scope never resolves the reorder_level policy_type
+        # (see above), so `trigger` always takes its reorder_point/min_max/periodic arm.
         triggered, reason_label = eng.trigger(
             policy_type, net=agg_net, rop=float(agg["reorder_point"]),
-            min_level=min_override, oup=target_oup, on_cadence=True,
-            reorder_level=(float(agg["reorder_point"]) if net_levels is not None else None))
+            min_level=min_override, oup=target_oup, on_cadence=True, reorder_level=None)
         retail_recommended, _unrounded = eng.order_qty(
             triggered, net=agg_net, oup=target_oup, moq=None, order_multiple=None)
         recommended = retail_recommended + network_project_need
@@ -2186,18 +2191,11 @@ def _plan_network(db: Session, run_id: str, rows: list[dict], policies: list[dic
         network_basis = _plan_basis("network", "network", prows, computed, allocation_map,
                                     retail_need=retail_recommended,
                                     recommended=recommended, rounded=rounded)
-        # G1 (product-grain admission, 2 Sep): a network member admitted purely as SUPPLY
-        # for a committed sibling gets no `needs_level` row of its own - see the matching
-        # comment in `_emit_pool` (G10-named products exempt, `committed_gate_exempt`).
-        for r, c in unset_levels:
-            if not (float(r.get("committed") or 0.0) > 0 or r.get("committed_gate_exempt")):
-                continue
-            recs.append(_build_rec(run_id, "needs_level", r, c,
-                                   warehouse_id=str(r["warehouse_id"]),
-                                   order_qty=None, rounded=None,
-                                   reason_enum="needs_level",
-                                   reason_label=_needs_level_label(c),
-                                   plan_basis=network_basis))
+        # No `needs_level` row is emitted here: this scope never resolves the
+        # reorder_level policy_type (see the comment above `policy_type`), so there is
+        # no per-member level to be missing. The location-grain `needs_level` gate lives
+        # in `_emit_cell` (single-location) and `_emit_pool`'s `unset` loop (pooled);
+        # this network-aggregate scope has neither concept.
         if triggered and rounded > 0 and chosen:
             allocation = _allocation_lines(allocation_map, wh_meta)
             recs.append(_build_rec(run_id, "buy", first, agg_cell, warehouse_id=None,
