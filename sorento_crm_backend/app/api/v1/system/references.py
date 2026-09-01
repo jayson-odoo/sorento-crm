@@ -29,12 +29,14 @@ from app.models.product import Brand, Product
 from app.models.resources import Attachment, AttachmentType
 from app.services.entity_resolver import (
     _CODE_RE,
+    EntityPinMismatch,
     _canonical_entity_type,
     fetch_product_brands,
     resolve_references,
     resolve_references_intersection,
     token_word_coverage_for_rows,
 )
+from app.services.error_handler import AppException
 
 
 # Canonical entity types the resolver understands. domain_hint matching one of
@@ -1397,6 +1399,33 @@ class ResolveReferenceRequest(BaseModel):
             "containing 'Sorento'."
         ),
     )
+    entity_pins: dict[str, str] | None = Field(
+        default=None,
+        description=(
+            "Optional per-token uuid pin: token (as it appears in `tokens`, "
+            "the ORIGINAL text the caller sent - matched through the same "
+            "entity-stopword stripping resolution itself applies) -> the "
+            "exact row uuid the caller already picked for it (e.g. from a "
+            "prior disambiguation reply). Codes are unique only PER COMPANY, "
+            "so re-deriving from the bare code alone can reopen an ambiguity "
+            "the caller already closed (n8n exec 14659385 customer 300-C043, "
+            "exec 14661446 product SRTBV110-DIY - both cross-company). When "
+            "the pinned uuid is among the token's own matches AFTER normal "
+            "company-scope filtering, resolution narrows to exactly that "
+            "row. Every other outcome is the SAME explicit 400 "
+            "(`ENTITY_PIN_MISMATCH`) - a uuid absent from the token's scoped "
+            "matches (whether it names nothing at all or names a real row "
+            "the caller's own company scope cannot see - the two are "
+            "deliberately NOT told apart), a blank pin value, an unparseable "
+            "uuid, or a key that does not correspond to any token in this "
+            "request. Never a silent misresolution and never a silent "
+            "fallback to plain token matching. Absent or empty = "
+            "byte-identical to today. POST only (this field does not exist "
+            "on the GET variant); rejected with a 400 under "
+            "`match_mode='and'` (AND-mode intersection has no per-token view "
+            "to pin)."
+        ),
+    )
 
 
 def _result_has_zero_matches(result: dict[str, Any]) -> bool:
@@ -1578,6 +1607,7 @@ def _resolve_input(
     access_levels: list[str] | None = None,
     fallback_to_all_types: bool = False,
     domain_hint: str | None = None,
+    entity_pins: dict[str, str] | None = None,
     limit: int | None = None,
 ):
     mode = (match_mode or "or").strip().lower()
@@ -1585,6 +1615,15 @@ def _resolve_input(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"match_mode must be one of {sorted(_ALLOWED_MATCH_MODES)}",
+        )
+    # AND-mode intersection has no per-token view to narrow, so a pin there is
+    # silently meaningless - and worse, a zero-intersection AND request retries
+    # under `force_mode="or"` further down, where the pin would suddenly start
+    # applying. Reject up front rather than let that surprise happen.
+    if mode == "and" and entity_pins:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="entity_pins is not supported with match_mode='and'",
         )
 
     # Treat literal strings "null" / "none" / "undefined" as empty so callers
@@ -1650,6 +1689,20 @@ def _resolve_input(
         }
 
     if filtered:
+        # entity_pins keys refer to the ORIGINAL token the caller sent (what
+        # they can see in their own request), not the stripped form the
+        # resolver actually matches against - so remap BEFORE stripping
+        # destroys the original spelling. A key with no matching original
+        # token is left untouched; it will bind to nothing below and
+        # `_apply_entity_pins` rejects it rather than silently dropping it.
+        if entity_pins:
+            _orig_norm_to_stripped = {
+                (t or "").strip().lower(): _strip_entity_stopwords(t) for t in filtered
+            }
+            entity_pins = {
+                _orig_norm_to_stripped.get((key or "").strip().lower(), key): value
+                for key, value in entity_pins.items()
+            }
         # Strip entity-type noise words ("order 202605-2651" → "202605-2651")
         # so callers can pass conversational phrasing verbatim. Alignment with
         # positional `allowed_entity_types` is preserved (in-place clean).
@@ -1713,6 +1766,7 @@ def _resolve_input(
                 allowed_entity_types=allowed,
                 cross_type_expand=cross_type_expand,
                 domain_hint=hint,
+                entity_pins=entity_pins,
             ).as_dict()
         raw = _apply_promotion_access_levels_filter(db, raw, access_levels)
         # Promotion-domain hint: run the expander. It owns the dispatch:
@@ -1801,6 +1855,11 @@ def _resolve_input(
         if "attachment" in caller_types
         else sorted(_RESOLVER_ENTITY_TYPES - {"attachment"})
     )
+    # No `entity_pins` here: a pinned token either resolved in the primary
+    # pass above or the whole request already raised, so `unresolved` never
+    # contains a pinned token - threading the dict through would only make
+    # `_apply_entity_pins` see pins with nothing in THIS call's resolutions to
+    # bind to and reject the request for keys the primary pass already used.
     fb_raw = resolve_references(
         db,
         unresolved,
@@ -1928,6 +1987,8 @@ def resolve_reference(
 
     OR mode (default): per-token, returns canonical UUIDs + display payload + ambiguity signals.
     AND mode: cross-token intersection across each entity's concatenated searchable columns.
+    Entity pinning (`entity_pins`) is POST-only - see `ResolveReferenceRequest`; this GET variant
+    has no equivalent parameter.
     """
     return _stamp_brand_on_products(
         db,
@@ -2137,17 +2198,29 @@ def resolve_reference_post(
     db: Session = Depends(get_db),
 ):
     """POST variant for external callers that send JSON body (e.g. n8n HTTP node)."""
-    result = _resolve_input(
-        db,
-        payload.query,
-        payload.tokens,
-        match_mode=payload.match_mode,
-        allowed_entity_types=payload.allowed_entity_types,
-        access_levels=payload.access_levels,
-        fallback_to_all_types=payload.fallback_to_all_types,
-        domain_hint=payload.domain_hint,
-        limit=payload.limit,
-    )
+    try:
+        result = _resolve_input(
+            db,
+            payload.query,
+            payload.tokens,
+            match_mode=payload.match_mode,
+            allowed_entity_types=payload.allowed_entity_types,
+            access_levels=payload.access_levels,
+            fallback_to_all_types=payload.fallback_to_all_types,
+            domain_hint=payload.domain_hint,
+            entity_pins=payload.entity_pins,
+            limit=payload.limit,
+        )
+    except EntityPinMismatch as exc:
+        raise AppException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            message=(
+                f"entity_pins uuid for token {exc.token!r} does not match any "
+                "candidate the resolver found for that token."
+            ),
+            detail=f"token={exc.token} pinned_uuid={exc.pinned_uuid}",
+            code="ENTITY_PIN_MISMATCH",
+        ) from exc
 
     # Shape B: a domain predicate over the described set. This is NOT a fallback -
     # "what faucets have certs" is a different question from "find me a faucet",
