@@ -49,12 +49,27 @@ echo "==> Starting ${NEW} color"
 docker compose --profile "${NEW}" up -d --no-deps \
   "backend_${NEW}" "frontend_${NEW}" "mcp_${NEW}"
 
+# Pre-swap abort: take the NEW color down before exiting. Left running, its
+# restart policy re-boots the backend forever, and every boot re-runs
+# `alembic upgrade head` against the LIVE database - each attempt queues a
+# fresh ACCESS EXCLUSIVE behind whatever blocked it, damming production reads
+# (1 Sep 2026: /references/resolve stalled, WhatsApp replies via n8n timed
+# out, and backend_blue had to be stopped by hand). OLD keeps serving either
+# way; this only removes the zombie.
+abort_new_color() {
+  echo "==> Aborting: stopping ${NEW} color so it cannot restart-loop migrations against the live DB"
+  docker compose --profile "${NEW}" stop "backend_${NEW}" "frontend_${NEW}" "mcp_${NEW}" || true
+  docker compose --profile "${NEW}" rm -f "backend_${NEW}" "frontend_${NEW}" "mcp_${NEW}" || true
+}
+
 # 3. Wait for all three new containers to be healthy
 echo "==> Waiting for healthchecks"
 for svc in backend frontend mcp; do
   cid=$(docker compose ps -q "${svc}_${NEW}")
   if [ -z "$cid" ]; then
-    echo "ERROR: container ${svc}_${NEW} not found"; exit 1
+    echo "ERROR: container ${svc}_${NEW} not found"
+    abort_new_color
+    exit 1
   fi
   i=0
   while [ $i -lt $HEALTH_WAIT_TICKS ]; do
@@ -69,6 +84,7 @@ for svc in backend frontend mcp; do
   if [ "$state" != "healthy" ]; then
     echo "ERROR: ${svc}_${NEW} not healthy after $((HEALTH_WAIT_TICKS * TICK_SECONDS))s"
     docker compose logs --tail=200 "${svc}_${NEW}" || true
+    abort_new_color
     exit 1
   fi
 done
