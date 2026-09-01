@@ -264,7 +264,6 @@ export function ReorderPlanView({ runId }: { runId: string }) {
         total={decisionProgress?.total ?? 0}
         cashCommitted={progressTotals?.cost ?? 0}
         cashTotal={item.summary?.total_cash_impact ?? 0}
-        awaitingRows={0}
         undecidedFilterActive={decidedFilter === 'undecided'}
         onToggleUndecidedFilter={() =>
           setDecidedFilter((f) => (f === 'undecided' ? 'all' : 'undecided'))
