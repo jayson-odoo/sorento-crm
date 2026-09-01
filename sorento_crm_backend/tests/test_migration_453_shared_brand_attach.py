@@ -110,9 +110,19 @@ def test_down_revision_is_the_main_head_at_branch_time():
 
 
 def test_453_is_the_single_head_of_the_whole_graph():
+    """This assertion is per-BRANCH, not per-repo: it was `[REVISION_ID]` while 453
+    was main's actual tip, and it moves forward by one commit every time a PR stacks a
+    new migration onto 453 (S1/S3/S4/S5 of PLAN-scm-reorder-oi-feedback-1sep.md all do,
+    independently, off the same base). On THIS branch (S3, PR #491) the whole graph's
+    only reachable head is `456_reorder_perf_quickwins` - see that migration's own
+    docstring for the two-round renumbering history and the merge-order chain. This
+    line moves again in the one-line follow-up commit that flips
+    `456_reorder_perf_quickwins.down_revision` to `455_saved_views_and_perms`
+    immediately before #491 merges (once #489 has landed on main)."""
     heads = _script_directory().get_heads()
-    assert heads == [REVISION_ID], (
-        f"453 must be the ONLY head after upgrade; found {heads}"
+    assert heads == ["456_reorder_perf_quickwins"], (
+        f"456_reorder_perf_quickwins must be the ONLY head after upgrade on this "
+        f"branch; found {heads}"
     )
 
 
