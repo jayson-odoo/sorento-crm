@@ -2556,6 +2556,22 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
         except Exception:  # pragma: no cover - defensive, see above
             logger.exception("planning change batch failed for a confirmed SO upload")
 
+    # G12 (`PLAN-scm-reorder-oi-feedback-1sep.md` S6, AC-6.11): only the PO channel
+    # writes OPEN lines this rule counts. Company-wide and always current rather than
+    # scoped to this upload's own rows - see `project_bin_lock`'s own docstring.
+    unclaimed_project_bin_lines = None
+    if doc_type == PO:
+        try:
+            from app.services.scm.project_bin_lock import (
+                count_unclaimed_project_bin_lines,
+            )
+
+            unclaimed_project_bin_lines = count_unclaimed_project_bin_lines(db)
+        except Exception:  # pragma: no cover - defensive, see above
+            logger.exception(
+                "counting unclaimed project-bin lines failed for a PO/SPO upload"
+            )
+
     return {
         "ok": True,
         "exception_batch_id": exception_batch_id,
@@ -2596,6 +2612,10 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
         "spo_new": spo.new,
         "spo_changed": spo.changed,
         "spo_unchanged": spo.unchanged,
+        # G12 (S6, AC-6.11): open project-bin PO/SPO lines no claim names, company-wide,
+        # as of THIS upload's own claim-resolution pass. `None` on an SO-channel upload,
+        # which writes no supply line this rule covers.
+        "unclaimed_project_bin_lines": unclaimed_project_bin_lines,
         "resolution_issues": [asdict(i) for i in plan.issues],
         "row_problems": [asdict(p) for p in read.problems + plan.problems],
         # Reported by the commit as well as by the preview, and stated as it was BEFORE the

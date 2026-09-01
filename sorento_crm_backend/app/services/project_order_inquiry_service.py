@@ -102,6 +102,7 @@ from app.models.projects import (
 )
 from app.services.error_handler import AppException
 from app.services.scm import order_link_service, priority, spo_supply
+from app.services.scm.pool_predicate import is_site_pool
 from app.services.scm.supply_assignment import (
     KIND_PO as SA_KIND_PO,
     KIND_SPO as SA_KIND_SPO,
@@ -395,6 +396,16 @@ class ProjectOrderInquiryService:
         # 27 Aug 2026). Five uncached queries per product, and the cascade asks it once
         # per row, so it is answered per product and remembered for the instance.
         self._awaiting_link_cache: Dict[str, Dict[str, set]] = {}
+        # G7 dedication (`PLAN-scm-reorder-oi-feedback-1sep.md` S6): every RESOLVED claim
+        # naming a PO line or SPO allocation, keyed by target id - one full-table read,
+        # cached the same way `_linked_by_target` already is, and dropped by the same
+        # invalidation for the same reason (a claim written mid-pass must not be read
+        # stale by the next row).
+        self._claims_by_target_cache: Optional[Dict[str, List[Dict[str, Any]]]] = None
+        # This service instance's own answer to "what SO does this row's claim identity
+        # name" (`_claim_identity`'s first element), memoised per row: the cascade calls
+        # `_candidates_for_row` once per row and the identity costs two queries to derive.
+        self._so_number_cache: Dict[str, Optional[str]] = {}
 
     # ------------------------------------------------------------- derivation
 
@@ -2878,6 +2889,130 @@ class ProjectOrderInquiryService:
         """
         self._linked_by_target_cache = None
         self._awaiting_link_cache = {}
+        # A write that resolves or creates a claim (`_write_link`, every placement) must
+        # not leave the NEXT row in the same pass reading the dedication state as it was
+        # before this one wrote. `_so_number_cache` stays: a row's own identity does not
+        # change inside a pass.
+        self._claims_by_target_cache = None
+
+    def _row_so_number(self, row: OrderInquiryRow) -> Optional[str]:
+        """This row's own SO number, the identity G7 dedication ranks a candidate's own
+        claim against - the same identity `_claim_identity` writes a claim under, so a
+        row can never be told its OWN document is "dedicated to" a different one.
+
+        Memoised per row (`_so_number_cache`): the cascade calls `_candidates_for_row`
+        once per row and `_claim_identity` costs two queries to derive.
+        """
+        key = str(row.id)
+        if key not in self._so_number_cache:
+            so_number, _item_code, _core_line_id = self._claim_identity(row)
+            self._so_number_cache[key] = so_number
+        return self._so_number_cache[key]
+
+    def _claims_by_target(self) -> Dict[str, List[Dict[str, Any]]]:
+        """Every RESOLVED claim naming a PO line or an SPO allocation - G7's dedication
+        evidence (`PLAN-scm-reorder-oi-feedback-1sep.md` S6).
+
+        Read once per service instance and cached, the same pattern `_linked_by_target`
+        already uses and for the same reason: the cascade asks this once per row over a
+        product-wide pass, and `scm.order_link_claim` does not change inside one.
+
+        Joined to the core sales order and its line so the reservation reads the SO
+        line's LIVE outstanding (G7) rather than a figure stored at claim time: a
+        fulfilled or cancelled SO line reserves nothing, whatever the claim itself still
+        names, and the claim row is never deleted to make that true.
+        """
+        if self._claims_by_target_cache is not None:
+            return self._claims_by_target_cache
+        rows = (
+            self.db.query(
+                OrderLinkClaim.id,
+                OrderLinkClaim.po_line_id,
+                OrderLinkClaim.spo_allocation_id,
+                SalesOrder.so_number,
+                SalesOrder.order_date,
+                SalesOrderLine.qty_ordered,
+                SalesOrderLine.qty_delivered,
+                SalesOrderLine.line_status,
+            )
+            .join(SalesOrderLine, SalesOrderLine.id == OrderLinkClaim.so_line_id)
+            .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
+            .filter(
+                or_(
+                    OrderLinkClaim.po_line_id.isnot(None),
+                    OrderLinkClaim.spo_allocation_id.isnot(None),
+                )
+            )
+            .all()
+        )
+        out: Dict[str, List[Dict[str, Any]]] = {}
+        for (
+            claim_id,
+            po_line_id,
+            spo_allocation_id,
+            so_number,
+            order_date,
+            qty_ordered,
+            qty_delivered,
+            line_status,
+        ) in rows:
+            key = str(po_line_id or spo_allocation_id)
+            outstanding = (
+                _ZERO
+                if (line_status or "open") != "open"
+                else max(_dec(qty_ordered) - _dec(qty_delivered), _ZERO)
+            )
+            out.setdefault(key, []).append(
+                {
+                    "claim_id": str(claim_id),
+                    "so_number": so_number,
+                    "so_date": order_date,
+                    "outstanding": outstanding,
+                }
+            )
+        self._claims_by_target_cache = out
+        return out
+
+    def _dedication_for_target(
+        self, target_id: str, own_so_number: Optional[str]
+    ) -> Tuple[Decimal, Optional[str], bool]:
+        """`(reserved, dedicated_to, claimed_by_own_so)` for one candidate line (G7 + G12).
+
+        `reserved` is the SUM of every OTHER SO's claimed outstanding on this line -
+        mathematically the same figure a strict SO-date-ordered cascade against the
+        line's own capacity would land on, since both are clamped to zero the same way
+        once subtracted (PO 100, SO A 30 + SO B 50 claimed both read 80 reserved,
+        whichever order they are summed in - the ORDER only decides which SO's number is
+        shown when more than one holds a claim, which `dedicated_to` answers by picking
+        the earliest SO date).
+
+        `dedicated_to` is None when nobody but this row's own SO claims the line - the
+        ordinary case - so a candidate list where nothing is dedicated adds no queries a
+        caller has to filter back out. A claim whose SO line has SETTLED reserves zero
+        (G7) and is excluded here entirely, not just from the sum: a fulfilled or
+        cancelled order is not who the line is "dedicated to" any more, whatever the
+        claim itself still names - the claim row stays, the dedication does not.
+        """
+        claims = self._claims_by_target().get(target_id, ())
+        own_claim = False
+        others: List[Dict[str, Any]] = []
+        for claim in claims:
+            if own_so_number is not None and claim["so_number"] == own_so_number:
+                own_claim = True
+                continue
+            if claim["outstanding"] > _ZERO:
+                others.append(claim)
+        if not others:
+            return _ZERO, None, own_claim
+        others.sort(
+            key=lambda c: (
+                c["so_date"] is None,
+                c["so_date"] or date.max,
+                c["claim_id"],
+            )
+        )
+        reserved = sum((c["outstanding"] for c in others), _ZERO)
+        return reserved, others[0]["so_number"], own_claim
 
     def _pool_codes(self) -> set:
         """Every warehouse that is SOME location's pool, by code.
@@ -2979,10 +3114,28 @@ class ProjectOrderInquiryService:
         covered when the group is 15,514 short of covering what it already owes. A
         pool-location line has no group and is always offered; the row that finds nothing
         stays raised and buys, which is the honest outcome.
+
+        DEDICATION (G7, `PLAN-scm-reorder-oi-feedback-1sep.md` S6): `scm.order_link_claim`
+        - explicit claims only, never a location or product match - subtracts every OTHER
+        SO's live outstanding from a line's `remaining`, in the same order regardless of
+        which claim is walked first (a straight sum, clamped at zero the same way a
+        SO-date-ordered cascade against the line's own capacity would be). This row's OWN
+        claim reserves nothing against itself, and a line it claims ranks first among the
+        candidates (`_candidate`'s sort key). Never removed from the list on account of
+        dedication alone - a fully dedicated line still shows, greyed, so the buyer sees
+        why and can still name it by hand (AC-6.5); the OLD `remaining <= 0` exclusion
+        below fires only for a line already spoken for by an actual link, unchanged.
+
+        PROJECT-BIN LOCK (G12, same slice): a line at a `segment = 'project'` warehouse is
+        `cascadable` ONLY when this row's own claim names it - claimed by another SO or
+        claimed by nobody are refused alike. Never a `remaining` cut: an unclaimed bin's
+        whole quantity is still there for a manual link to take, which is what converts it
+        to claimed (AC-6.9). A pool-destination line carries no such lock (AC-6.10).
         """
         product_id = self._resolve_product_id(row)
         if not product_id:
             return []
+        own_so_number = self._row_so_number(row)
         by_po, by_spo = self._linked_by_target()
         if credit_own_links:
             by_po, by_spo = dict(by_po), dict(by_spo)
@@ -3046,10 +3199,17 @@ class ProjectOrderInquiryService:
             location = warehouse.warehouse_code if warehouse else None
             if group_of_warehouse_code(location) in deficit:
                 continue
+            target_id = str(line.id)
+            raw_remaining = remaining
+            reserved, dedicated_to, own_claim = self._dedication_for_target(
+                target_id, own_so_number
+            )
+            remaining = max(remaining - reserved, _ZERO)
+            project_bin = not is_site_pool(warehouse.segment if warehouse else None)
             candidates.append(
                 self._candidate(
                     kind="po",
-                    target_id=str(line.id),
+                    target_id=target_id,
                     document=po.po_number,
                     line_label=self._line_label(line.source_ref),
                     location=location,
@@ -3064,6 +3224,11 @@ class ProjectOrderInquiryService:
                     own_location=own_location,
                     pools=pools,
                     cited=cited,
+                    own_so_claim=own_claim,
+                    dedicated_to=dedicated_to,
+                    project_locked=project_bin and not own_claim,
+                    unattributed=project_bin and dedicated_to is None and not own_claim,
+                    raw_remaining=raw_remaining,
                 )
             )
 
@@ -3088,6 +3253,12 @@ class ProjectOrderInquiryService:
                 )
                 if remaining <= _ZERO:
                     continue
+                target_id = str(allocation.id)
+                raw_remaining = remaining
+                reserved, dedicated_to, own_claim = self._dedication_for_target(
+                    target_id, own_so_number
+                )
+                remaining = max(remaining - reserved, _ZERO)
                 location = (
                     warehouse.warehouse_code if warehouse else allocation.location_code
                 )
@@ -3116,10 +3287,11 @@ class ProjectOrderInquiryService:
                     not in pools
                 ):
                     continue
+                project_bin = not is_site_pool(warehouse.segment if warehouse else None)
                 candidates.append(
                     self._candidate(
                         kind="spo",
-                        target_id=str(allocation.id),
+                        target_id=target_id,
                         document=allocation.spo_number,
                         line_label=self._line_label(allocation.spo_line_number),
                         location=location,
@@ -3134,6 +3306,11 @@ class ProjectOrderInquiryService:
                         own_location=own_location,
                         pools=pools,
                         cited=cited,
+                        own_so_claim=own_claim,
+                        dedicated_to=dedicated_to,
+                        project_locked=project_bin and not own_claim,
+                        unattributed=project_bin and dedicated_to is None and not own_claim,
+                        raw_remaining=raw_remaining,
                     )
                 )
 
@@ -3378,18 +3555,31 @@ class ProjectOrderInquiryService:
         own_location: Optional[str],
         pools: set,
         cited: Dict[str, int],
+        own_so_claim: bool = False,
+        dedicated_to: Optional[str] = None,
+        project_locked: bool = False,
+        unattributed: bool = False,
+        raw_remaining: Optional[Decimal] = None,
     ) -> Dict[str, Any]:
-        """One candidate, with the sort key that IS the walk (Q5 then Q7).
+        """One candidate, with the sort key that IS the walk (G7, then Q5, then Q7).
 
-        The key, outermost first: WHICH document CS cited, in the order they wrote them -
-        `SPO-2026/08-0061 & 202606-S0082` tries the allocation before the purchase order,
-        and a rank rather than a flag is what makes that true (a flag puts both in one
-        bucket and lets the date decide between two documents the form already ordered);
-        then an SPO before a purchase order (an order back is owed against what is already
-        shipped before it is owed against a new purchase); then the location tier; then the
-        pool sub-rank inside tier 3 (the row's own site pool before the others); then the
-        PO's own issue date, then the line's expected date, then the document number, then
-        the id so a tie breaks the same way twice.
+        The key, outermost first: whether THIS row's own SO claims the line (G7, AC-6.4) -
+        an explicit dedication outranks even what CS cited, because a claim is a fact
+        while a citation is a hint typed on a form; then WHICH document CS cited, in the
+        order they wrote them - `SPO-2026/08-0061 & 202606-S0082` tries the allocation
+        before the purchase order, and a rank rather than a flag is what makes that true (a
+        flag puts both in one bucket and lets the date decide between two documents the
+        form already ordered); then an SPO before a purchase order (an order back is owed
+        against what is already shipped before it is owed against a new purchase); then the
+        location tier; then the pool sub-rank inside tier 3 (the row's own site pool before
+        the others); then the PO's own issue date, then the line's expected date, then the
+        document number, then the id so a tie breaks the same way twice.
+
+        `dedicated_to` / `unattributed` are the Link dialog's grey states (G7 / G12): the
+        SO number another claim names, or - project-bin only - that nobody has claimed it
+        at all. `project_locked` folds into `cascadable` below rather than living beside
+        it: a line the automatic pass may not touch is exactly what `cascadable` already
+        means, whichever rule refused it.
         """
         tier, sub = link_location_tier(own_location, location, pools)
         # Uncited sorts after every citation, however many there are.
@@ -3406,18 +3596,33 @@ class ProjectOrderInquiryService:
             "tier": tier,
             # What the automatic pass may take (the captain, 27 Aug): the row's own site
             # pool and better, never a sibling group or another site. A row naming no
-            # location ranks nothing and keeps the whole list, as before.
-            "cascadable": own_location is None or tier <= TIER_POOL,
+            # location ranks nothing and keeps the whole list, as before. G12 narrows this
+            # further for a project-bin line this row's own SO has not claimed - refused
+            # to the automatic pass however good its location tier, because the SO that
+            # claims it is the only one allowed to auto-take it.
+            "cascadable": (own_location is None or tier <= TIER_POOL) and not project_locked,
             "issue_date": issue_date,
             "expected_date": expected_date,
             "remaining": remaining,
+            # `remaining` before G7's dedication subtracted anything - what an ACTUAL
+            # link already claims, and nothing a claim alone reserves. `po_candidates_for_row`
+            # reads `already_tagged` off this rather than off `remaining`, or a dedicated
+            # line with no link on it at all would misreport a link that was never written.
+            "raw_remaining": raw_remaining if raw_remaining is not None else remaining,
             "qty_ordered": qty_ordered,
             "qty_received": qty_received,
             "supplier_name": supplier_name,
             "unit_cost": unit_cost,
             "currency": currency,
             "cited": is_cited,
+            # G7's dedication label: the SO another claim names, when this row's own SO
+            # is not the one holding it. None on the ordinary, unclaimed line.
+            "dedicated_to": dedicated_to,
+            # G12's project-bin lock, unclaimed by ANY SO - the "Unattributed" state,
+            # distinct from `dedicated_to` (claimed, just not by this row).
+            "unattributed": unattributed,
             "sort": (
+                0 if own_so_claim else 1,
                 citation_rank,
                 0 if kind == "spo" else 1,
                 tier,
@@ -3490,8 +3695,14 @@ class ProjectOrderInquiryService:
         claims_by_line = self._linked_claims_by_target(candidates)
         out: List[Dict[str, Any]] = []
         for candidate in candidates:
+            # Off `raw_remaining` - what an ACTUAL link already claims - never off the
+            # dedication-reduced `remaining`, or a line no link has ever touched but
+            # another SO's claim reserves would misreport that claim as an "already
+            # tagged" placement nobody made (G7).
             already = (
-                candidate["qty_ordered"] - candidate["qty_received"] - candidate["remaining"]
+                candidate["qty_ordered"]
+                - candidate["qty_received"]
+                - candidate["raw_remaining"]
             )
             out.append(
                 {
@@ -3520,6 +3731,9 @@ class ProjectOrderInquiryService:
                     ),
                     "currency": candidate["currency"],
                     "claims": claims_by_line.get(candidate["target_id"], []),
+                    # G7 / G12 (S6): the dedication state the dialog greys with.
+                    "dedicated_to": candidate["dedicated_to"],
+                    "unattributed": candidate["unattributed"],
                 }
             )
         recommended = next((entry for entry in out if entry["covers"]), None)

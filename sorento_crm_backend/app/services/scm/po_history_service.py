@@ -930,6 +930,19 @@ def apply(db: Session, file_data: bytes, actor: Optional[str] = None,
     summary["documents"] = sorted({o.po_number for o in parsed.orders if o.po_number})
     summary["date_from"] = summary["date_from"].isoformat() if summary["date_from"] else None
     summary["date_to"] = summary["date_to"].isoformat() if summary["date_to"] else None
+    # G12 (`PLAN-scm-reorder-oi-feedback-1sep.md` S6, AC-6.11): a re-export's own
+    # `**SO:174830**` notes can resolve a claim onto an OPEN line an earlier upload
+    # wrote, so the number worth reporting is what remains unclaimed company-wide after
+    # THIS pass, not what this pass alone touched.
+    try:
+        from app.services.scm.project_bin_lock import count_unclaimed_project_bin_lines
+
+        summary["unclaimed_project_bin_lines"] = count_unclaimed_project_bin_lines(
+            db, claim_company_id
+        )
+    except Exception:  # pragma: no cover - defensive, see the relink pass above
+        logger.exception("counting unclaimed project-bin lines failed for a PO/SPO upload")
+        summary["unclaimed_project_bin_lines"] = None
     return summary
 
 

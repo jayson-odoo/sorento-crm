@@ -552,6 +552,15 @@ class OrderInquiryPoCandidate(BaseModel):
     # preview and the auto pass can never disagree; the dialog offers it as an editable
     # starting point, not the only answer.
     default_take: str = "0"
+    # G7 dedication (`PLAN-scm-reorder-oi-feedback-1sep.md` S6): the SO NUMBER another
+    # `scm.order_link_claim` names on this line, when that SO is not the row's own - the
+    # dialog greys the row "Dedicated to SO xxxx". `None` when nobody but this row's own
+    # SO (or nobody at all) claims it.
+    dedicated_to: Optional[str] = None
+    # G12's project-bin lock: this line sits at a `segment = 'project'` warehouse and NO
+    # SO has claimed it, not even this row's own - the dialog greys it "Unattributed -
+    # link manually". Always `False` for a pool-destination line (AC-6.10).
+    unattributed: bool = False
 
 
 class PlaceOnPoAllocation(BaseModel):

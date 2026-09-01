@@ -565,6 +565,7 @@ class PurchaseOrderService:
              *, product_code: Optional[str] = None,
              outstanding: Optional[bool] = None,
              allocated: Optional[bool] = None,
+             unclaimed_project_bin: Optional[bool] = None,
              documents: Optional[Sequence[str]] = None) -> dict:
         q = self._base_query()
         if documents is not None:
@@ -623,6 +624,15 @@ class PurchaseOrderService:
                 .exists()
             )
             q = q.filter(is_allocated if allocated else ~is_allocated)
+        if unclaimed_project_bin is not None:
+            # G12's own filter (AC-6.11): the order carries at least one OPEN line at a
+            # project-segment warehouse no `scm.order_link_claim` names - the backfill
+            # Joey works from `FromSODocList` in AutoCount to clear. Same predicate
+            # `project_bin_lock.count_unclaimed_project_bin_lines` sums company-wide.
+            from app.services.scm.project_bin_lock import has_unclaimed_project_bin_line
+
+            has_one = has_unclaimed_project_bin_line(self.db)
+            q = q.filter(has_one if unclaimed_project_bin else ~has_one)
         if product_code:
             # EXISTS, not a join: an order that carries the item on two lines is one order,
             # and a join would list it twice and count it twice.
