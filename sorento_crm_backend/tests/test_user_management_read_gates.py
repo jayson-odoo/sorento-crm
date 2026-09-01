@@ -641,7 +641,7 @@ class TestStructuralCoverage:
         below so the gate is stated rather than counted.
         """
         gated_paths = {r.path for r in _mounted_get_routes() if _is_gated(r)}
-        assert len(gated_paths) == 42
+        assert len(gated_paths) == 43
         assert gated_paths == {
             "/api/v1/user-management/teams/",
             "/api/v1/user-management/teams/{team_id}",
@@ -673,6 +673,13 @@ class TestStructuralCoverage:
             # Its 403/200 pair lives in tests/test_media_access_contact_route.py
             # alongside the PUT sibling it shares a service with.
             "/api/v1/user-management/contacts/{contact_id}/media-access",
+            # --- Per-contact portal form override editor (PLAN-contact-portal-form-
+            # override): the GET reads which portal forms a contact may see, which
+            # is the same read as the contact record itself, so it takes
+            # `user_management.contacts.view` like its path siblings above. Its
+            # 403/200 pair and the `.edit` gate on the PUT sibling live in
+            # tests/test_contact_portal_forms.py.
+            "/api/v1/user-management/contacts/{contact_id}/portal-forms",
             # --- Q2 decided: user_management.settings.view (the narrow
             # /settings/app-config projection stays open - see the allowlist)
             "/api/v1/user-management/settings/",
