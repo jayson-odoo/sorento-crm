@@ -1,6 +1,7 @@
 # PLAN: SCM reorder + order-inquiry feedback batch (1 Sep 2026)
 
-Status: GRILLED AND APPROVED - three grill rounds settled 1 Sep 2026, nothing built.
+Status: GRILLED AND APPROVED - three grill rounds settled 1 Sep 2026. S1 in flight on
+`feat/oi-auto-ack`. S2 (engine scope) built on `feat/reorder-committed-only`, PR open.
 UAC: `scm-reorder-oi-feedback-1sep-acceptance-criteria.md`
 
 ## Journeys
