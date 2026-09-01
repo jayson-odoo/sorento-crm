@@ -173,6 +173,14 @@ class PriceTagRequestResponse(BaseModel):
     # without a word (AC-S1-5).
     attachments: list[PriceTagRequestAttachment] = Field(default_factory=list)
 
+    # Whether a completed (READY) tag sheet PDF export exists for this request.
+    # Filled by ``response_with_resolved_lines`` from ``user_downloads``, same as
+    # the four fields above - the portal read-only view's gear needs to know
+    # whether to enable Download PDF without a second round trip, and an
+    # undeclared field is dropped by ``response_model`` without a word
+    # (PLAN-price-tag-feedback-r2 S2).
+    has_completed_export: bool = False
+
 
 class PriceTagRequestListItem(BaseModel):
     model_config = ConfigDict(from_attributes=True)

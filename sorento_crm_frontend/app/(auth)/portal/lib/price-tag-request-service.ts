@@ -7,6 +7,7 @@
 
 import { extractApiError } from '@/lib/api-client';
 import {
+  fetchPortalAttachmentBytes,
   portalFetch,
   unwrap,
   type PortalAttachment,
@@ -66,6 +67,10 @@ export interface PriceTagRequestDetail extends PriceTagRequestSummary {
    *  a draft's status is `new`, the same status a submitted request keeps until
    *  marketing claims it. */
   portal_draft_at?: string | null;
+  /** Whether a finished tag sheet PDF exists for this request - what the
+   *  read-only header's gear reads to enable/disable Download PDF without a
+   *  second round trip. */
+  has_completed_export?: boolean;
 }
 
 export interface DebtorOption {
@@ -391,4 +396,50 @@ export async function requestChanges(
     },
   );
   return unwrap<{ status: string }>(res, 'Failed to request changes');
+}
+
+// ---------------------------------------------------------------------------
+// Download the finished PDF (D19/S2)
+// ---------------------------------------------------------------------------
+
+/** `attachment; filename="tags.pdf"` -> `tags.pdf`, or null when absent. */
+function filenameFromContentDisposition(header: string | null): string | null {
+  if (!header) return null;
+  const quoted = /filename\*?=(?:UTF-8'')?"([^"]+)"/i.exec(header);
+  if (quoted?.[1]) return decodeURIComponent(quoted[1]);
+  const bare = /filename\*?=(?:UTF-8'')?([^;]+)/i.exec(header);
+  return bare?.[1] ? decodeURIComponent(bare[1].trim()) : null;
+}
+
+function saveBlobAs(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  // Revoked a tick later: the click starts the save asynchronously and some
+  // browsers have not read the object url yet by the time this line runs.
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+/**
+ * The request's latest completed tag sheet PDF, fetched with the portal token
+ * and saved through the browser (D19). Same-origin bytes route, not a signed
+ * URL: a bucket's presigned link is cross-origin and sends no auth header, so
+ * `fetch` is what the gear's Download PDF item actually calls.
+ */
+export async function downloadPriceTagPdf(id: string): Promise<void> {
+  const res = await fetchPortalAttachmentBytes(
+    `${BASE}/${encodeURIComponent(id)}/download`,
+  );
+  if (!res.ok) {
+    throw new Error(await extractApiError(res, 'Failed to download the PDF'));
+  }
+  const blob = await res.blob();
+  const filename =
+    filenameFromContentDisposition(res.headers.get('Content-Disposition')) ||
+    'tag-sheet.pdf';
+  saveBlobAs(blob, filename);
 }

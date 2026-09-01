@@ -536,6 +536,14 @@ class PriceTagRequestService:
             for row in list_attachments_for_entity(db, "price_tag_request", request.id)
         ]
 
+        from app.services.dealer_kit.tag_sheet_export_service import (
+            latest_completed_export,
+        )
+
+        response.has_completed_export = (
+            latest_completed_export(db, request.id) is not None
+        )
+
         # The header's names, from the same resolver the listing uses so the two
         # screens cannot disagree about who claimed a request.
         for key, value in (

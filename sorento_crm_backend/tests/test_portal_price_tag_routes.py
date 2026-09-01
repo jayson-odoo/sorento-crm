@@ -14,7 +14,7 @@ service call can prove.
 from __future__ import annotations
 
 import uuid
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -507,3 +507,164 @@ class TestTheGrantGatesEveryRoute:
 
         assert res.status_code == 200, res.text
         assert isinstance(res.json(), list)
+
+
+# ---------------------------------------------------------------------------
+# Download the latest completed tag sheet PDF (PLAN-price-tag-feedback-r2 S2)
+# ---------------------------------------------------------------------------
+
+
+def _seed_completed_export(
+    db: Session,
+    request_id: str,
+    *,
+    filename: str = "ZZT-tags-v1.pdf",
+    offset_seconds: int = 0,
+) -> str:
+    """A READY ``user_downloads`` row for ``request_id``, storage key returned.
+
+    Directly seeded rather than driven through ``request_tag_sheet_export`` +
+    the RQ render task: the render leg needs a live worker and a rendered
+    catalogue page, neither of which this suite stands up. What the route under
+    test reads is the finished row - status, kind, source pointer, storage key -
+    so seeding that row directly proves the same contract.
+
+    ``created_at`` is set explicitly rather than left to the column's
+    ``server_default=func.now()``: within one transaction Postgres's `now()` is
+    the transaction start time, constant for every statement in it, so two rows
+    seeded back to back in the same test transaction would tie on it. A real
+    export never has this problem (each export is its own request/transaction);
+    only stacking two of them inside one test does.
+    """
+    from app.models.download import DownloadStatus, UserDownload
+    from app.services.dealer_kit.tag_sheet_export_service import KIND
+
+    key = f"zzt/{uuid.uuid4()}.pdf"
+    download = UserDownload(
+        id=str(uuid.uuid4()),
+        user_id=str(uuid.uuid4()),  # the marketing staffer who exported it
+        kind=KIND,
+        source_entity_type="price_tag_request",
+        source_entity_id=request_id,
+        status=DownloadStatus.READY.value,
+        filename=filename,
+        storage_provider="s3",
+        storage_key=key,
+        created_at=datetime.utcnow() + timedelta(seconds=offset_seconds),
+    )
+    db.add(download)
+    db.flush()
+    return key
+
+
+class TestTheDownloadRoute:
+    def test_the_detail_route_says_whether_a_completed_export_exists(self, client):
+        c, db, _contact_id = client
+        product_id = _seed_product(db)
+        created = c.post(
+            _BASE,
+            json={"lines": [{"line_type": "product", "product_id": product_id}]},
+        ).json()
+        assert created["has_completed_export"] is False
+
+        _seed_completed_export(db, created["id"])
+
+        body = c.get(f"{_BASE}/{created['id']}").json()
+        assert body["has_completed_export"] is True
+
+    def test_the_owner_streams_the_latest_completed_export(self, client, monkeypatch):
+        c, db, _contact_id = client
+        from app.api.v1.public import portal_price_tag
+        from tests._fake_storage import FakeStorage
+
+        product_id = _seed_product(db)
+        created = c.post(
+            _BASE,
+            json={"lines": [{"line_type": "product", "product_id": product_id}]},
+        ).json()
+
+        storage = FakeStorage()
+        monkeypatch.setattr(portal_price_tag, "get_backend", lambda provider: storage)
+        key = _seed_completed_export(db, created["id"], filename="ZZT-tags-v1.pdf")
+        storage.objects[key] = (b"%PDF-1.4 zzt bytes", "application/pdf")
+
+        res = c.get(f"{_BASE}/{created['id']}/download")
+
+        assert res.status_code == 200, res.text
+        assert res.content == b"%PDF-1.4 zzt bytes"
+        assert "ZZT-tags-v1.pdf" in res.headers["content-disposition"]
+
+    def test_a_second_later_export_wins_over_the_first(self, client, monkeypatch):
+        """"Latest completed" - a re-export after a proof revision must win."""
+        c, db, _contact_id = client
+        from app.api.v1.public import portal_price_tag
+        from tests._fake_storage import FakeStorage
+
+        product_id = _seed_product(db)
+        created = c.post(
+            _BASE,
+            json={"lines": [{"line_type": "product", "product_id": product_id}]},
+        ).json()
+
+        storage = FakeStorage()
+        monkeypatch.setattr(portal_price_tag, "get_backend", lambda provider: storage)
+        first_key = _seed_completed_export(
+            db, created["id"], filename="v1.pdf", offset_seconds=0
+        )
+        storage.objects[first_key] = (b"v1 bytes", "application/pdf")
+        second_key = _seed_completed_export(
+            db, created["id"], filename="v2.pdf", offset_seconds=5
+        )
+        storage.objects[second_key] = (b"v2 bytes", "application/pdf")
+
+        res = c.get(f"{_BASE}/{created['id']}/download")
+
+        assert res.status_code == 200, res.text
+        assert res.content == b"v2 bytes"
+
+    def test_no_completed_export_refuses_with_404(self, client):
+        c, db, _contact_id = client
+        product_id = _seed_product(db)
+        created = c.post(
+            _BASE,
+            json={"lines": [{"line_type": "product", "product_id": product_id}]},
+        ).json()
+
+        res = c.get(f"{_BASE}/{created['id']}/download")
+
+        assert res.status_code == 404, res.text
+
+    def test_a_foreign_token_gets_the_same_404_no_existence_oracle(self, client):
+        """A request not owned by this token 404s exactly like "no export yet" -
+        neither the request's existence nor its export's is leaked."""
+        c, db, _contact_id = client
+        from app.services.price_tag_request_service import PriceTagRequestService
+
+        other = _seed_contact_who_can_see_the_form(db)
+        theirs = PriceTagRequestService.create_request(
+            db,
+            contact_id=other,
+            company_id=_SORENTO_COMPANY_ID,
+            data={"debtor_name": "ZZT Theirs"},
+        )
+        db.flush()
+        _seed_completed_export(db, theirs.id)
+
+        res = c.get(f"{_BASE}/{theirs.id}/download")
+
+        assert res.status_code == 404, res.text
+
+    def test_visibility_revoked_refuses_before_looking_for_an_export(self, client):
+        c, db, contact_id = client
+        product_id = _seed_product(db)
+        created = c.post(
+            _BASE,
+            json={"lines": [{"line_type": "product", "product_id": product_id}]},
+        ).json()
+        _seed_completed_export(db, created["id"])
+        _revoke_the_grant(db, contact_id)
+
+        res = c.get(f"{_BASE}/{created['id']}/download")
+
+        assert res.status_code == 403, res.text
+        assert res.json()["code"] == "FORM_TYPE_NOT_VISIBLE"

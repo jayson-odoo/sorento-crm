@@ -51,6 +51,17 @@ vi.mock('@/components/common/AttachmentPreviewModal', () => ({
   },
 }));
 
+// Same reasoning again: the real DetailActionsMenu mounts a Radix
+// DropdownMenu (Portal + `motion/react` AnimatePresence), which in jsdom
+// occasionally flickers a sibling section's text out of the tree for a tick
+// while it settles - unrelated to what THIS file asserts (the attachment
+// list). Rendered out entirely; the gear's own contract is covered where it
+// is the point of the test.
+vi.mock('@/components/common/DetailActionsMenu', () => ({
+  __esModule: true,
+  DetailActionsMenu: () => null,
+}));
+
 const asMock = (fn: unknown) => fn as ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
@@ -115,7 +126,10 @@ describe('read-only view attachments (PortalAttachment shape)', () => {
     ]);
   });
 
-  it('renders no PO Attachments card when the request carries none', async () => {
+  it('renders the Purchase Order card with an empty state when the request carries no attachments', async () => {
+    // S2 (ADR: View = Edit): the section is the SAME one the edit form
+    // shows, always present - a reader must not wonder whether the form
+    // even has a PO section, the way an entirely-hidden card would leave it.
     asMock(getRequest).mockResolvedValue({
       id: 'req-2',
       doc_number: 'PT-202609-0002',
@@ -137,6 +151,7 @@ describe('read-only view attachments (PortalAttachment shape)', () => {
     render(<PriceTagRequestForm requestId="req-2" />);
 
     await screen.findByText('PT-202609-0002');
-    expect(screen.queryByText('PO Attachments')).not.toBeInTheDocument();
+    expect(await screen.findByText('Purchase Order')).toBeInTheDocument();
+    expect(screen.getByText('No PO files attached.')).toBeInTheDocument();
   });
 });

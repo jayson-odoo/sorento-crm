@@ -13,7 +13,9 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+import mimetypes
+
+from fastapi import APIRouter, Depends, Query, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -27,6 +29,7 @@ from app.schemas.price_tag import (
     PriceTagRequestUpdate,
     TagItemLookupItem,
 )
+from app.services.dealer_kit.tag_sheet_export_service import latest_completed_export
 from app.services.error_handler import AppException
 from app.services.portal_form_visibility_service import resolve_visible_form_types
 from app.services.price_tag_request_service import (
@@ -35,6 +38,8 @@ from app.services.price_tag_request_service import (
     STATUS_CHANGES_REQUESTED,
     STATUS_NEW,
 )
+from app.services.storage_router import get_backend
+from app.utils.http import content_disposition
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +124,59 @@ def portal_get_price_tag_request(
     """
     _assert_visible(db, token.contact_id)
     return _detail_body(db, _require_own_request(db, token, request_id))
+
+
+# ---------------------------------------------------------------------------
+# Download the latest completed tag sheet PDF
+# ---------------------------------------------------------------------------
+
+
+@router.get("/submissions/price_tag_request/{request_id}/download")
+def portal_download_price_tag_pdf(
+    request_id: str,
+    token: PortalToken = Depends(get_portal_token),
+    db: Session = Depends(get_db),
+) -> Response:
+    """The request's latest completed tag sheet PDF, streamed same-origin.
+
+    Ownership is the request's contact (``_require_own_request``), exactly like
+    every other portal price tag route - never the download row's ``user_id``
+    (whichever marketing staffer ran the export). A foreign token and "no
+    completed export yet" both refuse with the same 404 message, so neither
+    leaks whether the request, or an export for it, exists (AC-S2-4).
+    """
+    _assert_visible(db, token.contact_id)
+    req = _require_own_request(db, token, request_id)
+    download = latest_completed_export(db, req.id)
+    if download is None or not download.storage_key:
+        raise AppException(
+            status_code=404,
+            message="No completed export exists for this request yet.",
+            code="NOT_FOUND",
+        )
+    try:
+        content = get_backend(download.storage_provider).download_file(download.storage_key)
+    except Exception:  # noqa: BLE001 - a missing object is not a server bug worth a 500
+        logger.warning(
+            "portal_download_price_tag_pdf: could not read %s", download.storage_key,
+            exc_info=True,
+        )
+        raise AppException(
+            status_code=404,
+            message="The stored file is no longer available.",
+            code="NOT_FOUND",
+        )
+
+    filename = download.filename or "tag-sheet.pdf"
+    media_type = mimetypes.guess_type(filename)[0] or "application/pdf"
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={
+            "Content-Disposition": content_disposition(filename),
+            "Content-Length": str(len(content)),
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
