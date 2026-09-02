@@ -20,6 +20,13 @@ export function usePrefetchOnce() {
 
   return useCallback(
     (href: string) => {
+      // A touch device fires `pointerenter` on the tap that is already opening
+      // the record, so the prefetch is pure cost there. Asked as `hover: none`
+      // rather than `!(hover: hover)` on purpose: a stub matchMedia that
+      // answers "no match" to everything - jsdom's, and the one every test in
+      // this repo runs against - would read the negative form as "no hover"
+      // and switch prefetching off everywhere.
+      if (typeof window !== 'undefined' && window.matchMedia?.('(hover: none)').matches) return;
       if (seen.current.has(href)) return;
       seen.current.add(href);
       // Optional: the real `useRouter()` always returns one, but the app has

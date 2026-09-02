@@ -509,17 +509,27 @@ function LinkableBodyRow({
     }
   };
 
+  // Hover is the signal, not the viewport: 151 lists render up to 100 rows, and
+  // a viewport-triggered prefetch would fetch a page's worth of detail chunks
+  // the reader never opens (M4 list latency).
+  //
+  // Taken OUT of the spread and composed rather than written after it: a
+  // draggable row carries its own `onPointerEnter`, and the last one written
+  // wins. Same rule as `rowOpenProps` below - nothing here silently replaces a
+  // handler the caller passed.
+  const { onPointerEnter: rowPointerEnter, ...restRowProps } = rowProps;
+
   return (
     // `rowOpenProps` BEFORE the dnd listeners `rowProps` carries: a future
     // list that is both draggable and openable would otherwise have its
     // keyboard-drag onKeyDown replaced by this one, silently.
     <tr
       {...rowOpenProps({ opensUrl: true, open: openRecord })}
-      {...rowProps}
-      // Hover is the signal, not the viewport: 151 lists render up to 100
-      // rows, and a viewport-triggered prefetch would fetch a page's worth of
-      // detail chunks the reader never opens (M4 list latency).
-      onPointerEnter={() => prefetchOnce(href)}
+      onPointerEnter={(event) => {
+        prefetchOnce(href);
+        rowPointerEnter?.(event);
+      }}
+      {...restRowProps}
     >
       {children}
     </tr>

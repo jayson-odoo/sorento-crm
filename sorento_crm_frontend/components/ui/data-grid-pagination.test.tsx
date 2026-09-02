@@ -9,7 +9,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { useReactTable, getCoreRowModel, type ColumnDef } from '@tanstack/react-table';
 
 import { DataGrid } from './data-grid';
@@ -40,9 +40,14 @@ function Harness({ isLoading, rows }: { isLoading: boolean; rows: Row[] }) {
     getCoreRowModel: getCoreRowModel(),
   });
   return (
-    <DataGrid table={table} recordCount={50} isLoading={isLoading} tableLayout={{ width: 'fixed' }}>
-      <DataGridPagination />
-    </DataGrid>
+    <>
+      {/* The page the table is actually on, so a test can press Next twice and
+          say where it landed rather than only that the button was enabled. */}
+      <span data-testid="page-index">{table.getState().pagination.pageIndex}</span>
+      <DataGrid table={table} recordCount={50} isLoading={isLoading} tableLayout={{ width: 'fixed' }}>
+        <DataGridPagination />
+      </DataGrid>
+    </>
   );
 }
 
@@ -64,9 +69,15 @@ describe('DataGridPagination on a placeholder page (M4-03)', () => {
 
   it('a second Next press while a placeholder page is showing still works (the second press wins)', () => {
     render(<Harness isLoading rows={[{ id: '1', name: 'Alpha' }]} />);
-
     const nextButton = screen.getByRole('button', { name: /go to next page/i });
-    expect(nextButton).not.toBeDisabled();
+
+    fireEvent.click(nextButton);
+    expect(screen.getByTestId('page-index')).toHaveTextContent('1');
+
+    // Still loading, still showing the placeholder page - and the reader who
+    // pressed again lands two pages on, not one.
+    fireEvent.click(nextButton);
+    expect(screen.getByTestId('page-index')).toHaveTextContent('2');
   });
 
   it('renders the live controls once loading finishes', () => {

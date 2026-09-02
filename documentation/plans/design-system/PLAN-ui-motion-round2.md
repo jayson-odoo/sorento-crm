@@ -6,10 +6,11 @@
 > `documentation/reference/DESIGN-LANGUAGE.md` (outranks the installed design skills).
 
 **Slug:** `ui-motion-round2` | **Domain:** design-system (cross-cutting)
-**Status:** PLANNED - audit 2 Sep 2026 (three read-only sweeps of `origin/main` e1adad4d2 with
-`review-animations`, `find-animation-opportunities`, `emil-design-eng`, `apple-design`); user
+**Status:** IN PROGRESS - M4 built, fix round applied, browser pass pending. Audit 2 Sep 2026
+(three read-only sweeps of `origin/main` e1adad4d2 with `review-animations`,
+`find-animation-opportunities`, `emil-design-eng`, `apple-design`); user
 approved all seven slices on the lavish review page 2 Sep 2026, order M4, M1+M2, M3, M5, M6, M7.
-Issues: M4 #512, M1 #513, M2 #514, M3 #515, M5 #516, M6 #517, M7 #518. Nothing built yet.
+Issues: M4 #512, M1 #513, M2 #514, M3 #515, M5 #516, M6 #517, M7 #518. M1-M3 and M5-M7 unbuilt.
 **UAC:** `documentation/plans/design-system/ui-motion-round2-acceptance-criteria.md`
 **Audit reports:** session scratchpad `audit-A-existing-motion.md` (36 rows, `/review-animations`
 verdict Block, narrow), `audit-B-opportunities.md` (6 survivors, 10 rejects),
@@ -87,9 +88,11 @@ gate let them through. Guardrail tests are widened so the perimeter cannot drift
   Mutation guards on forms and dialogs are untouched.
 - Prefetch: `LinkableBodyRow` in `data-grid-table.tsx` calls `router.prefetch(href)` on
   `onPointerEnter` (once per href, guarded by a `Set` ref). `useListPager` prefetches the prev
-  and next hrefs when the current record mounts. `sidebar-menu.tsx` drops `prefetch={false}`
-  in favour of the same pointer-enter prefetch (a viewport prefetch of ~100 links is the reason
-  it was off; hover is the middle ground). Measured in the browser with the Network panel.
+  and next hrefs when the current record mounts. `sidebar-menu.tsx` KEEPS
+  `prefetch={false}` and adds the same pointer-enter prefetch on top: a Next 15 App Router
+  `Link` prefetches on viewport by default in production, which on a ~100-item menu is the
+  whole menu on mount, and that is why the flag was set. Hover is the middle ground.
+  Measured in the browser with the Network panel.
 
 ### 3.2 Motion perimeter (M1)
 
