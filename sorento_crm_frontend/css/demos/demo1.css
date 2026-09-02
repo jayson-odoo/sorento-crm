@@ -37,11 +37,20 @@
      * `inset-inline-start`) rather than a `transform` - a transform-only
      * rewrite of this mechanism was tried and reverted (S8-03, see this
      * file's git history: it distorted both end states). M3 does not retry
-     * that rewrite; instead it records a DevTools performance trace of a
-     * sidebar collapse on the Orders list (50 rows, `evidence/M3/`) and
-     * either files a follow-up ticket for the transform rewrite (if the
-     * trace shows dropped frames) or makes the transition instant, the
-     * trace being the justification (if it does not). See the PR for which.
+     * that rewrite; it measured it instead.
+     *
+     * MEASURED, and it does drop frames. One collapse + expand cycle on the
+     * Orders list (50 rows, 1280x800) traced 34 layouts and 34 style recalcs,
+     * with 19 of 54 sampled frames over 16.7ms and 2 over 33ms - roughly one
+     * dropped frame per direction. Raw trace:
+     * `documentation/plans/design-system/evidence/M3/M3-06-sidebar-collapse-trace.json`
+     * (6636 events), method and numbers in that directory's README.
+     *
+     * So the UAC's first branch applies: the transform rewrite gets a
+     * follow-up ticket - #559, "Sidebar collapse: transform-only rewrite" -
+     * and the transition is NOT made instant here. Instant would trade a
+     * measured 2-frame cost for the loss of the one cue that tells the user
+     * the rail collapsed rather than the page reloading.
      */
     .demo1 .sidebar {
       width: var(--sidebar-width);

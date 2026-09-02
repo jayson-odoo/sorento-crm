@@ -11,12 +11,34 @@
  *
  * NOTE for the merge with `feat/motion2-M1-perimeter-hygiene` (#551): that
  * branch widens `css/design-tokens.test.ts` with the identical
- * `LAYOUT_PROPERTY` regex and an allowlist carrying these same four sites
- * tagged `'M3'` (pending this slice's fix). Once this branch lands, that
- * allowlist's four `M3` entries are stale (the lines they name no longer match)
- * and should be deleted at merge time - this file's own job is done at that
- * point too, since M1's widened test covers the same ground with the same
- * regex. See the M3 PR description for the exact four lines to remove.
+ * `LAYOUT_PROPERTY` regex, and it holds SEVEN allowlist entries that this
+ * slice's fixes make stale. M1 asserts its own allowlists are not stale
+ * (`staleAllowlistKeys`), so leaving them in place turns that test red at
+ * merge; all seven are deleted at merge time, and this file's job is done at
+ * the same moment, since M1's widened test then covers the same ground with
+ * the same regex.
+ *
+ * `PROPERTY_ALLOWLIST` (4), all tagged `'M3'`:
+ *   app/(protected)/sla-management/conversation-sla-tracking/components/TakeoverCountdown.tsx:85
+ *   app/(protected)/scm/reorder/components/CashBudgetPanel.tsx:120
+ *   components/common/ActivitiesNotesPanel/EntityActivitiesLayout.tsx:144
+ *   components/common/DeferredActionButton.tsx:99
+ *
+ * `DURATION_ALLOWLIST` (3 of its 4; the OTP caret entry stays):
+ *   app/(protected)/sla-management/conversation-sla-tracking/components/TakeoverCountdown.tsx:85
+ *   components/common/DeferredActionButton.tsx:99
+ *   components/common/ActivitiesNotesPanel/EntityActivitiesLayout.tsx:144
+ *
+ * The activities panel needs a second look rather than a straight delete: its
+ * `transition-[margin]` is gone (M3-03), but the `<aside>` that replaced it
+ * still carries a literal `duration-200`, so M1-03's duration guard has a live
+ * offender at a new line number, not a stale entry.
+ *
+ * SCOPE: `css/**` is not walked here - only `app/**` and `components/**`, the
+ * two trees a component can put a class in. A layout-property transition
+ * written in a stylesheet (`css/demos/demo1.css`'s sidebar `width`, M3-06) is
+ * out of this test's reach by design and is governed by its own decision
+ * recorded at that site.
  *
  * Same reasoning as the other inventory tests in this repo (e.g.
  * `css/design-tokens.test.ts`): this is a source scan, not a render, because
