@@ -2,7 +2,6 @@
 
 import { useState } from 'react';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { ruleSentence } from '../../lib/ruleSentence';
 import { useSpecTryIt, type TryItSource } from '../../hooks/useSpecTryIt';
 import SpecPreviewPanel from '../SpecPreviewPanel';
@@ -16,8 +15,6 @@ export interface RulesTabProps {
   mode: 'view' | 'edit';
   draft: SpecKeyDraft | null;
   setDraft: (updater: (draft: SpecKeyDraft) => SpecKeyDraft) => void;
-  /** The empty state's CTA enters edit mode on this tab (B.4). */
-  onEnterEdit: () => void;
 }
 
 /**
@@ -28,9 +25,11 @@ export interface RulesTabProps {
  * shape here, unlike the value rows, because a rule is a sentence to read in view and
  * a form to build in edit, and rendering the form read-only would not be reading it
  * as a sentence. Try it on a product runs in both modes; Preview on catalogue is
- * edit-only, "after a rule change" (B.4).
+ * edit-only, "after a rule change" (B.4). No per-tab Edit (D16): the record page's
+ * one Edit button is the only entry point, so shipped rules just list with their
+ * "default" pill and an empty key says "No rules yet" with no CTA of its own.
  */
-export function RulesTab({ row, mode, draft, setDraft, onEnterEdit }: RulesTabProps) {
+export function RulesTab({ row, mode, draft, setDraft }: RulesTabProps) {
   const rules: SpecDerivationRule[] =
     mode === 'edit' && draft ? draft.rules : (row.effective_rules ?? row.derivation_rules ?? []);
 
@@ -46,15 +45,6 @@ export function RulesTab({ row, mode, draft, setDraft, onEnterEdit }: RulesTabPr
 
   return (
     <div className="flex flex-col gap-4">
-      {mode === 'view' && row.rules_are_default && (
-        <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border bg-muted/20 p-3">
-          <span className="text-sm">Using the shipped rules</span>
-          <Button type="button" size="sm" variant="outline" onClick={onEnterEdit}>
-            Edit
-          </Button>
-        </div>
-      )}
-
       <SpecTryItPanel
         source={trySource}
         onSourceChange={setTrySource}
@@ -74,9 +64,6 @@ export function RulesTab({ row, mode, draft, setDraft, onEnterEdit }: RulesTabPr
       ) : rules.length === 0 ? (
         <div className="flex flex-col items-center gap-3 rounded-md border border-dashed p-8 text-center">
           <p className="text-sm font-medium">No rules yet</p>
-          <Button type="button" size="sm" variant="outline" onClick={onEnterEdit}>
-            Add rule
-          </Button>
         </div>
       ) : (
         <div className="flex flex-col gap-2">
