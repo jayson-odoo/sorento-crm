@@ -186,15 +186,34 @@ describe('SpecRegistryGrid', () => {
   });
 });
 
-describe('SpecRegistryGrid - row menu (D14, D15)', () => {
-  it('a user-made specification has a row "..." menu; a seed one has none', async () => {
+describe('SpecRegistryGrid - row menu (D14, D15, D15b)', () => {
+  /** Radix opens on pointerdown, not click. */
+  function openMenu(trigger: HTMLElement) {
+    fireEvent.pointerDown(trigger, new MouseEvent('pointerdown', { bubbles: true, button: 0 }));
+  }
+
+  it('both a seed and a user row carry the "..." menu, Delete disabled on the seed row', async () => {
     renderGrid();
     await screen.findByText('Finish');
 
-    // Bowl count is source: 'user' - it carries Delete (useSpecKeyActions).
-    expect(
-      screen.getByRole('button', { name: 'specification actions' }),
-    ).toBeInTheDocument();
+    // The gear is always present (D15b) - Finish is source: 'seed', Bowl count is 'user'.
+    // The grid is sorted by label, so Bowl count comes first, Finish second.
+    const menuButtons = screen.getAllByRole('button', { name: 'specification actions' });
+    expect(menuButtons).toHaveLength(2);
+
+    openMenu(menuButtons[1]); // Finish's row (seed)
+    const item = await screen.findByRole('menuitem', { name: 'Delete specification' });
+    expect(item).toHaveAttribute('aria-disabled', 'true');
+  });
+
+  it('a user-made row with the delete permission has Delete enabled', async () => {
+    renderGrid();
+    await screen.findByText('Finish');
+
+    const menuButtons = screen.getAllByRole('button', { name: 'specification actions' });
+    openMenu(menuButtons[0]); // Bowl count's row - source: 'user'
+    const item = await screen.findByRole('menuitem', { name: 'Delete specification' });
+    expect(item).not.toHaveAttribute('aria-disabled', 'true');
   });
 });
 
