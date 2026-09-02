@@ -1,12 +1,14 @@
-"""`loading_plan.cancel`, wired into the deferred-action registry (S1, AC-A7).
+"""`loading_plan.cancel` and `loading_plan.delete`, wired into the deferred-action
+registry with a PARK-time premise check apiece (S1, AC-A7).
 
 `tests/test_record_actions_s6b.py` owns the ENGINE-wide contract (every record action
 names a known slug, declares a window its verb agrees with, its `execute` resolves).
 This file owns what is specific to the loading-plan pair: cancelling a plan through
 `/api/v1/pending-actions` actually flips its status when the window lapses, an
-already-cancelled plan refuses the SECOND cancel at PARK time (not ten seconds later),
-and `loading_plan.delete` still refuses a sent plan (existing guard, exercised here
-through the SAME route the frontend now uses instead of the immediate one).
+already-cancelled plan refuses the SECOND cancel at PARK time, and a delete parked on
+a sent plan is refused the same way - both via `capture`, the one hook `dispatch` runs
+before anything is persisted, so neither refusal waits out its grace window dressed up
+as a failed countdown.
 
 Postgres only, blank scratch schema, seeding its own chain - CI's database is empty.
 """
@@ -214,27 +216,27 @@ def test_loading_plan_delete_is_registered_destructive():
     assert action.permission == "scm.reorder.run"
 
 
-def test_deleting_a_sent_plan_fails_the_commit_with_plan_sent(client):
-    """Delete has no `capture`, so the parking half of this route's contract still
-    accepts the click (the button reaching it at all would be an FE defect per AC-A5,
-    which disables Delete on a sent plan) - the guard `delete_record` already owns
-    fires when the window lapses, and the countdown's failure is legible by key.
+def test_deleting_a_sent_plan_is_refused_at_park_time(client):
+    """`delete_record`'s guard is `refuse_if_sent()` (a row in `supplier_notices` that
+    WENT OUT), not `plan.sent_at` by itself - so the seed writes the notice, the thing
+    the guard actually reads.
 
-    `delete_record`'s guard is `has_notices()` (a row in `supplier_notices` that WENT
-    OUT), not `plan.sent_at` by itself - so the seed writes the notice, the thing the
-    guard actually reads.
+    `loading_plan.delete` now carries a `capture` mirroring cancel's (AC-A7): the click
+    is refused with 409 `plan_sent` before anything is parked, the same way an
+    already-cancelled plan refuses a second cancel - not ten seconds later, dressed up
+    as a failed countdown.
     """
     c, db, _actor = client
     plan = _plan(db, status="sent", sent_at=datetime.utcnow())
     db.add(SupplierNotice(id=_uid(), supplier_id=plan.supplier_id, loading_plan_id=plan.id))
     db.commit()
 
-    parked = _start(c, "loading_plan.delete", "loading_plan", plan.id)
-    assert parked.status_code == 202, parked.text
+    response = _start(c, "loading_plan.delete", "loading_plan", plan.id)
 
-    body = _commit_now(c, db, "loading_plan", plan.id, parked.json()["id"]).json()
-    assert body["last_outcome"]["status"] == "failed", body["last_outcome"]
-    assert body["last_outcome"]["action_key"] == "loading_plan.delete"
+    assert response.status_code == 409, response.text
+    assert response.json()["code"] == "plan_sent"
+    # Refused before anything was parked - no countdown to have run, nothing to undo.
+    assert db.query(SlaFormAction).count() == 0
 
     db.expire_all()
     assert db.query(LoadingPlan).filter(LoadingPlan.id == plan.id).first() is not None

@@ -329,7 +329,11 @@ def test_a_sent_plan_is_cancelled_not_deleted(scm_app):
     r = client.delete(f"{PLANS_URL}/{plan['id']}")
 
     assert r.status_code == 409, r.text
-    assert r.json()["detail"]["code"] == "plan_sent"
+    # `refuse_if_sent` raises `AppException` (S1 phase 2, AC-A7 - shared with the
+    # deferred `loading_plan.delete` record action's `capture`), whose global handler
+    # answers with the code at the TOP level rather than nested under `detail`, the
+    # bare-HTTPException shape this route answered with before.
+    assert r.json()["code"] == "plan_sent"
     assert db.query(LoadingPlan).filter(LoadingPlan.id == plan["id"]).first() is not None
 
 

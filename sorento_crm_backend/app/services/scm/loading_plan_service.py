@@ -818,6 +818,24 @@ def has_notices(db: Session, plan_id: str) -> bool:
     )
 
 
+def refuse_if_sent(db: Session, plan: LoadingPlan) -> None:
+    """A notice already left for this plan, so it is cancelled, never deleted (Q5, AC-A10).
+
+    Shared by the immediate `DELETE /loading-plans/{id}` route (through `delete_record`
+    below) and the deferred `loading_plan.delete` record action's `capture`, so a delete
+    parked on a sent plan refuses at PARK time rather than ten seconds later - the same
+    shape `refuse_if_cancelled` gives cancel.
+    """
+    from app.services.error_handler import AppException
+
+    if has_notices(db, plan.id):
+        raise AppException(
+            status_code=409,
+            message="Sent plans are cancelled, not deleted.",
+            code="plan_sent",
+        )
+
+
 def delete_record(db: Session, plan_id: str) -> None:
     """Hard delete, with its lines - unless something for it already left the building.
 
@@ -831,13 +849,7 @@ def delete_record(db: Session, plan_id: str) -> None:
     plan = db.query(LoadingPlan).filter(LoadingPlan.id == plan_id).first()
     if plan is None:
         raise HTTPException(status_code=404, detail="Loading plan not found")
-    if has_notices(db, plan_id):
-        # The shape the route has always answered with, kept verbatim: the frontend
-        # service and `test_loading_plan_record` both read `detail.code`.
-        raise HTTPException(
-            status_code=409,
-            detail={"code": "plan_sent", "message": "Sent plans are cancelled, not deleted."},
-        )
+    refuse_if_sent(db, plan)
     db.delete(plan)
     db.commit()
 

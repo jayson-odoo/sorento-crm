@@ -990,6 +990,19 @@ def _delete_loading_plan(db: Session, payload: dict):
     return loading_plan_service.delete_record(db, _entity_id(payload))
 
 
+def _capture_loading_plan_delete(db: Session, payload: dict) -> dict:
+    """Refuse a sent plan's delete at PARK time, not ten seconds later (AC-A7).
+
+    Mirrors `_capture_loading_plan_cancel`: `capture` runs before anything is
+    persisted, on both the deferred and the immediate path, so it doubles as the
+    premise check `refuse_if_sent` already owns for the immediate DELETE route.
+    """
+    from app.services.scm import loading_plan_service
+
+    loading_plan_service.refuse_if_sent(db, _loading_plan_or_404(db, payload))
+    return {}
+
+
 def _loading_plan_or_404(db: Session, payload: dict):
     from app.models.scm import LoadingPlan
     from app.services.error_handler import handle_not_found
@@ -1085,6 +1098,7 @@ register(
         key="loading_plan.delete",
         entity_types=("loading_plan",),
         execute=_delete_loading_plan,
+        capture=_capture_loading_plan_delete,
         window=WINDOW_DESTRUCTIVE,
         permission="scm.reorder.run",
         label="Delete loading plan",
