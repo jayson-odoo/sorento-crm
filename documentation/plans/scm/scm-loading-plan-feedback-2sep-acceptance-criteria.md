@@ -99,7 +99,8 @@ the match.
   which the ladder re-runs and the code reappears under Needs a decision if nothing resolves.
 - **AC-C5** `[BE][T]` `GET /api/v1/scm/supplier-code-aliases?supplier_id=` returns every alias
   for the supplier, dismissed included, with `matched_by`, `source`, `created_at`, `created_by`
-  name (never a UUID) and the target's code and name; ordered `created_at desc`.
+  (a name, never a UUID), `product_code` / `product_name` / `set_code` / `set_name` (the flat
+  shape the endpoint already ships, kept on purpose); ordered `created_at desc`, newest first.
 - **AC-C6** `[BE][T]` The next stock list or proforma upload for the same supplier resolves a
   remembered code without asking again (rung 0 of the ladder), and a code remembered under
   supplier A is NOT applied to supplier B.
