@@ -25,6 +25,8 @@ from app.schemas.scm_reorder import (
     ReorderRunListResponse,
     ReorderRunStatusResponse,
     ReorderRunTodayResponse,
+    ReplanReorderRunAccepted,
+    ReplanReorderRunRequest,
     UnlocatedDemandResponse,
 )
 from app.services.company_scope_sql import company_sql_predicate
@@ -96,6 +98,36 @@ def create_reorder_run(
     if response is not None:
         response.status_code = 202
     return result
+
+
+@router.post(
+    "/reorder-runs/{run_id}/replan",
+    response_model=ReplanReorderRunAccepted,
+    status_code=202,
+)
+def replan_reorder_run(
+    run_id: str,
+    payload: ReplanReorderRunRequest = Body(...),
+    response: Response = None,  # type: ignore[assignment]
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_RUN),
+):
+    """Re-plan (plan 5.1, G8): editing Plan until or the warehouse/product scope on a
+    completed plan offers this - a NEW run with the edited values, which supersedes
+    ``run_id`` once it finishes. The FE navigates to the returned ``run_id`` immediately
+    and polls it exactly like Start Plan's own 202 (the carry of decisions + the old
+    run's supersede stamp both happen once the new run's own worker job completes)."""
+    svc.assert_run_visible(db, run_id)
+    result = svc.replan_run(
+        db, run_id,
+        warehouse_codes=payload.warehouse_codes or [],
+        product_codes=payload.product_codes or [],
+        plan_horizon_date=payload.plan_horizon_date,
+        actor=(_user or {}).get("id"),
+    )
+    if response is not None:
+        response.status_code = 202
+    return {**result, "supersedes_run_id": run_id}
 
 
 #: The plans list's sortable columns, keyed by the column id the grid sends
@@ -187,6 +219,7 @@ def list_reorder_runs(
                -- LEFT JOIN against the whole `purchase_order_lines` table this page used
                -- to run per load.
                planned_count, decided_count, confirmed_count,
+               superseded_by_run_id,
                -- How many warehouses were there to plan WHEN THIS RUN RAN. Compared with
                -- the run's own scope, that is what says "all" rather than "60 warehouses"
                -- - and it has to be as-of the run: 60 warehouses existed on 27 Aug and 61
@@ -303,6 +336,11 @@ def _list_item(
         "planned_product_count": _key(r, "planned_count"),
         "decided_product_count": _key(r, "decided_count"),
         "confirmed_product_count": _key(r, "confirmed_count"),
+        # AC-5.4: the superseded run stays readable and labelled in the plans list.
+        "superseded_by_run_id": (
+            str(_key(r, "superseded_by_run_id"))
+            if _key(r, "superseded_by_run_id") is not None else None
+        ),
     }
 
 
@@ -448,7 +486,8 @@ def get_reorder_run(
     co, co_params = company_sql_predicate(db, "company_id", param_prefix="crg")
     row = db.execute(text(
         "SELECT id, status, buy_scope, error_text, run_log, decision_grain, "
-        "       front_planning_contract_version, plan_horizon_date, started_at "
+        "       front_planning_contract_version, plan_horizon_date, started_at, "
+        "       warehouse_ids, product_ids, supersedes_run_id, superseded_by_run_id "
         "  FROM scm.reorder_run "
         f"WHERE id = :id AND {co or 'true'}"
     ), {"id": run_id, **co_params}).mappings().first()
@@ -457,6 +496,7 @@ def get_reorder_run(
         # from one that does not exist.
         raise AppException(status_code=404, message="Reorder run not found.")
     log_obj = row["run_log"] or {}
+    scope = svc.resolve_run_scope(db, row["warehouse_ids"], row["product_ids"], row["started_at"])
     summary = None
     if row["status"] == "completed":
         buy_count = _costed_buy_counts(db, [str(row["id"])]).get(str(row["id"]))
@@ -480,6 +520,13 @@ def get_reorder_run(
         # The plan header is "Plan dd/mm/yyyy HH:mm" (C1) and this is the only response
         # that page reads.
         "started_at": _iso(row["started_at"]),
+        "warehouse_codes": scope["warehouse_codes"],
+        "is_all_warehouses": scope["is_all_warehouses"],
+        "product_codes": scope["product_codes"],
+        "supersedes_run_id": (str(row["supersedes_run_id"])
+                              if row["supersedes_run_id"] else None),
+        "superseded_by_run_id": (str(row["superseded_by_run_id"])
+                                 if row["superseded_by_run_id"] else None),
     }
 
 
@@ -1162,6 +1209,10 @@ def _row(r, funding_by_id: Optional[dict[str, str]] = None, *,
         "supplier_reason": inp.get("supplier_reason"),
         "alternatives": inp.get("alternatives") or [],
         "is_exception": bool(inp.get("is_exception")),
+        # Re-plan (plan 5.1, G8): this row's product/location carried a decision on the
+        # run this one superseded, but the suggestion changed - the buyer decides again,
+        # not blindly reads the carried figure. Never true on a run nobody re-planned.
+        "needs_recheck": bool(inp.get("needs_recheck")),
         # --- covered rows: the two numbers the stock-or-buy choice turns on ---
         # The decision taken on this row, if any. A covered row KEEPS its place in the
         # list after a decision so it can be changed; without the state the list would

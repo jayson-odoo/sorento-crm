@@ -19,6 +19,7 @@ import {
   ChevronsDownUp,
   ChevronsUpDown,
 } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
@@ -592,6 +593,20 @@ export function PlanLinesGrid({
                 <span className="truncate text-sm font-medium" title={row.original.sku}>
                   {row.original.sku}
                 </span>
+                {/* Re-plan (S5, G8): this row's suggestion changed since the plan it
+                    replaced, so a decision carried from that plan was NOT carried here -
+                    the buyer decides again rather than trusting a stale figure. */}
+                {row.original.rec.needs_recheck ? (
+                  <Badge
+                    variant="warning"
+                    appearance="light"
+                    size="xs"
+                    className="shrink-0"
+                    title="The suggestion changed since the plan this replaced - decide again"
+                  >
+                    Re-check
+                  </Badge>
+                ) : null}
                 {/* Which orders this quantity is for, and the lookups the buyer used to do by
                     hand. Both were on the old row and are the reason a number is trustworthy.
                     A group row carries none of these: they are keyed to ONE recommendation
