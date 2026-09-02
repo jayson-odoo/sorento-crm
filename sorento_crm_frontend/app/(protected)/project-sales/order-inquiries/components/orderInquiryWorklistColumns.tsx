@@ -3,15 +3,29 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { ColumnDef } from '@tanstack/react-table';
-import { CircleCheck, CircleDashed, Info } from 'lucide-react';
+import { CircleCheck, CircleDashed, History, Info } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
-import { ackStateOf, isAcknowledgeable } from '../../_shared/lib/orderInquiryAck';
-import { OrderInquiryAckCell } from './OrderInquiryAckCell';
+import {
+  ACK_LABELS,
+  ackStateOf,
+  isBulkRejectable,
+  previousValueOf,
+} from '../../_shared/lib/orderInquiryAck';
+import { BoardChangeTable } from '../../fulfilment-planning/components/BoardChangeTable';
 import { OrderInquiryVerbPill } from '../../_shared/components/OrderInquiryVerbPill';
 import { SupplyBar } from '../../_shared/components/SupplyBar';
 import {
@@ -34,11 +48,97 @@ function Muted({ children }: { children: React.ReactNode }) {
 }
 
 /**
- * Is what this row shows a DRAFT or a real allocation (R1)?
+ * The Was/Now of a settled amendment, behind a lightbox: the row keeps only the clickable
+ * "Changed <date>" badge (captain, 1 Sep - the inline table crowded the qty cell), and the
+ * dialog is mounted only once it has been asked for, same as the document lightbox below.
+ */
+function ChangedBadge({ row }: { row: OrderInquiryWorklistRow }) {
+  const [open, setOpen] = React.useState(false);
+  const previous = previousValueOf(row);
+  if (!previous) return null;
+  return (
+    <>
+      <button
+        type="button"
+        data-testid={`change-badge-trigger-${row.id}`}
+        className="cursor-pointer"
+        aria-label={`Show what changed on ${row.item_code ?? row.so_number ?? 'this row'}`}
+        onClick={(event) => {
+          event.stopPropagation();
+          setOpen(true);
+        }}
+      >
+        <Badge variant="warning" appearance="light" size="sm">
+          <History className="size-3" aria-hidden="true" />
+          {row.changed_at
+            ? `${ACK_LABELS.changed} ${formatDateInMalaysia(row.changed_at)}`
+            : ACK_LABELS.changed}
+        </Badge>
+      </button>
+      {open ? (
+        <Dialog open={open} onOpenChange={setOpen}>
+          <DialogContent className="max-w-lg" data-testid={`change-detail-${row.id}`}>
+            <DialogHeader>
+              <DialogTitle className="tabular-nums">
+                {row.item_code ?? row.so_number ?? 'Changed'}
+              </DialogTitle>
+              <DialogDescription>
+                {row.changed_at
+                  ? `Changed ${formatDateInMalaysia(row.changed_at)}`
+                  : 'Changed by customer service'}
+              </DialogDescription>
+            </DialogHeader>
+            <DialogBody>
+              <BoardChangeTable
+                omitDecision
+                omitHeader
+                annotation={{
+                  rowId: row.id,
+                  soNumber: row.so_number ?? '',
+                  lineNo: 0,
+                  itemCode: row.item_code ?? '',
+                  // The batch's own change vocabulary is never shown (part 3) and this
+                  // table prints none of it; `qty_up` is the nearest true word for a row
+                  // CS amended, and nothing reads it here.
+                  kind: 'qty_up',
+                  closed: false,
+                  was: { qty: previous.qty, date: previous.date, decision: null },
+                  now: { qty: row.qty, date: row.delivery_date ?? null, decision: null },
+                  movedTransfer: null,
+                  projectLineId: null,
+                }}
+              />
+            </DialogBody>
+          </DialogContent>
+        </Dialog>
+      ) : null}
+    </>
+  );
+}
+
+/**
+ * The rejected reason, wherever a rejected row is rendered (moved off its own Confirmed
+ * column into the qty cell, S1 AC-1.5).
+ */
+function RejectedNote({ row }: { row: OrderInquiryWorklistRow }) {
+  const reason = (row.rejected_reason ?? '').trim();
+  const line = reason
+    ? `Rejected: ${reason}`
+    : `Rejected${row.rejected_by_name ? ` by ${row.rejected_by_name}` : ''}`;
+  return (
+    <span className="block truncate text-2xs text-muted-foreground" title={line}>
+      {reason && row.rejected_by_name ? `${row.rejected_by_name}: ${reason}` : line}
+    </span>
+  );
+}
+
+/**
+ * Is what this row shows firm, or still a row nobody has acknowledged (S1: essentially
+ * never, since a row is born acknowledged - this reads a legacy `awaiting`/`changed` row
+ * only, kept honest rather than assumed away)?
  *
- * There is no state on the link: a link is a draft while its ROW is still to confirm, and
- * it is confirmed the moment purchasing stamps the row. One source of truth, read two
- * ways, so the mark and the Confirmed column can never disagree.
+ * There is no state on the link: a link is firm the moment its row reads `acknowledged`.
+ * One source of truth, read two ways, so this mark can never disagree with the row itself.
  */
 function DraftMark({ row }: { row: OrderInquiryWorklistRow }) {
   const state = ackStateOf(row);
@@ -57,8 +157,8 @@ function DraftMark({ row }: { row: OrderInquiryWorklistRow }) {
   return (
     <span
       data-testid="link-draft-mark"
-      title="Draft, confirm to allocate"
-      aria-label="Draft, confirm to allocate"
+      title="Not yet acknowledged"
+      aria-label="Not yet acknowledged"
     >
       <CircleDashed className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
     </span>
@@ -87,11 +187,10 @@ export function useOrderInquiryWorklistColumns({
       ...(selectable
         ? [
             buildSelectColumn<OrderInquiryWorklistRow>({
-              // Only a row that CAN be acknowledged is tickable: the bulk press takes on
-              // awaiting and changed rows, and the server refuses the rest - so a box
-              // that could be ticked on an acknowledged row would build a selection the
-              // press then failed on whole.
-              enableRow: (row) => isAcknowledgeable(row.original),
+              // Only a row Reject may still take is tickable now (S1): every row is born
+              // acknowledged, so there is no Confirm press left for the tick to feed, and
+              // Reject is the last remaining bulk action gated on the row's own state.
+              enableRow: (row) => isBulkRejectable(row.original),
               disabledReason: (row) =>
                 ackStateOf(row.original) === 'rejected'
                   ? 'Rejected rows go back to CS, not to purchasing'
@@ -99,7 +198,7 @@ export function useOrderInquiryWorklistColumns({
                     ? 'This instruction was called off'
                     : row.original.state === 'actioned'
                       ? 'This row has already been answered'
-                      : 'Already acknowledged',
+                      : 'Nothing left to act on',
               rowLabel: (row) =>
                 `Select ${row.original.item_code ?? 'row'} on ${row.original.so_number ?? 'this order'}`,
             }),
@@ -191,13 +290,30 @@ export function useOrderInquiryWorklistColumns({
         ),
       },
       {
+        // Qty carries the handshake now (S1, AC-1.5): there is no manual confirm left to
+        // put a Confirmed column about, so the two facts that still matter to a buyer
+        // scanning the row - a rejection and its reason, a settle-in-place and its
+        // Was/Now - render right under the figure they are about. A row that is simply
+        // acknowledged (the ordinary case) shows the number and nothing else.
         accessorKey: 'qty',
         header: ({ column }) => <DataGridColumnHeader title="Qty" column={column} />,
-        size: 90,
+        size: 150,
         meta: { headerTitle: 'Qty', skeleton: <Skeleton className="h-4 w-10" /> },
-        cell: ({ row }) => (
-          <span className="tabular-nums">{formatInquiryQty(row.original.qty)}</span>
-        ),
+        cell: ({ row }) => {
+          const state = ackStateOf(row.original);
+          return (
+            <div className="min-w-0 space-y-1">
+              <span className="block tabular-nums">
+                {formatInquiryQty(row.original.qty)}
+              </span>
+              {state === 'rejected' ? (
+                <RejectedNote row={row.original} />
+              ) : (
+                <ChangedBadge row={row.original} />
+              )}
+            </div>
+          );
+        },
       },
       {
         accessorKey: 'delivery_date',
@@ -523,17 +639,9 @@ export function useOrderInquiryWorklistColumns({
             <Muted>Unknown</Muted>
           ),
       },
-      {
-        // The handshake, beside the supply state (AC-H2/AC-H5/AC-H8). Not sortable: the
-        // server sorts a closed set of columns and this is not one of them, and a grid
-        // drawing an arrow on a column the server ignored is a screen telling a lie.
-        accessorKey: 'ack_state',
-        header: ({ column }) => <DataGridColumnHeader title="Confirmed" column={column} />,
-        size: 210,
-        enableSorting: false,
-        meta: { headerTitle: 'Confirmed', skeleton: <Skeleton className="h-4 w-24" /> },
-        cell: ({ row }) => <OrderInquiryAckCell row={row.original} />,
-      },
+      // No Confirmed column (S1, AC-1.5): there is no manual confirm left to report on,
+      // and the two facts that column existed to carry - a rejection and a settle-in-place
+      // Was/Now - render in the qty cell above instead.
     ],
     [selectable],
   );

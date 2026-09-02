@@ -20,6 +20,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useContact } from './components/contact-context';
 import ContactMarketSegmentSection from './components/ContactMarketSegmentSection';
 import ContactAttachmentTypesSection from './components/ContactAttachmentTypesSection';
+import ContactPortalFormsSection from './components/ContactPortalFormsSection';
 import ContactEditDialog from './components/ContactEditDialog';
 import { StockVisibilitySection } from '@/components/stock-visibility/StockVisibilitySection';
 
@@ -173,6 +174,7 @@ export default function ContactProfilePage() {
             </div>
             <ContactMarketSegmentSection contactId={contactId} />
             <ContactAttachmentTypesSection contactId={contactId} />
+            <ContactPortalFormsSection contactId={contactId} />
             {/* Which locations the chatbot may quote to this contact, and in which
                 answer shape. Full width: the two pickers do not fit a grid cell at
                 375px without clipping their chips. */}

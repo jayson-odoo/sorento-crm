@@ -449,6 +449,16 @@ def _delete_warehouse(db: Session, payload: dict):
     return WarehouseService(db).delete_warehouse(_entity_id(payload))
 
 
+def _delete_spo_document(db: Session, payload: dict):
+    from app.services.procurement_service import SPOAllocationService
+
+    # `entity_id` is the SPO NUMBER, not a uuid - `spo_allocations` has no document
+    # row of its own (PLAN-spo-investigation-grid.md), so the "document" this deletes
+    # is every line sharing that number, and only the caller's own company's lines
+    # (see `delete_document`'s docstring for why the company scoping lives there).
+    return SPOAllocationService(db).delete_document(_entity_id(payload))
+
+
 def _delete_integration(db: Session, payload: dict):
     from app.services.integration_admin_service import IntegrationAdminService
 
@@ -501,6 +511,17 @@ register(
         window=WINDOW_DESTRUCTIVE,
         permission="inventory.warehouses.delete",
         label="Delete warehouse",
+    )
+)
+
+register(
+    FormAction(
+        key="spo_document.delete",
+        entity_types=("spo_document",),
+        execute=_delete_spo_document,
+        window=WINDOW_DESTRUCTIVE,
+        permission="procurement.spo_allocations.delete",
+        label="Delete SPO document",
     )
 )
 
@@ -1141,5 +1162,31 @@ register(
         window=WINDOW_REVERSIBLE,
         permission=OWN_RECORD,
         label="Delete notification",
+    )
+)
+
+
+def _delete_saved_view(db: Session, payload: dict):
+    from app.services.saved_views_service import SavedViewsService
+
+    # `SavedViewsService.delete` already answers 404 (via `handle_not_found`) for a view
+    # that is not the requester's own, so ownership IS the check - the same shape
+    # `notification.delete` above uses.
+    SavedViewsService(db).delete(_entity_id(payload), str(payload.get("requested_by_id") or ""))
+    return {"message": "Deleted"}
+
+
+register(
+    FormAction(
+        key="saved_view.delete",
+        entity_types=("saved_view",),
+        execute=_delete_saved_view,
+        # Destructive (the suite's own default for every `.delete`, `test_record_actions_s6b
+        # .SHORT_WINDOW_DELETES` is a narrow allowlist): unlike a notification, a saved view
+        # can carry real, non-trivial filter/sort/column work a reader built up over time,
+        # so ten seconds to catch a stray click is worth more than the five-second window.
+        window=WINDOW_DESTRUCTIVE,
+        permission=OWN_RECORD,
+        label="Delete view",
     )
 )

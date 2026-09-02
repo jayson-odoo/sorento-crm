@@ -1,11 +1,24 @@
 # PLAN: SCM reorder + order-inquiry feedback batch (1 Sep 2026)
 
-Status: GRILLED AND APPROVED - three grill rounds settled 1 Sep 2026. S1 in flight on
-`feat/oi-auto-ack`. S2 (engine scope) built on `feat/reorder-committed-only`, PR open.
-S5 (plan detail Header/Lines tabs + Re-plan supersede) built on `feat/reorder-replan`, PR
-#493 open (stacked on S2), review round 1 addressed - see the S5 section's own note on the
-one OPEN ruling (confirmed/keyed decisions block a Re-plan outright; captain confirm
-pending).
+Status: S1 IMPLEMENTED (PR #471, 1 Sep 2026) - review found a 6th creation site
+(`project_supply_service.py::_place_supply_borrows`) and 6 other must-fix items, addressed on the
+same branch. S2 (engine scope) built on `feat/reorder-committed-only`, PR #488 -
+re-reviewed 2 Sep: G1 reworked from row-grain to PRODUCT-GRAIN admission (a product with
+committed demand anywhere among its own locations admits all its rows; a location-grain
+basis gates EMISSION per location instead) after a review found the row-grain cut broke
+pooled netting (B1 regression). Merge-ready pending CAPTAIN CONFIRM of the product-grain
+reading (2 Sep intent ruling, not yet signed off in the terminal). S4 (dynamic filter +
+segments) built on `feat/dynamic-filter-segments`, PR #489 - review round 2 Sep added
+company-scoping to `saved_views` and a fail-closed permission default on its routes,
+pending captain confirm. S3 (perf quick wins) built on `feat/reorder-perf-quickwins`, PR
+#491 - review fix round amended AC-3.4's `plan_basis` claim to the measured numbers (see
+S3 below). S5 (plan detail Header/Lines tabs + Re-plan supersede) built on
+`feat/reorder-replan`, PR #493 (stacked on S2), review round 1 addressed - see the S5
+section's own note on the one OPEN ruling (confirmed/keyed decisions block a Re-plan
+outright; captain confirm pending). All six slices built, PRs open as of 2 Sep 2026:
+S1 #471, S2 #488, S3 #491, S4 #489, S5 #493, S6 #490. Merge order: #471 -> #488 -> #489 -> #491 -> #490 -> #493 -
+S3/S4/S5/S6 each stack a migration onto 453/454/455 in turn (see
+`456_reorder_perf_quickwins`'s own docstring for the two-round renumbering this caused).
 UAC: `scm-reorder-oi-feedback-1sep-acceptance-criteria.md`
 
 ## Journeys
@@ -15,8 +28,9 @@ UAC: `scm-reorder-oi-feedback-1sep-acceptance-criteria.md`
 - J2 Joey checks an order: opens Order Inquiries (no default filter), searches the SO. Rows
   show only documents genuinely free or dedicated to THIS SO. One decision max: reject.
 - J3 Buyer runs a reorder: Start Plan -> plan holds ONLY products with committed demand
-  (213 buys on today's data, not 4,255 rows). Every Buy traces to demand. Decisions in-row,
-  one Confirm. Wrong horizon or scope -> edit in header tab -> Re-plan carries decisions.
+  (~201 buys / ~830 rows on today's data - measured 2 Sep, post product-grain fix - not
+  4,255 rows). Every Buy traces to demand. Decisions in-row, one Confirm. Wrong horizon
+  or scope -> edit in header tab -> Re-plan carries decisions.
 - J4 Buyer slices the plan: composes filters, saves as a segment, optionally shares; next
   visit one click from the views dropdown.
 
@@ -48,13 +62,22 @@ UAC: `scm-reorder-oi-feedback-1sep-acceptance-criteria.md`
   of that product's location rows, so an aggregate basis (pooled netting, a network-scope
   buy, the product-wide `reorder_level` basis) keeps every location's on-hand/on-order in
   its net - a location with none of the committed demand itself is still real SUPPLY an
-  aggregate is entitled to see. WHICH locations get their OWN recommendation row is the
-  separate LOCATION question, answered at EMISSION time on a location-grain basis: a
-  location carrying none of the product's committed demand emits nothing of its own
-  (`reorder_run_service._emit_cell` and the per-member loops in `_emit_pool` /
-  `_plan_network`), G10-named products exempted (see G10). No movement gate, no activity
-  window either way. Retail with no demand anywhere = no replenishment - intended;
-  overstock-averse ruling.
+  aggregate is entitled to see. The pool's own BUY (allocation/placement) and `covered`
+  rows are POOL-level decisions and stay unfiltered by a member's own commitment - that
+  is the fix, not a second gate on top of it.
+
+  WHICH locations get their OWN recommendation row is separate, and the gate differs by
+  shape: `reorder_run_service._emit_cell` (a location that is not pooled with anything)
+  withholds its WHOLE cell - buy, covered, needs_level alike - when the location carries
+  none of the product's committed demand, G10-named products exempted (see G10).
+  `_emit_pool`'s `unset` loop withholds `needs_level` ONLY, per pooled member - the
+  pool's own buy (allocation/placement) and `covered` rows stay POOL-level aggregate
+  decisions, unfiltered by any one member's commitment (that visibility is the fix
+  itself). `_plan_network` carries no such gate at all - the reorder_level policy_type it
+  would apply to is caught earlier, by `_is_product_level_basis`, which routes the WHOLE
+  product to `_emit_product` first; the code that would have gated it there was dead by
+  construction and removed 2 Sep. No movement gate, no activity window either way. Retail
+  with no demand anywhere = no replenishment - intended; overstock-averse ruling.
 
   Row-grain admission (S2's first cut, corrected 2 Sep) stripped an uncommitted
   location's on-hand/on-order from every aggregate reading it - on the dev-DB
@@ -113,13 +136,28 @@ UAC: `scm-reorder-oi-feedback-1sep-acceptance-criteria.md`
   existed - not merely a silent presence in the run.
 - G11 S3 perf quick wins approved as listed.
 
+### PR #489 review round (2 Sep 2026) - pending captain confirm
+
+Two additions to G9, applied per the repo's standing fail-closed doctrine rather than a
+fresh grill - **pending captain confirm 2 Sep**. (Numbered "S1"/"S2" below refer to this
+review round's own two items, not the OI-slice S1/S2 elsewhere in this document.)
+
+- S1: `saved_views` gets `CompanyScopedMixin` + `company_id`. A shared/published
+  segment's `view` blob can name another company's suppliers/products/warehouses inside
+  its filters, and the listing key alone does not stop that crossing a company boundary.
+- S2: on the saved-views routes ONLY, `_can_view_listing_key`'s unknown-permission-slug
+  fallback goes fail-closed (403) rather than the permissive "module-auth only" default -
+  a saved view is a shared, cross-user surface, unlike column-config's per-user blob
+  (which keeps the permissive fallback).
+
 ## Slices
 
 ### S1 - OI auto-acknowledge
-- Rows born `acknowledged` at all 5 creation sites (import
+- Rows born `acknowledged` at all 6 creation sites (import
   `project_order_inquiry_import_service.py:864`, board raise `_handshake_for_raise` `:755`,
-  cancel-balance `:679`, borrow shortfalls `:1045`, amendment `_write` `:1263`). System
-  attribution when no actor.
+  cancel-balance `:679`, borrow shortfalls `:1045`, amendment `_write` `:1263`, borrow-asker
+  row `project_supply_service.py::_place_supply_borrows` `:5399` - found in review, missed
+  in the original grill). System attribution when no actor.
 - Amendment/supersede still stamps `changed` + was/now audit, then auto-acks (G4).
 - Migration backfills every existing `awaiting` row to `acknowledged` (G4).
 - Remove Confirm action (`OrderInquiriesClient.tsx:1290-1341`) and Confirmed column
@@ -135,18 +173,26 @@ UAC: `scm-reorder-oi-feedback-1sep-acceptance-criteria.md`
   committed SELECT the engine already uses); explicit `product_ids` bypasses the gate
   entirely (G10, both admission and emission - see G10). Corrected 2 Sep from a row-grain
   gate that broke pooled netting (B1 regression, see G1).
-- A location-grain basis (the default) gates EMISSION per location in `_emit_cell` and the
-  per-member loops in `_emit_pool` / `_plan_network`: a location carrying none of the
-  product's committed demand emits no row of its own, whatever its own stock/trigger says
-  (G10-named products exempt). A location-grain cell classified dead/overstock that still
-  carries committed demand emits `covered` (not silence) - G2 removed the `disposition`
-  rec type, but the demand itself must not vanish.
+- The location gate that actually ships is narrower than "every emission, per location":
+  `_emit_cell` (single, non-pooled location) withholds its ENTIRE cell - buy, covered,
+  needs_level alike - for a location carrying none of the product's committed demand
+  (G10-named products exempt). `_emit_pool`'s `unset` loop withholds `needs_level` ONLY,
+  per member - the pool's own BUY (allocation/placement across members) and `covered`
+  rows are POOL-level aggregate decisions and are NOT filtered by a member's own
+  commitment, on purpose (that visibility is the B1 fix). `_plan_network` carries no
+  per-member gate of any kind: the reorder_level policy_type it would apply to is always
+  caught earlier by `_is_product_level_basis`, which routes the whole product to
+  `_emit_product` first, so the code that would have gated it there was dead by
+  construction - removed 2 Sep rather than documented as reachable.
+- A location-grain cell classified dead/overstock that still carries committed demand
+  emits `covered` (not silence) in `_emit_cell` - G2 removed the `disposition` rec type,
+  but the demand itself must not vanish.
 - Disposition/dead-stock emission removed from the run (G2); backlog item BL-045 for the
   report.
-- `needs_level` falls out of G1/G10 with no separate gate: a committed product-wide row
-  (product-grain basis) or a committed member (location-grain basis, pool included) is
-  the only thing that can reach it; a G10-named zero-committed product also reaches it
-  (buyer intent).
+- `needs_level` falls out of G1/G10 with no separate gate beyond the location gate above:
+  a committed product-wide row (product-grain basis) or a committed member (location-grain
+  basis, `_emit_cell` or a pooled member) is the only thing that can reach it; a G10-named
+  zero-committed product also reaches it (buyer intent).
 - Goldens re-pinned; new dedicated file `tests/scm/test_reorder_committed_universe.py`
   (AC-2.1-2.4, incl. the B1 regression pin - product-level basis with stock at an
   uncommitted location keeps that stock in `agg_net`).
@@ -173,9 +219,11 @@ UAC: `scm-reorder-oi-feedback-1sep-acceptance-criteria.md`
   scope-keyed `saved_views` keyed by listing key; port `views_service.py` (one-default race
   guard, publish permission); lift `ReportViewsMenu` -> generic `<SavedViewsMenu>` dropdown
   beside Filters. Auth via `_can_view_listing_key`.
-- v1 fields: product code/name, category, supplier, location, rec type, decision state,
-  suggested qty, reorder level, reorder qty, on-hand BRW, SPO qty, PO qty, project
-  committed, retail committed, unit cost, currency, days late.
+- v1 fields: product code/name, supplier, location, rec type, decision state, suggested
+  qty, reorder level, reorder qty, on-hand BRW, SPO qty, PO qty, project committed,
+  retail committed, unit cost, currency (16 fields; PR #489 review round S7 dropped
+  category and days late - neither has a data source on `PlanLine`, so both would have
+  shipped as a dropdown entry that could only ever match "is empty").
 - First consumer: plan grid (`scm.dashboard.view::reorder-plan-lines`).
 
 ### S5 - Plan detail tabs + Re-plan

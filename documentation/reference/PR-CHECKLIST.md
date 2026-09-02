@@ -42,6 +42,15 @@ Before merging, verify compliance with [ADR-PRODUCT-STANDARDS.md](./ADR-PRODUCT-
 - [ ] Every icon-only button (`mode="icon"` / `size="icon"`) has an `aria-label` or an
       `sr-only` label - a bare icon with no accessible name is a defect
 
+## Design
+- [ ] `documentation/reference/DESIGN-LANGUAGE.md` hard-fails absent (`transition-all`,
+      `scale(0)` entrance, `ease-in` entrance, raw `cubic-bezier` outside `config.reui.css`,
+      motion on a keyboard-initiated action)
+- [ ] Primitives are from the roster (`DESIGN-LANGUAGE.md` section 4), not hand-rolled
+- [ ] No feature-explanation prose in the UI
+- [ ] 375px and 1280px screenshots attached
+- [ ] Any new motion honours `prefers-reduced-motion` (`useReducedMotion` from `lib/motion.ts`)
+
 ## Test cost
 - [ ] New backend tests do not add whole-suite-running slow tests without cause; check the `--durations=30` block in the backend CI logs for the PR ("Backend test suite (Postgres)" and "Backend test suite - SCM (Postgres)") and justify any new entry over ~2s
 - [ ] A test that only asserts against production-copy data goes in `tests/ci_excluded.txt` with a reason, not into the gated set

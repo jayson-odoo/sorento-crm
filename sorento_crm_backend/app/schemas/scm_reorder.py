@@ -63,14 +63,6 @@ class ReorderRunSummary(BaseModel):
     exception_count: int
     total_cash_impact: float
     recommendation_count: int
-    #: How many order inquiry rows purchasing has not acknowledged yet
-    #: (`PLAN-scm-oi-handshake.md`, AC-H10) - the plan page's own chip.
-    #:
-    #: LIVE, not frozen into `run_log` with the counts above it: the plan counts
-    #: acknowledged rows only, so an awaiting one is invisible on the very screen that
-    #: decides what to buy, and a number that still claimed six after the buyer had
-    #: cleared them would send them looking for two that do not exist.
-    awaiting_rows: int = 0
 
 
 class ReorderRunStatusResponse(BaseModel):

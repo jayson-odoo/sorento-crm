@@ -67,8 +67,28 @@ Plan: `PLAN-scm-reorder-oi-feedback-1sep.md` (journeys J1-J4 at its top)
   decision count (verified at 1,500 decisions).
 - AC-3.3 [BE] Plans list + Decided sort read denormalised counts; no join to the PO-lines
   table per page.
-- AC-3.4 [BE] Recommendations payload carries no `plan_basis`; response bytes for the
-  c9c575c8-sized run drop by more than half.
+- AC-3.4 [BE] (amended 2 Sep, pending captain confirm) The coder measured (PR #491 body)
+  that `plan_basis` was never serialized into the HTTP response body in the first place -
+  it lived only in the SQL projection's `inputs` column, and `_row()` in `reorder_runs.py`
+  only ever pulls specific keys off `inputs` (`supplier`, `alternatives`, ...), discarding
+  the rest before JSON encoding. So "response bytes drop by more than half" is unmeetable
+  as written: measured before vs after on the reference run (`c9c575c8-3bf3-4c32-8d1e-
+  d02af73162ef`, `/recommendations?page=1&limit=1000`), `3,549,063 -> 3,529,148` bytes
+  (~0.6%), not "more than half". The real, testable claim: the recommendations SQL no
+  longer fetches the `plan_basis` blob (`(rr.inputs - 'plan_basis') AS inputs`) nor
+  evaluates the per-row `LEFT JOIN LATERAL` unnesting it
+  (`reorder_run_service._plan_basis`'s locations) - reading precomputed
+  `pool_warehouse_id`/`pool_warehouse_code` columns instead, set once at generation time.
+  Warm-cache query time on that same reference run improves ~1.9x (~38ms -> ~20ms,
+  page limit 1000, PR #491 body). Independently re-measured here at a smaller page
+  (`EXPLAIN (ANALYZE, BUFFERS)`, warm cache, page 1/limit 50, run `1e58c6f7-2105-4f91-
+  9535-d45ddbeb38ff`, 11,892 recommendation rows) shows the same direction at a larger
+  ratio - OLD (LATERAL) 38.5-43.7 ms vs NEW (precomputed columns) 4.3-4.6 ms across two
+  warm runs each (~9x) - consistent with the LATERAL's cost growing with page size while
+  the precomputed-column read stays flat. Verified in
+  `tests/scm/test_s3_reorder_perf_quickwins.py::test_recommendations_payload_never_carries_plan_basis`
+  (no `plan_basis` string anywhere in the response) and the two `pool_warehouse_*`
+  precomputed-column tests alongside it.
 - AC-3.5 [FE] Deciding one row does not refetch the full decisions list; the grid updates
   without a visible stall.
 

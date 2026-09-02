@@ -30,6 +30,12 @@ export type UserListColumnConfigPayload = {
   filters?: Record<string, unknown> | null;
   /** The page's own filter-shape version, so a page can detect its stale blobs. */
   filtersVersion?: number | null;
+  /**
+   * S4 (PLAN-scm-reorder-oi-feedback-1sep.md, AC-4.4): the saved view (segment) THIS
+   * user wants auto-applied on open, distinct from the listing's PUBLISHED default
+   * (`SavedView.is_default`, everyone's). Owned by `SavedViewsMenu`.
+   */
+  defaultSavedViewId?: string | null;
 };
 
 export type UserListColumnConfigResponse = {

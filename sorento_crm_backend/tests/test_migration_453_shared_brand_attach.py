@@ -109,28 +109,28 @@ def test_down_revision_is_the_main_head_at_branch_time():
     assert module.down_revision == "452_transfer_days"
 
 
-def test_452_has_exactly_one_child_453_never_a_parallel_fork():
-    """453's OWN invariant at its own point in the graph - NOT the whole graph's
-    single-head state, which is a moving target every subsequent migration is
-    entitled to extend.
+def test_452_has_exactly_one_child():
+    """Review finding S6 - the graph-wide "exactly one alembic head" invariant already
+    lives in `tests/test_alembic_revision_ids.py::test_migration_graph_has_a_single_head`
+    (no hardcoded revision id, so it never goes stale). Pinning THIS file's own check to
+    a specific downstream head (`heads == ["456_reorder_perf_quickwins"]`, an earlier
+    form of this test) was wrong twice over: it went red the moment anything else
+    merged past 453 - guaranteed on main, since S1/S4/S5 of
+    PLAN-scm-reorder-oi-feedback-1sep.md all stack their own migration onto 453 too -
+    and it fought every one of those PRs over the same line (a conflict with #493).
 
-    This used to read `heads == [REVISION_ID]` ("453 must be the ONLY head"),
-    which was true only on the day 453 was the newest migration on `main` and
-    breaks for EVERY migration that (correctly) chains after it since - not a
-    defect in 453, and not a defect in whatever lands after it either. The
-    graph-wide "exactly one head, whatever it is today" check already lives at
-    `tests/test_alembic_revision_ids.py::test_migration_graph_has_a_single_head`
-    and needs no duplicate here. What's actually 453's own to guard is narrower:
-    nothing ELSE also claims `452_transfer_days` as its parent (a genuine merge-
-    caused fork at 453's own branch point), which stays true regardless of how
-    long the chain grows past it.
-    """
-    siblings = [
-        rev.revision for rev in _script_directory().walk_revisions()
-        if rev.down_revision == "452_transfer_days"
-    ]
-    assert siblings == [REVISION_ID], (
-        f"452_transfer_days must have exactly one child (453) - found {siblings}"
+    What THIS migration actually needs guarded, permanently, is narrower and never
+    goes stale: 453 is the ONE AND ONLY revision ever built directly on top of 452 -
+    i.e. no sibling PR ALSO picked 452 as its `down_revision`, which is exactly the
+    dual-mint collision this whole migration-renumbering saga (454 minted three times,
+    then 455 minted twice) was about, one level up the chain."""
+    script = _script_directory()
+    children_of_452 = sorted(
+        r.revision for r in script.walk_revisions() if r.down_revision == "452_transfer_days"
+    )
+    assert children_of_452 == [REVISION_ID], (
+        f"452_transfer_days must have exactly one child ({REVISION_ID}); "
+        f"found {children_of_452}"
     )
 
 

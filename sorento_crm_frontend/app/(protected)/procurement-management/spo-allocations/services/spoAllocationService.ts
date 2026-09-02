@@ -162,7 +162,19 @@ export async function createSPOAllocation(
 
 export async function updateSPOAllocation(
   id: string,
-  data: Partial<SPOAllocationFormData>,
+  // `Omit` + re-add, not `&`: intersecting `warehouse_id?: string` with `string | null`
+  // collapses back to `string | undefined` (TS distributes the intersection member-wise
+  // and `null` survives in neither side), which is not what widening it was for. The
+  // document form view's Lines-tab edit (`SPODocumentDetail`) clears a line's warehouse
+  // (and, since UAT AC-24, its supplier or ETA) back to "none"/"no location" the same
+  // way `SPOAllocationUpdate` (backend) already accepts it - `null`, not an empty
+  // string. `product_id` stays out of the widened set: an allocation always names a
+  // product, so its editor is never clearable.
+  data: Omit<Partial<SPOAllocationFormData>, 'warehouse_id' | 'supplier_id' | 'expected_date'> & {
+    warehouse_id?: string | null;
+    supplier_id?: string | null;
+    expected_date?: string | null;
+  },
 ): Promise<SPOAllocation> {
   const response = await apiFetch(`/api/v1/procurement/spo-allocations/${id}`, {
     method: 'PUT',

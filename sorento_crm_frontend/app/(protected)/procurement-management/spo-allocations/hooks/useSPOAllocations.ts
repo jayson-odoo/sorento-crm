@@ -1,92 +1,18 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 import {
-  getSPOAllocations,
-  getSPOAllocationsGroupedByShipment,
-  getSPOAllocationsGroupedBySPONumber,
   getSPOAllocation,
   createSPOAllocation,
   updateSPOAllocation,
   deleteSPOAllocation,
-  bulkDeleteSPOAllocations,
 } from '../services/spoAllocationService';
-import type {
-  SPOAllocationFormData,
-  ShipmentWithAllocationsGroup,
-} from '../types/spoAllocation.types';
-import type {
-  GroupedByShipmentParams,
-  GroupedBySPONumberParams,
-} from '../services/spoAllocationService';
+import type { SPOAllocationFormData } from '../types/spoAllocation.types';
 
-export function useSPOAllocationsGroupedBySPONumber(params: GroupedBySPONumberParams = {}) {
-  return useQuery({
-    queryKey: [
-      'spo-allocations-grouped-by-spo-number',
-      params.page,
-      params.limit,
-      params.query,
-      params.product_code,
-      params.warehouse_id,
-      params.receipt_status,
-      params.sort,
-      params.dir,
-    ],
-    queryFn: () => getSPOAllocationsGroupedBySPONumber(params),
-    staleTime: Infinity,
-    gcTime: 1000 * 60 * 60,
-    refetchOnWindowFocus: false,
-    retry: 1,
-  });
-}
-
-export function useSPOAllocationsGroupedByShipment(params: GroupedByShipmentParams = {}) {
-  return useQuery({
-    queryKey: [
-      'spo-allocations-grouped-by-shipment',
-      params.page,
-      params.limit,
-      params.query,
-      params.product_code,
-      params.warehouse_id,
-      params.receipt_status,
-      params.sort,
-      params.dir,
-    ],
-    queryFn: () => getSPOAllocationsGroupedByShipment(params),
-    staleTime: Infinity,
-    gcTime: 1000 * 60 * 60,
-    refetchOnWindowFocus: false,
-    retry: 1,
-  });
-}
-
-export function useSPOAllocations(
-  params: DataGridApiFetchParams & {
-    shipment_id?: string;
-    warehouse_id?: string;
-    receipt_status?: string;
-  },
-) {
-  return useQuery({
-    queryKey: [
-      'spo-allocations',
-      params.pageIndex,
-      params.pageSize,
-      params.sorting,
-      params.searchQuery,
-      params.shipment_id,
-      params.warehouse_id,
-      params.receipt_status,
-    ],
-    queryFn: () => getSPOAllocations(params),
-    staleTime: Infinity,
-    gcTime: 1000 * 60 * 60,
-    refetchOnWindowFocus: false,
-    retry: 1,
-  });
-}
+// The bare list, the two grouped-by-* lists and their bulk delete were the
+// standalone allocation list's hooks - retired with it (plan Q12/Q13, review S3):
+// the document list + form view (`SPOAllocationsList`, `SPODocumentDetail`) read
+// `hooks/useSPODocuments.ts` instead. What stays is what `SPOAllocationForm.tsx`
+// (Create/Edit SPO Allocation) and the document form view's Save still call.
 
 export function useSPOAllocation(id: string | null) {
   return useQuery({
@@ -113,6 +39,12 @@ export function useCreateSPOAllocation() {
   });
 }
 
+// No success toast on these two (review B2): the document form view's Save calls
+// either mutation once PER CHANGED LINE (`Promise.allSettled`, `SPODocumentDetail`),
+// and a toast per line would drown its own single closing sentence - the same
+// reasoning `useUpdateAttachment` follows for `AttachmentsInFolderPanel`'s bulk
+// move. `onError` stays: naming which line failed is worth one toast each.
+
 export function useUpdateSPOAllocation() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -121,12 +53,15 @@ export function useUpdateSPOAllocation() {
       data,
     }: {
       id: string;
-      data: Partial<SPOAllocationFormData>;
+      data: Omit<Partial<SPOAllocationFormData>, 'warehouse_id' | 'supplier_id' | 'expected_date'> & {
+        warehouse_id?: string | null;
+        supplier_id?: string | null;
+        expected_date?: string | null;
+      };
     }) => updateSPOAllocation(id, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['spo-allocations'] });
       queryClient.invalidateQueries({ queryKey: ['spo-allocation'] });
-      toast.success('SPO allocation updated successfully');
     },
     onError: (error: Error) =>
       toast.error(error.message || 'Failed to update SPO allocation'),
@@ -139,26 +74,10 @@ export function useDeleteSPOAllocation() {
     mutationFn: (id: string) => deleteSPOAllocation(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['spo-allocations'] });
-      queryClient.invalidateQueries({ queryKey: ['spo-allocations-grouped-by-shipment'] });
-      queryClient.invalidateQueries({ queryKey: ['spo-allocations-grouped-by-spo-number'] });
-      toast.success('SPO allocation deleted successfully');
+      queryClient.invalidateQueries({ queryKey: ['spo-allocation'] });
     },
     onError: (error: Error) =>
       toast.error(error.message || 'Failed to delete SPO allocation'),
   });
 }
 
-export function useBulkDeleteSPOAllocations() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (ids: string[]) => bulkDeleteSPOAllocations(ids),
-    onSuccess: (_, ids) => {
-      queryClient.invalidateQueries({ queryKey: ['spo-allocations'] });
-      queryClient.invalidateQueries({ queryKey: ['spo-allocations-grouped-by-shipment'] });
-      queryClient.invalidateQueries({ queryKey: ['spo-allocations-grouped-by-spo-number'] });
-      toast.success(`${ids.length} SPO allocation(s) deleted successfully`);
-    },
-    onError: (error: Error) =>
-      toast.error(error.message || 'Failed to bulk delete SPO allocations'),
-  });
-}
