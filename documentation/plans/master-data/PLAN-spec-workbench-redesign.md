@@ -4,7 +4,7 @@
 > Governs: `PRINCIPLES.md` + `documentation/reference/ADR-PRODUCT-STANDARDS.md` + `documentation/reference/DESIGN-LANGUAGE.md` (PR #498).
 
 **Slug:** `spec-workbench-redesign` | **Domain:** master-data
-**Status:** Pre-code. Grill closed 2 Sep 2026. Lavish review rounds 1-3 applied (D10 plain words, primary Add specification, gear icon, D11 no exceptions tab, rules editable in place, seen-in search, list search by product code, no default pill on the list); verdict pending.
+**Status:** S1 (Group A, registry list page) done at `c21422438` - old tabbed shell deleted, registry DataGrid + freshness line + Add specification / Try a phrase lightboxes built against react-query hooks, Catalogue tab and its exceptions/derived-specs endpoints removed (D6); S2 (record page) is next, browser verification deferred to the tester.
 **Lane:** worktree `.claude/worktrees/spec-workbench-redesign`, branch `feat/spec-workbench-redesign` from `origin/main` (f09532f6c). PR #498 (design-language reference) merged 2 Sep and merged into this lane.
 **Folds in:** `PLAN-spec-value-labels.md` (#423), now SUPERSEDED.
 **Pilot for:** the design slots added to `/feature` by #498 (design brief, `[UX]` ACs, animate gate, emil-design-eng review table).
