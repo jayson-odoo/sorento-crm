@@ -16,6 +16,13 @@ import path from 'path';
 const root = path.resolve(__dirname, '..');
 const read = (rel: string) => fs.readFileSync(path.join(root, rel), 'utf8');
 
+/**
+ * A hard-coded transition duration: `duration-150` and `duration-[150ms]` alike.
+ * `duration-(--duration-fast)` is the token form and is what these tests want to
+ * see instead, so it deliberately does not match.
+ */
+const LITERAL_DURATION = /\bduration-(?:\d+\b|\[)/;
+
 const configCss = read('css/config.reui.css');
 const stylesCss = read('css/styles.css');
 
@@ -376,7 +383,7 @@ describe('S2-06 motion tokens', () => {
 
   it('leaves no literal transition duration in components/ui', () => {
     const offenders = uiFiles.filter(
-      (file) => !animationPeriodAllowlist.has(file) && /\bduration-\d+/.test(fs.readFileSync(path.join(uiDir, file), 'utf8')),
+      (file) => !animationPeriodAllowlist.has(file) && LITERAL_DURATION.test(fs.readFileSync(path.join(uiDir, file), 'utf8')),
     );
     expect(offenders).toEqual([]);
   });
@@ -395,7 +402,7 @@ describe('S2-06 motion tokens', () => {
     // the spring, it has no fixed duration to key per direction).
     const sheet = read('components/ui/sheet.tsx');
     expect(sheet).not.toMatch(/data-\[state=(open|closed)\]:duration-/);
-    expect(sheet).not.toMatch(/\bduration-\d+/);
+    expect(sheet).not.toMatch(LITERAL_DURATION);
     expect(sheet).toContain("from '@/lib/motion'");
     expect(sheet).toContain('surfaceTransition(');
   });
@@ -439,6 +446,10 @@ describe('M1 motion perimeter hygiene', () => {
     walk('app');
     walk('components');
     walk('css');
+    // `lib/motion.ts` is where the springs and the reduced-motion transition
+    // live, so a raw cubic-bezier or a hard-coded duration there is exactly the
+    // leak these scans exist to catch.
+    walk('lib');
     return out;
   }
 
@@ -453,6 +464,22 @@ describe('M1 motion perimeter hygiene', () => {
    */
   function stripBlockComments(src: string): string {
     return src.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '));
+  }
+
+  /**
+   * An allowlist entry is a claim about ONE line. When the line moves, or the
+   * class it exempts leaves it, the entry stops describing anything and silently
+   * exempts whatever moved in - so a key that no longer matches its own matcher
+   * fails the same test its live siblings pass.
+   */
+  function staleAllowlistKeys(keys: string[], matches: (line: string) => boolean): string[] {
+    return keys.filter((key) => {
+      const at = key.lastIndexOf(':');
+      const file = key.slice(0, at);
+      if (!fs.existsSync(path.join(root, file))) return true;
+      const lines = stripBlockComments(read(file)).split('\n');
+      return !matches(lines[Number(key.slice(at + 1)) - 1] ?? '');
+    });
   }
 
   /**
@@ -600,6 +627,8 @@ describe('M1 motion perimeter hygiene', () => {
     };
 
     it('leaves zero literal duration-<N> classes outside the allowlist (audit baseline: 10)', () => {
+      expect(staleAllowlistKeys(Object.keys(DURATION_ALLOWLIST), (line) => LITERAL_DURATION.test(line))).toEqual([]);
+
       const offenders: string[] = [];
       for (const file of files) {
         // css/** is out of scope for this assertion (M1-03 globs are app/** and
@@ -608,7 +637,7 @@ describe('M1 motion perimeter hygiene', () => {
         if (!file.startsWith('app/') && !file.startsWith('components/')) continue;
         const src = stripBlockComments(read(file));
         src.split('\n').forEach((line, i) => {
-          if (/\bduration-\d+\b/.test(line)) {
+          if (LITERAL_DURATION.test(line)) {
             const key = `${file}:${i + 1}`;
             if (!DURATION_ALLOWLIST[key]) offenders.push(key);
           }
@@ -617,12 +646,22 @@ describe('M1 motion perimeter hygiene', () => {
       expect(offenders).toEqual([]);
     });
 
-    /** The two accepted alternating pulses - guide-spotlight and takeover-flash - repeat
-     * forever and never "enter", which is what the hard-fail in DESIGN-LANGUAGE.md
-     * section 3 actually bans. */
+    /**
+     * The two accepted alternating pulses - guide-spotlight and takeover-flash -
+     * repeat forever and never "enter", which is what the hard-fail in
+     * DESIGN-LANGUAGE.md section 3 actually bans.
+     *
+     * Everything else is banned FLAT, entering or not, and that is a choice
+     * rather than a shortcut in the matcher: `ease-in` accelerating out of rest
+     * is the one curve the house language has no use for, and deciding "is this
+     * element entering?" from source text is guesswork. An exit that genuinely
+     * wants it argues its case here, on its own line, the way these two did.
+     */
     const EASE_IN_ALLOWLIST = new Set(['css/styles.css:49', 'css/styles.css:73']);
 
     it('leaves zero ease-in/ease-in-out on an entering element outside the allowlist', () => {
+      expect(staleAllowlistKeys([...EASE_IN_ALLOWLIST], (line) => /\bease-in\b/.test(line))).toEqual([]);
+
       const offenders: string[] = [];
       for (const file of files) {
         const src = stripBlockComments(read(file));
@@ -639,7 +678,17 @@ describe('M1 motion perimeter hygiene', () => {
 
   describe('M1-04 raw cubic-bezier stays in config.reui.css only', () => {
     it('leaves zero raw cubic-bezier( outside css/config.reui.css', () => {
-      const offenders = files.filter((file) => file !== 'css/config.reui.css' && read(file).includes('cubic-bezier('));
+      const offenders: string[] = [];
+      for (const file of files) {
+        if (file === 'css/config.reui.css') continue;
+        // A comment quoting the house curve, next to the token that replaced it,
+        // is documentation and not a second curve.
+        stripBlockComments(read(file))
+          .split('\n')
+          .forEach((line, i) => {
+            if (line.includes('cubic-bezier(')) offenders.push(`${file}:${i + 1}`);
+          });
+      }
       expect(offenders).toEqual([]);
     });
   });
@@ -685,6 +734,8 @@ describe('M1 motion perimeter hygiene', () => {
       /transition-\[[^\]]*\b(width|height|margin(?:-[a-z]+)?|padding(?:-[a-z]+)?|inset(?:-[a-z]+)?)\b[^\]]*\]/;
 
     it('leaves zero transition-[width|height|margin|padding|inset] outside the M3 allowlist', () => {
+      expect(staleAllowlistKeys(Object.keys(PROPERTY_ALLOWLIST), (line) => LAYOUT_PROPERTY.test(line))).toEqual([]);
+
       const offenders: string[] = [];
       for (const file of files) {
         const src = stripBlockComments(read(file));

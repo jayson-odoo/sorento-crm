@@ -57,14 +57,26 @@ describe('M1-06 the 16 unused motion components stay deleted (audit baseline: 0 
     expect(fs.existsSync(path.join(root, 'components/ui', `${name}.tsx`))).toBe(false);
   });
 
-  it('no file imports any of the 16 deleted component paths', () => {
-    const files = sourceFiles();
+  it('no file imports any of the 16 deleted component paths, by any specifier', () => {
+    // `@/components/ui/marquee` is only one of the ways back in: a sibling inside
+    // `components/ui` writes `./marquee`, a file one directory over writes
+    // `../ui/marquee`, and all three resolve to the same deleted module. So the
+    // specifier is RESOLVED against the importing file rather than matched as a
+    // prefix - which also keeps `@/partials/common/avatar-group`, a different
+    // component that happens to share a filename, out of the offender list.
+    const deleted = new Set(DELETED_MOTION_COMPONENTS.map((name) => `components/ui/${name}`));
     const offenders: string[] = [];
-    for (const file of files) {
+    for (const file of sourceFiles()) {
+      const dir = path.posix.dirname(file);
       const src = fs.readFileSync(path.join(root, file), 'utf8');
-      for (const name of DELETED_MOTION_COMPONENTS) {
-        if (src.includes(`components/ui/${name}'`) || src.includes(`components/ui/${name}"`)) {
-          offenders.push(`${file} -> ${name}`);
+      for (const [, quoted] of src.matchAll(/(?:from|import\(|require\()\s*['"]([^'"]+)['"]/g)) {
+        const resolved = quoted.startsWith('.')
+          ? path.posix.normalize(path.posix.join(dir, quoted))
+          : quoted.startsWith('@/')
+            ? quoted.slice(2)
+            : null;
+        if (resolved && deleted.has(resolved.replace(/\.[jt]sx?$/, ''))) {
+          offenders.push(`${file} -> ${quoted}`);
         }
       }
     }
