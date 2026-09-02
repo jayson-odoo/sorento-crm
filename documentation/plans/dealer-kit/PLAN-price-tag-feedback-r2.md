@@ -1,6 +1,7 @@
 # PLAN - Price Tag Feedback R2
 
-Status: Approved 1 Sep 2026 - implementation starting
+Status: Lane A + Lane B built; round 3 in flight - S8 delivered (PR #510,
+review round 2 Sep), S9-S11 built.
 UAC: `documentation/plans/dealer-kit/price-tag-feedback-r2-acceptance-criteria.md`
 Predecessor: `documentation/plans/dealer-kit/PLAN-price-tag-request.md` (shipped, PR #289)
 
@@ -244,6 +245,73 @@ S7 independent; its connector half ships whenever the AutoCount side sends
 - a designed tag vanishes on Design -> Arrange -> Design (render, not data; diagnose)
 
 ### S8 - guides single-per-axis + autosave (D21, D22)
+
+Delivered. What shipped:
+
+**Guides (AC-S8-1/2).** `placeOrMoveGuide` is the single function both the ruler
+click and the drag-spawn gesture go through, so an axis can only ever hold one
+guide - a second click on the same ruler MOVES it. Three removal paths: drag
+back onto the spawning ruler, select + Delete/Backspace, or the x chip drawn at
+the guide's own ruler position. A guide and a layer are never selected at once
+(review B4): selecting either clears the other, and the Delete handler asks
+about the guide FIRST, so what the key removes is always what was clicked last.
+Guides stay session-only React state - never in the doc, never exported (D9).
+
+**Autosave (AC-S8-3/4).** New `hooks/useAutosave.ts`: ~1s debounce, status +
+savedAt + flush + retry, and saves are SERIALISED - each one chains onto
+whatever is in flight, because two overlapping PUTs of the same document can
+land in either order and the loser is what the server keeps. `AutosaveIndicator`
+reads it next to each host's manual Save button. Both the request tag designer
+and the template editor use it.
+
+The autosave and the manual button are two different acts with two different
+contracts (review B2/B3): the autosave path is SILENT and rethrows, so the
+indicator is its whole report and a failure reaches it; the manual path keeps
+its toast and rethrows, so Mark proof ready / Print sheet abort rather than
+transitioning off a design the server never received. Both flush before they
+act (review S4), so neither can race the debounce.
+
+Two changes are deliberately NOT autosaved: the initial document as loaded, and
+the starter/template clone a line gets when it has no tag yet (review S3) -
+that is the page deciding what to draw, not the user deciding anything, so
+opening a request with undesigned lines, or clicking down the rail to look at
+them, now persists nothing.
+
+Leaving the page flushes (review S1/S2). An in-app route change - the back
+link, the sidebar, the browser's Back - unmounts the host, so the effect
+cleanup is where the last edit gets its chance; `pagehide` covers the refreshes
+and closes React never hears about, and replaces `beforeunload` (too early, and
+skipped outright when mobile Safari discards a backgrounded tab). The teardown
+request alone goes out `keepalive: true` so it outlives the document - not
+every request, because a keepalive body is capped at 64KB and a busy tag sheet
+exceeds it.
+
+**`page.draft_doc` (captain ruling 2 Sep, review B1).** Autosave must NOT create
+`page_version` rows: routed through the manual Save endpoint, a minute of
+nudging a layer wrote sixty immutable versions and buried the deliberate saves.
+Migration 456 adds `dealer_kit.page.draft_doc` JSONB NULL (chains on
+`455_products_barcode`, replay-guarded like 453/454, hand-applied once on the
+shared dev DB with `alembic_version` left where it was - the documented drift).
+The split mirrors S5's template draft/live model:
+
+- `PUT /{id}/design/draft` overwrites `draft_doc` in place. No version, ever.
+- `PUT /{id}/design` (manual Save) snapshots the document into one new
+  `page_version` and clears `draft_doc`.
+- The `proof_ready` transition promotes an unsaved draft the same way, because
+  the proof renders from VERSIONS and the detail page's header can transition a
+  request whose designer tab still holds one.
+- `GET /{id}/design` answers the draft when present, else the latest version,
+  and says which in `source` - reopening on the version would silently discard
+  everything since the last Save.
+- Both write routes carry `_PROCESS` + `validate_designable` (S10's guard), so
+  a stale tab cannot autosave over an approved or void request either.
+- Export and proof rendering are untouched: they read versions only.
+
+NOT built, and why: a `draft_updated_at` / "unsaved changes" cue on the detail
+page. Nothing asks for one today and the indicator already says it live in the
+designer; the trigger that would justify it is a second person needing to see
+that a request has work in progress before opening it.
+
 ### S9 - barcode override + tag size control (D23, D24)
 ### S10 - request detail tabs + per-line Design (D25)
 ### S11 - tag templates bulk delete, deferred action (D26)

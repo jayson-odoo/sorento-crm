@@ -114,6 +114,22 @@ class Page(Base, CompanyScopedMixin):
         nullable=True,
     )
     print_profile = Column(JSONB, nullable=True)
+    # Work in progress, overwritten in place - never history (B1, migration
+    # 456). The tag designer autosaves every committed change here, so a minute
+    # of nudging a layer costs one UPDATE rather than sixty immutable
+    # ``PageVersion`` rows. The deliberate acts - manual Save, marking the proof
+    # ready - snapshot this into a version and set it back to NULL, which is
+    # what "nothing in progress" means and what every page starts as. Export and
+    # proof rendering read VERSIONS only, so nothing half-finished can print.
+    #
+    # `none_as_null` because clearing this has to write SQL NULL. Postgres JSONB
+    # can hold the JSON value `null`, and SQLAlchemy's default is to store
+    # exactly that for a Python `None` - so `draft_doc = None` produced a row
+    # that reads back as None through the ORM but answers FALSE to
+    # `draft_doc IS NULL` in SQL. Two representations of "nothing in progress",
+    # one of them invisible until somebody writes a query. Measured on the lane
+    # after a manual Save (2 Sep).
+    draft_doc = Column(JSONB(none_as_null=True), nullable=True)
     # 'catalogue' (default, all existing pages) or 'tag_sheet'.
     kind = Column(String(20), nullable=False, server_default=text("'catalogue'"))
     # When kind='tag_sheet', the request this sheet was created from.

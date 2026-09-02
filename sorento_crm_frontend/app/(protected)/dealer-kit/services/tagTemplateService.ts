@@ -70,14 +70,24 @@ export async function createTemplate(input: {
   return response.json();
 }
 
+/**
+ * Write the template's DRAFT doc. Publish is what moves the live pointer (S5).
+ *
+ * `keepalive` is for the page-teardown autosave flush only: the browser cancels
+ * a normal fetch when the document goes away, which is exactly the moment the
+ * last edit most needs to reach the server. It is not the default because a
+ * keepalive request body is capped at 64KB and a busy template exceeds that.
+ */
 export async function updateTemplate(
   id: string,
   doc: TagTemplateDoc,
+  options: { keepalive?: boolean } = {},
 ): Promise<TagTemplate> {
   const response = await apiFetch(`${BASE}/${encodeURIComponent(id)}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ doc }),
+    keepalive: options.keepalive,
   });
   if (!response.ok) {
     throw new Error(await extractApiError(response, 'Failed to update template'));

@@ -18,6 +18,7 @@ import {
   getPriceTagRequest,
   getTagSheetDoc,
   saveTagSheetDoc,
+  saveTagSheetDraft,
   type PriceTagRequestDetail,
 } from '../../../../services/priceTagRequestService';
 import dynamic from 'next/dynamic';
@@ -62,13 +63,40 @@ export default function RequestTagDesignerShell({ requestId }: Props) {
     };
   }, [requestId]);
 
+  /**
+   * Autosave: silent, and it RETHROWS (B2/B3).
+   *
+   * Two different acts were sharing one handler, and the autosave inherited
+   * the manual button's manners: a "Tag sheet saved" toast roughly once a
+   * second while the designer worked (D22 asks for an indicator, not a
+   * announcement), and - worse - a swallowed failure, which left the header
+   * saying "Saved" when nothing had been. The indicator is the whole report
+   * for this path, and it can only say "Save failed" if the rejection reaches
+   * `useAutosave`.
+   *
+   * It writes the DRAFT, never a version (B1): sixty autosaves are one row
+   * overwritten sixty times, not sixty entries in the request's history.
+   */
+  const handleAutosave = useCallback(
+    async (doc: TagSheetDoc, options: { keepalive?: boolean } = {}) => {
+      await saveTagSheetDraft(requestId, doc, options);
+    },
+    [requestId],
+  );
+
+  /**
+   * Manual Save: the deliberate act, so it keeps its toast - and rethrows so a
+   * caller that saves as a PRECONDITION (Mark proof ready, Print sheet) can
+   * abort instead of transitioning a request whose design never landed.
+   */
   const handleSave = useCallback(
     async (doc: TagSheetDoc) => {
       try {
         await saveTagSheetDoc(requestId, doc);
         toast.success('Tag sheet saved');
-      } catch {
-        toast.error('Failed to save tag sheet');
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : 'Failed to save tag sheet');
+        throw err;
       }
     },
     [requestId],
@@ -98,6 +126,7 @@ export default function RequestTagDesignerShell({ requestId }: Props) {
       request={request}
       initialDoc={initialDoc ?? null}
       onSave={handleSave}
+      onAutosave={handleAutosave}
     />
   );
 }

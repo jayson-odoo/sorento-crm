@@ -38,6 +38,7 @@ from app.services.error_handler import AppException
 from app.services.price_tag_request_service import (
     PriceTagRequestService,
     STATUS_DESIGNING,
+    STATUS_PROOF_READY,
 )
 
 logger = logging.getLogger(__name__)
@@ -203,6 +204,19 @@ def transition_price_tag_request(
     result = PriceTagRequestService.transition_status(
         db, request_id, payload.status, user_id=_user_id(user),
     )
+    # Marking the proof ready is a deliberate act, so it promotes the autosaved
+    # draft to a version the same way manual Save does (B1). The designer's own
+    # button saves first and leaves nothing to promote, but the detail page's
+    # header can transition a request whose designer tab still holds an
+    # unsaved draft - and the proof renders from VERSIONS, so without this the
+    # salesperson would review the last manual save rather than the design
+    # marketing just declared ready.
+    if payload.status == STATUS_PROOF_READY and result.page_id:
+        page = db.query(Page).filter(Page.id == result.page_id).first()
+        if page is not None and page.draft_doc is not None:
+            _snapshot_draft(
+                db, page, page.draft_doc, _user_id(user), "Marked proof ready"
+            )
     db.commit()
     return _with_resolved_lines(db, result)
 
@@ -274,24 +288,111 @@ def _require_request_page(db: Session, request_id: str) -> tuple[PriceTagRequest
     return req, page
 
 
+def _latest_version(db: Session, page: Page) -> PageVersion | None:
+    return (
+        db.query(PageVersion)
+        .filter(PageVersion.page_id == page.id)
+        .order_by(PageVersion.version.desc())
+        .first()
+    )
+
+
+def _snapshot_draft(
+    db: Session, page: Page, doc: dict, user_id: str | None, commit_message: str | None
+) -> PageVersion:
+    """Turn a document into the page's next immutable version, draft cleared.
+
+    The one place a ``PageVersion`` is written for a tag sheet, so "a version is
+    a deliberate act" cannot drift: the manual Save button and the
+    proof-ready transition both come through here, and the autosave route below
+    deliberately does not.
+    """
+    current_max = (
+        db.query(func.max(PageVersion.version))
+        .filter(PageVersion.page_id == page.id)
+        .scalar()
+    ) or 0
+
+    version = PageVersion(
+        page_id=page.id,
+        version=current_max + 1,
+        doc=doc,
+        commit_message=commit_message,
+        created_by=user_id,
+    )
+    db.add(version)
+    # The draft has become history, so there is no work in progress left. Not
+    # clearing it would make the NEXT open show the draft rather than the
+    # version that was just saved from it - the same document today, but a
+    # trap the moment anything edits one of the two.
+    page.draft_doc = None
+    return version
+
+
 @router.get("/{request_id}/design", response_model=TagSheetDocResponse)
 def get_tag_sheet_design(
     request_id: str,
     db: Session = Depends(get_db),
     _user: dict = Depends(_VIEW),
 ):
-    """Return the latest page_version doc for this request's tag_sheet page."""
+    """The document the designer should open on: the draft, else the latest version.
+
+    Draft first (B1). The autosaved draft is what the user was last looking at;
+    the latest version is what they last deliberately saved. Reopening on the
+    version would silently discard everything since the last Save, which is the
+    exact loss autosave exists to prevent.
+
+    ``version`` reports the latest immutable version either way, so a draft says
+    which version it is sitting on top of; ``source`` says which of the two the
+    ``doc`` actually is.
+    """
     _req, page = _require_request_page(db, request_id)
-    latest = (
-        db.query(PageVersion)
-        .filter(PageVersion.page_id == page.id)
-        .order_by(PageVersion.version.desc())
-        .first()
-    )
+    latest = _latest_version(db, page)
+    if page.draft_doc is not None:
+        return TagSheetDocResponse(
+            page_id=str(page.id),
+            version=latest.version if latest else 0,
+            doc=page.draft_doc,
+            source="draft",
+        )
     return TagSheetDocResponse(
         page_id=str(page.id),
         version=latest.version if latest else 0,
         doc=latest.doc if latest else None,
+        source="version",
+    )
+
+
+@router.put("/{request_id}/design/draft", response_model=TagSheetDocResponse)
+def save_tag_sheet_draft(
+    request_id: str,
+    payload: TagSheetDocPayload,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_PROCESS),
+):
+    """Autosave: overwrite the page's draft IN PLACE. Never writes a version.
+
+    This is the whole point of the split (B1, captain ruling 2 Sep). The
+    designer autosaves every committed change roughly once a second; routing
+    that through the version route wrote an immutable row per keystroke-burst
+    and buried the deliberate saves in noise. One column, overwritten.
+
+    Same ``validate_designable`` gate as the manual Save route: a stale tab on
+    an approved or void request must not be able to autosave over the record
+    either.
+    """
+    req, page = _require_request_page(db, request_id)
+    PriceTagRequestService.validate_designable(req)
+
+    page.draft_doc = payload.doc
+    db.commit()
+
+    latest = _latest_version(db, page)
+    return TagSheetDocResponse(
+        page_id=str(page.id),
+        version=latest.version if latest else 0,
+        doc=payload.doc,
+        source="draft",
     )
 
 
@@ -302,7 +403,11 @@ def save_tag_sheet_design(
     db: Session = Depends(get_db),
     user: dict = Depends(_PROCESS),
 ):
-    """Save a new page_version for the request's tag_sheet page."""
+    """Manual Save: snapshot the design into a new page_version, draft cleared.
+
+    The deliberate act. Export and proof rendering read versions only, so this
+    is what makes a design printable.
+    """
     req, page = _require_request_page(db, request_id)
     # The FE only ever reaches this route from a status the Lines tab / header
     # already gated Design on (review: this route wrote a PageVersion in ANY
@@ -310,20 +415,9 @@ def save_tag_sheet_design(
     # save a design over the record).
     PriceTagRequestService.validate_designable(req)
 
-    current_max = (
-        db.query(func.max(PageVersion.version))
-        .filter(PageVersion.page_id == page.id)
-        .scalar()
-    ) or 0
-
-    version = PageVersion(
-        page_id=page.id,
-        version=current_max + 1,
-        doc=payload.doc,
-        commit_message=payload.commit_message,
-        created_by=_user_id(user),
+    version = _snapshot_draft(
+        db, page, payload.doc, _user_id(user), payload.commit_message
     )
-    db.add(version)
     db.commit()
     db.refresh(version)
 
@@ -331,6 +425,7 @@ def save_tag_sheet_design(
         page_id=str(page.id),
         version=version.version,
         doc=version.doc,
+        source="version",
     )
 
 
