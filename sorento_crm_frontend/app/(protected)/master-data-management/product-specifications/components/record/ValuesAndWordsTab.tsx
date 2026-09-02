@@ -180,9 +180,17 @@ export interface ValuesAndWordsTabProps {
   /** Null in view mode - the tab reads straight off `row` then. */
   draft: SpecKeyDraft | null;
   setDraft: (updater: (draft: SpecKeyDraft) => SpecKeyDraft) => void;
+  /** The empty state's CTA enters edit mode on this tab (B.3), same as Rules'. */
+  onEnterEdit: () => void;
 }
 
-export function ValuesAndWordsTab({ row, mode, draft, setDraft }: ValuesAndWordsTabProps) {
+export function ValuesAndWordsTab({
+  row,
+  mode,
+  draft,
+  setDraft,
+  onEnterEdit,
+}: ValuesAndWordsTabProps) {
   const [newValue, setNewValue] = useState('');
   const isBoolean = row.data_type === 'boolean';
 
@@ -224,9 +232,9 @@ export function ValuesAndWordsTab({ row, mode, draft, setDraft }: ValuesAndWords
             }}
           />
         ) : (
-          <span className="text-xs text-muted-foreground">
-            Edit this specification to add one.
-          </span>
+          <Button type="button" size="sm" variant="outline" onClick={onEnterEdit}>
+            Add value
+          </Button>
         )}
       </div>
     );

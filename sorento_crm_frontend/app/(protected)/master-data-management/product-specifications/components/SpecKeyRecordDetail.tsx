@@ -171,6 +171,10 @@ export function SpecKeyRecordDetail({ specKey }: { specKey: string }) {
               mode={record.mode}
               draft={record.draft}
               setDraft={record.setDraft}
+              onEnterEdit={() => {
+                record.edit();
+                setTab('values');
+              }}
             />
           </TabsContent>
 

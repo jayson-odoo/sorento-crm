@@ -62,6 +62,7 @@ function EditHarness({
           return next;
         })
       }
+      onEnterEdit={() => {}}
     />
   );
 }
@@ -111,7 +112,7 @@ describe('ValuesAndWordsTab - display label (E.1, E.2)', () => {
 
   it('view mode shows a stored label instead of the automatic wording', () => {
     const row = { ...finishWithASuppressedValue(), value_labels: { chrome: 'Chrome finish' } };
-    render(<ValuesAndWordsTab row={row} mode="view" draft={null} setDraft={() => {}} />);
+    render(<ValuesAndWordsTab row={row} mode="view" draft={null} setDraft={() => {}} onEnterEdit={() => {}} />);
 
     expect(screen.getByText('Chrome finish')).toBeInTheDocument();
   });
@@ -121,7 +122,7 @@ describe('ValuesAndWordsTab - view and edit share field labels (G.8)', () => {
   it('renders the same field labels in both modes', () => {
     const row = finishWithASuppressedValue();
     const { unmount } = render(
-      <ValuesAndWordsTab row={row} mode="view" draft={null} setDraft={() => {}} />,
+      <ValuesAndWordsTab row={row} mode="view" draft={null} setDraft={() => {}} onEnterEdit={() => {}} />,
     );
     const viewLabels = screen.getAllByText(/Display label|Words customers say/).map(
       (el) => el.textContent,
