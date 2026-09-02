@@ -164,6 +164,7 @@ function renderGrid(
     readOnlyReason?: string | null;
     toolbarPrimary?: React.ReactNode;
     live?: boolean;
+    groupByChannel?: boolean;
   } = {},
 ) {
   const onRowEdit = vi.fn();
@@ -200,6 +201,7 @@ function renderGrid(
         economicsFor={opts.economicsFor}
         decisionsReadOnly={opts.decisionsReadOnly}
         readOnlyReason={opts.readOnlyReason ?? null}
+        groupByChannel={opts.groupByChannel}
       />
     );
   }
@@ -490,6 +492,67 @@ describe('PlanLinesGrid - the toolbar (C2)', () => {
   });
 });
 
+describe('PlanLinesGrid - the Decided filter reads GROUPED rows (S3 perf, AC-3.5)', () => {
+  // Two per-warehouse rows of the SAME product, grouped into one product row
+  // (`groupByChannel`) - `groupPlanLinesByChannel` runs off decision-independent
+  // filters only, and the Decided/Undecided filter + sort run AFTER grouping, against
+  // `isRowDecided`'s "any member carries a decision" rule.
+  const memberA = line({
+    id: 'a', product_id: 'p1', warehouse_id: 'w-brw', warehouse_code: 'BRW',
+    warehouse_name: 'Butterworth', sku: 'SKU-GROUP',
+  });
+  const memberB = line({
+    id: 'b', product_id: 'p1', warehouse_id: 'w-pj', warehouse_code: 'PJ',
+    warehouse_name: 'Petaling Jaya', sku: 'SKU-GROUP',
+  });
+
+  const openFilters = () => {
+    const trigger = screen.getByRole('button', { name: /Filters/i });
+    fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false, pointerType: 'mouse' });
+  };
+
+  it('renders ONE row for the group when only one member is decided, not two', () => {
+    renderGrid([memberA, memberB], {
+      groupByChannel: true,
+      decisions: { a: { buy: 10 } },
+    });
+    // One collapsed group row for the product, not a row per member warehouse.
+    expect(screen.getAllByText('SKU-GROUP')).toHaveLength(1);
+  });
+
+  it('a partially-decided group counts as DECIDED under "Already decided" (any member rule)', async () => {
+    renderGrid([memberA, memberB], {
+      groupByChannel: true,
+      decisions: { a: { buy: 10 } }, // only member 'a' decided, 'b' is not
+    });
+    openFilters();
+    fireEvent.change(await screen.findByLabelText('Decision'), {
+      target: { value: 'decided' },
+    });
+    expect(screen.getByText('SKU-GROUP')).toBeInTheDocument();
+  });
+
+  it('the SAME partially-decided group disappears under "Still to decide"', async () => {
+    renderGrid([memberA, memberB], {
+      groupByChannel: true,
+      decisions: { a: { buy: 10 } },
+    });
+    openFilters();
+    fireEvent.change(await screen.findByLabelText('Decision'), {
+      target: { value: 'undecided' },
+    });
+    expect(screen.queryByText('SKU-GROUP')).not.toBeInTheDocument();
+  });
+
+  it('a group with NO member decided is undecided, and vanishes from "Already decided"', async () => {
+    renderGrid([memberA, memberB], { groupByChannel: true, decisions: {} });
+    openFilters();
+    fireEvent.change(await screen.findByLabelText('Decision'), {
+      target: { value: 'decided' },
+    });
+    expect(screen.queryByText('SKU-GROUP')).not.toBeInTheDocument();
+  });
+});
 
 describe('PlanLinesGrid - saved column layout belongs to the screen (A1)', () => {
   it('keys the column preferences on the listing, never on the plan id', () => {
