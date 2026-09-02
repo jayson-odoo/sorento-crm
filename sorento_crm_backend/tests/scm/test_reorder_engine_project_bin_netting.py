@@ -29,6 +29,7 @@ from datetime import date
 from decimal import Decimal
 
 import pytest
+from sqlalchemy import text
 
 from app.models.base import set_company_scope
 from app.models.inventory import Warehouse
@@ -95,11 +96,14 @@ def test_an_unclaimed_project_bin_spo_allocation_still_nets_as_on_order(db, worl
     assert Decimal(str(net[0]["on_order"])) == Decimal("25")
 
 
-def test_a_plain_project_bin_po_line_nets_as_zero_on_order_whether_or_not_it_is_claimed(db, world):
-    """The other half of the same measurement, stated so the gap does not read as an
-    oversight: `scm.on_order_v` was SPO-only before this slice (migration 337, 6 Aug
-    2026), so a plain PO line contributes NOTHING to the engine's on-order figure with
-    or without a claim. G12 changes what the OI cascade offers, never this."""
+def test_a_plain_project_bin_po_line_is_absent_from_the_spo_only_on_order_view(db, world):
+    """One half of the measurement: `scm.on_order_v` was SPO-only before this slice
+    (migration 337, 6 Aug 2026), so a plain PO line contributes nothing to THAT view with
+    or without a claim.
+
+    On its own this says nothing about double-buying, which is why the test below exists:
+    the engine does not size against `on_order` alone.
+    """
     po = PurchaseOrder(
         id=_u(), company_id=SORENTO, po_number=unique_code(MARKER),
         supplier_id=world["supplier"].id, status="active", issue_date=date(2026, 8, 1),
@@ -116,3 +120,65 @@ def test_a_plain_project_bin_po_line_nets_as_zero_on_order_whether_or_not_it_is_
     net = load_net_position(db, world["product"].id, world["warehouse"].id)
 
     assert net == [], "no stock, no SPO, no committed demand: the view has no row at all"
+
+
+def test_the_engine_still_nets_an_unattributed_project_bin_po_line(db, world):
+    """AC-6.12 proper, at ENGINE level (S6, review of PR #490).
+
+    The claim G12 rests on is "safe against double-buying because the reorder engine nets
+    open PO qty by location regardless of claims". The engine does NOT size against
+    `scm.on_order_v` alone - `_compute_cell` takes `net = net_position + po_ordered`, and
+    the `po_ordered` leg is `scm.po_ordered_v`, which sums every OPEN purchase-order line
+    of an active order by `(product, warehouse)` and joins neither `scm.order_link_claim`
+    nor a warehouse's `segment`.
+
+    So a project-bin line nobody has attributed is still counted as supply the plan can
+    see, and the lock costs the buyer nothing but the OI cover state. Asserted against the
+    view the engine reads, with and without a claim, because "regardless of claims" is the
+    half of the sentence that this slice could have broken.
+    """
+    po = PurchaseOrder(
+        id=_u(), company_id=SORENTO, po_number=unique_code(MARKER),
+        supplier_id=world["supplier"].id, status="active", issue_date=date(2026, 8, 1),
+    )
+    db.add(po)
+    db.flush()
+    line = PurchaseOrderLine(
+        id=_u(), company_id=SORENTO, purchase_order_id=po.id,
+        product_id=world["product"].id, warehouse_id=world["warehouse"].id,
+        qty_ordered=40, qty_received=0, line_status="open",
+    )
+    db.add(line)
+    db.flush()
+
+    def _po_ordered() -> float:
+        return float(
+            db.execute(
+                text(
+                    "SELECT COALESCE(SUM(ordered), 0) FROM scm.po_ordered_v "
+                    " WHERE product_id = :p AND warehouse_id = :w"
+                ),
+                {"p": str(world["product"].id), "w": str(world["warehouse"].id)},
+            ).scalar()
+            or 0
+        )
+
+    assert _po_ordered() == 40.0, (
+        "an unattributed project-bin line is invisible to the engine's supply read, which "
+        "is the double-buy G12's own wording promises it is safe from"
+    )
+
+    # And with a claim naming somebody else entirely: the view has no way to tell, which
+    # is exactly the property being pinned.
+    db.execute(
+        text(
+            "INSERT INTO scm.order_link_claim (id, company_id, so_number, po_number, "
+            "item_code, source, po_line_id, claimed_at) "
+            "VALUES (:i, :c, :son, :pon, NULL, 'po_history', :pol, now())"
+        ),
+        {"i": _u(), "c": SORENTO, "son": unique_code("SO"), "pon": po.po_number,
+         "pol": str(line.id)},
+    )
+    db.flush()
+
+    assert _po_ordered() == 40.0, "a claim never changes what the engine counts as supply"

@@ -385,9 +385,11 @@ class ProjectOrderInquiryService:
         # `_invalidate_link_cache` on every write, so the cascade cannot read a total it
         # has already changed.
         self._linked_by_target_cache: Optional[Tuple[Dict[str, Decimal], Dict[str, Decimal]]] = None
-        # The same links, keyed by the CLAIM each was written under: what a claim's own
-        # reservation and its own placements overlap on (`_reserved_for_netting`).
-        self._linked_by_claim_cache: Optional[Dict[str, Decimal]] = None
+        # G7 dedication evidence per candidate LINE (`PLAN-scm-reorder-oi-feedback-1sep.md`
+        # S6), filled by `_prime_claims` for the targets actually under consideration and
+        # dropped by the same invalidation `_linked_by_target` uses - a claim written
+        # mid-pass must not be read stale by the next row.
+        self._claims_cache: Dict[str, Sequence[Dict[str, Any]]] = {}
         # Ladder v4's availability reader (`app.services.scm.group_netting`), over the
         # products this instance has been asked about. A candidate walk needs to know what
         # the group it would link into already owes, and a listing asks the same question
@@ -399,12 +401,6 @@ class ProjectOrderInquiryService:
         # 27 Aug 2026). Five uncached queries per product, and the cascade asks it once
         # per row, so it is answered per product and remembered for the instance.
         self._awaiting_link_cache: Dict[str, Dict[str, set]] = {}
-        # G7 dedication (`PLAN-scm-reorder-oi-feedback-1sep.md` S6): every RESOLVED claim
-        # naming a PO line or SPO allocation, keyed by target id - one full-table read,
-        # cached the same way `_linked_by_target` already is, and dropped by the same
-        # invalidation for the same reason (a claim written mid-pass must not be read
-        # stale by the next row).
-        self._claims_by_target_cache: Optional[Dict[str, List[Dict[str, Any]]]] = None
         # This service instance's own answer to "what SO does this row's claim identity
         # name" (`claim_identity`'s first element), memoised per row: the cascade calls
         # `_candidates_for_row` once per row and the identity costs two queries to derive.
@@ -639,7 +635,7 @@ class ProjectOrderInquiryService:
                     # (`po_ref` / `po_line_id` / `spo_ref`) is restated with the state, and
                     # setting `placed` here alone would have left them saying whatever the
                     # last link change happened to leave.
-                    self._refresh_link_state([row])
+                    self.refresh_link_state([row])
                     row.note = (
                         f"{row.note}; Remainder superseded by revision "
                         f"{decision.revision_no}"
@@ -980,7 +976,7 @@ class ProjectOrderInquiryService:
                 row.acknowledged_by = actor_user_id
                 row.acknowledged_at = row.changed_at
         self._retire_settled_cancel_balance(rows, decision)
-        self._refresh_link_state([row])
+        self.refresh_link_state([row])
         self.db.flush()
         if changed:
             # `linked` is the CURRENT total after any over-cover trim above, not the
@@ -2526,7 +2522,7 @@ class ProjectOrderInquiryService:
         links = self._links_of(row.id)
         if links:
             self._remove_links(row, links)
-            self._refresh_link_state([row])
+            self.refresh_link_state([row])
             self.db.flush()
         row.ack_state = ACK_REJECTED
         row.rejected_by = actor_user_id
@@ -2700,7 +2696,7 @@ class ProjectOrderInquiryService:
     # so a cascade needing two lines SPLIT the row - and nine sales-order lines read as
     # eleven instructions. `projects.order_inquiry_links` (migration 421) is one row per
     # placement; the row's `state` and `po_ref` are DERIVED from them, never written by
-    # hand (`_refresh_link_state`).
+    # hand (`refresh_link_state`).
     #
     # **The lever on the reorder engine is netting, not a state test.** `committed_v`'s
     # confirmed leg counts `qty - sum(links.qty)` (migration 422), so a fully linked row
@@ -2727,7 +2723,7 @@ class ProjectOrderInquiryService:
     # the most specific thing anybody knows about the row, and a walk that ignored it would
     # be answering a question nobody asked.
 
-    def _refresh_link_state(self, rows: Sequence[OrderInquiryRow]) -> None:
+    def refresh_link_state(self, rows: Sequence[OrderInquiryRow]) -> None:
         """Set each row's state and its derived display from its own links.
 
         The ONE writer of `state` / `po_ref` / `po_line_id` / `spo_ref` on a linkable row,
@@ -2891,13 +2887,12 @@ class ProjectOrderInquiryService:
         across them.
         """
         self._linked_by_target_cache = None
-        self._linked_by_claim_cache = None
+        self._claims_cache = {}
         self._awaiting_link_cache = {}
         # A write that resolves or creates a claim (`_write_link`, every placement) must
         # not leave the NEXT row in the same pass reading the dedication state as it was
-        # before this one wrote. `_so_number_cache` stays: a row's own identity does not
-        # change inside a pass.
-        self._claims_by_target_cache = None
+        # before this one wrote - which is why `_claims_cache` is dropped above.
+        # `_so_number_cache` stays: a row's own identity does not change inside a pass.
 
     def _row_so_number(self, row: OrderInquiryRow) -> Optional[str]:
         """This row's own SO number, the identity G7 dedication ranks a candidate's own
@@ -2913,25 +2908,32 @@ class ProjectOrderInquiryService:
             self._so_number_cache[key] = so_number
         return self._so_number_cache[key]
 
-    def _claims_by_target(self) -> Dict[str, List[Dict[str, Any]]]:
-        """Every RESOLVED claim naming a PO line or an SPO allocation - G7's dedication
-        evidence (`PLAN-scm-reorder-oi-feedback-1sep.md` S6).
+    def _prime_claims(self, target_ids: Sequence[str]) -> None:
+        """Read the dedication evidence for these candidate lines, once.
 
-        Read once per service instance and cached, the same pattern `_linked_by_target`
-        already uses and for the same reason: the cascade asks this once per row over a
-        product-wide pass, and `scm.order_link_claim` does not change inside one.
+        Scoped to the targets actually under consideration (S5, review of PR #490). This
+        used to read every RESOLVED claim in the database on the first candidate walk of
+        every service instance - 33,231 rows on the live book - and again after every
+        `_write_link`, because a placement invalidates the cache. A cascade over a product
+        with fifty candidates paid for the whole table each time somebody was linked.
 
-        The read itself is `order_link_service.reservations_by_target` - the ONE spelling
-        of "what does this claim reserve", shared with the purchase order's "Allocated to"
-        panel, which asks the same question of one document's lines. It joins the core
-        sales order line so the reservation reads that line's LIVE outstanding (G7) rather
-        than a figure stored at claim time, and it reads `so_number` off the CLAIM's own
-        column rather than off the join.
+        Cached per TARGET rather than as one whole-table answer, so a second row asking
+        about the same purchase order pays nothing and a row asking about a new one pays
+        only for its own lines.
         """
-        if self._claims_by_target_cache is not None:
-            return self._claims_by_target_cache
-        self._claims_by_target_cache = order_link_service.reservations_by_target(self.db)
-        return self._claims_by_target_cache
+        missing = [str(t) for t in target_ids if str(t) not in self._claims_cache]
+        if not missing:
+            return
+        found = order_link_service.reservations_by_target(self.db, target_ids=missing)
+        for target_id in missing:
+            self._claims_cache[target_id] = found.get(target_id, [])
+
+    def _claims_of(self, target_id: str) -> Sequence[Dict[str, Any]]:
+        """This line's claims, reading through the primed cache and filling it if the
+        caller never primed (`po_candidates_for_row`'s single-line reads, tests)."""
+        if target_id not in self._claims_cache:
+            self._prime_claims([target_id])
+        return self._claims_cache.get(target_id, ())
 
     def _dedication_for_target(
         self,
@@ -2970,14 +2972,18 @@ class ProjectOrderInquiryService:
         compares the held document and the alternatives on the same terms `credit_own_
         links` already promises for their quantity.
         """
-        claims = self._claims_by_target().get(target_id, ())
+        claims = self._claims_of(target_id)
         own_claim = False
         others: List[Dict[str, Any]] = []
         for claim in claims:
             if claim["claim_id"] in ignore_claim_ids:
                 continue
             if own_so_number is not None and claim["so_number"] == own_so_number:
-                own_claim = True
+                # A SETTLED claim does not unlock the line either (nit, review of PR #490).
+                # G12 opens a project bin to the sales order that claims it, and an order
+                # that has been delivered or cancelled is not claiming anything any more -
+                # the same test the `others` branch below applies to a stranger's claim.
+                own_claim = own_claim or claim["outstanding"] > _ZERO
                 continue
             if claim["outstanding"] > _ZERO:
                 others.append(claim)
@@ -2990,79 +2996,33 @@ class ProjectOrderInquiryService:
                 c["claim_id"],
             )
         )
-        reserved = sum((c["outstanding"] for c in others), _ZERO)
+        # The WALKED reservation (B2), not the claiming line's raw outstanding: a need
+        # already reserved on an earlier document is not reserved again here.
+        reserved = sum((c["reserved"] for c in others), _ZERO)
         return reserved, others[0]["so_number"], own_claim
-
-    def _linked_by_claim(self) -> Dict[str, Decimal]:
-        """How much every claim has ALREADY had placed under it, keyed by claim id.
-
-        A link carries the id of the claim it was written under (`OrderInquiryLink.
-        claim_id`, stamped by `_write_link` whether it CREATED the claim or found one an
-        earlier feed had already made), so this is the exact overlap between "what a claim
-        reserves" and "what has already been taken against it" - the two figures
-        `_reserved_for_netting` must not count twice. Cached and dropped with the rest on
-        every write, the same way `_linked_by_target` is.
-
-        Keyed by the CLAIM ALONE, never by `(claim, line)`. A claim's identity is
-        (company, SO number, PO number, item), which is a DOCUMENT-level pairing - so one
-        claim backs every placement that sales order makes on that document, and a row
-        whose need is spread over two lines of it writes two links under the SAME claim
-        while the claim's own `po_line_id` can only name one of them. Keyed per line, the
-        line the claim happens to name looked as though only part of the reservation had
-        been taken, and the rest was subtracted a second time off whatever was left there
-        (`test_po_confirm_links_the_sizing_rows.py::test_a_purchase_order_naming_two_runs_
-        falls_back_to_the_latest_completed`: a 5-need spread as 3 + 2 over two lines of one
-        order left the second row's only candidate reading 0 remaining, half the time).
-        """
-        if self._linked_by_claim_cache is not None:
-            return self._linked_by_claim_cache
-        out: Dict[str, Decimal] = {}
-        for claim_id, qty in self.db.query(
-            OrderInquiryLink.claim_id, func.sum(OrderInquiryLink.qty)
-        ).filter(OrderInquiryLink.claim_id.isnot(None)).group_by(
-            OrderInquiryLink.claim_id
-        ):
-            out[str(claim_id)] = _dec(qty)
-        self._linked_by_claim_cache = out
-        return out
 
     def _reserved_for_netting(
         self, target_id: str, own_so_number: Optional[str]
     ) -> Decimal:
-        """What `_dedication_for_target`'s `reserved` should ALSO subtract from
-        `remaining` once `by_po` / `by_spo` has already been - never the same quantity
-        twice (bug found chasing PR #490's CI failures, `test_po_confirm_links_the_sizing_
-        rows.py` and the ladder v7 borrow suites).
+        """What comes off a candidate's `remaining` on top of the LINKS already netted out.
 
-        A claim reserves the claiming sales order line's LIVE outstanding (G7). Where that
-        order has ALREADY placed some of it, the placement is a LINK, and `by_po` / `by_spo`
-        has subtracted it off `remaining` before this is asked - so only the part of the
-        reservation nothing has taken yet is still to come off, which is
-        `max(outstanding - what this claim's own links already hold, 0)`.
+        `order_link_service.reservations_by_target` has already done the arithmetic (B2):
+        each claim's `reserved` is its share of the claiming SALES ORDER LINE's still
+        unplaced need, capped at the document's own capacity and handed out once across
+        every document that line claims. So what is left to subtract here is simply the
+        sum of the OTHER sales orders' shares - the part of the line somebody else is
+        owed and has not taken yet.
 
-        Read off the LINK's own `claim_id` rather than off the claim's `source` (corrected
-        2 Sep 2026). The source test was right for exactly one case - a claim `_write_link`
-        wrote in lockstep with its link (`order_inquiry`) - and wrong for the two that
-        matter now: a `crm_supply` claim the reorder plan's own confirm wrote for the rows
-        that sized a bin line reserves 84 for SO Y AND is then linked by SO Y for 84, which
-        under the source test came off twice and cost SO Y most of its own buy; a
-        `po_history` claim a row has since linked did the same. `claim_id` names the ONE
-        claim a given link was written under, whichever feed first stated the pairing, so
-        the overlap is measured rather than inferred from a label.
-
-        `_dedication_for_target`'s own `reserved` stays as it reads today (AC-6.9 reads it
-        raw, as the audit figure) - this is a SEPARATE sum, for the one caller that
-        combines it with `by_po` / `by_spo` rather than reporting it on its own.
+        The row's own claims are skipped: a line this row's order claims reserves nothing
+        against that same order (AC-6.4), and its own placements are already in
+        `by_po` / `by_spo`.
         """
-        claims = self._claims_by_target().get(target_id, ())
-        linked = self._linked_by_claim()
         total = _ZERO
-        for claim in claims:
+        for claim in self._claims_of(target_id):
             if own_so_number is not None and claim["so_number"] == own_so_number:
                 continue
-            outstanding = claim["outstanding"] - linked.get(claim["claim_id"], _ZERO)
-            if outstanding > _ZERO:
-                total += outstanding
+            if claim["reserved"] > _ZERO:
+                total += claim["reserved"]
         return total
 
     def _pool_codes(self) -> set:
@@ -3258,6 +3218,9 @@ class ProjectOrderInquiryService:
         # 27 Aug 2026): a group holding an acknowledged, unlinked row may reach its own
         # purchase order, and the row that earns that is the one being placed. Lifted per
         # product instead, a row at any other group walked first took the line.
+        # S5: one scoped read of the dedication evidence for every line this walk could
+        # offer, instead of the whole claim table per candidate.
+        self._prime_claims([str(line.id) for line, _po, _sup, _wh in po_rows])
         deficit = (
             set()
             if manual
@@ -3279,7 +3242,7 @@ class ProjectOrderInquiryService:
                 continue
             target_id = str(line.id)
             raw_remaining = remaining
-            _reserved, dedicated_to, own_claim = self._dedication_for_target(
+            _, dedicated_to, own_claim = self._dedication_for_target(
                 target_id, own_so_number, ignore_claim_ids=ignore_claim_ids
             )
             remaining = max(
@@ -3325,6 +3288,7 @@ class ProjectOrderInquiryService:
                 )
                 .all()
             )
+            self._prime_claims([str(a.id) for a, _sup, _wh in spo_rows])
             for allocation, supplier, warehouse in spo_rows:
                 remaining = (
                     _dec(allocation.allocated_quantity)
@@ -3335,7 +3299,7 @@ class ProjectOrderInquiryService:
                     continue
                 target_id = str(allocation.id)
                 raw_remaining = remaining
-                _reserved, dedicated_to, own_claim = self._dedication_for_target(
+                _, dedicated_to, own_claim = self._dedication_for_target(
                     target_id, own_so_number, ignore_claim_ids=ignore_claim_ids
                 )
                 remaining = max(
@@ -3986,7 +3950,7 @@ class ProjectOrderInquiryService:
         if released > _ZERO:
             self.db.flush()
             self._invalidate_link_cache()
-            self._refresh_link_state(touched)
+            self.refresh_link_state(touched)
             self.db.flush()
         return released
 
@@ -4155,10 +4119,21 @@ class ProjectOrderInquiryService:
             )
 
         need = self._unlinked_need(row)
+        manual = auto_trigger is None
         by_target = {
             candidate["target_id"]: candidate
-            for candidate in self._candidates_for_row(row, manual=auto_trigger is None)
+            for candidate in self._candidates_for_row(row, manual=manual)
         }
+        # AC-6.5's "manual override stays" (B3, review of PR #490). A PERSON naming a
+        # dedicated line is measured against what the line ACTUALLY has left -
+        # `raw_remaining`, net of real LINKS - never against the dedication-reduced
+        # `remaining` the automatic walk uses. The dialog greys such a line and still
+        # offers it (AC-6.5), and G12's whole answer for an unattributed project bin is
+        # "link it manually" (AC-6.9) - but the check refused exactly those links with a
+        # 409, so the override the design promised could not be taken. What another
+        # order's CLAIM reserves is guidance for the automatic pass; a buyer overriding it
+        # deliberately is the escape hatch, and it is audited like any other placement.
+        capacity_field = "raw_remaining" if manual else "remaining"
 
         resolved: List[Tuple[Dict[str, Any], Decimal]] = []
         taken_within_call: Dict[str, Decimal] = {}
@@ -4194,7 +4169,7 @@ class ProjectOrderInquiryService:
                     po_line_id=po_line_id, spo_allocation_id=spo_allocation_id,
                     product_id=product_id,
                 )
-            left = candidate["remaining"] - taken_within_call.get(target_id, _ZERO)
+            left = candidate[capacity_field] - taken_within_call.get(target_id, _ZERO)
             if left < qty:
                 raise AppException(
                     status_code=409,
@@ -4230,7 +4205,7 @@ class ProjectOrderInquiryService:
                 row, candidate, qty, actor_user_id=actor_user_id, auto_trigger=auto_trigger
             )
 
-        self._refresh_link_state([row])
+        self.refresh_link_state([row])
         self.db.flush()
         self._refresh_inquiry_states({row.order_inquiry_id})
         return self.serialize_rows([row])
@@ -4788,7 +4763,7 @@ class ProjectOrderInquiryService:
             row.note = f"{row.note}; {stamp}" if row.note else stamp
             touched.append(row)
         if touched:
-            self._refresh_link_state(touched)
+            self.refresh_link_state(touched)
             self.db.flush()
             self._refresh_inquiry_states({row.order_inquiry_id for row in touched})
 
@@ -5103,7 +5078,7 @@ class ProjectOrderInquiryService:
             self._invalidate_link_cache()
             # The derived display (`po_ref` / `po_line_id`) is read off the links, so it has
             # to be restated or the row keeps naming the line it has just left.
-            self._refresh_link_state(touched)
+            self.refresh_link_state(touched)
             self.db.flush()
         return moved
 
@@ -5134,7 +5109,7 @@ class ProjectOrderInquiryService:
                 code="order_inquiry_not_placed",
             )
         self._remove_links(row, links)
-        self._refresh_link_state([row])
+        self.refresh_link_state([row])
         self.db.flush()
         self._refresh_inquiry_states({row.order_inquiry_id})
         return self.serialize_rows([row])[0]
@@ -5170,7 +5145,7 @@ class ProjectOrderInquiryService:
         for row in rows:
             self._remove_links(row, self._links_of(row.id))
         if rows:
-            self._refresh_link_state(rows)
+            self.refresh_link_state(rows)
             self.db.flush()
             self._refresh_inquiry_states({row.order_inquiry_id for row in rows})
         return len(rows)

@@ -12,7 +12,9 @@ mechanisms broke that, and this repairs both:
     BRW-IB, 114 units bought for SO391853 per the AutoCount book, auto-linked to SO381895
     at 2026-09-02 02:47:41 with a self-written claim beside it. This scope undoes EXACTLY
     what that pass wrote: an `auto = true` link on a project-bin target whose only claims
-    are `order_inquiry` rows written on or after the cut-off, plus those claims.
+    are `order_inquiry` rows written on or after the cut-off, plus those claims. A link
+    on a target with NO claim at all is deliberately NOT in this scope (it predates
+    claims entirely) - it is `legacy`'s to judge, after the book upload.
 
   * `legacy` - every OTHER automatic placement on a project-bin line that no EXTERNAL
     attribution names the row's own sales order for (captain's extension, 2 Sep 2026).
@@ -38,6 +40,10 @@ Run from sorento_crm_backend/:
     python scripts/repair_project_bin_self_claims.py --scope legacy           # dry run
     python scripts/repair_project_bin_self_claims.py --scope legacy --apply
     python scripts/repair_project_bin_self_claims.py --scope both
+    python scripts/repair_project_bin_self_claims.py --scope legacy --company <uuid>
+
+Company-scoped, always. This is raw SQL, so the ORM's isolation filter never sees it;
+`--company` names one and the default is the incumbent (`SRT`).
 
 Deliberately NOT an Alembic migration. `alembic upgrade` runs unattended on every deploy and
 this repair has a prerequisite a deploy cannot satisfy (the book re-upload above), so it is
@@ -51,6 +57,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from typing import Optional
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -93,16 +100,32 @@ WITH bin_link AS (
                                                                sa.warehouse_id)
      WHERE l.auto IS TRUE
        AND COALESCE(w.segment, 'dealer') = 'project'
+       -- COMPANY SCOPE, by hand (S8, review of PR #490). This is raw SQL, so the ORM's
+       -- own isolation filter never sees it: without the predicate a single-company
+       -- operator running the repair would delete another company's placements, which is
+       -- the one mistake a delete script must not be able to make. NULL `company_id` rows
+       -- predate the stamp and belong to the incumbent company, so they are included.
+       AND (l.company_id = :company OR l.company_id IS NULL)
 )
 """
 
-#: `today`: the target carries NOTHING but self-written `order_inquiry` claims made on or
-#: after the cut-off. Any other claim - an older one, or one from a real feed - means this
-#: link is not the born-claimed pass's doing and is left for the `legacy` pass to judge.
+#: `today`: the target carries AT LEAST ONE self-written `order_inquiry` claim from the
+#: cut-off onward - the born-claimed pass's own signature - and NOTHING ELSE. The second
+#: half alone is vacuously true of a line with NO claims at all, which is every
+#: pre-claims-era automatic link (S2, review of PR #490): without the EXISTS this scope
+#: swept those up too, before the book upload that is meant to justify them, and its own
+#: docstring promised the opposite. They are `legacy`'s to judge, after the upload.
 _TODAY = _POPULATION + """
 SELECT link_id, row_id, claim_id, document, item_code, so_number, qty, linked_at
   FROM bin_link b
- WHERE NOT EXISTS (
+ WHERE EXISTS (
+        SELECT 1
+          FROM scm.order_link_claim c
+         WHERE (c.po_line_id = b.target_id OR c.spo_allocation_id = b.target_id)
+           AND c.source = 'order_inquiry'
+           AND c.claimed_at >= :cut_off
+       )
+   AND NOT EXISTS (
         SELECT 1
           FROM scm.order_link_claim c
          WHERE (c.po_line_id = b.target_id OR c.spo_allocation_id = b.target_id)
@@ -128,15 +151,28 @@ SELECT link_id, row_id, claim_id, document, item_code, so_number, qty, linked_at
 """
 
 
-def _find(db, scope: str) -> list[dict]:
+def default_company_id(db) -> Optional[str]:
+    """The company the repair runs against when nobody names one.
+
+    `SRT` is the incumbent on every install this ships to; `--company` overrides it, and a
+    database that does not hold it fails loudly rather than running unscoped.
+    """
+    return db.execute(
+        text("SELECT id FROM companies WHERE code = 'SRT'")
+    ).scalar()
+
+
+def _find(db, scope: str, company_id: Optional[str] = None) -> list[dict]:
     sql = _TODAY if scope == "today" else _LEGACY
-    params = {"cut_off": CUT_OFF} if scope == "today" else {
-        "external": list(EXTERNAL_SOURCES)
-    }
+    params = {"company": company_id}
+    params.update(
+        {"cut_off": CUT_OFF} if scope == "today" else {"external": list(EXTERNAL_SOURCES)}
+    )
     return [dict(row._mapping) for row in db.execute(text(sql), params)]
 
 
-def _repair(db, scope: str, *, apply: bool) -> dict:
+def _repair(db, scope: str, *, apply: bool, company_id: Optional[str] = None,
+            found: Optional[list[dict]] = None) -> dict:
     """Delete the links this scope names, and the self-written claim behind each.
 
     The CLAIM goes only when it is the `order_inquiry` audit row this very placement wrote
@@ -145,7 +181,9 @@ def _repair(db, scope: str, *, apply: bool) -> dict:
     made at the same identity is somebody else's evidence and stays, whether or not this
     link survives.
     """
-    found = _find(db, scope)
+    # The caller may hand in the rows it already read (nit: this used to run the query a
+    # second time, so a dry run and the apply that followed it each paid for the walk).
+    found = _find(db, scope, company_id) if found is None else found
     if not found:
         print(f"[{scope}] nothing to repair")
         return {"links": 0, "claims": 0, "rows": 0}
@@ -197,7 +235,7 @@ def _refresh_rows(db, row_ids: list[str]) -> None:
     rows = (
         db.query(OrderInquiryRow).filter(OrderInquiryRow.id.in_(row_ids)).all()
     )
-    ProjectOrderInquiryService(db)._refresh_link_state(rows)
+    ProjectOrderInquiryService(db).refresh_link_state(rows)
 
 
 def main() -> int:
@@ -211,15 +249,26 @@ def main() -> int:
     )
     parser.add_argument("--apply", action="store_true",
                         help="Write the repair. Default is dry-run.")
+    parser.add_argument(
+        "--company", default=None,
+        help="Company id to scope the repair to. Defaults to the incumbent (`SRT`); this "
+             "is raw SQL, so nothing else applies the company filter for it.",
+    )
     args = parser.parse_args()
 
     scopes = ("today", "legacy") if args.scope == "both" else (args.scope,)
     db = SessionLocal()
     try:
+        company_id = args.company or default_company_id(db)
+        if not company_id:
+            print("no company to scope to: name one with --company")
+            return 1
+        print(f"company {company_id}")
         touched: list[str] = []
         for scope in scopes:
-            found = _find(db, scope)
-            result = _repair(db, scope, apply=args.apply)
+            found = _find(db, scope, company_id)
+            result = _repair(db, scope, apply=args.apply, company_id=company_id,
+                             found=found)
             if args.apply and result["links"]:
                 touched.extend(sorted({f["row_id"] for f in found}))
         if args.apply:

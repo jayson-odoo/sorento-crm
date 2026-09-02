@@ -112,15 +112,49 @@ class _World:
         self.db.flush()
         return allocation
 
-    def claim(self, *, po_line_id=None, spo_allocation_id=None, resolved=True) -> None:
-        """G12's own count treats ANY claim as "claimed" - resolved or not (the
-        module's own docstring: "an UNRESOLVED claim ... still says somebody typed a
-        reference for this line")."""
+    def sales_order_line(self, *, qty=10, delivered=0, line_status="open") -> str:
+        """A CORE sales-order line for a claim to RESOLVE onto.
+
+        The count is the exact complement of the lock (S4), and the lock reads only claims
+        it can join through `so_line_id` - so a claim with no sales line behind it opens
+        nothing, and the fixture has to be able to build the resolved case as well as the
+        unresolved one.
+        """
+        so_id, line_id = _uid(), _uid()
+        self.db.execute(
+            text(
+                "INSERT INTO sales_orders (id, company_id, so_number, order_date, status) "
+                "VALUES (:i, :c, :n, :d, 'open')"
+            ),
+            {"i": so_id, "c": self.company_id, "n": f"{MARKER}-SO-{_uid()[:8]}",
+             "d": date(2026, 7, 1)},
+        )
+        self.db.execute(
+            text(
+                "INSERT INTO sales_order_lines (id, company_id, sales_order_id, "
+                "product_id, qty_ordered, qty_delivered, line_status) "
+                "VALUES (:i, :c, :so, :p, :q, :qd, :ls)"
+            ),
+            {"i": line_id, "c": self.company_id, "so": so_id, "p": self.product.id,
+             "q": qty, "qd": delivered, "ls": line_status},
+        )
+        self.db.flush()
+        return line_id
+
+    def claim(self, *, po_line_id=None, spo_allocation_id=None, resolved=True,
+              so_line_id=None) -> None:
+        """One claim on a line. `resolved=True` (the default) gives it a real, OPEN core
+        sales-order line, which is what actually opens the line to the automatic pass;
+        `resolved=False` leaves both `so_line_id` and `resolved_at` NULL, the state a book
+        claim sits in until the sales order is uploaded."""
+        if resolved and so_line_id is None:
+            so_line_id = self.sales_order_line()
         self.db.execute(
             text(
                 "INSERT INTO order_link_claim (id, company_id, so_number, po_number, "
-                "item_code, source, po_line_id, spo_allocation_id, resolved_at) "
-                "VALUES (:i, :c, :son, :pon, NULL, 'po_history', :pol, :spo, "
+                "item_code, source, po_line_id, spo_allocation_id, so_line_id, "
+                "resolved_at) "
+                "VALUES (:i, :c, :son, :pon, NULL, 'po_history', :pol, :spo, :sol, "
                 ":resolved_at)"
             ),
             {
@@ -130,17 +164,8 @@ class _World:
                 "pon": f"{MARKER}-PO",
                 "pol": po_line_id,
                 "spo": spo_allocation_id,
-                "resolved_at": None,
-            }
-            if not resolved
-            else {
-                "i": _uid(),
-                "c": self.company_id,
-                "son": f"{MARKER}-SO",
-                "pon": f"{MARKER}-PO",
-                "pol": po_line_id,
-                "spo": spo_allocation_id,
-                "resolved_at": date(2026, 8, 15),
+                "sol": so_line_id if resolved else None,
+                "resolved_at": date(2026, 8, 15) if resolved else None,
             },
         )
         self.db.flush()
@@ -172,13 +197,30 @@ def test_a_claim_on_the_line_removes_it_from_the_count(world):
     assert count_unclaimed_project_bin_lines(world.db, world.company_id) == 0
 
 
-def test_an_unresolved_claim_still_removes_it_from_the_count(world):
-    """"Claimed" means named by a claim AT ALL - the SO side arriving later does not
-    make the line count as unattributed again in the meantime."""
+def test_an_unresolved_claim_leaves_the_line_counted(world):
+    """The count is the exact COMPLEMENT of the lock (S4, review of PR #490).
+
+    It used to treat any claim row as "claimed", including one whose sales order has not
+    been uploaded - but the lock opens a line only for a claim it can join through
+    `so_line_id`, so those lines stayed refused to the automatic pass. Joey chased the
+    number to zero in AutoCount and nothing unlocked. A line whose only claim is
+    unresolved is still work to do, so it is still counted.
+    """
     made = world.purchase_order(f"{MARKER}-PO-3")
     world.claim(po_line_id=made["bin_line"].id, resolved=False)
 
-    assert count_unclaimed_project_bin_lines(world.db, world.company_id) == 0
+    assert count_unclaimed_project_bin_lines(world.db, world.company_id) == 1
+
+
+def test_a_settled_sales_order_leaves_the_line_counted(world):
+    """Same rule from the other side: a claim whose sales-order line has been delivered
+    reserves nothing and dedicates nothing (G7), so it opens nothing - and a line whose
+    only claim is settled is unattributed again, not attributed for ever."""
+    made = world.purchase_order(f"{MARKER}-PO-3B")
+    settled = world.sales_order_line(qty=10, delivered=10)
+    world.claim(po_line_id=made["bin_line"].id, so_line_id=settled)
+
+    assert count_unclaimed_project_bin_lines(world.db, world.company_id) == 1
 
 
 def test_an_unclaimed_spo_allocation_at_a_project_bin_is_counted_too(world):

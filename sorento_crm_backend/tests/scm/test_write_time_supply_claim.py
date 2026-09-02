@@ -295,9 +295,16 @@ def test_the_cascade_never_claims_a_project_bin_line_it_did_not_create(db):
         ),
         {"i": str(leg["inquiry_row"].so_line_id)},
     ).scalar()
+    # The DOCUMENT'S OWN number, never a made-up one (nit, review of PR #490): the claim's
+    # identity is (company, SO, PO, item), so a claim naming a purchase order that does not
+    # exist would be a different pairing from the one the book would have written, and the
+    # control would prove nothing about the line under test.
+    book_po_number = db.execute(
+        text("SELECT po_number FROM purchase_orders WHERE id = :i"), {"i": po_id}
+    ).scalar()
     order_link_service.claim_placed_on_po(
         db, company_id=None, so_number=_so_ref(db, leg["pso"].id),
-        po_number=f"{MARKER}-book", item_code=leg["inquiry_row"].item_code,
+        po_number=book_po_number, item_code=leg["inquiry_row"].item_code,
         so_line_id=core_line_id, po_line_id=line_id,
         source=order_link_service.SOURCE_PO_UPLOAD,
     )
@@ -607,3 +614,245 @@ def test_the_repair_undoes_the_born_claimed_pass_and_spares_a_real_attribution(d
     assert _linked(db, manual["inquiry_row"].id) == 10.0, "a human link is never touched"
 
     assert repair._find(db, "today") == [], "idempotent: a second run finds nothing"
+
+
+# ---------------------------------------------------- review round 2 (B1-B4, S1-S3)
+
+
+def test_a_placement_on_another_line_never_repoints_the_books_claim(db):
+    """B1. A claim's identity is DOCUMENT-level - (company, SO, PO, item) - while its
+    `po_line_id` names ONE line of that document. `claim_placed_on_po` used to overwrite
+    that pointer on every placement, so linking a row to line B of a purchase order moved
+    the book's own claim off line A, the line it bought: A was left carrying no claim at
+    all, which under G12 means unattributed and locked to the automatic pass for ever.
+
+    Worst on a `po_history` claim with a NULL `item_code`, which matches every item on the
+    order and so was repointed by any placement anywhere on it.
+    """
+    from tests.scm.test_channel_read_model import _core_so_line
+    from tests.scm.test_m3_run import _mk_product
+
+    bin_id = _project_bin(db, f"{MARKER}-IB-{uuid.uuid4().hex[:6].upper()}")
+    pid = _mk_product(db, f"{MARKER}-{uuid.uuid4().hex[:6].upper()}")
+    po_id, line_a = _draft_line(db, product_id=pid, warehouse_id=bin_id, qty=50)
+    _, line_b = _draft_line(db, product_id=pid, warehouse_id=bin_id, qty=50,
+                            po_id=po_id, number="already")
+    po_number = db.execute(
+        text("SELECT po_number FROM purchase_orders WHERE id = :i"), {"i": po_id}
+    ).scalar()
+
+    so, so_line = _core_so_line(db, product_id=pid, warehouse_id=bin_id, qty=50,
+                                demand_class="project")
+    order_link_service.claim_placed_on_po(
+        db, company_id=None, so_number=so.so_number, po_number=po_number,
+        item_code=None, so_line_id=str(so_line.id), po_line_id=line_a,
+        source=order_link_service.SOURCE_PO_UPLOAD,
+    )
+    db.flush()
+
+    # The SAME pairing restated while a placement lands on the OTHER line.
+    order_link_service.claim_placed_on_po(
+        db, company_id=None, so_number=so.so_number, po_number=po_number,
+        item_code=None, so_line_id=str(so_line.id), po_line_id=line_b,
+    )
+    db.flush()
+
+    pointed_at = db.execute(
+        text("SELECT po_line_id FROM scm.order_link_claim WHERE po_number = :p"),
+        {"p": po_number},
+    ).scalar()
+    assert str(pointed_at) == line_a, (
+        "the placement repointed the book's claim off the line the book bought"
+    )
+
+
+def test_a_sales_order_lines_need_is_reserved_once_across_its_documents(db):
+    """B2, first shape. SO line of 100 with 70 placed on PO-A and 10 on PO-B still needs
+    20 - so 20 is reserved, once, on the first document in order. Reserving the whole live
+    outstanding per claim gave 30 + 90 = 120 against that 20, and made PO-B read as fully
+    spoken for when 90 of it was free.
+    """
+    from tests.scm.test_channel_read_model import _confirmed_leg
+    from tests.scm.test_m3_run import _mk_product, _mk_warehouse
+
+    actor = seed_user(db, None)
+    pool = _mk_warehouse(db, f"{MARKER}POOL{uuid.uuid4().hex[:5].upper()}")
+    pid = _mk_product(db, f"{MARKER}-{uuid.uuid4().hex[:6].upper()}")
+
+    leg = _confirmed_leg(db, product_id=pid, warehouse_id=pool, buy_qty=100)
+    row = leg["inquiry_row"]
+    row.item_code = db.execute(
+        text("SELECT product_code FROM products WHERE id = :i"), {"i": pid}
+    ).scalar()
+    db.flush()
+
+    po_a, line_a = _draft_line(db, product_id=pid, warehouse_id=pool, qty=100)
+    po_b, line_b = _draft_line(db, product_id=pid, warehouse_id=pool, qty=100)
+    PurchaseOrderService(db).bulk_confirm([po_a, po_b], actor=actor)
+
+    # Place 70 on A and 10 on B by hand, so the row has 20 of its 100 still to find.
+    from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+
+    service = ProjectOrderInquiryService(db)
+    for link in service._links_of(str(row.id)):
+        db.delete(link)
+    db.flush()
+    service.refresh_link_state([row])
+    db.flush()
+    ProjectOrderInquiryService(db).place_on_po_allocations(
+        str(row.id),
+        [{"po_line_id": line_a, "qty": 70}, {"po_line_id": line_b, "qty": 10}],
+        actor_user_id=actor,
+    )
+
+    reservations = order_link_service.reservations_by_target(
+        db, target_ids=[line_a, line_b]
+    )
+    total = sum(
+        float(c["reserved"]) for claims in reservations.values() for c in claims
+    )
+    assert total == 20.0, (
+        "the line's unplaced need is reserved ONCE across its documents, not per claim"
+    )
+
+
+def test_a_partial_link_on_a_pool_line_does_not_reserve_more_than_the_line_holds(db):
+    """B2, second shape. A claim can never reserve more of a document than the document
+    has: the reservation is capped at that line's own open capacity. A 200-unit sales
+    order line that has placed 10 on a 30-unit pool line reserves at most the 30, not the
+    190 it still needs everywhere else in the world."""
+    from tests.scm.test_channel_read_model import _confirmed_leg
+    from tests.scm.test_m3_run import _mk_product, _mk_warehouse
+
+    actor = seed_user(db, None)
+    pool = _mk_warehouse(db, f"{MARKER}POOL{uuid.uuid4().hex[:5].upper()}")
+    pid = _mk_product(db, f"{MARKER}-{uuid.uuid4().hex[:6].upper()}")
+
+    leg = _confirmed_leg(db, product_id=pid, warehouse_id=pool, buy_qty=200)
+    row = leg["inquiry_row"]
+    row.item_code = db.execute(
+        text("SELECT product_code FROM products WHERE id = :i"), {"i": pid}
+    ).scalar()
+    db.flush()
+
+    po_id, line_id = _draft_line(db, product_id=pid, warehouse_id=pool, qty=30)
+    PurchaseOrderService(db).bulk_confirm([po_id], actor=actor)
+
+    reservations = order_link_service.reservations_by_target(db, target_ids=[line_id])
+    reserved = sum(float(c["reserved"]) for c in reservations.get(line_id, []))
+    assert reserved <= 30.0, (
+        "a claim reserved more of the document than the document holds"
+    )
+
+
+def test_a_person_may_link_a_fully_dedicated_line_by_hand(db):
+    """B3, AC-6.5's "manual override stays". The dialog greys a dedicated line and still
+    offers it, and G12's whole answer for an unattributed project bin is "link it
+    manually" - but the validation measured a manual allocation against the
+    dedication-reduced `remaining`, so exactly those links came back 409. A person is
+    measured against what the line ACTUALLY has left."""
+    from tests.scm.test_channel_read_model import _confirmed_leg, _core_so_line
+    from tests.scm.test_m3_run import _mk_product
+    from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+
+    bin_id = _project_bin(db, f"{MARKER}-IB-{uuid.uuid4().hex[:6].upper()}")
+    pid = _mk_product(db, f"{MARKER}-{uuid.uuid4().hex[:6].upper()}")
+    po_id, line_id = _draft_line(db, product_id=pid, warehouse_id=bin_id, qty=40)
+    db.execute(text("UPDATE purchase_orders SET status = 'active' WHERE id = :i"),
+               {"i": po_id})
+    po_number = db.execute(
+        text("SELECT po_number FROM purchase_orders WHERE id = :i"), {"i": po_id}
+    ).scalar()
+
+    # Somebody else's order claims the whole line.
+    other, other_line = _core_so_line(db, product_id=pid, warehouse_id=bin_id, qty=40,
+                                      demand_class="project")
+    order_link_service.claim_placed_on_po(
+        db, company_id=None, so_number=other.so_number, po_number=po_number,
+        item_code=None, so_line_id=str(other_line.id), po_line_id=line_id,
+        source=order_link_service.SOURCE_PO_UPLOAD,
+    )
+    db.flush()
+
+    leg = _confirmed_leg(db, product_id=pid, warehouse_id=bin_id, buy_qty=10)
+    row = leg["inquiry_row"]
+    service = ProjectOrderInquiryService(db)
+    candidate = next(
+        c for c in service._candidates_for_row(row, manual=True)
+        if c["target_id"] == line_id
+    )
+    assert candidate["remaining"] == 0, "the automatic pass sees nothing left"
+    assert candidate["raw_remaining"] == 40, "no link has taken any of it"
+
+    ProjectOrderInquiryService(db).place_on_po_allocations(
+        str(row.id), [{"po_line_id": line_id, "qty": 10}], actor_user_id=None,
+    )
+
+    assert _linked(db, row.id) == 10.0, "the override the dialog offers was refused"
+    note = db.execute(
+        text("SELECT note FROM projects.order_inquiry_rows WHERE id = :i"),
+        {"i": str(row.id)},
+    ).scalar()
+    assert po_number in (note or ""), "a manual override is audited like any placement"
+
+
+def test_an_unresolvable_claim_is_never_stamped_resolved(db):
+    """S3. `resolve()` only ever looks at claims where `resolved_at IS NULL`, and
+    dedication reads only claims it can join through `so_line_id`. Stamping a claim
+    resolved before its sales line is known therefore retired it permanently: invisible to
+    both. Reachable through `supply_claim` whenever a project line carries no
+    `core_sales_order_line_id` yet."""
+    claim = order_link_service.claim_placed_on_po(
+        db, company_id=None, so_number=f"{MARKER}-SO-{uuid.uuid4().hex[:6].upper()}",
+        po_number=f"{MARKER}-PO-{uuid.uuid4().hex[:6].upper()}", item_code=None,
+        so_line_id=None, po_line_id=None,
+        source=order_link_service.SOURCE_CRM_SUPPLY,
+    )
+    db.flush()
+    assert claim.resolved_at is None, (
+        "a claim with neither side found was retired before the resolver could finish it"
+    )
+
+
+def test_the_today_repair_leaves_a_claimless_orphan_link_alone(db):
+    """S2. `today` is scoped to the born-claimed pass's own signature - a self-written
+    `order_inquiry` claim from the cut-off onward. Its NOT EXISTS half is vacuously true
+    of a link whose line carries NO claim at all, which is every pre-claims-era automatic
+    link, so without the matching EXISTS this scope swept those up too - before the book
+    upload that is meant to justify them, and against its own docstring."""
+    import importlib.util
+    import os
+
+    from tests.scm.test_channel_read_model import _confirmed_leg
+    from tests.scm.test_m3_run import _mk_product
+
+    path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        "scripts", "repair_project_bin_self_claims.py",
+    )
+    spec = importlib.util.spec_from_file_location("_repair_s2", path)
+    repair = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(repair)
+
+    bin_id = _project_bin(db, f"{MARKER}-IB-{uuid.uuid4().hex[:6].upper()}")
+    pid = _mk_product(db, f"{MARKER}-{uuid.uuid4().hex[:6].upper()}")
+    orphan = _confirmed_leg(db, product_id=pid, warehouse_id=bin_id, buy_qty=12)
+    _, line_id = _draft_line(db, product_id=pid, warehouse_id=bin_id, qty=12)
+    db.execute(
+        text(
+            "INSERT INTO projects.order_inquiry_links (id, row_id, po_line_id, document, "
+            "qty, auto, claim_id, linked_at) "
+            "VALUES (:i, :r, :pol, :doc, 12, true, NULL, :at)"
+        ),
+        {"i": _u(), "r": str(orphan["inquiry_row"].id), "pol": line_id,
+         "doc": f"{MARKER}-orphan", "at": datetime(2026, 8, 1, 9, 0, 0)},
+    )
+    db.flush()
+
+    company_id = repair.default_company_id(db)
+    found = {f["link_id"] for f in repair._find(db, "today", company_id)}
+    assert not found, "the claimless orphan is legacy's to judge, after the book upload"
+    assert any(
+        str(f["row_id"]) == str(orphan["inquiry_row"].id)
+        for f in repair._find(db, "legacy", company_id)
+    ), "and legacy does see it"

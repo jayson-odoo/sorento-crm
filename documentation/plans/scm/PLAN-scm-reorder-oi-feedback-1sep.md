@@ -68,7 +68,13 @@ UAC: `scm-reorder-oi-feedback-1sep-acceptance-criteria.md`
   it to claimed. Pool-destination documents keep today's rules. Safe against double-buying
   because the reorder engine nets open PO qty by location regardless of claims - the
   unclaimed line still counts as supply in the plan; only the OI cover state waits for
-  attribution. The import result + PO view surface the unclaimed-project-bin count so Joey
+  attribution. MEASURED (S6, 2 Sep review round 2): the engine sizes on
+  `net = net_position + po_ordered`, and `scm.po_ordered_v` sums every OPEN line of an
+  active purchase order by `(product, warehouse)`, joining neither `scm.order_link_claim`
+  nor a warehouse's `segment` - so an unattributed project-bin line IS counted as supply
+  and there is no double-buy. (`scm.on_order_v` alone is SPO-only and has been since
+  migration 337; that is a different fact and not the one this rests on.)
+  The import result + PO view surface the unclaimed-project-bin count so Joey
   backfills FromSODocList in AutoCount.
   - WRITE-TIME CLAIMING (captain, 2 Sep 2026 - this SUPERSEDES the withdrawn
     "born claimed" mechanism, which is deleted, not disabled). The rule, stated
@@ -103,6 +109,45 @@ UAC: `scm-reorder-oi-feedback-1sep-acceptance-criteria.md`
     stops a claim being subtracted twice once its own SO has placed part of it - now
     measured off `OrderInquiryLink.claim_id` rather than guessed from the claim's
     source (`_reserved_for_netting`).
+- G16 (2 Sep, review round 2) A SALES ORDER LINE'S NEED IS RESERVED ONCE, ACROSS ALL OF
+  ITS DOCUMENTS. A claim carries no quantity, so the reservation is derived - and deriving
+  it per CLAIM over-reserved twice over: a line claimed on two documents reserved its whole
+  outstanding on each (SO line 100 with 70 placed on PO-A and 10 on PO-B reserved 30 + 90 =
+  120 against a need of 20), and nothing capped a reservation at the size of the document
+  carrying it. The walk, per SALES ORDER LINE: need = live outstanding less everything
+  already PLACED under its own claims; its claims are visited in document order; each
+  reserves min(that document's own open capacity, whatever of the need is still
+  unreserved). `order_link_service.reservations_by_target` returns both figures - `reserved`
+  (the walked share, what every netting consumer reads) and `outstanding` (the raw live
+  outstanding, kept because AC-6.9 reports it). PENDING CAPTAIN CONFIRM.
+- G17 (2 Sep, review round 2) ATTRIBUTION IS FILLED, NEVER REPOINTED. A claim's identity is
+  document-level - (company, SO, PO, item) - while `po_line_id` names one line of it. A
+  placement on a DIFFERENT line of the same order used to move the book's pointer off the
+  line the book bought, leaving that line unattributed and therefore locked for ever (worst
+  on a `po_history` claim with a NULL item code, which matches every item on the order).
+  Each pointer is now written only while it is still NULL. `resolved_at` is likewise stamped
+  only once BOTH sides are known: `resolve()` looks only at unresolved claims, so stamping
+  it early retired a claim before it was finished and hid it from dedication for good.
+- G18 (2 Sep, review round 2) THE MANUAL OVERRIDE IS REAL (AC-6.5). A person naming a line
+  is validated against `raw_remaining` - what the line actually has left after real LINKS -
+  never against the dedication-reduced `remaining` the automatic pass uses. The dialog greys
+  a dedicated line and still offers it, and G12's own answer for an unattributed bin is
+  "link it manually"; validating the override against the automatic figure refused exactly
+  those links with a 409.
+- G19 (2 Sep, review round 2) THE UNCLAIMED COUNT IS THE EXACT COMPLEMENT OF THE LOCK. It
+  counted "no claim row at all" while the lock opens only for a claim that has RESOLVED onto
+  a core sales-order line whose order is still UNSETTLED - so Joey could chase the number to
+  zero and the lines stayed locked. Both now ask the same question.
+- KNOWN LIMITATION (S7, 2 Sep, documented not fixed): claim identity is document-level, so
+  ONE purchase order carrying two lines of the SAME item at two different project bins for
+  two different sales orders cannot have both attributed - the second claim resolves onto
+  whichever line the resolver reaches first, and the other stays unattributed and
+  manual-link only. It needs a line-grained identity (the line number or the location in the
+  key) and a migration, so it waits for a case that actually occurs; AC-6.11's count makes
+  such a line visible rather than silent. Related: an unreconciled project sales order (no
+  `autocount_doc_no`, so its claims are written under the provisional reference) cannot
+  match a claim the BOOK wrote under the AutoCount number - the two identities are different
+  strings until reconciliation happens.
 - G13 (2 Sep) THE OUTSTANDING BOOK WRITES CLAIMS (D2). `outstanding_import_service`
   resolved `FromSODocList` and threw the value away, so the feed most attribution
   arrives on could not seed a single dedication. It now writes one `po_upload` claim per

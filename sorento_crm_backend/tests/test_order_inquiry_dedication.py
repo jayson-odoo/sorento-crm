@@ -696,7 +696,12 @@ def test_ac_6_9_a_manual_link_on_an_unclaimed_project_bin_line_writes_a_claim(wo
     )
     assert dedicated_to == "ZZT-SO-6-9"
     assert own_claim is False
-    assert reserved == Decimal("15")
+    # ZERO, not 15 (B2, review of PR #490): the order has ALREADY PLACED its whole 15 on
+    # this line, so there is nothing of its need left to reserve here. `reserved` is what
+    # is still to come, and the placement itself is already netted out of the line by its
+    # own link. The DEDICATION stands regardless - the line is still SO-6-9's, which is
+    # what `dedicated_to` says and what greys it for everybody else.
+    assert reserved == Decimal("0")
 
     # And read back against ITS OWN identity, the line is its own claim, not a
     # dedication to somebody else - the same distinction AC-6.4 ranks on.

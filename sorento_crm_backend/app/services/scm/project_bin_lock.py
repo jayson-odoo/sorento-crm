@@ -7,22 +7,55 @@ matters to Joey is what remains unclaimed after this pass runs, not what this pa
 touched. Surfaced on the PO/SPO upload result and as a PO-view filter, so the backfill
 has a number to chase to zero rather than a silent gap.
 
-"Claimed" here means named by a `scm.order_link_claim` at all - resolved or not. An
-UNRESOLVED claim (the SO side not yet uploaded) still says somebody typed a reference for
-this line; it is the ABSENCE of any claim that leaves G12's lock with nothing to open
-except a manual link.
+"Claimed" here is the EXACT COMPLEMENT of what the lock opens on (S4, review of PR #490),
+and it did not use to be. The count asked "does any claim row name this line", while
+`_dedication_for_target` - the lock itself - opens a line only for a claim that is
+RESOLVED (it joins through `so_line_id`, so an unresolved claim is invisible to it) and
+whose sales order line is still UNSETTLED (a delivered or cancelled order reserves nothing
+and dedicates nothing, G7). The two disagreed in exactly the direction that wastes Joey's
+time: he chased the count to zero in AutoCount and the lines stayed locked, because the
+claims he had written had never resolved onto a sales order this database holds.
+
+So a line counts as CLAIMED here only when a claim names it, that claim has found its
+sales-order line, and that line is open. Anything else is what the automatic pass will
+still refuse, which is what the number is for.
 """
 from __future__ import annotations
 
 from typing import Optional
 
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models.inventory import Warehouse
+from app.models.order import SalesOrderLine
 from app.models.procurement import InboundShipment, PurchaseOrderLine, SPOAllocation
 from app.models.scm import OrderLinkClaim
 from app.services.scm import spo_supply
 from app.services.scm.pool_predicate import PROJECT_SEGMENT
+
+
+def _unlocking_claim_exists(target_clause):
+    """EXISTS a claim that would actually OPEN this line to the automatic pass.
+
+    The same three conditions `_dedication_for_target` applies, said in SQL: the claim
+    names the line, it has RESOLVED onto a core sales-order line (dedication reads only
+    claims it can join through `so_line_id`), and that line is still OPEN with something
+    left to deliver (a settled order reserves nothing and dedicates nothing, G7).
+    """
+    return (
+        select(OrderLinkClaim.id)
+        .select_from(OrderLinkClaim)
+        .join(SalesOrderLine, SalesOrderLine.id == OrderLinkClaim.so_line_id)
+        .where(
+            target_clause,
+            SalesOrderLine.line_status == "open",
+            func.coalesce(SalesOrderLine.qty_ordered, 0)
+            - func.coalesce(SalesOrderLine.qty_delivered, 0)
+            > 0,
+        )
+        .exists()
+    )
 
 
 def count_unclaimed_project_bin_lines(
@@ -35,11 +68,10 @@ def count_unclaimed_project_bin_lines(
     po_query = (
         db.query(PurchaseOrderLine.id)
         .join(Warehouse, Warehouse.id == PurchaseOrderLine.warehouse_id)
-        .outerjoin(OrderLinkClaim, OrderLinkClaim.po_line_id == PurchaseOrderLine.id)
         .filter(
             PurchaseOrderLine.line_status == "open",
             Warehouse.segment == PROJECT_SEGMENT,
-            OrderLinkClaim.id.is_(None),
+            ~_unlocking_claim_exists(OrderLinkClaim.po_line_id == PurchaseOrderLine.id),
         )
     )
     spo_query = (
@@ -48,13 +80,12 @@ def count_unclaimed_project_bin_lines(
         .outerjoin(
             InboundShipment, InboundShipment.id == SPOAllocation.inbound_shipment_id
         )
-        .outerjoin(
-            OrderLinkClaim, OrderLinkClaim.spo_allocation_id == SPOAllocation.id
-        )
         .filter(
             *spo_supply.open_incoming_clauses(),
             Warehouse.segment == PROJECT_SEGMENT,
-            OrderLinkClaim.id.is_(None),
+            ~_unlocking_claim_exists(
+                OrderLinkClaim.spo_allocation_id == SPOAllocation.id
+            ),
         )
     )
     if company_id:
@@ -75,12 +106,11 @@ def has_unclaimed_project_bin_line(db: Session):
     return (
         db.query(PurchaseOrderLine.id)
         .join(Warehouse, Warehouse.id == PurchaseOrderLine.warehouse_id)
-        .outerjoin(OrderLinkClaim, OrderLinkClaim.po_line_id == PurchaseOrderLine.id)
         .filter(
             PurchaseOrderLine.purchase_order_id == PurchaseOrder.id,
             PurchaseOrderLine.line_status == "open",
             Warehouse.segment == PROJECT_SEGMENT,
-            OrderLinkClaim.id.is_(None),
+            ~_unlocking_claim_exists(OrderLinkClaim.po_line_id == PurchaseOrderLine.id),
         )
         .exists()
     )

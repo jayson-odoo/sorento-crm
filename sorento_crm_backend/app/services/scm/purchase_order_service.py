@@ -517,32 +517,14 @@ class PurchaseOrderService:
         # `order_link_service.reservations_by_target` the cascade's own netting uses, so
         # the panel and the walk cannot come to two answers.
         #
-        # Netted against what each claim has ALREADY placed (`OrderInquiryLink.claim_id`),
-        # for the reason `_reserved_for_netting` gives on the other side: `allocated` above
-        # has counted those links once, and a reservation the same order has already taken
-        # up is not a second call on the line.
+        # The reservation arithmetic itself is `reservations_by_target`'s (B2): each
+        # claim's `reserved` is its share of the claiming SALES ORDER LINE's still
+        # unplaced need, capped at this document's own capacity and handed out once
+        # across every document that line claims. Nothing is recomputed here - a panel
+        # that did its own sums is how it comes to disagree with the walk behind it.
         reservations = order_link_service.reservations_by_target(
             self.db, target_ids=list(lines)
         )
-        # Summed per CLAIM across every line it backs, never per (claim, line): a claim's
-        # identity is (company, SO number, PO number, item), a DOCUMENT-level pairing, so
-        # one row whose need is spread over two lines of the same order writes two links
-        # under one claim while the claim's own `po_line_id` names only one of them. Per
-        # line, the rest of the reservation reads as untaken and comes off `free` twice.
-        # Scoped to the claims THIS panel is about (`reservations`), so the sum is over a
-        # handful of rows rather than the whole link table.
-        linked_by_claim: dict[str, float] = {}
-        claim_ids = [c["claim_id"] for claims in reservations.values() for c in claims]
-        if claim_ids:
-            for claim_id, qty in (
-                self.db.query(
-                    OrderInquiryLink.claim_id, func.sum(OrderInquiryLink.qty)
-                )
-                .filter(OrderInquiryLink.claim_id.in_(claim_ids))
-                .group_by(OrderInquiryLink.claim_id)
-                .all()
-            ):
-                linked_by_claim[str(claim_id)] = float(qty or 0)
 
         dedications: dict[str, list[dict]] = {}
         reserved: dict[str, float] = {}
@@ -553,12 +535,13 @@ class PurchaseOrderService:
                     # A claim whose sales order line has settled reserves nothing and is
                     # not who the line is dedicated to any more (G7). The claim row stays.
                     continue
-                still = max(outstanding - linked_by_claim.get(claim["claim_id"], 0.0), 0.0)
+                still = float(claim["reserved"])
                 reserved[line_id] = reserved.get(line_id, 0.0) + still
                 dedications.setdefault(line_id, []).append({
                     "so_number": claim["so_number"],
-                    # What the claim reserves in full, and what of it is still to be
-                    # placed. The buyer reads the first and acts on the second.
+                    # What the claiming line still owes in FULL, and what of it this
+                    # document is holding. The buyer reads the first for context and acts
+                    # on the second, which is what comes off `free`.
                     "reserved": outstanding,
                     "unplaced": still,
                     "source": claim["source"],
@@ -1105,9 +1088,10 @@ class PurchaseOrderService:
         # drafted off different runs, and a run resolved once for the whole batch linked
         # every one of them under whichever plan came back first.
         bought: list[dict] = []
-        #: How many project-bin lines this confirm attributed to the rows that sized them
-        #: (G12 write-time claim). Reported so a confirm that could attribute nothing is
-        #: visible rather than silent.
+        #: How many order-inquiry ROWS this confirm attributed to the project-bin lines
+        #: that were bought for them (G12 write-time claim) - a report of work done, not a
+        #: count of claim inserts, since two rows of one sales order share a claim.
+        #: Reported so a confirm that could attribute nothing is visible rather than silent.
         claimed_lines = 0
         for pid in ids or []:
             po = (

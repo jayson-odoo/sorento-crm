@@ -30,7 +30,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional, Sequence
 
-from sqlalchemy import nullslast, or_
+from sqlalchemy import func, nullslast, or_
 from sqlalchemy.orm import Session
 
 from app.models.order import SalesOrder, SalesOrderLine
@@ -297,27 +297,62 @@ def claim_book_pairing(
     return claim
 
 
-def reservations_by_target(
-    db: Session, *, target_ids: Optional[Sequence[str]] = None
-) -> dict[str, list[dict]]:
-    """What every RESOLVED claim reserves, keyed by the PO line or SPO allocation it names.
+def _claim_capacity(db: Session, target_ids: set[str]) -> dict[str, Decimal]:
+    """Each document line's own OPEN capacity, keyed by target id.
 
-    G7 (`PLAN-scm-reorder-oi-feedback-1sep.md` S6): a claim carries no quantity of its own,
-    it reserves the claiming sales order LINE's LIVE outstanding - so a fulfilled or
-    cancelled line reserves nothing, whatever the claim still names, and the claim row is
-    never deleted to make that true. Joined rather than stored for exactly that reason.
+    `qty_ordered - qty_received` for a purchase-order line, `allocated_quantity -
+    quantity_received` for an SPO allocation - the line's own size, not what is left after
+    links. It is the ceiling B2 caps a reservation at: a claim cannot reserve more of a
+    document than the document has.
+    """
+    out: dict[str, Decimal] = {}
+    if not target_ids:
+        return out
+    wanted = list(target_ids)
+    for line_id, ordered, received in db.query(
+        PurchaseOrderLine.id, PurchaseOrderLine.qty_ordered, PurchaseOrderLine.qty_received
+    ).filter(PurchaseOrderLine.id.in_(wanted)):
+        out[str(line_id)] = max(_dec(ordered) - _dec(received), _ZERO)
+    for alloc_id, allocated, received in db.query(
+        SPOAllocation.id, SPOAllocation.allocated_quantity, SPOAllocation.quantity_received
+    ).filter(SPOAllocation.id.in_(wanted)):
+        out[str(alloc_id)] = max(_dec(allocated) - _dec(received), _ZERO)
+    return out
+
+
+def placed_by_claim(db: Session, claim_ids: Sequence[str]) -> dict[str, Decimal]:
+    """How much has already been PLACED under each claim, keyed by claim id.
+
+    A link carries the id of the claim it was written under
+    (`projects.order_inquiry_links.claim_id`), so this is the part of a reservation that is
+    no longer waiting to happen. Keyed by the CLAIM alone and never by `(claim, line)`: a
+    claim's identity is document-level, so one sales order spreading its need over two
+    lines of one purchase order writes two links under a single claim whose own
+    `po_line_id` can name only one of them.
+    """
+    out: dict[str, Decimal] = {}
+    wanted = [str(c) for c in claim_ids]
+    if not wanted:
+        return out
+    from app.models.project_so import OrderInquiryLink
+
+    for claim_id, qty in (
+        db.query(OrderInquiryLink.claim_id, func.sum(OrderInquiryLink.qty))
+        .filter(OrderInquiryLink.claim_id.in_(wanted))
+        .group_by(OrderInquiryLink.claim_id)
+    ):
+        out[str(claim_id)] = _dec(qty)
+    return out
+
+
+def _claim_rows(db: Session, *, target_ids=None, so_line_ids=None) -> list[dict]:
+    """Every RESOLVED claim naming a purchase line, as raw rows.
 
     `so_number` is read off the CLAIM's OWN column, never `SalesOrder.so_number` off the
     join: the write side (`ProjectOrderInquiryService.claim_identity`) stores
     `ProjectSalesOrder.autocount_doc_no or provisional_ref`, which is not always the
     reconciled core number this join can also reach, and comparing the two identities made
     a row's own claim unrecognisable as its own.
-
-    ONE reader, two consumers - the cascade's dedication netting
-    (`ProjectOrderInquiryService._claims_by_target`, whole table, cached per instance) and
-    the purchase order's "Allocated to" panel (`PurchaseOrderService._allocations_for`,
-    narrowed to one document's lines). A second spelling of "what does this claim reserve"
-    is how a panel and the walk behind it come to print different numbers for the same line.
     """
     query = (
         db.query(
@@ -325,7 +360,9 @@ def reservations_by_target(
             OrderLinkClaim.po_line_id,
             OrderLinkClaim.spo_allocation_id,
             OrderLinkClaim.so_number,
+            OrderLinkClaim.po_number,
             OrderLinkClaim.source,
+            OrderLinkClaim.so_line_id,
             SalesOrder.order_date,
             SalesOrderLine.qty_ordered,
             SalesOrderLine.qty_delivered,
@@ -334,48 +371,133 @@ def reservations_by_target(
         .join(SalesOrderLine, SalesOrderLine.id == OrderLinkClaim.so_line_id)
         .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
     )
-    if target_ids is None:
-        query = query.filter(
-            or_(
-                OrderLinkClaim.po_line_id.isnot(None),
-                OrderLinkClaim.spo_allocation_id.isnot(None),
-            )
-        )
-    else:
+    if so_line_ids is not None:
+        wanted = [str(x) for x in so_line_ids]
+        if not wanted:
+            return []
+        query = query.filter(OrderLinkClaim.so_line_id.in_(wanted))
+    elif target_ids is not None:
         wanted = [str(t) for t in target_ids]
         if not wanted:
-            return {}
+            return []
         query = query.filter(
             or_(
                 OrderLinkClaim.po_line_id.in_(wanted),
                 OrderLinkClaim.spo_allocation_id.in_(wanted),
             )
         )
-    out: dict[str, list[dict]] = {}
-    for (
-        claim_id,
-        po_line_id,
-        spo_allocation_id,
-        so_number,
-        source,
-        order_date,
-        qty_ordered,
-        qty_delivered,
-        line_status,
-    ) in query.all():
-        key = str(po_line_id or spo_allocation_id)
-        outstanding = (
-            _ZERO
-            if (line_status or "open") != "open"
-            else max(_dec(qty_ordered) - _dec(qty_delivered), _ZERO)
+    else:
+        query = query.filter(
+            or_(
+                OrderLinkClaim.po_line_id.isnot(None),
+                OrderLinkClaim.spo_allocation_id.isnot(None),
+            )
         )
-        out.setdefault(key, []).append(
+    rows = []
+    for (
+        claim_id, po_line_id, spo_allocation_id, so_number, po_number, source,
+        so_line_id, order_date, qty_ordered, qty_delivered, line_status,
+    ) in query.all():
+        target_id = str(po_line_id or spo_allocation_id or "")
+        if not target_id:
+            continue
+        rows.append({
+            "claim_id": str(claim_id),
+            "target_id": target_id,
+            "so_number": so_number,
+            "po_number": po_number,
+            "source": source,
+            "so_line_id": str(so_line_id),
+            "so_date": order_date,
+            # The claiming line's LIVE outstanding (G7): a fulfilled or cancelled line
+            # reserves nothing, whatever the claim still names, and the claim row is never
+            # deleted to make that true.
+            "outstanding": (
+                _ZERO
+                if (line_status or "open") != "open"
+                else max(_dec(qty_ordered) - _dec(qty_delivered), _ZERO)
+            ),
+        })
+    return rows
+
+
+def reservations_by_target(
+    db: Session, *, target_ids: Optional[Sequence[str]] = None
+) -> dict[str, list[dict]]:
+    """What every RESOLVED claim reserves, keyed by the PO line or SPO allocation it names.
+
+    **A sales order LINE's unplaced need is reserved ONCE, across all of its documents**
+    (B2, review of PR #490 - captain's ruling on the arithmetic, flagged pending confirm).
+    A claim carries no quantity of its own, so the figure has to be derived, and deriving
+    it PER CLAIM was wrong in two ways that both over-reserved:
+
+      * a line claimed on TWO documents reserved its whole outstanding on each of them.
+        SO line 100 with 70 placed on PO-A and 10 on PO-B reserved 30 + 90 = 120 against a
+        need of 20, and the 100 of PO-B read as fully spoken for;
+      * nothing capped a reservation at the size of the document it sat on, so one big
+        sales order line could reserve more of a purchase order than the purchase order
+        holds.
+
+    The walk, per SALES ORDER LINE: `need` is its live outstanding less everything already
+    PLACED under its own claims; its claims are visited in document order; each reserves
+    `min(that document's own open capacity, whatever of `need` is still unreserved)`. So
+    the same 20 above is reserved once, on the first document, and PO-B reserves nothing.
+
+    Each returned claim carries BOTH figures: `reserved`, the walked number every netting
+    consumer should read, and `outstanding`, the claiming line's raw live outstanding, kept
+    because AC-6.9 reports it as the audit figure.
+
+    ONE reader, two consumers - the cascade's dedication netting
+    (`ProjectOrderInquiryService._claims_by_target`) and the purchase order's "Allocated to"
+    panel (`PurchaseOrderService._allocations_for`). A second spelling of "what does this
+    claim reserve" is how a panel and the walk behind it come to print different numbers.
+
+    `target_ids` narrows what is RETURNED, never what is walked: a claim's siblings on
+    other documents decide how much of the need is left by the time this one is reached,
+    so they are read even when the caller only asked about one purchase order.
+    """
+    asked = _claim_rows(db, target_ids=target_ids)
+    if not asked:
+        return {}
+    # The whole SO LINE, not just the documents asked about: the walk below shares one
+    # need across every document a line claims, so a sibling claim left out would hand the
+    # same quantity out twice.
+    rows = _claim_rows(db, so_line_ids={r["so_line_id"] for r in asked})
+    capacity = _claim_capacity(db, {r["target_id"] for r in rows})
+    placed = placed_by_claim(db, [r["claim_id"] for r in rows])
+
+    by_so_line: dict[str, list[dict]] = {}
+    for row in rows:
+        by_so_line.setdefault(row["so_line_id"], []).append(row)
+
+    reserved_by_claim: dict[str, Decimal] = {}
+    for so_line_id, claims in by_so_line.items():
+        need = claims[0]["outstanding"]
+        for claim in claims:
+            need -= placed.get(claim["claim_id"], _ZERO)
+        need = max(need, _ZERO)
+        # Document order, so the same set of claims splits the same need the same way
+        # twice. The document NUMBER first (what a person reads), the claim id as the
+        # tie-break for two claims on one document.
+        for claim in sorted(claims, key=lambda c: (c["po_number"] or "", c["claim_id"])):
+            take = min(capacity.get(claim["target_id"], _ZERO), need)
+            take = max(take, _ZERO)
+            reserved_by_claim[claim["claim_id"]] = take
+            need -= take
+
+    wanted_targets = {r["target_id"] for r in asked}
+    out: dict[str, list[dict]] = {}
+    for row in rows:
+        if row["target_id"] not in wanted_targets:
+            continue
+        out.setdefault(row["target_id"], []).append(
             {
-                "claim_id": str(claim_id),
-                "so_number": so_number,
-                "source": source,
-                "so_date": order_date,
-                "outstanding": outstanding,
+                "claim_id": row["claim_id"],
+                "so_number": row["so_number"],
+                "source": row["source"],
+                "so_date": row["so_date"],
+                "outstanding": row["outstanding"],
+                "reserved": reserved_by_claim.get(row["claim_id"], _ZERO),
             }
         )
     for claims in out.values():
@@ -385,6 +507,23 @@ def reservations_by_target(
             key=lambda c: (c["so_date"] is None, c["so_date"] or date.max, c["claim_id"])
         )
     return out
+
+
+def _resolved_at(claim: OrderLinkClaim, now: datetime) -> Optional[datetime]:
+    """`now` once BOTH sides of the pairing are known, else NULL (review of PR #490, S3).
+
+    "Resolved" means the sales line and the purchase line have both been found - it is the
+    same test `resolve()` applies to a claim it fills in itself, and `resolve()` only ever
+    LOOKS at claims where `resolved_at IS NULL`. Stamping it on a claim whose `so_line_id`
+    is still NULL therefore retired the claim before it was finished: the resolver skipped
+    it for ever, and dedication - which reads only claims joined through `so_line_id` -
+    never saw it either. Reachable two ways: `supply_claim` claiming for an order-inquiry
+    row whose project line carries no `core_sales_order_line_id` yet, and any book claim
+    whose sales order has not been uploaded.
+    """
+    if claim.so_line_id and (claim.po_line_id or claim.spo_allocation_id):
+        return claim.resolved_at or now
+    return None
 
 
 def claim_placed_on_po(
@@ -428,11 +567,21 @@ def claim_placed_on_po(
         item_code=item_code,
     )
     if existing is not None:
+        # FILL, never REPOINT (review of PR #490, B1). Every pointer is written only when
+        # it is still NULL, because a claim's identity is DOCUMENT-level - (company, SO,
+        # PO, item) - while its `po_line_id` names ONE line of that document. A placement
+        # on a different line of the same purchase order used to move the book's own
+        # pointer off the line the book bought, which left that line carrying no claim at
+        # all: unattributed, and therefore locked to the automatic pass for ever (G12).
+        # A `po_history` claim with a NULL `item_code` is the worst case, because it
+        # matches every item on the order and so every placement anywhere on it moved the
+        # pointer again. The pairing is the fact; which line first resolved it stands.
         if existing.so_line_id is None:
             existing.so_line_id = so_line_id
-        existing.po_line_id = po_line_id
-        existing.spo_allocation_id = spo_allocation_id
-        existing.resolved_at = now
+        if existing.po_line_id is None and existing.spo_allocation_id is None:
+            existing.po_line_id = po_line_id
+            existing.spo_allocation_id = spo_allocation_id
+        existing.resolved_at = _resolved_at(existing, now)
         return existing
 
     claim = OrderLinkClaim(
@@ -445,8 +594,8 @@ def claim_placed_on_po(
         so_line_id=so_line_id,
         po_line_id=po_line_id,
         spo_allocation_id=spo_allocation_id,
-        resolved_at=now,
     )
+    claim.resolved_at = _resolved_at(claim, now)
     db.add(claim)
     db.flush()
     return claim

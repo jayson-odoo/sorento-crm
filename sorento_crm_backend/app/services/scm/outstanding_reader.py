@@ -476,7 +476,7 @@ def read_workbook(file_data: bytes, doc_type: str, resolver: AliasResolver) -> R
             "qty_ordered": ordered,
             "qty_fulfilled": fulfilled,
             # WHICH sales order this purchase line was bought for, as `FromSODocList`
-            # states it (migration 456). The only place either AutoCount purchase export
+            # states it (migration 459). The only place either AutoCount purchase export
             # names the pairing per LINE, and what G12's project-bin lock waits for: an
             # unattributed bin line is refused to the automatic pass, so a book that
             # states this column is how a weekly re-upload seeds dedication. Absent on

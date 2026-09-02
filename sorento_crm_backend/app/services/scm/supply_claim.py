@@ -57,11 +57,12 @@ def claim_created_supply(
 ) -> int:
     """Claim ONE created supply line for the order-inquiry rows it was created for.
 
-    Returns how many claims exist for it afterwards (created or already there) - the
-    caller reports it, and a re-run of the same write returns the same number rather than
-    doubling anything: `order_link_service.claim_placed_on_po` is get-or-create on
-    `uq_scm_order_link_claim_identity`, and a pairing the BOOK already states keeps its own
-    `po_history` / `po_upload` source rather than being relabelled.
+    Returns how many order-inquiry ROWS were attributed to it - which is not the same as
+    the number of claim rows written, because two rows of one sales order share a claim
+    (the identity is company + SO + PO + item). It is a report of work done, not a count of
+    inserts: `order_link_service.claim_placed_on_po` is get-or-create on
+    `uq_scm_order_link_claim_identity`, so a re-run writes nothing new, and a pairing the
+    BOOK already states keeps its own `po_history` / `po_upload` source.
 
     The rows are read through `ProjectOrderInquiryService`, which owns the (SO number, item
     code, core sales-order line) identity a claim is written under. Imported inside the
@@ -78,7 +79,7 @@ def claim_created_supply(
         .filter(OrderInquiryRow.id.in_([str(rid) for rid in row_ids]))
         .all()
     )
-    written = 0
+    attributed = 0
     for row in rows:
         so_number, item_code, core_line_id = service.claim_identity(row)
         if not so_number:
@@ -94,8 +95,8 @@ def claim_created_supply(
             spo_allocation_id=spo_allocation_id,
             source=SOURCE,
         )
-        written += 1
-    return written
+        attributed += 1
+    return attributed
 
 
 def claim_purchase_order_for_sizing_rows(db: Session, po: PurchaseOrder) -> int:
@@ -106,6 +107,10 @@ def claim_purchase_order_for_sizing_rows(db: Session, po: PurchaseOrder) -> int:
     same reader the confirm's own first cascade pass already uses to decide who the buy was
     for (`PLAN-scm-purchasing-uat-journey.md` P7) - so the claim and the placement agree by
     construction rather than by two lookups that happen to match today.
+
+    Returns the number of order-inquiry ROWS attributed across every line of the order -
+    a report of work done rather than a count of claim inserts, for the reason
+    `claim_created_supply` gives.
 
     A line at a pool is skipped (AC-6.10) and a line whose cell nothing sized writes no
     claim: an unattributed project-bin line is a real state, counted by
@@ -136,17 +141,17 @@ def claim_purchase_order_for_sizing_rows(db: Session, po: PurchaseOrder) -> int:
 
     cells = sorted({(str(ln.product_id), str(ln.warehouse_id)) for ln in bins})
     by_cell = ProjectOrderInquiryService(db).rows_needed_at_by_cell(cells)
-    written = 0
+    attributed = 0
     for line in bins:
         row_ids = by_cell.get((str(line.product_id), str(line.warehouse_id))) or []
-        written += claim_created_supply(
+        attributed += claim_created_supply(
             db,
             row_ids=row_ids,
             document=po.po_number,
             company_id=line.company_id,
             po_line_id=str(line.id),
         )
-    return written
+    return attributed
 
 
 __all__ = [
