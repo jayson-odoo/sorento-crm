@@ -37,6 +37,7 @@ export const wfKeys = {
 
 export function useWorkflowDefinitionsQuery(params: { page?: number; limit?: number; q?: string }) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: [...wfKeys.definitions, params],
     queryFn: () => fetchWorkflowDefinitions({ page: params.page ?? 1, limit: params.limit ?? 50, q: params.q }),
   });
@@ -211,6 +212,7 @@ export function useWorkflowSubmissionsQuery(params: {
   state_code?: string;
 }) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: [...wfKeys.submissions, params],
     queryFn: () =>
       fetchWorkflowSubmissions({
