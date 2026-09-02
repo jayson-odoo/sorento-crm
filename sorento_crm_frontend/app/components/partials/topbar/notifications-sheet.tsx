@@ -38,7 +38,7 @@ import {
   deleteNotificationsBulk,
   deleteAllNotifications,
 } from '@/services/notificationService';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import NotificationItem from './notifications/NotificationItem';
 
 const UNREAD_POLL_INTERVAL_MS = 10_000; // 10s so bell badge updates soon after job completion
