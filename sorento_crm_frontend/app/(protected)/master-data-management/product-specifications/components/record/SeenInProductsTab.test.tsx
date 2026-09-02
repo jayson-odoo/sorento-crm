@@ -136,4 +136,31 @@ describe('SeenInProductsTab - row navigation (item 6)', () => {
     expect(push.mock.calls[0][0]).toContain('tab=specifications');
     expect(push.mock.calls[0][0]).toContain('back=');
   });
+
+  it('a real middle-click opens the same target in a new tab (F3)', () => {
+    // DataGridTable's rowHref row is a <tr> with no <a> underneath it - a <tr>
+    // cannot be an anchor's child per the HTML table model - so it earns
+    // "opens in a new tab" the same way an anchor's target=_blank would: an
+    // `auxclick` listener that checks `button === 1` and calls `window.open`.
+    // A real middle-click delivers exactly that event, which this asserts
+    // rather than looking for an `href` attribute that will never exist here.
+    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
+    renderTab();
+
+    const row = screen
+      .getAllByRole('row')
+      .find((el) => el.getAttribute('tabindex') === '0') as HTMLElement;
+    expect(row).toBeTruthy();
+
+    fireEvent(row, new MouseEvent('auxclick', { bubbles: true, cancelable: true, button: 1 }));
+
+    expect(openSpy).toHaveBeenCalledTimes(1);
+    const [url] = openSpy.mock.calls[0];
+    expect(String(url)).toContain('/products/prod-1');
+    expect(String(url)).toContain('tab=specifications');
+    expect(String(url)).toContain('back=');
+    expect(push).not.toHaveBeenCalled();
+
+    openSpy.mockRestore();
+  });
 });
