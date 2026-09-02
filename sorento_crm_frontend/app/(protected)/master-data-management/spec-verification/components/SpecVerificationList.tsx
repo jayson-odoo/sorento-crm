@@ -170,7 +170,7 @@ function CoverageCell({
   return (
     <HoverCard open={open} onOpenChange={setOpen} openDelay={120}>
       <HoverCardTrigger asChild>
-        <div className="flex items-center gap-1.5">
+        <div className="flex flex-wrap items-center gap-1.5">
           <button
             type="button"
             className="text-sm tabular-nums underline decoration-dotted underline-offset-4"
@@ -547,10 +547,15 @@ export default function SpecVerificationList() {
             openExceptions={row.original.open_exceptions}
           />
         ),
-        size: 90,
+        // Wide enough for "n / N" beside the "n need a human" pill without the two
+        // overlapping (F5); the cell also drops the shared `truncate` (which forces
+        // `white-space: nowrap` and hid the overlap rather than avoiding it) so the
+        // pill wraps to its own line if a row's numbers still run long.
+        size: 150,
         meta: {
           headerTitle: 'Coverage',
           skeleton: <Skeleton className="h-4 w-12" />,
+          cellClassName: 'whitespace-normal! overflow-visible!',
         },
         enableSorting: true,
       },
