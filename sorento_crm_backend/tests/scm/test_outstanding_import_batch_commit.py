@@ -428,6 +428,46 @@ def test_processed_rows_moves_before_the_job_completes(db, monkeypatch):
     )
 
 
+def test_flush_publishes_even_with_an_empty_buffer(db):
+    """C6 (code review round 3 batch 2): `_record` stops APPENDING to the buffer once
+    `max_rows` is reached (`rows_truncated`), so every `flush(publish=True)` call after
+    that point arrives with nothing queued. The bug: the early `if not self._buffer: return`
+    used to skip the publish along with the (correctly) skipped insert, freezing
+    `processed_rows` at whatever the LAST non-empty flush left it - past the cap, the
+    activity card stopped moving even though rows kept being counted.
+
+    `buffer_size=1` reproduces the empty-buffer case directly and without needing the
+    200k-row cap: `_record`'s own auto-flush (which never publishes) empties the buffer on
+    every single row, so the EXPLICIT `flush(publish=True)` a caller makes afterwards always
+    arrives here with nothing left to insert - exactly the shape a batch boundary hits once
+    a real run has passed `max_rows`.
+    """
+    from sqlalchemy.orm import Session as SASession
+
+    from app.models.job import ImportJob, JobStatus
+    from app.services.import_outcome import ImportOutcome
+
+    job = ImportJob(id=uuid.uuid4(), job_id=str(uuid.uuid4()),
+                    job_type="outstanding_so_import", status=JobStatus.STARTED.value,
+                    user_id=str(uuid.uuid4()))
+    db.add(job)
+    db.flush()
+
+    out = ImportOutcome(
+        job.id, buffer_size=1, session_factory=lambda: SASession(bind=db.get_bind()),
+        bump_job_progress=True,
+    )
+    out.success(row=1)
+    assert not out._buffer, "sanity: buffer_size=1 already auto-flushed this row"
+
+    out.flush(publish=True)
+
+    db.refresh(job)
+    assert job.processed_rows == out.processed == 1, (
+        "an empty-buffer publish must still bump processed_rows to the true total"
+    )
+
+
 # --------------------------------------------------------------------------- #
 # AC-5.3: batched commit resilience (review round 1, B4 - two REAL sessions)
 # --------------------------------------------------------------------------- #

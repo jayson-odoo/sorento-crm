@@ -51,6 +51,9 @@ BORN_AFTER_THE_MOVE = frozenset({
     "order_inquiry_links",
     # PLAN-scm-fulfilment-feedback.md: the planning module's own move-stock artifact.
     "stock_transfers",
+    # PLAN-scm-fulfilment-feedback-2sep.md S4, migration 461: saved-but-not-yet-confirmed
+    # board decisions, born straight into `projects` the same way `so_supply_decisions` was.
+    "so_supply_decision_drafts",
 })
 
 MIGRATION = (

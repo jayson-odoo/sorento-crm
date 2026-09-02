@@ -6714,7 +6714,15 @@ def test_a_saved_decision_is_attached_to_its_own_contribution_and_to_no_other():
                     item_code=mine["item_code"],
                     bucket_key=mine["key"].split("|")[3],
                     decision={"verdict": "approved"},
-                    proposed_snapshot=mine["proposed"],
+                    # S1 (code review round 3): the LINE's own facts, not the proposal -
+                    # `mine["qty"]` is already `qty_text`-formatted, the same function
+                    # `_attach_drafts` recomputes from at read time.
+                    line_snapshot={
+                        "open_qty": mine["qty"],
+                        "required_date": mine["required_date"].isoformat()
+                        if mine["required_date"]
+                        else None,
+                    },
                     saved_by=actor,
                 )
             )

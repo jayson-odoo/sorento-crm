@@ -178,6 +178,14 @@ class SupplyLadderOption(BaseModel):
     step: str
     label: str
     whole: bool = False
+    #: LADDER V8 (C5, code review round 3 batch 2): how much this step can give. On
+    #: `pool_share` it is the share itself - the one figure a reader cannot derive from
+    #: `whole` - and on every other step it is what that step would contribute to what is
+    #: LEFT after the share. Same field the board's own `BoardLadderOption` carries.
+    gives_qty: Optional[str] = None
+    #: The step's own sentence, where the quantity alone does not say it ("600 is more than
+    #: the 450 BRW can spare"). Null on a step whose label and quantity are the whole answer.
+    reason: Optional[str] = None
     #: Null exactly when the step offered nothing, and `days_late` is null with it.
     fulfil_date: Optional[date] = None
     #: Never negative: landing early is on time, not minus six days late.

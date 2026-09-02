@@ -4323,9 +4323,12 @@ class FulfilmentBoardService:
         moves with the board's GRANULARITY (`bucket_key_for`), so matching on it would hide
         every saved line the moment the planner switched from week to day.
 
-        `stale` is computed here rather than stored, against the proposal `_allocate` has
-        just produced: it is a statement about the board being looked at now, and a flag
-        frozen at save time could only ever say what was true then.
+        `stale` is computed here rather than stored, against the LINE's own current facts
+        (S1, code review round 3, captain ruling) - `row.qty` and `row.required_date`, the
+        same figures the contribution itself states - never against the proposal: the
+        proposal depends on which orders share this board, its granularity and its window,
+        so comparing it flipped `stale` falsely the moment a planner opened a different view
+        of the exact same line.
         """
         saved = project_line_draft_service.drafts_for_orders(
             self.db, {row.sales_order_id for row in rows}
@@ -4345,10 +4348,7 @@ class FulfilmentBoardService:
                 "saved_by": entry["saved_by"],
                 "saved_at": entry["saved_at"],
                 "stale": project_line_draft_service.is_stale(
-                    entry["proposed_snapshot"],
-                    None
-                    if row.proposed_components is None
-                    else {"components": row.proposed_components},
+                    entry["line_snapshot"], row.qty, row.required_date
                 ),
             }
 

@@ -519,20 +519,17 @@ class BoardLineDraft(BaseModel):
 
 
 class BoardLineDraftBody(BaseModel):
-    """`PUT .../fulfilment-planning/lines/{contribution_key}/draft`."""
+    """`PUT .../fulfilment-planning/lines/{contribution_key}/draft`.
+
+    Carries no `proposed` (S1, code review round 3, captain ruling): a proposal depends on
+    which orders share the board, its granularity and its window, so a save made on one
+    view compared against a proposal computed for another flipped `stale` falsely across
+    views and silently dropped a saved line from Confirm. The server snapshots the LINE's
+    own facts (outstanding qty, required date) at save time instead - `is_stale` is judged
+    on those, never on a proposal.
+    """
 
     decision: Dict[str, Any]
-    #: What the ENGINE was suggesting on the board the planner saved from
-    #: (`contributions[].proposed`), kept as the thing `stale` is judged against.
-    #:
-    #: Sent by the CLIENT rather than recomputed here, and that is the whole point: a
-    #: proposal depends on which orders share the board (the ladder draws the shared piles
-    #: down once for the whole walk, `compose_lines`), on its granularity and on its
-    #: `as_of`. A snapshot the server built for this one order would differ from the board
-    #: in front of the planner, and every save on a multi-order board would come back stale
-    #: the moment it was made. Absent means no suggestion was recorded, which reads as never
-    #: stale.
-    proposed: Optional[Dict[str, Any]] = None
 
 
 class BoardContribution(BaseModel):

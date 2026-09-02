@@ -336,14 +336,17 @@ def save_line_draft(
             db,
             contribution_key,
             decision=payload.decision,
-            proposed=payload.proposed,
             actor_user_id=current_user["id"],
         )
         db.commit()
         return body
     except Exception as exc:
         db.rollback()
-        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+        # S3, code review round 3: an `AppException` (the 422s above) states its own
+        # message and propagates untouched; anything else is a genuine server defect and
+        # gets the FIXED message - never `str(exc)`, which echoed raw DB/constraint text
+        # (table and column names, the SQL fragment) straight into the response body.
+        raise exc if hasattr(exc, "status_code") else handle_internal_error()
 
 
 @router.delete(
@@ -366,7 +369,8 @@ def delete_line_draft(
         return None
     except Exception as exc:
         db.rollback()
-        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+        # S3, code review round 3: see `save_line_draft`'s own note - never `str(exc)`.
+        raise exc if hasattr(exc, "status_code") else handle_internal_error()
 
 
 @router.post("/fulfilment-planning/confirm-all", response_model=ConfirmManyResult)

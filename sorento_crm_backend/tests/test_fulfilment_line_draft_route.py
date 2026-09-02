@@ -8,7 +8,7 @@ the two routes exist. The right reason to fail today is a 405 on the route and a
 ImportError on the model.
 
   PUT    /project-sales/fulfilment-planning/lines/{contribution_key}/draft
-         body {decision, proposed} -> 200 {decision, saved_by, saved_at, stale}
+         body {decision} -> 200 {decision, saved_by, saved_at, stale}
   DELETE /project-sales/fulfilment-planning/lines/{contribution_key}/draft -> 204
 
 `contribution_key` is the board's own `contributions[].key`, read off a real board read
@@ -22,6 +22,7 @@ core sales order, mirror and stock on top.
 from __future__ import annotations
 
 import uuid
+from datetime import date
 from decimal import Decimal
 
 import pytest
@@ -34,6 +35,7 @@ from .test_so_supply_confirmation import (  # noqa: F401 - `api` is a fixture
     _core_line,
     _core_so,
     _line_payload,
+    _product,
     _project_line,
     _project_so,
     _stock,
@@ -91,10 +93,10 @@ def _contribution(board, so_number: str) -> dict:
     )
 
 
-def _save(client, key: str, decision=None, proposed=None):
+def _save(client, key: str, decision=None):
     return client.put(
         f"{BASE}/fulfilment-planning/lines/{key}/draft",
-        json={"decision": decision or DECISION, "proposed": proposed},
+        json={"decision": decision or DECISION},
     )
 
 
@@ -111,7 +113,7 @@ def test_saving_a_line_decision_answers_with_the_saver_and_the_time(api):
     board = _board(client, core_so)
     contribution = _contribution(board, core_so.so_number)
 
-    response = _save(client, contribution["key"], proposed=contribution["proposed"])
+    response = _save(client, contribution["key"])
 
     assert response.status_code == 200, response.text
     body = response.json()
@@ -184,6 +186,10 @@ def test_a_view_only_planner_cannot_save_a_decision(api):
         "d24f5c1e-0000-0000-0000-000000000000|three|ZZT-ITEM|2026-09-07",
         # A sales order id that is not an id.
         "SO391698|3|ZZT-ITEM|2026-09-07",
+        # An item code longer than the column (`String(100)`).
+        f"d24f5c1e-0000-0000-0000-000000000000|3|{'Z' * 101}|2026-09-07",
+        # A bucket key longer than the column (`String(32)`).
+        f"d24f5c1e-0000-0000-0000-000000000000|3|ZZT-ITEM|{'2' * 33}",
     ],
 )
 def test_a_malformed_contribution_key_is_refused(api, key):
@@ -195,6 +201,118 @@ def test_a_malformed_contribution_key_is_refused(api, key):
     response = _save(client, key)
 
     assert response.status_code == 422, response.text
+
+
+# ------------------------------------------------------- S3: a key naming no real line
+
+
+def test_saving_against_an_order_outside_the_caller_s_company_scope_is_refused(api):
+    """S3, captain ruling: an order this company cannot see is refused, not saved under a
+    key nobody will ever ask for again."""
+    client, world, _core_so, _core_line, _order, _line = _world(api)
+    unknown_order = _uid()
+
+    response = _save(client, f"{unknown_order}|1|ZZT-ITEM|2026-09-07")
+
+    assert response.status_code == 422, response.text
+
+
+def test_saving_against_another_company_s_real_order_is_refused_not_saved(api):
+    """S3: a syntactically real order that belongs to ANOTHER company reads the same as one
+    that never existed - fail-closed, the way every other owned row here is scoped."""
+    from app.models.project_so import SOSupplyDecisionDraft
+    from .test_so_supply_confirmation import _second_company
+
+    client, world, core_so, _core_line, _order, _line = _world(api)
+    db = world.db
+    other_company = _second_company(db)
+    other_so = _core_so(db, other_company)
+    db.commit()
+
+    response = _save(client, f"{other_so.id}|1|ZZT-ITEM|2026-09-07")
+
+    assert response.status_code == 422, response.text
+    assert (
+        db.query(SOSupplyDecisionDraft)
+        .filter(SOSupplyDecisionDraft.sales_order_id == other_so.id)
+        .count()
+        == 0
+    )
+
+
+def test_saving_a_real_order_with_a_bogus_line_number_is_refused(api):
+    """S3: the order exists, but no line on it derives to this number."""
+    client, world, core_so, _core_line, _order, _line = _world(api)
+
+    response = _save(client, f"{core_so.id}|999|ZZT-ITEM|2026-09-07")
+
+    assert response.status_code == 422, response.text
+
+
+def test_saving_a_valid_uuid_that_names_no_sales_order_is_422_not_500(api):
+    """S3: a syntactically valid UUID that names something OTHER than a sales order (a
+    product, here) must read as "no such line", never as an unhandled server error."""
+    client, world, _core_so, _core_line, _order, _line = _world(api)
+
+    response = _save(client, f"{world.product.id}|1|ZZT-ITEM|2026-09-07")
+
+    assert response.status_code == 422, response.text
+    # Never raw DB/SQL text (S3): the 422 states its own fixed message.
+    body = str(response.json()).lower()
+    assert "select" not in body and "constraint" not in body
+
+
+def test_saving_a_line_whose_order_also_carries_a_closed_line_resolves_correctly(api):
+    """Found by hand on the real lane (SO391698), not by a unit test: `_resolve_core_line`
+    used to number EVERY line of the order, while the board numbers only the lines
+    `is_open_demand()` counts (`SalesOrder.status == "open"`, `demand_class == "project"`,
+    the line itself open and not covered) - `_demand_rows` in
+    `project_fulfilment_board_service.py`. An order carrying a closed line beside open ones
+    got a DIFFERENT ordinal on each side: the board handed out "line 2" for the second OPEN
+    line, and the resolver, counting the closed one too, read ordinal 2 as a different row -
+    "That sales order line does not exist" for a line that plainly did, on a real board.
+
+    Three core lines, DIFFERENT products (a same-product fixture would resolve to the WRONG
+    line silently instead of 422ing, which is worse and would not have failed this test),
+    the closed one sorted FIRST (earliest date) so it shifts every ordinal after it if it
+    is wrongly counted."""
+    client, world = api
+    db = world.db
+    product_b = _product(db)
+    product_c = _product(db)
+    _stock(db, world.product, world.pool_wh, on_hand=100)
+    _stock(db, product_b, world.pool_wh, on_hand=100)
+    _stock(db, product_c, world.pool_wh, on_hand=100)
+    core_so = _core_so(db, world.company_id)
+    closed = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="5",
+                        required_date=date(2026, 1, 1))
+    closed.line_status = "closed"
+    _core_line(db, core_so, product_b, world.own_wh, qty_ordered="10",
+              required_date=date(2026, 6, 1))
+    _core_line(db, core_so, product_c, world.own_wh, qty_ordered="8",
+              required_date=date(2026, 7, 1))
+    db.commit()
+
+    board = _board(client, core_so)
+    contributions = board["contributions"]
+    assert len(contributions) == 2, "the closed line must not appear on the board at all"
+    target = next(row for row in contributions if row["line_no"] == 2)
+    assert target["item_code"] == product_c.product_code, (
+        "sanity: line 2 must be the LATER open line (product_c), never product_b shifted "
+        "into its place by counting the closed line"
+    )
+
+    response = _save(client, target["key"])
+    assert response.status_code == 200, response.text
+
+    # And the SAVE landed on the right line: re-reading the board shows the draft on
+    # product_c's contribution, never on product_b's (the wrong-line resolution this test
+    # exists to catch would have silently saved against product_b's key instead).
+    again = _board(client, core_so)
+    saved_c = next(row for row in again["contributions"] if row["item_code"] == product_c.product_code)
+    saved_b = next(row for row in again["contributions"] if row["item_code"] == product_b.product_code)
+    assert saved_c["draft"] is not None
+    assert saved_b["draft"] is None
 
 
 # --------------------------------------------------------------------------- the board
@@ -209,7 +327,7 @@ def test_the_board_carries_a_saved_decision_back_on_the_next_read(api):
     contribution = _contribution(board, core_so.so_number)
     assert contribution["draft"] is None, "nobody has saved this line yet"
 
-    assert _save(client, contribution["key"], proposed=contribution["proposed"]).status_code == 200
+    assert _save(client, contribution["key"]).status_code == 200
 
     again = _board(client, core_so)
     saved = _contribution(again, core_so.so_number)["draft"]
@@ -244,28 +362,53 @@ def test_undo_on_a_line_nobody_saved_is_a_404(api):
     assert response.status_code == 404, response.text
 
 
-def test_a_saved_line_the_engine_has_re_suggested_reads_stale(api):
-    """AC-4.4, second half: a line saved and then re-suggested by a new upload shows the
-    "suggestion changed" state. The draft keeps the suggestion it was saved against, and
-    the board compares it with the one it is proposing NOW."""
-    client, world, core_so, _core_line, _order, _line = _world(api)
+def test_a_saved_line_whose_outstanding_qty_changes_reads_stale(api):
+    """AC-4.4, second half, S1 (code review round 3, captain ruling): staleness is judged
+    on the LINE's own facts - outstanding qty and required date - never on the proposal.
+
+    The proposal depends on which orders share the board, its granularity and its window,
+    so comparing IT flipped `stale` falsely across views and silently dropped a saved line
+    from Confirm the moment a planner opened a different one. The line's own facts do not
+    move with the view - only with a real change, exactly like this one."""
+    client, world, core_so, core_line, _order, _line = _world(api)
     db = world.db
     board = _board(client, core_so)
     contribution = _contribution(board, core_so.so_number)
-    assert contribution["proposed"]["components"][0]["kind"] == "reserve"
-    assert _save(client, contribution["key"], proposed=contribution["proposed"]).status_code == 200
+    assert _save(client, contribution["key"]).status_code == 200
 
-    # The pool empties: the same line is now a Buy, so what the planner saved against is
-    # no longer what the engine says.
-    pool_stock = _pool_stock(db, world)
-    pool_stock.quantity_on_hand = Decimal("0")
+    # The customer takes part delivery: the outstanding qty this line owes moves, the same
+    # fact an SO re-upload changes.
+    core_line.qty_delivered = Decimal("4")
     db.commit()
 
     after = _contribution(_board(client, core_so), core_so.so_number)
-    assert after["proposed"]["components"][0]["kind"] == "buy"
     assert after["draft"]["stale"] is True
     # Still SAVED, and still readable: staleness is a warning on the row, not a deletion.
     assert after["draft"]["decision"]["verdict"] == "amended"
+
+
+def test_a_saved_line_read_under_a_different_granularity_is_not_stale(api):
+    """S1: the bug this rule replaces. Comparing the ENGINE's proposal (rather than the
+    line's own facts) meant the same saved line, with nothing about it actually changed,
+    could read `stale` on one view of the board and not another - here, week against day -
+    because the proposal depends on the board's own granularity. Nothing about the LINE
+    moved, so it must read the same either way."""
+    client, world, core_so, _core_line, _order, _line = _world(api)
+    board = _board(client, core_so)
+    contribution = _contribution(board, core_so.so_number)
+    assert _save(client, contribution["key"]).status_code == 200
+    assert _contribution(board, core_so.so_number)["draft"] is None, (
+        "the FIRST read predates the save; sanity on the fixture, not the assertion"
+    )
+
+    day = client.get(
+        f"{BASE}/fulfilment-planning/board",
+        params={"orders": core_so.so_number, "granularity": "day"},
+    )
+    assert day.status_code == 200, day.text
+    after = _contribution(day.json(), core_so.so_number)
+    assert after["draft"] is not None, "the save must still be found under a different view"
+    assert after["draft"]["stale"] is False
 
 
 def _pool_stock(db, world):
@@ -300,7 +443,7 @@ def test_a_draft_saved_in_another_company_is_invisible_here(api):
             item_code=contribution["item_code"],
             bucket_key=contribution["key"].split("|")[3],
             decision=DECISION,
-            proposed_snapshot=None,
+            line_snapshot=None,
             saved_by=world.eling,
         )
     )

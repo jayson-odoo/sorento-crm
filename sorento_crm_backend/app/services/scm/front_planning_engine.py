@@ -593,6 +593,8 @@ def pool_share_option_reason(
     allowance: Decimal,
     share: Decimal,
     free: Any = None,
+    immediate: bool = True,
+    window_days: Optional[int] = None,
 ) -> str:
     """The `pool_share` option row's own sentence (AC-2.4).
 
@@ -614,6 +616,16 @@ def pool_share_option_reason(
     if allowance <= ZERO:
         return f"{location} has nothing to spare for projects"
     if share <= ZERO:
+        # C8 (code review round 3 batch 2): beyond the window the pool is whole or
+        # nothing (R-B) - a floor holding PART of the line (100 of 600) is not "nothing
+        # free"; it is a partial pile the whole-or-nothing rule itself refused, and the
+        # older sentence sent a planner looking at an empty floor that was not empty.
+        if not immediate and free is not None and ZERO < _dec(free) < open_qty:
+            when = f"{window_days} days" if window_days is not None else "the window"
+            return (
+                f"{location} gives whole lines only beyond {when}, and "
+                f"{qty_text(_dec(free))} on the floor cannot cover {qty_text(open_qty)}"
+            )
         if free is not None and _dec(free) <= ZERO:
             return f"{location} has nothing free on the floor to spare"
         if open_qty > allowance:
@@ -1130,6 +1142,13 @@ def walk_line(
             if borrowed.qty >= remainder and borrowed.components:
                 for component in borrowed.components:
                     step_share.add(component)
+                # C8 (code review round 3 batch 2): the SAME fix the R-L spill above
+                # already has, for the SAME reason - without it the chosen row kept the
+                # asking pool's own PRE-borrow label ("Use BRW stock") and reason ("BRW
+                # has nothing to spare for projects") beside a Reserve the composition
+                # actually borrowed from a later order, often at a DIFFERENT pool
+                # entirely. The borrowed components' own reasons already name the donor.
+                spilled_components = tuple(borrowed.components)
                 chosen = STEP_POOL_SHARE
 
     options = _options(
@@ -1153,6 +1172,8 @@ def walk_line(
                     allowance=allowance,
                     share=share_qty,
                     free=(pools[0].get("free") if pools else None),
+                    immediate=immediate,
+                    window_days=window_days,
                 )
                 if pools and (pools[0].get("location"))
                 else None

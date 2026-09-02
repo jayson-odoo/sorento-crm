@@ -146,8 +146,8 @@ from app.services.scm.front_planning_engine import (
     available_for_project,
     group_take_reason,
     group_water_reason,
-    pool_reason,
     pool_reserve_capacity,
+    pool_share_reason,
     qty_text,
     reserve_window_end,
     spo_reason,
@@ -3341,6 +3341,17 @@ class ProjectSupplyService:
                     "step": option.step,
                     "label": option.label,
                     "whole": bool(option.whole),
+                    # LADDER V8 (C5, code review round 3 batch 2): `gives_qty` and `reason`
+                    # never reached this sheet, only the board's own `_option_row` - so the
+                    # sheet's Gives column (`SupplyLineCard` -> the shared
+                    # `BoardLadderOptionsTable`) rendered blank. Same two fields, same
+                    # computation as `_option_row` in `project_fulfilment_board_service.py`.
+                    "gives_qty": (
+                        qty_text(_dec(getattr(option, "gives_qty", None)))
+                        if getattr(option, "gives_qty", None) is not None
+                        else None
+                    ),
+                    "reason": getattr(option, "reason", None),
                     "fulfil_date": (
                         option.fulfil_date.isoformat() if option.fulfil_date else None
                     ),
@@ -5305,6 +5316,7 @@ class ProjectSupplyService:
             self.db,
             str(order.so_id) if order.so_id else None,
             [(line.line_no, fact.item_code) for line, _entry, fact in checked],
+            company_id=str(order.company_id) if order.company_id else None,
         )
         transfers_written, transfers_failed, transfers_kept = self._write_transfers(
             order, decision, snapshots
@@ -6315,12 +6327,24 @@ class ProjectSupplyService:
         """The rule's own sentence for a confirmed Reserve component, at whichever
         location it named - ladder v3's GROUP first (this line's own location, then its
         siblings), then the pool chain (own site pool, then every other)."""
+        pool_chain = self._pool_chain(fact, own_pool_free_left=None)
         for candidate, qty in pool_reserve_capacity(
-            pools=self._pool_chain(fact, own_pool_free_left=None),
-            pools_net=fact.pools_net,
+            pools=pool_chain, pools_net=fact.pools_net
         ):
             if candidate == location:
-                return pool_reason(str(location), qty, fact.pools_net)
+                # LADDER V8 (nit, code review round 3 batch 2): the v7.1 sentence ("Pool
+                # BRW lends N of the M the site pools net between them") is retired - the
+                # pool answers with its OWN allowance now (R-A/R-B), and re-displaying a
+                # CONFIRMED component in the old wording said something the walk that
+                # produced it never said.
+                pool = next(
+                    (p for p in pool_chain if str(p.get("location")) == candidate), None
+                )
+                pct = self._fulfilment_settings().get("pool_share_pct")
+                allowance = available_for_project(
+                    pool.get("available") if pool else None, fact.pools_net, pct
+                )
+                return pool_share_reason(str(location), qty, allowance)
         for candidate in self._group_take_candidates(fact):
             # A confirmed RESERVE is floor stock by definition; the water half of question 1
             # is confirmed as `timely_spo` and reads through `_timely_reason`.

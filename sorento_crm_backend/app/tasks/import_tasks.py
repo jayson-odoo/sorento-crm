@@ -188,6 +188,33 @@ def _write_import_audit(
             pass
 
 
+def _documents_committed(db, import_job_id) -> int:
+    """How many distinct documents this job's per-row outcomes name, so far (C6).
+
+    Best-effort off `import_job_rows.identity->>'doc_no'` - the SO/PO channels' own
+    `_identity()` key (`outstanding_import_service.py`) - never a second counter to keep in
+    step with the batch loop. Zero on an importer whose rows carry no `doc_no` (or on any
+    read failure): the failure message below simply states the row count alone then.
+    """
+    try:
+        from sqlalchemy import text
+
+        return int(
+            db.execute(
+                text(
+                    "SELECT count(DISTINCT identity->>'doc_no') FROM import_job_rows "
+                    "WHERE import_job_id = :job_id AND identity->>'doc_no' IS NOT NULL"
+                ),
+                {"job_id": str(import_job_id)},
+            ).scalar()
+            or 0
+        )
+    except Exception:
+        logger.debug("Could not count committed documents for job %s", import_job_id,
+                    exc_info=True)
+        return 0
+
+
 def _json_safe(value):
     if isinstance(value, (datetime, date, dt_time)):
         return value.isoformat()
@@ -3586,11 +3613,32 @@ def _run_scm_upload_job(
         logger.exception("%s job %s failed", job_label, job_id_str)
         db.rollback()
         # The recorder writes on its own session, so the rows it already classified survive
-        # this rollback.
+        # this rollback. NOT `publish=True`: the batch this exception interrupted was never
+        # committed, so bumping `processed_rows` for it here would claim rows that just got
+        # rolled back. `job.processed_rows` therefore still reads exactly what the LAST
+        # committed batch's own `outcome.flush(publish=True)` left it at (S5).
         outcome.flush()
-        job_service.fail_job(job_id_str, str(exc))
-        _write_import_audit(db, entity_type=entity_type, label=label, row_count=0,
-                            user_id=user_id, entity_id=job_id_str, status="failed")
+        # C6 (code review round 3 batch 2): read what genuinely landed BEFORE building the
+        # failure message, so the message itself can say so - `db` has already rolled back
+        # above, and `processed_rows` was bumped durably on a SEPARATE session/commit by
+        # every completed batch's own `outcome.flush(publish=True)`, so a fresh query here
+        # sees it regardless of this session's own rollback.
+        refreshed = job_service.get_job_by_db_id(str(job.id))
+        rows_committed = int(getattr(refreshed, "processed_rows", None) or 0)
+        documents_committed = _documents_committed(db, job.id)
+        message = str(exc)
+        if rows_committed:
+            note = f"{rows_committed} row{'s' if rows_committed != 1 else ''}"
+            if documents_committed:
+                note += (
+                    f" in {documents_committed} document"
+                    f"{'s' if documents_committed != 1 else ''}"
+                )
+            message = f"{message} ({note} were committed; re-upload resumes)"
+        job_service.fail_job(job_id_str, message)
+        _write_import_audit(db, entity_type=entity_type, label=label,
+                            row_count=rows_committed, user_id=user_id,
+                            entity_id=job_id_str, status="failed")
     finally:
         db.close()
 

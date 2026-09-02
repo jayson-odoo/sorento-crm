@@ -266,8 +266,17 @@ class ImportOutcome:
         on a feature this file did not have before. The savepoint means a failed UPDATE
         rolls back to before it started rather than leaving the session's transaction
         unusable for the `bulk_insert_mappings` that already happened in the same one.
+
+        C6 (code review round 3 batch 2): an EMPTY buffer with `publish=True` must still
+        publish. `_record` stops appending to `self._buffer` once `max_rows` (200k) is
+        reached (`rows_truncated`), so on a run past that cap every LATER
+        `flush(publish=True)` call arrived here with nothing queued - and the early return
+        used to skip the bump along with the (correctly) skipped insert, freezing
+        `processed_rows` at whatever the cap's own last flush left it. The insert stays
+        conditional on the buffer; the publish does not.
         """
-        if not self._buffer:
+        do_publish = publish and self.bump_job_progress
+        if not self._buffer and not do_publish:
             return
         batch, self._buffer = self._buffer, []
         if not self.persist:
@@ -282,8 +291,9 @@ class ImportOutcome:
 
             session = factory()
             _scope_session(session)
-            session.bulk_insert_mappings(ImportJobRow, batch)
-            if publish and self.bump_job_progress:
+            if batch:
+                session.bulk_insert_mappings(ImportJobRow, batch)
+            if do_publish:
                 try:
                     from app.models.job import ImportJob
 

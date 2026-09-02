@@ -1272,6 +1272,7 @@ class SOSupplyDecisionDraft(Base, CompanyScopedMixin):
     """
 
     __tablename__ = "so_supply_decision_drafts"
+    __audit_entity_type__ = "project_so_supply_decision_drafts"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     sales_order_id = Column(
@@ -1288,12 +1289,22 @@ class SOSupplyDecisionDraft(Base, CompanyScopedMixin):
     #: server stores and returns it and reads nothing out of it: the confirmation is posted
     #: from the board's own body, so a shape that grew a field here would still travel.
     decision = Column(JSONB, nullable=False)
-    #: What the ENGINE was suggesting for this line when the decision was saved
-    #: (`contributions[].proposed`). The board compares it with what it is proposing NOW to
-    #: answer `stale` (AC-4.4). NULL means the save recorded no suggestion, which reads as
-    #: "not stale": claiming a suggestion changed when nothing was written down would put a
-    #: warning on the row with no evidence behind it.
-    proposed_snapshot = Column(JSONB, nullable=True)
+    #: The LINE's own facts at save time - `{"open_qty": ..., "required_date": ...}` - not
+    #: the engine's proposal (S1, code review round 3, captain ruling: staleness is judged
+    #: on the line's own facts, never on the proposal). A proposal depends on which orders
+    #: share the board, its granularity and its window (`_allocate` draws the shared piles
+    #: in board order), so comparing PROPOSED snapshots flipped stale falsely across views
+    #: and silently dropped a saved line from Confirm the moment a planner opened a
+    #: different filter or granularity. `_attach_drafts` compares this against the row's
+    #: CURRENT `qty` / `required_date` on every board read (AC-4.4). NULL means the save
+    #: recorded no facts, which reads as "not stale": claiming a line changed when nothing
+    #: was written down would put a warning on the row with no evidence behind it.
+    #:
+    #: Renamed from `proposed_snapshot` (hand-altered on the dev DB with `ALTER TABLE
+    #: projects.so_supply_decision_drafts RENAME COLUMN proposed_snapshot TO
+    #: line_snapshot;` - the table was hand-created there too, see migration
+    #: `461_so_supply_decision_drafts`).
+    line_snapshot = Column(JSONB, nullable=True)
     saved_by = Column(
         String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )

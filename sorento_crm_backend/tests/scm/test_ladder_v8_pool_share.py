@@ -525,6 +525,45 @@ def test_the_confirm_accepts_the_pool_share_and_buy_the_engine_proposes():
     assert status == 200, body
 
 
+def test_a_confirmed_pool_reserve_re_reads_with_the_v8_share_sentence():
+    """Nit (code review round 3 batch 2): `_reserve_reason` re-displaying a CONFIRMED pool
+    Reserve rebuilt the retired v7.1 sentence ("Pool BRW lends 100 of the 200 the site
+    pools net between them") - the WALK that produced this component never said that; v8
+    always says "Pool BRW spares N of the M it may lend a project" (`pool_share_reason`),
+    and a confirmed component read back must say the same thing the proposal that produced
+    it did."""
+    from app.models.base import company_scope
+    from tests._pg_fixture import blank_session
+    from tests.test_so_supply_confirmation import BASE, _client, _restore
+
+    with blank_session() as db:
+        company_id, eling, order, line, pool = _split_world(db)
+        confirm = _confirm_split(
+            db, company_id, eling, order,
+            _split_payload(line, warehouse=pool, share="100", buy="50"),
+        )
+        assert confirm.status_code == 200, confirm.text
+
+        client, originals = _client(db, eling)
+        try:
+            with company_scope(db, frozenset({company_id})):
+                sheet = client.get(f"{BASE}/sales-orders/{order.id}/supply")
+        finally:
+            _restore(originals)
+
+    assert sheet.status_code == 200, sheet.text
+    reserve = next(
+        component
+        for line_row in sheet.json()["lines"]
+        for component in line_row["components"]
+        if component["kind"] == "reserve"
+    )
+    assert "spares" in reserve["reason"] and "may lend a project" in reserve["reason"], (
+        reserve["reason"]
+    )
+    assert "site pools net between them" not in reserve["reason"], reserve["reason"]
+
+
 def test_the_confirm_accepts_the_split_at_a_bin_with_no_pool_of_its_own():
     """S6/B2: `BRW-IB` names no `pool_warehouse_id`, so the line's own `pool_available`
     reads 0 while the WALK offers it the chain's first pool. A recheck reading the fact

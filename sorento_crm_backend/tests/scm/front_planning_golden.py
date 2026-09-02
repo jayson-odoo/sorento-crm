@@ -1212,12 +1212,67 @@ BEYOND_WINDOW_FREE_PILE_SHORT_CASE = WalkCase(
             step="pool_share",
             whole=False,
             gives_qty=Decimal("0"),
-            reason="BRW has nothing free on the floor to spare",
+            # C8 (code review round 3 batch 2): re-blessed - 60 IS free on the floor, so
+            # the OLD sentence ("nothing free on the floor to spare") sent a planner
+            # looking for stock that was actually there. The floor just cannot cover the
+            # whole line, and beyond the window the pool gives nothing less than whole.
+            reason="BRW gives whole lines only beyond 30 days, and 60 on the floor cannot cover 100",
         ),
         OptionRow(step="use", whole=False, gives_qty=Decimal("0")),
         OptionRow(step="order_borrow", whole=False, gives_qty=Decimal("0")),
         OptionRow(step="supply_borrow", whole=False, gives_qty=Decimal("0")),
         OptionRow(step="buy", whole=True, gives_qty=Decimal("100"), chosen=True),
+    ),
+)
+
+
+BORROW_HALF_ANSWERS_THE_POOL_SHARE_ROW_CASE = WalkCase(
+    ac="C8",
+    title=(
+        "the pool's own BORROW half answers the remainder: the chosen pool_share row "
+        "names the DONOR pool it actually borrowed from, not the asking pool's own "
+        "pre-borrow label and reason (code review round 3 batch 2)"
+    ),
+    inputs=_v8_inputs(
+        open_qty=Decimal("650"),
+        required_date=IMMEDIATE_DATE,
+        pools=[
+            {"location": POOL_LOCATION, "free": Decimal("0"), "available": Decimal("0")}
+        ],
+        pools_net=Decimal("0"),
+        pool_borrow_candidates=[
+            {
+                "so_number": "SO900001",
+                "donor_so_number": "SO900001",
+                "line_no": 1,
+                "donor_line_no": 1,
+                "warehouse_id": "wh-mwh",
+                "location": "MWH",
+                "qty": Decimal("650"),
+            }
+        ],
+    ),
+    components=(
+        Component(
+            kind=BORROW,
+            qty=Decimal("650"),
+            source_location="MWH",
+            reason="Borrow 650 on hand at pool MWH from SO900001",
+        ),
+    ),
+    options=(
+        OptionRow(
+            step="pool_share",
+            whole=True,
+            gives_qty=Decimal("650"),
+            chosen=True,
+            label="Use MWH stock",
+            reason="Borrow 650 on hand at pool MWH from SO900001",
+        ),
+        OptionRow(step="use", whole=False, gives_qty=Decimal("0")),
+        OptionRow(step="order_borrow", whole=False, gives_qty=Decimal("0")),
+        OptionRow(step="supply_borrow", whole=False, gives_qty=Decimal("0")),
+        OptionRow(step="buy", whole=True, gives_qty=Decimal("650")),
     ),
 )
 
@@ -1232,4 +1287,5 @@ V8_WALK_CASES = (
     OTHER_POOL_COVERS_THE_REMAINDER_CASE,
     NET_BOUNDS_THE_WHOLE_POOL_CHAIN_CASE,
     BEYOND_WINDOW_FREE_PILE_SHORT_CASE,
+    BORROW_HALF_ANSWERS_THE_POOL_SHARE_ROW_CASE,
 )

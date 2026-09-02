@@ -48,7 +48,12 @@ def upgrade() -> None:
         sa.Column("item_code", sa.String(length=100), nullable=False),
         sa.Column("bucket_key", sa.String(length=32), nullable=False),
         sa.Column("decision", postgresql.JSONB(), nullable=False),
-        sa.Column("proposed_snapshot", postgresql.JSONB(), nullable=True),
+        # `line_snapshot`, not `proposed_snapshot` (S1, code review round 3): staleness is
+        # judged on the LINE's own facts (open qty, required date), not on a proposal that
+        # depends on which orders share the board. Renamed by hand on the dev DB (the table
+        # there was hand-created too): `ALTER TABLE projects.so_supply_decision_drafts
+        # RENAME COLUMN proposed_snapshot TO line_snapshot;`.
+        sa.Column("line_snapshot", postgresql.JSONB(), nullable=True),
         sa.Column("saved_by", sa.String(length=100), nullable=True),
         sa.Column(
             "saved_at", sa.DateTime(timezone=False), server_default=sa.text("now()"),
@@ -72,8 +77,14 @@ def upgrade() -> None:
         ),
         schema=SCHEMA,
     )
+    # `ix_projects_..._company_id`, matching what `CompanyScopedMixin`'s `index=True`
+    # generates under `create_all` (N1, code review round 3 - see e.g.
+    # `ix_projects_planning_change_batches_company_id` in `29d85dc3ccc3`), not the
+    # unprefixed name this migration first shipped with. Renamed by hand on the dev DB too:
+    # `ALTER INDEX projects.ix_so_supply_decision_drafts_company_id RENAME TO
+    # ix_projects_so_supply_decision_drafts_company_id;`.
     op.create_index(
-        "ix_so_supply_decision_drafts_company_id",
+        "ix_projects_so_supply_decision_drafts_company_id",
         TABLE,
         ["company_id"],
         schema=SCHEMA,
@@ -90,5 +101,7 @@ def downgrade() -> None:
     if TABLE not in _tables(SCHEMA):
         return
     op.drop_index("ix_so_supply_decision_drafts_order", TABLE, schema=SCHEMA)
-    op.drop_index("ix_so_supply_decision_drafts_company_id", TABLE, schema=SCHEMA)
+    op.drop_index(
+        "ix_projects_so_supply_decision_drafts_company_id", TABLE, schema=SCHEMA
+    )
     op.drop_table(TABLE, schema=SCHEMA)

@@ -336,6 +336,64 @@ def test_an_unreadable_file_fails_the_job_and_writes_nothing(scm_app, monkeypatc
     assert db.execute(text("SELECT count(*) FROM sales_order_lines")).scalar() == before
 
 
+def test_a_mid_run_failure_records_what_was_actually_committed(scm_app, monkeypatch):
+    """C6 (code review round 3 batch 2): S5's own per-batch commits leave SOME documents
+    durably written when a later batch dies - the job used to fail with `row_count=0` and no
+    hint of that, which read to an operator as nothing had landed and sent them re-uploading
+    a book most of which was already in.
+
+    `_DOCUMENT_BATCH` shrunk to 1 so `week1`'s two documents each get their own batch and
+    commit, and the SECOND batch's own preload is made to raise - the first batch's rows
+    must show up in both the job row and the audit row, and the failure message must say so.
+    """
+    from app.services.scm import outstanding_import_service as svc
+
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    codes = make_codes()
+    seed_catalogue(db, codes)
+
+    monkeypatch.setattr(svc, "_DOCUMENT_BATCH", 1)
+    real_preload = svc._preload_closed_lines
+    calls = {"n": 0}
+
+    def _boom(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 2:  # the second document's own batch
+            raise RuntimeError("simulated worker kill")
+        return real_preload(*args, **kwargs)
+
+    monkeypatch.setattr(svc, "_preload_closed_lines", _boom)
+
+    _c, job_id = _queue_and_run(
+        app, db, monkeypatch, "/api/v1/scm/outstanding/sales-orders/apply",
+        _upload(week1(codes)),
+    )
+
+    job = _job(db, job_id)
+    assert job.status == "failed"
+    assert 0 < job.processed_rows < 5, (
+        "the first document's rows must be counted, and the second's must not be"
+    )
+    assert "committed" in (job.error or "").lower()
+    assert "re-upload resumes" in (job.error or "").lower()
+    assert str(job.processed_rows) in job.error
+
+    rq_job_id = db.execute(
+        text("SELECT job_id FROM import_jobs WHERE id = :id"), {"id": job_id}
+    ).scalar()
+    audit = db.execute(
+        text(
+            "SELECT description FROM audit_logs WHERE entity_id = :eid "
+            "AND action = 'IMPORT' ORDER BY changed_at DESC LIMIT 1"
+        ),
+        {"eid": rq_job_id},
+    ).first()
+    assert audit is not None, "no audit row was written for the failed job"
+    assert f"{job.processed_rows} rows" in audit.description, audit.description
+    assert "(failed)" in audit.description
+
+
 def test_a_broken_audit_row_count_cannot_fail_a_job_that_already_finished(scm_app,
                                                                           monkeypatch):
     """The audit row is a post-commit side effect, and so is COMPUTING its figure.
