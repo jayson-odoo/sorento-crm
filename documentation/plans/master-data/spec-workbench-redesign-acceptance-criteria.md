@@ -33,6 +33,7 @@ They leave with one key corrected and, if rules changed, a catalogue reread queu
 - **D7** No new motion. Row expand no longer exists; tab switches and edit-mode toggles do not animate; lightboxes use the shared surface spring only. `find-animation-opportunities` was skipped by ruling.
 - **D8** Spec Verification is in scope for the design pass and one behaviour change: Unverify (row and bulk) becomes a deferred action (5s reversible window) instead of an AlertDialog. Verify stays immediate.
 - **D10** Plain words: the type pill reads Choice / Number / Yes or no / Text (never enum, string, boolean); UI copy says "specification", never "key"; the gear is a gear icon (Settings2), not three dots.
+- **D12** `is_active` stays on the record card as a labelled switch in both modes (the seed-key delete refusal tells the user to switch the key off instead).
 - **D9** No single-key GET is added. The record page reads the key from the registry list query (ETag-cached, small) and the pager is page-scoped from that cache (design language D4).
 
 ## Group A - Registry list page (S1)
@@ -67,7 +68,7 @@ From `/`, sidebar Master Data > Product Specifications: grid renders the seeded 
 `[specKey]/page.tsx` renders `PageHeader` (crumb trail ends in the key label) and a record card: label as title, the code slug as secondary text, pills for type (D10 wording) and source, unit as a field. `DetailActions` in the design-language order: `ListPager` (page-scoped from the registry list cache, "n / N"), gear, primary. Gear holds Delete only, and only when `source == user` and the user has `master_data.spec_registry.delete`; seed keys show no gear.
 
 ### AC-B.2 [FE] View and edit share one layout
-Tabs, in order: Values and words, Rules, Seen in products (`TabsList variant="line"`, scrolls at 375px). Primary button "Edit" swaps every editable field on every tab for its input in place; the button becomes Save with a Cancel beside it. Nothing moves, appears or disappears between the two modes except the inputs. Save sends ONE `PATCH /spec-registry/{spec_key}` with `user_values`, `suppressed_values`, `user_synonyms`, `suppressed_synonyms`, `value_labels`, `derivation_rules`, `label`, `unit`, `max_value`; Cancel restores the last loaded row. Unsaved changes prompt via the browser `beforeunload` only (no custom dialog).
+Tabs, in order: Values and words, Rules, Seen in products (`TabsList variant="line"`, scrolls at 375px). Primary button "Edit" swaps every editable field on every tab for its input in place; the button becomes Save with a Cancel beside it. Nothing moves, appears or disappears between the two modes except the inputs, with one named exception: the pager and the gear are disabled (still mounted, same place) while editing, because a client-side route change fires no `beforeunload` and would drop the draft. Save sends ONE `PATCH /spec-registry/{spec_key}` with `user_values`, `suppressed_values`, `user_synonyms`, `suppressed_synonyms`, `value_labels`, `derivation_rules`, `label`, `unit`, `max_value`; Cancel restores the last loaded row. Unsaved changes prompt via the browser `beforeunload` only (no custom dialog).
 
 ### AC-B.3 [FE] Values and words tab
 One row per merged allowed value: display label input (Group E) with the automatic wording as placeholder, the slug in a muted `code` span, the customer words as `TokenInput` chips, suppress / restore per value. Suppressed values render struck through with an Undo chip. A value the user added carries the "user" pill. Empty state when the key has no values: "No values yet" + CTA "Add value" (opens the same add-value input). Boolean keys render the single "When true" row.
@@ -124,7 +125,7 @@ Given a seed row with `value_labels = {"pp": "PP"}`, when the startup seed repai
 `readableValue('pp', undefined, {pp: 'PP'})` -> `PP`; `readableValue('pp')` -> `Pp`; list values map element-wise; unit still appended; numbers and booleans unaffected.
 
 ### AC-E.2 [FE] Every value display uses the label
-Product Specifications tab (`SpecTable` -> `SpecValueCell`, including enum option labels), `ProductProposalGroup`, `FlyerSpecReviewScreen`, `SpecVerificationList` (invalidation diff `title`), `SpecProposalReview`: a value with a label renders the label. Each screen reads labels from the registry it already loads, or `useSpecRegistryQuery`.
+Every registry payload the readers consume carries `value_labels`: the list AND `GET /spec-registry/applicable-keys` (the product page's only registry source), each asserted by a pytest. Product Specifications tab (`SpecTable` -> `SpecValueCell`, including enum option labels), `ProductProposalGroup`, `FlyerSpecReviewScreen`, `SpecVerificationList` (invalidation diff `title`), `SpecProposalReview`: a value with a label renders the label. Each screen reads labels from the registry it already loads, or `useSpecRegistryQuery`.
 
 ### AC-E.3 [E2E]
 Set `PP` on Seat cover material, Save; open a Water Closet product whose seat material is `pp`; Specifications tab shows `PP`. Clear the label, Save, reload: `Pp`.
@@ -170,6 +171,7 @@ The reviewer's report includes the `emil-design-eng` Before / After / Why table 
 vitest: registry grid renders + filters + row href; record page view/edit toggle keeps field order (snapshot of field labels in both modes is identical); Values tab label input + payload; Rules tab try-on-product; Seen-in pagination params; Add specification dialog; Try a phrase dialog empty state; Search ranking tab save; Spec Verification unverify countdown commit + cancel. pytest: D.2 to D.5, F.2 if applicable. Existing 54 Spec Verification tests stay green.
 
 ## Out of scope
+- Six per-key tuning fields the retired editor exposed (`rank_weight`, `match_tolerance`, `match_decay`, `applies_when`, `excluded_values`, `value_weights`) are not on the record page in this lane; restoring them is issue #528 (S2b), awaiting the user's call.
 - Outline user guide for the workbench (backlog; the prose removed in D3 is its raw material).
 - Chatbot / MCP presenters keep slug wording (#423 out-of-scope carried over).
 - A server GET for one key (D9); revisit when the registry exceeds one page.
