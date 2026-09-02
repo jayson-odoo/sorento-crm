@@ -28,6 +28,7 @@ from app.models.scm import (
     SupplierProductCodeAlias,
 )
 from app.services.error_handler import AppException
+from app.services.scm import plan_statement
 from app.services.scm.supplier_code_matcher import resolve
 from app.services.scm.supplier_scope import is_uuid as _is_uuid
 
@@ -587,12 +588,11 @@ def _unmatched_rows(
         .scalar_subquery()
     )
 
-    stock_scope = db.query(SupplierInventory).filter(
-        SupplierInventory.loading_plan_id == loading_plan_id
-    )
-    if stock_scope.count():
+    if plan_statement.has_stock_rows(db, loading_plan_id):
         rows = (
-            stock_scope.filter(
+            db.query(SupplierInventory)
+            .filter(
+                SupplierInventory.loading_plan_id == loading_plan_id,
                 SupplierInventory.product_id.is_(None),
                 SupplierInventory.product_set_id.is_(None),
                 func.upper(SupplierInventory.item_code).notin_(dismissed),
@@ -602,10 +602,7 @@ def _unmatched_rows(
         )
         return [_stock_queue_row(row) for row in rows]
 
-    invoice_scope = db.query(ProformaInvoice).filter(
-        ProformaInvoice.loading_plan_id == loading_plan_id
-    )
-    if not invoice_scope.count():
+    if not plan_statement.has_invoices(db, loading_plan_id):
         return None
     lines = (
         db.query(ProformaInvoiceLine, ProformaInvoice)

@@ -68,7 +68,7 @@ from app.models.scm import (
 )
 from app.services.company_scope_sql import company_sql_predicate
 from app.services.error_handler import AppException
-from app.services.scm import priority, supplier_notice_service
+from app.services.scm import plan_statement, priority, supplier_notice_service
 from app.services.scm.customer_label import CUSTOMER_JOIN_ON, CUSTOMER_LABEL_SQL
 from app.services.scm.demand import (
     PLAN_DEMAND_LINE_SQL,
@@ -1320,10 +1320,17 @@ def _statement(
     file", off a snapshot another plan had uploaded).
 
     The supplier-wide reads survive for exactly two callers and are marked for deletion with
-    the second: a build with no plan at all (a test, and the send preview), and a LEGACY plan
-    that predates migration 454 and therefore has nothing stamped. Blanking every plan that
-    was open on the day 454 landed would be a worse answer than the drift they already carry;
-    the branch retires once every one of them is cancelled or sent.
+    the second: a build with no plan at all (the service-level tests), and a LEGACY plan that
+    predates migration 454 and therefore has nothing stamped. Blanking every plan that was
+    open on the day 454 landed would be a worse answer than the drift they already carry; the
+    branch retires once every one of them is cancelled or sent.
+
+    "Has nothing stamped" is asked about ROWS, never about matched holdings (`plan_statement`,
+    shared with the alias queue). A plan whose upload wrote 115 rows that bound to nothing HAS
+    a statement - it just says nothing about our catalogue - and reading the empty holdings as
+    "no statement" dropped it into the legacy branch, which is the ROYAL MIRROR shape from the
+    other direction. The proforma leg was worse: an all-unmatched proforma plan fell back to
+    the supplier's STOCK LIST, a different document answering a different question.
     """
     if plan is None:
         as_of, stock = _stock_list(db, supplier_id)
@@ -1331,13 +1338,12 @@ def _statement(
 
     kind = plan.document_kind
     if kind == "stock_list":
-        as_of, stock = _plan_stock_list(db, plan)
-        if stock:
+        if plan_statement.has_stock_rows(db, str(plan.id)):
+            as_of, stock = _plan_stock_list(db, plan)
             return as_of, stock, None
     elif kind == "proforma":
-        proforma = _plan_proforma(db, plan)
-        if proforma:
-            return None, {}, proforma
+        if plan_statement.has_invoices(db, str(plan.id)):
+            return None, {}, _plan_proforma(db, plan)
     else:
         # "No file" is a real answer, not a missing one: this plan reads no statement.
         return None, {}, None
