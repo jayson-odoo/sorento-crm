@@ -419,6 +419,7 @@ export function BrochureImagePicker() {
           table={table}
           recordCount={listable}
           isLoading={query.isPending}
+          isPlaceholderData={query.isPlaceholderData}
           tableLayout={{ width: 'fixed', columnsResizable: true }}
           // Prefixed with the permission that guards the screen, so saved column
           // widths survive the route moving.

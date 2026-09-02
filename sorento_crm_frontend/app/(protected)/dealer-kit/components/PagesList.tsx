@@ -57,7 +57,7 @@ export function PagesList() {
     pageSize: 10,
   });
 
-  const { data, isLoading, isError, error } = useQuery({
+  const { data, isLoading, isPlaceholderData, isError, error } = useQuery({
     ...LIST_QUERY_OPTIONS,
     queryKey: ['dealer-kit', 'pages'],
     queryFn: listPages,
@@ -202,6 +202,7 @@ export function PagesList() {
       table={table}
       recordCount={rows.length}
       isLoading={isLoading}
+      isPlaceholderData={isPlaceholderData}
       onRowClick={(row: PageSummary) => router.push(`/dealer-kit/pages/${row.id}`)}
       rowPending={rowPending}
       standardToolbar={false}

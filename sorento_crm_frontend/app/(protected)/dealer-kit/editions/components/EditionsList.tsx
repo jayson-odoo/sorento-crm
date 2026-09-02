@@ -54,7 +54,7 @@ export function EditionsList() {
   const [sorting, setSorting] = useState<SortingState>([]);
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 10 });
 
-  const { data, isLoading, isError, error } = useEditionsQuery(pageId);
+  const { data, isLoading, isPlaceholderData, isError, error } = useEditionsQuery(pageId);
   const create = useCreateEdition();
 
   const rows = useMemo(() => {
@@ -158,6 +158,7 @@ export function EditionsList() {
       table={table}
       recordCount={rows.length}
       isLoading={isLoading}
+      isPlaceholderData={isPlaceholderData}
       standardToolbar={false}
       tableLayout={{ width: 'fixed', columnsResizable: true }}
       // Prefixed with the permission that guards the screen. The default keys
