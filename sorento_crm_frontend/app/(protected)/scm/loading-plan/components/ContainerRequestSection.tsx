@@ -12,19 +12,7 @@ import {
   useReactTable,
 } from '@tanstack/react-table';
 import { useRouter } from 'next/navigation';
-import {
-  Check,
-  Download,
-  LayoutGrid,
-  Link2,
-  LoaderCircle,
-  Mail,
-  MessageCircle,
-  PackageSearch,
-  RefreshCw,
-  Table2,
-} from 'lucide-react';
-import { toast } from 'sonner';
+import { LayoutGrid, PackageSearch, RefreshCw, Table2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -36,22 +24,14 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
-import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { cn } from '@/lib/utils';
-import { EM_DASH, fmtInt, fmtOpens } from '../../lib/format';
-import {
-  useContainerRequestBuild,
-  useContainerRequestHistory,
-  useSupplierNotices,
-} from '../../hooks/useFulfilment';
-import {
-  getNoticeDocumentUrl,
-  type ContainerRequestHistoryProduct,
-  type ContainerRequestRow,
-  type ContainerRequestSoLine,
-  type NoticeChatRecipient,
-  type SupplierNotice,
+import { EM_DASH, fmtInt } from '../../lib/format';
+import { useContainerRequestBuild, useContainerRequestHistory } from '../../hooks/useFulfilment';
+import type {
+  ContainerRequestHistoryProduct,
+  ContainerRequestRow,
+  ContainerRequestSoLine,
 } from '../../services/fulfilmentService';
 import {
   IncomingPlTable,
@@ -66,7 +46,6 @@ import {
   type PlanRowDialogKind,
 } from '../../components/PlanRowDialog';
 import { PlanNumberButton } from '../../components/PlanNumberButton';
-import { copyPublicLink } from './copyPublicLink';
 import { FormulaTip } from './FormulaTip';
 import { ContainerRequestRowDialog } from './ContainerRequestRowDialog';
 import { ContainerRequestStatCards } from './ContainerRequestStatCards';
@@ -107,48 +86,11 @@ import {
  * The header's occasional actions sit behind a gear (R23), for the reason the toolbar's own
  * gear exists: Send is the errand, and a row of equally-weighted outline buttons made the
  * rare things look as important as the routine one.
- */
-
-const NOTICE_STATUS_LABEL: Record<SupplierNotice['status'], string> = {
-  pending: 'Queued',
-  sent: 'Sent',
-  failed: 'Failed',
-  skipped: 'Not sent',
-};
-
-const NOTICE_CHANNEL_LABEL: Record<SupplierNotice['channel'], string> = {
-  email: 'Email',
-  // A chat send is a WeChat send (R10) - the factories are in China. The column says the
-  // channel it actually went out on, not the internal name of the column it is stored in.
-  chat: 'WeChat',
-};
-
-const NOTICE_CHANNEL_ICON: Record<SupplierNotice['channel'], typeof Mail> = {
-  email: Mail,
-  chat: MessageCircle,
-};
-
-/**
- * Everybody this send named, in one line (AC-C2).
  *
- * An email notice holds addresses; a chat notice holds the one WeChat contact, by name -
- * "who read it" is a person on a phone, not a `respond_contacts` id (no UUIDs in the UI).
- * `recipient` is the pre-442 single-address column, kept as the fallback so a notice sent
- * before the send dialog existed still says where it went.
+ * S2 (2 Sep): this renders on the record's Lines tab only. The "Requests sent to X" card
+ * that used to sit under this grid as an inline `noticesCard` left for its own Sent tab
+ * (`SentRequestsPanel.tsx`); `LoadingPlanView` owns the tab strip and both panels.
  */
-function noticeRecipients(notice: SupplierNotice): string {
-  const named = notice.recipients;
-  if (Array.isArray(named) && named.length > 0) {
-    return named
-      .map((r) =>
-        typeof r === 'string'
-          ? r
-          : (r as NoticeChatRecipient).name || 'Unnamed contact',
-      )
-      .join(', ');
-  }
-  return notice.recipient ?? '';
-}
 
 const MATRIX_AXIS_OPTIONS = [
   { value: 'product', label: 'Product' },
@@ -311,8 +253,6 @@ export function ContainerRequestSection({
 }) {
   const router = useRouter();
   const build = useContainerRequestBuild(planId);
-  // This plan's sends only (R3/R11) - the supplier's other open plan keeps its own history.
-  const notices = useSupplierNotices(supplierId, planId);
 
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 25 });
   const [sorting, setSorting] = useState<SortingState>([]);
@@ -320,8 +260,6 @@ export function ContainerRequestSection({
   const [matrixAxis, setMatrixAxis] = useState<ContainerRequestMatrixAxis>('product');
   const [matrixGranularity, setMatrixGranularity] =
     useState<ContainerRequestMatrixGranularity>('week');
-  const [openingDocId, setOpeningDocId] = useState<string | null>(null);
-  const [copiedNoticeId, setCopiedNoticeId] = useState<string | null>(null);
   // The row whose breakdown is open. Held as its KEY, not the row object, so a refresh
   // behind an open dialog shows the NEW numbers rather than the ones it opened on.
   const [openRowKey, setOpenRowKey] = useState<string | null>(null);
@@ -743,147 +681,6 @@ export function ContainerRequestSection({
     ? (rows.find((r) => r.row_key === openRowKey) ?? null)
     : null;
 
-  const requestNotices = (notices.data ?? []).filter(
-    (n) => n.notice_type === 'container_request',
-  );
-
-  // Duplicated from `SupplierNoticePanel.openDocument` rather than generalizing that panel to
-  // take an arbitrary notices list: its header couples the document list to ONE action
-  // (`useApproveLoadingPlan`, keyed on a `planId` this stage does not have) - reshaping it to
-  // also drive `useSendContainerRequest` risked the panel's own, already-covered tests for a
-  // few lines of overlap. Noted per the CLAUDE.md lesson on not silently duplicating shared
-  // list/detail rendering: this IS a duplication, made deliberately and in the open.
-  async function openDocument(notice: SupplierNotice, kind: 'pdf' | 'xlsx') {
-    setOpeningDocId(`${notice.id}:${kind}`);
-    try {
-      const { url } = await getNoticeDocumentUrl(notice.id, kind);
-      window.open(url, '_blank', 'noopener');
-    } catch (e) {
-      toast.error((e as Error).message);
-    } finally {
-      setOpeningDocId(null);
-    }
-  }
-
-  // The link the supplier already has in their inbox, copied so Ms Tee can paste it into
-  // WeChat herself - which is how she reaches the factories that never open email.
-  async function copyLink(notice: SupplierNotice) {
-    if (!(await copyPublicLink(notice.public_url))) return;
-    setCopiedNoticeId(notice.id);
-    window.setTimeout(() => setCopiedNoticeId(null), 2000);
-  }
-
-  // SF-4 (reviewer): what has already been sent to this supplier does not disappear just
-  // because the build is loading, errored, or has nothing to suggest right now - it is its own
-  // fact, independent of the current suggestion. Rendered on every branch below.
-  const noticesCard = (
-    <Card className="p-4" data-testid="requests-sent">
-      <h3 className="text-sm font-semibold">Requests sent to {supplierName}</h3>
-      {requestNotices.length === 0 ? (
-        <p className="mt-2 rounded-lg border border-dashed border-border p-4 text-center text-xs text-muted-foreground">
-          Nothing sent to this supplier yet.
-        </p>
-      ) : (
-        <div className="mt-2 divide-y divide-border rounded-lg border">
-          {requestNotices.map((n) => (
-            <div
-              key={n.id}
-              className="flex flex-col gap-2 p-3 sm:flex-row sm:items-center sm:justify-between"
-            >
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  {(() => {
-                    const ChannelIcon = NOTICE_CHANNEL_ICON[n.channel];
-                    return <ChannelIcon className="size-3.5 text-muted-foreground" />;
-                  })()}
-                  <span className="text-xs font-medium">{NOTICE_CHANNEL_LABEL[n.channel]}</span>
-                  <span className={cn(STATUS_PILL_BASE, statusPillClass(n.status))}>
-                    {NOTICE_STATUS_LABEL[n.status]}
-                  </span>
-                  {noticeRecipients(n) ? (
-                    <span
-                      className="truncate text-2xs text-muted-foreground"
-                      title={noticeRecipients(n)}
-                    >
-                      {noticeRecipients(n)}
-                    </span>
-                  ) : null}
-                </div>
-                <p className="mt-0.5 text-2xs text-muted-foreground">
-                  {n.last_error ||
-                    n.status_reason ||
-                    (n.sent_at ? `Sent ${formatDateInMalaysia(n.sent_at)}` : EM_DASH)}
-                </p>
-                {/* Whether the supplier has actually looked at it (AC-C8). Its own line,
-                    beside the send, because "sent" and "read" are two different facts and
-                    the second one is the one that decides whether to chase. */}
-                <p className="mt-0.5 text-2xs text-muted-foreground" data-testid="notice-opens">
-                  {fmtOpens(n.open_count, n.last_opened_at)}
-                </p>
-              </div>
-              <div className="flex shrink-0 items-center gap-2">
-                <span className="text-2xs text-muted-foreground">{n.line_count} products</span>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={!n.has_document || openingDocId === `${n.id}:pdf`}
-                  onClick={() => openDocument(n, 'pdf')}
-                >
-                  {openingDocId === `${n.id}:pdf` ? (
-                    <LoaderCircle className="size-4 animate-spin" />
-                  ) : (
-                    <Download className="size-4" />
-                  )}
-                  PDF
-                </Button>
-                {/* Their own stock list with the quantity to load filled in (AC-C4). Absent
-                    on notices sent before F4, which is why the button is conditional rather
-                    than merely disabled. */}
-                {n.has_xlsx ? (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={openingDocId === `${n.id}:xlsx`}
-                    onClick={() => openDocument(n, 'xlsx')}
-                  >
-                    {openingDocId === `${n.id}:xlsx` ? (
-                      <LoaderCircle className="size-4 animate-spin" />
-                    ) : (
-                      <Download className="size-4" />
-                    )}
-                    XLSX
-                  </Button>
-                ) : null}
-                {/* On EVERY row of the current send (R23), because the link is one credential
-                    delivered two ways and the chat row is the one she copies from for WeChat.
-                    A row whose token has run out says so instead of falling silent: no button
-                    (a copied dead link is worse than none) but not the same blank as a row
-                    that never carried a link at all. */}
-                {n.public_url ? (
-                  <Button size="sm" variant="outline" onClick={() => copyLink(n)}>
-                    {copiedNoticeId === n.id ? (
-                      <Check className="size-4" />
-                    ) : (
-                      <Link2 className="size-4" />
-                    )}
-                    Copy link
-                  </Button>
-                ) : n.link_retired ? (
-                  <span
-                    className="text-2xs text-muted-foreground"
-                    title="A later request replaced this link, or it passed its 30 days."
-                  >
-                    Link retired
-                  </span>
-                ) : null}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </Card>
-  );
-
   if (build.isLoading) {
     return (
       <div className="space-y-4">
@@ -891,7 +688,6 @@ export function ContainerRequestSection({
           <Skeleton className="h-6 w-64" />
           <Skeleton className="mt-3 h-24 w-full rounded-lg" />
         </Card>
-        {noticesCard}
       </div>
     );
   }
@@ -906,7 +702,6 @@ export function ContainerRequestSection({
             Try again
           </Button>
         </Card>
-        {noticesCard}
       </div>
     );
   }
@@ -929,7 +724,6 @@ export function ContainerRequestSection({
             new plan from the loading plans list to hand over a newer stock list or proforma.
           </p>
         </Card>
-        {noticesCard}
       </div>
     );
   }
@@ -1056,11 +850,6 @@ export function ContainerRequestSection({
           )}
         </Card>
       </DataGrid>
-
-      {/* SF-4 (reviewer): always rendered, with an explicit empty state - "nothing sent yet" is
-          a state she needs to see, not infer from an absent section. Shared with the early
-          returns above so every branch of this component shows the same fact. */}
-      {noticesCard}
 
       {openRow ? (
         <ContainerRequestRowDialog

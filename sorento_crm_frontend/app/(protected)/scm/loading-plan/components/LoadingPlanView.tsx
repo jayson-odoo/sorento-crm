@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { toast } from 'sonner';
-import { ArrowLeft, LoaderCircle, Save } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, LoaderCircle, Save } from 'lucide-react';
 import {
   AlertDialog,
   AlertDialogContent,
@@ -27,6 +27,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import DetailActions from '@/components/common/DetailActions';
 import AttachmentPreviewModal, {
   type AttachmentPreviewItem,
@@ -43,7 +44,10 @@ import {
   useSupplierStockListFile,
   useUpdateLoadingPlanCutOff,
 } from '../../hooks/useFulfilment';
-import { useRematchSupplierCodes } from '../../hooks/useSupplierCodeAliases';
+import {
+  useRematchSupplierCodes,
+  useUnmatchedSupplierCodes,
+} from '../../hooks/useSupplierCodeAliases';
 import {
   type CodedError,
   type ContainerRequestRow,
@@ -54,9 +58,14 @@ import { useLoadingPlanActions } from '../actions';
 import { UnmatchedSupplierCodesPanel } from './UnmatchedSupplierCodesPanel';
 import { ContainerRequestSection } from './ContainerRequestSection';
 import { SendRequestDialog } from './SendRequestDialog';
+import { SentRequestsPanel } from './SentRequestsPanel';
 import { requestLinesFrom } from './containerRequestSummary';
 import { copyPublicLink } from './copyPublicLink';
 import { PageHeader } from '@/components/common/PageHeader';
+
+/** The record's three tabs (S2): Lines (default), Supplier codes, Sent. */
+type LoadingPlanTab = 'lines' | 'codes' | 'sent';
+const LOADING_PLAN_TABS: LoadingPlanTab[] = ['lines', 'codes', 'sent'];
 
 /**
  * One loading plan, as a record (R5).
@@ -172,7 +181,24 @@ export function LoadingPlanView({ planId }: { planId: string }) {
   // when every code binds, and that is exactly the state somebody is trying to reach after
   // adding the missing products (R18), so it is also reachable from up here.
   const rematch = useRematchSupplierCodes();
+  // Read here too (S2), for the Supplier codes tab's own badge - same query key as
+  // `UnmatchedSupplierCodesPanel`, so React Query serves both callers from one fetch.
+  const { data: unmatchedCodes = [] } = useUnmatchedSupplierCodes(supplierId || null);
 
+  // The tab lives in the URL (AC-B2), not component state: reload and the record's own
+  // prev/next pager both have to land back on the tab she was reading. `?tab=` follows the
+  // same shape ProductDetail uses - absent or unrecognised falls back to Lines, the default.
+  const rawTab = searchParams?.get('tab');
+  const activeTab: LoadingPlanTab = LOADING_PLAN_TABS.includes(rawTab as LoadingPlanTab)
+    ? (rawTab as LoadingPlanTab)
+    : 'lines';
+  const handleTabChange = (tab: string) => {
+    const params = new URLSearchParams(searchParams?.toString());
+    if (tab === 'lines') params.delete('tab');
+    else params.set('tab', tab);
+    const qs = params.toString();
+    router.replace(`/scm/loading-plan/${planId}${qs ? `?${qs}` : ''}`, { scroll: false });
+  };
 
   const rows = useMemo(() => build.data?.rows ?? [], [build.data]);
   const readOnly = plan?.status === 'cancelled';
@@ -450,18 +476,57 @@ export function LoadingPlanView({ planId }: { planId: string }) {
         }
       />
 
-      {/* The queue of codes this supplier's file names and our catalogue does not - the stock
-          behind them is invisible to the plan below until somebody answers them. */}
-      <UnmatchedSupplierCodesPanel supplierId={supplierId} />
+      {/* Three tabs (S2): what to ask (Lines, default), the codes her file named that our
+          catalogue does not (Supplier codes), and what has already gone out (Sent). The
+          toolbar above never moves between them - Save and Send both act on the Lines tab's
+          edits no matter which tab is open. */}
+      <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
+        <TabsList variant="line" className="mb-4 w-full justify-start">
+          <TabsTrigger value="lines">Lines</TabsTrigger>
+          <TabsTrigger value="codes">
+            Supplier codes{unmatchedCodes.length ? ` (${unmatchedCodes.length})` : ''}
+          </TabsTrigger>
+          <TabsTrigger value="sent">
+            Sent{requestNotices.length ? ` (${requestNotices.length})` : ''}
+          </TabsTrigger>
+        </TabsList>
 
-      <ContainerRequestSection
-        planId={planId}
-        supplierId={supplierId}
-        supplierName={supplierName}
-        qtyFor={qtyFor}
-        onQtyChange={(rowKey, qty) => setEdits((prev) => ({ ...prev, [rowKey]: qty }))}
-        readOnly={readOnly}
-      />
+        <TabsContent value="lines">
+          <ContainerRequestSection
+            planId={planId}
+            supplierId={supplierId}
+            supplierName={supplierName}
+            qtyFor={qtyFor}
+            onQtyChange={(rowKey, qty) => setEdits((prev) => ({ ...prev, [rowKey]: qty }))}
+            readOnly={readOnly}
+          />
+        </TabsContent>
+
+        <TabsContent value="codes">
+          {unmatchedCodes.length > 0 ? (
+            // The queue of codes this supplier's file names and our catalogue does not - the
+            // stock behind them is invisible to the plan until somebody answers them.
+            <UnmatchedSupplierCodesPanel supplierId={supplierId} />
+          ) : (
+            <Card className="flex flex-col items-center gap-3 p-10 text-center">
+              <span className="flex size-10 items-center justify-center rounded-full bg-muted text-muted-foreground">
+                <CheckCircle2 className="size-5" />
+              </span>
+              <p className="text-sm font-medium">Every code on file is matched</p>
+            </Card>
+          )}
+        </TabsContent>
+
+        <TabsContent value="sent">
+          <SentRequestsPanel
+            supplierName={supplierName}
+            notices={requestNotices}
+            onSend={() => setSendOpen(true)}
+            sendDisabled={readOnly || lines.length === 0 || totalQty <= 0 || send.isPending}
+            sendDisabledReason={readOnly ? 'This plan is cancelled.' : undefined}
+          />
+        </TabsContent>
+      </Tabs>
 
       <SendRequestDialog
         open={sendOpen}

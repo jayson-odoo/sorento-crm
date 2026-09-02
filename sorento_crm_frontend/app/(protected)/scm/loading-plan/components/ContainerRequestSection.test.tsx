@@ -7,7 +7,8 @@
  * Send, the gear and the two downloads left this component in part 4 (R5) - they live on the
  * record's toolbar now, and `LoadingPlanView.test.tsx` owns them. What turns the grid's
  * quantities into lines that go out is `requestLinesFrom`, covered in
- * `containerRequestSummary.test.ts`.
+ * `containerRequestSummary.test.ts`. The "Requests sent to X" card left in S2 for its own
+ * Sent tab - `SentRequestsPanel.test.tsx` owns everything about it now.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -58,15 +59,6 @@ vi.mock('@/components/ui/dropdown-menu', () => ({
   ),
 }));
 /* eslint-enable @typescript-eslint/no-explicit-any */
-
-// B3 gap: the Document button on a sent-notice row calls the real service fn, not a bare fetch.
-const getNoticeDocumentUrlMock = vi.fn();
-vi.mock('../../services/fulfilmentService', async () => {
-  const actual = await vi.importActual<typeof import('../../services/fulfilmentService')>(
-    '../../services/fulfilmentService',
-  );
-  return { ...actual, getNoticeDocumentUrl: (...args: [string]) => getNoticeDocumentUrlMock(...args) };
-});
 
 // jsdom answers nothing for the personalization fetch DataGrid drives on mount, which would
 // otherwise leave every row under a skeleton (see the memory note on DataGridTable + jsdom).
@@ -141,7 +133,6 @@ const state = {
     data: { products: ContainerRequestHistoryProduct[] } | undefined;
     isFetching: boolean;
   },
-  notices: [] as unknown[],
   download: vi.fn(),
 };
 
@@ -152,7 +143,6 @@ vi.mock('../../hooks/useFulfilment', () => ({
   // peak columns need it, so a test that opens one states its own series.
   useContainerRequestHistory: () => state.history,
   useSendContainerRequest: () => state.send,
-  useSupplierNotices: () => ({ data: state.notices }),
   useDownloadContainerRequestDocument: () => ({
     mutate: state.download,
     isPending: false,
@@ -262,7 +252,6 @@ beforeEach(() => {
   };
   state.send = { mutate: vi.fn(), isPending: false, isError: false, error: null };
   state.history = { data: undefined, isFetching: false };
-  state.notices = [];
   useContainerRequestDrill.mockReset();
   useContainerRequestDrill.mockReturnValue({
     data: { rows: [], total: 0, history: [] },
@@ -273,8 +262,6 @@ beforeEach(() => {
   routerPush.mockReset();
   state.download = vi.fn();
   onQtyChange.mockReset();
-  getNoticeDocumentUrlMock.mockReset();
-  getNoticeDocumentUrlMock.mockResolvedValue({ url: 'https://cdn.test/doc.pdf', filename: 'doc.pdf' });
 });
 
 describe('ContainerRequestSection - loading / empty / error states', () => {
@@ -844,234 +831,6 @@ describe('ContainerRequestSection - the eight figures open the shared lightbox (
     expect(
       screen.queryByRole('button', { name: 'Open retail sales orders' }),
     ).not.toBeInTheDocument();
-  });
-});
-
-describe('ContainerRequestSection - requests already sent', () => {
-  it('lists a previously sent request with its channel and status', () => {
-    state.notices = [
-      {
-        id: 'n-1', supplier_id: 'sup-1', supplier_name: 'Foshan Ceramics',
-        loading_plan_id: null, notice_type: 'container_request', channel: 'email',
-        recipient: 'sales@foshan.test', status: 'sent', status_reason: null,
-        sent_at: '2026-08-18T02:00:00', attempt_count: 1, last_error: null,
-        document_filename: 'container-request.pdf', has_document: true,
-        container_type: null, container_count: null, planned_cbm: null,
-        line_count: 4, production_line_count: 0, created_at: '2026-08-18T02:00:00',
-        created_by: 'Ms Tee',
-      },
-    ];
-    renderSection();
-
-    expect(screen.getByText('Requests sent to Foshan Ceramics')).toBeInTheDocument();
-    expect(screen.getByText('Email')).toBeInTheDocument();
-    expect(screen.getByText('Sent')).toBeInTheDocument();
-  });
-
-  it('a loading-notice (not a request) does not appear in the request panel', () => {
-    // Invalidated by S4 (reviewer): the section is now ALWAYS rendered, with an explicit empty
-    // state - it can no longer disappear as a proxy for "filtered out". The updated assertion
-    // is what S4 actually asks for: the heading stays, a `notice_type: 'loading'` row does not
-    // populate it, so the empty-state copy is what shows.
-    state.notices = [
-      {
-        id: 'n-2', supplier_id: 'sup-1', supplier_name: 'Foshan Ceramics',
-        loading_plan_id: 'plan-1', notice_type: 'loading', channel: 'email',
-        recipient: 'sales@foshan.test', status: 'sent', status_reason: null,
-        sent_at: '2026-08-18T02:00:00', attempt_count: 1, last_error: null,
-        document_filename: 'loading-notice.pdf', has_document: true,
-        container_type: '40HQ', container_count: 1, planned_cbm: 60,
-        line_count: 4, production_line_count: 0, created_at: '2026-08-18T02:00:00',
-        created_by: 'Ms Tee',
-      },
-    ];
-    renderSection();
-
-    expect(screen.getByText('Requests sent to Foshan Ceramics')).toBeInTheDocument();
-    expect(screen.getByText('Nothing sent to this supplier yet.')).toBeInTheDocument();
-  });
-
-  const sentRequest = () => ({
-    id: 'n-3', supplier_id: 'sup-1', supplier_name: 'Foshan Ceramics',
-    loading_plan_id: null, notice_type: 'container_request', channel: 'email',
-    recipient: 'sales@foshan.test',
-    recipients: ['sales@foshan.test', 'ms.tee@sorento.com.my'],
-    opened_at: null, last_opened_at: null, open_count: 0,
-    status: 'sent', status_reason: null,
-    sent_at: '2026-08-18T02:00:00', attempt_count: 1, last_error: null,
-    document_filename: 'container-request.pdf', has_document: true,
-    xlsx_filename: 'container-request.xlsx', has_xlsx: true,
-    public_url: 'https://crm.test/c/SRT/supplier-request/tok-1',
-    link_retired: false,
-    container_type: null, container_count: null, planned_cbm: null,
-    line_count: 4, production_line_count: 0, created_at: '2026-08-18T02:00:00',
-    created_by: 'Ms Tee',
-  });
-
-  it('clicking PDF calls getNoticeDocumentUrl for that notice and opens the returned url', async () => {
-    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
-    state.notices = [sentRequest()];
-    renderSection();
-
-    fireEvent.click(
-      within(screen.getByTestId('requests-sent')).getByRole('button', { name: /^pdf$/i }),
-    );
-
-    await waitFor(() => expect(getNoticeDocumentUrlMock).toHaveBeenCalledWith('n-3', 'pdf'));
-    await waitFor(() =>
-      expect(openSpy).toHaveBeenCalledWith('https://cdn.test/doc.pdf', '_blank', 'noopener'),
-    );
-    openSpy.mockRestore();
-  });
-
-  // AC-C4: the card offers all three of what the send produced.
-  it('clicking XLSX asks for the spreadsheet, not the pdf', async () => {
-    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
-    state.notices = [sentRequest()];
-    renderSection();
-
-    fireEvent.click(
-      within(screen.getByTestId('requests-sent')).getByRole('button', { name: /xlsx/i }),
-    );
-
-    await waitFor(() => expect(getNoticeDocumentUrlMock).toHaveBeenCalledWith('n-3', 'xlsx'));
-    openSpy.mockRestore();
-  });
-
-  it('a notice sent before the spreadsheet existed offers no XLSX button', () => {
-    state.notices = [{ ...sentRequest(), has_xlsx: false, xlsx_filename: null }];
-    renderSection();
-
-    expect(
-      within(screen.getByTestId('requests-sent')).queryByRole('button', { name: /xlsx/i }),
-    ).not.toBeInTheDocument();
-  });
-
-  it('Copy link puts the supplier page on the clipboard', async () => {
-    const writeText = vi.fn().mockResolvedValue(undefined);
-    Object.assign(navigator, { clipboard: { writeText } });
-    state.notices = [sentRequest()];
-    renderSection();
-
-    // Scoped to the card: the gear on the header offers the same action for the CURRENT
-    // link, and this is about the row's own button.
-    fireEvent.click(
-      within(screen.getByTestId('requests-sent')).getByRole('button', { name: /copy link/i }),
-    );
-
-    await waitFor(() =>
-      expect(writeText).toHaveBeenCalledWith('https://crm.test/c/SRT/supplier-request/tok-1'),
-    );
-  });
-
-  it('a retired link says so instead of offering a dead button (AC-C8)', () => {
-    // A copied dead link is worse than no button: the supplier opens it, is told it is gone,
-    // and has no way to tell that a live one exists. Silence is not right either - the row
-    // would read like one that never carried a link at all.
-    state.notices = [{ ...sentRequest(), public_url: null, link_retired: true }];
-    renderSection();
-
-    const card = within(screen.getByTestId('requests-sent'));
-    expect(card.queryByRole('button', { name: /copy link/i })).not.toBeInTheDocument();
-    expect(card.getByText('Link retired')).toBeInTheDocument();
-  });
-
-  it('a notice that never carried a link says nothing about one', () => {
-    state.notices = [{ ...sentRequest(), public_url: null, link_retired: false }];
-    renderSection();
-
-    const card = within(screen.getByTestId('requests-sent'));
-    expect(card.queryByRole('button', { name: /copy link/i })).not.toBeInTheDocument();
-    expect(card.queryByText('Link retired')).not.toBeInTheDocument();
-  });
-
-  it('lists every address the send named, not just the first (AC-C2)', () => {
-    state.notices = [sentRequest()];
-    renderSection();
-
-    expect(
-      within(screen.getByTestId('requests-sent')).getByText(
-        'sales@foshan.test, ms.tee@sorento.com.my',
-      ),
-    ).toBeInTheDocument();
-  });
-
-  it('names the WeChat contact a chat send went to, never its id (AC-C2)', () => {
-    state.notices = [
-      {
-        ...sentRequest(),
-        id: 'n-9',
-        channel: 'chat',
-        recipient: null,
-        recipients: [
-          { respond_contact_id: '6b2f...uuid', name: 'Mr Chen (JBC)', channel: 'wechat' },
-        ],
-      },
-    ];
-    renderSection();
-
-    const card = within(screen.getByTestId('requests-sent'));
-    expect(card.getByText('WeChat')).toBeInTheDocument();
-    expect(card.getByText('Mr Chen (JBC)')).toBeInTheDocument();
-    expect(card.queryByText(/6b2f/)).not.toBeInTheDocument();
-  });
-
-  it('says whether the supplier has opened the link, and how often (AC-C8)', () => {
-    state.notices = [
-      { ...sentRequest(), open_count: 3, last_opened_at: '2026-08-27T07:10:00' },
-    ];
-    renderSection();
-
-    expect(screen.getByTestId('notice-opens').textContent).toContain('Opened 3 times, last');
-  });
-
-  it('a link nobody has opened says so, rather than falling silent (AC-C8)', () => {
-    state.notices = [sentRequest()];
-    renderSection();
-
-    expect(screen.getByTestId('notice-opens').textContent).toBe('Not opened yet');
-  });
-
-  it('offers Copy link on BOTH rows of one send (AC-C8)', () => {
-    // R23: one credential, delivered two ways. The chat row is the one Ms Tee copies from
-    // for WeChat, so a link on the email row alone is a link she cannot reach where she
-    // looks for it.
-    state.notices = [
-      sentRequest(),
-      { ...sentRequest(), id: 'n-4', channel: 'chat', status: 'skipped' },
-    ];
-    renderSection();
-
-    expect(
-      within(screen.getByTestId('requests-sent')).getAllByRole('button', { name: /copy link/i }),
-    ).toHaveLength(2);
-  });
-});
-
-describe('ContainerRequestSection - SF-4 (reviewer): the sent-requests card survives every early return', () => {
-  it('renders on the nothing-to-ask-for branch', () => {
-    state.build.data = { stock_list_as_of: null, rows: [], sources: EMPTY_SOURCES };
-    renderSection();
-
-    expect(screen.getByText(/nothing to ask foshan ceramics for right now/i)).toBeInTheDocument();
-    expect(screen.getByText('Requests sent to Foshan Ceramics')).toBeInTheDocument();
-    expect(screen.getByText('Nothing sent to this supplier yet.')).toBeInTheDocument();
-  });
-
-  it('renders on the loading branch', () => {
-    state.build.isLoading = true;
-    state.build.data = undefined;
-    renderSection();
-
-    expect(screen.getByText('Requests sent to Foshan Ceramics')).toBeInTheDocument();
-  });
-
-  it('renders on the error branch', () => {
-    state.build.isError = true;
-    state.build.error = new Error('The build blew up');
-    renderSection();
-
-    expect(screen.getByText('Requests sent to Foshan Ceramics')).toBeInTheDocument();
   });
 });
 
