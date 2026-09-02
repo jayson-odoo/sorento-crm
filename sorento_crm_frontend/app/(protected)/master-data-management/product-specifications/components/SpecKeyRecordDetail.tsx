@@ -76,6 +76,7 @@ export function SpecKeyRecordDetail({ specKey }: { specKey: string }) {
         onPrevious={() => stepTo(index - 1)}
         onNext={() => stepTo(index + 1)}
         ariaLabel="specification"
+        disabled={record.mode === 'edit'}
       />
     ) : null;
 

@@ -4,6 +4,7 @@ import type { ReactNode } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Switch } from '@/components/ui/switch';
 import DetailActions from '@/components/common/DetailActions';
 import type { RecordAction } from '@/components/common/recordActions';
 import { specTypeLabel } from '../../lib/specTypeLabel';
@@ -85,19 +86,33 @@ export function SpecKeyRecordCard({
                   <span>{row.unit || 'None'}</span>
                 )}
               </span>
+              <span className="flex items-center gap-1.5">
+                Active
+                <Switch
+                  size="sm"
+                  aria-label="Active"
+                  checked={mode === 'edit' && draft ? draft.isActive : row.is_active}
+                  disabled={mode !== 'edit' || !draft}
+                  onCheckedChange={(checked) =>
+                    setDraft((d) => ({ ...d, isActive: checked }))
+                  }
+                />
+              </span>
             </div>
           </div>
 
           {/* An edit session states ONE intent: Save or Cancel. Nav and Delete act on
-              the record as it is STORED, and offering them over a screen of unsaved
-              changes is offering to act on something nobody is reading (same rule
-              SalesAgentDetail's header follows) - so both hide while editing. */}
+              the record as it is STORED, so both are disabled while editing rather
+              than unmounted (UAC B.2 exception): a client-side route change fires no
+              `beforeunload`, and unmounting them would let a click through to drop
+              the draft with no warning. */}
           <DetailActions
-            pagerNode={mode === 'edit' ? null : pagerNode}
-            actions={mode === 'edit' ? [] : actions}
+            pagerNode={pagerNode}
+            actions={actions}
             pendingAction={pending}
             primary={primary}
             gearLabel="Specification options"
+            disabled={mode === 'edit'}
           />
         </div>
       </CardHeader>

@@ -100,6 +100,24 @@ describe('useSpecKeyRecord', () => {
     expect(payload.suppressed_values).toEqual(['brushed_brass']);
   });
 
+  it('D12 - a toggled is_active goes out on the PATCH', async () => {
+    const row = finishWithASuppressedValue();
+    updateSpecKey.mockResolvedValue({ ...row, is_active: false });
+    const { result } = renderHook(() => useSpecKeyRecord(row), { wrapper });
+
+    act(() => result.current.edit());
+    expect(result.current.draft?.isActive).toBe(true);
+    act(() => {
+      result.current.setDraft((draft) => ({ ...draft, isActive: false }));
+    });
+    await act(async () => {
+      await result.current.save();
+    });
+
+    const [, payload] = updateSpecKey.mock.calls[0];
+    expect(payload.is_active).toBe(false);
+  });
+
   it('drops back to view mode once the save resolves', async () => {
     const row = finishWithASuppressedValue();
     updateSpecKey.mockResolvedValue(row);
