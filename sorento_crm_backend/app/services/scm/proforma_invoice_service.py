@@ -56,7 +56,9 @@ from app.services.scm.proforma_invoice_reader import (
 from app.services.scm.supplier_scope import (  # noqa: F401  (assert_supplier is re-exported)
     assert_supplier,
     is_uuid as _is_uuid,
+    supplier_check as _supplier_check,
     supplier_label as _supplier_label,
+    supplier_mismatch_warning as _supplier_mismatch_warning,
 )
 from app.services.scm.upload_validation import envelope, named
 
@@ -244,7 +246,15 @@ def _summarise(
 ) -> dict[str, Any]:
     """What the file holds, described. `known` and `resolved` are injectable so `apply`,
     which needs both to do the writing, does not pay for them a second time to describe
-    what it wrote."""
+    what it wrote.
+
+    `supplier_check` (AC-G3) rides along here rather than living only in `validate`, so
+    `preview` and `apply`'s own summary agree with it too: `{letterhead,
+    chosen_supplier_name, other_supplier_name | null}`, or `None` when the file states no
+    letterhead. `document_count` is what the verdict card calls "N invoice blocks" and
+    `unmatched_items` is its "U codes unknown" (AC-G4) - both already computed below, named
+    for what they were before this slice, not renamed for it.
+    """
     codes = {ln.item_code for d in parsed.documents for ln in d.lines}
     if known is None:
         known = _products_by_code(db, codes)
@@ -303,6 +313,7 @@ def _summarise(
         "currency": file_currency,
         "currency_source": file_source,
         "priced_lines_without_currency": priced_without_currency,
+        "supplier_check": _supplier_check(db, parsed.letterhead, supplier_id=supplier_id),
     }
 
 
@@ -758,6 +769,9 @@ def validate(
             "The stated total does not match the sum of the lines on "
             + named(len(disagreeing), disagreeing, one="invoice", many="invoices")
         )
+    mismatch = _supplier_mismatch_warning(summary.get("supplier_check"))
+    if mismatch:
+        warnings.append(mismatch)
 
     return envelope(ok=not problems, problems=problems, warnings=warnings, summary=summary)
 

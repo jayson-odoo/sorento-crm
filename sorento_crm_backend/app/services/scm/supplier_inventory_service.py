@@ -32,6 +32,10 @@ from sqlalchemy.orm import Session
 from app.models.product import Product
 from app.models.scm import SupplierInventory
 from app.services.scm.supplier_inventory_reader import InventoryReadResult, read_workbook
+from app.services.scm.supplier_scope import (
+    supplier_check as _supplier_check,
+    supplier_mismatch_warning as _supplier_mismatch_warning,
+)
 from app.services.scm.upload_validation import envelope, named
 
 logger = logging.getLogger(__name__)
@@ -106,6 +110,11 @@ def _supplier_label(db: Session, supplier_id: str) -> Optional[str]:
 def _summarise(
     db: Session, parsed: InventoryReadResult, supplier_id: Optional[str] = None
 ) -> dict[str, Any]:
+    """What the file holds, described. `rows` is what the verdict card calls "L rows" and
+    `items_unmatched` is its "U codes unknown" (AC-G4) - both already computed below.
+    `supplier_check` (AC-G3) is `{letterhead, chosen_supplier_name, other_supplier_name |
+    null}`, or `None` when the file states no letterhead above its header row.
+    """
     codes = {r.item_code for r in parsed.rows}
     known = _products_by_code(db, codes, supplier_id=supplier_id, remember=False)
     unmatched = sorted(c for c in codes if c not in known)
@@ -133,6 +142,7 @@ def _summarise(
         "unmeasured_item_codes": sorted(set(unmeasured))[:50],
         "unmapped_headers": parsed.unmapped_headers,
         "unreadable_rows": len(parsed.problems),
+        "supplier_check": _supplier_check(db, parsed.letterhead, supplier_id=supplier_id),
     }
 
 
@@ -206,6 +216,9 @@ def validate(db: Session, data: bytes, *, supplier_id: str) -> dict:
             many="columns are not recognised and will be ignored",
         ),
     ]
+    mismatch = _supplier_mismatch_warning(summary.get("supplier_check"))
+    if mismatch:
+        warnings.append(mismatch)
     if not summary["rows"]:
         return envelope(
             ok=False,

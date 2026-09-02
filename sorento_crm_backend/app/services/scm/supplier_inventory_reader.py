@@ -51,6 +51,10 @@ class InventoryReadResult:
     unmapped_headers: list[str] = field(default_factory=list)
     missing_columns: list[str] = field(default_factory=list)
     total_rows: int = 0
+    #: The first non-empty text cell above the header row (AC-G3), so a preview can warn
+    #: when the sheet's own title names a different supplier than the one picked in the
+    #: dialog. `None` when the header sits on row 1 - the file said nothing above its table.
+    letterhead: Optional[str] = None
 
     @property
     def ok(self) -> bool:
@@ -129,6 +133,13 @@ def read_workbook(
                 if p not in mapped and normalize_header(c)
             ]
             break
+
+        if result.letterhead is None:
+            for cell in raw:
+                cell_text = _text(cell)
+                if cell_text:
+                    result.letterhead = cell_text
+                    break
 
     if header_idx is None:
         result.missing_columns = list(_REQUIRED_COLUMNS)

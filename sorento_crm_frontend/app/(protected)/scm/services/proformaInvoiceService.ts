@@ -415,33 +415,6 @@ function proformaForm(
   return body;
 }
 
-/**
- * PHASE 1 MOCK (S7) - DELETE WITH THIS COMMENT in Phase 2.
- *
- * `supplier_check` is the field S7 adds to this response; the backend does not serve it
- * until Phase 2. Stands in with the captain's OWN scenario - JINBAICHUAN's letterhead
- * against a supplier picked whose name is not "JINBAICHUAN" - so the verdict card's
- * mismatch warning can be tuned and reviewed in a browser before the real field exists.
- * Discarded the moment `supplier_check` actually arrives on the response.
- */
-function mockSupplierCheck(preview: ProformaInvoicePreview): ProformaInvoicePreview {
-  if (preview.supplier_check !== undefined) return preview;
-  const chosen = preview.supplier_name;
-  const mismatched = preview.ok && !!chosen && !chosen.toUpperCase().includes('JINBAICHUAN');
-  return {
-    ...preview,
-    supplier_check: preview.ok
-      ? {
-          letterhead: 'CHAOZHOU JINBAICHUAN SANITARY WARE TECHNOLOGY CO.,LTD',
-          chosen_supplier_name: chosen,
-          other_supplier_name: mismatched
-            ? 'CHAOZHOU JINBAICHUAN SANITARY WARE CO., LTD'
-            : null,
-        }
-      : null,
-  };
-}
-
 export async function previewProformaInvoice(
   file: File,
   supplierId: string,
@@ -450,8 +423,7 @@ export async function previewProformaInvoice(
     method: 'POST',
     body: proformaForm(file, supplierId),
   });
-  const body = await readJson<ProformaInvoicePreview>(res, 'Failed to read the proforma invoice');
-  return mockSupplierCheck(body);
+  return readJson<ProformaInvoicePreview>(res, 'Failed to read the proforma invoice');
 }
 
 /**
