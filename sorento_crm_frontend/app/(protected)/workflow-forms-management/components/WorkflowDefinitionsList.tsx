@@ -67,7 +67,7 @@ export default function WorkflowDefinitionsList() {
   const [advancedFilter, setAdvancedFilter] = useState<ListQueryFilterGroup | null>(null);
   const [quickStatus, setQuickStatus] = useState<'all' | 'active' | 'inactive'>('all');
 
-  const { data, isLoading, isError, error, refetch, isFetching } = useWorkflowDefinitionsGridQuery({
+  const { data, isLoading, isPlaceholderData, isError, error, refetch, isFetching } = useWorkflowDefinitionsGridQuery({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -216,6 +216,7 @@ export default function WorkflowDefinitionsList() {
       table={table}
       recordCount={data?.pagination.total ?? 0}
       isLoading={isLoading}
+      isPlaceholderData={isPlaceholderData}
       onRowClick={(row) => router.push(`/workflow-forms-management/definitions/${row.id}`)}
       rowPending={rowPending}
       tableLayout={{ columnsVisibility: true }}
