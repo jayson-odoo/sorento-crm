@@ -3,6 +3,15 @@
  * down like every other pressable (S1-09 gave the shared controls this;
  * these four never got it), and a clickable DataGrid row darkens on
  * pointer-down instead of only lifting on hover.
+ *
+ * Three of the four are keyboard-navigated: arrow keys move the highlight
+ * through a command palette, a context menu and a menubar menu. Their press cue
+ * is therefore transform-only (`PRESSED_TRANSFORM_CLASS`) - transitioning
+ * `color`/`background-color` there would fade the highlight over 150ms as the
+ * selection moves, and motion on a keyboard-initiated action is a hard-fail
+ * (DESIGN-LANGUAGE.md section 3). `DropdownMenuItem` keeps the full
+ * `PRESSED_CLASS`: it already shipped `transition-colors` in its own base
+ * string, so its colours were never instant to begin with.
  */
 import React from 'react';
 import fs from 'node:fs';
@@ -19,8 +28,20 @@ function classOf(el: Element | null) {
   return el?.getAttribute('class') ?? '';
 }
 
+/**
+ * A keyboard-navigated item: the press still shrinks it, and nothing else on it
+ * is on a transition, so the arrow-key highlight lands on the same frame.
+ */
+function expectTransformOnlyPress(cls: string) {
+  expect(cls).toContain('active:scale-[0.97]');
+  expect(cls).toContain('motion-reduce:active:scale-100');
+  expect(cls).toContain('transition-transform');
+  expect(cls).not.toContain('background-color');
+  expect(cls).not.toContain('transition-colors');
+}
+
 describe('Menu item pressed states (M1-05)', () => {
-  it('DropdownMenuItem carries PRESSED_CLASS', async () => {
+  it('DropdownMenuItem keeps the full PRESSED_CLASS, colours included', async () => {
     render(
       <DropdownMenu>
         <DropdownMenuTrigger>Open menu</DropdownMenuTrigger>
@@ -31,10 +52,12 @@ describe('Menu item pressed states (M1-05)', () => {
     );
     fireEvent.pointerDown(screen.getByRole('button', { name: 'Open menu' }), { button: 0 });
     const item = await screen.findByText('Item one');
-    expect(classOf(item.closest('[data-slot="dropdown-menu-item"]'))).toContain('active:scale-[0.97]');
+    const cls = classOf(item.closest('[data-slot="dropdown-menu-item"]'));
+    expect(cls).toContain('active:scale-[0.97]');
+    expect(cls).toContain('transition-[transform,color,background-color,border-color,box-shadow]');
   });
 
-  it('ContextMenuItem carries PRESSED_CLASS', () => {
+  it('ContextMenuItem presses without transitioning its highlight', () => {
     render(
       <ContextMenu>
         <ContextMenuTrigger>Right-click me</ContextMenuTrigger>
@@ -45,10 +68,10 @@ describe('Menu item pressed states (M1-05)', () => {
     );
     fireEvent.contextMenu(screen.getByText('Right-click me'));
     const item = screen.getByText('Item one');
-    expect(classOf(item.closest('[data-slot="context-menu-item"]'))).toContain('active:scale-[0.97]');
+    expectTransformOnlyPress(classOf(item.closest('[data-slot="context-menu-item"]')));
   });
 
-  it('MenubarItem carries PRESSED_CLASS', async () => {
+  it('MenubarItem presses without transitioning its highlight', async () => {
     render(
       <Menubar>
         <MenubarMenu>
@@ -61,10 +84,10 @@ describe('Menu item pressed states (M1-05)', () => {
     );
     fireEvent.pointerDown(screen.getByText('File'), { button: 0 });
     const item = await screen.findByText('New');
-    expect(classOf(item.closest('[data-slot="menubar-item"]'))).toContain('active:scale-[0.97]');
+    expectTransformOnlyPress(classOf(item.closest('[data-slot="menubar-item"]')));
   });
 
-  it('CommandItem carries PRESSED_CLASS', () => {
+  it('CommandItem presses without transitioning its highlight', () => {
     render(
       <Command>
         <CommandList>
@@ -73,7 +96,7 @@ describe('Menu item pressed states (M1-05)', () => {
       </Command>,
     );
     const item = screen.getByText('Result one');
-    expect(classOf(item.closest('[data-slot="command-item"]'))).toContain('active:scale-[0.97]');
+    expectTransformOnlyPress(classOf(item.closest('[data-slot="command-item"]')));
   });
 });
 
