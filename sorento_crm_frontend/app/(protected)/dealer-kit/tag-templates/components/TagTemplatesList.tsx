@@ -12,6 +12,7 @@ import { useRouter } from 'next/navigation';
 import {
   ColumnDef,
   PaginationState,
+  RowSelectionState,
   getCoreRowModel,
   getPaginationRowModel,
   useReactTable,
@@ -22,9 +23,12 @@ import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
+import { buildSelectColumn, selectedRowIds } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
+import { useDeferredAction } from '@/hooks/useDeferredAction';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { familyLabel, type TagTemplate } from '@/lib/dealer-kit/tag-template-types';
 import {
@@ -44,6 +48,7 @@ export function TagTemplatesList() {
   });
   const [createOpen, setCreateOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<TagTemplate | null>(null);
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
   const fetchData = useCallback(async () => {
     setIsLoading(true);
@@ -59,8 +64,47 @@ export function TagTemplatesList() {
     fetchData();
   }, [fetchData]);
 
+  // Delete selected (D26, S11): the backend validates and deletes the whole
+  // selection ATOMICALLY (a foreign/missing id refuses everything, nothing
+  // partial), so this is ONE `useDeferredAction`, not `useDeferredBulkAction`
+  // (that hook parks one independent action per row - the wrong shape when a
+  // single id has to be able to sink the whole batch). `bulkDelete` freezes
+  // the ids AND the count at the click: the selection is cleared right after
+  // (so the grid does not keep dead rows looking tickable), and the toast's
+  // own effect only reads this closure ten seconds later - it would otherwise
+  // report "0 templates" once the selection it was reading live had emptied.
+  const [bulkDelete, setBulkDelete] = useState<{ batchId: string; ids: string[] } | null>(
+    null,
+  );
+  const bulkDeleteCount = bulkDelete?.ids.length ?? 0;
+  const bulkDeleteNoun = `${bulkDeleteCount} template${bulkDeleteCount === 1 ? '' : 's'}`;
+
+  const bulkDeletion = useDeferredAction({
+    actionKey: 'tag_template.bulk_delete',
+    entityType: 'tag_template',
+    entityId: bulkDelete?.batchId ?? null,
+    verb: 'Deleting',
+    subject: bulkDeleteNoun,
+    surface: 'toast',
+    successMessage: `${bulkDeleteNoun} deleted`,
+    payload: { template_ids: bulkDelete?.ids ?? [] },
+    onCommitted: fetchData,
+  });
+
+  // `start()` reads its OWN hook's current closure, which only carries the
+  // batch above once a render has actually happened - calling it inline in
+  // the click handler would still see last render's `entityId: null` and
+  // no-op.
+  useEffect(() => {
+    if (bulkDelete) bulkDeletion.start();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bulkDelete?.batchId]);
+
   const columns = useMemo<ColumnDef<TagTemplate>[]>(
     () => [
+      buildSelectColumn<TagTemplate>({
+        rowLabel: (row) => `Select ${row.original.name}`,
+      }),
       {
         accessorKey: 'name',
         header: ({ column }) => (
@@ -165,24 +209,49 @@ export function TagTemplatesList() {
   const table = useReactTable({
     data: templates,
     columns,
-    state: { pagination },
+    getRowId: (row) => row.id,
+    state: { pagination, rowSelection },
     onPaginationChange: setPagination,
+    onRowSelectionChange: setRowSelection,
     getCoreRowModel: getCoreRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
     columnResizeMode: 'onChange',
+    enableRowSelection: true,
   });
+
+  const handleBulkDelete = () => {
+    const ids = selectedRowIds(table);
+    if (ids.length === 0) return;
+    setBulkDelete({ batchId: crypto.randomUUID(), ids });
+    setRowSelection({});
+  };
+
+  const listPrimaryAction = (
+    <Button size="sm" onClick={() => setCreateOpen(true)}>
+      <Plus className="mr-1.5 size-3.5" />
+      New Template
+    </Button>
+  );
 
   return (
     <>
       <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
-          <span className="text-sm text-muted-foreground">
-            {templates.length} template{templates.length !== 1 ? 's' : ''}
-          </span>
-          <Button size="sm" onClick={() => setCreateOpen(true)}>
-            <Plus className="mr-1.5 size-3.5" />
-            New Template
-          </Button>
+        <CardHeader className="block">
+          <DataGridListToolbar
+            table={table}
+            showColumns={false}
+            exportConfig={false}
+            primaryAction={listPrimaryAction}
+            bulkActions={[
+              {
+                key: 'delete',
+                label: 'Delete',
+                icon: Trash2,
+                destructive: true,
+                onClick: handleBulkDelete,
+              },
+            ]}
+          />
         </CardHeader>
         <CardTable>
           <DataGrid

@@ -920,6 +920,35 @@ for _key, _entity, _fn, _label in (
     )
 
 
+def _bulk_delete_tag_templates(db: Session, payload: dict):
+    """Delete a SELECTION of templates atomically (D26, S11).
+
+    One handler, one call, over the whole list of ids - not
+    `useDeferredBulkAction`'s one-pending-action-per-row shape, because the
+    batch has to refuse together (AC-S11-2): a foreign or missing id must stop
+    every row in the selection, not just its own. `entity_id` here is a
+    client-generated token naming the CLICK, not a real template - there is
+    no single record a multi-row delete is "about", and the ids that matter
+    travel in the payload instead.
+    """
+    from app.services.dealer_kit import tag_template_service
+
+    ids = payload.get("template_ids") or []
+    return tag_template_service.bulk_delete(db, [str(i) for i in ids])
+
+
+register(
+    FormAction(
+        key="tag_template.bulk_delete",
+        entity_types=("tag_template",),
+        execute=_bulk_delete_tag_templates,
+        window=WINDOW_DESTRUCTIVE,
+        permission="dealer_kit.tag_templates.manage",
+        label="Delete tag templates",
+    )
+)
+
+
 def _undo_flyer_code_adopt(db: Session, payload: dict):
     """"This printed code is NOT that product" - undoing an adoption (D7, S1).
 
