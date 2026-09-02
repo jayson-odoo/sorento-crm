@@ -13,7 +13,7 @@ import {
   getPaginationRowModel,
 } from '@tanstack/react-table';
 import { Plus, Upload, Trash2 } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { useQueryClient } from '@tanstack/react-query';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';

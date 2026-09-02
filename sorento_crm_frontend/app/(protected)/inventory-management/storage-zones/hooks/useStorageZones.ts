@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { getStorageZonesTree, getStorageZone, createStorageZone, updateStorageZone, deleteStorageZone, moveStorageZone } from '../services/storageZoneService';
 import type { StorageZoneFormData } from '../types/storageZone.types';
 

@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 import { getStockBatches, getStockBatch, createStockBatch, updateStockBatch, deleteStockBatch, bulkAddSerialNumbers } from '../services/batchService';
 import type { BatchFormData } from '../types/batch.types';
