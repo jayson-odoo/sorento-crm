@@ -665,9 +665,10 @@ describe('BoardCellBreakdownDialog: the facts the server sends', () => {
       // A negative available is the whole point: it is the shortfall, and clamping it to zero
       // would turn the one number that says "this cannot be met" into one that says it can.
       '-46531',
-      // Available for Project: blank on an own location (LADDER v8, R-K) - there is no dealer
-      // share to keep back outside a site pool, and a 0 would read as an empty location.
-      '-',
+      // Available for Project: on an own location it IS Available (D2, captain 3 Sep) -
+      // there is no dealer share to keep back outside a site pool, so everything available
+      // there is available to a project. It used to print "-", which read as missing data.
+      '-46531',
       // PO qty and Taken: the server stated neither, and a row that names a location reads 0.
       '0',
       '0',

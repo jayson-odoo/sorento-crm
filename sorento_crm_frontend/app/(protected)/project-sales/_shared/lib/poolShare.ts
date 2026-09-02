@@ -20,7 +20,13 @@
  * the payload (`PlanningBoard.pool_share_pct`, `StockDetail.pool_share_pct`) rather than a
  * constant, so a policy change on the Policies page moves every one of these numbers at once.
  */
-import { fromMinor, QTY_SCALE, toMinor } from './supplyComposition';
+import type { BoardCellLocation } from '../types/fulfilmentPlanning.types';
+import {
+  fromMinor,
+  QTY_SCALE,
+  toMinor,
+  type PoolShareLimits,
+} from './supplyComposition';
 
 /** What the server calls the five-pool set on `net_of` and on `stock-detail`'s `group`. */
 export const POOLS_SET = 'pools';
@@ -57,4 +63,33 @@ export function availableForProject(
   ) * QTY_SCALE;
   if (fivePoolNet === null || fivePoolNet === undefined) return fromMinor(spare);
   return fromMinor(Math.min(spare, Math.max(toMinor(fivePoolNet), 0)));
+}
+
+/**
+ * What each site pool of THIS cell may lend a project line, and the one net over all of
+ * them (D5, captain 3 Sep).
+ *
+ * Read straight off the rows the server sent - `available_for_project` per site pool row and
+ * the pools' own `net` - because those are the figures the walk obeyed and the ones
+ * `ProjectSupplyService._is_pool_share_split` checks a confirmation against. Anything else
+ * would be a second opinion about the same allowance, and the client refusing what the
+ * server accepts (or the other way round) is the defect this exists to stop.
+ *
+ * An own bin, a group sibling and another group are absent from the map on purpose: they
+ * keep no share back, so a reserve there beside a Buy is still the mix the whole-line rule
+ * refuses.
+ */
+export function poolShareLimitsOf(
+  locations: readonly BoardCellLocation[],
+): PoolShareLimits {
+  const pools = locations.filter((entry) => (entry.where ?? 'own') === 'site_pool');
+  const allowanceByWarehouseId: Record<string, string | null | undefined> = {};
+  for (const entry of pools) {
+    if (!entry.warehouse_id) continue;
+    allowanceByWarehouseId[entry.warehouse_id] = entry.available_for_project;
+  }
+  return {
+    allowanceByWarehouseId,
+    net: pools.find((entry) => entry.net !== null && entry.net !== undefined)?.net ?? null,
+  };
 }

@@ -226,6 +226,32 @@ export const CellStockTable = React.forwardRef<
    * sits - a second, ad hoc scan here would risk answering the two questions differently.
    */
   const sections = React.useMemo(() => sectionsOf(locations), [locations]);
+  /**
+   * How tall THIS table's own header is, so a ledger expanded under a row can stack its own
+   * header directly below it (D3, captain 3 Sep). Measured rather than written down: the
+   * header wraps to two lines at 375px, and a constant would leave a gap at one width and
+   * cover a row at the other.
+   */
+  const headRef = React.useRef<HTMLTableSectionElement | null>(null);
+  const [headHeight, setHeadHeight] = React.useState(0);
+  /**
+   * A row whose ledger is OPEN stays under the table's own header while that ledger is read
+   * (D3). Sticky on the row, one z-index under the header it sits below, on a solid
+   * background so the rows passing beneath do not show through - and confined to its own
+   * section's `tbody`, so it stops sticking where its section ends.
+   */
+  const frozenRow = (open: boolean): React.CSSProperties | undefined =>
+    open ? { position: 'sticky', top: headHeight, zIndex: 9 } : undefined;
+  React.useEffect(() => {
+    const node = headRef.current;
+    if (!node || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(() => {
+      setHeadHeight(node.getBoundingClientRect().height);
+    });
+    observer.observe(node);
+    setHeadHeight(node.getBoundingClientRect().height);
+    return () => observer.disconnect();
+  }, []);
 
   /**
    * Opens whichever section a jump names - the GROUP subtotal when the set nets one (the
@@ -364,7 +390,7 @@ export const CellStockTable = React.forwardRef<
           had it stopping at two thirds with an empty band on the right), the numeric columns
           hold a min-width floor, and the Location column above carries the slack. */}
         <table className="w-full border-separate border-spacing-0 text-xs">
-          <thead>
+          <thead ref={headRef}>
             <tr>
               <th scope="col" className={cn(CHEVRON_COL, HEAD_CELL)} />
               <th scope="col" className={cn(LOCATION_COL, HEAD_CELL)}>
@@ -385,8 +411,13 @@ export const CellStockTable = React.forwardRef<
             </tr>
           </thead>
 
-          <tbody>
-            {sections.flatMap((section) => [
+          {/* ONE `tbody` PER SECTION (D3, captain 3 Sep). A sticky row is confined to its
+              own block container, so a subtotal frozen under the header would otherwise
+              float over every section after it once its own was scrolled past - "the
+              freezing of row is not very robust". Per section, it stops where it belongs. */}
+          {sections.map((section) => (
+            <tbody key={`section-${section.key}`}>
+              {[
               ...section.rows.map((entry) => {
                 const key = entry.location ?? '__none__';
                 const testKey = entry.location ?? 'none';
@@ -399,7 +430,11 @@ export const CellStockTable = React.forwardRef<
                 const isOpen = Boolean(expanded[key]);
                 return (
                   <React.Fragment key={key}>
-                    <tr data-testid={`cell-location-${testKey}`}>
+                    <tr
+                      data-testid={`cell-location-${testKey}`}
+                      className={cn(isOpen && 'bg-muted')}
+                      style={frozenRow(isOpen)}
+                    >
                       <td className={cn(CHEVRON_COL, BODY_CELL, 'px-1')}>
                         {addressable ? (
                           <Button
@@ -522,6 +557,7 @@ export const CellStockTable = React.forwardRef<
                             documentInfo={documentInfo}
                             filterText={filterText}
                             jumpTarget={activeJump}
+                            stickyTop={0}
                           />
                         </td>
                       </tr>
@@ -539,6 +575,8 @@ export const CellStockTable = React.forwardRef<
                     <tr
                       key={`subtotal-${section.key}`}
                       data-testid={`stock-subtotal-${section.key}`}
+                      className={cn(expandedSets[section.key] && 'bg-muted')}
+                      style={frozenRow(Boolean(expandedSets[section.key]))}
                     >
                       <td className={cn(CHEVRON_COL, FOOT_CELL, 'px-1')}>
                         {section.netOf && sectionProductId(section) ? (
@@ -590,25 +628,20 @@ export const CellStockTable = React.forwardRef<
                         const isNet =
                           column.key === 'available' && section.net !== null;
                         // R-K: the SUBTOTAL's own Available-for-Project is not a sum of the
-                        // rows above it, same reason `isNet` is not for Available - it is the
-                        // share of the pool's own net, which every pool row already agrees on
-                        // (`_net_fields`, the same value each row's `net` carries). Blank on a
-                        // non-pool section: there is no share to keep back from a group.
-                        const isPoolShare =
-                          column.key === 'available-for-project';
-                        const total = isNet
-                          ? section.net
-                          : isPoolShare
-                            ? section.netOf === POOLS_SET
-                              ? availableForProject(
-                                  section.net,
-                                  section.net,
-                                  poolSharePct,
-                                )
-                              : null
-                            : sumOf(section.rows, (entry) =>
-                                valueOf(column, entry, drawn),
-                              );
+                        // rows above it, same reason `isNet` is not for Available - on a SITE
+                        // POOL it is the share of the pool's own net, which every pool row
+                        // already agrees on (`_net_fields`, the same value each row's `net`
+                        // carries). On every other section it IS that section's Available
+                        // (D2, captain 3 Sep): nothing is kept back outside a pool, and the
+                        // "-" it used to print read as missing data.
+                        const total =
+                          column.key === 'available-for-project'
+                            ? projectShareSubtotalOf(section, drawn, poolSharePct)
+                            : isNet
+                              ? section.net
+                              : sumOf(section.rows, (entry) =>
+                                  valueOf(column, entry, drawn),
+                                );
                         return (
                           <td
                             key={column.key}
@@ -659,6 +692,7 @@ export const CellStockTable = React.forwardRef<
                                 documentInfo={documentInfo}
                                 filterText={filterText}
                                 jumpTarget={activeJump}
+                                stickyTop={0}
                               />
                             </td>
                           </tr>,
@@ -666,8 +700,9 @@ export const CellStockTable = React.forwardRef<
                       : []),
                   ]
                 : []),
-            ])}
-          </tbody>
+              ]}
+            </tbody>
+          ))}
 
           {showTotals && (
             // Only when there is something to add up. One location IS its own total, and a totals
@@ -694,27 +729,19 @@ export const CellStockTable = React.forwardRef<
                       />
                     );
                   }
-                  // Nit (code review round 3 batch 2): "Available for Project" is NOT a
-                  // sum of the rows above it, the same reason the site pool SUBTOTAL isn't
-                  // (R-K) - it is the one share of the pool's own net, and a plain
-                  // `sumOf(locations, ...)` added every pool row's own figure together and
-                  // read "Total 400" above a subtotal reading "Subtotal 200". One formula,
-                  // reused: `availableForProject` on the pool section's own net, capped by
-                  // the five-pool net.
+                  // Nit (code review round 3 batch 2), amended by D2: "Available for
+                  // Project" is NOT a sum of the ROWS, the same reason the site pool
+                  // SUBTOTAL isn't (R-K) - a plain `sumOf(locations, ...)` added every pool
+                  // row's own figure together and read "Total 400" above a subtotal reading
+                  // "Subtotal 200". It is the SUBTOTALS added up, which is how the Available
+                  // column's own total reads once each section has stated its own.
                   const total =
                     column.key === 'available-for-project'
-                      ? (() => {
-                          const poolSection = sections.find(
-                            (entry) => entry.netOf === POOLS_SET,
-                          );
-                          return poolSection
-                            ? availableForProject(
-                                poolSection.net,
-                                poolSection.net,
-                                poolSharePct,
-                              )
-                            : null;
-                        })()
+                      ? sumValues(
+                          sections.map((section) =>
+                            projectShareSubtotalOf(section, drawn, poolSharePct),
+                          ),
+                        )
                       : sumOf(locations, (entry) => valueOf(column, entry, drawn));
                   return (
                     <td key={column.key} className={cn(NUMBER_COL, FOOT_CELL)}>
@@ -865,12 +892,6 @@ const NUMERIC_COLUMNS: {
   total?: boolean;
   /** May legitimately be negative, and is coloured when it is. */
   signed?: boolean;
-  /**
-   * Skips AC-B2's "a named location with no figure reads 0" default (R-K): this column has
-   * no answer at all outside a site pool, and 0 there would say "the pool can spare
-   * nothing" about a row that is not a pool.
-   */
-  noZeroFallback?: boolean;
 }[] = [
   {
     key: 'on-hand',
@@ -903,17 +924,22 @@ const NUMERIC_COLUMNS: {
   },
   // R-K, S2: what the pool may still give a PROJECT line once its own dealer share is kept
   // back (`min(floor(available x (100 - share) / 100), max(five-pool net, 0))`). Every site
-  // pool row states it, `0` included - the ONLY numeric column that is never `Available`'s
-  // own AC-B2 blank-or-zero rule, because outside a pool the concept does not exist at all.
+  // pool row states it, `0` included.
+  //
+  // OUTSIDE A SITE POOL IT IS SIMPLY `Available` (D2, captain 3 Sep): no dealer share is
+  // kept back at an own bin, a group sibling or another group, so everything Available
+  // there is available to a project - the same signed figure, negative included. It used to
+  // print "-", and a dash in a numeric column reads as missing data rather than as a rule
+  // that does not apply.
   {
     key: 'available-for-project',
     label: 'Available for Project',
     of: (entry) =>
       (entry.where ?? 'own') === 'site_pool'
         ? (entry.available_for_project ?? '0')
-        : null,
+        : (entry.available_qty ?? null),
     total: true,
-    noZeroFallback: true,
+    signed: true,
   },
   // Information, deliberately NOT folded into Available: a purchase order reaches a project
   // line through a link, never by sitting at the location. "500 already on order at DC1" is
@@ -949,14 +975,12 @@ const NUMERIC_COLUMNS: {
 function valueOf(
   column: {
     of: (entry: BoardCellLocation, taken: Map<string, string>) => string | null;
-    noZeroFallback?: boolean;
   },
   entry: BoardCellLocation,
   taken: Map<string, string>,
 ): string | null {
   const value = column.of(entry, taken);
   if (value !== null) return value;
-  if (column.noZeroFallback) return null;
   return entry.location ? '0' : null;
 }
 
@@ -965,11 +989,45 @@ function sumOf(
   locations: BoardCellLocation[],
   pick: (entry: BoardCellLocation) => string | null,
 ): string | null {
-  const stated = locations
-    .map(pick)
-    .filter((value): value is string => value !== null);
+  return sumValues(locations.map(pick));
+}
+
+/** The same rule over figures already picked, for a total summed across SECTIONS (D2). */
+function sumValues(values: (string | null)[]): string | null {
+  const stated = values.filter((value): value is string => value !== null);
   if (stated.length === 0) return null;
   return fromMinor(stated.reduce((total, value) => total + toMinor(value), 0));
+}
+
+/**
+ * What one section's Available subtotal prints: the SET's own net when the server states one
+ * (the figure covers every location of the set, listed here or not), and otherwise the rows
+ * added up.
+ */
+function availableSubtotalOf(
+  section: StockSection,
+  drawn: Map<string, string>,
+): string | null {
+  if (section.net !== null) return section.net;
+  const column = NUMERIC_COLUMNS.find((entry) => entry.key === 'available');
+  return column ? sumOf(section.rows, (entry) => valueOf(column, entry, drawn)) : null;
+}
+
+/**
+ * What one section's "Available for Project" subtotal prints (R-K, amended by D2).
+ *
+ * A SITE POOL keeps a share back for dealers, so its figure is the share of its own net. No
+ * other set keeps anything back, so its figure IS its Available - the same signed number,
+ * read off the same place the Available cell reads it, so the two can never disagree.
+ */
+function projectShareSubtotalOf(
+  section: StockSection,
+  drawn: Map<string, string>,
+  poolSharePct: number,
+): string | null {
+  return section.netOf === POOLS_SET
+    ? availableForProject(section.net, section.net, poolSharePct)
+    : availableSubtotalOf(section, drawn);
 }
 
 function isNegative(value: string | null): boolean {

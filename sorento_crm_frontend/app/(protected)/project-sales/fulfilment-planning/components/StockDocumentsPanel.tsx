@@ -81,6 +81,7 @@ export function StockDocumentsPanel({
   documentInfo,
   filterText,
   jumpTarget,
+  stickyTop,
 }: {
   productId: string;
   /** One bin. Omitted for a group read, where the set is the answer. */
@@ -105,6 +106,16 @@ export function StockDocumentsPanel({
   filterText?: string;
   /** A jump `CellStockTable` raised. Only the panel holding the matching row acts on it. */
   jumpTarget?: StockJumpTarget | null;
+  /**
+   * Where this ledger's own header pins inside the panel's OWN scroller (D3).
+   *
+   * `0` is the honest value here and it was measured, not assumed: this panel is a
+   * `max-h-[35vh] overflow-y-auto` box, so the ledger scrolls INSIDE it and that box - not
+   * the stock table's scroll container - is the scrollport its header sticks to. An offset
+   * of the outer header's height pinned the header 43px DOWN inside the box, which is the
+   * gap the captain saw one ledger row sitting in.
+   */
+  stickyTop?: number;
 }) {
   const detail = useStockDetail(productId, warehouseId ?? null, lineIds, group);
   const isGroup = Boolean(group);
@@ -761,6 +772,9 @@ export function StockDocumentsPanel({
           // already reaches this exact row through `jumpTarget` and lands it WITH the flash.
           // Two buttons doing the same job, one of them worse, is not a second feature.
           emptyTitle="Nothing is claiming this stock"
+          // D3: the ledger's own header stacks under the outer table's, so ten rows down
+          // the reader is still looking at the columns these figures belong to.
+          stickyTop={stickyTop}
           // The live book tops out at 501 rows for one product and location, which is one page:
           // paging it would hide the total that makes the header checkable.
           pageSize={1000}

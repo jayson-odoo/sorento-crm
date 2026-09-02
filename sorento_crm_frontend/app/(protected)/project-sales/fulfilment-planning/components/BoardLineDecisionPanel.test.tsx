@@ -922,35 +922,66 @@ describe('BoardLineDecisionPanel: Reserve add-location (S3, AC-3.1 to AC-3.3)', 
 
 /**
  * The button answers the click itself (S4, AC-4.1), rather than leaving the planner to
- * notice the pill above it and the toast below it. Fake timers, because what is asserted is
- * that the check state ENDS - a 600ms state nobody clears is a button stuck on "Saved".
+ * notice the pill above it and the toast below it.
+ *
+ * D4 (captain, 3 Sep): it STAYS answered. The check used to last about 600 ms and then go
+ * back to "Save decision", which read as the save reverting - "shows saved then jumps back".
+ * The state is now the line's, not a moment's: saved until the line is edited again.
  */
 describe('BoardLineDecisionPanel: the Save button says it saved (S4, AC-4.1)', () => {
-  it('shows a check for about 600 ms once the save resolves, then goes back', async () => {
-    vi.useFakeTimers();
-    try {
-      const { onDecide } = renderPanel();
+  it('stays Saved and disabled while the line is untouched', async () => {
+    const { onDecide } = renderPanel();
 
-      await act(async () => {
-        fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
-      });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
+    });
 
-      expect(onDecide).toHaveBeenCalledTimes(1);
-      expect(screen.getByRole('button', { name: 'Saved' })).toBeInTheDocument();
-      expect(
-        screen.queryByRole('button', { name: 'Save decision' }),
-      ).not.toBeInTheDocument();
+    expect(onDecide).toHaveBeenCalledTimes(1);
+    const saved = screen.getByRole('button', { name: 'Saved' });
+    expect(saved).toBeInTheDocument();
+    expect(saved).toBeDisabled();
+    expect(
+      screen.queryByRole('button', { name: 'Save decision' }),
+    ).not.toBeInTheDocument();
+  });
 
-      act(() => {
-        vi.advanceTimersByTime(600);
-      });
+  it('goes back to Save decision the moment the planner edits the line again', async () => {
+    renderPanel();
 
-      expect(
-        screen.getByRole('button', { name: 'Save decision' }),
-      ).toBeInTheDocument();
-    } finally {
-      vi.useRealTimers();
-    }
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
+    });
+    expect(screen.getByRole('button', { name: 'Saved' })).toBeInTheDocument();
+
+    // An edit that still BALANCES and carries its reason, so what the button says is about
+    // the save being stale and nothing else: 5 + 19 against the line's 24, and a reason.
+    fireEvent.change(screen.getByLabelText('Reserve at BRW-AM'), {
+      target: { value: '5' },
+    });
+    fireEvent.change(screen.getByLabelText('Reserve at BRW'), {
+      target: { value: '19' },
+    });
+    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+      target: { value: 'Agreed a smaller own-location share with the site.' },
+    });
+
+    const again = screen.getByRole('button', { name: 'Save decision' });
+    expect(again).toBeInTheDocument();
+    expect(again).toBeEnabled();
+  });
+
+  it('opens Saved and disabled on a line somebody has already saved', () => {
+    renderPanel({
+      draft: {
+        decision: { verdict: 'approved' },
+        saved_by: 'Eling',
+        saved_at: '2026-09-03T02:00:00',
+      },
+    });
+
+    const saved = screen.getByRole('button', { name: 'Saved' });
+    expect(saved).toBeInTheDocument();
+    expect(saved).toBeDisabled();
   });
 
   it('waits for the save to resolve before showing the check', async () => {
@@ -1009,5 +1040,105 @@ describe('BoardLineDecisionPanel: the Save button says it saved (S4, AC-4.1)', (
     expect(onDecide).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole('button', { name: 'Saved' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Save decision' })).toBeInTheDocument();
+  });
+});
+
+/**
+ * D5 (captain, 3 Sep, SO419208 line 3, CSK14A-NL). The engine proposed "BRW 62 + Buy 73" -
+ * the site pool's share inside the immediate window, remainder bought (R-B/R-C) - and this
+ * panel refused to save its own suggestion, because the client's whole-line rule knew
+ * nothing about the carve-out the server's confirm has always applied.
+ */
+describe('BoardLineDecisionPanel: a pool share beside a Buy is saveable (D5)', () => {
+  const POOL_LOCATIONS: BoardCellLocation[] = [
+    {
+      location: 'BRW-AM',
+      warehouse_id: 'wh-BRW-AM',
+      qty: '0',
+      available_qty: '0',
+      qty_free: '0',
+      qty_free_remaining: '0',
+      where: 'own',
+    },
+    {
+      location: 'BRW',
+      warehouse_id: 'wh-BRW',
+      qty: '0',
+      available_qty: '124',
+      qty_free: '124',
+      qty_free_remaining: '124',
+      where: 'site_pool',
+      // What the SERVER says this pool may lend a project line, and the five pools' net.
+      available_for_project: '62',
+      net: '400',
+      net_of: 'pools',
+    },
+  ];
+
+  function renderSplit() {
+    const onDecide = vi.fn();
+    render(
+      <BoardLineDecisionPanel
+        contribution={contributionOf({
+          line_no: 3,
+          item_code: 'CSK14A-NL',
+          qty: '135',
+          qty_ordered: '135',
+          qty_outstanding: '135',
+          // The engine's own totals for this line, which is where the draft's Buy comes from
+          // on an uncovered line (`draftFromSources`).
+          qty_proposed_reserve: '62',
+          qty_proposed_buy: '73',
+          sources: [
+            {
+              kind: 'reserve',
+              qty: '62',
+              location: 'BRW',
+              warehouse_id: 'wh-BRW',
+              reason: 'BRW may spare 62 of its pile to a project line.',
+              rung: 'pool',
+            },
+            {
+              kind: 'buy',
+              qty: '73',
+              location: null,
+              warehouse_id: null,
+              reason: 'The remainder has to be bought.',
+              rung: 'buy',
+            },
+          ],
+        })}
+        decision={null}
+        locations={POOL_LOCATIONS}
+        onDecide={onDecide}
+      />,
+    );
+    return { onDecide };
+  }
+
+  it('never calls the engine s own split a mix, and saves it', () => {
+    renderSplit();
+
+    expect(
+      screen.queryByText(/either met wholly from stock or wholly bought/),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save decision' })).toBeEnabled();
+  });
+
+  /**
+   * Beyond the allowance the refusal stands, and it names the figure. There is no Buy INPUT
+   * on this panel - Buy is the all-or-nothing switch - so an overdrawn split cannot be typed
+   * here; the predicate's own tests (`supplyComposition.test.ts`) cover that shape, and this
+   * one covers what the panel can actually reach: the pool row moved past its allowance,
+   * which leaves the composition short and says so.
+   */
+  it('still refuses a pool draw beyond what that pool may spare', () => {
+    renderSplit();
+
+    fireEvent.change(screen.getByLabelText('Reserve at BRW'), {
+      target: { value: '70' },
+    });
+
+    expect(screen.getByRole('button', { name: 'Save decision' })).toBeDisabled();
   });
 });

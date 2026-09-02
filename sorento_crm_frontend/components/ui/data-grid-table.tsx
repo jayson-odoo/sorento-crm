@@ -138,6 +138,8 @@ function DataGridTableHead({ children }: { children: ReactNode }) {
         props.tableClassNames?.header,
         props.tableLayout?.headerSticky && props.tableClassNames?.headerSticky,
       )}
+      // A MEASURED offset only (D3) - everything a class can say is said in one above.
+      style={props.headerStyle}
     >
       {children}
     </thead>
@@ -855,6 +857,7 @@ export function moveColumnKeepingGroups(
  * and the overflow lands where it belongs.
  */
 function DataGridScroller({ children }: { children: ReactNode }) {
+  const { props } = useDataGrid();
   const { ref, isFading } = useHorizontalOverflow<HTMLDivElement>();
 
   return (
@@ -863,7 +866,10 @@ function DataGridScroller({ children }: { children: ReactNode }) {
         ref={ref}
         data-slot="data-grid-scroller"
         data-fade={isFading}
-        className="min-w-0 overflow-x-auto overscroll-x-contain"
+        className={cn(
+          'min-w-0 overflow-x-auto overscroll-x-contain',
+          props.tableClassNames?.scroller,
+        )}
       >
         {children}
       </div>

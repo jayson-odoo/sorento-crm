@@ -63,6 +63,7 @@ export function PanelDataGrid<TRow extends object>({
   expanded,
   onExpandedChange,
   pageSize = 10,
+  stickyTop,
 }: {
   /**
    * A plain heading, or a heading with an embedded link (e.g. the record's own number).
@@ -139,6 +140,22 @@ export function PanelDataGrid<TRow extends object>({
   expanded?: ExpandedState;
   onExpandedChange?: OnChangeFn<ExpandedState>;
   pageSize?: number;
+  /**
+   * Pin this grid's header that many pixels down, for a panel rendered INSIDE another
+   * scrolling table (D3, captain 3 Sep).
+   *
+   * The fulfilment board's stock drill expands one of these under every location row, and
+   * scrolling it left the ledger's rows under the OUTER table's headers - "Quantity" and
+   * "Balance after" read under "Available / Available for Project / PO qty". The two headers
+   * stack instead: this one sits directly below the outer one, one z-index under it so they
+   * never fight, on a solid background so rows do not show through.
+   *
+   * The offset is measured against THIS grid's own scrollport, which is whichever ancestor
+   * scrolls - `0` when the caller bounds the panel itself (the stock drill's own
+   * `max-h-[35vh]` box), a measured header height when the grid scrolls inside another
+   * table's container. Omit it and nothing about the header changes.
+   */
+  stickyTop?: number;
 }) {
   const [pagination, setPagination] = React.useState<PaginationState>({
     pageIndex: 0,
@@ -189,6 +206,21 @@ export function PanelDataGrid<TRow extends object>({
       isLoading={isLoading}
       listingKey={listingKey}
       tableLayout={{ width: 'fixed', columnsResizable: true }}
+      // D3: sticky needs a scrollport that actually scrolls. The grid's own scroller is
+      // `overflow-x: auto`, which CSS makes a scroll container on BOTH axes, so a header
+      // sticking inside it sticks to a box with no scrolling of its own - the scrolling is
+      // the OUTER table's. `overflow-x-visible` hands it back, and the background keeps the
+      // rows from showing through as they pass under.
+      tableClassNames={
+        stickyTop === undefined
+          ? undefined
+          : { scroller: 'overflow-x-visible', header: 'bg-background' }
+      }
+      headerStyle={
+        stickyTop === undefined
+          ? undefined
+          : { position: 'sticky', top: stickyTop, zIndex: 9 }
+      }
       onRowClick={onRowClick}
       renderGroupHeader={renderGroupHeader as never}
     >

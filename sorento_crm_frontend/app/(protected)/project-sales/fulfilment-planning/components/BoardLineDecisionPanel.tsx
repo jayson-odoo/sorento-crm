@@ -27,6 +27,7 @@ import {
   type DraftBorrow,
   type DraftLine,
 } from '../../_shared/lib/supplyComposition';
+import { poolShareLimitsOf } from '../../_shared/lib/poolShare';
 import type {
   BoardCellLocation,
   BoardContribution,
@@ -120,21 +121,23 @@ export function BoardLineDecisionPanel({
   /** Untouched since it opened. Saving or approving puts it back, because it is saved now. */
   const [dirty, setDirty] = React.useState(false);
   /**
-   * The Save button's own answer, within the interaction (S4, AC-4.1): a check state for
-   * about 600ms after `onDecide` resolves, whether or not `prefers-reduced-motion` is set -
-   * that preference turns off the CSS TRANSITIONS the button would otherwise animate through
-   * (`styles.css`), not the state itself, which still swaps.
+   * Whether this line's decision is SAVED as the panel stands (S4, AC-4.1; amended by D4,
+   * captain 3 Sep).
+   *
+   * It used to be a 600 ms flash after `onDecide` resolved, and the captain read the flash
+   * as the save undoing itself: "shows saved then jumps back". So it is the LINE's state
+   * now, not a moment's - the button stays on the check, disabled, for as long as nothing
+   * has been edited since, and any edit puts "Save decision" back (`dirty` below is what
+   * every input already sets). A line that opens on somebody else's saved draft starts
+   * there too: pressing Save on it would write what is already written.
    */
-  const [justSaved, setJustSaved] = React.useState(false);
-  const justSavedTimeout = React.useRef<number | null>(null);
-  React.useEffect(
-    () => () => {
-      if (justSavedTimeout.current !== null) {
-        window.clearTimeout(justSavedTimeout.current);
-      }
-    },
-    [],
-  );
+  const [savedOnce, setSavedOnce] = React.useState(() => Boolean(contribution.draft));
+
+  /**
+   * Saved AND untouched since (D4). `dirty` is set by every input on this panel, so an edit
+   * of any kind puts "Save decision" back without this having to know which one moved.
+   */
+  const saved = savedOnce && !dirty;
 
   React.useEffect(() => {
     onDirtyChange?.(dirty);
@@ -172,7 +175,14 @@ export function BoardLineDecisionPanel({
   );
 
   const balance = lineBalance(draft);
-  const blockers = lineBlockers(draft);
+  /**
+   * D5: the board CAN check the pool-share carve-out (R-C), because its own cell states each
+   * pool's allowance and the pools' net. Without them this panel refused "BRW 62 + Buy 73" -
+   * the engine's own suggestion on SO419208 line 3, and a composition the server's confirm
+   * has always admitted.
+   */
+  const poolLimits = React.useMemo(() => poolShareLimitsOf(locations), [locations]);
+  const blockers = lineBlockers(draft, poolLimits);
   const needsReason = amendNeedsReason(contribution, draft);
   // Which verdict Save takes, and therefore what it may be pressed for: approving the engine's
   // own composition is never blocked, because there is nothing about it to balance or justify.
@@ -266,10 +276,9 @@ export function BoardLineDecisionPanel({
     // success, the same as before this fix.
     if (ok === false) return;
     // S4/AC-4.1: the button answers the click itself, within the interaction, before the
-    // pill's own "Saved" and the toast even have to be looked at.
-    setJustSaved(true);
-    if (justSavedTimeout.current !== null) window.clearTimeout(justSavedTimeout.current);
-    justSavedTimeout.current = window.setTimeout(() => setJustSaved(false), 600);
+    // pill's own "Saved" and the toast even have to be looked at - and it keeps answering
+    // until the line is edited again (D4).
+    setSavedOnce(true);
   };
 
   const reject = () => {
@@ -701,10 +710,12 @@ export function BoardLineDecisionPanel({
               <Button
                 type="button"
                 size="sm"
-                disabled={!approving && !canSave}
+                // Disabled ON the saved state too (D4): there is nothing left to save, and a
+                // live button under the word "Saved" invites a second write of the same row.
+                disabled={saved || (!approving && !canSave)}
                 onClick={save}
               >
-                {justSaved ? (
+                {saved ? (
                   <>
                     <CheckCircle2 className="size-4" aria-hidden />
                     Saved

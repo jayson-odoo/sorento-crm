@@ -140,9 +140,10 @@ describe('CellStockTable: the position, tabulated', () => {
       '47009',
       '0',
       '-46531',
-      // Blank, not 0: an own location keeps no dealer share, so the question does not apply
-      // there and a 0 would read as a pool with nothing in it (R-K).
-      '-',
+      // D2 (captain, 3 Sep): an own location keeps no dealer share, so everything Available
+      // there is available to a project - the same signed figure, never the "-" this used
+      // to print, which read as missing data rather than as a rule that does not apply.
+      '-46531',
       '0',
       '0',
     ]);
@@ -154,7 +155,7 @@ describe('CellStockTable: the position, tabulated', () => {
       '9028',
       '500',
       '-7513',
-      '-',
+      '-7513',
       '0',
       '0',
     ]);
@@ -605,12 +606,11 @@ describe('CellStockTable: the whole ladder, in sections', () => {
     );
     expect(footer).toContain('Total');
     expect(footer).toContain('580');
-    // Nit (code review round 3 batch 2): the TOTAL row's own "Available for Project" must
-    // read the SAME figure the site pool subtotal does - one formula, `availableForProject`
-    // on the pool's own net - never a sum of every pool row's own figure (that summed to
-    // "400" above a subtotal reading "250").
+    // D2 (captain, 3 Sep): the TOTAL's own "Available for Project" is the SUBTOTALS added
+    // up - own 40, group 40, and the pool's own share of its net, 250 - never a sum of the
+    // pool ROWS (which summed to "400" above a subtotal reading "250", the round-3 nit).
     expect(screen.getByTestId('stock-total-available-for-project').textContent).toBe(
-      screen.getByTestId('stock-subtotal-available-for-project-pools').textContent,
+      '330',
     );
   });
 
@@ -654,9 +654,65 @@ describe('CellStockTable: the whole ladder, in sections', () => {
     expect(
       screen.getByTestId('stock-subtotal-available-for-project-pools').textContent,
     ).toBe('200');
+    // D2: the own section's own subtotal (40) rides with it, and the pool ROWS still do not.
     expect(screen.getByTestId('stock-total-available-for-project').textContent).toBe(
-      '200',
+      '240',
     );
+  });
+
+  /**
+   * D2, captain 3 Sep. "Available for Project" used to print "-" on every row that is not a
+   * site pool, and a dash in a numeric column reads as missing data rather than as a rule
+   * that does not apply. Outside a site pool nothing is kept back for dealers, so the
+   * answer is simply the row's own Available - signed, negative included.
+   */
+  it('prints Available as Available for Project on every row that keeps no dealer share', () => {
+    renderTable(ladder());
+
+    // The own location: 40 available, 40 available to a project.
+    expect(cellsOf('BRW-BB')[6]).toBe('40');
+    expect(cellsOf('BRW-BB')[7]).toBe('40');
+    // A group sibling, the same rule.
+    expect(cellsOf('MWH-BB')[6]).toBe('10');
+    expect(cellsOf('MWH-BB')[7]).toBe('10');
+    // And the site pool keeps the share formula it always had.
+    expect(cellsOf('BRW')[7]).toBe('50');
+
+    // The GROUP subtotal prints its own Available too, and the site pool subtotal does not.
+    expect(
+      screen.getByTestId('stock-subtotal-available-for-project-group').textContent,
+    ).toBe(screen.getByTestId('stock-subtotal-available-group').textContent);
+    expect(
+      screen.getByTestId('stock-subtotal-available-for-project-pools').textContent,
+    ).toBe('250');
+  });
+
+  it('prints a negative Available for Project rather than a dash on an oversold group', () => {
+    renderTable([
+      // The captain's own numbers: BRW-IB oversold by 23,458 inside an IB group netting
+      // -17,912. Both used to read "-" in this column.
+      position({
+        location: 'BRW-IB',
+        where: 'own',
+        qty_on_hand: '478',
+        so_qty: '23936',
+        spo_qty: '0',
+        available_qty: '-23458',
+        net: '-17912',
+        net_of: 'IB',
+      }),
+    ]);
+
+    expect(cellsOf('BRW-IB')[7]).toBe('-23458');
+    // The subtotal reads the SET's net, exactly as its own Available cell does: the figure
+    // covers every IB location, listed here or not. There is no Total row on a one-location
+    // table - "one location IS its own total" - so the subtotal is the whole of it.
+    expect(
+      screen.getByTestId('stock-subtotal-available-for-project-IB').textContent,
+    ).toBe('-17912');
+    expect(
+      screen.getByTestId('stock-subtotal-available-IB').textContent,
+    ).toBe('-17912');
   });
 
   /**
@@ -1155,5 +1211,51 @@ describe('CellStockTable: the S3 jump handles', () => {
     });
 
     expect(() => act(() => ref.current?.jumpToDonor())).not.toThrow();
+  });
+});
+
+/**
+ * D3 (captain, 3 Sep): "the freezing of row is not very robust". A row whose ledger is open
+ * stays under the table's own header while that ledger is read, and stops sticking at the
+ * end of its own section - which is what the one-`tbody`-per-section split is for.
+ */
+describe('CellStockTable: the row a ledger belongs to stays visible', () => {
+  it('freezes a location row only while its own documents are open', () => {
+    getStockDetail.mockResolvedValue({
+      product_id: 'prod-1',
+      item_code: 'ZZT',
+      sales_orders: [],
+      incoming: [],
+      holds: [],
+      bins: [],
+    });
+    renderTable([position()]);
+
+    const row = () => screen.getByTestId('cell-location-BRW-BB');
+    expect(row().style.position).toBe('');
+
+    fireEvent.click(screen.getByTestId('stock-expand-BRW-BB'));
+
+    expect(row().style.position).toBe('sticky');
+    expect(row().style.zIndex).toBe('9');
+  });
+
+  it('gives every section its own tbody, so a frozen row cannot outlive its section', () => {
+    renderTable([
+      position({ where: 'own', qty_on_hand: '40', available_qty: '40' }),
+      position({
+        location: 'BRW',
+        warehouse_id: 'wh-p0',
+        where: 'site_pool',
+        qty_on_hand: '100',
+        available_qty: '100',
+        available_for_project: '50',
+        net: '100',
+        net_of: 'pools',
+      }),
+    ]);
+
+    const bodies = screen.getByRole('table').querySelectorAll('tbody');
+    expect(bodies.length).toBe(2);
   });
 });
