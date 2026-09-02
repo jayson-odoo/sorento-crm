@@ -121,10 +121,17 @@ export function PillOverflow({
     setVisibleCount(count);
   }, [items.length]);
 
+  // Content-based signature, not the `items` array itself (nit, code review round 3 batch
+  // 2): every call site builds `items` fresh each render, so depending on the array
+  // re-measured the DOM on every unrelated re-render, not only when a pill's key/label or
+  // the count actually changed. Joins the two fields `recompute` cares about into a string,
+  // which the dependency array below compares by VALUE the way a primitive does.
+  const itemsSignature = items.map((item) => `${item.key} ${item.label}`).join('');
+
   React.useLayoutEffect(() => {
     pillRefs.current = pillRefs.current.slice(0, items.length);
     recompute();
-  }, [items, recompute]);
+  }, [itemsSignature, items.length, recompute]);
 
   React.useEffect(() => {
     const container = containerRef.current;

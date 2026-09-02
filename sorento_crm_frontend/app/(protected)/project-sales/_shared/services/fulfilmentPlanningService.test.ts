@@ -413,11 +413,7 @@ describe('fulfilmentPlanningService: saved decisions (S4)', () => {
     } as Response);
     const { putLineDraft } = await loadService();
 
-    const saved = await putLineDraft(
-      KEY,
-      { verdict: 'amended', buy_qty: '4' },
-      { components: [{ kind: 'buy', qty: '4' }] },
-    );
+    const saved = await putLineDraft(KEY, { verdict: 'amended', buy_qty: '4' });
 
     const [url, init] = apiFetch.mock.calls[0];
     // The key embeds `|`, which a raw path segment may not carry.
@@ -425,13 +421,12 @@ describe('fulfilmentPlanningService: saved decisions (S4)', () => {
     expect(init).toMatchObject({ method: 'PUT' });
     expect(JSON.parse((init as RequestInit).body as string)).toEqual({
       decision: { verdict: 'amended', buy_qty: '4' },
-      proposed: { components: [{ kind: 'buy', qty: '4' }] },
     });
     expect(saved.saved_by).toBe('Eling');
     expect(saved.stale).toBe(false);
   });
 
-  it('sends a null snapshot when the board had no suggestion to record', async () => {
+  it('carries no `proposed` (S1, code review round 3): the server snapshots the line\'s own facts, never the proposal', async () => {
     apiFetch.mockResolvedValue({
       ok: true,
       json: async () => ({ decision: {}, saved_by: 'Eling', saved_at: '', stale: false }),
@@ -441,8 +436,10 @@ describe('fulfilmentPlanningService: saved decisions (S4)', () => {
     await putLineDraft(KEY, { verdict: 'approved' });
 
     expect(
-      JSON.parse((apiFetch.mock.calls[0][1] as RequestInit).body as string).proposed,
-    ).toBeNull();
+      Object.keys(
+        JSON.parse((apiFetch.mock.calls[0][1] as RequestInit).body as string),
+      ),
+    ).toEqual(['decision']);
   });
 
   it('reports a refused save through the shared extractor', async () => {

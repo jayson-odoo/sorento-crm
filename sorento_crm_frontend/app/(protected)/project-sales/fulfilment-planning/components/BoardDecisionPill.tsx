@@ -85,13 +85,18 @@ export function BoardDecisionPill({
   const draftSource = decision ?? contribution.draft?.decision ?? null;
   const stale = !covered && Boolean(contribution.draft?.stale);
 
+  // N6 (code review round 3): `confirmed > rejected > stale > saved`, the same order
+  // `confirmSummaryFor` (`_shared/lib/fulfilmentBoard.ts`) counts by. A REJECTED verdict on
+  // a stale line commits nothing either way, and "Rejected" is what the planner actually did
+  // about it - reading "Suggestion changed" instead would say something happened that had
+  // already been answered.
   let verdict: string;
   if (covered) {
     verdict = 'confirmed';
-  } else if (stale) {
-    verdict = 'stale';
   } else if (draftSource?.verdict === 'rejected') {
     verdict = 'rejected';
+  } else if (stale) {
+    verdict = 'stale';
   } else if (draftSource) {
     verdict = 'saved';
   } else {

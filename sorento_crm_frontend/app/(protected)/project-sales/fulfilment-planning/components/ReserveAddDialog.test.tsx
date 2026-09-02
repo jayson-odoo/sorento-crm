@@ -106,6 +106,22 @@ describe('ReserveAddDialog: the candidate order (R-A, AC-3.1)', () => {
     expect(screen.getByText('Own')).toBeInTheDocument();
     expect(screen.getByText('Group')).toBeInTheDocument();
   });
+
+  it('reads "Unknown" for a row the server sent no location name for, never the warehouse id (N3, no UUID in the UI)', () => {
+    const NAMELESS: BoardCellLocation = {
+      location: null,
+      warehouse_id: 'a3f1c9e2-6b40-4d1a-9d0e-8f2c4b1a7d55',
+      where: 'own',
+      qty: '0',
+      qty_free: '5',
+    };
+    renderDialog([NAMELESS]);
+
+    expect(screen.getByText('Unknown')).toBeInTheDocument();
+    expect(
+      screen.queryByText('a3f1c9e2-6b40-4d1a-9d0e-8f2c4b1a7d55'),
+    ).not.toBeInTheDocument();
+  });
 });
 
 describe('ReserveAddDialog: picking a row seeds the quantity (AC-3.2)', () => {

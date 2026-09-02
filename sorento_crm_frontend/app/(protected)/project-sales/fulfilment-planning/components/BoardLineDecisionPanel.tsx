@@ -83,9 +83,11 @@ export function BoardLineDecisionPanel({
   /**
    * S4/R-F: saves (or, on `null`, undoes) the decision on the SERVER, not only in this
    * session's draft - `await`ed here so the Save button's own check state (AC-4.1) can wait
-   * for it to settle before showing.
+   * for it to settle before showing. Resolves `true` on success (S2, code review round 3):
+   * a rejected write must not show the check either, and `void` stays for callers that have
+   * no result to report (a `?batch=` board pre-marking a row locally, for instance).
    */
-  onDecide: (decision: BoardDecision | null) => Promise<void> | void;
+  onDecide: (decision: BoardDecision | null) => Promise<boolean> | void;
   /**
    * Whether this panel holds an edit nobody has saved. The dialog opens one row at a time,
    * so it has to ask before it closes this one over the planner's work.
@@ -245,18 +247,24 @@ export function BoardLineDecisionPanel({
   const save = async () => {
     setDirty(false);
     setLocked(false);
+    let ok: boolean | void;
     if (approving) {
       setDraft(suggestionDraftFrom(contribution));
       setReason('');
-      await onDecide({ verdict: 'approved', suspected_system_issue: suspected });
+      ok = await onDecide({ verdict: 'approved', suspected_system_issue: suspected });
     } else {
-      await onDecide({
+      ok = await onDecide({
         ...decisionFromAmendDraft(draft, reason),
         // THE BOOLEAN, never `|| undefined`: `false` is the planner's answer that the numbers
         // are fine, and dropping the key let the frozen `true` behind it read as current.
         suspected_system_issue: suspected,
       });
     }
+    // S2 (code review round 3): the check state answers the click, but only for a click that
+    // actually landed - `onDecide` returning `false` (a rejected write) must not show a
+    // check the server never earned. `undefined` (a caller with nothing to report) reads as
+    // success, the same as before this fix.
+    if (ok === false) return;
     // S4/AC-4.1: the button answers the click itself, within the interaction, before the
     // pill's own "Saved" and the toast even have to be looked at.
     setJustSaved(true);
@@ -869,7 +877,15 @@ function availableAt(
     locations.find(
       (row) => row.warehouse_id && row.warehouse_id === warehouseId,
     ) ?? (code ? locations.find((row) => row.location === code) : undefined);
-  return found?.available_qty ?? null;
+  // NOT `available_qty` (B2, code review round 3): it is AutoCount's own SIGNED whole-book
+  // figure - negative at a location like MWH-IB (-15514) - so it flagged the ENGINE'S OWN
+  // suggestions as oversold. `qty_free_remaining` (falling back to `qty_free` before any
+  // proposal has drawn it down) is the figure `reserveCandidates` and this dialog's own
+  // `ReserveAddDialog.openingQty` already offer on, so the echo agrees with what a planner
+  // was shown when they picked the location. The server's own guard
+  // (`_check_reserve_against_on_hand`, on hand minus confirmed holds) stays the authority at
+  // Confirm; this is only the echo shown while typing.
+  return found?.qty_free_remaining ?? found?.qty_free ?? null;
 }
 
 /** One editable section, labelled the way the sheet labels it, so the two read the same. */

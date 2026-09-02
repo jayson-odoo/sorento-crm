@@ -116,7 +116,7 @@ export function BoardCellBreakdownDialog({
    * pool ROW arrives with the server's own `available_for_project` and needs nothing here.
    */
   poolSharePct?: number;
-  onDecide: (key: string, decision: BoardDecision | null) => Promise<void> | void;
+  onDecide: (key: string, decision: BoardDecision | null) => Promise<boolean> | void;
   onClose: () => void;
 }) {
   // NO RANK, ANYWHERE ON THIS TABLE (R8, the captain 27 Aug: "rank goes"). Under ladder v4

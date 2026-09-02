@@ -603,25 +603,37 @@ export function plannedLineCount(
 export function confirmSummaryFor(
   contributions: BoardContribution[],
   draft: BoardDraft,
-): { toConfirm: number; rejected: number; orderCount: number } {
+): { toConfirm: number; rejected: number; orderCount: number; changed: number } {
+  // N6 (code review round 3): `confirmed > rejected > stale > saved`, the same order
+  // `BoardDecisionPill` reads by. A covered line's frozen composition is what the server
+  // carries forward regardless of a local click, so it is checked FIRST - a click of
+  // "rejected" on an already-confirmed line cannot make Confirm refuse it, and must not be
+  // counted as a rejection either.
   let rejected = 0;
+  // C4 (code review round 3 batch 2): a saved line the engine has re-suggested is dropped
+  // from Confirm with no trace beyond the pill itself, which is easy to miss on a board of
+  // forty lines - `changed` is the count the header and the Confirm dialog say it with.
+  let changed = 0;
   const orderIds = new Set<string>();
   for (const contribution of contributions) {
     if (contribution.unplannable) continue;
     const decision = draft[contribution.key];
+    if (contribution.covered && decision?.verdict !== 'amended') continue;
     if (decision?.verdict === 'rejected') {
       rejected += 1;
       continue;
     }
-    if (contribution.draft?.stale) continue;
-    if (contribution.covered && decision?.verdict !== 'amended') continue;
+    if (contribution.draft?.stale) {
+      changed += 1;
+      continue;
+    }
     orderIds.add(contribution.sales_order_id);
   }
   const toConfirm = [...orderIds].reduce(
     (total, salesOrderId) => total + plannedLineCount(contributions, salesOrderId, draft),
     0,
   );
-  return { toConfirm, rejected, orderCount: orderIds.size };
+  return { toConfirm, rejected, orderCount: orderIds.size, changed };
 }
 
 /**

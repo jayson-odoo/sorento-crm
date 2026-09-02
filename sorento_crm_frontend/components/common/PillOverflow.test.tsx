@@ -260,3 +260,70 @@ describe('PillOverflow: the click never reaches the row behind it', () => {
     expect(onParentClick).not.toHaveBeenCalled();
   });
 });
+
+describe('PillOverflow: re-measures only on a real change, never on every render (nit, code review round 3 batch 2)', () => {
+  it('does not touch offsetWidth again on a re-render that rebuilds items with the same content', () => {
+    containerWidth = 420;
+    let measureCalls = 0;
+    const stubbed = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetWidth')!;
+    Object.defineProperty(HTMLElement.prototype, 'offsetWidth', {
+      configurable: true,
+      get(this: HTMLElement) {
+        measureCalls += 1;
+        return stubbed.get!.call(this);
+      },
+    });
+
+    // A FRESH array literal every render - the exact shape every real call site (the
+    // board cell, the contributing-lines column, the Stock tab's Taken cell) builds.
+    function Harness({ salt }: { salt: string }) {
+      const items: PillItem[] = [
+        { key: 'a', label: 'AAA' },
+        { key: 'b', label: 'BBB' },
+        { key: 'c', label: 'CCC' },
+      ];
+      void salt;
+      return (
+        <PillOverflow
+          items={items}
+          ariaLabel="Sourced from"
+          testId="pills"
+          renderPopover={renderRow}
+        />
+      );
+    }
+
+    const { rerender } = render(<Harness salt="one" />);
+    const afterFirstRender = measureCalls;
+    expect(afterFirstRender).toBeGreaterThan(0);
+
+    // A re-render with a brand-new `items` array reference, same key/label content.
+    rerender(<Harness salt="two" />);
+
+    expect(measureCalls).toBe(afterFirstRender);
+  });
+
+  it('still re-measures once a pill’s label actually changes', () => {
+    containerWidth = 420;
+    const { rerender } = render(
+      <PillOverflow
+        items={[{ key: 'a', label: 'AAA' }]}
+        ariaLabel="Sourced from"
+        testId="pills"
+        renderPopover={renderRow}
+      />,
+    );
+    expect(within(screen.getByTestId('pills')).getByText('AAA')).toBeInTheDocument();
+
+    rerender(
+      <PillOverflow
+        items={[{ key: 'a', label: 'AAA 25' }]}
+        ariaLabel="Sourced from"
+        testId="pills"
+        renderPopover={renderRow}
+      />,
+    );
+
+    expect(within(screen.getByTestId('pills')).getByText('AAA 25')).toBeInTheDocument();
+  });
+});

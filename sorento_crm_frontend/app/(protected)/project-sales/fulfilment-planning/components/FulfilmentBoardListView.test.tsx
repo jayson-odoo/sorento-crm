@@ -199,6 +199,8 @@ describe('FulfilmentBoardListView', () => {
               qty: '43',
               qty_demand: '43',
               available_qty: '9',
+              qty_free: '9',
+              qty_free_remaining: '9',
             },
           ],
         }),

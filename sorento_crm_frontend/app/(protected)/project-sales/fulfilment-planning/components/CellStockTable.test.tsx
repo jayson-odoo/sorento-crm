@@ -605,6 +605,58 @@ describe('CellStockTable: the whole ladder, in sections', () => {
     );
     expect(footer).toContain('Total');
     expect(footer).toContain('580');
+    // Nit (code review round 3 batch 2): the TOTAL row's own "Available for Project" must
+    // read the SAME figure the site pool subtotal does - one formula, `availableForProject`
+    // on the pool's own net - never a sum of every pool row's own figure (that summed to
+    // "400" above a subtotal reading "250").
+    expect(screen.getByTestId('stock-total-available-for-project').textContent).toBe(
+      screen.getByTestId('stock-subtotal-available-for-project-pools').textContent,
+    );
+  });
+
+  /**
+   * Nit (code review round 3 batch 2), the case that actually catches a naive `sumOf`: two
+   * pool rows whose OWN `available_for_project` figures (150 and 250, summing to 400) do
+   * not sum to the pool's own net-based allowance (`availableForProject(400, 400, 50)` =
+   * 200) - the exact "Total 400 above Subtotal 200" the finding named. `ladder()`'s five
+   * pool rows happen to sum to the same number the formula gives (5 x 50 = 250 = the
+   * subtotal), which is why that test alone would not have caught this.
+   */
+  it('does not sum the pool rows for the total: two rows summing to 400 still total 200', () => {
+    renderTable([
+      position({ where: 'own', qty_on_hand: '40', available_qty: '40' }),
+      position({
+        location: 'BRW',
+        warehouse_id: 'wh-p0',
+        where: 'site_pool',
+        qty_on_hand: '300',
+        so_qty: '0',
+        spo_qty: '0',
+        available_qty: '300',
+        available_for_project: '150',
+        net: '400',
+        net_of: 'pools',
+      }),
+      position({
+        location: 'MWH',
+        warehouse_id: 'wh-p1',
+        where: 'site_pool',
+        qty_on_hand: '100',
+        so_qty: '0',
+        spo_qty: '0',
+        available_qty: '100',
+        available_for_project: '250',
+        net: '400',
+        net_of: 'pools',
+      }),
+    ]);
+
+    expect(
+      screen.getByTestId('stock-subtotal-available-for-project-pools').textContent,
+    ).toBe('200');
+    expect(screen.getByTestId('stock-total-available-for-project').textContent).toBe(
+      '200',
+    );
   });
 
   /**

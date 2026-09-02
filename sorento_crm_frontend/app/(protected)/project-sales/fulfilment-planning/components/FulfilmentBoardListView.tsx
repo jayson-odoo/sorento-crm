@@ -47,7 +47,7 @@ export function FulfilmentBoardListView({
 }: {
   contributions: BoardContribution[];
   draft: BoardDraft;
-  onDecide: (key: string, decision: BoardDecision | null) => Promise<void> | void;
+  onDecide: (key: string, decision: BoardDecision | null) => Promise<boolean> | void;
   isLoading?: boolean;
 }) {
   /**

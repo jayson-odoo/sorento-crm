@@ -124,7 +124,9 @@ export function ReserveAddDialog({
                     <tbody>
                       {candidates.map((location) => {
                         const key = locationKey(location);
-                        const code = location.location ?? location.warehouse_id ?? 'Unknown';
+                        // No UUID in the UI: a location with no name reads "Unknown" rather
+                        // than the warehouse id it has no other label for.
+                        const code = location.location ?? 'Unknown';
                         const chosen = key === selectedKey;
                         const free = location.qty_free_remaining ?? location.qty_free ?? null;
                         return (

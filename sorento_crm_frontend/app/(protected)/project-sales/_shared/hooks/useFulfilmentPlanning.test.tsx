@@ -613,7 +613,7 @@ describe('useLineDraftMutation', () => {
 
   const KEY = 'so-a|22|SRTWB7518|2026-06-29';
 
-  it('saves the key, the decision and the suggestion it was taken against', async () => {
+  it('saves the key and the decision, and carries no proposal (S1, code review round 3)', async () => {
     putLineDraft.mockResolvedValue({
       decision: { verdict: 'amended' },
       saved_by: 'Eling',
@@ -622,16 +622,11 @@ describe('useLineDraftMutation', () => {
     });
 
     const api = await drafts();
-    const saved = await api.save(
-      KEY,
-      { verdict: 'amended' },
-      { components: [{ kind: 'reserve', qty: '9', location: 'BRW-AM' }] },
-    );
+    const saved = await api.save(KEY, { verdict: 'amended' });
 
-    // No saver: the server reads that off the caller's own JWT.
-    expect(putLineDraft).toHaveBeenCalledWith(KEY, { verdict: 'amended' }, {
-      components: [{ kind: 'reserve', qty: '9', location: 'BRW-AM' }],
-    });
+    // No saver: the server reads that off the caller's own JWT. No proposal either: the
+    // server snapshots the line's own facts at save time, never the proposal.
+    expect(putLineDraft).toHaveBeenCalledWith(KEY, { verdict: 'amended' });
     expect(saved.saved_by).toBe('Eling');
   });
 

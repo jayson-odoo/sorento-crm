@@ -694,12 +694,32 @@ export const CellStockTable = React.forwardRef<
                       />
                     );
                   }
-                  const total = sumOf(locations, (entry) =>
-                    valueOf(column, entry, drawn),
-                  );
+                  // Nit (code review round 3 batch 2): "Available for Project" is NOT a
+                  // sum of the rows above it, the same reason the site pool SUBTOTAL isn't
+                  // (R-K) - it is the one share of the pool's own net, and a plain
+                  // `sumOf(locations, ...)` added every pool row's own figure together and
+                  // read "Total 400" above a subtotal reading "Subtotal 200". One formula,
+                  // reused: `availableForProject` on the pool section's own net, capped by
+                  // the five-pool net.
+                  const total =
+                    column.key === 'available-for-project'
+                      ? (() => {
+                          const poolSection = sections.find(
+                            (entry) => entry.netOf === POOLS_SET,
+                          );
+                          return poolSection
+                            ? availableForProject(
+                                poolSection.net,
+                                poolSection.net,
+                                poolSharePct,
+                              )
+                            : null;
+                        })()
+                      : sumOf(locations, (entry) => valueOf(column, entry, drawn));
                   return (
                     <td key={column.key} className={cn(NUMBER_COL, FOOT_CELL)}>
                       <span
+                        data-testid={`stock-total-${column.key}`}
                         className={cn(
                           'block truncate text-end tabular-nums',
                           total === null && 'font-normal text-muted-foreground',

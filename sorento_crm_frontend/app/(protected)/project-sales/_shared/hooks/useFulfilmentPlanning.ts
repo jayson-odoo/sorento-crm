@@ -423,15 +423,8 @@ export function useLineDraftMutation() {
   const queryClient = useQueryClient();
 
   const save = useMutation({
-    mutationFn: ({
-      key,
-      decision,
-      proposed,
-    }: {
-      key: string;
-      decision: BoardDecision;
-      proposed?: unknown;
-    }) => putLineDraft(key, decision, proposed),
+    mutationFn: ({ key, decision }: { key: string; decision: BoardDecision }) =>
+      putLineDraft(key, decision),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [PLANNING_BOARD_KEY] });
     },
@@ -448,15 +441,12 @@ export function useLineDraftMutation() {
 
   return {
     /**
-     * `proposed` is `contribution.proposed` as the board is currently showing it: the
-     * server keeps it as the snapshot `stale` is judged against (AC-4.4). The SAVER comes
-     * off the caller's own JWT and is never sent.
+     * NO `proposed` (S1, code review round 3): the server snapshots the LINE's own facts
+     * (outstanding qty, required date) at save time, never the proposal - see
+     * `putLineDraft`'s own note. The SAVER comes off the caller's own JWT and is never sent.
      */
-    save: (
-      key: string,
-      decision: BoardDecision,
-      proposed?: unknown,
-    ): Promise<BoardLineDraft> => save.mutateAsync({ key, decision, proposed }),
+    save: (key: string, decision: BoardDecision): Promise<BoardLineDraft> =>
+      save.mutateAsync({ key, decision }),
     remove: (key: string): Promise<void> => remove.mutateAsync(key),
   };
 }

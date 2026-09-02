@@ -209,4 +209,28 @@ describe('BoardDecisionPill: a saved line the engine has re-suggested (S4, AC-4.
     );
     expect(screen.getByTestId(`decision-pill-${KEY}`)).toHaveTextContent('Confirmed');
   });
+
+  /**
+   * N6 (code review round 3): resolution order is `confirmed > rejected > stale > saved`,
+   * matching `confirmSummaryFor` (`_shared/lib/fulfilmentBoard.ts`). A REJECTED decision on
+   * a stale line commits nothing either way, and "Rejected" is what the planner actually did
+   * about it - "Suggestion changed" said something happened that the planner had already
+   * answered.
+   */
+  it('reads Rejected before Suggestion changed, when THIS session rejected a stale line', () => {
+    render(
+      <BoardDecisionPill
+        contribution={contributionOf({
+          draft: {
+            decision: { verdict: 'amended' },
+            saved_by: 'Eling',
+            saved_at: '2026-09-03T01:00:00',
+            stale: true,
+          },
+        })}
+        decision={{ verdict: 'rejected', reason: 'The customer cancelled this line.' }}
+      />,
+    );
+    expect(screen.getByTestId(`decision-pill-${KEY}`)).toHaveTextContent('Rejected');
+  });
 });

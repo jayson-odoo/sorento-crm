@@ -550,32 +550,27 @@ export async function confirmMany(body: ConfirmManyBody): Promise<ConfirmManyRes
  * planner.
  *
  *   PUT /project-sales/fulfilment-planning/lines/{contribution_key}/draft
- *       body { decision: BoardDecision, proposed: BoardProposed | null } -> BoardLineDraft
+ *       body { decision: BoardDecision } -> BoardLineDraft
  *
  * `contributionKey` is `BoardContribution.key` and travels URL-encoded - it embeds `|`,
  * which is not a legal unencoded path segment character.
+ *
+ * NO `proposed` in the body (S1, code review round 3, captain ruling): a proposal depends
+ * on which orders share the board, its granularity and its window, so a save made on one
+ * view compared against a proposal computed for another flipped `stale` falsely across
+ * views and silently dropped a saved line from Confirm. The server snapshots the LINE's own
+ * facts (outstanding qty, required date) at save time instead - `stale` is judged on those.
  */
 export async function putLineDraft(
   contributionKey: string,
   decision: BoardDecision,
-  /**
-   * What the ENGINE was suggesting for this line on the board being saved from
-   * (`contribution.proposed`), which is what the server judges `stale` against later.
-   *
-   * Sent rather than recomputed on the server, and deliberately: a proposal depends on
-   * which orders share the board (the ladder draws the shared piles down once for the whole
-   * walk), on its granularity and on its `as_of`. A snapshot the server built for this one
-   * order would differ from the board in front of the planner, and every save on a
-   * multi-order board would come back stale the moment it was made.
-   */
-  proposed?: unknown,
 ): Promise<BoardLineDraft> {
   const response = await apiFetch(
     `${BASE}/fulfilment-planning/lines/${encodeURIComponent(contributionKey)}/draft`,
     {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ decision, proposed: proposed ?? null }),
+      body: JSON.stringify({ decision }),
     },
   );
   if (!response.ok)

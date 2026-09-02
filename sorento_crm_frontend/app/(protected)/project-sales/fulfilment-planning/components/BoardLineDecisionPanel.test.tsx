@@ -82,8 +82,17 @@ const LOCATIONS: BoardCellLocation[] = [
     warehouse_id: 'wh-BRW-AM',
     qty: '0',
     available_qty: '9',
+    qty_free: '9',
+    qty_free_remaining: '9',
   },
-  { location: 'BRW', warehouse_id: 'wh-BRW', qty: '0', available_qty: '16' },
+  {
+    location: 'BRW',
+    warehouse_id: 'wh-BRW',
+    qty: '0',
+    available_qty: '16',
+    qty_free: '16',
+    qty_free_remaining: '16',
+  },
 ];
 
 function renderPanel(
@@ -807,6 +816,51 @@ describe('BoardLineDecisionPanel: Reserve add-location (S3, AC-3.1 to AC-3.3)', 
     expect(screen.getByLabelText('Reserve at BRW')).toHaveValue(30);
   });
 
+  it('reads the echo off qty_free_remaining, never the signed whole-book available_qty (B2, code review round 3)', () => {
+    // MWH-IB style figures: `available_qty` is AutoCount's own signed whole-book number and
+    // reads deeply negative even though the location has plenty free for THIS board's own
+    // proposals; `qty_free` and `qty_free_remaining` are positive and DIFFER from each other
+    // (and from `available_qty`), so a fix that fell back to the wrong one would show either
+    // the wrong number or a false "Only N available" on the engine's own suggestion.
+    const oversoldWholeBook: BoardCellLocation[] = [
+      {
+        location: 'BRW-AM',
+        warehouse_id: 'wh-BRW-AM',
+        where: 'own',
+        qty: '0',
+        available_qty: '-15514',
+        qty_free: '20',
+        qty_free_remaining: '9',
+      },
+      {
+        location: 'BRW',
+        warehouse_id: 'wh-BRW',
+        where: 'site_pool',
+        qty: '0',
+        available_qty: '-999',
+        qty_free: '30',
+        qty_free_remaining: '16',
+      },
+    ];
+    render(
+      <BoardLineDecisionPanel
+        contribution={contributionOf()}
+        decision={null}
+        locations={oversoldWholeBook}
+        onDecide={vi.fn()}
+      />,
+    );
+
+    // The engine's own suggestion (Reserve 9 at BRW-AM, Reserve 15 at BRW) reads its echo off
+    // `qty_free_remaining`, not `available_qty` - no red "Only N available here" anywhere on
+    // an unedited, engine-suggested composition.
+    expect(screen.getByText('9 available')).toBeInTheDocument();
+    expect(screen.getByText('16 available')).toBeInTheDocument();
+    expect(screen.queryByText(/-15514/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/-999/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Only .* available here/)).not.toBeInTheDocument();
+  });
+
   it('says no other location holds free stock once every candidate is already on the Reserve list', () => {
     renderAddLocationPanel({
       sources: [
@@ -904,8 +958,8 @@ describe('BoardLineDecisionPanel: the Save button says it saved (S4, AC-4.1)', (
     try {
       let settle: () => void = () => {};
       const onDecide = vi.fn(
-        () => new Promise<void>((resolve) => {
-          settle = resolve;
+        () => new Promise<boolean>((resolve) => {
+          settle = () => resolve(true);
         }),
       );
       render(
@@ -932,5 +986,28 @@ describe('BoardLineDecisionPanel: the Save button says it saved (S4, AC-4.1)', (
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('shows no check state when the write did not land (S2, code review round 3)', async () => {
+    // `FulfilmentBoardPanel.decide` never lets a save REJECT into this panel - it catches its
+    // own write and resolves `false` - so this is the shape a failure actually arrives in.
+    const onDecide = vi.fn().mockResolvedValue(false);
+
+    render(
+      <BoardLineDecisionPanel
+        contribution={contributionOf()}
+        decision={null}
+        locations={LOCATIONS}
+        onDecide={onDecide}
+      />,
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
+    });
+
+    expect(onDecide).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('button', { name: 'Saved' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save decision' })).toBeInTheDocument();
   });
 });
