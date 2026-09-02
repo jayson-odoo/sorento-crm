@@ -13,12 +13,13 @@ import React from 'react';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { toast } from 'sonner';
 
 import { PRODUCT_BLOCK_SIZE } from '@/lib/dealer-kit/product-block';
 import type { TagLayer, TagTemplateDoc } from '@/lib/dealer-kit/tag-template-types';
 
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+import { toast } from 'sonner';
+const mockToastSuccess = vi.mocked(toast.success);
 
 const push = vi.fn();
 const replace = vi.fn();
@@ -106,6 +107,10 @@ vi.mock('@/app/(protected)/dealer-kit/tag-templates/components/TagCanvasEditor',
     );
   },
 }));
+
+/** The designer's autosave prop, typed so a test can read back the document
+ *  and the `keepalive` flag it was called with. */
+type AutosaveFn = (doc: TagSheetDoc, options?: { keepalive?: boolean }) => Promise<void>;
 
 /** A minimal, valid text layer for the "add a layer" stub button above. */
 function addedLayer(index: number): TagLayer {
@@ -288,7 +293,12 @@ function deferred<T>() {
 
 function renderDesigner(req: PriceTagRequestDetail = request()) {
   return render(
-    <RequestTagDesigner request={req} initialDoc={null} onSave={vi.fn(async () => {})} />,
+    <RequestTagDesigner
+      request={req}
+      initialDoc={null}
+      onSave={vi.fn(async () => {})}
+      onAutosave={vi.fn<AutosaveFn>(async () => {})}
+    />,
   );
 }
 
@@ -300,6 +310,7 @@ beforeEach(() => {
   searchParams = new URLSearchParams();
   push.mockReset();
   replace.mockReset();
+  mockToastSuccess.mockReset();
 });
 
 // ---------------------------------------------------------------------------
@@ -583,24 +594,38 @@ describe('RequestTagDesigner - explicit canvas states (AC-S3-2, AC-S3-3)', () =>
 // ---------------------------------------------------------------------------
 // Autosave (D22, S8, AC-S8-3)
 //
-// The initial starter-tag clone (cloning a line's first tag into `tags`) is
-// itself a committed change and queues its OWN autosave on a real ~1s
-// debounce - every test below drains that one first, with REAL timers,
-// before switching to fake ones for the behaviour under test. Mixing fake
-// timers in any earlier than that would race the initial async mount
-// (template/price loading, both plain Promises) against the fake clock.
+// Autosave and manual Save are two different acts on two different routes
+// (B1/B3): `onAutosave` writes the request's DRAFT and says nothing, `onSave`
+// snapshots an immutable version and toasts. Every test here is about which
+// of the two ran, how many times, and what the header said about it.
+//
+// The starter-tag clone a line gets on open is NOT one of them (S3), so
+// nothing has to be drained before the behaviour under test - the first
+// assertion in every case below is that opening the page saved nothing.
 // ---------------------------------------------------------------------------
 
 describe('RequestTagDesigner - autosave (D22, AC-S8-3)', () => {
-  it('collapses rapid edits into a single autosave call, ~1s after the LAST one', async () => {
+  /** Mount with templates and prices settled, and nothing saved yet. */
+  async function mountQuiet(overrides: Partial<PriceTagRequestDetail> = {}) {
     mockListTemplates.mockResolvedValue([]);
     mockResolveRequestLines.mockResolvedValue([lineTagData()]);
     const onSave = vi.fn(async () => {});
+    const onAutosave = vi.fn<AutosaveFn>(async () => {});
 
-    render(<RequestTagDesigner request={request()} initialDoc={null} onSave={onSave} />);
+    render(
+      <RequestTagDesigner
+        request={request(overrides)}
+        initialDoc={null}
+        onSave={onSave}
+        onAutosave={onAutosave}
+      />,
+    );
     await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
-    await waitFor(() => expect(onSave).toHaveBeenCalled(), { timeout: 3000 });
-    onSave.mockClear();
+    return { onSave, onAutosave };
+  }
+
+  it('collapses rapid edits into a single autosave call, ~1s after the LAST one', async () => {
+    const { onSave, onAutosave } = await mountQuiet();
 
     vi.useFakeTimers();
     try {
@@ -614,58 +639,21 @@ describe('RequestTagDesigner - autosave (D22, AC-S8-3)', () => {
       await act(async () => {
         await vi.advanceTimersByTimeAsync(999);
       });
-      expect(onSave).not.toHaveBeenCalled();
+      expect(onAutosave).not.toHaveBeenCalled();
 
       await act(async () => {
         await vi.advanceTimersByTimeAsync(1);
       });
-      expect(onSave).toHaveBeenCalledTimes(1);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it('a mode switch (Design -> Arrange) flushes the pending autosave immediately', async () => {
-    mockListTemplates.mockResolvedValue([]);
-    mockResolveRequestLines.mockResolvedValue([lineTagData()]);
-    const onSave = vi.fn(async () => {});
-
-    render(<RequestTagDesigner request={request()} initialDoc={null} onSave={onSave} />);
-    await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
-    await waitFor(() => expect(onSave).toHaveBeenCalled(), { timeout: 3000 });
-    onSave.mockClear();
-
-    vi.useFakeTimers();
-    try {
-      fireEvent.click(screen.getByRole('button', { name: 'Add layer' }));
+      expect(onAutosave).toHaveBeenCalledTimes(1);
+      // The DRAFT route, never the version route.
       expect(onSave).not.toHaveBeenCalled();
-
-      fireEvent.click(screen.getByRole('button', { name: 'Arrange' }));
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(0);
-      });
-      expect(onSave).toHaveBeenCalledTimes(1);
-
-      // The debounce the flush cut short must not ALSO fire later.
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(2000);
-      });
-      expect(onSave).toHaveBeenCalledTimes(1);
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it('shows Save failed with Retry, and Retry resends the same doc', async () => {
-    mockListTemplates.mockResolvedValue([]);
-    mockResolveRequestLines.mockResolvedValue([lineTagData()]);
-    const onSave = vi.fn(async () => {});
-
-    render(<RequestTagDesigner request={request()} initialDoc={null} onSave={onSave} />);
-    await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
-    await waitFor(() => expect(onSave).toHaveBeenCalled(), { timeout: 3000 });
-    onSave.mockClear();
-    onSave.mockRejectedValueOnce(new Error('network down'));
+  it('says nothing on a successful autosave - the indicator is the whole report (D22)', async () => {
+    const { onAutosave } = await mountQuiet();
 
     vi.useFakeTimers();
     try {
@@ -673,19 +661,203 @@ describe('RequestTagDesigner - autosave (D22, AC-S8-3)', () => {
       await act(async () => {
         await vi.advanceTimersByTimeAsync(1000);
       });
-      expect(onSave).toHaveBeenCalledTimes(1);
+      expect(onAutosave).toHaveBeenCalledTimes(1);
+      expect(screen.getByText(/^Saved/)).toBeInTheDocument();
+      // A toast roughly once a second while somebody designs is noise, not
+      // feedback. `onAutosave` is silent by contract and nothing here adds one.
+      expect(mockToastSuccess).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a mode switch (Design -> Arrange) flushes the pending autosave immediately', async () => {
+    const { onAutosave } = await mountQuiet();
+
+    vi.useFakeTimers();
+    try {
+      fireEvent.click(screen.getByRole('button', { name: 'Add layer' }));
+      expect(onAutosave).not.toHaveBeenCalled();
+
+      fireEvent.click(screen.getByRole('button', { name: 'Arrange' }));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(onAutosave).toHaveBeenCalledTimes(1);
+
+      // The debounce the flush cut short must not ALSO fire later.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+      expect(onAutosave).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('shows Save failed with Retry, and Retry resends the same doc', async () => {
+    const { onAutosave } = await mountQuiet();
+    onAutosave.mockRejectedValueOnce(new Error('network down'));
+
+    vi.useFakeTimers();
+    try {
+      fireEvent.click(screen.getByRole('button', { name: 'Add layer' }));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1000);
+      });
+      expect(onAutosave).toHaveBeenCalledTimes(1);
+      // The failure reaches the indicator because `onAutosave` rethrows (B2) -
+      // a swallowed one left the header reading "Saved" over lost work.
       expect(screen.getByText('Save failed')).toBeInTheDocument();
 
       fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
       await act(async () => {
         await vi.advanceTimersByTimeAsync(0);
       });
-      expect(onSave).toHaveBeenCalledTimes(2);
+      expect(onAutosave).toHaveBeenCalledTimes(2);
+      expect(onAutosave.mock.calls[1][0]).toEqual(onAutosave.mock.calls[0][0]);
       expect(screen.queryByText('Save failed')).not.toBeInTheDocument();
       expect(screen.getByText(/^Saved/)).toBeInTheDocument();
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Opening and browsing persist NOTHING (S3)
+//
+// The starter/template clone a line gets when it has no tag yet is the page
+// deciding what to draw, not the user deciding anything. Before this, merely
+// opening a request with undesigned lines - or clicking down the rail to look
+// at them - wrote a design for every line the eye landed on.
+// ---------------------------------------------------------------------------
+
+describe('RequestTagDesigner - the starter clone is not a user change (S3)', () => {
+  it('saves nothing on open, and nothing while browsing undesigned lines', async () => {
+    const lineA = line({ id: 'line-a', product_id: 'prod-a', code: 'AAA-1' });
+    const lineB = line({ id: 'line-b', product_id: 'prod-b', code: 'BBB-2', name: 'Basin' });
+    mockListTemplates.mockResolvedValue([]);
+    mockResolveRequestLines.mockResolvedValue([
+      lineTagData({ line_id: 'line-a', code: 'AAA-1' }),
+      lineTagData({ line_id: 'line-b', code: 'BBB-2', name: 'Basin' }),
+    ]);
+    const onSave = vi.fn(async () => {});
+    const onAutosave = vi.fn<AutosaveFn>(async () => {});
+
+    render(
+      <RequestTagDesigner
+        request={request({ lines: [lineA, lineB], line_count: 2 })}
+        initialDoc={null}
+        onSave={onSave}
+        onAutosave={onAutosave}
+      />,
+    );
+    await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
+
+    // Line B has no tag either - switching to it clones one, which must be as
+    // silent as opening was.
+    fireEvent.click(screen.getByText('Basin'));
+    await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
+
+    // Well past the debounce, on real timers, so a scheduled save would have
+    // had every chance to fire.
+    await new Promise((resolve) => setTimeout(resolve, 1300));
+
+    expect(onAutosave).not.toHaveBeenCalled();
+    expect(onSave).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Manual Save is one deliberate version, flushed clear of the autosave (S4)
+// ---------------------------------------------------------------------------
+
+describe('RequestTagDesigner - manual Save (S4)', () => {
+  it('flushes the pending autosave, then snapshots exactly once', async () => {
+    mockListTemplates.mockResolvedValue([]);
+    mockResolveRequestLines.mockResolvedValue([lineTagData()]);
+    const order: string[] = [];
+    const onSave = vi.fn(async () => {
+      order.push('version');
+    });
+    const onAutosave = vi.fn<AutosaveFn>(async () => {
+      order.push('draft');
+    });
+
+    render(
+      <RequestTagDesigner
+        request={request()}
+        initialDoc={null}
+        onSave={onSave}
+        onAutosave={onAutosave}
+      />,
+    );
+    await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add layer' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Save/ }));
+
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+    // The pending draft went first, so a late draft write cannot land after
+    // the snapshot and resurrect the draft the snapshot just cleared.
+    expect(order).toEqual(['draft', 'version']);
+    expect(onAutosave).toHaveBeenCalledTimes(1);
+
+    // And the debounce the flush consumed does not fire a second time.
+    await new Promise((resolve) => setTimeout(resolve, 1300));
+    expect(onAutosave).toHaveBeenCalledTimes(1);
+    expect(onSave).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaving the page flushes the last edit, keepalive so it survives teardown', async () => {
+    mockListTemplates.mockResolvedValue([]);
+    mockResolveRequestLines.mockResolvedValue([lineTagData()]);
+    const onSave = vi.fn(async () => {});
+    const onAutosave = vi.fn<AutosaveFn>(async () => {});
+
+    const { unmount } = render(
+      <RequestTagDesigner
+        request={request()}
+        initialDoc={null}
+        onSave={onSave}
+        onAutosave={onAutosave}
+      />,
+    );
+    await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
+
+    // An edit whose ~1s debounce has NOT fired - a sidebar click or the
+    // browser's Back here is exactly how the edit used to be lost. The route
+    // change is this component unmounting, so that is what the test does.
+    fireEvent.click(screen.getByRole('button', { name: 'Add layer' }));
+    expect(onAutosave).not.toHaveBeenCalled();
+
+    unmount();
+
+    await waitFor(() => expect(onAutosave).toHaveBeenCalledTimes(1));
+    expect(onAutosave.mock.calls[0][1]).toEqual({ keepalive: true });
+  });
+
+  it('with nothing pending, Save is a single request', async () => {
+    mockListTemplates.mockResolvedValue([]);
+    mockResolveRequestLines.mockResolvedValue([lineTagData()]);
+    const onSave = vi.fn(async () => {});
+    const onAutosave = vi.fn<AutosaveFn>(async () => {});
+
+    render(
+      <RequestTagDesigner
+        request={request()}
+        initialDoc={null}
+        onSave={onSave}
+        onAutosave={onAutosave}
+      />,
+    );
+    await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: /^Save/ }));
+
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+    expect(onAutosave).not.toHaveBeenCalled();
   });
 });
 
@@ -799,6 +971,7 @@ describe('RequestTagDesigner - tag size control (D24, AC-S9-3)', () => {
         request={request({ lines: [lineA] })}
         initialDoc={null}
         onSave={onSave}
+        onAutosave={vi.fn<AutosaveFn>(async () => {})}
       />,
     );
     await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
@@ -831,6 +1004,7 @@ describe('RequestTagDesigner - tag size control (D24, AC-S9-3)', () => {
         request={request({ lines: [lineA, lineB] })}
         initialDoc={null}
         onSave={onSave}
+        onAutosave={vi.fn<AutosaveFn>(async () => {})}
       />,
     );
     await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
@@ -879,6 +1053,7 @@ describe('RequestTagDesigner - tag size control (D24, AC-S9-3)', () => {
         request={request({ lines: [lineA] })}
         initialDoc={null}
         onSave={onSave}
+        onAutosave={vi.fn<AutosaveFn>(async () => {})}
       />,
     );
     await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
@@ -929,6 +1104,7 @@ describe('RequestTagDesigner - tag size control (D24, AC-S9-3)', () => {
         request={request({ lines: [lineA, lineB, lineC] })}
         initialDoc={null}
         onSave={onSave}
+        onAutosave={vi.fn<AutosaveFn>(async () => {})}
       />,
     );
     await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
@@ -969,6 +1145,7 @@ describe('RequestTagDesigner - tag size control (D24, AC-S9-3)', () => {
         request={request({ lines: [lineA] })}
         initialDoc={null}
         onSave={onSave}
+        onAutosave={vi.fn<AutosaveFn>(async () => {})}
       />,
     );
     await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());

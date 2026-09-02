@@ -1024,6 +1024,10 @@ export function TagCanvasEditor({
 
   /** Layers panel and inspector: pick exactly what was asked for. */
   const handleSelect = useCallback((id: string, additive: boolean) => {
+    // Selecting a LAYER deselects the guide (B4). The two selections share one
+    // Delete key, so leaving both live makes what that key removes depend on
+    // an order the user cannot see.
+    setSelectedGuideId(null);
     setSelectedIds((prev) => {
       if (additive) {
         const next = new Set(prev);
@@ -1393,20 +1397,29 @@ export function TagCanvasEditor({
       // the axis's existing guide's own id instead (placeOrMoveGuide decides
       // which), and the drag ref below has to track WHICHEVER one it was.
       const freshId = newGuideId();
-      const existing = guideForAxis(rulerGuides, orientation);
-      const id = existing?.id ?? freshId;
-      setRulerGuides((prev) => placeOrMoveGuide(prev, orientation, freshId, position_mm));
-      setSelectedGuideId(null);
-      guideDragRef.current = {
-        id,
+      const drag = {
+        id: freshId,
         orientation,
         moved: false,
         // Spawned FROM the ruler, so the drag starts inside it (B2).
         leftRuler: false,
         downClient: { x: event.clientX, y: event.clientY },
       };
+      guideDragRef.current = drag;
+      setSelectedGuideId(null);
+      setRulerGuides((prev) => {
+        // Which guide this gesture is now dragging is decided by the state the
+        // update actually runs against, not by a `rulerGuides` snapshot read
+        // during render - two ruler clicks in the same tick would otherwise
+        // both see "no guide yet" and the second would track an id that never
+        // made it into the array. Idempotent, so StrictMode's double-invoked
+        // updater is harmless.
+        const existing = guideForAxis(prev, orientation);
+        if (existing) drag.id = existing.id;
+        return placeOrMoveGuide(prev, orientation, freshId, position_mm);
+      });
     },
-    [stagePointFromClient, view, rulerGuides],
+    [stagePointFromClient, view],
   );
 
   /** An EXISTING guide picked up off the canvas: the same drag, a later start. */
@@ -1479,8 +1492,10 @@ export function TagCanvasEditor({
         // A plain click - placing/moving the axis's guide from the ruler, or
         // picking an existing one back up off the canvas without dragging it
         // anywhere - selects it (D21, AC-S8-2), the same way clicking a layer
-        // selects the layer.
+        // selects the layer. And, the same way, it deselects whatever was
+        // selected before (B4): one Delete key, one thing it can remove.
         setSelectedGuideId(drag.id);
+        setSelectedIds(new Set());
       }
       guideDragRef.current = null;
     };
@@ -1831,16 +1846,19 @@ export function TagCanvasEditor({
         return;
       }
 
-      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedIds.size > 0) {
-        e.preventDefault();
-        deleteSelectedLayers();
-      } else if ((e.key === 'Delete' || e.key === 'Backspace') && selectedGuideId) {
-        // A selected GUIDE, not a layer (D21, AC-S8-2) - mutually exclusive
-        // with the branch above, the same way selecting either clears the
-        // other.
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedGuideId) {
+        // The GUIDE first (B4). Selecting one already clears the layer
+        // selection, so this is only ever reached with a guide selected - but
+        // asking about the layers first meant that if the two ever DID overlap
+        // (as they did before this), Delete silently removed the layers and
+        // left the thing the user had just clicked on untouched. Cheap to make
+        // the order say what is meant.
         e.preventDefault();
         setRulerGuides((prev) => removeGuide(prev, selectedGuideId));
         setSelectedGuideId(null);
+      } else if ((e.key === 'Delete' || e.key === 'Backspace') && selectedIds.size > 0) {
+        e.preventDefault();
+        deleteSelectedLayers();
       }
       if (e.key === 'z' && modifier && !e.shiftKey) {
         e.preventDefault();

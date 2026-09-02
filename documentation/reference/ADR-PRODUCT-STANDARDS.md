@@ -190,10 +190,15 @@ together. One card listing every column the entity has is banned.
   both configurable in System Settings > General - even if the tab has been closed, and Escape
   does not cancel it. Never `confirm()`. `ConfirmDeleteDialog` and a destructive `AlertDialog` are
   retired for this - a new importer of either is a defect, not a style choice.
+- **A bulk action on a multi-row selection is ONE deferred action, not a dialog** (captain ruling
+  2 Sep 2026, D26 - pending user ratification). The selection has no single record for the
+  countdown to name, so the countdown names the COUNT ("Deleting 12 templates in 8s") and EVERY
+  selected row dims until it commits: the count says how many, the dimming says which. One parked
+  action per batch, never one per row - the server refuses or applies the whole selection
+  together, and a per-row action could not express that. Reference implementation:
+  `app/(protected)/dealer-kit/tag-templates/components/TagTemplatesList.tsx` with
+  `useDeferredAction`'s `dimEntityIds`, over `tag_template.bulk_delete`.
 - **The deliberate carve-outs, each with the reason it cannot move to the deferred model today:**
-  - **A bulk action on a multi-row selection** (e.g. "Delete selected (12)"): a grace-window
-    countdown names and dims ONE record, and a selection has no single record for it to name, so
-    a bulk delete keeps a confirmation dialog whose copy includes the count.
   - **Token-scoped surfaces** - `components/common/onboarding/PeopleGrid.tsx` and the portal
     ticket-draft confirm in `app/(auth)/portal/components/SubmissionForm.tsx` - run outside the
     authenticated session the deferred-action route (`POST /pending-actions`) requires, so there

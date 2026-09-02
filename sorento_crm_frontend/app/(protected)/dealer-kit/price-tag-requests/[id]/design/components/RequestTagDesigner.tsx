@@ -22,10 +22,18 @@
  *
  * Autosave (D22, S8): every committed change - a layer edit, an arranged
  * pin - re-runs the `doc` memo below, and an effect on THAT schedules a
- * debounced save through the same `onSave` the manual Save button calls.
- * `flush()` (the debounce's own pending value, sent now) covers the three
- * moments a ~1s wait is too slow to trust: switching Design/Arrange,
- * switching lines, and leaving the page (`beforeunload` and the back link).
+ * debounced save through `onAutosave`, which writes the request's DRAFT.
+ * `onSave` - the manual button, Mark proof ready, Print sheet - is a
+ * different act on a different route: it snapshots the design into an
+ * immutable version, which is what export and proof rendering read (B1).
+ * Autosaving through that route wrote a version per second and buried the
+ * deliberate saves in noise.
+ *
+ * `flush()` (the debounce's own pending value, sent now, awaited) covers every
+ * moment a ~1s wait is too slow to trust: switching Design/Arrange, switching
+ * lines, the manual Save button making sure it is not racing an autosave, and
+ * leaving the page - which is this component unmounting (the back link, the
+ * sidebar, the browser's own Back) plus `pagehide` for a refresh or a close.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
@@ -112,10 +120,19 @@ function newTagId(): string {
 interface Props {
   request: PriceTagRequestDetail;
   initialDoc: TagSheetDoc | null;
+  /** The deliberate save: snapshots a new version, toasts, rethrows (B1/B3). */
   onSave: (doc: TagSheetDoc) => Promise<void>;
+  /** The autosave: writes the draft, silent, rethrows so the indicator can
+   *  report a failure. `keepalive` is set only on the page-teardown flush. */
+  onAutosave: (doc: TagSheetDoc, options?: { keepalive?: boolean }) => Promise<void>;
 }
 
-export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
+export function RequestTagDesigner({
+  request,
+  initialDoc,
+  onSave,
+  onAutosave,
+}: Props) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -262,6 +279,12 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
   // product-block (or, for a set line, a set block) starter bound to its own
   // item instead of dead-ending on "Preparing this line..." forever
   // (D6/D13, #476).
+  //
+  // This clone is NOT a user change (S3), so it only moves the autosave's
+  // baseline - see the autosave effect below for why. `autoCloneRef` is how it
+  // says so: set immediately before the state update whose `doc` the autosave
+  // effect will then see.
+  const autoCloneRef = useRef(false);
   useEffect(() => {
     if (!selectedLineId || tags[selectedLineId]) return;
     if (templatesStatus === 'loading' || templatesStatus === 'error') return;
@@ -272,6 +295,7 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
     const template =
       defaultTemplateFor(line, templates, lineData?.code) ??
       starterTemplateFor(line, lineData, newTagId);
+    autoCloneRef.current = true;
     applyTemplate(line, template);
   }, [
     selectedLineId,
@@ -441,13 +465,31 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
 
   // -- Autosave (D22, S8) ------------------------------------------------------
 
-  const autosave = useAutosave<TagSheetDoc>(onSave);
+  // Set the moment the page is going away, and read by the save below so ONLY
+  // the teardown request is sent `keepalive` (a keepalive body is capped at
+  // 64KB, which a busy tag sheet exceeds - see the service).
+  const teardownRef = useRef(false);
+  const { status, savedAt, schedule, flush, retry } = useAutosave<TagSheetDoc>(
+    useCallback(
+      (next: TagSheetDoc) => onAutosave(next, { keepalive: teardownRef.current }),
+      [onAutosave],
+    ),
+  );
 
   // Every REAL change to `doc` schedules a debounced save - a layer edit
-  // (through `tags`), an arranged pin, an imposition change. The very first
-  // firing is the initial `doc` itself (whatever `initialDoc` seeded, or the
-  // empty starting point), not an edit, so it is skipped rather than
-  // autosaving data that is already exactly what the server has.
+  // (through `tags`), an arranged pin, an imposition change. Two changes are
+  // NOT edits and must persist nothing:
+  //
+  //  * the very first `doc` (whatever `initialDoc` seeded, or the empty
+  //    starting point) - already exactly what the server has;
+  //  * the starter/template CLONE the effect above performs for a line that
+  //    has no tag yet (S3). That is the page deciding what to draw, not the
+  //    user deciding anything, so merely OPENING a request with undesigned
+  //    lines - or clicking down the rail to look at them - used to write a
+  //    design for every one of them. The clone announces itself through
+  //    `autoCloneRef` and only moves the baseline. Choosing a template from
+  //    the picker goes through `chooseTemplate`, never through here, so a real
+  //    choice still saves.
   //
   // Guards on the VALUE, not a boolean "have I run yet" flag: dev's
   // StrictMode fires a fresh mount's effects twice (mount, cleanup, mount
@@ -460,22 +502,41 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
   useEffect(() => {
     if (lastSeenDocRef.current === doc) return;
     const isInitial = lastSeenDocRef.current === undefined;
+    const isAutoClone = autoCloneRef.current;
+    autoCloneRef.current = false;
     lastSeenDocRef.current = doc;
-    if (isInitial) return;
-    autosave.schedule(doc);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [doc, autosave.schedule]);
+    if (isInitial || isAutoClone) return;
+    schedule(doc);
+  }, [doc, schedule]);
 
-  // beforeunload covers a refresh, a close and a jump out of the app - the
-  // debounce armed by the last edit otherwise never gets to run.
+  // Leaving the page, both ways it can happen (S1/S2).
+  //
+  // A route change inside the app - the back link, a sidebar click, the
+  // browser's own Back - unmounts this component, so the cleanup below is
+  // where that edit gets its last chance. `pagehide` covers what no React
+  // lifecycle sees: a refresh, a closed tab, a jump to another site. It
+  // replaces `beforeunload`, which fires too early to be the whole story and
+  // is throttled or skipped outright on mobile Safari, where a backgrounded
+  // tab is discarded without one.
+  //
+  // Both set `teardownRef` first so the request goes out `keepalive` and
+  // survives the document it was made from.
   useEffect(() => {
+    // A mounted page is not tearing down. StrictMode's mount/cleanup/mount
+    // pass would otherwise leave the flag set for the whole session, and
+    // every ordinary autosave after it would go out keepalive - which fails
+    // outright once the document passes 64KB.
+    teardownRef.current = false;
     const handler = () => {
-      void autosave.flush();
+      teardownRef.current = true;
+      void flush();
     };
-    window.addEventListener('beforeunload', handler);
-    return () => window.removeEventListener('beforeunload', handler);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autosave.flush]);
+    window.addEventListener('pagehide', handler);
+    return () => {
+      window.removeEventListener('pagehide', handler);
+      handler();
+    };
+  }, [flush]);
 
   const handleMoveTag = useCallback(
     (sheetIndex: number, tag: PlacedTag, x_mm: number, y_mm: number) => {
@@ -487,19 +548,40 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
     [],
   );
 
+  /**
+   * The deliberate save: one version, and never racing the autosave (S4).
+   *
+   * `flush()` first - it cancels the armed debounce and waits for anything on
+   * the wire, so a draft write cannot land AFTER this version snapshot and
+   * resurrect a draft the snapshot just cleared. With nothing pending it is a
+   * no-op, which is the ordinary case: this stays one request.
+   *
+   * The toast lives in the host's `onSave` (B3), and so does the error one -
+   * which is also why the rejection is swallowed here rather than reported
+   * twice.
+   */
+  const saveNow = useCallback(async () => {
+    await flush();
+    await onSave(doc);
+  }, [flush, doc, onSave]);
+
   const save = useCallback(async () => {
     setSaving(true);
     try {
-      await onSave(doc);
+      await saveNow();
+    } catch {
+      // Already reported by `onSave`.
     } finally {
       setSaving(false);
     }
-  }, [doc, onSave]);
+  }, [saveNow]);
 
   const handleMarkProofReady = useCallback(async () => {
     setTransitioning(true);
     try {
-      await onSave(doc);
+      // A failed save now ABORTS rather than marking a proof ready off a
+      // design the server never received (B3: `onSave` rethrows).
+      await saveNow();
       // A STATUS, not an action name: see the note on the detail page.
       await transitionPriceTagRequest(request.id, 'proof_ready');
       toast.success('Proof marked as ready');
@@ -509,7 +591,7 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
     } finally {
       setTransitioning(false);
     }
-  }, [doc, onSave, request.id, router]);
+  }, [saveNow, request.id, router]);
 
   const handlePrintSheet = useCallback(
     async (sheetIndex: number) => {
@@ -517,9 +599,9 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
       if (!sheet) return;
       setPrinting(true);
       try {
-        // Saved first: the worker prints what the document says, and an unsaved
+        // Saved first: the worker prints the latest VERSION, and an unsaved
         // arrangement would print the previous one.
-        await onSave(doc);
+        await saveNow();
         await exportTagSheet(request.id, [sheet.id]);
         toast.success(`Sheet ${sheetIndex + 1} export queued. Check My Downloads.`);
       } catch {
@@ -528,7 +610,7 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
         setPrinting(false);
       }
     },
-    [doc, onSave, request.id],
+    [doc.sheets, saveNow, request.id],
   );
 
   const canMarkProofReady =
@@ -539,28 +621,27 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
    *  to the ~1s debounce that might not have fired yet. */
   const handleSelectLine = useCallback(
     (lineId: string) => {
-      if (lineId !== selectedLineId) void autosave.flush();
+      if (lineId !== selectedLineId) void flush();
       setSelectedLineId(lineId);
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [selectedLineId, autosave.flush],
+    [selectedLineId, flush],
   );
 
   /** Same idea for Design <-> Arrange (AC-S8-3). */
   const handleModeChange = useCallback(
     (value: 'design' | 'arrange') => {
-      if (value !== mode) void autosave.flush();
+      if (value !== mode) void flush();
       setMode(value);
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [mode, autosave.flush],
+    [mode, flush],
   );
 
+  // The unmount cleanup flushes too, so this is only about being EARLY: the
+  // save leaves before the route change rather than after it.
   const handleBack = useCallback(() => {
-    void autosave.flush();
+    void flush();
     router.push(`/dealer-kit/price-tag-requests/${request.id}`);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autosave.flush, router, request.id]);
+  }, [flush, router, request.id]);
 
   // -- Render ----------------------------------------------------------------
 
@@ -625,11 +706,7 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
 
         <div className="flex-1" />
 
-        <AutosaveIndicator
-          status={autosave.status}
-          savedAt={autosave.savedAt}
-          onRetry={autosave.retry}
-        />
+        <AutosaveIndicator status={status} savedAt={savedAt} onRetry={retry} />
 
         <FocusToggle
           active={focus}

@@ -457,6 +457,10 @@ describe('draft autosave (D22, AC-S8-4)', () => {
       expect(mockUpdate).toHaveBeenCalledWith(
         'tmpl-1',
         expect.objectContaining({ layers: [{ id: 'l1' }, { id: 'new-1' }, { id: 'new-2' }] }),
+        // An ordinary autosave is NOT keepalive - that is reserved for the
+        // page-teardown flush, because a keepalive body is capped at 64KB and
+        // a busy template exceeds it (S1/S2).
+        { keepalive: false },
       );
     } finally {
       vi.useRealTimers();
@@ -489,5 +493,85 @@ describe('draft autosave (D22, AC-S8-4)', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The deliberate acts never race the autosave (S4), and leaving the page does
+// not lose the last edit (S1/S2).
+// ---------------------------------------------------------------------------
+
+describe('draft autosave - flush points (S4, S1/S2)', () => {
+  it('Save flushes the pending autosave first, so the two land in order', async () => {
+    mockGet.mockResolvedValue(templateFixture());
+    mockUpdate.mockResolvedValue(templateFixture());
+    render(<TagTemplateEditorPage />);
+    await screen.findByTestId('canvas-editor');
+
+    // An edit with the ~1s debounce still armed, then Save immediately.
+    fireEvent.click(screen.getByText('Add a layer'));
+    fireEvent.click(screen.getByRole('button', { name: /Save/ }));
+
+    // Two writes of the SAME draft, the flushed one first - never overlapping,
+    // which is what would let the older document win on the server.
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalledTimes(2));
+    expect(mockUpdate.mock.calls[0][1]).toEqual(mockUpdate.mock.calls[1][1]);
+    expect(mockToastSuccess).toHaveBeenCalledWith('Template saved');
+
+    // And the debounce the flush consumed does not fire a third one.
+    await new Promise((resolve) => setTimeout(resolve, 1300));
+    expect(mockUpdate).toHaveBeenCalledTimes(2);
+  });
+
+  it('Save with nothing pending is a single write', async () => {
+    mockGet.mockResolvedValue(templateFixture());
+    mockUpdate.mockResolvedValue(templateFixture());
+    render(<TagTemplateEditorPage />);
+    await screen.findByTestId('canvas-editor');
+
+    fireEvent.click(screen.getByRole('button', { name: /Save/ }));
+
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalledTimes(1));
+  });
+
+  it('Publish flushes the pending autosave before it snapshots', async () => {
+    mockGet.mockResolvedValue(templateFixture());
+    mockUpdate.mockResolvedValue(templateFixture());
+    mockPublish.mockResolvedValue(
+      templateFixture({ published_version_id: 'v1', published_version_no: 1 }),
+    );
+    render(<TagTemplateEditorPage />);
+    await screen.findByTestId('canvas-editor');
+
+    fireEvent.click(screen.getByText('Add a layer'));
+    fireEvent.click(screen.getByRole('button', { name: /Publish/ }));
+    const dialog = within(screen.getByRole('dialog'));
+    fireEvent.click(dialog.getByRole('button', { name: 'Publish' }));
+
+    await waitFor(() => expect(mockPublish).toHaveBeenCalled());
+    // The flush and Publish's own pre-save both wrote the draft, both BEFORE
+    // the snapshot - so no autosave can still be on its way when the version
+    // is cut.
+    expect(mockUpdate).toHaveBeenCalledTimes(2);
+    expect(mockUpdate.mock.invocationCallOrder[1]).toBeLessThan(
+      mockPublish.mock.invocationCallOrder[0],
+    );
+  });
+
+  it('unmounting the page flushes the last edit, keepalive so it survives teardown', async () => {
+    mockGet.mockResolvedValue(templateFixture());
+    mockUpdate.mockResolvedValue(templateFixture());
+    const { unmount } = render(<TagTemplateEditorPage />);
+    await screen.findByTestId('canvas-editor');
+
+    // An edit whose debounce has NOT fired yet - navigating away here is
+    // exactly how the edit used to be lost.
+    fireEvent.click(screen.getByText('Add a layer'));
+    expect(mockUpdate).not.toHaveBeenCalled();
+
+    unmount();
+
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalledTimes(1));
+    expect(mockUpdate.mock.calls[0][2]).toEqual({ keepalive: true });
   });
 });

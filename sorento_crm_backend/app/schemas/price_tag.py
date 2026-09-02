@@ -500,6 +500,14 @@ class TagSheetDocResponse(BaseModel):
     page_id: str
     version: int
     doc: Optional[dict] = None
+    # WHICH of the two documents this answer came from (B1): ``draft`` is the
+    # autosaved work in progress, ``version`` the last deliberate save. The
+    # caller has to be able to tell them apart - reopening the designer on a
+    # draft and reopening it on the last saved version look identical
+    # otherwise, and only one of them is what the user was last looking at.
+    # ``version`` above stays the number of the latest immutable version either
+    # way, so a draft still reports the version it is sitting on top of.
+    source: Literal["draft", "version"] = "version"
 
 
 # ---------------------------------------------------------------------------

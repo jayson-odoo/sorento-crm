@@ -27,14 +27,14 @@ import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { buildSelectColumn, selectedRowIds } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { useDeferredAction } from '@/hooks/useDeferredAction';
+import {
+  useDeferredRowAction,
+  useRowPending,
+} from '@/hooks/useDeferredRowAction';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { familyLabel, type TagTemplate } from '@/lib/dealer-kit/tag-template-types';
-import {
-  deleteTemplate,
-  listTemplates,
-} from '../../services/tagTemplateService';
+import { listTemplates } from '../../services/tagTemplateService';
 import { TagTemplateDialog } from './TagTemplateDialog';
 
 export function TagTemplatesList() {
@@ -47,7 +47,6 @@ export function TagTemplatesList() {
     pageSize: 50,
   });
   const [createOpen, setCreateOpen] = useState(false);
-  const [deleteTarget, setDeleteTarget] = useState<TagTemplate | null>(null);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
   const fetchData = useCallback(async () => {
@@ -69,15 +68,16 @@ export function TagTemplatesList() {
   // partial), so this is ONE `useDeferredAction`, not `useDeferredBulkAction`
   // (that hook parks one independent action per row - the wrong shape when a
   // single id has to be able to sink the whole batch). `bulkDelete` freezes
-  // the ids AND the count at the click: the selection is cleared right after
-  // (so the grid does not keep dead rows looking tickable), and the toast's
-  // own effect only reads this closure ten seconds later - it would otherwise
-  // report "0 templates" once the selection it was reading live had emptied.
-  const [bulkDelete, setBulkDelete] = useState<{ batchId: string; ids: string[] } | null>(
-    null,
-  );
-  const bulkDeleteCount = bulkDelete?.ids.length ?? 0;
-  const bulkDeleteNoun = `${bulkDeleteCount} template${bulkDeleteCount === 1 ? '' : 's'}`;
+  // the ids AND the noun read off them at the click: the selection is cleared
+  // right after (so the grid does not keep dead rows looking tickable), and the
+  // toast's copy is read again when the window lapses - anything derived live
+  // from the selection would say "0 templates" by then.
+  const [bulkDelete, setBulkDelete] = useState<{
+    batchId: string;
+    ids: string[];
+    noun: string;
+  } | null>(null);
+  const bulkDeleteNoun = bulkDelete?.noun ?? '';
 
   const bulkDeletion = useDeferredAction({
     actionKey: 'tag_template.bulk_delete',
@@ -88,8 +88,24 @@ export function TagTemplatesList() {
     surface: 'toast',
     successMessage: `${bulkDeleteNoun} deleted`,
     payload: { template_ids: bulkDelete?.ids ?? [] },
+    // Every row the reader picked dims for the length of the window, even though
+    // the action is keyed on the batch token: the countdown names the count, and
+    // the rows show which ones it means (D26).
+    dimEntityIds: bulkDelete?.ids,
     onCommitted: fetchData,
   });
+
+  // The per-row Delete asks nothing either (D7): the row dims and a toast counts
+  // down with Cancel, exactly like the batch above - one template is just a batch
+  // of one, and it goes through the single-record action so the countdown can name
+  // the template by name.
+  const deletion = useDeferredRowAction({
+    actionKey: 'tag_template.delete',
+    entityType: 'tag_template',
+    successMessage: 'Template deleted',
+    onCommitted: fetchData,
+  });
+  const rowPending = useRowPending<TagTemplate>('tag_template');
 
   // `start()` reads its OWN hook's current closure, which only carries the
   // batch above once a render has actually happened - calling it inline in
@@ -193,9 +209,10 @@ export function TagTemplatesList() {
               className="h-7 w-7 p-0 text-destructive hover:text-destructive"
               onClick={(e) => {
                 e.stopPropagation();
-                setDeleteTarget(row.original);
+                deletion.run({ id: row.original.id, subject: row.original.name });
               }}
               title="Delete template"
+              aria-label="Delete template"
             >
               <Trash2 className="size-3.5" />
             </Button>
@@ -203,7 +220,7 @@ export function TagTemplatesList() {
         ),
       },
     ],
-    [router],
+    [router, deletion],
   );
 
   const table = useReactTable({
@@ -222,7 +239,14 @@ export function TagTemplatesList() {
   const handleBulkDelete = () => {
     const ids = selectedRowIds(table);
     if (ids.length === 0) return;
-    setBulkDelete({ batchId: crypto.randomUUID(), ids });
+    // The noun is frozen HERE, off the ids this click captured: the selection is
+    // cleared on the next line, and the toast's own copy is read again when the
+    // window lapses - live state would have it saying "0 templates" by then.
+    setBulkDelete({
+      batchId: crypto.randomUUID(),
+      ids,
+      noun: `${ids.length} template${ids.length === 1 ? '' : 's'}`,
+    });
     setRowSelection({});
   };
 
@@ -259,6 +283,7 @@ export function TagTemplatesList() {
             recordCount={templates.length}
             isLoading={isLoading}
             tableLayout={{ width: 'fixed', columnsResizable: true }}
+            rowPending={rowPending}
             onRowClick={(row) =>
               router.push(`/dealer-kit/tag-templates/${row.id}`)
             }
@@ -275,26 +300,6 @@ export function TagTemplatesList() {
         open={createOpen}
         onOpenChange={setCreateOpen}
         onCreated={fetchData}
-      />
-
-      <ConfirmDeleteDialog
-        open={!!deleteTarget}
-        onOpenChange={(open) => {
-          if (!open) setDeleteTarget(null);
-        }}
-        title="Delete tag template"
-        description={
-          deleteTarget
-            ? `Are you sure you want to delete "${deleteTarget.name}"? This action cannot be undone.`
-            : ''
-        }
-        onDelete={async () => {
-          if (deleteTarget) {
-            await deleteTemplate(deleteTarget.id);
-          }
-        }}
-        successMessage="Template deleted"
-        onSuccess={fetchData}
       />
     </>
   );

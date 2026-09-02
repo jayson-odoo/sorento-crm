@@ -31,7 +31,7 @@ from app.schemas.price_tag import (
     TagTemplateVersionDetailResponse,
     TagTemplateVersionResponse,
 )
-from app.services.dealer_kit import tag_data_service
+from app.services.dealer_kit import tag_data_service, tag_template_service
 from app.services.error_handler import AppException
 
 logger = logging.getLogger(__name__)
@@ -200,9 +200,11 @@ def delete_tag_template(
     db: Session = Depends(get_db),
     _user: dict = Depends(_MANAGE),
 ):
-    t = _get_template_or_404(db, template_id)
-    db.delete(t)
-    db.commit()
+    """The immediate delete. The deferred one (`tag_template.delete`, the list's
+    countdown) calls the SAME service method, so the two cannot drift."""
+    tag_template_service.delete_template(
+        db, template_id, requested_by_id=_user_id(_user)
+    )
 
 
 # ---------------------------------------------------------------------------

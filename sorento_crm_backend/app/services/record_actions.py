@@ -934,19 +934,35 @@ def _bulk_delete_tag_templates(db: Session, payload: dict):
     from app.services.dealer_kit import tag_template_service
 
     ids = payload.get("template_ids") or []
-    return tag_template_service.bulk_delete(db, [str(i) for i in ids])
-
-
-register(
-    FormAction(
-        key="tag_template.bulk_delete",
-        entity_types=("tag_template",),
-        execute=_bulk_delete_tag_templates,
-        window=WINDOW_DESTRUCTIVE,
-        permission="dealer_kit.tag_templates.manage",
-        label="Delete tag templates",
+    return tag_template_service.bulk_delete(
+        db,
+        [str(i) for i in ids],
+        requested_by_id=payload.get("requested_by_id"),
     )
-)
+
+
+def _delete_tag_template(db: Session, payload: dict):
+    from app.services.dealer_kit import tag_template_service
+
+    return tag_template_service.delete_template(
+        db, _entity_id(payload), requested_by_id=payload.get("requested_by_id")
+    )
+
+
+for _key, _fn, _label in (
+    ("tag_template.delete", _delete_tag_template, "Delete tag template"),
+    ("tag_template.bulk_delete", _bulk_delete_tag_templates, "Delete tag templates"),
+):
+    register(
+        FormAction(
+            key=_key,
+            entity_types=("tag_template",),
+            execute=_fn,
+            window=WINDOW_DESTRUCTIVE,
+            permission="dealer_kit.tag_templates.manage",
+            label=_label,
+        )
+    )
 
 
 def _undo_flyer_code_adopt(db: Session, payload: dict):

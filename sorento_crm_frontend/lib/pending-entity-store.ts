@@ -86,6 +86,16 @@ export interface TrackPendingActionInput {
   /** Naive UTC, from the server. The clock is never the client's. */
   commitAt: string;
   /**
+   * Other records this ONE action is about, dimmed for as long as it is parked.
+   *
+   * A batch delete is one action over a SELECTION: the action is keyed on a token
+   * naming the click, because there is no single record for a countdown to name,
+   * but every selected row is on its way out and has to say so. Held here rather
+   * than by the list, because the window is the server's and outlives the surface
+   * that started it - the same reason `entityId` is (D26, S11).
+   */
+  dimEntityIds?: readonly string[];
+  /**
    * Said if the commit is still fresh when it is observed.
    *
    * `null` means the caller answers for it: a bulk delete parks one action per row and
@@ -162,7 +172,14 @@ function dismissToastFor(actionId: string) {
 /** Stop tracking AND take the dimming off the row, and its countdown with it. */
 function releaseKey(key: string) {
   const entry = _tracked.get(key);
-  if (entry) dismissToastFor(entry.id);
+  if (entry) {
+    dismissToastFor(entry.id);
+    // Every row the batch dimmed comes back with it: the action is one action, so
+    // it ends once, whether it committed, failed or was cancelled.
+    for (const id of entry.dimEntityIds ?? []) {
+      unmarkKey(pendingEntityKey(entry.entityType, id));
+    }
+  }
   untrackKey(key);
   unmarkKey(key);
 }
@@ -330,6 +347,9 @@ export const pendingEntityStore = {
     armTimer(entry, key);
     attachWakeListeners();
     markKey(key);
+    for (const id of input.dimEntityIds ?? []) {
+      markKey(pendingEntityKey(input.entityType, id));
+    }
   },
 
   announceOutcome,
