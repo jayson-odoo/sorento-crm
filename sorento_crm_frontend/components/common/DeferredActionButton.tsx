@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { useDrainingScaleXFill } from '@/hooks/useDrainingScaleXFill';
@@ -45,18 +45,22 @@ export function DeferredCountdown({
 }: DeferredCountdownProps) {
   const target = pending ? Date.parse(asUtc(pending.commit_at)) : 0;
   const [now, setNow] = useState(() => Date.now());
-  // The fill itself no longer needs a fast tick (see the transform effect
-  // below) - this one only redraws the `role="timer"` label, so once a
-  // second is plenty (M3-01).
-  const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     if (!pending) return;
-    tickRef.current = setInterval(() => setNow(Date.now()), 1000);
+    // The fill itself no longer needs a fast tick (the CSS transition drains
+    // it, M3-01) - this one only redraws the `role="timer"` label, so once a
+    // second is plenty.
+    const tick = setInterval(() => setNow(Date.now()), 1000);
+    // A window almost never ends on one of those 1s boundaries, and until it
+    // is redrawn the bar sits empty beside a label still reading "in 1s". This
+    // lands the flip on the millisecond the window actually closes.
+    const lapse = setTimeout(() => setNow(Date.now()), Math.max(0, target - Date.now()));
     return () => {
-      if (tickRef.current) clearInterval(tickRef.current);
+      clearInterval(tick);
+      clearTimeout(lapse);
     };
-  }, [pending]);
+  }, [pending, target]);
 
   const remainingMs = Math.max(0, target - now);
   const windowMs = (pending?.window_seconds ?? 0) * 1000;
@@ -92,7 +96,14 @@ export function DeferredCountdown({
           variant="ghost"
           size="sm"
           className="ms-auto h-7 px-2"
-          onClick={onCancel}
+          // Guarded on the CLOCK, not only on the last render: a click can land
+          // after the window closed, and by then the server has committed - so
+          // the cancel would ask for something that no longer exists, and the
+          // caller would report a failure the user cannot act on.
+          onClick={() => {
+            if (Date.now() >= target) return;
+            onCancel();
+          }}
           disabled={cancelling || lapsed}
         >
           Cancel

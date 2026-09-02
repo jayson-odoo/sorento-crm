@@ -224,12 +224,16 @@ describe('AIAssistantBubble resize (M3-07)', () => {
     fireEvent.pointerUp(corner, { clientX: 40, clientY: 40, pointerId: 1 });
   });
 
-  it('renders the collapsed handle as a motion element with an opacity exit', () => {
+  it('presses rather than widening on hover, and stays a real button', () => {
     render(<AIAssistantBubble />);
-    // React 19's dev warning aside, the underlying DOM node is still a real
-    // <button> - motion.button renders one. The exit behaviour itself
-    // (fading rather than vanishing) is covered by the "expands on click"
-    // test above, which has to `waitFor` the unmount.
+    // `transition-all hover:w-9` grew the handle on hover and, because `all`
+    // includes opacity, smeared the AnimatePresence exit it now has (M3-07).
+    // The press is the shared class every other control uses.
+    expect(handle().className).not.toContain('transition-all');
+    expect(handle().className).not.toContain('hover:w-9');
+    expect(handle().className).toContain('active:scale-[0.97]');
+    // The exit behaviour itself (fading rather than vanishing) is covered by
+    // the "expands on click" test above, which has to `waitFor` the unmount.
     expect(handle().tagName).toBe('BUTTON');
   });
 });

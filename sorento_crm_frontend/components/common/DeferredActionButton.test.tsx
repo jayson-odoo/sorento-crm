@@ -146,45 +146,6 @@ describe('the fill animates transform, not width (M3-01)', () => {
     expect(bar.style.width).toBe('');
   });
 
-  it('reports zero size changes to a ResizeObserver during the window (baseline: one per 100ms tick)', () => {
-    const sizeChanges: number[] = [];
-    const realRO = globalThis.ResizeObserver;
-    class TrackingResizeObserver {
-      private target: Element | null = null;
-      constructor(private cb: ResizeObserverCallback) {}
-      observe(el: Element) {
-        this.target = el;
-      }
-      unobserve() {
-        this.target = null;
-      }
-      disconnect() {
-        this.target = null;
-      }
-    }
-    globalThis.ResizeObserver = TrackingResizeObserver as unknown as typeof ResizeObserver;
-
-    try {
-      render(<DeferredCountdown pending={parked()} verb="Deleting" onCancel={vi.fn()} />);
-      const bar = screen.getByTestId('deferred-countdown-bar') as HTMLElement;
-      const observer = new ResizeObserver(() => sizeChanges.push(1));
-      observer.observe(bar);
-
-      armFillTransition();
-      // A transform never changes layout size, so a real ResizeObserver would
-      // never fire here either - this jsdom stand-in only proves the fill's
-      // own box never changes width/height across the window.
-      const widthAtStart = bar.getBoundingClientRect().width;
-      act(() => {
-        vi.advanceTimersByTime(5000);
-      });
-      expect(bar.getBoundingClientRect().width).toBe(widthAtStart);
-      expect(sizeChanges).toHaveLength(0);
-    } finally {
-      globalThis.ResizeObserver = realRO;
-    }
-  });
-
   it('steps the fill once per tick under reduced motion, with no inline transition', () => {
     // The class alone cannot do this: the hook writes the transition as an
     // INLINE style, which beats `motion-reduce:transition-none` every time.
@@ -216,6 +177,44 @@ describe('the fill animates transform, not width (M3-01)', () => {
       vi.advanceTimersByTime(3000);
     });
     expect(screen.getByRole('timer')).toHaveTextContent('Deleting in 7s');
+  });
+});
+
+describe('the edges of the window (M3-01 fix round)', () => {
+  it('flips to "applying" the moment the window lapses, not on the next tick', () => {
+    // 10.4s: a real window almost never ends on one of the label's own 1s
+    // boundaries, and waiting for the next one left the bar empty beside a
+    // label still reading "Deleting in 1s".
+    render(
+      <DeferredCountdown
+        pending={parked({ commit_at: '2026-08-30T10:00:10.400' })}
+        verb="Deleting"
+        onCancel={vi.fn()}
+      />,
+    );
+
+    act(() => {
+      vi.advanceTimersByTime(10_000);
+    });
+    expect(screen.getByRole('timer')).toHaveTextContent('Deleting in 1s');
+
+    act(() => {
+      vi.advanceTimersByTime(400);
+    });
+    expect(screen.getByTestId('deferred-countdown')).toHaveAttribute('data-lapsed', 'true');
+  });
+
+  it('ignores a Cancel click that lands after the window closed', () => {
+    const onCancel = vi.fn();
+    render(<DeferredCountdown pending={parked()} verb="Deleting" onCancel={onCancel} />);
+
+    // The clock moves without React re-rendering: exactly the race between the
+    // last paint and the pointer landing. The button still looks live, and the
+    // server has already committed.
+    vi.setSystemTime(NOW + 11_000);
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    expect(onCancel).not.toHaveBeenCalled();
   });
 });
 
