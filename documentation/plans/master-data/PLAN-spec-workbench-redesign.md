@@ -4,8 +4,8 @@
 > Governs: `PRINCIPLES.md` + `documentation/reference/ADR-PRODUCT-STANDARDS.md` + `documentation/reference/DESIGN-LANGUAGE.md` (PR #498).
 
 **Slug:** `spec-workbench-redesign` | **Domain:** master-data
-**Status:** Pre-code. Grill closed 2 Sep 2026. Lavish review rounds 1-2 applied (D10 plain words, primary Add specification, gear icon, D11 no exceptions tab, rules editable in place, seen-in search); verdict pending.
-**Lane:** worktree `.claude/worktrees/spec-workbench-redesign`, branch `feat/spec-workbench-redesign` from `origin/main` (f09532f6c). Depends on PR #498 for the design-language reference; merge #498 first or the reviewer reads it from that branch.
+**Status:** Pre-code. Grill closed 2 Sep 2026. Lavish review rounds 1-3 applied (D10 plain words, primary Add specification, gear icon, D11 no exceptions tab, rules editable in place, seen-in search, list search by product code, no default pill on the list); verdict pending.
+**Lane:** worktree `.claude/worktrees/spec-workbench-redesign`, branch `feat/spec-workbench-redesign` from `origin/main` (f09532f6c). PR #498 (design-language reference) merged 2 Sep and merged into this lane.
 **Folds in:** `PLAN-spec-value-labels.md` (#423), now SUPERSEDED.
 **Pilot for:** the design slots added to `/feature` by #498 (design brief, `[UX]` ACs, animate gate, emil-design-eng review table).
 
@@ -41,6 +41,7 @@ components/
   TokenInput.tsx, PillList.tsx    kept
 hooks/
   useSpecRegistryQuery.ts         list (staleTime 60s), selectKey(specKey)
+  useKeysForProductQuery.ts       debounced /keys-for-product?code= for the list search (A.2)
   useSpecRegistryMutations.ts     create / update / delete / addValue / rereadCatalogue
   useCatalogueStatusQuery.ts      3s polling while running
   useSpecKeyProductsQuery.ts      facets + page
