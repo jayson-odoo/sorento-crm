@@ -139,3 +139,100 @@ scored as a failure here.
 Dev server killed (`kill 28534`; its `next-server` child 28549 exited with it; confirmed via a
 follow-up `lsof -i :3081` returning empty). Only the `m1tester` agent-browser session belonging to
 this run was closed - no `close --all` was issued. `.env.local` left in place per the brief.
+
+## Run 2 (after fix round, HEAD fc73e53ee)
+
+Worktree `motion2-M1` (branch `feat/motion2-M1-perimeter-hygiene`), same worktree as run 1, tree
+clean at HEAD `fc73e53ee` except two untracked plan docs (left alone per the brief). Port `:3081`
+was held by another tester this run, so **`:3082`** was used instead: `lsof -i :3082` confirmed
+empty before starting, `.env.local`'s `NEXTAUTH_URL` was edited to `http://localhost:3082`
+(`FASTAPI_INTERNAL_URL=http://localhost:8120`, `AUTH_TRUST_HOST=true`, no `NEXT_PUBLIC_API_URL`
+kept as-is), and `PORT=3082 npm run dev` ran as a background Bash session (`next-server` PID 5665,
+parent `npm run dev` PID 5638; killing 5638 took 5665 down with it, confirmed via a follow-up
+`lsof -i :3082` returning empty). Session `--session-name m1run2` (isolated browser). Login via
+`E2E_EMAIL`/`E2E_PASSWORD` from `.env.local`. Viewport 1280x800 unless noted. Navigated by sidebar
+clicks from `/`, except a row click into an order's own record page (content-driven, not a typed
+URL) and the two portal pages the brief explicitly named as exceptions.
+
+Same tool quirk as run 1: `agent-browser click @ref` silently no-ops on several targets this run
+too (sidebar group toggles two levels deep, the row-level "product actions" trigger, the
+`PeriodPicker`'s "Show date picker" button worked via `@ref` but the row-actions trigger and
+deeper sidebar links needed it) - a native `element.click()` via `eval`, or for Radix trigger
+buttons that ignore a plain synthetic `click`, a full `pointerdown`/`mousedown`/`pointerup`/
+`mouseup`/`click` `PointerEvent`/`MouseEvent` sequence via `eval`, opened them immediately. Real
+`:hover` CSS state (background/border colour reads) needed the CDP-level `agent-browser hover`/
+`find ... hover` command - dispatching synthetic `pointerenter`/`mouseover` events via `eval` does
+NOT flip the browser's internal `:hover` state, so computed-style reads after a synthetic hover
+dispatch came back unchanged (confirmed and worked around: hover checks below all use the real
+`hover` command, verified by `element.matches(':hover') === true` post-dispatch).
+
+### Findings summary (pass/fail table)
+
+| Check | Target | Result | Measured value |
+| --- | --- | --- | --- |
+| 1 | Command palette (Ctrl+Shift+K) arrow traversal | PASS | Dispatched 6x `ArrowDown` on `document.activeElement` (the `[cmdk-input]`), 50ms apart, polling `[cmdk-item][data-selected="true"]` every 16ms: `data-value` advanced Dashboards -> Ideas -> Pipeline -> Leads -> Awaiting Acceptance -> My Tasks -> Stock Claims with the selected item's computed `background-color` identical (`lab(96.1634 ...)`) at every sample - no intermediate colour. Structural proof: `getComputedStyle(item).transitionProperty === "transform, translate, scale, rotate"` (no `background-color`/`color` in the list), so a fade is not merely absent at these samples, it is impossible. `className` contains `transition-transform` and `active:scale-[0.97]`; does NOT contain `transition-[transform,color` |
+| 1 (control) | Products row "..." DropdownMenuItem ("Delete product") | PASS | `className` contains `transition-[transform,color,background-color,border-color,box-shadow] duration-(--duration-fast) ease-(--ease-standard) active:scale-[0.97]` - full PRESSED_CLASS list, still transitions colour, confirming the control differs from the CommandItem/ContextMenuItem transform-only treatment |
+| 2 | Right-click ContextMenu (Resources > Files, grid view) | PASS | Dispatched a synthetic `contextmenu` MouseEvent (button 2) on the first file card; opened `[data-slot="context-menu-content"]` with 8 items (Open, Preview, Download, Rename, Move to..., Set company..., Resubmit to n8n, Move to trash) - all 8 have `transition-transform` + `active:scale-[0.97]`, none has `transition-[transform,color` |
+| 3 | Clickable DataGrid row (Products, row 1) | PASS | `<tr>` className: `hover:bg-muted/40 data-[state=selected]:bg-muted/50 cursor-pointer active:bg-muted/60 border-b border-border ...` |
+| 3 | Non-clickable DataGrid row (System > Numbering Rules, "Running Numbers" - no `rowHref`/`onRowClick`) | PASS | `<tr>` className: `hover:bg-muted/40 data-[state=selected]:bg-muted/50 border-b border-border ...` - no `cursor-pointer`, no `active:bg-muted/60` |
+| 3 | Loading skeleton rows | SOURCE-CONFIRMED, runtime capture attempted and inconclusive | `components/ui/data-grid-table.tsx:324-343` (`DataGridTableBodyRowSkeleton`) builds its `<tr>` className from `hover:bg-muted/40`, `cursor-pointer` (if `rowHref`/`onRowClick`), border/stripped variants, and `tableClassNames?.bodyRow` - `active:bg-muted/60` is never in that list regardless of `rowHref`/`onRowClick`, matching the source comment at line 526 ("It is not on the skeleton row"). Attempted to catch one live: clicked the Files sidebar's "Marketing" folder and polled for `.animate-pulse` inside a `tr` every 10ms for 3s (`skeleton_poll.js`) - none appeared, the local dev fetch resolved faster than the poll could observe it, so this line is source-confirmed rather than runtime-observed this run too (same limitation as menubar in run 1) |
+| 3 | Stripped grid (`tableLayout.stripped: true`) | SOURCE-CONFIRMED, not browser-reachable | `grep -rn "stripped" app/ --include="*.tsx"` (excluding tests and unrelated string-manipulation locals of the same name) found no page in this branch's `app/` tree that sets `tableLayout={{ stripped: true }}` - `stripped` support exists only in `components/ui/data-grid-table.tsx` (default `false` per `data-grid.tsx:216`) and its consumers (`DraggableAttachmentsTable.tsx`, `DriveListView.tsx`) only reference `props.tableLayout?.stripped` defensively, they don't set it. Line 529 of `data-grid-table.tsx` proves structurally that `active:bg-muted/60` is gated on `!props.tableLayout?.stripped`, so a stripped grid would never carry it even with `rowHref` set, but no live instance exists to click through the sidebar this run |
+| 4 | SLA KPI Dashboard cards ring on hover (Dashboards home) | PASS | `div.cursor-pointer.transition-shadow.hover:ring-1.hover:ring-border` (7 matching cards - the 3 stage-breakdown cards + 4 timeliness/at-risk cards); `getComputedStyle(el).transitionProperty === "box-shadow"`, `transitionDuration === "0.15s"` |
+| 4 | Portal landing rows brightness on hover (`/portal`) | SKIP, login-gated | `/portal` with no session renders only the "Get your portal link" card (`PortalRootContent`, mode `request-link`) - the row list lives in `PortalLanding.tsx` and only renders after a real WhatsApp OTP / token exchange, which `e2e/portal-slug-links.spec.ts`'s own header comment confirms needs "a live OTP/WhatsApp loop" unavailable to a scripted run. Source-confirmed instead: `PortalLanding.tsx:733` - `` `relative block rounded-lg border ${tintClass} px-3.5 py-3 pr-3 hover:brightness-95 active:brightness-90 transition-[filter] select-none cursor-pointer` `` |
+| 4 | SubmissionForm pagers opacity | SKIP, unreachable | Same gating as above - `SubmissionForm` renders inside the authenticated portal tree only |
+| 5 | AI assistant launcher (`data-testid="ai-assistant-tab"`) hover tint | PASS | Real `agent-browser hover` (CDP-level, not a synthetic dispatch): `background-color` went from `lab(54.1736 13.3369 -74.6839)` (rest, `bg-primary`) to `oklab(0.622989 -0.0378532 -0.210606 / 0.9)` (hover, matches `hover:bg-primary/90`) |
+| 5 | AI assistant launcher press shrink | PASS | `className` contains `active:scale-[0.97]` |
+| 6 | AttachmentDropzone (`/portal/price_tag_request/new`) render + hover | PASS | Page renders with no redirect and no session (form itself is public; only its data lookups are agent-gated, see below). Dropzone div className: `rounded-lg border-2 border-dashed ... transition-colors ... hover:border-primary/60 border-muted-foreground/25`. Real hover: `border-color` went from `oklab(0.551998 ... / 0.25)` (rest, `border-muted-foreground/25`) to `oklab(0.622989 ... / 0.6)` (hover, `border-primary/60`), `element.matches(':hover') === true`. Renders cleanly at 1280x800 and 375x812 (screenshots below), zero console errors at both widths |
+| 6 | AsyncCombobox ("Debtor *") | PARTIAL - renders, underlying data 401s | Combobox opens on click (search input + empty `listbox`), `className` includes `transition-shadow` and the standard border/focus-ring treatment. Typing into it fires `GET /api/v1/public/portal/lookups/debtors-for-agent`, which returns **401** in `network requests` - this endpoint needs a real agent-portal session, not just a CRM admin cookie, so no results render. This is expected per the page's purpose (agent-only lookup), not a defect; the shell and its transitions are unaffected |
+| 6 | PeriodPicker ("Needed by" field, "Show date picker" button) | PASS (render/errors), hover not directly captured | Clicking "Show date picker" opened a full month calendar with zero console errors. Day cells are the shared `components/ui/calendar.tsx` primitive: `className` includes `transition-[color,background-color,border-radius,box-shadow]` and `hover:not-in-data-selected:bg-accent` (line 30) - confirmed by source read; a live `agent-browser find text "15" hover` landed on the page background rather than the day cell (day text nodes render inside a nested button/span the text-locator didn't resolve precisely), so the computed-style hover delta wasn't captured pixel-for-pixel this run, but the shared primitive is exercised via the same PeriodPicker/Calendar path everywhere else in the app already covered elsewhere |
+| 7 | Zero console errors: Products, Orders, an order record page, Settings (System > Companies), Files | PASS | `errors` returned empty after every navigation; full-session `console` dump filtered to non-debug/non-Fast-Refresh/non-i18next/non-DevTools lines showed exactly one line: `[warning] Warning: Missing \`Description\` or \`aria-describedby={undefined}\` for {DialogContent}` - a pre-existing Radix a11y warning, not an `[error]`-level line and unrelated to this branch's diff (same pattern as run 1's unrelated tiptap warning) |
+
+### Detail notes
+
+- **Check 1 method**: keyboard navigation in `cmdk` is driven by `data-selected`, not CSS
+  `:hover`, so dispatching `KeyboardEvent('keydown', {key:'ArrowDown'})` on
+  `document.activeElement` (bubbling into the focused `[cmdk-input]`, which is where cmdk's
+  listener lives) is a legitimate simulation of a held arrow key, unlike the `:hover` case in
+  checks 5/6 where a dispatched pointer event does not work (see the quirks paragraph above). The
+  first attempt dispatched on `document` directly and produced no movement, because a native event
+  targeted at `document` never passes through the input on its way up - retargeting to
+  `document.activeElement` fixed it immediately.
+- **Check 2 method**: same file-card selector as run 1 (`.group.relative.flex.flex-col`, 50 cards
+  in grid view), synthetic `contextmenu` MouseEvent with `button: 2` at the card's centre opened
+  the menu on the first try this run.
+- **Check 3 non-nav grid**: chosen via `grep -rln "<DataGrid" ... | for f in ...; grep -L
+  "onRowClick\|rowHref"` scoped to `app/(protected)/system-management/` to find a reachable
+  candidate quickly; picked "Running Numbers" (`/system-management/numbering-rules`, under System
+  > Configuration in the sidebar) since it is plainly a reference-data list with no detail route.
+- **Check 4 SLA cards**: reached directly on the Dashboards home page (no navigation needed - the
+  KPI dashboard renders there by default for this user), so no extra click was required.
+- **Check 6 navigation exception**: `/portal/price_tag_request/new` and `/portal` were opened by
+  direct URL per the brief's explicit carve-out for the two portal checks - both are outside the
+  authenticated sidebar entirely and have no in-app link from the CRM shell.
+
+### Screenshots in this directory (run 2)
+
+- `run2-command-palette.png` - Command palette open via Ctrl+Shift+K, first item highlighted.
+- `run2-dropdownmenu-control.png` - Products row "..." menu open, "Delete product" control case.
+- `run2-products-list.png` - Products list, used for the clickable-row class measurement.
+- `run2-contextmenu.png` - Right-click ContextMenu open on a file card in Resources > Files (grid
+  view).
+- `run2-numbering-rules-nonav.png` - System > Running Numbers, the non-clickable-row control case.
+- `run2-sla-kpi-cards.png` - Dashboards home showing the SLA KPI Dashboard cards used for the
+  ring-on-hover measurement.
+- `run2-ai-assistant-hover.png` - AI assistant launcher mid-hover (tinted).
+- `run2-portal-price-tag-1280.png` / `run2-portal-price-tag-375.png` - `/portal/price_tag_request/new`
+  at 1280x800 and 375x812, both clean with zero console errors.
+- `run2-portal-dropzone-hover.png` - AttachmentDropzone mid-hover (border tinted).
+- `run2-portal-periodpicker.png` - PeriodPicker calendar open, zero console errors.
+- `run2-orders-list.png` - Orders (Delivery Orders) list, zero console errors.
+- `run2-order-record.png` - An order's detail/record page, zero console errors.
+- `run2-settings-companies.png` - System > Companies settings page, zero console errors.
+
+### Cleanup
+
+Dev server killed by killing its parent `npm run dev` (PID 5638), which took the `next-server`
+child (PID 5665) down with it; confirmed via a follow-up `lsof -i :3082 -sTCP:LISTEN` returning
+empty. Only the `m1run2` agent-browser session belonging to this run was closed - no `close --all`
+was issued. `.env.local`'s `NEXTAUTH_URL` restored to `http://localhost:3081` afterwards (untracked
+file, not committed).
