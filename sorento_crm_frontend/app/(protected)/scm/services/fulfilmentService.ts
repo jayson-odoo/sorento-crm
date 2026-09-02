@@ -432,11 +432,6 @@ export async function updateLoadingPlanCutOff(
   return readJson<LoadingPlanRecord>(res, 'Failed to change the cut-off');
 }
 
-export async function cancelLoadingPlan(id: string): Promise<LoadingPlanRecord> {
-  const res = await apiFetch(`/api/v1/scm/loading-plans/${id}/cancel`, { method: 'POST' });
-  return readJson<LoadingPlanRecord>(res, 'Failed to cancel the plan');
-}
-
 /**
  * The typed quantities, WHOLE map, one transaction (R6). Not a patch: what is not in the map
  * is not an edit any more, so a cleared cell cannot survive as a stale override.
@@ -539,19 +534,6 @@ export interface SupplierNotice {
   created_by: string | null;
 }
 
-export async function approveLoadingPlan(
-  planId: string,
-): Promise<{ notices: SupplierNotice[]; document_filename: string }> {
-  const res = await apiFetch(`/api/v1/scm/loading-plans/${planId}/notices`, { method: 'POST' });
-  return readJson(res, 'Failed to send the supplier notice');
-}
-
-export async function getPlanNotices(planId: string): Promise<SupplierNotice[]> {
-  const res = await apiFetch(`/api/v1/scm/loading-plans/${planId}/notices`);
-  const body = await readJson<{ data: SupplierNotice[] }>(res, 'Failed to load the notices');
-  return body.data;
-}
-
 export async function getNoticeDocumentUrl(
   noticeId: string,
   kind: 'pdf' | 'xlsx' = 'pdf',
@@ -578,8 +560,8 @@ export async function getNoticeDocumentUrl(
  * Rows on the stock list with no open need (`has_demand: false`) sort after them, suggested 0,
  * unranked - nothing the stock list holds vanishes in the merge. `include_lines=true` (always
  * requested by this FE - the matrix and the SO drill both need it) adds the flat open-SO lines
- * behind every demand row. `send` turns Ms Tee's reviewed lines into a notice through the same
- * S8 machinery `approveLoadingPlan` uses.
+ * behind every demand row. `send` turns Ms Tee's reviewed lines into a notice through the
+ * same S8 notice machinery the plan approval used.
  *
  * `planHorizonDate` ("Plan until", captain 20 Aug) is an optional request field, not a stored
  * column - `build` recomputes on every call, so there is no run row to carry it on. When set,

@@ -78,14 +78,12 @@ vi.mock('./PlanContainerDialog', () => ({
 }));
 
 const getLoadingPlanList = vi.fn();
-const cancelLoadingPlan = vi.fn();
 const deleteLoadingPlan = vi.fn();
 vi.mock('../../services/fulfilmentService', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../services/fulfilmentService')>();
   return {
     ...actual,
     getLoadingPlanList: (...a: unknown[]) => getLoadingPlanList(...a),
-    cancelLoadingPlan: (...a: unknown[]) => cancelLoadingPlan(...a),
     deleteLoadingPlan: (...a: unknown[]) => deleteLoadingPlan(...a),
   };
 });
@@ -157,7 +155,6 @@ describe('LoadingPlansGrid', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     getLoadingPlanList.mockResolvedValue({ data: [PLANNING, SENT], total: 2 });
-    cancelLoadingPlan.mockResolvedValue({ ...PLANNING, status: 'cancelled' });
     deleteLoadingPlan.mockResolvedValue(undefined);
   });
 
@@ -241,7 +238,6 @@ describe('LoadingPlansGrid', () => {
         }),
       ),
     );
-    expect(cancelLoadingPlan).not.toHaveBeenCalled();
     expect(screen.queryByText('Cancel this plan?')).not.toBeInTheDocument();
     // The row action must not ALSO open the record.
     expect(push).not.toHaveBeenCalled();

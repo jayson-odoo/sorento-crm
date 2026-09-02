@@ -168,7 +168,6 @@ const state = {
 
 const saveEdits = vi.fn();
 const sendRequest = vi.fn();
-const cancelPlan = vi.fn();
 const changeCutOff = vi.fn();
 const refetchBuild = vi.fn();
 
@@ -218,7 +217,6 @@ vi.mock('../../hooks/useFulfilment', () => ({
     },
     isLoading: false,
   }),
-  useCancelLoadingPlan: () => ({ mutate: cancelPlan, isPending: false }),
   useDownloadContainerRequestDocument: () => ({ mutate: vi.fn(), isPending: false }),
   useLoadingPlanList: () => ({ data: { data: [{ id: 'plan-1' }], total: 1 } }),
   useSupplierNotices: () => ({ data: state.notices }),
