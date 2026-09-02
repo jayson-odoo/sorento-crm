@@ -1,6 +1,6 @@
 # PLAN: Fulfilment planning feedback batch, 2 Sep (BRW first, per-line walk, saved decisions, upload speed)
 
-Status: IN PROGRESS - S1, S2 and S5 are all in PR #553 (draft; review round 2 fixes applied), which is the ONE final PR (captain, 2 Sep) ("yessir, correct ... let's go"). S1 DONE; S2 Phase 1 + Phase 2 DONE (ladder v8 live on the lane); S5 DONE (folded in from #546). S3 Phase 1 + Phase 2 DONE; S3b Phase 1 + Phase 2 DONE, plus a first-pill-truncation fix (3 Sep) on top - a quantity was clipped below its own content instead of "+N" wrapping. S4 Phase 1 DONE (3 Sep, frontend against the draft contract below); Phase 2 (the real `so_supply_decision_drafts` table and endpoints) outstanding.
+Status: IN REVIEW - S1 to S5 are all in PR #553 (the ONE final PR, captain 2 Sep), every slice delivered. S1 DONE; S2 Phase 1 + Phase 2 DONE (ladder v8 live on the lane); S3 and S3b Phase 1 + Phase 2 DONE, plus a first-pill-truncation fix (3 Sep); S4 Phase 1 + Phase 2 DONE (3 Sep - `projects.so_supply_decision_drafts`, the two draft routes and the confirm-time promotion are live on the lane, the Phase 1 mock is deleted); S5 DONE (folded in from #546). Review pending.
 Captain rulings: 2 Sep 2026 user test on SO419208 / SO419370 / SO418324 (screenshots on the session)
 Probe: `scratchpad/probe_brw_first.md` (read-only, worktree `.claude/worktrees/scm-brw-first`, branch `probe/scm-brw-first` off `origin/main cf255833d`)
 Lane: engine lane `.claude/worktrees/scm-fulfilment-2sep` branch `feat/scm-fulfilment-feedback-2sep` FE :3080 BE :8080 (S1, S2, then S3, S3b, S4); import lane `.claude/worktrees/scm-upload-2sep` branch `feat/scm-upload-speed-2sep` BE :8090, no FE server (S5). Both off origin/main. Own `.env` per lane (API_PORT, NEXTAUTH_URL, FASTAPI_INTERNAL_URL), venv symlinked to the primary checkout, node_modules cloned from it.
@@ -191,12 +191,16 @@ Verified facts this plan stands on:
 
 ### S4 - saved decisions (server draft + response)
 
-- `so_supply_decisions.state` gains `draft`. Save decision = `PUT
+- Save decision is PERSISTED (superseded by the Deviation below, which puts it in its own
+  table rather than a `draft` state on `so_supply_decisions`) = `PUT
   /fulfilment-planning/lines/{contribution_key}/draft` (upsert, one row per contribution
-  key, `saved_by`, `saved_at`); Undo = DELETE. Confirm promotes `draft` to `active` for the
-  keys it confirms (same write as today, reading the draft when the body carries no
-  composition). Board GET returns drafts in `contributions[].draft` and the panel seeds
-  `draft` state from them on load.
+  key, `saved_by`, `saved_at`); Undo = DELETE. Confirm promotes the keys it confirms (the
+  same write as today, and it DELETES their drafts in that transaction). The "reading the
+  draft when the body carries no composition" half is not built and is not needed:
+  `confirmLinesFor` composes every line it posts, from the saved decision or from the
+  engine's own suggestion, so the body never reaches the server without a composition.
+  Board GET returns drafts in `contributions[].draft` and the panel seeds `draft` state
+  from them on load.
 - Feedback: pill goes `Suggested` to `Saved` on the row (plain "Saved", markup 2 Sep; the
   saver's name lives in the popover), the button shows a 600 ms check state, a sonner toast
   "Line 3 saved · 4 to confirm", the header counter updates as today.
@@ -243,13 +247,47 @@ on the row, taken at save time, compared against a fresh `propose_line` call on 
 
 **Deviation (3 Sep).** Drafts live in a NEW table `so_supply_decision_drafts`, keyed by the
 contribution key (sales order id, line no, item code, bucket key), carrying the composition
-as JSONB, `saved_by`, `saved_at`, and a `proposal_snapshot` JSONB column for the `stale`
+as JSONB, `saved_by`, `saved_at`, and a `proposed_snapshot` JSONB column for the `stale`
 comparison above - NOT `so_supply_decisions`, because that table is one row per ORDER
 REVISION (`revision_no` and `line_snapshots` NOT NULL, one-active partial index per
 `(pso_id)`): a per-line draft on it would either loosen the NOT NULLs for a row that is not a
 revision, or fabricate a revision number and a snapshot for a decision that has not been
 confirmed - both weaken a constraint the confirmed audit trail depends on. Confirm deletes
 the drafts it promotes in the same transaction that writes the new revision.
+
+**Phase 2 as built (3 Sep).** Migration `461_so_supply_decision_drafts`, model
+`SOSupplyDecisionDraft` (`app/models/project_so.py`), service
+`app/services/project_line_draft_service.py`, routes `PUT` / `DELETE
+/fulfilment-planning/lines/{contribution_key}/draft` on the EDIT permission, `draft` on
+`BoardContribution` (schema + `_contribution()` + `_attach_drafts()`), and the promotion
+delete inside `ProjectSupplyService._write_decision`. Three departures from the deviation
+above, each because the code says otherwise:
+
+- **The order column is the CORE sales order** (`sales_orders.id`), not the planning mirror:
+  `_Row.key` is built from `str(order.id)` where `order` is a core `SalesOrder`, and a line
+  whose order nobody has adopted still has a key and is still saveable. Confirm reaches it
+  through `order.so_id`.
+- **Uniqueness is `(company_id, sales_order_id, line_no, item_code)` - the bucket is stored,
+  not matched on.** `bucket_key` is derived from the board's GRANULARITY as well as the
+  line's date (`bucket_key_for`), so the same line is `2026-09-07` at week and `2026-09-09`
+  at day: keyed on all four, a planner switching the view would watch every saved line
+  disappear.
+- **The `proposed` snapshot is sent by the CLIENT on the PUT** (`{decision, proposed}`),
+  rather than recomputed on the server. A proposal depends on which orders share the board
+  (`compose_lines` draws the shared piles down once for the whole walk), on its granularity
+  and on its `as_of`; a snapshot the server built for the one order would differ from the
+  board in front of the planner, so every save on a multi-order board would come back stale
+  the moment it was made. `stale` itself is still computed SERVER-side on every board read,
+  comparing that snapshot with what `_allocate` has just proposed, on kind + quantity +
+  location only (the reason sentence is prose the engine rewords).
+
+Two smaller notes. The save takes the EDIT permission and NOT the per-project
+`_assert_can_act_on` Confirm applies: that check refuses a planner who is not the project's
+own salesperson, and AC-4.5 needs a second planner to be able to save over the first; a draft
+claims no stock, and Confirm still applies the full check to what it posts. And `DELETE` on a
+line nobody saved answers 404, which `deleteLineDraft` treats as "already gone" - "Undo all"
+walks every key in the panel's map, and a `?batch=` board pre-marks lines locally that were
+never PUT.
 
 ### S5 - upload speed and live progress
 
