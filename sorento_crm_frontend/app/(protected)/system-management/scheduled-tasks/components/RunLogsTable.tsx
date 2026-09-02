@@ -25,7 +25,7 @@ export function RunLogsTable({ taskId }: RunLogsTableProps) {
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 20 });
   const page = pagination.pageIndex + 1;
 
-  const { data, isLoading } = useScheduledTaskRuns(taskId, page, pagination.pageSize);
+  const { data, isLoading, isPlaceholderData } = useScheduledTaskRuns(taskId, page, pagination.pageSize);
   const runs = data?.data ?? [];
   const total = data?.pagination?.total ?? 0;
 
@@ -117,6 +117,7 @@ export function RunLogsTable({ taskId }: RunLogsTableProps) {
       table={table}
       recordCount={total}
       isLoading={isLoading}
+      isPlaceholderData={isPlaceholderData}
       tableLayout={{ width: 'fixed', columnsResizable: true }}
     >
       <Card>

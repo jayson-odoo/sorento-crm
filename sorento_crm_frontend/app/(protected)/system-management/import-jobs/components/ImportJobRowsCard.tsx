@@ -91,7 +91,7 @@ export function ImportJobRowsCard({
     query: search || undefined,
   };
 
-  const { data, isLoading, isFetching, isError, error } = useImportJobRows(jobId, query);
+  const { data, isLoading, isPlaceholderData, isFetching, isError, error } = useImportJobRows(jobId, query);
 
   // A search brings the reader back to page 0 to see the matches.
   const searchMounted = useRef(false);
@@ -243,6 +243,7 @@ export function ImportJobRowsCard({
       table={table}
       recordCount={total}
       isLoading={isLoading}
+      isPlaceholderData={isPlaceholderData}
       tableLayout={{ width: 'fixed', columnsResizable: true }}
     >
       <Card>

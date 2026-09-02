@@ -77,7 +77,7 @@ export default function RespondContactsOutboundList() {
     setPagination((p) => ({ ...p, pageIndex: 0 }));
   }, [searchQuery]);
 
-  const { data, isLoading, isFetching, isError, error, refetch } = useRespondContactsOutbound({
+  const { data, isLoading, isPlaceholderData, isFetching, isError, error, refetch } = useRespondContactsOutbound({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     searchQuery: searchQuery || undefined,
@@ -281,6 +281,7 @@ export default function RespondContactsOutboundList() {
         table={table}
         recordCount={total}
         isLoading={isLoading}
+        isPlaceholderData={isPlaceholderData}
         emptyMessage={
           searchQuery || outbound !== 'all'
             ? 'No contact matches this search.'

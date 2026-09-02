@@ -89,7 +89,7 @@ export default function ChatHistoryPage() {
     [dateFrom, dateTo, direction, breachedOnly],
   );
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isPlaceholderData } = useQuery({
     ...LIST_QUERY_OPTIONS,
     queryKey: ['chat-history', filters, searchQuery, pagination, sorting, groupBy],
     queryFn: () =>
@@ -337,6 +337,7 @@ export default function ChatHistoryPage() {
           table={table}
           recordCount={data?.pagination.total ?? 0}
           isLoading={isLoading}
+          isPlaceholderData={isPlaceholderData}
           onRowClick={(row: ChatMessageRow) => setSelected(row)}
           standardToolbar={false}
           tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}

@@ -110,7 +110,7 @@ export default function AuditLogsList() {
   const [dateFrom, setDateFrom] = useState(() => searchParams.get('changed_from') ?? '');
   const [dateTo, setDateTo] = useState(() => searchParams.get('changed_to') ?? '');
 
-  const { data, isLoading, isError, error, refetch, isFetching } = useAuditLogs({
+  const { data, isLoading, isPlaceholderData, isError, error, refetch, isFetching } = useAuditLogs({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     entity_type: entityType || undefined,
@@ -320,6 +320,7 @@ export default function AuditLogsList() {
         table={table}
         recordCount={data?.pagination.total || 0}
         isLoading={isLoading}
+        isPlaceholderData={isPlaceholderData}
         emptyMessage="No audit log entries found."
         onRowClick={(row) => setSelectedLog(row)}
         tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
