@@ -34,7 +34,7 @@ export default function StockLedgerList() {
   const [transactionType, setTransactionType] = useState('');
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
-  const { data, isLoading, refetch, isFetching } = useStockLedger({
+  const { data, isLoading, isPlaceholderData, refetch, isFetching } = useStockLedger({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -143,6 +143,7 @@ export default function StockLedgerList() {
 
   return (
     <DataGrid table={table} recordCount={data?.pagination.total || 0} isLoading={isLoading}
+      isPlaceholderData={isPlaceholderData}
       tableLayout={{ columnsVisibility: true }}
       standardToolbar={false}
     >

@@ -98,7 +98,7 @@ export default function StockBalanceGrid() {
   });
   const warehouses: Warehouse[] = warehousesData?.data ?? [];
 
-  const { data, isLoading, isFetching } = useStockBalance({
+  const { data, isLoading, isPlaceholderData, isFetching } = useStockBalance({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -265,6 +265,7 @@ export default function StockBalanceGrid() {
       table={table}
       recordCount={total}
       isLoading={isLoading}
+      isPlaceholderData={isPlaceholderData}
       onRowClick={handleRowClick}
       standardToolbar={false}
       tableLayout={{ columnsVisibility: true }}

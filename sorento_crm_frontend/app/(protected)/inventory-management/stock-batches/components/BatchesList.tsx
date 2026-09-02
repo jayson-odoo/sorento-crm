@@ -50,7 +50,7 @@ export default function BatchesList() {
   const [statusFilter, setStatusFilter] = useState<string>('');
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
-  const { data, isLoading, refetch, isFetching } = useStockBatches({
+  const { data, isLoading, isPlaceholderData, refetch, isFetching } = useStockBatches({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -167,6 +167,7 @@ export default function BatchesList() {
       tableLayout={{ columnsVisibility: true }}
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
+      isPlaceholderData={isPlaceholderData}
       standardToolbar={false}
     >
       <Card>

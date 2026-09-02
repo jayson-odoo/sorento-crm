@@ -295,7 +295,12 @@ export default function StockDetailPage({ params }: StockDetailPageProps) {
             </CardContent>
           </Card>
 
-          <DataGrid table={table} recordCount={ledgerQuery.data?.pagination.total || 0} isLoading={ledgerQuery.isLoading}>
+          <DataGrid
+            table={table}
+            recordCount={ledgerQuery.data?.pagination.total || 0}
+            isLoading={ledgerQuery.isLoading}
+            isPlaceholderData={ledgerQuery.isPlaceholderData}
+          >
             <Card>
               <CardHeader className="flex-row items-center justify-between">
                 <div className="text-lg font-semibold">Stock Ledger</div>
