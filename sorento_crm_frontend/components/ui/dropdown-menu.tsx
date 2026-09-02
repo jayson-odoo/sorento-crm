@@ -69,17 +69,39 @@ function DropdownMenuSubTrigger({
 
 function DropdownMenuSubContent({
   className,
+  children,
   ...props
 }: React.ComponentProps<typeof DropdownMenuPrimitive.SubContent>) {
+  const open = React.useContext(DropdownMenuSubOpenContext);
+  const prefersReducedMotion = useReducedMotion();
+  const variants = surfaceVariants(prefersReducedMotion);
+  const transition = surfaceTransition(prefersReducedMotion, 'menu');
+  const exitTransition = surfaceExitTransition(prefersReducedMotion);
+
+  // Same split as DropdownMenuContent (M2-06): Radix Popper owns Content's
+  // own positioning transform, so the spring animates an inner div instead.
+  // Radix re-namespaces the same `--radix-dropdown-menu-content-transform-origin`
+  // variable onto SubContent (see dropdown-menu package source), so the
+  // origin utility below matches the parent Content's.
   return (
-    <DropdownMenuPrimitive.SubContent
-      data-slot="dropdown-menu-sub-content"
-      className={cn(
-        'space-y-0.5 z-50 min-w-[8rem] overflow-hidden shadow-md shadow-black/5 rounded-md border border-border bg-popover text-popover-foreground p-2 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2',
-        className,
+    <AnimatePresence>
+      {open && (
+        <DropdownMenuPrimitive.SubContent forceMount data-slot="dropdown-menu-sub-content" className="z-50" {...props}>
+          <motion.div
+            className={cn(
+              'space-y-0.5 min-w-[8rem] overflow-hidden rounded-md border border-border bg-popover p-2 text-popover-foreground shadow-md shadow-black/5 origin-(--radix-dropdown-menu-content-transform-origin)',
+              className,
+            )}
+            initial={variants.initial}
+            animate={variants.animate}
+            exit={{ ...variants.exit, transition: exitTransition }}
+            transition={transition}
+          >
+            {children}
+          </motion.div>
+        </DropdownMenuPrimitive.SubContent>
       )}
-      {...props}
-    />
+    </AnimatePresence>
   );
 }
 
@@ -254,8 +276,22 @@ function DropdownMenuShortcut({ className, ...props }: React.HTMLAttributes<HTML
   );
 }
 
-function DropdownMenuSub({ ...props }: React.ComponentProps<typeof DropdownMenuPrimitive.Sub>) {
-  return <DropdownMenuPrimitive.Sub data-slot="dropdown-menu-sub" {...props} />;
+// Mirrors the Sub's own open state so DropdownMenuSubContent can gate its own
+// <AnimatePresence> (M2-06) - same reason as DropdownMenuOpenContext above.
+const DropdownMenuSubOpenContext = React.createContext(true);
+
+function DropdownMenuSub({
+  open: openProp,
+  defaultOpen = false,
+  onOpenChange,
+  ...props
+}: React.ComponentProps<typeof DropdownMenuPrimitive.Sub>) {
+  const [open, setOpen] = useOpenState(openProp, defaultOpen, onOpenChange);
+  return (
+    <DropdownMenuSubOpenContext.Provider value={open}>
+      <DropdownMenuPrimitive.Sub data-slot="dropdown-menu-sub" open={open} onOpenChange={setOpen} {...props} />
+    </DropdownMenuSubOpenContext.Provider>
+  );
 }
 
 export {
