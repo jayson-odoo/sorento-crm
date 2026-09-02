@@ -545,6 +545,90 @@ describe('ContainerRequestSection - the grid', () => {
   });
 });
 
+describe('ContainerRequestSection - the fold (S5, AC-E1/AC-E2/AC-E3)', () => {
+  it('splits held-but-no-demand rows out of the ranked grid, into their own fold line', () => {
+    state.build.data = {
+      stock_list_as_of: '2026-08-18T00:00:00',
+      rows: [
+        row({ product_id: 'p1', item_code: 'ITEM-1' }),
+        row({
+          product_id: 'p2',
+          item_code: 'ITEM-2',
+          has_demand: false,
+          rank: null,
+          open_so_need: 0,
+        }),
+      ],
+      sources: EMPTY_SOURCES,
+    };
+    renderSection();
+
+    expect(screen.getByText('ITEM-1')).toBeInTheDocument();
+    expect(screen.queryByText('ITEM-2')).not.toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: /1 products held with no open demand/i }),
+    ).toBeInTheDocument();
+  });
+
+  it('is collapsed on load; expanding renders the folded row in its own grid, same columns', () => {
+    state.build.data = {
+      stock_list_as_of: '2026-08-18T00:00:00',
+      rows: [
+        row({ product_id: 'p1', item_code: 'ITEM-1' }),
+        row({
+          product_id: 'p2',
+          item_code: 'ITEM-2',
+          has_demand: false,
+          rank: null,
+          open_so_need: 0,
+        }),
+      ],
+      sources: EMPTY_SOURCES,
+    };
+    renderSection();
+
+    const trigger = screen.getByRole('button', { name: /products held with no open demand/i });
+    expect(trigger).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByText('ITEM-2')).not.toBeInTheDocument();
+
+    fireEvent.click(trigger);
+
+    expect(trigger).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText('ITEM-2')).toBeInTheDocument();
+    // Same column set as the ranked grid: rank reads a dash, Need reads the muted copy.
+    expect(screen.getByText('No open demand')).toBeInTheDocument();
+  });
+
+  it('the fold line is absent when every row carries open demand', () => {
+    renderSection(); // default single row, has_demand: true
+
+    expect(screen.queryByText(/products held with no open demand/i)).not.toBeInTheDocument();
+  });
+
+  it('a typed qty on a folded row still reaches the record (AC-E3)', () => {
+    state.build.data = {
+      stock_list_as_of: '2026-08-18T00:00:00',
+      rows: [
+        row({
+          product_id: 'p2',
+          item_code: 'ITEM-2',
+          has_demand: false,
+          rank: null,
+          open_so_need: 0,
+          suggested_qty: 0,
+        }),
+      ],
+      sources: EMPTY_SOURCES,
+    };
+    renderSection();
+
+    fireEvent.click(screen.getByRole('button', { name: /1 products held with no open demand/i }));
+    fireEvent.change(screen.getByDisplayValue('0'), { target: { value: '15' } });
+
+    expect(onQtyChange).toHaveBeenCalledWith('p2', 15);
+  });
+});
+
 describe('ContainerRequestSection - the eight figures open the shared lightbox (AC-B1-B7)', () => {
   function soLine(over: Partial<ContainerRequestSoLine> = {}): ContainerRequestSoLine {
     return {

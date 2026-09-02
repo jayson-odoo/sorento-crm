@@ -12,16 +12,18 @@ import {
   useReactTable,
 } from '@tanstack/react-table';
 import { useRouter } from 'next/navigation';
-import { LayoutGrid, PackageSearch, RefreshCw, Table2 } from 'lucide-react';
+import { ChevronDown, LayoutGrid, PackageSearch, RefreshCw, Table2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { COARSE_HIT_TARGET_CLASS, PRESSED_CLASS } from '@/components/ui/primitive-classes';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateInMalaysia } from '@/lib/helpers';
@@ -90,6 +92,13 @@ import {
  * S2 (2 Sep): this renders on the record's Lines tab only. The "Requests sent to X" card
  * that used to sit under this grid as an inline `noticesCard` left for its own Sent tab
  * (`SentRequestsPanel.tsx`); `LoadingPlanView` owns the tab strip and both panels.
+ *
+ * S5 (2 Sep, section 3.5): a `has_demand: false` row no longer sits muted inside the ranked
+ * table - it leaves the grid's data entirely and sits under a collapsed line below it, "N
+ * products held with no open demand", expandable into a second grid with the SAME column
+ * definitions and the same (default, pathname-derived) listing key, so the two share one
+ * column-preference store. Collapsed on every load; no shared fold component is built, this
+ * is its only consumer.
  */
 
 const MATRIX_AXIS_OPTIONS = [
@@ -256,6 +265,14 @@ export function ContainerRequestSection({
 
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 25 });
   const [sorting, setSorting] = useState<SortingState>([]);
+  // The fold (S5): collapsed on every load, state in component memory only - never persisted,
+  // never read from a prop.
+  const [foldOpen, setFoldOpen] = useState(false);
+  const [foldPagination, setFoldPagination] = useState<PaginationState>({
+    pageIndex: 0,
+    pageSize: 25,
+  });
+  const [foldSorting, setFoldSorting] = useState<SortingState>([]);
   const [view, setView] = useState<'table' | 'schedule'>('table');
   const [matrixAxis, setMatrixAxis] = useState<ContainerRequestMatrixAxis>('product');
   const [matrixGranularity, setMatrixGranularity] =
@@ -269,6 +286,12 @@ export function ContainerRequestSection({
 
   const rows = useMemo(() => build.data?.rows ?? [], [build.data]);
   const soLines = useMemo(() => build.data?.lines ?? [], [build.data]);
+
+  // AC-E0/AC-E1: membership and placement are separate. Every candidate the build returned
+  // is either ranked (open demand) or folded (held, no open demand); nothing the build sends
+  // is dropped, it just changes which table it renders in.
+  const rankedRows = useMemo(() => rows.filter((r) => r.has_demand !== false), [rows]);
+  const foldedRows = useMemo(() => rows.filter((r) => r.has_demand === false), [rows]);
 
   const linesByProduct = useMemo(() => {
     const map = new Map<string, ContainerRequestSoLine[]>();
@@ -645,11 +668,28 @@ export function ContainerRequestSection({
 
   const table = useReactTable({
     columns,
-    data: rows,
+    data: rankedRows,
     getRowId: (row) => row.row_key,
     state: { pagination, sorting },
     onPaginationChange: setPagination,
     onSortingChange: setSorting,
+    getCoreRowModel: getCoreRowModel(),
+    getPaginationRowModel: getPaginationRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+    columnResizeMode: 'onChange',
+    enableColumnResizing: true,
+  });
+
+  // The fold's own table (S5): SAME column defs as the ranked grid, its own pagination and
+  // sorting so the two scroll independently, no `listingKey` passed on either grid so both
+  // fall back to the pathname - one preference store, one look.
+  const foldTable = useReactTable({
+    columns,
+    data: foldedRows,
+    getRowId: (row) => row.row_key,
+    state: { pagination: foldPagination, sorting: foldSorting },
+    onPaginationChange: setFoldPagination,
+    onSortingChange: setFoldSorting,
     getCoreRowModel: getCoreRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
     getSortedRowModel: getSortedRowModel(),
@@ -663,9 +703,21 @@ export function ContainerRequestSection({
     () => table.getRowModel().rows.map((r) => r.original.product_id),
     // The row model is rebuilt when any of these move; `table` itself is stable.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [table, rows, pagination, sorting],
+    [table, rankedRows, pagination, sorting],
   );
-  const history = useContainerRequestHistory(supplierId, pageProductIds);
+  // Folded rows only pay for their own page of history once the fold is actually open -
+  // collapsed is the default on every load, so asking for it up front would be the same
+  // overfetch AC-B8 exists to avoid.
+  const foldPageProductIds = useMemo(
+    () => (foldOpen ? foldTable.getRowModel().rows.map((r) => r.original.product_id) : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [foldTable, foldedRows, foldPagination, foldSorting, foldOpen],
+  );
+  const historyProductIds = useMemo(
+    () => Array.from(new Set([...pageProductIds, ...foldPageProductIds])),
+    [pageProductIds, foldPageProductIds],
+  );
+  const history = useContainerRequestHistory(supplierId, historyProductIds);
   historyRef.current = useMemo(() => {
     const map = new Map<string, ContainerRequestHistoryProduct>();
     for (const p of history.data?.products ?? []) map.set(p.product_id, p);
@@ -743,7 +795,7 @@ export function ContainerRequestSection({
 
       <DataGrid
         table={table}
-        recordCount={rows.length}
+        recordCount={rankedRows.length}
         tableLayout={{ width: 'fixed', columnsResizable: true }}
         emptyMessage="No open customer demand for what this supplier supplies."
       >
@@ -829,6 +881,47 @@ export function ContainerRequestSection({
               <CardFooter>
                 <DataGridPagination />
               </CardFooter>
+              {foldedRows.length > 0 ? (
+                <Collapsible
+                  open={foldOpen}
+                  onOpenChange={setFoldOpen}
+                  className="border-t border-border"
+                >
+                  <CollapsibleTrigger asChild>
+                    <button
+                      type="button"
+                      className={cn(
+                        PRESSED_CLASS,
+                        COARSE_HIT_TARGET_CLASS,
+                        'flex w-full items-center gap-2 px-4 py-2.5 text-start text-sm text-muted-foreground hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 [&[data-state=open]_svg]:rotate-180',
+                      )}
+                    >
+                      <ChevronDown
+                        className="size-4 shrink-0 transition-transform duration-(--duration-fast)"
+                        aria-hidden
+                      />
+                      {foldedRows.length} products held with no open demand
+                    </button>
+                  </CollapsibleTrigger>
+                  {/* Tens-per-day interaction (row expand/collapse): no motion beyond what the
+                      trigger's own chevron does. The shared primitive's height keyframes are
+                      switched off here rather than reused as-is. */}
+                  <CollapsibleContent className="overflow-hidden data-[state=closed]:animate-none data-[state=open]:animate-none">
+                    <DataGrid
+                      table={foldTable}
+                      recordCount={foldedRows.length}
+                      tableLayout={{ width: 'fixed', columnsResizable: true }}
+                    >
+                      <CardTable>
+                        <DataGridTable />
+                      </CardTable>
+                      <CardFooter>
+                        <DataGridPagination />
+                      </CardFooter>
+                    </DataGrid>
+                  </CollapsibleContent>
+                </Collapsible>
+              ) : null}
             </>
           ) : matrix.rows.length === 0 ? (
             <div className="p-6 text-center">
