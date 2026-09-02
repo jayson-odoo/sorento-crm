@@ -154,3 +154,59 @@ describe('BoardDecisionPill: the warning flag (C10)', () => {
     expect(screen.queryByTestId(`decision-flag-${KEY}`)).not.toBeInTheDocument();
   });
 });
+
+describe('BoardDecisionPill: a saved line the engine has re-suggested (S4, AC-4.4)', () => {
+  it('reads "Suggestion changed" rather than Saved', () => {
+    render(
+      <BoardDecisionPill
+        contribution={contributionOf({
+          draft: {
+            decision: { verdict: 'amended' },
+            saved_by: 'Eling',
+            saved_at: '2026-09-03T01:00:00',
+            stale: true,
+          },
+        })}
+        decision={null}
+      />,
+    );
+    expect(screen.getByTestId(`decision-pill-${KEY}`)).toHaveTextContent(
+      'Suggestion changed',
+    );
+  });
+
+  it('reads Saved once the same draft is no longer stale', () => {
+    render(
+      <BoardDecisionPill
+        contribution={contributionOf({
+          draft: {
+            decision: { verdict: 'amended' },
+            saved_by: 'Eling',
+            saved_at: '2026-09-03T01:00:00',
+            stale: false,
+          },
+        })}
+        decision={null}
+      />,
+    );
+    expect(screen.getByTestId(`decision-pill-${KEY}`)).toHaveTextContent('Saved');
+  });
+
+  it('leaves a CONFIRMED line alone: a stale draft never overrides what was frozen', () => {
+    render(
+      <BoardDecisionPill
+        contribution={contributionOf({
+          covered: true,
+          draft: {
+            decision: { verdict: 'amended' },
+            saved_by: 'Eling',
+            saved_at: '2026-09-03T01:00:00',
+            stale: true,
+          },
+        })}
+        decision={null}
+      />,
+    );
+    expect(screen.getByTestId(`decision-pill-${KEY}`)).toHaveTextContent('Confirmed');
+  });
+});

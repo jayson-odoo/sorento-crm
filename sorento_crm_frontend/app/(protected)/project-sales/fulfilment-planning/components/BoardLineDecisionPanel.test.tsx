@@ -7,7 +7,7 @@
  * BRW (the 24 outstanding, C7/C8's own numbers), so every test below traces to a UAC id.
  */
 import React from 'react';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { BoardDecisionPill } from './BoardDecisionPill';
@@ -863,5 +863,74 @@ describe('BoardLineDecisionPanel: Reserve add-location (S3, AC-3.1 to AC-3.3)', 
     expect(
       screen.queryByRole('button', { name: 'Add location' }),
     ).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * The button answers the click itself (S4, AC-4.1), rather than leaving the planner to
+ * notice the pill above it and the toast below it. Fake timers, because what is asserted is
+ * that the check state ENDS - a 600ms state nobody clears is a button stuck on "Saved".
+ */
+describe('BoardLineDecisionPanel: the Save button says it saved (S4, AC-4.1)', () => {
+  it('shows a check for about 600 ms once the save resolves, then goes back', async () => {
+    vi.useFakeTimers();
+    try {
+      const { onDecide } = renderPanel();
+
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
+      });
+
+      expect(onDecide).toHaveBeenCalledTimes(1);
+      expect(screen.getByRole('button', { name: 'Saved' })).toBeInTheDocument();
+      expect(
+        screen.queryByRole('button', { name: 'Save decision' }),
+      ).not.toBeInTheDocument();
+
+      act(() => {
+        vi.advanceTimersByTime(600);
+      });
+
+      expect(
+        screen.getByRole('button', { name: 'Save decision' }),
+      ).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('waits for the save to resolve before showing the check', async () => {
+    vi.useFakeTimers();
+    try {
+      let settle: () => void = () => {};
+      const onDecide = vi.fn(
+        () => new Promise<void>((resolve) => {
+          settle = resolve;
+        }),
+      );
+      render(
+        <BoardLineDecisionPanel
+          contribution={contributionOf()}
+          decision={null}
+          locations={LOCATIONS}
+          onDecide={onDecide}
+          onDirtyChange={vi.fn()}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
+      // In flight: the server has not answered, so the button has nothing to confirm yet.
+      expect(
+        screen.queryByRole('button', { name: 'Saved' }),
+      ).not.toBeInTheDocument();
+
+      await act(async () => {
+        settle();
+      });
+
+      expect(screen.getByRole('button', { name: 'Saved' })).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

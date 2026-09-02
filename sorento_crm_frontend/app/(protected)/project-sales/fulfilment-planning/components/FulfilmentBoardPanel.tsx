@@ -39,7 +39,6 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
-import { useSession } from 'next-auth/react';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
@@ -292,9 +291,6 @@ export function FulfilmentBoardPanel({
 
   const { adopt } = useFulfilmentPlanningMutations();
   const { save: saveLineDraft, remove: removeLineDraft } = useLineDraftMutation();
-  // The saver's name (S4, R-F): whoever the pill's popover names once this line reaches a
-  // reload, so it has to be the display name a person recognises, never the id.
-  const { data: session } = useSession();
 
   // NO PER-ORDER CONFIRM (R11). The board used to carry one Confirm per sales order in a
   // Commit section under the matrix, each with its own busy flag and its own refusal list.
@@ -394,12 +390,10 @@ export function FulfilmentBoardPanel({
       try {
         if (decision) {
           const contribution = allContributions.find((entry) => entry.key === key);
-          await saveLineDraft(
-            key,
-            decision,
-            session?.user?.name ?? '',
-            contribution?.proposed,
-          );
+          // The suggestion this decision was taken against travels with it: the server
+          // keeps it as the snapshot `draft.stale` is judged against on every later read
+          // (AC-4.4). The SAVER is read off the caller's own JWT, never sent from here.
+          await saveLineDraft(key, decision, contribution?.proposed);
         } else {
           await removeLineDraft(key);
         }
@@ -417,7 +411,7 @@ export function FulfilmentBoardPanel({
         );
       }
     },
-    [draft, allContributions, saveLineDraft, removeLineDraft, session],
+    [draft, allContributions, saveLineDraft, removeLineDraft],
   );
 
   /**
@@ -948,8 +942,9 @@ export function FulfilmentBoardPanel({
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               {/* Every decision taken on this board since it was opened, or since the
-                  last confirm, goes back to the suggestion. Nothing on the server moves -
-                  the draft is the only thing cleared. */}
+                  last confirm, goes back to the suggestion - on the SERVER too (S4): each
+                  key is deleted through `decide(key, null)`, or the next board read would
+                  seed the discarded lines straight back in. Nothing CONFIRMED moves. */}
               <DropdownMenuItem
                 disabled={Object.keys(draft).length === 0}
                 onSelect={

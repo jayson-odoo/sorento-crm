@@ -6677,3 +6677,55 @@ def test_a_deactivated_bin_is_not_told_it_is_outside_fulfilment_planning():
     assert on_off_plan["unplannable"] is True
     assert [s["kind"] for s in on_off_plan["sources"]] == ["unplannable"]
     assert on_off_plan["sources"][0]["reason"] == "Outside fulfilment planning"
+
+
+def test_a_saved_decision_is_attached_to_its_own_contribution_and_to_no_other():
+    """S4 (R-F): `build()` stamps the drafts table onto the contribution whose key it was
+    saved under, and leaves every other line alone.
+
+    A draft is addressed by (sales order, line number, item code), so the sibling line of
+    the SAME order and the same product - one row away in the same cell - is the case that
+    would catch a match made on too little.
+    """
+    from app.models.base import company_scope
+    from app.models.project_so import SOSupplyDecisionDraft
+
+    with blank_session() as db:
+        company_id = _sorento(db)
+        actor = _user(db, f"{MARKER} Eling")
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        own, pool = _pooled_warehouses(db)
+        _stock(db, product, pool, on_hand=200)
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        _line(db, order, product, qty="10", required_date=date(2026, 9, 3), warehouse=own)
+        _line(db, order, product, qty="20", required_date=date(2026, 9, 10), warehouse=own)
+        db.flush()
+
+        with company_scope(db, frozenset({company_id})):
+            board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+            mine, sibling = sorted(
+                board["contributions"], key=lambda row: row["line_no"]
+            )
+            db.add(
+                SOSupplyDecisionDraft(
+                    id=_uid(),
+                    sales_order_id=str(order.id),
+                    line_no=mine["line_no"],
+                    item_code=mine["item_code"],
+                    bucket_key=mine["key"].split("|")[3],
+                    decision={"verdict": "approved"},
+                    proposed_snapshot=mine["proposed"],
+                    saved_by=actor,
+                )
+            )
+            db.flush()
+
+            again = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+
+        saved, untouched = sorted(again["contributions"], key=lambda row: row["line_no"])
+        assert saved["key"] == mine["key"]
+        assert saved["draft"]["decision"] == {"verdict": "approved"}
+        assert saved["draft"]["saved_by"] == f"{MARKER} Eling"
+        # Saved against the suggestion it is still being shown beside.
+        assert saved["draft"]["stale"] is False
+        assert untouched["draft"] is None

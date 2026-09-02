@@ -75,6 +75,7 @@ from app.models.project_so import (
 )
 from app.models.sales_agent import SalesAgent
 from app.models.user import User
+from app.services import project_line_draft_service
 from app.services.error_handler import AppException
 from app.services.project_supply_service import (
     LADDER_VERSION,
@@ -373,7 +374,7 @@ class _Row:
         "outside_reserve_window",
         "project_sales_order_id", "project_line_id", "warehouse_ids", "project_key",
         "so_qty_ahead", "lines_ahead", "available_to_this_line",
-        "decision", "item_flags", "order_inquiry", "lent_to",
+        "decision", "draft", "item_flags", "order_inquiry", "lent_to",
         "unit_qty", "unit_line_count",
         "outside_planning",
     )
@@ -423,6 +424,11 @@ class _Row:
         self.available_to_this_line: Optional[Decimal] = _ZERO
         # What the order's ACTIVE revision froze for this line, when it covers it (13.4).
         self.decision: Optional[Dict[str, Any]] = None
+        # What somebody SAVED on this line without confirming it yet (S4, R-F), read off
+        # `projects.so_supply_decision_drafts` by `_attach_drafts` once the ladder has run -
+        # `stale` is judged against the proposal this build has just computed. None when
+        # nobody has saved one, which is most of the board.
+        self.draft: Optional[Dict[str, Any]] = None
         # The item facts the ladder judged this line on (dealer hot-selling and where,
         # discontinued, whether anybody classified it). None on a line the ladder never
         # walked - unplannable or covered - because `false` there would claim a judgement that
@@ -663,6 +669,9 @@ class FulfilmentBoardService:
                 served.extend(cells_by_key.get((item, bucket_key), []))
 
         self._allocate(served, as_of=as_of)
+        # AFTER the ladder, never before: `stale` compares what was saved against what this
+        # build is proposing, and before `_allocate` there is no proposal to compare with.
+        self._attach_drafts(rows)
 
         cells: List[Dict[str, Any]] = []
         for bucket in buckets:
@@ -4306,6 +4315,43 @@ class FulfilmentBoardService:
     def _proposed_text(rows: Sequence[_Row], kind: str) -> str:
         return qty_text(sum((row.proposed.get(kind, _ZERO) for row in rows), _ZERO))
 
+    def _attach_drafts(self, rows: Sequence[_Row]) -> None:
+        """Stamp what has been SAVED on each line back onto it (S4, R-F, AC-4.2).
+
+        One query for the whole board, addressed by (core sales order, line number, item
+        code) - the first three parts of the contribution key. Not the fourth: `bucket_key`
+        moves with the board's GRANULARITY (`bucket_key_for`), so matching on it would hide
+        every saved line the moment the planner switched from week to day.
+
+        `stale` is computed here rather than stored, against the proposal `_allocate` has
+        just produced: it is a statement about the board being looked at now, and a flag
+        frozen at save time could only ever say what was true then.
+        """
+        saved = project_line_draft_service.drafts_for_orders(
+            self.db, {row.sales_order_id for row in rows}
+        )
+        if not saved:
+            return
+        for row in rows:
+            if row.line_no is None or not row.item_code:
+                continue
+            entry = saved.get(
+                (str(row.sales_order_id), int(row.line_no), row.item_code)
+            )
+            if entry is None:
+                continue
+            row.draft = {
+                "decision": entry["decision"],
+                "saved_by": entry["saved_by"],
+                "saved_at": entry["saved_at"],
+                "stale": project_line_draft_service.is_stale(
+                    entry["proposed_snapshot"],
+                    None
+                    if row.proposed_components is None
+                    else {"components": row.proposed_components},
+                ),
+            }
+
     def _contribution(self, row: _Row) -> Dict[str, Any]:
         return {
             #: THIS LINE's own location table (R1/B1): the same rows the cell's drawer shows,
@@ -4437,6 +4483,11 @@ class FulfilmentBoardService:
             #: is not proposed for again: everything above states what was DECIDED.
             "covered": row.covered,
             "decision": row.decision,
+            #: A decision SAVED on this line and not yet confirmed (S4, R-F). Beside
+            #: `decision` rather than instead of it: that is what an ACTIVE revision froze,
+            #: this is what somebody has settled but not committed, and a line can carry
+            #: either, both or neither. Null when nobody has saved one.
+            "draft": row.draft,
             #: What ANOTHER sales order borrowed off this line (AC-L6): "71 lent to
             #: SO415472". Empty when nothing was lent, never absent.
             "lent_to": row.lent_to or [],

@@ -1,10 +1,5 @@
 import { apiFetch } from '@/lib/api';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
-import {
-  mockDeleteLineDraft,
-  mockPutLineDraft,
-  withMockDrafts,
-} from '../lib/fulfilmentS4Mock';
 import type {
   AdoptSalesOrderResult,
   BoardDecision,
@@ -25,15 +20,6 @@ import type {
   SupplyFailingLine,
   SupplyProposal,
 } from '../types/fulfilmentPlanning.types';
-
-/**
- * S4 (saved decisions) Phase 1: the backend has no drafts table yet, so `putLineDraft` /
- * `deleteLineDraft` read and write `lib/fulfilmentS4Mock.ts` instead of a real endpoint, and
- * `getPlanningBoard` stamps every response with whatever it holds. Phase 2 flips this to
- * `false`, deletes the three mock functions above and their import, and the two functions
- * below drop their `if (S4_MOCK)` branch. See that file's own doc comment for the contract.
- */
-const S4_MOCK = true;
 
 /**
  * Fulfilment Planning: the worklist of everything that needs planning, the reconciliation
@@ -448,10 +434,7 @@ export async function getPlanningBoard(
   const response = await apiFetch(`${BASE}/fulfilment-planning/board?${search.toString()}`);
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to load the planning board'));
-  const board: PlanningBoard = await response.json();
-  // S4 Phase 1 (see the const above): the real board carries no `draft` yet, so it is
-  // stamped on here. A no-op once Phase 2 sends the field itself and this call is deleted.
-  return S4_MOCK ? withMockDrafts(board) : board;
+  return response.json();
 }
 
 
@@ -567,7 +550,7 @@ export async function confirmMany(body: ConfirmManyBody): Promise<ConfirmManyRes
  * planner.
  *
  *   PUT /project-sales/fulfilment-planning/lines/{contribution_key}/draft
- *       body { decision: BoardDecision } -> BoardLineDraft
+ *       body { decision: BoardDecision, proposed: BoardProposed | null } -> BoardLineDraft
  *
  * `contributionKey` is `BoardContribution.key` and travels URL-encoded - it embeds `|`,
  * which is not a legal unencoded path segment character.
@@ -576,22 +559,23 @@ export async function putLineDraft(
   contributionKey: string,
   decision: BoardDecision,
   /**
-   * S4 MOCK ONLY (see the `S4_MOCK` const above). The real PUT reads the saver off the
-   * caller's own JWT and the "what did the engine suggest" comparison off the database, so
-   * Phase 2 drops both parameters - `lib/fulfilmentS4Mock.ts` cannot reach either on its own.
+   * What the ENGINE was suggesting for this line on the board being saved from
+   * (`contribution.proposed`), which is what the server judges `stale` against later.
+   *
+   * Sent rather than recomputed on the server, and deliberately: a proposal depends on
+   * which orders share the board (the ladder draws the shared piles down once for the whole
+   * walk), on its granularity and on its `as_of`. A snapshot the server built for this one
+   * order would differ from the board in front of the planner, and every save on a
+   * multi-order board would come back stale the moment it was made.
    */
-  mockSavedBy?: string,
-  mockProposedNow?: unknown,
+  proposed?: unknown,
 ): Promise<BoardLineDraft> {
-  if (S4_MOCK) {
-    return mockPutLineDraft(contributionKey, decision, mockSavedBy ?? '', mockProposedNow);
-  }
   const response = await apiFetch(
     `${BASE}/fulfilment-planning/lines/${encodeURIComponent(contributionKey)}/draft`,
     {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ decision }),
+      body: JSON.stringify({ decision, proposed: proposed ?? null }),
     },
   );
   if (!response.ok)
@@ -605,14 +589,14 @@ export async function putLineDraft(
  *   DELETE /project-sales/fulfilment-planning/lines/{contribution_key}/draft -> 204
  */
 export async function deleteLineDraft(contributionKey: string): Promise<void> {
-  if (S4_MOCK) {
-    mockDeleteLineDraft(contributionKey);
-    return;
-  }
   const response = await apiFetch(
     `${BASE}/fulfilment-planning/lines/${encodeURIComponent(contributionKey)}/draft`,
     { method: 'DELETE' },
   );
-  if (!response.ok)
+  // 404 IS the post-condition Undo asked for: there is no saved decision on that line any
+  // more. "Undo all" walks every key in the panel's draft map, and a `?batch=` board
+  // pre-marks lines as approved locally that were never PUT, so refusing those would put an
+  // error toast on a discard that did exactly what it said.
+  if (!response.ok && response.status !== 404)
     throw new Error(await extractApiError(response, 'Failed to remove the saved decision'));
 }

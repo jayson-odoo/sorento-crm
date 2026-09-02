@@ -1241,6 +1241,78 @@ class SOSupplyDecision(Base, CompanyScopedMixin):
     )
 
 
+class SOSupplyDecisionDraft(Base, CompanyScopedMixin):
+    """A decision SAVED on the planning board but not yet confirmed (S4, R-F).
+
+    `PLAN-scm-fulfilment-feedback-2sep.md` S4: Save decision used to write React state and
+    nothing else, so leaving the page lost every line the planner had settled. This is the
+    row that survives it - shared, not per user, because there is one planning team and a
+    second planner opening the same board must see the same saved lines.
+
+    ITS OWN TABLE, not a `draft` state on `so_supply_decisions` (the PLAN's "Deviation
+    (3 Sep)"): that table is one row per ORDER REVISION, with `revision_no` and
+    `line_snapshots` NOT NULL and a partial unique index making one active revision per
+    order. A per-line draft on it would either loosen those NOT NULLs or fabricate a
+    revision number for a decision nobody has confirmed, and the confirmed audit trail
+    depends on both.
+
+    ADDRESSED BY THE BOARD'S OWN CONTRIBUTION KEY, which is
+    `${sales_order_id}|${line_no}|${item_code}|${bucket_key}` (`_Row.key` in
+    `project_fulfilment_board_service.py`, rebuilt on the frontend by `standingsFor`). So
+    `sales_order_id` here is the CORE sales order (`sales_orders.id`), never the planning
+    mirror: the board is built from the core book, and a line whose order nobody has
+    adopted yet still has a key and can still be saved.
+
+    IDENTITY IS THE FIRST THREE PARTS, not four (plus the company, the way every other
+    owned uniqueness rule here is scoped). `bucket_key` is derived from the board's
+    GRANULARITY as well as the line's required date (`bucket_key_for`), so the same line is
+    `2026-09-07` at week granularity and `2026-09-09` at day: keyed on all four, a planner
+    who switched the view would watch every saved line disappear. It is stored because it
+    is the key the save was made under, and it is not part of the unique index.
+    """
+
+    __tablename__ = "so_supply_decision_drafts"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    sales_order_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("sales_orders.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    line_no = Column(Integer, nullable=False)
+    item_code = Column(String(100), nullable=False)
+    #: Which column of the board the save was made in. Recorded, never matched on: see the
+    #: class docstring.
+    bucket_key = Column(String(32), nullable=False)
+    #: The composition the planner saved, in the frontend's own `BoardDecision` words. The
+    #: server stores and returns it and reads nothing out of it: the confirmation is posted
+    #: from the board's own body, so a shape that grew a field here would still travel.
+    decision = Column(JSONB, nullable=False)
+    #: What the ENGINE was suggesting for this line when the decision was saved
+    #: (`contributions[].proposed`). The board compares it with what it is proposing NOW to
+    #: answer `stale` (AC-4.4). NULL means the save recorded no suggestion, which reads as
+    #: "not stale": claiming a suggestion changed when nothing was written down would put a
+    #: warning on the row with no evidence behind it.
+    proposed_snapshot = Column(JSONB, nullable=True)
+    saved_by = Column(
+        String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    saved_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "company_id",
+            "sales_order_id",
+            "line_no",
+            "item_code",
+            name="uq_so_supply_decision_drafts_line",
+        ),
+        Index("ix_so_supply_decision_drafts_order", "sales_order_id"),
+        {"schema": "projects"},
+    )
+
+
 class SOLineAllocation(Base, CompanyScopedMixin):
     """Where one sales-order line's stock is coming from, once a person has said so (D17).
 

@@ -16,7 +16,7 @@ pair of odd-looking field names.
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -491,6 +491,50 @@ class BoardProposed(BaseModel):
     components: List[BoardSource] = []
 
 
+class BoardLineDraft(BaseModel):
+    """A decision SAVED on a line but not yet confirmed (S4, R-F).
+
+    Written by `PUT .../fulfilment-planning/lines/{contribution_key}/draft`, removed by the
+    matching `DELETE` (Undo), deleted by the Confirm that promotes it, and stamped back onto
+    every contribution the drafts table holds a row for. Drafts are SHARED, not per user:
+    one planning team, so a second planner sees the same saved lines and the pill names who
+    saved.
+    """
+
+    #: The composition the planner saved, in the frontend's own `BoardDecision` words, and
+    #: OPAQUE to the server: it stores this and hands it back. Declared as a free object
+    #: rather than transcribed field by field on purpose - the confirmation is posted from
+    #: the board's own body, never from here, so a model restating that shape would only be
+    #: a second place for it to drift, and a field it had not declared would be dropped in
+    #: silence on the way out.
+    decision: Dict[str, Any]
+    #: The saver's NAME. Never an id: the pill's popover renders it.
+    saved_by: str
+    saved_at: datetime
+    #: The engine has re-suggested this line since it was saved (AC-4.4), compared on the
+    #: composition alone - kind, quantity and location, never the reason sentence beside
+    #: them. The board excludes a stale line from Confirm and says so on the pill instead of
+    #: posting a decision taken against numbers that have moved.
+    stale: bool = False
+
+
+class BoardLineDraftBody(BaseModel):
+    """`PUT .../fulfilment-planning/lines/{contribution_key}/draft`."""
+
+    decision: Dict[str, Any]
+    #: What the ENGINE was suggesting on the board the planner saved from
+    #: (`contributions[].proposed`), kept as the thing `stale` is judged against.
+    #:
+    #: Sent by the CLIENT rather than recomputed here, and that is the whole point: a
+    #: proposal depends on which orders share the board (the ladder draws the shared piles
+    #: down once for the whole walk, `compose_lines`), on its granularity and on its
+    #: `as_of`. A snapshot the server built for this one order would differ from the board
+    #: in front of the planner, and every save on a multi-order board would come back stale
+    #: the moment it was made. Absent means no suggestion was recorded, which reads as never
+    #: stale.
+    proposed: Optional[Dict[str, Any]] = None
+
+
 class BoardContribution(BaseModel):
     """One contributing sales-order line inside a cell: a row of the breakdown table."""
 
@@ -645,6 +689,13 @@ class BoardContribution(BaseModel):
     #: taking side, so the agent whose stock moved found out when the delivery did not.
     #: An empty list when nothing was lent, never absent: the cell has one shape to read.
     lent_to: List[BoardLineLending] = Field(default_factory=list)
+    #: A decision SAVED on this line but not yet confirmed (S4, R-F): it survives leaving
+    #: the page, another device and another planner. Null when nobody has saved one.
+    #:
+    #: Distinct from `decision` above, which is what an ACTIVE revision froze. A line can
+    #: carry a draft with no decision (saved, not confirmed), a decision with no draft
+    #: (confirmed - Confirm deletes the draft it promotes), or neither.
+    draft: Optional[BoardLineDraft] = None
 
 
 class BorrowDonorImpact(BaseModel):

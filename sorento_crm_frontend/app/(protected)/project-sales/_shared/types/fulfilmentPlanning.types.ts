@@ -1823,7 +1823,10 @@ export interface BoardDecision {
   suspected_system_issue?: boolean;
 }
 
-/** Keyed by `BoardContribution.key`. Client-side in Phase 1 (13.4). */
+/**
+ * The panel's own working copy, keyed by `BoardContribution.key` (13.4). Seeded from every
+ * `contribution.draft` the board carries and written through to the server by `decide()`.
+ */
 export type BoardDraft = Record<string, BoardDecision>;
 
 /**
@@ -1841,10 +1844,10 @@ export interface BoardLineDraft {
   saved_at: string;
   /**
    * The engine has re-suggested this line since it was saved (AC-4.4: "a line saved but
-   * then re-suggested by a new upload"). Computed by comparing the composition/`proposed`
-   * this draft was saved against to what the engine proposes NOW - server-side in Phase 2;
-   * `fulfilmentS4Mock.ts` approximates it client-side for Phase 1. Absent/false on an
-   * ordinary saved line.
+   * then re-suggested by a new upload"). Computed by the SERVER on every board read: the
+   * draft keeps the `proposed` it was saved against, and the board compares that
+   * composition - kind, quantity and location, never the reason sentence - with what it is
+   * proposing now. False on an ordinary saved line.
    */
   stale?: boolean;
 }

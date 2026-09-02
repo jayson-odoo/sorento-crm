@@ -5290,6 +5290,22 @@ class ProjectSupplyService:
                     "carried": True,
                 }
             )
+        # THE SAVED DECISIONS THIS CONFIRMATION PROMOTES GO WITH IT (S4, AC-4.4), in the
+        # same transaction that wrote the revision above: a draft left behind would re-seed
+        # the board's panel on the next read and offer to confirm a line already confirmed,
+        # and a delete outside this transaction would lose the planner's work whenever the
+        # confirmation itself was refused (the 409 above, a stale line, `confirm_many`'s
+        # per-order rollback).
+        #
+        # Addressed by the board's own contribution key, whose first three parts are the
+        # CORE sales order, the line number and the item code.
+        from app.services import project_line_draft_service
+
+        project_line_draft_service.delete_drafts_for_lines(
+            self.db,
+            str(order.so_id) if order.so_id else None,
+            [(line.line_no, fact.item_code) for line, _entry, fact in checked],
+        )
         transfers_written, transfers_failed, transfers_kept = self._write_transfers(
             order, decision, snapshots
         )
