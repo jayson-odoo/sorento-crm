@@ -35,7 +35,7 @@ vi.mock('@/hooks/useEffectiveUserId', () => ({
   useEffectiveUserId: () => effectiveUserId,
 }));
 
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 function row(partial: Partial<FormHandlingTracker> = {}): FormHandlingTracker {
   return {

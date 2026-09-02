@@ -157,7 +157,7 @@ vi.mock('@/components/common/conversation/InternalCommentComposer', () => ({
 }));
 
 const toastSuccess = vi.fn();
-vi.mock('sonner', () => ({ toast: { success: (...a: unknown[]) => toastSuccess(...a) } }));
+vi.mock('@/lib/toast', () => ({ toast: { success: (...a: unknown[]) => toastSuccess(...a) } }));
 
 import ConversationThreadPane from './ConversationThreadPane';
 import type { ConversationInboxItem } from '../services/conversationsInboxService';

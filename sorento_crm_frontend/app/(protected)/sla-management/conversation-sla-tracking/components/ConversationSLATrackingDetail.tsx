@@ -51,7 +51,7 @@ import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { getUsersSelect } from '@/services/userSelectService';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import SlaTrackingChatRecords from './SlaTrackingChatRecords';
 import PortalLinkButton from '@/components/contacts/PortalLinkButton';

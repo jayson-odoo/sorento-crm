@@ -49,7 +49,7 @@ vi.mock('next/navigation', () => ({
   }),
 }));
 
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }));
+vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }));
 
 // Per-action RBAC: by default the user holds every SLA slug (existing button tests
 // assume the buttons render). Individual gating tests flip a slug to false via
