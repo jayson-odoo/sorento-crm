@@ -126,17 +126,29 @@ function inquiry(over: Partial<StockInquiry> = {}): StockInquiry {
   } as StockInquiry;
 }
 
+/**
+ * Answers only while the query is ENABLED, the way React Query does.
+ *
+ * A held query has no data, so the grid has nothing to paint until the stored
+ * view resolves and the fetch fires - which is what makes `findByText` below a
+ * real synchronisation point. Answering while disabled used to be harmless
+ * because the grid painted a skeleton over whatever it held whenever it was
+ * loading; since M4 it keeps the rows it has, so the row would appear on the
+ * very first render and the assertions would run before any fetch went out.
+ */
 function mockList(rows: StockInquiry[]) {
-  hooks.useStockInquiries.mockReturnValue({
-    data: {
-      data: rows,
-      empty: rows.length === 0,
-      pagination: { page: 1, total: rows.length },
-    },
+  hooks.useStockInquiries.mockImplementation((params: ListParams) => ({
+    data: params?.enabled
+      ? {
+          data: rows,
+          empty: rows.length === 0,
+          pagination: { page: 1, total: rows.length },
+        }
+      : undefined,
     isLoading: false,
     isFetching: false,
     refetch: vi.fn(),
-  });
+  }));
 }
 
 function renderList() {

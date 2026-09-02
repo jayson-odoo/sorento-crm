@@ -308,6 +308,7 @@ function DataGridTableRowSpacer() {
 
 function DataGridTableBody({ children }: { children: ReactNode }) {
   const { props, table, isLoading } = useDataGrid();
+  const showSkeleton = useBodySkeleton();
 
   // The rows on screen are the PREVIOUS page's while the next one loads
   // (M4 list latency) - dimmed rather than replaced by a skeleton.
@@ -316,7 +317,9 @@ function DataGridTableBody({ children }: { children: ReactNode }) {
   // derived here rather than asked of 186 call sites: a grid gets it without
   // wiring anything. `isPlaceholderData` stays as the explicit override for a
   // caller that knows better.
-  const holdingRows = Boolean(props.isPlaceholderData || (isLoading && table.getRowModel().rows.length > 0));
+  const holdingRows = Boolean(
+    !showSkeleton && (props.isPlaceholderData || (isLoading && table.getRowModel().rows.length > 0)),
+  );
 
   return (
     <tbody
@@ -333,23 +336,31 @@ function DataGridTableBody({ children }: { children: ReactNode }) {
 }
 
 /**
- * True while the body should draw skeleton rows: a FIRST load, with nothing on
- * screen yet.
+ * True while the body should draw skeleton rows, i.e. while it has nothing
+ * worth showing. Two ways for that to be true:
  *
- * Once a page has rendered, a reload holds those rows - dimmed by
+ * - no rows yet - a FIRST load; or
+ * - column preferences still resolving, which is why `DataGridProvider` merges
+ *   `isColumnPreferencesLoading` into `isLoading` at all: painting the rows
+ *   under the DEFAULT column layout and re-laying them out a tick later is a
+ *   flash, and a reader who saw the wrong columns first does not trust the
+ *   second answer either.
+ *
+ * With both settled, a reload holds the rows it has - dimmed by
  * `DataGridTableBody` - rather than throwing them away, which is the same gate
  * `DataGridPagination` uses to keep its own controls live (M4-02, M4-03). It
  * lives here, not at the call sites, so all three body render paths (plain,
  * column-drag, row-drag) and every grid built on them behave the same.
  */
 function useBodySkeleton(): boolean {
-  const { table, isLoading, props } = useDataGrid();
+  const { table, isLoading, isColumnPreferencesLoading, props } = useDataGrid();
+  const hasRows = table.getRowModel().rows.length > 0;
 
   return Boolean(
     props.loadingMode === 'skeleton' &&
       isLoading &&
       table.getState().pagination?.pageSize &&
-      table.getRowModel().rows.length === 0,
+      (!hasRows || isColumnPreferencesLoading),
   );
 }
 

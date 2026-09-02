@@ -13,7 +13,7 @@
  * stays as the explicit override.
  */
 import React from 'react';
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { useReactTable, getCoreRowModel, type ColumnDef } from '@tanstack/react-table';
 
@@ -26,9 +26,14 @@ vi.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 
+const prefsGate = vi.hoisted(() => ({ isLoading: false }));
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
-  useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
+  useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: prefsGate.isLoading }),
 }));
+
+afterEach(() => {
+  prefsGate.isLoading = false;
+});
 
 type Row = { id: string; name: string };
 
@@ -124,6 +129,17 @@ describe('DataGridTable gates the body skeleton on having no rows (M4-02)', () =
     render(<Harness isLoading rows={[]} />);
 
     expect(screen.queryAllByTestId('cell-skeleton').length).toBeGreaterThan(0);
+  });
+
+  it('keeps the skeleton while column preferences are still resolving, rows or not', () => {
+    // The grid would otherwise paint those rows under the DEFAULT column layout
+    // and re-lay them out a tick later, which is the flash the provider merges
+    // `isColumnPreferencesLoading` into `isLoading` to avoid.
+    prefsGate.isLoading = true;
+    const { container } = render(<Harness isLoading={false} />);
+
+    expect(screen.queryAllByTestId('cell-skeleton').length).toBeGreaterThan(0);
+    expect(container.querySelector('tbody')!.className).not.toContain('opacity-60');
   });
 
   it('does not dim a first load - there is nothing on screen to dim', () => {
