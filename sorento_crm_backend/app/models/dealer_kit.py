@@ -685,9 +685,16 @@ class TagTemplate(Base, CompanyScopedMixin):
 
     Named slots (product_image, code, name, dimensions, spec_lines, list_price,
     sell_price, badges, etc.) are resolved at render time from the product master
-    and the pricing engine. The ``doc`` JSONB holds the layer definitions; the
-    ``family`` column selects which template applies when a request line is
-    dropped onto the tag sheet designer.
+    and the pricing engine. The ``doc``/``print_size`` columns are the DRAFT the
+    editor reads and writes on every Save - never rewritten to a version's
+    content, so an in-progress edit is never at risk of a stray publish.
+
+    ``published_version_id`` is the live pointer (PLAN D7, mirrors
+    ``ai_prompt.AIPromptLabel`` / this file's own ``Page``/``PageVersion``):
+    Publish snapshots the draft into a new immutable ``TagTemplateVersion`` row
+    and repoints this column at it; the request designer's template source reads
+    ONLY templates with a pointer, and reads THAT version's doc, never the draft.
+    NULL means never published - invisible to request design, still editable.
     """
 
     __tablename__ = "tag_template"
@@ -701,6 +708,56 @@ class TagTemplate(Base, CompanyScopedMixin):
     family = Column(String(50), nullable=False)
     doc = Column(JSONB, nullable=False)
     print_size = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    published_version_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey(f"{SCHEMA}.tag_template_version.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     created_by = Column(UUID(as_uuid=False), nullable=True)
     created_at = _created_at()
     updated_at = _updated_at()
+
+    published_version = relationship(
+        "TagTemplateVersion", foreign_keys=[published_version_id]
+    )
+    versions = relationship(
+        "TagTemplateVersion",
+        primaryjoin="TagTemplate.id == foreign(TagTemplateVersion.template_id)",
+        viewonly=True,
+        order_by="desc(TagTemplateVersion.version_no)",
+    )
+
+
+class TagTemplateVersion(Base):
+    """An immutable snapshot of a tag template's doc. Never edited in place.
+
+    Publish always writes ``max(version_no) + 1`` for that template, which is
+    what makes View/Restore free: an older document is still there, in full,
+    forever. Not company-scoped itself - it is reachable only through its
+    template, and the template carries the partition.
+    """
+
+    __tablename__ = "tag_template_version"
+    __table_args__ = (
+        UniqueConstraint(
+            "template_id", "version_no", name="uq_dealer_kit_tag_template_version"
+        ),
+        Index("ix_dealer_kit_tag_template_version_template_id", "template_id"),
+        {"schema": SCHEMA},
+    )
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    template_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey(f"{SCHEMA}.tag_template.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    version_no = Column(Integer, nullable=False)
+    doc = Column(JSONB, nullable=False)
+    print_size = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    note = Column(String(500), nullable=True)
+    # String, not UUID - ``users.id`` is TEXT (see the same note on
+    # ``PriceTagRequest.assigned_to_id``), and a UUID-typed column here cannot
+    # join to it without an explicit cast.
+    created_by = Column(String, nullable=True)
+    created_at = _created_at()

@@ -11,12 +11,14 @@ import { describe, expect, it } from 'vitest';
 
 import type {
   ImpositionConfig,
+  LineTagData,
   PlacedTag,
   TagLayer,
   TagTemplate,
   TagTemplateFamily,
 } from './tag-template-types';
 import { IMPOSITION_PRESETS, defaultTextProps } from './tag-template-types';
+import { PRODUCT_BLOCK_SIZE, SET_BLOCK_SIZE } from './product-block';
 import {
   autoArrange,
   copiesOf,
@@ -25,6 +27,7 @@ import {
   pinKeyForPlacement,
   pinnedFromDoc,
   placementKey,
+  starterTemplateFor,
   tagForLine,
 } from './request-tags';
 
@@ -112,6 +115,9 @@ function setLine(id: string, quantity = 1) {
 const A4_3UP: ImpositionConfig = { preset: 'a4_3up', ...IMPOSITION_PRESETS.a4_3up };
 const A4_2X2: ImpositionConfig = { preset: 'a4_2x2', ...IMPOSITION_PRESETS.a4_2x2 };
 
+let layerSeq = 0;
+const newId = () => `layer-${(layerSeq += 1)}`;
+
 // ---------------------------------------------------------------------------
 // defaultTemplateFor
 // ---------------------------------------------------------------------------
@@ -138,6 +144,160 @@ describe('defaultTemplateFor', () => {
 
   it('answers null when there is no template at all', () => {
     expect(defaultTemplateFor(productLine('l6'), [], 'SRTKS2435')).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// starterTemplateFor
+// ---------------------------------------------------------------------------
+
+function lineTagData(overrides: Partial<LineTagData> = {}): LineTagData {
+  return {
+    line_id: 'l1',
+    code: 'SRT-1234',
+    name: 'Kitchen Sink',
+    dimensions: '800 x 500 x 220 mm',
+    spec_lines: 'Stainless steel\nOverflow included',
+    specs: [],
+    set_members: '',
+    images: [],
+    list_price: 1599,
+    sell_price: null,
+    show_promo_price: false,
+    included_accessories: '',
+    quantity: 1,
+    ...overrides,
+  };
+}
+
+describe('starterTemplateFor', () => {
+  it('builds the product block layer set - and slots - from the resolved line', () => {
+    const line = productLine('l1');
+    const data = lineTagData();
+    const source = starterTemplateFor(line, data, newId);
+
+    // image, code, name, dimensions, spec_lines, price_badge + the wrapping group.
+    expect(source.doc.layers).toHaveLength(7);
+
+    const slots = source.doc.layers.map((l) => l.slot_binding).filter(Boolean);
+    expect(slots).toEqual(
+      expect.arrayContaining(['product_image', 'code', 'name', 'dimensions', 'spec_lines', 'list_price']),
+    );
+
+    const codeLayer = source.doc.layers.find((l) => l.slot_binding === 'code');
+    expect(codeLayer?.props).toMatchObject({ kind: 'text', text: 'SRT-1234' });
+    const nameLayer = source.doc.layers.find((l) => l.slot_binding === 'name');
+    expect(nameLayer?.props).toMatchObject({ kind: 'text', text: 'Kitchen Sink' });
+    const dimensionsLayer = source.doc.layers.find((l) => l.slot_binding === 'dimensions');
+    expect(dimensionsLayer?.props).toMatchObject({ kind: 'text', text: '800 x 500 x 220 mm' });
+    const specLayer = source.doc.layers.find((l) => l.slot_binding === 'spec_lines');
+    expect(specLayer?.props).toMatchObject({
+      kind: 'text',
+      text: 'Stainless steel\nOverflow included',
+    });
+  });
+
+  it('never throws on a line whose price data has not resolved yet', () => {
+    const line = productLine('l2');
+    expect(() => starterTemplateFor(line, undefined, newId)).not.toThrow();
+
+    const source = starterTemplateFor(line, undefined, newId);
+    const codeLayer = source.doc.layers.find((l) => l.slot_binding === 'code');
+    expect(codeLayer?.props).toMatchObject({ kind: 'text', text: '' });
+    // Still a complete block: an unresolved line must not draw fewer layers.
+    expect(source.doc.layers).toHaveLength(7);
+  });
+
+  it('draws the promo price only when the line is showing its promo price AND has one', () => {
+    const line = productLine('l3');
+
+    const promo = starterTemplateFor(
+      line,
+      lineTagData({ show_promo_price: true, sell_price: 899 }),
+      newId,
+    );
+    const promoBadge = promo.doc.layers.find((l) => l.props.kind === 'price_badge');
+    expect(promoBadge).toMatchObject({
+      slot_binding: 'sell_price',
+      props: { variant: 'promo' },
+    });
+
+    const noPromoValue = starterTemplateFor(
+      line,
+      lineTagData({ show_promo_price: true, sell_price: null }),
+      newId,
+    );
+    const listBadge1 = noPromoValue.doc.layers.find((l) => l.props.kind === 'price_badge');
+    expect(listBadge1).toMatchObject({
+      slot_binding: 'list_price',
+      props: { variant: 'list_only' },
+    });
+
+    const promoSwitchedOff = starterTemplateFor(
+      line,
+      lineTagData({ show_promo_price: false, sell_price: 899 }),
+      newId,
+    );
+    const listBadge2 = promoSwitchedOff.doc.layers.find((l) => l.props.kind === 'price_badge');
+    expect(listBadge2).toMatchObject({
+      slot_binding: 'list_price',
+      props: { variant: 'list_only' },
+    });
+  });
+
+  it('is always the ala carte family - a starter has no family of its own', () => {
+    const source = starterTemplateFor(productLine('l4'), lineTagData(), newId);
+    expect(source.family).toBe('ala_carte');
+  });
+
+  it('is sized at the default product block footprint, not any template size', () => {
+    const source = starterTemplateFor(productLine('l5'), lineTagData(), newId);
+    expect(source.print_size).toEqual(PRODUCT_BLOCK_SIZE);
+    expect(source.doc.width_mm).toBe(PRODUCT_BLOCK_SIZE.width_mm);
+    expect(source.doc.height_mm).toBe(PRODUCT_BLOCK_SIZE.height_mm);
+  });
+
+  it('binds the group to the LINE\'S REAL product id, never the line id itself', () => {
+    const line = productLine('l7');
+    const source = starterTemplateFor(line, lineTagData(), newId);
+    const group = source.doc.layers.find((l) => l.props.kind === 'group');
+    expect(group?.props).toMatchObject({ binding: { product_id: 'p-l7' } });
+    // The line id and the product id are deliberately different strings in
+    // this fixture, so a binding of { product_id: 'l7' } - the line id
+    // masquerading as the product id - would fail this assertion too.
+    expect(group?.props).not.toMatchObject({ binding: { product_id: 'l7' } });
+  });
+
+  it('a set line gets a SET block - set_members text, no empty product-only slots - not buildProductBlock', () => {
+    const line = setLine('l6');
+    const data = lineTagData({
+      code: 'BF-SET-01',
+      name: 'Bathroom Furniture Set',
+      set_members: '- A1 (Basin)\n- A2 (Tap)',
+    });
+    const source = starterTemplateFor(line, data, newId);
+
+    expect(source.print_size).toEqual(SET_BLOCK_SIZE);
+    expect(source.doc.width_mm).toBe(SET_BLOCK_SIZE.width_mm);
+    expect(source.doc.height_mm).toBe(SET_BLOCK_SIZE.height_mm);
+
+    const membersLayer = source.doc.layers.find((l) => l.slot_binding === 'set_members');
+    expect(membersLayer?.props).toMatchObject({
+      kind: 'text',
+      text: '- A1 (Basin)\n- A2 (Tap)',
+    });
+
+    // A set has no product photo, dimensions or spec lines of its own - a
+    // set-line starter must not carry the empty boxes buildProductBlock would
+    // draw for them.
+    const slots = source.doc.layers.map((l) => l.slot_binding).filter(Boolean);
+    expect(slots).not.toEqual(
+      expect.arrayContaining(['product_image', 'dimensions', 'spec_lines']),
+    );
+
+    // Bound to the set, not the line id and not a product id.
+    const group = source.doc.layers.find((l) => l.props.kind === 'group');
+    expect(group?.props).toMatchObject({ binding: { product_set_id: 's-l6' } });
   });
 });
 

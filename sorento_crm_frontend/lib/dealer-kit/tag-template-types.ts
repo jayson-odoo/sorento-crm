@@ -249,6 +249,30 @@ export interface TagTemplate {
   print_size: { width_mm: number; height_mm: number };
   created_at: string;
   updated_at: string;
+  /** The live pointer (PLAN D7). Absent = never published. */
+  published_version_id?: string | null;
+  published_version_no?: number | null;
+}
+
+// ---------------------------------------------------------------------------
+// Template versions (S5)
+// ---------------------------------------------------------------------------
+
+/** One row of the Versions sheet. No `doc` - fetched only on View. */
+export interface TagTemplateVersion {
+  id: string;
+  template_id: string;
+  version_no: number;
+  note: string | null;
+  created_by: string | null;
+  created_by_name: string | null;
+  created_at: string;
+}
+
+/** A past version's full document, for View (D16). */
+export interface TagTemplateVersionDetail extends TagTemplateVersion {
+  doc: TagTemplateDoc;
+  print_size: { width_mm: number; height_mm: number };
 }
 
 // ---------------------------------------------------------------------------

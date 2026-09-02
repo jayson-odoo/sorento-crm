@@ -95,6 +95,12 @@ interface KonvaTagLayerProps {
   onDragStart?: (id: string) => void;
   onDragMove?: (id: string, x_mm: number, y_mm: number) => void;
   onDragEnd?: (id: string) => void;
+  /**
+   * The pointer entered/left this layer's own bounds (S6, D10). Used to show
+   * a previewable block's eye chip on hover - a plain pass-through, the host
+   * resolves which BLOCK a hovered child belongs to.
+   */
+  onHoverChange?: (id: string, hovering: boolean) => void;
 }
 
 /** Convert mm to canvas pixels. */
@@ -118,6 +124,7 @@ export function KonvaTagLayer({
   onDragStart,
   onDragMove,
   onDragEnd,
+  onHoverChange,
 }: KonvaTagLayerProps) {
   if (!layer.visible) return null;
 
@@ -177,6 +184,8 @@ export function KonvaTagLayer({
       onDragStart={handleDragStart}
       onDragMove={handleDragMove}
       onDragEnd={handleDragEnd}
+      onMouseEnter={() => onHoverChange?.(layer.id, true)}
+      onMouseLeave={() => onHoverChange?.(layer.id, false)}
     >
       <LayerContent props={layer.props} w={w} h={h} scale={scale} display={display} />
     </Group>

@@ -12,7 +12,13 @@ import { describe, expect, it } from 'vitest';
 
 import type { GroupBinding, SlotBinding, TagLayer } from './tag-template-types';
 import { defaultImageProps, defaultShapeProps, defaultTextProps } from './tag-template-types';
-import { previewBindingFor, previewBlockOf, previewableBlocks } from './preview';
+import {
+  WHOLE_TAG_BLOCK_ID,
+  previewBindingFor,
+  previewBlockOf,
+  previewableBlocks,
+  wholeTagBlock,
+} from './preview';
 
 // ---------------------------------------------------------------------------
 // Fixtures, shaped like the seeded templates
@@ -180,54 +186,99 @@ describe('previewBindingFor', () => {
       main: { product_id: 'p-main' },
       'alt-a': { product_id: 'p-alt' },
     };
-    expect(previewBindingFor(find('main-code'), previews, groupOf, layers)).toEqual({
+    expect(previewBindingFor(find('main-code'), previews, groupOf)).toEqual({
       product_id: 'p-main',
     });
-    expect(previewBindingFor(find('alt-a-code'), previews, groupOf, layers)).toEqual({
+    expect(previewBindingFor(find('alt-a-code'), previews, groupOf)).toEqual({
       product_id: 'p-alt',
     });
   });
 
   it('leaves an unpreviewed block on its placeholders', () => {
     const previews = { main: { product_id: 'p-main' } };
-    expect(previewBindingFor(find('alt-b-code'), previews, groupOf, layers)).toBeUndefined();
-    expect(previewBindingFor(find('alt-b'), previews, groupOf, layers)).toBeUndefined();
+    expect(previewBindingFor(find('alt-b-code'), previews, groupOf)).toBeUndefined();
+    expect(previewBindingFor(find('alt-b'), previews, groupOf)).toBeUndefined();
   });
 
   it('answers for the group layer itself, not only its children', () => {
     const previews = { 'alt-c': { product_id: 'p-c' } };
-    expect(previewBindingFor(find('alt-c'), previews, groupOf, layers)).toEqual({
+    expect(previewBindingFor(find('alt-c'), previews, groupOf)).toEqual({
       product_id: 'p-c',
     });
   });
 
   it('resolves nothing anywhere while no block is previewed', () => {
     for (const layer of layers) {
-      expect(previewBindingFor(layer, {}, groupOf, layers)).toBeUndefined();
+      expect(previewBindingFor(layer, {}, groupOf)).toBeUndefined();
     }
   });
 
-  it('follows the first previewed block for a slot layer in no group', () => {
+  it('resolves a slot layer in no group against the WHOLE-TAG entry, not any real block (D10)', () => {
     const loose = [...layers, text('loose-code', 'code', 'Product code')];
     const previews = {
       'alt-b': { product_id: 'p-b' },
       main: { product_id: 'p-main' },
+      [WHOLE_TAG_BLOCK_ID]: { product_id: 'p-whole' },
     };
-    // Document order decides, not the order the previews were chosen in.
     expect(
-      previewBindingFor(loose[loose.length - 1], previews, groupsOf(loose), loose),
-    ).toEqual({ product_id: 'p-main' });
+      previewBindingFor(loose[loose.length - 1], previews, groupsOf(loose)),
+    ).toEqual({ product_id: 'p-whole' });
+  });
+
+  it('leaves a loose slot layer unresolved while the whole-tag entry is unset', () => {
+    const loose = [...layers, text('loose-code', 'code', 'Product code')];
+    const previews = { 'alt-b': { product_id: 'p-b' }, main: { product_id: 'p-main' } };
+    expect(
+      previewBindingFor(loose[loose.length - 1], previews, groupsOf(loose)),
+    ).toBeUndefined();
   });
 
   it('leaves an unbound layer in no group alone', () => {
     expect(
-      previewBindingFor(find('band'), { main: { product_id: 'p' } }, groupOf, layers),
+      previewBindingFor(find('band'), { main: { product_id: 'p' } }, groupOf),
     ).toBeUndefined();
   });
 
   it('leaves the accessories strip alone, previewed or not', () => {
     const previews = { main: { product_id: 'p-main' } };
-    expect(previewBindingFor(find('acc-title'), previews, groupOf, layers)).toBeUndefined();
+    expect(previewBindingFor(find('acc-title'), previews, groupOf)).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// wholeTagBlock
+// ---------------------------------------------------------------------------
+
+describe('wholeTagBlock', () => {
+  it('is absent when every bindable layer belongs to a real block', () => {
+    expect(wholeTagBlock(sinkCombo())).toBeNull();
+  });
+
+  it('is absent when nothing on the tag is bindable at all', () => {
+    const layers = [shape('a'), shape('b')];
+    expect(wholeTagBlock(layers)).toBeNull();
+  });
+
+  it('synthesizes one block over every loose bound layer', () => {
+    const layers = [text('code', 'code', 'Product code'), text('price', 'sell_price', '')];
+    const block = wholeTagBlock(layers);
+    expect(block?.groupId).toBe(WHOLE_TAG_BLOCK_ID);
+    expect(block?.mode).toBe('product');
+  });
+
+  it('ignores a loose layer already claimed by a group', () => {
+    const layers = sinkCombo();
+    expect(wholeTagBlock(layers)).toBeNull();
+  });
+
+  it('asks for a SET when a loose layer carries the set members slot', () => {
+    const layers = [text('members', 'set_members', 'Set members')];
+    expect(wholeTagBlock(layers)?.mode).toBe('set');
+  });
+
+  it('ignores a loose layer with no slot binding', () => {
+    const layers = [shape('deco'), text('label', null, 'Sale!')];
+    expect(wholeTagBlock(layers)).toBeNull();
   });
 });
 

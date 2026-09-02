@@ -744,9 +744,10 @@ function PriceBadgeInspector({
 /**
  * Preview THIS block, from wherever the selection is inside it.
  *
- * The toolbar asks about the whole tag; a designer working on one alternative
- * wants that alternative, and going back to the toolbar to pick it out of a
- * list of four is a longer way round than the block already selected.
+ * A block also carries its own eye chip on the canvas itself, shown on hover
+ * or select (D10, S6); this is the same action from the sidebar, for a
+ * designer who already has the block selected and does not want to go
+ * hunting for its outline.
  */
 function PreviewBlockInspector({
   groupId,

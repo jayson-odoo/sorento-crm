@@ -10,6 +10,14 @@
  *
  * Tick marks every 5 mm, numbers every 10 mm. Plain DOM and CSS, not Konva, so
  * the rulers stay outside the canvas bitmap.
+ *
+ * Both rulers also spawn guides (D9/D17, S6): a `mousedown` here starts the
+ * gesture and reports the ORIENTATION plus the raw event - the host (which
+ * already owns pan/zoom/the container) turns that into an mm position and
+ * owns the guide's whole lifecycle from there, the same way it already owns
+ * marquee and pan. A ruler div's own left/top edge sits at the same pixel as
+ * the Stage's own x/y = 0 (both are positioned at `RULER_THICKNESS` from the
+ * same container), so no extra plumbing is needed to line the two up.
  */
 
 import { useMemo } from 'react';
@@ -30,6 +38,12 @@ interface CanvasRulersProps {
   /** Size of the Stage the strips run alongside, in px. */
   viewportWidth: number;
   viewportHeight: number;
+  /**
+   * A guide-drop gesture started on this ruler (D9/D17). `orientation` names
+   * which kind of guide it spawns - `'vertical'` for the top ruler,
+   * `'horizontal'` for the left one - not which ruler was clicked.
+   */
+  onGuideStart?: (orientation: 'vertical' | 'horizontal', event: React.MouseEvent) => void;
 }
 
 export function CanvasRulers({
@@ -40,6 +54,7 @@ export function CanvasRulers({
   originY,
   viewportWidth,
   viewportHeight,
+  onGuideStart,
 }: CanvasRulersProps) {
   const hTicks = useMemo(() => {
     const ticks: { pos: number; mm: number; major: boolean }[] = [];
@@ -63,14 +78,15 @@ export function CanvasRulers({
 
   return (
     <>
-      {/* Top ruler */}
+      {/* Top ruler - drops a VERTICAL guide (it measures X, D17). */}
       <div
-        className="absolute top-0 overflow-hidden border-b border-border bg-muted"
+        className="absolute top-0 cursor-col-resize overflow-hidden border-b border-border bg-muted"
         style={{
           left: RULER_THICKNESS,
           height: RULER_THICKNESS,
           width: viewportWidth,
         }}
+        onMouseDown={(event) => onGuideStart?.('vertical', event)}
       >
         {hTicks.map((t) => (
           <div
@@ -94,14 +110,15 @@ export function CanvasRulers({
         ))}
       </div>
 
-      {/* Left ruler */}
+      {/* Left ruler - drops a HORIZONTAL guide (it measures Y, D17). */}
       <div
-        className="absolute left-0 overflow-hidden border-r border-border bg-muted"
+        className="absolute left-0 cursor-row-resize overflow-hidden border-r border-border bg-muted"
         style={{
           top: RULER_THICKNESS,
           width: RULER_THICKNESS,
           height: viewportHeight,
         }}
+        onMouseDown={(event) => onGuideStart?.('horizontal', event)}
       >
         {vTicks.map((t) => (
           <div
