@@ -818,12 +818,14 @@ function DataGridTableRowSelect<TData>({ row, size }: { row: Row<TData>; size?: 
 }
 
 function DataGridTableRowSelectAll({ size }: { size?: 'sm' | 'md' | 'lg' }) {
-  const { table, recordCount, isLoading } = useDataGrid();
+  const { table, recordCount } = useDataGrid();
 
   return (
     <Checkbox
       checked={table.getIsAllPageRowsSelected() || (table.getIsSomePageRowsSelected() && 'indeterminate')}
-      disabled={isLoading || recordCount === 0}
+      // Not `isLoading`: a refetch with rows on screen is not a reason to take
+      // the control away (M4-05). An empty list still has nothing to select.
+      disabled={recordCount === 0}
       onCheckedChange={(value) => table.toggleAllPageRowsSelected(!!value)}
       aria-label="Select all"
       size={size}
