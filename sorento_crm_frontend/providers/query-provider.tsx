@@ -16,6 +16,21 @@ const QueryProvider = ({ children }: { children: ReactNode }) => {
   const [queryClient] = useState(
     () =>
       new QueryClient({
+        // The shared default every query gets unless a hook names a reason
+        // not to (M4 list latency): retry once, treat data as fresh for 30s,
+        // and do not refetch merely because the tab regained focus - 404
+        // hooks used to set `refetchOnWindowFocus: false` themselves for
+        // this exact value, 314 had `staleTime: 0`, and 325 retried 3 times.
+        // A hook with a genuinely different staleTime or refetchInterval
+        // (the conversation surfaces' polling, a pager's Infinity) still
+        // sets its own - this is only the floor every OTHER hook inherits.
+        defaultOptions: {
+          queries: {
+            retry: 1,
+            staleTime: 30_000,
+            refetchOnWindowFocus: false,
+          },
+        },
         queryCache: new QueryCache({
           onError: (error, query) => {
             // A query may opt out of the shared toast with `meta: { silent: true }`.
