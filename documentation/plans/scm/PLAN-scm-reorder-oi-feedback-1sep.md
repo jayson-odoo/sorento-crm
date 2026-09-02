@@ -109,17 +109,37 @@ UAC: `scm-reorder-oi-feedback-1sep-acceptance-criteria.md`
     stops a claim being subtracted twice once its own SO has placed part of it - now
     measured off `OrderInquiryLink.claim_id` rather than guessed from the claim's
     source (`_reserved_for_netting`).
-- G16 (2 Sep, review round 2) A SALES ORDER LINE'S NEED IS RESERVED ONCE, ACROSS ALL OF
-  ITS DOCUMENTS. A claim carries no quantity, so the reservation is derived - and deriving
-  it per CLAIM over-reserved twice over: a line claimed on two documents reserved its whole
-  outstanding on each (SO line 100 with 70 placed on PO-A and 10 on PO-B reserved 30 + 90 =
-  120 against a need of 20), and nothing capped a reservation at the size of the document
-  carrying it. The walk, per SALES ORDER LINE: need = live outstanding less everything
-  already PLACED under its own claims; its claims are visited in document order; each
-  reserves min(that document's own open capacity, whatever of the need is still
-  unreserved). `order_link_service.reservations_by_target` returns both figures - `reserved`
-  (the walked share, what every netting consumer reads) and `outstanding` (the raw live
-  outstanding, kept because AC-6.9 reports it). PENDING CAPTAIN CONFIRM.
+- G16 (2 Sep, review rounds 2 + 3) HOW MUCH A CLAIM RESERVES - TWO RULES, IN THIS ORDER.
+  A claim carries no quantity of its own, so the figure is derived; deriving it per CLAIM
+  over-reserved in both directions at once.
+  1. A SALES ORDER LINE'S UNPLACED NEED IS RESERVED ONCE, ACROSS ALL OF ITS DOCUMENTS.
+     Per claim, a line claimed on two documents reserved its whole outstanding on each
+     (SO line 100 with 70 placed on PO-A and 10 on PO-B reserved 30 + 90 = 120 against a
+     need of 20, and PO-B read as fully spoken for). So: need = live outstanding less
+     everything already PLACED under that line's own claims; its claims are visited in
+     document-number order; each takes min(that document's REMAINING capacity, whatever
+     of the need is still unreserved).
+  2. A DOCUMENT LINE IS RATIONED ACROSS ITS CLAIMANTS IN SO-DATE ORDER, AND NEVER HANDS
+     OUT MORE THAN IT HOLDS. Rule 1 alone offers every claimant the line's FULL capacity,
+     because it is applied per sales order line with no knowledge of the others - so two
+     orders of 60 on a 100-unit line reserved 60 each, each then saw only 40 free, and
+     NEITHER could auto-take its own 60. Measured on the live book: 25,788 units across
+     155 lines, reserved twice and takeable by nobody. AC-6.1's "multiple claims reserve
+     in SO-date order" is the tie-break - the earlier order gets its 60, the later one the
+     40 that is left, and the line adds up to 100.
+  CAPACITY IS NET OF LINKS throughout (the line's own size less what links already take),
+  never gross: with a gross ceiling a reservation settled on the document whose every unit
+  was already placed while the document with room read free.
+  `order_link_service.reservations_by_target` returns both figures - `reserved` (the
+  rationed share, what every netting consumer reads) and `outstanding` (the raw live
+  outstanding, kept because AC-6.9 reports it as the audit figure). PENDING CAPTAIN
+  CONFIRM.
+- OPEN RULING R-1 (raised 2 Sep, review round 3, NOT decided): do G7 reservations apply on
+  POOL lines at all? A pool line is shared supply by definition, yet every placement writes
+  an audit claim, so one order's partial take reserves the rest of its need against that
+  same pool line and can read it down to nothing for everybody else. Left exactly as it
+  behaves today until the captain rules; the rationing above bounds the damage (a line can
+  never promise more than it holds) but does not answer the question.
 - G17 (2 Sep, review round 2) ATTRIBUTION IS FILLED, NEVER REPOINTED. A claim's identity is
   document-level - (company, SO, PO, item) - while `po_line_id` names one line of it. A
   placement on a DIFFERENT line of the same order used to move the book's pointer off the
@@ -147,7 +167,11 @@ UAC: `scm-reorder-oi-feedback-1sep-acceptance-criteria.md`
   such a line visible rather than silent. Related: an unreconciled project sales order (no
   `autocount_doc_no`, so its claims are written under the provisional reference) cannot
   match a claim the BOOK wrote under the AutoCount number - the two identities are different
-  strings until reconciliation happens.
+  strings until reconciliation happens. Also: 2 live rows carry `resolved_at` with a NULL
+  `so_line_id` (both `order_inquiry`, written before G17 made the stamp honest). They
+  self-heal the next time anything restates that pairing, since `claim_placed_on_po` now
+  recomputes `resolved_at` from what is actually known; no backfill is scheduled for two
+  rows.
 - G13 (2 Sep) THE OUTSTANDING BOOK WRITES CLAIMS (D2). `outstanding_import_service`
   resolved `FromSODocList` and threw the value away, so the feed most attribution
   arrives on could not seed a single dedication. It now writes one `po_upload` claim per

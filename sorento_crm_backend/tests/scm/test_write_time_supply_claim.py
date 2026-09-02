@@ -740,9 +740,41 @@ def test_a_partial_link_on_a_pool_line_does_not_reserve_more_than_the_line_holds
 
     reservations = order_link_service.reservations_by_target(db, target_ids=[line_id])
     reserved = sum(float(c["reserved"]) for c in reservations.get(line_id, []))
-    assert reserved <= 30.0, (
-        "a claim reserved more of the document than the document holds"
+    assert reserved == 0.0, (
+        "the cascade placed the line's whole 30 under this order's own claim, so there is "
+        "nothing further for it to reserve here - the other 170 it still needs belongs on "
+        "documents that have room, not on this one a second time"
     )
+
+    # And the CAP itself, on a line with room: the same order still needs 170, and a
+    # 20-unit line reserves 20 - never the 170.
+    other_po, other_line = _draft_line(db, product_id=pid, warehouse_id=pool, qty=20)
+    db.execute(text("UPDATE purchase_orders SET status = 'active' WHERE id = :i"),
+               {"i": other_po})
+    other_number = db.execute(
+        text("SELECT po_number FROM purchase_orders WHERE id = :i"), {"i": other_po}
+    ).scalar()
+    core_line_id = db.execute(
+        text(
+            "SELECT core_sales_order_line_id FROM projects.sales_order_lines WHERE id = :i"
+        ),
+        {"i": str(row.so_line_id)},
+    ).scalar()
+    order_link_service.claim_placed_on_po(
+        db, company_id=None, so_number=_so_ref(db, leg["pso"].id),
+        po_number=other_number, item_code=row.item_code,
+        so_line_id=str(core_line_id), po_line_id=other_line,
+        source=order_link_service.SOURCE_PO_UPLOAD,
+    )
+    db.flush()
+
+    capped = sum(
+        float(c["reserved"])
+        for c in order_link_service.reservations_by_target(
+            db, target_ids=[other_line]
+        ).get(other_line, [])
+    )
+    assert capped == 20.0, "a claim reserved more of the document than the document holds"
 
 
 def test_a_person_may_link_a_fully_dedicated_line_by_hand(db):
@@ -856,3 +888,200 @@ def test_the_today_repair_leaves_a_claimless_orphan_link_alone(db):
         str(f["row_id"]) == str(orphan["inquiry_row"].id)
         for f in repair._find(db, "legacy", company_id)
     ), "and legacy does see it"
+
+
+# ------------------------------------------------------- review round 3 (S-1, S-2)
+
+
+def test_one_line_is_rationed_across_its_claimants_in_sales_order_date_order(db):
+    """S-1. Netting per SALES ORDER LINE offers every claimant the document's FULL
+    capacity, because each line is walked with no knowledge of the others - so two orders
+    of 60 on a 100-unit line each reserved 60, each then saw only 40 free, and NEITHER
+    could auto-take its own 60. On the live book that stranded 25,788 units across 155
+    lines: reserved twice over, takeable by nobody.
+
+    AC-6.1's "multiple claims reserve in SO-date order" is the tie-break: the earlier order
+    gets its 60, the later one gets the 40 that is left, and the line adds up to its own
+    100 rather than to 120.
+    """
+    from tests.scm.test_channel_read_model import _core_so_line
+    from tests.scm.test_m3_run import _mk_product, _mk_warehouse
+
+    pool = _mk_warehouse(db, f"{MARKER}POOL{uuid.uuid4().hex[:5].upper()}")
+    pid = _mk_product(db, f"{MARKER}-{uuid.uuid4().hex[:6].upper()}")
+    po_id, line_id = _draft_line(db, product_id=pid, warehouse_id=pool, qty=100)
+    db.execute(text("UPDATE purchase_orders SET status = 'active' WHERE id = :i"),
+               {"i": po_id})
+    number = db.execute(
+        text("SELECT po_number FROM purchase_orders WHERE id = :i"), {"i": po_id}
+    ).scalar()
+
+    early_so, early_line = _core_so_line(db, product_id=pid, warehouse_id=pool, qty=60,
+                                         demand_class="project")
+    late_so, late_line = _core_so_line(db, product_id=pid, warehouse_id=pool, qty=60,
+                                       demand_class="project")
+    db.execute(
+        text("UPDATE sales_orders SET order_date = :d WHERE id = :i"),
+        {"d": date(2026, 1, 1), "i": str(early_so.id)},
+    )
+    db.execute(
+        text("UPDATE sales_orders SET order_date = :d WHERE id = :i"),
+        {"d": date(2026, 6, 1), "i": str(late_so.id)},
+    )
+    for so, so_line in ((early_so, early_line), (late_so, late_line)):
+        order_link_service.claim_placed_on_po(
+            db, company_id=None, so_number=so.so_number, po_number=number,
+            item_code=so.so_number, so_line_id=str(so_line.id), po_line_id=line_id,
+            source=order_link_service.SOURCE_PO_UPLOAD,
+        )
+    db.flush()
+
+    claims = {
+        c["so_number"]: float(c["reserved"])
+        for c in order_link_service.reservations_by_target(
+            db, target_ids=[line_id]
+        )[line_id]
+    }
+    assert claims[early_so.so_number] == 60.0, "the earlier sales order gets its whole 60"
+    assert claims[late_so.so_number] == 40.0, "the later one gets what is left, not 60"
+    assert sum(claims.values()) == 100.0, (
+        "the line handed out more than it holds, and stranded the difference"
+    )
+
+
+def test_the_earlier_sales_order_can_still_auto_take_its_own_rationed_share(db):
+    """The consequence S-1 exists for: with 120 reserved on a 100 line, the earlier order's
+    own cascade saw 100 - 60 (the other claim) = 40 and could not place its 60. Rationed,
+    it sees the 40 the later order holds and takes its own 60."""
+    from tests.scm.test_channel_read_model import _confirmed_leg, _core_so_line
+    from tests.scm.test_m3_run import _mk_product, _mk_warehouse
+    from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+
+    pool = _mk_warehouse(db, f"{MARKER}POOL{uuid.uuid4().hex[:5].upper()}")
+    pid = _mk_product(db, f"{MARKER}-{uuid.uuid4().hex[:6].upper()}")
+    po_id, line_id = _draft_line(db, product_id=pid, warehouse_id=pool, qty=100)
+    db.execute(text("UPDATE purchase_orders SET status = 'active' WHERE id = :i"),
+               {"i": po_id})
+    number = db.execute(
+        text("SELECT po_number FROM purchase_orders WHERE id = :i"), {"i": po_id}
+    ).scalar()
+
+    # The row that will do the taking, and its own claim on the line (the book's).
+    leg = _confirmed_leg(db, product_id=pid, warehouse_id=pool, buy_qty=60)
+    row = leg["inquiry_row"]
+    core_line_id = db.execute(
+        text(
+            "SELECT core_sales_order_line_id FROM projects.sales_order_lines WHERE id = :i"
+        ),
+        {"i": str(row.so_line_id)},
+    ).scalar()
+    # Dated EARLY and explicitly: `_core_so_line` leaves `order_date` NULL, and a NULL
+    # sorts last in G7's own order, which would make this the LATER claimant by accident.
+    db.execute(
+        text(
+            "UPDATE sales_orders SET order_date = :d WHERE id = ("
+            "  SELECT sales_order_id FROM sales_order_lines WHERE id = :l)"
+        ),
+        {"d": date(2026, 1, 1), "l": str(core_line_id)},
+    )
+    order_link_service.claim_placed_on_po(
+        db, company_id=None, so_number=_so_ref(db, leg["pso"].id), po_number=number,
+        item_code=row.item_code, so_line_id=str(core_line_id), po_line_id=line_id,
+        source=order_link_service.SOURCE_PO_UPLOAD,
+    )
+    # A LATER sales order claiming the same line for another 60.
+    late_so, late_line = _core_so_line(db, product_id=pid, warehouse_id=pool, qty=60,
+                                       demand_class="project")
+    db.execute(
+        text("UPDATE sales_orders SET order_date = :d WHERE id = :i"),
+        {"d": date(2099, 1, 1), "i": str(late_so.id)},
+    )
+    order_link_service.claim_placed_on_po(
+        db, company_id=None, so_number=late_so.so_number, po_number=number,
+        item_code=late_so.so_number, so_line_id=str(late_line.id), po_line_id=line_id,
+        source=order_link_service.SOURCE_PO_UPLOAD,
+    )
+    db.flush()
+
+    ProjectOrderInquiryService(db).auto_place_for_products(
+        [pid], actor_user_id=seed_user(db, None), trigger="test", include_awaiting=True,
+    )
+
+    assert _linked(db, row.id) == 60.0, (
+        "the earlier order could not take its own share, because the line had promised 120"
+    )
+
+
+def test_a_reservation_lands_on_the_document_that_actually_has_room(db):
+    """S-2. Capacity is the line's own size LESS what links have already taken. With a
+    GROSS ceiling, a sales order line claiming two documents let the first swallow the
+    whole need even when every unit of it was already linked to somebody else - so the
+    reservation sat on the document with no room while the one that did have room read
+    free."""
+    from tests.scm.test_channel_read_model import _confirmed_leg, _core_so_line
+    from tests.scm.test_m3_run import _mk_product, _mk_warehouse
+    from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+
+    actor = seed_user(db, None)
+    pool = _mk_warehouse(db, f"{MARKER}POOL{uuid.uuid4().hex[:5].upper()}")
+    pid = _mk_product(db, f"{MARKER}-{uuid.uuid4().hex[:6].upper()}")
+
+    # PO-A sorts FIRST by document number - the order the per-sales-order-line walk visits
+    # them in - and is fully taken by somebody else; PO-B sorts second and has room.
+    def _order(prefix: str) -> tuple[str, str, str]:
+        po_id, number, line_id = _u(), f"{MARKER}-{prefix}-{uuid.uuid4().hex[:5].upper()}", _u()
+        db.execute(
+            text(
+                "INSERT INTO purchase_orders (id, po_number, status, issue_date, "
+                "currency, source_system) "
+                "VALUES (:i, :n, 'active', :d, 'MYR', 'scm_upload')"
+            ),
+            {"i": po_id, "n": number, "d": date(2026, 8, 1)},
+        )
+        db.execute(
+            text(
+                "INSERT INTO purchase_order_lines (id, purchase_order_id, product_id, "
+                "warehouse_id, qty_ordered, qty_received, unit_cost, currency, "
+                "line_status, expected_date) "
+                "VALUES (:i, :po, :p, :w, 50, 0, 10, 'MYR', 'open', :e)"
+            ),
+            {"i": line_id, "po": po_id, "p": pid, "w": pool, "e": SOON},
+        )
+        db.flush()
+        return po_id, number, line_id
+
+    _, number_a, line_a = _order("AAA")
+    _, number_b, line_b = _order("ZZZ")
+    numbers = {line_a: number_a, line_b: number_b}
+
+    # Somebody else takes the whole of PO-A.
+    other = _confirmed_leg(db, product_id=pid, warehouse_id=pool, buy_qty=50)
+    ProjectOrderInquiryService(db).place_on_po_allocations(
+        str(other["inquiry_row"].id), [{"po_line_id": line_a, "qty": 50}],
+        actor_user_id=actor,
+    )
+
+    # Our sales order claims BOTH documents and has placed nothing.
+    ours, ours_line = _core_so_line(db, product_id=pid, warehouse_id=pool, qty=50,
+                                    demand_class="project")
+    for target in (line_a, line_b):
+        order_link_service.claim_placed_on_po(
+            db, company_id=None, so_number=ours.so_number, po_number=numbers[target],
+            item_code=ours.so_number, so_line_id=str(ours_line.id), po_line_id=target,
+            source=order_link_service.SOURCE_PO_UPLOAD,
+        )
+    db.flush()
+
+    reservations = order_link_service.reservations_by_target(
+        db, target_ids=[line_a, line_b]
+    )
+    on_a = sum(
+        float(c["reserved"]) for c in reservations.get(line_a, [])
+        if c["so_number"] == ours.so_number
+    )
+    on_b = sum(
+        float(c["reserved"]) for c in reservations.get(line_b, [])
+        if c["so_number"] == ours.so_number
+    )
+    assert on_a == 0.0, "PO-A has nothing left, so nothing can be reserved on it"
+    assert on_b == 50.0, "the reservation belongs on the document that has room"

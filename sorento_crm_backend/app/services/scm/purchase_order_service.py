@@ -526,24 +526,35 @@ class PurchaseOrderService:
             self.db, target_ids=list(lines)
         )
 
+        # WHAT THE TWO WIRE FIELDS MEAN, because they read crosswise to the reader's own
+        # keys and that is worth saying once rather than puzzling over twice:
+        #
+        #   wire `reserved` = the claim's `outstanding` - what the claiming sales order
+        #                     line still owes IN TOTAL, everywhere. Context for the buyer.
+        #   wire `unplaced` = the claim's `reserved`    - what THIS document is holding for
+        #                     it after the walk, and therefore what comes off `free`.
+        #
+        # The names are the panel's, from before the reader had a rationed figure to give;
+        # they are the buyer's words ("dedicated 114, 40 of it still to come off this
+        # order") and the frontend types are declared against them, so the mapping is
+        # explicit here rather than renamed on the wire.
         dedications: dict[str, list[dict]] = {}
-        reserved: dict[str, float] = {}
+        reserved_per_line: dict[str, float] = {}
         for line_id, claims in reservations.items():
             for claim in claims:
-                outstanding = float(claim["outstanding"])
-                if outstanding <= 0:
+                owed_in_total = float(claim["outstanding"])
+                if owed_in_total <= 0:
                     # A claim whose sales order line has settled reserves nothing and is
                     # not who the line is dedicated to any more (G7). The claim row stays.
                     continue
-                still = float(claim["reserved"])
-                reserved[line_id] = reserved.get(line_id, 0.0) + still
+                held_on_this_line = float(claim["reserved"])
+                reserved_per_line[line_id] = (
+                    reserved_per_line.get(line_id, 0.0) + held_on_this_line
+                )
                 dedications.setdefault(line_id, []).append({
                     "so_number": claim["so_number"],
-                    # What the claiming line still owes in FULL, and what of it this
-                    # document is holding. The buyer reads the first for context and acts
-                    # on the second, which is what comes off `free`.
-                    "reserved": outstanding,
-                    "unplaced": still,
+                    "reserved": owed_in_total,
+                    "unplaced": held_on_this_line,
                     "source": claim["source"],
                 })
 
@@ -588,7 +599,9 @@ class PurchaseOrderService:
                 "allocated": claimed,
                 # Floored at 0: a line promised more than it has left is over-committed,
                 # which is a finding for the buyer, not a credit they may spend again.
-                "free": max(outstanding - claimed - reserved.get(str(line.id), 0.0), 0.0),
+                "free": max(
+                    outstanding - claimed - reserved_per_line.get(str(line.id), 0.0), 0.0
+                ),
                 # WHO the line is dedicated to and for how much (G7), in SO-date order.
                 # Beside `free` rather than folded into it, because "0 free" and "0 free
                 # because SO391853 bought it" send the buyer to two different places.

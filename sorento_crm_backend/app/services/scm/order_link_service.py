@@ -297,13 +297,36 @@ def claim_book_pairing(
     return claim
 
 
-def _claim_capacity(db: Session, target_ids: set[str]) -> dict[str, Decimal]:
-    """Each document line's own OPEN capacity, keyed by target id.
+def _linked_by_target(db: Session, target_ids: set[str]) -> dict[str, Decimal]:
+    """What LINKS already occupy on each document line, keyed by target id."""
+    out: dict[str, Decimal] = {}
+    if not target_ids:
+        return out
+    from app.models.project_so import OrderInquiryLink
 
-    `qty_ordered - qty_received` for a purchase-order line, `allocated_quantity -
-    quantity_received` for an SPO allocation - the line's own size, not what is left after
-    links. It is the ceiling B2 caps a reservation at: a claim cannot reserve more of a
-    document than the document has.
+    wanted = list(target_ids)
+    for column in (OrderInquiryLink.po_line_id, OrderInquiryLink.spo_allocation_id):
+        for target_id, qty in (
+            db.query(column, func.sum(OrderInquiryLink.qty))
+            .filter(column.in_(wanted))
+            .group_by(column)
+        ):
+            if target_id is not None:
+                out[str(target_id)] = out.get(str(target_id), _ZERO) + _dec(qty)
+    return out
+
+
+def _claim_capacity(db: Session, target_ids: set[str]) -> dict[str, Decimal]:
+    """How much of each document line a reservation may actually land on.
+
+    The line's own open size - `qty_ordered - qty_received` for a purchase-order line,
+    `allocated_quantity - quantity_received` for an SPO allocation - LESS what links have
+    already taken off it (S-2, review round 3). Gross was the wrong ceiling: a sales order
+    line claiming two documents walks them in order, and with a gross capacity the FIRST
+    document swallowed the whole need even when every unit of it was already linked to
+    somebody else, so the reservation landed on the document with no room and the one that
+    did have room read free. Net of links, the walk puts the reservation where the goods
+    actually are.
     """
     out: dict[str, Decimal] = {}
     if not target_ids:
@@ -317,6 +340,9 @@ def _claim_capacity(db: Session, target_ids: set[str]) -> dict[str, Decimal]:
         SPOAllocation.id, SPOAllocation.allocated_quantity, SPOAllocation.quantity_received
     ).filter(SPOAllocation.id.in_(wanted)):
         out[str(alloc_id)] = max(_dec(allocated) - _dec(received), _ZERO)
+    linked = _linked_by_target(db, target_ids)
+    for target_id, gross in list(out.items()):
+        out[target_id] = max(gross - linked.get(target_id, _ZERO), _ZERO)
     return out
 
 
@@ -376,21 +402,14 @@ def _claim_rows(db: Session, *, target_ids=None, so_line_ids=None) -> list[dict]
         if not wanted:
             return []
         query = query.filter(OrderLinkClaim.so_line_id.in_(wanted))
-    elif target_ids is not None:
-        wanted = [str(t) for t in target_ids]
+    else:
+        wanted = [str(t) for t in target_ids or ()]
         if not wanted:
             return []
         query = query.filter(
             or_(
                 OrderLinkClaim.po_line_id.in_(wanted),
                 OrderLinkClaim.spo_allocation_id.in_(wanted),
-            )
-        )
-    else:
-        query = query.filter(
-            or_(
-                OrderLinkClaim.po_line_id.isnot(None),
-                OrderLinkClaim.spo_allocation_id.isnot(None),
             )
         )
     rows = []
@@ -422,46 +441,58 @@ def _claim_rows(db: Session, *, target_ids=None, so_line_ids=None) -> list[dict]
 
 
 def reservations_by_target(
-    db: Session, *, target_ids: Optional[Sequence[str]] = None
+    db: Session, *, target_ids: Sequence[str]
 ) -> dict[str, list[dict]]:
     """What every RESOLVED claim reserves, keyed by the PO line or SPO allocation it names.
 
-    **A sales order LINE's unplaced need is reserved ONCE, across all of its documents**
-    (B2, review of PR #490 - captain's ruling on the arithmetic, flagged pending confirm).
-    A claim carries no quantity of its own, so the figure has to be derived, and deriving
-    it PER CLAIM was wrong in two ways that both over-reserved:
+    Two rules, in this order, and both are needed - the first stops one sales order double
+    -booking itself across documents, the second stops several sales orders double-booking
+    one document between them (B2 + S-1, review of PR #490; captain's ruling on the
+    arithmetic, PENDING CONFIRM).
 
-      * a line claimed on TWO documents reserved its whole outstanding on each of them.
-        SO line 100 with 70 placed on PO-A and 10 on PO-B reserved 30 + 90 = 120 against a
-        need of 20, and the 100 of PO-B read as fully spoken for;
-      * nothing capped a reservation at the size of the document it sat on, so one big
-        sales order line could reserve more of a purchase order than the purchase order
-        holds.
+    **1. A sales order LINE's unplaced need is reserved ONCE, across all of its
+    documents.** A claim carries no quantity of its own, so the figure is derived, and
+    deriving it per CLAIM over-reserved: a line claimed on TWO documents reserved its whole
+    outstanding on each. SO line 100 with 70 placed on PO-A and 10 on PO-B reserved
+    30 + 90 = 120 against a need of 20, and the 100 of PO-B read as fully spoken for.
+    So: `need` is the line's live outstanding less everything already PLACED under its own
+    claims; its claims are visited in document order; each takes
+    `min(that document's remaining capacity, whatever of `need` is still unreserved)`.
 
-    The walk, per SALES ORDER LINE: `need` is its live outstanding less everything already
-    PLACED under its own claims; its claims are visited in document order; each reserves
-    `min(that document's own open capacity, whatever of `need` is still unreserved)`. So
-    the same 20 above is reserved once, on the first document, and PO-B reserves nothing.
+    **2. A document line is rationed across the sales orders claiming it, in SO-DATE
+    ORDER, and never hands out more than it has.** Rule 1 alone offers every claimant the
+    line's FULL capacity, because it is applied per sales order line with no knowledge of
+    the others - so two orders of 60 on a 100-unit line reserved 60 each, and each then saw
+    only 40 free and neither could auto-take its own. On the live book that stranded 25,788
+    units across 155 lines: reserved twice, takeable by nobody. AC-6.1's "multiple claims
+    reserve in SO-date order" is exactly the tie-break this needs - the earlier order gets
+    its 60, the later one gets the 40 that is left, and the line adds up to 100.
 
-    Each returned claim carries BOTH figures: `reserved`, the walked number every netting
+    Capacity throughout is NET OF LINKS (S-2): what the line has left for a reservation to
+    land on, not its gross size, or a reservation settles on a document whose every unit is
+    already placed while the document with room reads free.
+
+    Each returned claim carries BOTH figures: `reserved`, the rationed number every netting
     consumer should read, and `outstanding`, the claiming line's raw live outstanding, kept
     because AC-6.9 reports it as the audit figure.
 
     ONE reader, two consumers - the cascade's dedication netting
-    (`ProjectOrderInquiryService._claims_by_target`) and the purchase order's "Allocated to"
+    (`ProjectOrderInquiryService._prime_claims`) and the purchase order's "Allocated to"
     panel (`PurchaseOrderService._allocations_for`). A second spelling of "what does this
     claim reserve" is how a panel and the walk behind it come to print different numbers.
 
     `target_ids` narrows what is RETURNED, never what is walked: a claim's siblings on
     other documents decide how much of the need is left by the time this one is reached,
-    so they are read even when the caller only asked about one purchase order.
+    so they are read even when the caller only asked about one purchase order. It is
+    required - there is no whole-table mode, because every consumer knows its candidates
+    and reading 33,231 claims to answer for fifty lines is what S5 removed.
     """
     asked = _claim_rows(db, target_ids=target_ids)
     if not asked:
         return {}
-    # The whole SO LINE, not just the documents asked about: the walk below shares one
-    # need across every document a line claims, so a sibling claim left out would hand the
-    # same quantity out twice.
+    # The whole SO LINE, not just the documents asked about: rule 1 shares one need across
+    # every document a line claims, so a sibling claim left out would hand the same
+    # quantity out twice.
     rows = _claim_rows(db, so_line_ids={r["so_line_id"] for r in asked})
     capacity = _claim_capacity(db, {r["target_id"] for r in rows})
     placed = placed_by_claim(db, [r["claim_id"] for r in rows])
@@ -471,7 +502,7 @@ def reservations_by_target(
         by_so_line.setdefault(row["so_line_id"], []).append(row)
 
     reserved_by_claim: dict[str, Decimal] = {}
-    for so_line_id, claims in by_so_line.items():
+    for claims in by_so_line.values():
         need = claims[0]["outstanding"]
         for claim in claims:
             need -= placed.get(claim["claim_id"], _ZERO)
@@ -480,10 +511,24 @@ def reservations_by_target(
         # twice. The document NUMBER first (what a person reads), the claim id as the
         # tie-break for two claims on one document.
         for claim in sorted(claims, key=lambda c: (c["po_number"] or "", c["claim_id"])):
-            take = min(capacity.get(claim["target_id"], _ZERO), need)
-            take = max(take, _ZERO)
+            take = max(min(capacity.get(claim["target_id"], _ZERO), need), _ZERO)
             reserved_by_claim[claim["claim_id"]] = take
             need -= take
+
+    # Rule 2: ration each LINE across its claimants, earliest sales order first (AC-6.1),
+    # so the claims on one document can never add up to more than the document holds.
+    by_target: dict[str, list[dict]] = {}
+    for row in rows:
+        by_target.setdefault(row["target_id"], []).append(row)
+    for target_id, claims in by_target.items():
+        left = capacity.get(target_id, _ZERO)
+        for claim in sorted(
+            claims,
+            key=lambda c: (c["so_date"] is None, c["so_date"] or date.max, c["claim_id"]),
+        ):
+            take = max(min(reserved_by_claim.get(claim["claim_id"], _ZERO), left), _ZERO)
+            reserved_by_claim[claim["claim_id"]] = take
+            left -= take
 
     wanted_targets = {r["target_id"] for r in asked}
     out: dict[str, list[dict]] = {}
