@@ -234,7 +234,20 @@ class ImportOutcome:
     # Persistence
     # ------------------------------------------------------------------
     def flush(self) -> None:
-        """Write buffered rows in ONE bulk insert on a session of our own."""
+        """Write buffered rows in ONE bulk insert on a session of our own.
+
+        Also bumps `import_jobs.processed_rows` to `self.processed` - the exact count
+        recorded so far, independent of what gets persisted below - in the SAME commit.
+        Generic on purpose (S5): every importer that buffers through this class inherits a
+        LIVE activity card for free, rather than the card sitting at 0 until the job's own
+        `complete_job` call writes the final figure. `self.processed` is a plain counter sum
+        (`_counter`), so this is exact even when row detail itself is capped by `max_rows`.
+
+        The bump is its own inner try/except, deliberately: this class's whole point is that
+        observability never breaks the import it is observing, and letting a progress-bump
+        defect (a stub session in a test, a stale `import_job_id`) abort the row insert too
+        would fail AC-A7 on a feature this file did not have before.
+        """
         if not self._buffer:
             return
         batch, self._buffer = self._buffer, []
@@ -251,6 +264,18 @@ class ImportOutcome:
             session = factory()
             _scope_session(session)
             session.bulk_insert_mappings(ImportJobRow, batch)
+            try:
+                from app.models.job import ImportJob
+
+                session.query(ImportJob).filter(ImportJob.id == self.import_job_id).update(
+                    {"processed_rows": self.processed}, synchronize_session=False
+                )
+            except Exception:
+                logger.debug(
+                    "ImportOutcome could not bump processed_rows for job %s",
+                    self.import_job_id,
+                    exc_info=True,
+                )
             session.commit()
             self._persisted += len(batch)
         except Exception:

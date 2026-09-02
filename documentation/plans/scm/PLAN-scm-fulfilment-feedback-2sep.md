@@ -82,7 +82,7 @@ Verified facts this plan stands on:
   pool included, can be added to Reserve by hand; the server's on-hand check stays the
   guard.
 - R-H. **Upload commits per document and reports live.** Minutes, not hours; the card
-  counts up while the job runs.
+  counts up while the job runs. Completed books are welcome on the SO and PO channels.
 - R-I. **Duplicate SPO rows are found by the system, not by eye.** One identity across the
   three feeds; a listing of suspected duplicates with delete.
 - R-J. **Sourced-from is pills, not prose.** One pill per component ("BRW 325", "Buy
@@ -180,9 +180,10 @@ Verified facts this plan stands on:
   the outcome rows say where it stopped.
 - `ImportOutcome.flush` bumps the job's `processed_rows` on every buffer flush (every
   importer that uses it inherits the live card).
-- Upload screen: a full-book "Completed" file is refused up front with the message that the
-  outstanding channel wants the outstanding book (every row had Qty = Transfered Qty); the
-  history channel is the place for it.
+- No refusal, no redirect (markup round 3: "none of our file uploads distinguish
+  outstanding or completed, both types are welcome, this applies to PO as well"). The
+  Outstanding SO and PO uploads accept a completed book; delivered rows settle their lines
+  through the same prefetch, and the 82,257-row completed book must complete in minutes.
 
 ### S6 - SPO duplicates (investigate on prod first)
 

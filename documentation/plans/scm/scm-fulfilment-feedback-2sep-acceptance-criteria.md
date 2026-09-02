@@ -92,8 +92,9 @@ or a rule: those live once on the Policies page.
 ## S5 upload
 
 - AC-5.1 The 22,111-row outstanding file completes in under 5 minutes on the dev machine
-  (was 18 min and counting); the 82,257-row completed book is refused before enqueue with
-  the message naming the history channel.
+  (was 18 min and counting); the 82,257-row completed book (every row delivered) completes
+  in under 10 minutes on the SO channel and settles its lines; the PO channel accepts a
+  completed book the same way.
 - AC-5.2 The activity card counts up during the run (at least every 1,000 rows), matching
   the outcomes page count.
 - AC-5.3 Killing the worker mid-run leaves documents committed up to the last batch and
