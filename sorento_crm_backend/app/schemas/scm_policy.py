@@ -226,6 +226,14 @@ class FulfilmentPriorityWrite(BaseModel):
     # code `transfer_days_negative`), the same coded-422 shape as the TBA freshness rule,
     # because it too needs the ACTIVE policy's own value to decide "unchanged".
     transfer_days: Optional[int] = None
+    # The site pool's share step settings (fulfilment feedback batch, S1, 2 Sep ruling
+    # R-B, migration 460) - the same "optional, None-means-unchanged" shape as
+    # `transfer_days` above, so an older writer that does not know either field yet
+    # cannot silently reset it while saving something else. Range (0-365 / 0-100) is
+    # checked here since, unlike the TBA freshness rule, it needs nothing from the
+    # active row - AC-1.2, 0 is a valid value for both.
+    immediate_window_days: Optional[int] = None
+    pool_share_pct: Optional[int] = None
 
     @model_validator(mode="after")
     def _check(self) -> "FulfilmentPriorityWrite":
@@ -235,6 +243,12 @@ class FulfilmentPriorityWrite(BaseModel):
         for key, value in self.demand_class_weights.items():
             if value < 0:
                 raise ValueError(f"the demand-class weight for {key!r} must be >= 0")
+        if self.immediate_window_days is not None and not (
+            0 <= self.immediate_window_days <= 365
+        ):
+            raise ValueError("immediate_window_days must be between 0 and 365")
+        if self.pool_share_pct is not None and not (0 <= self.pool_share_pct <= 100):
+            raise ValueError("pool_share_pct must be between 0 and 100")
         # The TBA freshness rule is NOT here. It has to compare the submitted date with
         # the ACTIVE policy's own, which needs the database, so it lives in the route
         # (`policies.put_fulfilment_priority`). See the note on `tba_date_from` above.
@@ -260,6 +274,10 @@ class FulfilmentPriorityPolicy(BaseModel):
     #: NOT NULL on the row (migration 451), default 0. `response_model` drops an undeclared
     #: field, so this is declared explicitly even though it travels alongside the others.
     transfer_days: int = 0
+    #: NOT NULL on the row (migration 460), defaults 30 / 50. Same "declared explicitly"
+    #: reason as `transfer_days` above.
+    immediate_window_days: int = 30
+    pool_share_pct: int = 50
     name: str
     #: False only on a database that has never activated a fulfilment-priority policy at
     #: all - every seeded/migrated database (migration 385) has one.
