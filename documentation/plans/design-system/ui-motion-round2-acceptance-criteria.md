@@ -109,8 +109,29 @@ Baseline measured on `origin/main` e1adad4d2, 2 Sep 2026.
 - **M2-01** `[vitest] [browser]` Cmd/Ctrl+Shift+K opens the command palette with no scale and
   no spring: the panel is fully opaque on the first painted frame after the keydown (DevTools
   Animations panel shows no running animation on the content node). Escape closes it the same way.
+  **Escape clause (fix round).** The panel and the scrim share one `AnimatePresence`, and
+  AnimatePresence holds a fragment mounted until every exiting child is done - so the scrim's
+  own 150ms fade governs when the DOM node goes, not the panel. The first pass left the
+  no-motion panel's `exit` equal to its `animate` (opacity 1), so it sat fully opaque over the
+  fading scrim for ~150-185ms and then popped (measured, `evidence/M2/README.md`). Fixed by
+  giving the no-motion content a real `exit: { opacity: 0 }` on a `{ duration: 0 }` transition:
+  the panel is gone on the closing frame, the scrim keeps its fade, and under
+  `prefers-reduced-motion` that scrim uses `REDUCED_MOTION_TRANSITION` instead of the 150ms
+  tween. What this AC asserts is therefore the panel's own opacity on the closing frame, not
+  the node's removal latency: the node may outlive it by the scrim's fade, by design.
 - **M2-02** `[browser]` In the attachment lightbox, ArrowRight and ArrowLeft change the slide on
   the same frame; drag and dot navigation still animate.
+  **Fix round.** The shared `Carousel` had its own `onKeyDownCapture` still calling the animated
+  `scrollNext()`/`scrollPrev()`, so the rule held only where `AttachmentPreviewModal`'s handler
+  ran; it now passes Embla's `jump` argument too, so arrow keys in ANY carousel jump. The modal
+  keeps its own handler, and the two no longer collide: the carousel's is a capture listener on
+  the carousel region, so with focus INSIDE that region the capture handler wins and stops
+  propagation, and the modal's handler never runs; with focus anywhere else in the dialog the
+  capture listener never sees the key and the modal's handler is what moves the slide. Stopping
+  propagation is the round-3 fix - the capture handler called `preventDefault` only, so both
+  fired and one press advanced two slides, which is the normal case because
+  `CarouselPrevious`/`CarouselNext` render inside the region and a click on either leaves focus
+  there.
 - **M2-03** `[vitest]` `lib/motion.ts` exports `MENU_SPRING` (visualDuration 0.2) and
   `SURFACE_SPRING_EXIT` (0.2); `surfaceTransition(reduced, 'menu')` returns `MENU_SPRING`;
   `surfaceExitTransition(reduced)` returns `SURFACE_SPRING_EXIT`; both return
@@ -118,6 +139,18 @@ Baseline measured on `origin/main` e1adad4d2, 2 Sep 2026.
 - **M2-04** `[browser]` Frame-by-frame at 4x: DropdownMenu and Popover open in ~200ms and
   close in ~200ms; Dialog and Sheet open in ~300ms and close in ~200ms. Reopening a dialog
   mid-close continues from its current scale (no jump to 0.96).
+  **Settle time is not visualDuration.** `visualDuration` is the contract, and a critically
+  damped spring keeps creeping after it: the settle time a frame-by-frame run measures (first
+  frame at opacity >= 0.99) reads ~50 to 100ms longer. The tester measured menus at ~230-275ms
+  against a 200ms preset and dialogs at ~375-420ms against 300ms, all of which PASS. Read a
+  measured value against the preset plus that tail, not against the preset alone.
+  **Portalled popovers (fix round).** `PopoverPortal` wrapped `PopoverContent` in Radix's own
+  Portal, which drops its subtree the moment `open` flips false and took the exit spring with
+  it - every `SearchableSelect`/`SearchableMultiSelect` dropdown and the 14 SCM/project-sales
+  popovers closed in ~21ms with no fade (measured; the same pair unportalled faded over
+  ~300ms). `PopoverPortal` now only sets a context and `PopoverContent` renders
+  `Portal forceMount` from inside its own `AnimatePresence`, the shape `DropdownMenuContent`
+  already used. Verify on a `SearchableSelect`, not only on a bare `Popover`.
 - **M2-05** `[vitest] [browser]` AlertDialog renders through `AnimatePresence` with the
   lightbox spring and `OVERLAY_CLASS_STATIC`; at 4x the scrim and the panel reach full opacity
   on the same frame.
@@ -127,7 +160,18 @@ Baseline measured on `origin/main` e1adad4d2, 2 Sep 2026.
 - **M2-07** `[vitest] [browser]` Exactly one `TooltipProvider` is mounted (in
   `ClientProviders.tsx`) with `delayDuration={700}` and `skipDelayDuration={300}`; `Tooltip`
   renders no provider of its own. Hovering a toolbar: the first tooltip appears after ~700ms,
-  the next sibling within 300ms appears immediately, content fades only (no `zoom-in-95`).
+  the next sibling within 300ms appears immediately, and the content is **instant in and out** -
+  no scale, and no fade either.
+  **Fix-round note (M2 round 2).** The shipped `opacity-0 transition-opacity ->
+  data-[state=delayed-open]:opacity-100` pairing was dead in both directions and has been
+  removed rather than repaired: Radix mounts the content already carrying
+  `delayed-open`/`instant-open` (its `stateAttribute` is only `closed` while the content is
+  unmounted), so the entry fade has no starting value to travel from, and Radix's Presence
+  waits on `animationend` only, so a transition-only style unmounts on the closing frame
+  before an exit fade can run. Hover sits in the frequency table's "none or `--duration-fast`
+  opacity only" band, so none is a legitimate answer. A per-instance `delayDuration` on a
+  `Tooltip` Root is allowed where the icons carry no labels: `CanvasToolbar` (15 icons) sets
+  300ms, which Radix honours without a second provider.
 - **M2-08** `[review]` `DESIGN-LANGUAGE.md` section 3 records the menu preset and the exit
   preset as shipped and removes the "follow-up work" note.
 
