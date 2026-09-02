@@ -74,6 +74,7 @@ export const attachmentsPagerQuery = {
 
 export function useAttachments(params: AttachmentsListParams) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: attachmentsListQueryKey(params),
     queryFn: () => getAttachments(params),
     staleTime: Infinity,
