@@ -250,6 +250,7 @@ export function DivergenceListClient() {
         table={table}
         recordCount={divergences.data?.total ?? 0}
         isLoading={divergences.isLoading}
+        isPlaceholderData={divergences.isPlaceholderData}
         listingKey="projects.projects.view::project-so-divergences"
         tableLayout={{ width: 'fixed', columnsResizable: true }}
       >
