@@ -311,6 +311,10 @@ def test_the_row_total_is_published_before_the_first_write(scm_app, monkeypatch)
                    _upload(week1(codes)))
 
     assert seen and seen[0] == (5, 0), seen
+    # Review round 2, S3/C3: only the FIRST call may reset `processed_rows` to 0 - every
+    # later call (apply() restates the total once closures/supersession are counted) must
+    # touch `total_rows` only, never stomping a live count back to zero mid-run.
+    assert all(p is None for _t, p in seen[1:]), seen
 
 
 def test_an_unreadable_file_fails_the_job_and_writes_nothing(scm_app, monkeypatch):

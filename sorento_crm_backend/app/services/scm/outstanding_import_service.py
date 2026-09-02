@@ -1246,12 +1246,16 @@ def _spo_plan(db: Session, read: ReadResult) -> tuple[dict, dict, dict]:
     if not by_document:
         return {}, {}, {}
 
+    # Chunked through `_in_chunks` (review round 2, S2): a shipping-order book names its
+    # own document family, so its product/warehouse code sets grow with the same file size
+    # the rest of `apply` already chunks against.
     codes = {_norm(l.item_code) for lines in by_document.values() for l in lines}
     products = {
         _norm(code): str(pid)
-        for pid, code in db.query(Product.id, Product.product_code)
-        .filter(func.upper(Product.product_code).in_(list(codes)))
-        .all()
+        for pid, code in _in_chunks(
+            db.query(Product.id, Product.product_code), func.upper(Product.product_code),
+            codes,
+        )
     }
     locations = {
         _norm(l.location)
@@ -1261,12 +1265,12 @@ def _spo_plan(db: Session, read: ReadResult) -> tuple[dict, dict, dict]:
     }
     warehouses: dict[str, str] = {}
     if locations:
-        for wid, code in (
+        rows = _in_chunks(
             db.query(Warehouse.id, Warehouse.warehouse_code)
-            .filter(func.upper(Warehouse.warehouse_code).in_(list(locations)),
-                    Warehouse.is_active.is_(True))
-            .all()
-        ):
+            .filter(Warehouse.is_active.is_(True)),
+            func.upper(Warehouse.warehouse_code), locations,
+        )
+        for wid, code in rows:
             # FIRST wins on a case collision, for the reason `po_history_service` states:
             # last would make the answer depend on the order Postgres returned rows in.
             warehouses.setdefault(_norm(code), str(wid))
@@ -1972,16 +1976,17 @@ def _supersede_crm_raised_pos(db: Session, resolved: _Resolved,
         return 0, []
 
     product_ids = {product_id for product_id, _supplier_id in pairs}
-    candidates = (
+    # Chunked (review round 2, N1): a batch's own supersession candidates are bounded by
+    # its documents, but the product set they name is not guaranteed small.
+    candidates = _in_chunks(
         db.query(PurchaseOrderLine, PurchaseOrder)
         .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
         .filter(
             PurchaseOrder.source_system == "scm_recommendation",
             PurchaseOrder.status == "active",
             PurchaseOrderLine.line_status == "open",
-            PurchaseOrderLine.product_id.in_(list(product_ids)),
-        )
-        .all()
+        ),
+        PurchaseOrderLine.product_id, product_ids,
     )
     to_close: list[tuple] = []
     for line, header in candidates:
@@ -2001,10 +2006,10 @@ def _supersede_crm_raised_pos(db: Session, resolved: _Resolved,
 
     placed_row_ids = [
         row_id for (row_id,) in
-        db.query(OrderInquiryRow.id)
-        .filter(OrderInquiryRow.po_line_id.in_(line_ids),
-                OrderInquiryRow.state == INQUIRY_PLACED)
-        .all()
+        _in_chunks(
+            db.query(OrderInquiryRow.id).filter(OrderInquiryRow.state == INQUIRY_PLACED),
+            OrderInquiryRow.po_line_id, line_ids,
+        )
     ]
     if placed_row_ids:
         from app.services.project_order_inquiry_service import (
@@ -2596,7 +2601,11 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
         doc_batch_set = set(doc_batch)
         # One bulk lookup per batch instead of one SELECT per document (review round 1b, C1):
         # `doc_batch` is at most `_DOCUMENT_BATCH` documents, so a single `IN (...)` here
-        # never approaches the bound-parameter ceiling the other preloads chunk against.
+        # never approaches the bound-parameter ceiling the other preloads chunk against. The
+        # dict comprehension's "last wins" on a repeated key is never actually ambiguous:
+        # `uq_sales_orders_company_so_number` / `uq_purchase_orders_company_po_number` make
+        # `(company_id, number)` unique, and this query already runs inside one company's
+        # scope, so at most one row can ever come back per document number.
         number_col = getattr(bind.header, bind.number)
         existing_headers = {
             getattr(h, bind.number): h
@@ -2671,10 +2680,14 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
                     ProjectOrderInquiryService,
                 )
 
-                relinked += ProjectOrderInquiryService(db).relink_to_matching_lines(
-                    [order_ids[number] for number in doc_batch],
-                    actor_user_id=actor, trigger="po_book_upload",
-                )
+                # On its OWN savepoint (review round 2), same as `_write_spo_lines` below:
+                # a DB error here must not poison this batch's own commit - the lines this
+                # batch already wrote are good regardless of whether the relink is.
+                with db.begin_nested():
+                    relinked += ProjectOrderInquiryService(db).relink_to_matching_lines(
+                        [order_ids[number] for number in doc_batch],
+                        actor_user_id=actor, trigger="po_book_upload",
+                    )
             except Exception:  # pragma: no cover - defensive, see above
                 logger.exception("re-linking placements failed for a confirmed PO upload")
 
@@ -2692,8 +2705,17 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
 
     # This job's own count, exactly like `closed_rows` above: a line closed by supersession
     # carries an outcome and no source row either, so the total has to grow with it or
-    # `processed` runs past `total_rows` on the progress bar.
+    # `processed` runs past `total_rows` on the progress bar. Published again here (review
+    # round 2, S3): every batch's own supersession outcomes were already counted into
+    # `outcome`'s running total DURING the loop (each batch's `outcome.flush(publish=True)`
+    # published `processed_rows` reflecting them), but the JOB's own `total_rows` field was
+    # still the pre-supersession figure until now - `processed_rows` could momentarily read
+    # ahead of the total the card shows beside it. `_run_scm_upload_job`'s `on_total_rows`
+    # wrapper (C3) only touches `total_rows` on a call after the first, never resetting
+    # `processed_rows` back to 0, so this is safe to call again here.
     total_rows += superseded_lines
+    if on_total_rows is not None:
+        on_total_rows(total_rows)
 
     # The three reactions below run ONCE for the whole file, after every batch has already
     # committed - NOT per batch, unlike supersession and the relink pass above (S5 review

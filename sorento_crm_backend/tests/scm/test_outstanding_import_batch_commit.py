@@ -459,6 +459,15 @@ def _cleanup_real(marker: str) -> None:
         ), {"m": f"{marker}%"})
         db.execute(text("DELETE FROM purchase_orders WHERE po_number LIKE :m"),
                   {"m": f"{marker}%"})
+        # The SO channel's own reaction (AC-D2a) files a `scm.plan_exception_batch` row
+        # naming this run's documents in `source_documents` (a JSONB array) - review round 2,
+        # S4, found 8 of these already leaked into the shared dev DB from earlier test runs
+        # that predated this delete. `PlanException.batch_id` cascades on delete, so nothing
+        # else needs a separate statement.
+        db.execute(text(
+            "DELETE FROM scm.plan_exception_batch WHERE source_documents::text LIKE "
+            "'%'||:m||'%'"
+        ), {"m": marker})
         db.execute(text("DELETE FROM products WHERE product_code LIKE :m"), {"m": f"{marker}%"})
         db.execute(text("DELETE FROM suppliers WHERE supplier_code LIKE :m"),
                   {"m": f"{marker}%"})
