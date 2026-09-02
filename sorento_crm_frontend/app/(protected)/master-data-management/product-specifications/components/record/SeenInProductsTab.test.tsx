@@ -35,7 +35,7 @@ vi.mock('../../hooks/useSpecRegistryMutations', () => ({
   }),
 }));
 
-let queryData: unknown;
+let queryData: SpecKeyProducts;
 vi.mock('../../hooks/useSpecKeyProductsQuery', () => ({
   useSpecKeyProductsQuery: () => ({
     data: queryData,
@@ -45,6 +45,7 @@ vi.mock('../../hooks/useSpecKeyProductsQuery', () => ({
 }));
 
 import { SeenInProductsTab } from './SeenInProductsTab';
+import type { SpecKeyProducts } from '../../services/productSpecService';
 
 function renderTab(props: Partial<React.ComponentProps<typeof SeenInProductsTab>> = {}) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
