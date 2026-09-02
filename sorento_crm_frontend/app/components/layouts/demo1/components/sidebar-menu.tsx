@@ -346,7 +346,9 @@ export function SidebarMenu() {
   const menuAfter = useMemo(() => effectiveMenu.slice(indexToSplit), [effectiveMenu, indexToSplit]);
 
   return (
-    <div className="kt-scrollable-y-hover flex grow shrink-0 py-5 px-5 lg:max-h-[calc(100vh-5.5rem)]">
+    // M6-02: dvh - this IS the shipped shell (demo1), so its sidebar scroll cap
+    // must not sit under mobile Safari's dynamic toolbar the way vh does.
+    <div className="kt-scrollable-y-hover flex grow shrink-0 py-5 px-5 lg:max-h-[calc(100dvh-5.5rem)]">
       <AccordionMenu
         selectedValue={pathname}
         matchPath={matchPath}

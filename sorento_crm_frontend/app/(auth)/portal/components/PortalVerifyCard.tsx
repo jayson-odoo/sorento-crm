@@ -537,7 +537,9 @@ function VerifyShell({
   children: React.ReactNode;
 }) {
   return (
-    <div className="min-h-screen max-w-md mx-auto px-4 py-6 space-y-4">
+    // M6-02: dvh - phone-facing (verify/OTP), so a `vh` shell that sits under
+    // mobile Safari's dynamic toolbar clips the card the reader is filling in.
+    <div className="min-h-dvh max-w-md mx-auto px-4 py-6 space-y-4">
       <Card>
         {title && (
           <CardHeader>

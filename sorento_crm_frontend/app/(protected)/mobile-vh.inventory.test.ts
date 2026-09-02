@@ -7,17 +7,162 @@
  * chrome the reader cannot scroll past. `dvh` (dynamic viewport height)
  * tracks the ACTUAL visible area instead.
  *
- * Three named sites were the M6 targets - `notifications-sheet.tsx`,
- * `AIAssistantBubble.tsx`, `ConversationsInbox.tsx` - and are converted. The
- * other 33 occurrences (24 files) from the 2 Sep audit are allowlisted with a
- * reason so this floor does not silently widen; each is due its own M6
- * follow-up rather than blocking this round.
+ * Three named sites were the original M6 targets - `notifications-sheet.tsx`,
+ * `AIAssistantBubble.tsx`, `ConversationsInbox.tsx` - and a fix round added
+ * three more that are shipped shell / phone-facing surfaces: `demo1`'s
+ * `sidebar-menu.tsx` (the ACTIVE shell, not the unused demo1-10 variants),
+ * `PortalVerifyCard.tsx` and `SubmissionForm.tsx` (both portal, both on a
+ * phone in the reader's hand). All six are converted.
+ *
+ * The pattern was also widened this round from the literal `100vh` to any
+ * `<digits>vh` (`max-h-[80vh]`, `max-h-[85vh]`, ...), which is the same defect
+ * at a fraction of the viewport instead of the whole thing. That widened net
+ * catches 128 more files (185 lines) with no existing entry here - each is a
+ * mechanical swap on its own, but 128 of them is not a "keep the sweep
+ * converged" fix round, so they land under ONE shared reason as follow-up
+ * #567 rather than blocking this one. The original 2 Sep audit's 21 remaining
+ * entries (after the three conversions above) keep their own per-file reason.
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, it, expect } from 'vitest';
 
-const PATTERN = /100vh|(?<![\w-])h-screen(?![\w-])|min-h-screen/;
+const PATTERN = /\d+vh|(?<![\w-])h-screen(?![\w-])|min-h-screen/;
+
+const FRACTIONAL_VH_FOLLOWUP = 'fractional vh, follow-up #567';
+
+/** The widened-pattern sweep (this round): every file it newly caught, none
+ *  of which had an entry here before. One shared reason - see the header. */
+const FRACTIONAL_VH_FILES = [
+  'app/(auth)/portal/components/AIExtractDialog.tsx',
+  'app/(auth)/portal/components/AttachmentDropzone.tsx',
+  'app/(auth)/portal/components/PortalLanding.tsx',
+  'app/(auth)/portal/ticket-draft/[token]/page.tsx',
+  'app/(protected)/complaint-management/_shared/LinkedComplaintsChip.tsx',
+  'app/(protected)/complaint-management/complaints/components/ComplaintConversationPanel.tsx',
+  'app/(protected)/dealer-kit/brochure-images/components/BrochureImageDialog.tsx',
+  'app/(protected)/dealer-kit/flyer-readings/components/DimensionReviewSection.tsx',
+  'app/(protected)/integration-management/integrations/components/IntegrationFormDialog.tsx',
+  'app/(protected)/integration-management/integrations/components/IssuedKeyDialog.tsx',
+  'app/(protected)/inventory-management/stock-transfers/components/StockTransferActions.tsx',
+  'app/(protected)/marketing-management/promotion-types/components/PromotionTypeFormModal.tsx',
+  'app/(protected)/marketing-management/promotions/components/PromotionAttachmentsTab.tsx',
+  'app/(protected)/master-data-management/certificates/components/CertificateFormDialog.tsx',
+  'app/(protected)/master-data-management/flyer-spec-proposals/components/AddProposalRowDialog.tsx',
+  'app/(protected)/master-data-management/flyer-spec-proposals/components/FlyerSpecReviewScreen.tsx',
+  'app/(protected)/master-data-management/products/components/LinkAttachmentBrowserDialog.tsx',
+  'app/(protected)/master-data-management/products/components/ProductAttachmentsTab.tsx',
+  'app/(protected)/procurement-management/packing-lists/components/SpoScheduleMatrixTable.tsx',
+  'app/(protected)/procurement-management/purchase-requests/components/PurchaseRequestConversationPanel.tsx',
+  'app/(protected)/procurement-management/stock-inquiries/components/StockInquiryConversationPanel.tsx',
+  'app/(protected)/project-sales/[projectId]/components/AmendmentCreateDialog.tsx',
+  'app/(protected)/project-sales/[projectId]/components/DeliveryScheduleUploadDialog.tsx',
+  'app/(protected)/project-sales/[projectId]/components/POIntakeAnnotationEditDialog.tsx',
+  'app/(protected)/project-sales/[projectId]/components/POIntakeDocumentViewer.tsx',
+  'app/(protected)/project-sales/[projectId]/components/POIntakeExtractionStatus.tsx',
+  'app/(protected)/project-sales/[projectId]/components/POIntakeUploadDialog.tsx',
+  'app/(protected)/project-sales/[projectId]/components/ProjectAccessPanel.tsx',
+  'app/(protected)/project-sales/[projectId]/components/ProjectDocumentsPanel.tsx',
+  'app/(protected)/project-sales/[projectId]/components/PurchaseOrderDialog.tsx',
+  'app/(protected)/project-sales/[projectId]/components/QuotationDialog.tsx',
+  'app/(protected)/project-sales/[projectId]/components/QuotationOutcomeDialog.tsx',
+  'app/(protected)/project-sales/[projectId]/components/SalesOrderAcknowledgeDialog.tsx',
+  'app/(protected)/project-sales/[projectId]/components/SalesOrderBuildDialog.tsx',
+  'app/(protected)/project-sales/[projectId]/components/SalesOrderPublishDialog.tsx',
+  'app/(protected)/project-sales/[projectId]/components/SalesOrderRegroupDialog.tsx',
+  'app/(protected)/project-sales/[projectId]/components/SampleDialog.tsx',
+  'app/(protected)/project-sales/[projectId]/components/StakeholdersPanel.tsx',
+  'app/(protected)/project-sales/[projectId]/components/TaskFormDialog.tsx',
+  'app/(protected)/project-sales/[projectId]/components/TaskHistoryDialog.tsx',
+  'app/(protected)/project-sales/[projectId]/components/TaskStatusDialog.tsx',
+  'app/(protected)/project-sales/[projectId]/delivery-schedules/components/DeliveryScheduleByDateMatrix.tsx',
+  'app/(protected)/project-sales/[projectId]/delivery-schedules/components/DeliveryScheduleConfirmDialog.tsx',
+  'app/(protected)/project-sales/[projectId]/delivery-schedules/components/DeliveryScheduleMatrix.tsx',
+  'app/(protected)/project-sales/[projectId]/quotation-documents/[documentId]/components/QuotationApprovalPanel.tsx',
+  'app/(protected)/project-sales/_shared/components/LinkDocumentDialog.tsx',
+  'app/(protected)/project-sales/_shared/components/PriceFloorDialog.tsx',
+  'app/(protected)/project-sales/divergences/components/DivergenceRowDialog.tsx',
+  'app/(protected)/project-sales/fulfilment-planning/components/BoardCellBreakdownDialog.tsx',
+  'app/(protected)/project-sales/fulfilment-planning/components/BoardRankPopover.tsx',
+  'app/(protected)/project-sales/fulfilment-planning/components/BoardTrailPopover.tsx',
+  'app/(protected)/project-sales/fulfilment-planning/components/BorrowAddDialog.tsx',
+  'app/(protected)/project-sales/fulfilment-planning/components/CellStockTable.tsx',
+  'app/(protected)/project-sales/fulfilment-planning/components/ClassificationProofPopover.tsx',
+  'app/(protected)/project-sales/fulfilment-planning/components/FulfilmentBoardMatrix.tsx',
+  'app/(protected)/project-sales/fulfilment-planning/components/PileQueueDialog.tsx',
+  'app/(protected)/project-sales/fulfilment-planning/components/StockDocumentsPanel.tsx',
+  'app/(protected)/project-sales/lead-acceptance/components/NudgeAssigneeDialog.tsx',
+  'app/(protected)/project-sales/leads/[leadId]/components/DisqualifyLeadDialog.tsx',
+  'app/(protected)/project-sales/leads/[leadId]/components/EditLeadInformantDialog.tsx',
+  'app/(protected)/project-sales/leads/[leadId]/components/QualifyLeadDialog.tsx',
+  'app/(protected)/project-sales/leads/components/AssignLeadDialog.tsx',
+  'app/(protected)/project-sales/leads/components/DeclineLeadDialog.tsx',
+  'app/(protected)/project-sales/leads/components/LeadWizardDialog.tsx',
+  'app/(protected)/project-sales/order-inquiries/components/OrderInquiryDocumentDialog.tsx',
+  'app/(protected)/project-sales/order-inquiries/components/OrderInquiryMatrixCellDrilldown.tsx',
+  'app/(protected)/project-sales/order-inquiries/components/OrderInquiryScheduleMatrix.tsx',
+  'app/(protected)/project-sales/parties/components/PartyFormDialog.tsx',
+  'app/(protected)/project-sales/pipeline/components/RegisterProjectDialog.tsx',
+  'app/(protected)/project-sales/setup/components/ProjectTemplateDialog.tsx',
+  'app/(protected)/project-sales/setup/components/ProjectTypeDialog.tsx',
+  'app/(protected)/project-sales/setup/components/TemplateChecklistPanel.tsx',
+  'app/(protected)/project-sales/stock-debt/components/StockDebtCellDialog.tsx',
+  'app/(protected)/resource-management/attachment-directories/components/BulkAttachmentAccessLevelsDialog.tsx',
+  'app/(protected)/resource-management/attachment-directories/components/MoveToDialog.tsx',
+  'app/(protected)/resource-management/attachments/components/AttachmentDetailModal.tsx',
+  'app/(protected)/resource-management/attachments/components/AttachmentUploadDialog.tsx',
+  'app/(protected)/resource-management/attachments/components/FilePreviewModal.tsx',
+  'app/(protected)/resource-management/attachments/components/ManageFieldLinksDialog.tsx',
+  'app/(protected)/scm/components/PlanRowDialog.tsx',
+  'app/(protected)/scm/loading-plan/components/ContainerRequestRowDialog.tsx',
+  'app/(protected)/scm/loading-plan/components/ContainerRequestScheduleMatrix.tsx',
+  'app/(protected)/scm/loading-plan/components/PlanContainerDialog.tsx',
+  'app/(protected)/scm/loading-plan/components/SendRequestDialog.tsx',
+  'app/(protected)/scm/proforma-invoices/components/ProformaUploadDialog.tsx',
+  'app/(protected)/scm/reorder/components/HistoryUploadDialog.tsx',
+  'app/(protected)/scm/reorder/components/OutstandingUploadDialog.tsx',
+  'app/(protected)/scm/reorder/components/PlanOrderQtyLedger.tsx',
+  'app/(protected)/scm/reorder/components/PlanRowDialogs.tsx',
+  'app/(protected)/scm/reorder/components/PlanTrendPopover.tsx',
+  'app/(protected)/sla-management/_shared/FormSkipAction.tsx',
+  'app/(protected)/sla-management/conversation-sla-tracking/components/ConversationSLATrackingDetail.tsx',
+  'app/(protected)/sla-management/conversation-sla-tracking/components/SlaTrackingChatRecords.tsx',
+  'app/(protected)/sla-management/conversation-sla-tracking/components/TicketConversationPanel.tsx',
+  'app/(protected)/sla-management/conversations/components/ConversationThreadPane.tsx',
+  'app/(protected)/sla-management/message-snippets/components/MessageSnippetFormDialog.tsx',
+  'app/(protected)/system-management/app-store/components/ModuleBundlesAdmin.tsx',
+  'app/(protected)/system-management/automation/components/AutomationForm.tsx',
+  'app/(protected)/system-management/email-outbox/components/EmailOutboxList.tsx',
+  'app/(protected)/system-management/outgoing-mails/components/OutgoingMailsList.tsx',
+  'app/(protected)/system-management/status-graphs/components/StatusDeleteDialog.tsx',
+  'app/(protected)/system-management/status-graphs/components/StatusFormDialog.tsx',
+  'app/(protected)/system-management/status-graphs/components/TransitionFormDialog.tsx',
+  'app/(protected)/user-management/access-agents/components/AccessAgentFormModal.tsx',
+  'app/(protected)/user-management/access-agents/components/ContactFieldAccessDialog.tsx',
+  'app/(protected)/user-management/contact-access-types/components/ContactAccessTypesAdmin.tsx',
+  'app/(protected)/user-management/contacts/[id]/components/ContactAttachmentTypesSection.tsx',
+  'app/(protected)/user-management/contacts/[id]/components/ContactMediaAccessSection.tsx',
+  'app/(protected)/user-management/onboarding-requests/[id]/components/OnboardingRequestDetail.tsx',
+  'app/(protected)/user-management/onboarding-requests/components/NewOnboardingRequestDialog.tsx',
+  'app/(protected)/user-management/roles/components/role-edit-dialog.tsx',
+  'app/(protected)/user-management/users/[id]/components/user-profile-edit-dialog.tsx',
+  'app/components/common/AccessDenied.tsx',
+  'app/components/layouts/demo1/components/quick-access-block.tsx',
+  'components/common/AttachmentPreviewModal.tsx',
+  'components/common/BulkUpdateDialog/BulkUpdateDialog.tsx',
+  'components/common/LinkAttachmentBrowserDialog.tsx',
+  'components/common/RespondChatList.tsx',
+  'components/common/RevisionSnapshotDialog.tsx',
+  'components/common/TruncatedTextCell.tsx',
+  'components/list/ListQueryExportDialog.tsx',
+  'components/list/ListQueryFilterDialog.tsx',
+  'components/list/OrderFilterFieldSelect.tsx',
+  'components/my-downloads/EntityDownloadsButton.tsx',
+  'components/template/TemplateUploadDialog.tsx',
+  'components/ui/data-grid-column-visibility.tsx',
+  'components/ui/data-grid-list-toolbar.tsx',
+  'components/ui/drawer.tsx',
+];
 
 /** file -> why it is still on `vh`/`-screen`, not yet converted. */
 const ALLOWLIST = new Map<string, string>([
@@ -27,7 +172,6 @@ const ALLOWLIST = new Map<string, string>([
   ['app/components/layouts/demo4/components/sidebar-secondary.tsx', 'M6 follow-up: unused demo shell'],
   ['app/components/layouts/demo6/components/sidebar-menu.tsx', 'M6 follow-up: unused demo shell'],
   ['app/components/layouts/demo8/components/sidebar-menu.tsx', 'M6 follow-up: unused demo shell'],
-  ['app/components/layouts/demo1/components/sidebar-menu.tsx', 'M6 follow-up: the active shell, not an M6 target'],
   [
     'app/(protected)/forms-management/forms/[id]/builder/components/FormBuilder.tsx',
     'M6 follow-up: desktop-only builder canvas',
@@ -53,8 +197,6 @@ const ALLOWLIST = new Map<string, string>([
     'M6 follow-up: internal admin sheet',
   ],
   ['app/(public)/c/[company]/[slug]/page.tsx', 'M6 follow-up: public catalogue landing'],
-  ['app/(auth)/portal/components/PortalVerifyCard.tsx', 'M6 follow-up: portal auth screen'],
-  ['app/(auth)/portal/components/SubmissionForm.tsx', 'M6 follow-up: portal form shell'],
   ['app/(auth)/view/stock-inquiry/page.tsx', 'M6 follow-up: emailed read-only view'],
   ['app/(auth)/view/complaint/page.tsx', 'M6 follow-up: emailed read-only view'],
   ['app/(auth)/view/request/page.tsx', 'M6 follow-up: emailed read-only view'],
@@ -66,12 +208,16 @@ const ALLOWLIST = new Map<string, string>([
     'M6 follow-up: one of the 16 zero-importer motion components M1 deletes',
   ],
   ['components/upload-activity/UploadActivityDrawer.tsx', 'M6 follow-up: desktop-oriented drawer'],
+  ...FRACTIONAL_VH_FILES.map((file): [string, string] => [file, FRACTIONAL_VH_FOLLOWUP]),
 ]);
 
 const CONVERTED_M6_SITES = [
   'app/components/partials/topbar/notifications-sheet.tsx',
   'app/components/common/AIAssistantBubble.tsx',
   'app/(protected)/sla-management/conversations/components/ConversationsInbox.tsx',
+  'app/components/layouts/demo1/components/sidebar-menu.tsx',
+  'app/(auth)/portal/components/PortalVerifyCard.tsx',
+  'app/(auth)/portal/components/SubmissionForm.tsx',
 ];
 
 function sourceFiles(): string[] {
@@ -94,7 +240,7 @@ function sourceFiles(): string[] {
 }
 
 describe('fixed viewport-height sweep (M6-02 / M6-03)', () => {
-  it('every 100vh / h-screen / min-h-screen site is either converted or allowlisted with a reason', () => {
+  it('every fractional-or-whole vh / h-screen / min-h-screen site is either converted or allowlisted with a reason', () => {
     const offenders: string[] = [];
     for (const file of sourceFiles()) {
       if (ALLOWLIST.has(file)) continue;
@@ -104,7 +250,7 @@ describe('fixed viewport-height sweep (M6-02 / M6-03)', () => {
     expect(offenders).toEqual([]);
   });
 
-  it('the three named M6 sites use dvh, not vh', () => {
+  it('the six named M6 sites use dvh, not vh', () => {
     for (const file of CONVERTED_M6_SITES) {
       const src = fs.readFileSync(file, 'utf8');
       expect(src, file).not.toMatch(PATTERN);
@@ -112,13 +258,13 @@ describe('fixed viewport-height sweep (M6-02 / M6-03)', () => {
     }
   });
 
-  it('the allowlist matches the 2 Sep audit baseline (33 lines, 24 files)', () => {
+  it('the allowlist matches its baseline (222 lines, 149 files)', () => {
     let matchingLines = 0;
     for (const file of ALLOWLIST.keys()) {
       const lines = fs.readFileSync(file, 'utf8').split('\n');
       matchingLines += lines.filter((line) => PATTERN.test(line)).length;
     }
-    expect(ALLOWLIST.size).toBe(24);
-    expect(matchingLines).toBe(33);
+    expect(ALLOWLIST.size).toBe(149);
+    expect(matchingLines).toBe(222);
   });
 });
