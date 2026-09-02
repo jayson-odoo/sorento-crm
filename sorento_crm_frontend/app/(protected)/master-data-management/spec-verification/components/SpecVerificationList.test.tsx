@@ -18,7 +18,30 @@ import {
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 vi.mock('sonner', () => ({
-  toast: { success: vi.fn(), warning: vi.fn(), error: vi.fn() },
+  toast: { success: vi.fn(), warning: vi.fn(), error: vi.fn(), dismiss: vi.fn() },
+}));
+
+/**
+ * Every countdown toast Unverify raised, in order, with the Cancel it was given -
+ * the same capture `useDeferredRowAction.test.tsx` uses, since a row's countdown
+ * lives in a toast (S6-07) that jsdom never actually paints.
+ */
+const raisedToasts: { id: string; subject: string; onCancel: () => void }[] = [];
+const dismissDeferredToast = vi.fn();
+vi.mock('@/components/common/deferredToast', () => ({
+  deferredToast: (input: {
+    pending: { id: string };
+    subject: string;
+    onCancel: () => void;
+  }) => {
+    raisedToasts.push({
+      id: input.pending.id,
+      subject: input.subject,
+      onCancel: input.onCancel,
+    });
+    return `pending-action-${input.pending.id}`;
+  },
+  dismissDeferredToast: (...a: unknown[]) => dismissDeferredToast(...a),
 }));
 
 // `DataGrid` renders skeletons - and therefore no rows - until this answers, so the
@@ -77,7 +100,20 @@ vi.mock('../services/specVerificationService', () => ({
   unverifySpecBulk: (...a: unknown[]) => unverifySpecBulk(...a),
 }));
 
+// Unverify (row and bulk) runs through the deferred-action engine now (D7, D8,
+// AC-F.1) - the same three routes every other deferred delete/withdraw goes
+// through, mocked the same way `PromotionTypesList.test.tsx` mocks them.
+const createPendingAction = vi.fn();
+const cancelPendingAction = vi.fn();
+const getCurrentPendingAction = vi.fn();
+vi.mock('@/services/pendingActionService', () => ({
+  createPendingAction: (...a: unknown[]) => createPendingAction(...a),
+  cancelPendingAction: (...a: unknown[]) => cancelPendingAction(...a),
+  getCurrentPendingAction: (...a: unknown[]) => getCurrentPendingAction(...a),
+}));
+
 import SpecVerificationList from './SpecVerificationList';
+import { pendingEntityStore } from '@/lib/pending-entity-store';
 import type {
   SpecVerificationRow,
   VerificationState,
@@ -127,15 +163,23 @@ function row(
   };
 }
 
+/** Returns the render result plus the QueryClient, so a test can drive a commit
+ * directly (`client.refetchQueries`) rather than waiting out the real 500ms poll. */
 function renderList() {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  return render(
+  const utils = render(
     <QueryClientProvider client={client}>
       <SpecVerificationList />
     </QueryClientProvider>,
   );
+  return { ...utils, client };
+}
+
+/** A naive-UTC timestamp `offsetMs` from now, the way the backend writes them. */
+function serverTime(offsetMs: number): string {
+  return new Date(Date.now() + offsetMs).toISOString().replace(/\.\d+Z$/, '');
 }
 
 beforeEach(() => {
@@ -144,6 +188,34 @@ beforeEach(() => {
   nav.params = new URLSearchParams();
   usePermissions.mockReturnValue({
     permissionSet: new Set(['master_data.products.edit']),
+  });
+  // Module-level state is per TAB, and each test is a fresh tab: a row dimmed by
+  // one test would otherwise still read dimmed in the next.
+  pendingEntityStore.reset();
+  raisedToasts.length = 0;
+  createPendingAction.mockResolvedValue({
+    id: 'pa-1',
+    action_key: 'spec_verification.unverify',
+    entity_type: 'spec_verification',
+    entity_id: 'WC300',
+    commit_at: serverTime(5_000),
+    window_seconds: 5,
+  });
+  cancelPendingAction.mockResolvedValue(undefined);
+  // Mirrors what a real server answers with while the window is still open (the
+  // same row `createPendingAction` just parked) - a bare `pending: null` here would
+  // read as an already-settled action the moment the row's own poll asks, which
+  // no server actually says while the countdown is still running.
+  getCurrentPendingAction.mockResolvedValue({
+    pending: {
+      id: 'pa-1',
+      action_key: 'spec_verification.unverify',
+      entity_type: 'spec_verification',
+      entity_id: 'WC300',
+      commit_at: serverTime(5_000),
+      window_seconds: 5,
+    },
+    last_outcome: null,
   });
 });
 
@@ -445,6 +517,30 @@ describe('data state', () => {
     expect(screen.queryByText(/Material/)).not.toBeInTheDocument();
   });
 
+  it('the Coverage cell shows a warning pill when open_exceptions is set, and nothing when it is zero (AC-F.4)', async () => {
+    mockWorklist([
+      row('WC100', 'unverified', { open_exceptions: 0 }),
+      row('WC200', 'unverified', { open_exceptions: 2 }),
+    ]);
+    renderList();
+    await waitFor(() => expect(screen.getByText('WC100')).toBeInTheDocument());
+
+    const rowWC100 = screen.getByText('WC100').closest('tr') as HTMLElement;
+    const rowWC200 = screen.getByText('WC200').closest('tr') as HTMLElement;
+
+    expect(within(rowWC100).queryByText(/need a human/)).not.toBeInTheDocument();
+    expect(within(rowWC200).getByText('2 need a human')).toBeInTheDocument();
+
+    // The hover card carries the same count - the payload has no reasons to list -
+    // portaled outside the row, so it is a SECOND instance of the same sentence.
+    fireEvent.focus(
+      within(rowWC200).getByRole('button', { name: /^Coverage:/ }),
+    );
+    await waitFor(() =>
+      expect(screen.getAllByText('2 need a human').length).toBeGreaterThanOrEqual(2),
+    );
+  });
+
   it('the row action does not itself navigate (stops propagation)', async () => {
     mockWorklist();
     renderList();
@@ -531,58 +627,89 @@ describe('data state', () => {
     }
   });
 
-  it('a row-level Unverify is confirmed first, with a count of one, and only then sent', async () => {
-    // PRINCIPLES: confirm before every destructive OR detach action, never one-click.
-    // Verify is not destructive and stays one-click; withdrawing a stamp is not.
+  it('a row-level Unverify parks a deferred action, with no dialog in the way (AC-F.1)', async () => {
+    // D7, D8: Unverify no longer confirms - the first press IS the action, and the
+    // countdown travels to a toast while the row dims (S6-07, a list row has
+    // nowhere to put an inline one). Verify is unaffected (it never confirmed
+    // row-level either).
     mockWorklist();
     renderList();
     await waitFor(() => expect(screen.getByText('WC300')).toBeInTheDocument());
-    unverifySpecBulk.mockResolvedValue({
-      results: [
-        {
-          product_code: 'WC300',
-          outcome: 'unverified',
-          verification: row('WC300', 'unverified').verification,
-        },
-      ],
-      counts: { unverified: 1, no_change: 0 },
-    });
 
     const rowWC300 = screen.getByText('WC300').closest('tr') as HTMLElement;
     fireEvent.click(within(rowWC300).getByRole('button', { name: 'Unverify' }));
 
     await waitFor(() =>
-      expect(screen.getByText('Confirm unverify')).toBeInTheDocument(),
+      expect(createPendingAction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          actionKey: 'spec_verification.unverify',
+          entityType: 'spec_verification',
+          entityId: 'WC300',
+        }),
+      ),
     );
-    expect(
-      screen.getByText(/Withdraw the verification on 1 product code\?/),
-    ).toBeInTheDocument();
+    expect(screen.queryByText('Confirm unverify')).not.toBeInTheDocument();
     expect(unverifySpecBulk).not.toHaveBeenCalled();
-
-    const dialog = screen.getByRole('alertdialog');
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Unverify' }));
-
+    await waitFor(() => expect(raisedToasts).toHaveLength(1));
+    expect(raisedToasts[0].subject).toBe('WC300');
     await waitFor(() =>
-      expect(unverifySpecBulk).toHaveBeenCalledWith(['WC300']),
+      expect(rowWC300).toHaveAttribute('data-pending', 'true'),
     );
   });
 
-  it('cancelling the row-level Unverify confirmation sends nothing', async () => {
+  it('the row-level Unverify countdown can be cancelled from its toast, and nothing is sent', async () => {
     mockWorklist();
     renderList();
     await waitFor(() => expect(screen.getByText('WC300')).toBeInTheDocument());
 
     const rowWC300 = screen.getByText('WC300').closest('tr') as HTMLElement;
     fireEvent.click(within(rowWC300).getByRole('button', { name: 'Unverify' }));
-    await waitFor(() =>
-      expect(screen.getByText('Confirm unverify')).toBeInTheDocument(),
-    );
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(raisedToasts).toHaveLength(1));
 
+    raisedToasts[0].onCancel();
+
+    await waitFor(() => expect(cancelPendingAction).toHaveBeenCalledWith('pa-1'));
     await waitFor(() =>
-      expect(screen.queryByText('Confirm unverify')).not.toBeInTheDocument(),
+      expect(rowWC300).not.toHaveAttribute('data-pending', 'true'),
     );
     expect(unverifySpecBulk).not.toHaveBeenCalled();
+  });
+
+  it('a committed row-level Unverify refetches the worklist (AC-F.2)', async () => {
+    // The server withdraws the stamp itself (`spec_verification.unverify`, a
+    // registered record action, `record_actions.py`) - this proves the row's own
+    // pending-action watch learns the commit and the list catches up.
+    mockWorklist();
+    const { client } = renderList();
+    await waitFor(() => expect(screen.getByText('WC300')).toBeInTheDocument());
+
+    const rowWC300 = screen.getByText('WC300').closest('tr') as HTMLElement;
+    fireEvent.click(within(rowWC300).getByRole('button', { name: 'Unverify' }));
+    await waitFor(() =>
+      expect(rowWC300).toHaveAttribute('data-pending', 'true'),
+    );
+
+    getSpecVerificationWorklist.mockClear();
+    getCurrentPendingAction.mockResolvedValue({
+      pending: null,
+      last_outcome: {
+        id: 'pa-1',
+        action_key: 'spec_verification.unverify',
+        status: 'committed',
+        error_text: null,
+        ended_at: serverTime(0),
+      },
+    });
+    await client.refetchQueries({ queryKey: ['pending-action-current'] });
+
+    // The row un-dims once the window has closed, and the worklist is asked for
+    // again so the row's own pill catches up.
+    await waitFor(() =>
+      expect(rowWC300).not.toHaveAttribute('data-pending', 'true'),
+    );
+    await waitFor(() =>
+      expect(getSpecVerificationWorklist).toHaveBeenCalled(),
+    );
   });
 
   it('changing page clears the selection, so a bulk action can only ever send on-page codes', async () => {
