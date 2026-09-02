@@ -412,273 +412,273 @@ export function DataGridListToolbar<TData extends object>({
   return (
     <>
       <div data-slot="data-grid-list-toolbar" className="flex w-full flex-col gap-2 py-5">
-      {/* `flex-wrap`: at a narrow desktop width the two clusters used to push each
-          other past the viewport edge instead of stacking, so Quick filters and
-          Group by went out of reach. */}
-      <div className="flex w-full flex-col flex-wrap gap-3 sm:flex-row sm:items-center sm:justify-between">
-        {/* LEFT cluster - replaced by the bulk strip while rows are selected (D2/H). */}
-        {bulkStripActive ? (
-          <div className="flex flex-wrap items-center gap-2">
-            {/* Where the box already sits when nothing is selected, so it does not move
-                under the cursor the moment a row is ticked. */}
-            {keepSearchWhileSelected ? searchSlot : null}
-            <Badge variant="secondary" className="h-8 gap-1 px-2.5 text-sm">
-              {allRecordsActive && selectAllMatching
-                ? `All ${selectAllMatching.total} selected`
-                : `${stripSelectionCount} selected`}
-            </Badge>
-            {bulkActionsSlot == null && exportButtonEl}
-            {/* Bulk destructive actions operate on the loaded selection only; hide
-                them once the user opts into the full filtered set to avoid a
-                "delete all matching but only loaded rows go" footgun. */}
-            {bulkActionsSlot != null
-              ? typeof bulkActionsSlot === 'function'
-                ? bulkActionsSlot({ openExport: isListQueryExport ? () => setExportOpen(true) : openExport })
-                : bulkActionsSlot
-              : !allRecordsActive &&
-                bulkActions.map((action) => <ActionButton key={action.key} action={action} />)}
-            <Button
-              variant="ghost"
-              size="sm"
-              className="gap-1.5 text-muted-foreground"
-              onClick={clearSelection}
-            >
-              <X className="size-4" />
-              Clear
-            </Button>
-          </div>
-        ) : (
-          // `grow` (flex-grow, basis auto), not the default `0 1 auto`: without it a
-          // wrapping flex item is sized at its own basis rather than at the free space
-          // beside it, so Columns and Refresh dropped onto a second row at 1280 with
-          // ~300px of empty toolbar to their right (AC-D13). Growing costs nothing when
-          // the row is genuinely full - the item still shrinks to min-content and wraps.
-          <div className="flex grow flex-wrap items-center gap-2">
-            {/*
-              The slot's OWN children have to wrap, not just sit in a wrapping row.
-              Promotions and SPO Allocations both hand the toolbar a nested flex -
-              search box plus "Quick filters" / "Group by" - with no wrap of its
-              own, so at 375 it ran past the viewport edge and took the page
-              sideways with it. `[&>*]` reaches whatever the list put here, and is
-              inert on a child that is not a flex row.
-            */}
-            <div
-              data-slot="data-grid-list-toolbar-search"
-              className="flex min-w-0 flex-wrap items-center gap-2 [&>*]:min-w-0 [&>*]:flex-wrap"
-            >
-              {searchSlot}
+        {/* `flex-wrap`: at a narrow desktop width the two clusters used to push each
+            other past the viewport edge instead of stacking, so Quick filters and
+            Group by went out of reach. */}
+        <div className="flex w-full flex-col flex-wrap gap-3 sm:flex-row sm:items-center sm:justify-between">
+          {/* LEFT cluster - replaced by the bulk strip while rows are selected (D2/H). */}
+          {bulkStripActive ? (
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Where the box already sits when nothing is selected, so it does not move
+                  under the cursor the moment a row is ticked. */}
+              {keepSearchWhileSelected ? searchSlot : null}
+              <Badge variant="secondary" className="h-8 gap-1 px-2.5 text-sm">
+                {allRecordsActive && selectAllMatching
+                  ? `All ${selectAllMatching.total} selected`
+                  : `${stripSelectionCount} selected`}
+              </Badge>
+              {bulkActionsSlot == null && exportButtonEl}
+              {/* Bulk destructive actions operate on the loaded selection only; hide
+                  them once the user opts into the full filtered set to avoid a
+                  "delete all matching but only loaded rows go" footgun. */}
+              {bulkActionsSlot != null
+                ? typeof bulkActionsSlot === 'function'
+                  ? bulkActionsSlot({ openExport: isListQueryExport ? () => setExportOpen(true) : openExport })
+                  : bulkActionsSlot
+                : !allRecordsActive &&
+                  bulkActions.map((action) => <ActionButton key={action.key} action={action} />)}
+              <Button
+                variant="ghost"
+                size="sm"
+                className="gap-1.5 text-muted-foreground"
+                onClick={clearSelection}
+              >
+                <X className="size-4" />
+                Clear
+              </Button>
             </div>
-            {filters ? (
-              filters.kind === 'listQuery' ? (
-                <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setFilterOpen(true)}>
-                  <Filter className="size-4" />
-                  Filters
-                  {filters.advancedFilter ? (
-                    <Badge variant="secondary" className="ms-0.5 px-1 py-0 text-[10px]">On</Badge>
-                  ) : null}
-                </Button>
-              ) : (
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="outline" size="sm" className="gap-1.5">
-                      <Filter className="size-4" />
-                      Filters
-                      {filters.active ? (
-                        <Badge variant="secondary" className="ms-0.5 px-1 py-0 text-[10px]">
-                          {filters.activeCount ?? 'On'}
-                        </Badge>
-                      ) : null}
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start" className="w-72 p-3">
-                    {filters.content}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              )
-            ) : null}
-            {showColumns ? (
-              <DataGridColumnVisibility
-                table={table}
-                trigger={
-                  <Button variant="outline" size="sm" className="gap-1.5">
-                    <Columns3 className="size-4" />
-                    Columns
+          ) : (
+            // `grow` (flex-grow, basis auto), not the default `0 1 auto`: without it a
+            // wrapping flex item is sized at its own basis rather than at the free space
+            // beside it, so Columns and Refresh dropped onto a second row at 1280 with
+            // ~300px of empty toolbar to their right (AC-D13). Growing costs nothing when
+            // the row is genuinely full - the item still shrinks to min-content and wraps.
+            <div className="flex grow flex-wrap items-center gap-2">
+              {/*
+                The slot's OWN children have to wrap, not just sit in a wrapping row.
+                Promotions and SPO Allocations both hand the toolbar a nested flex -
+                search box plus "Quick filters" / "Group by" - with no wrap of its
+                own, so at 375 it ran past the viewport edge and took the page
+                sideways with it. `[&>*]` reaches whatever the list put here, and is
+                inert on a child that is not a flex row.
+              */}
+              <div
+                data-slot="data-grid-list-toolbar-search"
+                className="flex min-w-0 flex-wrap items-center gap-2 [&>*]:min-w-0 [&>*]:flex-wrap"
+              >
+                {searchSlot}
+              </div>
+              {filters ? (
+                filters.kind === 'listQuery' ? (
+                  <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setFilterOpen(true)}>
+                    <Filter className="size-4" />
+                    Filters
+                    {filters.advancedFilter ? (
+                      <Badge variant="secondary" className="ms-0.5 px-1 py-0 text-[10px]">On</Badge>
+                    ) : null}
                   </Button>
-                }
-              />
+                ) : (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="outline" size="sm" className="gap-1.5">
+                        <Filter className="size-4" />
+                        Filters
+                        {filters.active ? (
+                          <Badge variant="secondary" className="ms-0.5 px-1 py-0 text-[10px]">
+                            {filters.activeCount ?? 'On'}
+                          </Badge>
+                        ) : null}
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="start" className="w-72 p-3">
+                      {filters.content}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                )
+              ) : null}
+              {showColumns ? (
+                <DataGridColumnVisibility
+                  table={table}
+                  trigger={
+                    <Button variant="outline" size="sm" className="gap-1.5">
+                      <Columns3 className="size-4" />
+                      Columns
+                    </Button>
+                  }
+                />
+              ) : null}
+              {exportButtonEl}
+              {onRefresh ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  mode="icon"
+                  title="Refresh list"
+                  onClick={() => void onRefresh()}
+                  disabled={isRefreshing}
+                  aria-label="Refresh list"
+                >
+                  <RefreshCw className={`size-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+                </Button>
+              ) : null}
+              {leftActions}
+            </div>
+          )}
+
+          {/* RIGHT cluster - secondary overflow + primary CTA (always present). */}
+          <div className="flex flex-wrap items-center gap-2">
+            {secondaryActions.length === 1 ? (
+              <ActionButton action={secondaryActions[0]} />
+            ) : secondaryActions.length >= 2 ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="sm" className="gap-1.5">
+                    <MoreHorizontal className="size-4" />
+                    Actions
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  {secondaryActions.map((action) => {
+                    const Icon = action.icon;
+                    const item = (
+                      <DropdownMenuItem
+                        key={action.key}
+                        disabled={action.disabled}
+                        // Not wired at all while disabled. Radix only suppresses its own
+                        // `onSelect` for a disabled item; a plain `onClick` still fires, and
+                        // the ONLY thing stopping it is the `data-disabled:pointer-events-none`
+                        // class - so a disabled action was one missing stylesheet away from
+                        // running. The single-button path next door is a real `<button
+                        // disabled>`, which the DOM itself refuses to click.
+                        onClick={action.disabled ? undefined : action.onClick}
+                        className={action.destructive ? 'text-destructive' : undefined}
+                        asChild={Boolean(action.href && !action.disabled)}
+                        data-guide-target={action.href && !action.disabled ? undefined : action.dataGuideTarget}
+                        // The collapsed-into-"Actions" path has no room for the single-button
+                        // path's `Tooltip` wrapper, so a disabled item's reason travels as a
+                        // native `title` instead - still a tooltip, just the browser's own.
+                        title={action.disabled ? action.disabledReason : undefined}
+                      >
+                        {action.href && !action.disabled ? (
+                          <Link href={action.href} data-guide-target={action.dataGuideTarget}>
+                            {Icon ? <Icon className="size-4" /> : null}
+                            {action.label}
+                          </Link>
+                        ) : (
+                          <Fragment>
+                            {Icon ? <Icon className="size-4" /> : null}
+                            {action.label}
+                          </Fragment>
+                        )}
+                      </DropdownMenuItem>
+                    );
+                    return item;
+                  })}
+                </DropdownMenuContent>
+              </DropdownMenu>
             ) : null}
-            {exportButtonEl}
-            {onRefresh ? (
+            {typeof primaryAction === 'function'
+              ? primaryAction({ openExport: isListQueryExport ? () => setExportOpen(true) : openExport })
+              : primaryAction}
+          </div>
+        </div>
+
+        {/* Active-filter chip (AC-C1). Its own row, so it neither competes with the
+            toolbar buttons for width at 375px nor disappears behind the bulk strip. */}
+        {activeFilterSummary ? (
+          <div className="flex w-full flex-wrap items-center gap-2">
+            <span className="inline-flex h-8 max-w-full items-center gap-1.5 rounded-full border border-border bg-muted/50 ps-3 pe-1 text-xs font-medium">
+              <Filter className="size-3.5 shrink-0 text-muted-foreground" />
+              <span className="truncate" title={activeFilterSummary.label}>
+                {activeFilterSummary.label}
+              </span>
               <Button
                 type="button"
-                variant="outline"
+                variant="ghost"
                 size="sm"
                 mode="icon"
-                title="Refresh list"
-                onClick={() => void onRefresh()}
-                disabled={isRefreshing}
-                aria-label="Refresh list"
+                shape="circle"
+                className="size-6 shrink-0 p-0"
+                onClick={activeFilterSummary.onClear}
+                aria-label={`Clear filter: ${activeFilterSummary.label}`}
+                title="Clear filter"
               >
-                <RefreshCw className={`size-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+                <X className="size-3.5" />
               </Button>
-            ) : null}
-            {leftActions}
-          </div>
-        )}
-
-        {/* RIGHT cluster - secondary overflow + primary CTA (always present). */}
-        <div className="flex flex-wrap items-center gap-2">
-          {secondaryActions.length === 1 ? (
-            <ActionButton action={secondaryActions[0]} />
-          ) : secondaryActions.length >= 2 ? (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="sm" className="gap-1.5">
-                  <MoreHorizontal className="size-4" />
-                  Actions
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                {secondaryActions.map((action) => {
-                  const Icon = action.icon;
-                  const item = (
-                    <DropdownMenuItem
-                      key={action.key}
-                      disabled={action.disabled}
-                      // Not wired at all while disabled. Radix only suppresses its own
-                      // `onSelect` for a disabled item; a plain `onClick` still fires, and
-                      // the ONLY thing stopping it is the `data-disabled:pointer-events-none`
-                      // class - so a disabled action was one missing stylesheet away from
-                      // running. The single-button path next door is a real `<button
-                      // disabled>`, which the DOM itself refuses to click.
-                      onClick={action.disabled ? undefined : action.onClick}
-                      className={action.destructive ? 'text-destructive' : undefined}
-                      asChild={Boolean(action.href && !action.disabled)}
-                      data-guide-target={action.href && !action.disabled ? undefined : action.dataGuideTarget}
-                      // The collapsed-into-"Actions" path has no room for the single-button
-                      // path's `Tooltip` wrapper, so a disabled item's reason travels as a
-                      // native `title` instead - still a tooltip, just the browser's own.
-                      title={action.disabled ? action.disabledReason : undefined}
-                    >
-                      {action.href && !action.disabled ? (
-                        <Link href={action.href} data-guide-target={action.dataGuideTarget}>
-                          {Icon ? <Icon className="size-4" /> : null}
-                          {action.label}
-                        </Link>
-                      ) : (
-                        <Fragment>
-                          {Icon ? <Icon className="size-4" /> : null}
-                          {action.label}
-                        </Fragment>
-                      )}
-                    </DropdownMenuItem>
-                  );
-                  return item;
-                })}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          ) : null}
-          {typeof primaryAction === 'function'
-            ? primaryAction({ openExport: isListQueryExport ? () => setExportOpen(true) : openExport })
-            : primaryAction}
-        </div>
-      </div>
-
-      {/* Active-filter chip (AC-C1). Its own row, so it neither competes with the
-          toolbar buttons for width at 375px nor disappears behind the bulk strip. */}
-      {activeFilterSummary ? (
-        <div className="flex w-full flex-wrap items-center gap-2">
-          <span className="inline-flex h-8 max-w-full items-center gap-1.5 rounded-full border border-border bg-muted/50 ps-3 pe-1 text-xs font-medium">
-            <Filter className="size-3.5 shrink-0 text-muted-foreground" />
-            <span className="truncate" title={activeFilterSummary.label}>
-              {activeFilterSummary.label}
             </span>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              mode="icon"
-              shape="circle"
-              className="size-6 shrink-0 p-0"
-              onClick={activeFilterSummary.onClear}
-              aria-label={`Clear filter: ${activeFilterSummary.label}`}
-              title="Clear filter"
-            >
-              <X className="size-3.5" />
-            </Button>
-          </span>
-        </div>
-      ) : null}
+          </div>
+        ) : null}
 
-      {/* "Select all N records" banner (Odoo pattern, D4/F). */}
-      {showSelectAllBanner && selectAllMatching ? (
-        <div className="flex flex-wrap items-center justify-center gap-2 rounded-md border border-dashed bg-muted/40 px-3 py-1.5 text-sm">
-          {allRecordsActive ? (
-            <>
-              <span>
-                All <span className="font-medium">{selectAllMatching.total}</span> records matching the current filters are selected.
-              </span>
-              <Button variant="link" size="sm" className="h-auto p-0" onClick={clearSelection}>
-                Clear selection
-              </Button>
-            </>
-          ) : (
-            <>
-              <span>
-                All <span className="font-medium">{selectAllMatching.loadedCount}</span> on this page selected.
-              </span>
-              <Button variant="link" size="sm" className="h-auto p-0" onClick={selectAllMatching.onSelectAll}>
-                Select all {selectAllMatching.total} records
-              </Button>
-            </>
-          )}
-        </div>
-      ) : null}
+        {/* "Select all N records" banner (Odoo pattern, D4/F). */}
+        {showSelectAllBanner && selectAllMatching ? (
+          <div className="flex flex-wrap items-center justify-center gap-2 rounded-md border border-dashed bg-muted/40 px-3 py-1.5 text-sm">
+            {allRecordsActive ? (
+              <>
+                <span>
+                  All <span className="font-medium">{selectAllMatching.total}</span> records matching the current filters are selected.
+                </span>
+                <Button variant="link" size="sm" className="h-auto p-0" onClick={clearSelection}>
+                  Clear selection
+                </Button>
+              </>
+            ) : (
+              <>
+                <span>
+                  All <span className="font-medium">{selectAllMatching.loadedCount}</span> on this page selected.
+                </span>
+                <Button variant="link" size="sm" className="h-auto p-0" onClick={selectAllMatching.onSelectAll}>
+                  Select all {selectAllMatching.total} records
+                </Button>
+              </>
+            )}
+          </div>
+        ) : null}
       </div>
 
       {/* Column-selection export modal - pre-ticked to visible columns (D4).
           Only for selection (client) export; listQuery uses its own dialog below. */}
       {!isListQueryExport && (
-      <Dialog open={exportOpen} onOpenChange={setExportOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Export</DialogTitle>
-            <DialogDescription>
-              Choose the columns to include. Exporting {exportCountLabel} row(s).
-            </DialogDescription>
-          </DialogHeader>
-          <div className="max-h-[50vh] space-y-2 overflow-y-auto rounded-md border p-2">
-            {exportableColumns.map((col) => {
-              const checked = selectedColumnIds.has(col.id);
-              return (
-                <label
-                  key={col.id}
-                  className="flex cursor-pointer items-center gap-2 rounded-sm px-1 py-1.5 hover:bg-muted/60"
-                >
-                  <Checkbox
-                    checked={checked}
-                    onCheckedChange={() =>
-                      setSelectedColumnIds((prev) => {
-                        const next = new Set(prev);
-                        if (next.has(col.id)) next.delete(col.id);
-                        else next.add(col.id);
-                        return next;
-                      })
-                    }
-                  />
-                  <span className="text-sm">{columnLabel(col.id)}</span>
-                </label>
-              );
-            })}
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setExportOpen(false)}>
-              Cancel
-            </Button>
-            <Button onClick={runExport}>Download Excel</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        <Dialog open={exportOpen} onOpenChange={setExportOpen}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Export</DialogTitle>
+              <DialogDescription>
+                Choose the columns to include. Exporting {exportCountLabel} row(s).
+              </DialogDescription>
+            </DialogHeader>
+            <div className="max-h-[50vh] space-y-2 overflow-y-auto rounded-md border p-2">
+              {exportableColumns.map((col) => {
+                const checked = selectedColumnIds.has(col.id);
+                return (
+                  <label
+                    key={col.id}
+                    className="flex cursor-pointer items-center gap-2 rounded-sm px-1 py-1.5 hover:bg-muted/60"
+                  >
+                    <Checkbox
+                      checked={checked}
+                      onCheckedChange={() =>
+                        setSelectedColumnIds((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(col.id)) next.delete(col.id);
+                          else next.add(col.id);
+                          return next;
+                        })
+                      }
+                    />
+                    <span className="text-sm">{columnLabel(col.id)}</span>
+                  </label>
+                );
+              })}
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setExportOpen(false)}>
+                Cancel
+              </Button>
+              <Button onClick={runExport}>Download Excel</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       )}
 
       {/* ListQuery server export dialog (filtered set, column selection). */}

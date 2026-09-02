@@ -17,6 +17,49 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './tool
 const root = path.resolve(__dirname, '..', '..');
 const read = (rel: string) => fs.readFileSync(path.join(root, rel), 'utf8');
 
+/** Roots scanned for stray tooltip timing. */
+const ROOTS = ['app', 'components'];
+
+/**
+ * Where a `delayDuration=` prop is legitimate:
+ * - `components/ClientProviders.tsx` - the one app-wide provider (asserted above).
+ * - `components/ui/tooltip.tsx` - the provider's own definition and forwarding.
+ * - this file - it asserts on those two as source text.
+ */
+const TIMING_OWNERS = [
+  'components/ClientProviders.tsx',
+  'components/ui/tooltip.tsx',
+  'components/ui/tooltip.provider.test.tsx',
+];
+
+/**
+ * The one dense-toolbar carve-out named in DESIGN-LANGUAGE section 3: 15
+ * unlabelled icons in a row make the label the affordance, so its Roots pass
+ * `delayDuration={300}` - on the Root, which Radix reads per instance, NOT via
+ * a second provider.
+ */
+const DENSE_TOOLBARS = [
+  'app/(protected)/dealer-kit/tag-templates/components/CanvasToolbar.tsx',
+];
+
+/** Every `.ts`/`.tsx` under the scanned roots, this file included. */
+function sourceFiles(): string[] {
+  const out: string[] = [];
+  const walk = (dir: string) => {
+    for (const entry of fs.readdirSync(path.join(root, dir), { withFileTypes: true })) {
+      const rel = `${dir}/${entry.name}`;
+      if (entry.isDirectory()) {
+        if (entry.name === 'node_modules' || entry.name === '.next') continue;
+        walk(rel);
+      } else if (entry.name.endsWith('.ts') || entry.name.endsWith('.tsx')) {
+        out.push(rel);
+      }
+    }
+  };
+  for (const dir of ROOTS) walk(dir);
+  return out;
+}
+
 describe('Tooltip is a bare Root (M2-07)', () => {
   it('tooltip.tsx does not mount its own TooltipProvider inside Tooltip', () => {
     const source = read('components/ui/tooltip.tsx');
@@ -32,6 +75,23 @@ describe('Tooltip is a bare Root (M2-07)', () => {
     expect(matches).toHaveLength(1);
     expect(source).toContain('delayDuration={700}');
     expect(source).toContain('skipDelayDuration={300}');
+  });
+
+  /**
+   * M2-07 fix round - the shared rhythm holds across the whole tree.
+   *
+   * The provider count above only speaks for ClientProviders.tsx. What actually
+   * breaks the 700ms-first/300ms-sibling grouping is any OTHER file setting its
+   * own tooltip timing, whether through a second provider or a per-Root
+   * override - so this enumerates every `delayDuration=` in the source tree and
+   * allows exactly one: the dense icon toolbar the design language names.
+   */
+  it('no file outside the named carve-out sets its own tooltip delay', () => {
+    const offenders = sourceFiles().filter(
+      (rel) => !TIMING_OWNERS.includes(rel) && read(rel).includes('delayDuration='),
+    );
+
+    expect(offenders.sort()).toEqual(DENSE_TOOLBARS);
   });
 
   /**

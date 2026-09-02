@@ -145,9 +145,10 @@ function DialogContent({
         // animate gives AnimatePresence nothing to run, and since the scrim
         // beside it still fades for 150ms, the fragment stays mounted for that
         // whole window with the panel at full opacity - then pops. The tester
-        // measured exactly that (evidence/M2/README.md, M2-01 Escape:
-        // content alive ~150-185ms at opacity 1). Zero duration removes the
-        // panel on the closing frame while the scrim fades out behind it.
+        // measured exactly that (content alive ~150-185ms at opacity 1; see
+        // documentation/plans/design-system/evidence/M2/README.md, M2-01
+        // Escape). Zero duration removes the panel on the closing frame while
+        // the scrim fades out behind it.
         initial: { opacity: 1, ...centerOffset },
         animate: { opacity: 1, ...centerOffset },
         exit: { opacity: 0, ...centerOffset },

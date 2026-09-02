@@ -119,7 +119,7 @@ describe('Carousel arrow keys do not double-fire (M2-02 fix round)', () => {
   it('a key the carousel ignores still reaches the panel handler', () => {
     const onKeyDown = vi.fn();
     render(
-      <div onKeyDown={onKeyDown}>
+      <div onKeyDown={onKeyDown} role="dialog">
         <Harness />
       </div>,
     );

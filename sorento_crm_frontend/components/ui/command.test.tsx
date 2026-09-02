@@ -65,10 +65,10 @@ describe('CommandDialog motion={false} (M2-01)', () => {
  * animate out; AnimatePresence still holds the whole fragment mounted for the
  * scrim's own 150ms fade, so the palette sat fully opaque over a fading scrim
  * and then popped. The tester measured the content node alive ~150-185ms after
- * Escape at full opacity (evidence/M2/README.md, M2-01 Escape). A zero-duration
- * `opacity: 0` exit removes the panel on the frame the shortcut fires - which is
- * what "keyboard-triggered surfaces never animate" asks for - while the scrim
- * keeps its own fade.
+ * Escape at full opacity (documentation/plans/design-system/evidence/M2/README.md,
+ * M2-01 Escape). A zero-duration `opacity: 0` exit removes the panel on the
+ * frame the shortcut fires - which is what "keyboard-triggered surfaces never
+ * animate" asks for - while the scrim keeps its own fade.
  */
 describe('CommandDialog motion={false} exits on the same frame (M2-01)', () => {
   it('drives the content to opacity 0 the moment it closes, not at the end of the scrim fade', async () => {

@@ -9,7 +9,8 @@
  * `SearchableMultiSelect` dropdown and the 14 SCM/project-sales popovers wrap
  * `PopoverContent` in `PopoverPortal`, and the tester measured all of them
  * closing in ~21ms with no fade at all, against ~300ms for the same pair used
- * without the portal (evidence/M2/README.md, M2-04 Popover close).
+ * without the portal (documentation/plans/design-system/evidence/M2/README.md,
+ * M2-04 Popover close).
  */
 import React from 'react';
 import { describe, it, expect, beforeAll } from 'vitest';
