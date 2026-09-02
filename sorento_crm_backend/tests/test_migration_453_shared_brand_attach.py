@@ -109,16 +109,29 @@ def test_down_revision_is_the_main_head_at_branch_time():
     assert module.down_revision == "452_transfer_days"
 
 
-def test_the_migration_graph_still_reports_a_single_head():
-    """Not pinned to 453 by id (review of PR #471): 454 landed on top of it in the
-    same review round, exactly the kind of one-more-migration event this test has to
-    survive without editing - `test_alembic_revision_ids.py::test_migration_graph_has_a_
-    single_head` already asserts the graph-wide invariant this way, and per-migration
-    files that pinned a specific id (`test_migration_359_...`, `test_migration_367_...`)
-    used `len(heads) == 1` for the same reason. A second head is a merge nobody asked
-    for; it is not about WHICH revision happens to be newest today."""
-    heads = _script_directory().get_heads()
-    assert len(heads) == 1, f"expected a single head, found {heads}"
+def test_452_has_exactly_one_child():
+    """Review finding S6 - the graph-wide "exactly one alembic head" invariant already
+    lives in `tests/test_alembic_revision_ids.py::test_migration_graph_has_a_single_head`
+    (no hardcoded revision id, so it never goes stale). Pinning THIS file's own check to
+    a specific downstream head (`heads == ["456_reorder_perf_quickwins"]`, an earlier
+    form of this test) was wrong twice over: it went red the moment anything else
+    merged past 453 - guaranteed on main, since S1/S4/S5 of
+    PLAN-scm-reorder-oi-feedback-1sep.md all stack their own migration onto 453 too -
+    and it fought every one of those PRs over the same line (a conflict with #493).
+
+    What THIS migration actually needs guarded, permanently, is narrower and never
+    goes stale: 453 is the ONE AND ONLY revision ever built directly on top of 452 -
+    i.e. no sibling PR ALSO picked 452 as its `down_revision`, which is exactly the
+    dual-mint collision this whole migration-renumbering saga (454 minted three times,
+    then 455 minted twice) was about, one level up the chain."""
+    script = _script_directory()
+    children_of_452 = sorted(
+        r.revision for r in script.walk_revisions() if r.down_revision == "452_transfer_days"
+    )
+    assert children_of_452 == [REVISION_ID], (
+        f"452_transfer_days must have exactly one child ({REVISION_ID}); "
+        f"found {children_of_452}"
+    )
 
 
 # --------------------------------------------------------------------------- #

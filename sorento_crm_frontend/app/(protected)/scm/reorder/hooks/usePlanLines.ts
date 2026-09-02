@@ -33,13 +33,16 @@ import {
 import { poolWarehouseIdOf } from '../lib/planLine';
 import {
   DEFAULT_PRICE_MODE,
+  applyDecisionClears,
+  applyDecisionWrites,
   planTotals,
+  productIdMap,
   serverDecisionsToMap,
   toRecordPlanRowDecisionPayload,
   type PlanDecision,
   type PlanDecisionMap,
 } from '../lib/planDecisions';
-import type { PlanRowPriceMode } from '../types/decisions.types';
+import type { PlanRowDecisionListResponse, PlanRowPriceMode } from '../types/decisions.types';
 import type { ProductEconomics } from '../lib/productHealth';
 import {
   cheaperAlternative,
@@ -253,6 +256,17 @@ export function usePlanLines(runId: string | null, enabled = true) {
     [planRowDecisions.data, lines, cover.data],
   );
 
+  /** `recommendation_id -> product_id`, built once off this run's flat line list - what
+   *  `applyDecisionWrites`/`applyDecisionClears` need to recompute `decided_count` by
+   *  DISTINCT PRODUCT (R14) rather than per write/clear call (S3 perf review fix: an
+   *  increment-per-call double-counted a product decided at two warehouses on a
+   *  location-grain, ungrouped run). */
+  const productOfMap = useMemo(() => productIdMap(lines), [lines]);
+  const productOf = useCallback(
+    (recId: string) => productOfMap.get(recId),
+    [productOfMap],
+  );
+
   // Read inside `chooseRow`, whose identity must not change with every decision fetch.
   const decisionsRef = useRef(decisions);
   decisionsRef.current = decisions;
@@ -299,7 +313,17 @@ export function usePlanLines(runId: string | null, enabled = true) {
       const results = await Promise.allSettled(
         recIds.map((id) => recordPlanRowDecision(id, payload)),
       );
-      await qc.invalidateQueries({ queryKey: planRowDecisionsKey(runId) });
+      // S3 perf, AC-3.5: fold the rows the server actually wrote straight into the
+      // cache rather than invalidating and refetching the run's WHOLE decisions list -
+      // one row's decision is a handful of writes, not a reason to re-page a run that
+      // can hold thousands.
+      const written = results
+        .filter((r): r is PromiseFulfilledResult<Awaited<ReturnType<typeof recordPlanRowDecision>>> =>
+          r.status === 'fulfilled')
+        .map((r) => r.value);
+      qc.setQueryData<PlanRowDecisionListResponse>(planRowDecisionsKey(runId), (old) =>
+        applyDecisionWrites(old, written, productOf),
+      );
       const failures = results.filter(
         (r): r is PromiseRejectedResult => r.status === 'rejected',
       );
@@ -312,7 +336,7 @@ export function usePlanLines(runId: string | null, enabled = true) {
           : detail,
       );
     },
-    [qc, runId],
+    [qc, runId, productOf],
   );
 
   /**
@@ -355,7 +379,14 @@ export function usePlanLines(runId: string | null, enabled = true) {
         ? line.__group.members.map((m) => m.rec.id)
         : [line.rec.id];
       const results = await Promise.allSettled(recIds.map((id) => clearPlanRowDecision(id)));
-      await qc.invalidateQueries({ queryKey: planRowDecisionsKey(runId) });
+      // S3 perf, AC-3.5: same targeted update as `decide` - only recs the server
+      // actually cleared leave the cache, never a refetch of the whole list. A
+      // rejected clear (already-undecided is idempotent, so a real failure is rare)
+      // simply leaves that rec's cached row as-is.
+      const cleared = recIds.filter((id, i) => results[i].status === 'fulfilled');
+      qc.setQueryData<PlanRowDecisionListResponse>(planRowDecisionsKey(runId), (old) =>
+        applyDecisionClears(old, cleared, productOf),
+      );
       const failures = results.filter(
         (r): r is PromiseRejectedResult => r.status === 'rejected',
       );
@@ -368,7 +399,7 @@ export function usePlanLines(runId: string | null, enabled = true) {
           : detail,
       );
     },
-    [qc, runId],
+    [qc, runId, productOf],
   );
 
   const totals = useMemo(

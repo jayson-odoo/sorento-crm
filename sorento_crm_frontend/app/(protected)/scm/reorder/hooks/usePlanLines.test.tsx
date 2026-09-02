@@ -696,4 +696,87 @@ describe('usePlanLines - S16 row decisions (decide/clear)', () => {
     await waitFor(() => expect(result.current.decidedCount).toBe(4));
     expect(result.current.totalDecidableCount).toBe(9);
   });
+
+  it('deciding the SAME product at two DIFFERENT warehouses (location-grain, ungrouped) moves decidedCount by one, not two', async () => {
+    // Review finding B1: two separate decide() calls (never a grouped fan-out - these
+    // are two ordinary rows, not one product-grain group's members) that happen to
+    // name the same product. The server counts DISTINCT product; the client-side
+    // cache patch must agree, or the header reads "412 of 200 decided".
+    //
+    // Restored explicitly: an earlier test in this block overrides
+    // `getPlanRowDecisions` with a fixed `mockResolvedValue`, which `mockClear()` in
+    // `beforeEach` does not undo - this test must not inherit that override.
+    getPlanRowDecisions.mockReset().mockImplementation(async () => ({
+      data: planRowDecisionsStore,
+      decided_count: planRowDecisionsStore.length,
+      total_count: planRowDecisionsStore.length,
+    }));
+
+    function buyRec(over: Record<string, unknown> = {}) {
+      return {
+        id: 'r1', type: 'buy', sku: 'SKU-1', product_name: 'Product one',
+        abc_class: null, xyz_class: null, warehouse_code: 'BRW', warehouse_name: 'Butterworth',
+        product_id: 'p1', warehouse_id: 'wh-BRW', is_network: false, allocation: null,
+        order_qty: 10, recommended_qty: 10, reorder_point: 10, min_qty: null, max_qty: null,
+        order_up_to: 20, net_position: -10, days_of_cover: null, reason: 'reorder_point',
+        reason_label: '', confidence: 'low', sample_size: 0,
+        supplier: { supplier_code: 'S1', supplier_name: 'Acme', unit_cost: 10,
+                    lead_time_days: 30, composite_score: 0, is_primary: true },
+        alternatives: [], is_exception: false, disposition_action: null, transfer_flag: null,
+        forecast_daily_demand: 1, lead_time_days: 30, lead_time_source: 'default',
+        safety_stock: 0, safety_stock_method: null, safety_stock_fallback: null,
+        service_level: null, safety_days: 0, review_days: 30, demand_window_days: 90,
+        moq: null, order_multiple: null, policy_type: 'reorder_point', supplier_selection: 'primary',
+        unit_cost: 10, cash_impact: 100, rank: 1, rank_score: 0, funding_status: null,
+        days_to_stockout: null, rank_factors: [], segment: 'project',
+        on_hand: 0, incoming_spo: 0, outstanding_po: 0, outstanding_sales: 10,
+        reorder_level: null, master_reorder_level: null,
+        ...over,
+      };
+    }
+    // Both recs share product_id 'p1' (the default) - the product-grain grouping
+    // never applies here, this is the plain location-grain grid.
+    const recA = buyRec();
+    const recB = buyRec({ id: 'r2', warehouse_code: 'PJ', warehouse_id: 'wh-PJ', rank: 2 });
+    getBuyRecommendationsForCash.mockResolvedValue([recA, recB]);
+
+    const { result } = renderHook(() => usePlanLines('run-1', true), { wrapper });
+    await waitFor(() => expect(result.current.lines).toHaveLength(2));
+    // The INITIAL `getPlanRowDecisions` fetch must settle before any decide()/clear()
+    // call: react-query's own fetch-success handler overwrites the cache with
+    // whatever it fetched regardless of an intervening `setQueryData`, so an
+    // in-flight initial fetch resolving AFTER an optimistic patch would clobber it -
+    // a real flake this test hit once, unrelated to the behaviour under test.
+    await waitFor(() => expect(getPlanRowDecisions).toHaveBeenCalled());
+    expect(result.current.decidedCount).toBe(0);
+
+    await act(async () => {
+      await result.current.decide({ id: 'r1', rec: recA } as never, { buy: 5 });
+    });
+    await waitFor(() => expect(result.current.decidedCount).toBe(1));
+
+    await act(async () => {
+      await result.current.decide({ id: 'r2', rec: recB } as never, { buy: 7 });
+    });
+    // The bug: an increment-per-call implementation reports 2 here. `waitFor`, not a
+    // bare `expect`, the same as every other assertion in this test - the cache
+    // notification `setQueryData` triggers lands as its own microtask outside the
+    // `act()` callback's own awaited scope, one tick after `decide()`'s promise
+    // itself resolves (the existing tests in this file all read the same way,
+    // e.g. "an ungrouped row records exactly one recommendation").
+    await waitFor(() => expect(result.current.decidedCount).toBe(1));
+
+    // Clearing ONE of the two still-decided-elsewhere product's rows keeps the count
+    // at 1 (the product is still decided via the surviving row).
+    await act(async () => {
+      await result.current.clear({ id: 'r1', rec: recA } as never);
+    });
+    await waitFor(() => expect(result.current.decidedCount).toBe(1));
+
+    // Clearing the LAST row of the product drops it to 0.
+    await act(async () => {
+      await result.current.clear({ id: 'r2', rec: recB } as never);
+    });
+    await waitFor(() => expect(result.current.decidedCount).toBe(0));
+  });
 });

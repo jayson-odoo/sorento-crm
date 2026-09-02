@@ -705,6 +705,19 @@ class PurchaseOrderLine(Base, CompanyScopedMixin):
         Index("ix_purchase_order_lines_product_id", "product_id"),
         Index("ix_purchase_order_lines_warehouse_id", "warehouse_id"),
         Index("ix_purchase_order_lines_product_warehouse_status", "product_id", "warehouse_id", "line_status"),
+        # S3 perf quick wins (AC-3.1, migration 456_reorder_perf_quickwins) - every
+        # decision-list / plans-list read resolves a recommendation's draft/active PO
+        # line by this pair (`decision_service._po_for_rec` / `_pos_for_recs` /
+        # `_refresh_run_counts`). Declared on the model, not just created by the
+        # migration's raw DDL: CI's `bootstrap_env` builds its schema from
+        # `Base.metadata.create_all` and stamps alembic to head WITHOUT running any
+        # migration body (`.github/workflows/deploy.yml` - "alembic upgrade head
+        # cannot build this schema from zero"), so an index that exists only as a
+        # migration's `op.execute("CREATE INDEX ...")` is invisible there - found by
+        # `tests/scm/test_s3_reorder_perf_quickwins.py::TestIndexUsage::
+        # test_the_index_exists` failing in CI while passing against the hand-migrated
+        # shared dev DB.
+        Index("ix_purchase_order_lines_source_ref_system", "source_ref", "source_system"),
     )
 
 

@@ -439,6 +439,18 @@ def _execute_run_scoped(db: Session, run: ReorderRun, _caller_scope) -> dict:
         run.status = "completed"
         run.finished_at = datetime.utcnow()
         run.run_log = {"stage": _STAGES[3], **counts}
+        # S3 perf quick wins (AC-3.3): the plans list's Products/Decided/Confirmed
+        # columns read these stored counts instead of joining `purchase_order_lines`
+        # per page - a fresh run has decided none of them yet, but its planned figure
+        # (by DISTINCT product, R14, the same rec types the decision layer decides on)
+        # is known the moment generation finishes, off the rows already in hand.
+        from app.services.scm import decision_service as dsvc
+        run.planned_count = len({
+            str(r.product_id) for r in recs
+            if r.rec_type in dsvc._PLAN_ROW_DECIDABLE_TYPES
+        })
+        run.decided_count = 0
+        run.confirmed_count = 0
         db.add(run)
         db.commit()
 
@@ -661,8 +673,11 @@ def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
                -- The site pool this location draws on (its own id when it heads one).
                -- R15: the last purchase, the SPO book and the PO book are all read at the
                -- POOL, never at a project bin, so the pool has to travel with the row that
-               -- freezes them.
+               -- freezes them. The pool's CODE travels alongside (S3 perf, AC-3.4) so a
+               -- product/network-grain group's basis (`_plan_basis`) can state its own
+               -- pool without a per-row read-time lookup.
                COALESCE(w.pool_warehouse_id, w.id) AS pool_warehouse_id,
+               COALESCE(pw.warehouse_code, w.warehouse_code) AS pool_warehouse_code,
                {on_hand_expr} AS quantity_on_hand,
                np.on_order, {committed_col}, {net_position_col},
                -- Front planning 5.3: the SAME committed figure, split by demand channel.
@@ -690,6 +705,7 @@ def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
         FROM scm.net_position_v np
         JOIN products p ON p.id = np.product_id
         JOIN warehouses w ON w.id = np.warehouse_id
+        LEFT JOIN warehouses pw ON pw.id = w.pool_warehouse_id
         {cv_join}
         {product_admit_join}
         LEFT JOIN scm.po_ordered_v po
@@ -2328,6 +2344,12 @@ def _plan_basis(group: str, scope: str, prows: list[dict], cells: list[dict],
             "warehouse_id": wid,
             "warehouse_code": r.get("warehouse_code"),
             "warehouse_name": r.get("warehouse_name"),
+            # The location's own pool (S3 perf, AC-3.4) - `_build_rec` reads these back
+            # off this same list to precompute the GROUP's pool at generation time
+            # (`_group_pool_from_basis`), the one-time cost the read-path LATERAL used to
+            # pay on every request.
+            "pool_warehouse_id": _str_or_none(r.get("pool_warehouse_id")),
+            "pool_warehouse_code": r.get("pool_warehouse_code"),
             "project_need": _r(c.get("project_need")) or 0.0,
             "retail_need": _r(c.get("retail_need")) or 0.0,
             # Shared facts of the product-location, carrying no channel dimension.
@@ -2365,6 +2387,35 @@ def _plan_basis(group: str, scope: str, prows: list[dict], cells: list[dict],
 # ===========================================================================
 # recommendation builder (freezes inputs)
 # ===========================================================================
+
+def _group_pool_from_basis(plan_basis: Optional[dict]) -> tuple[Optional[str], Optional[str]]:
+    """The ONE pool every location a product/network-grain group was sized over shares,
+    or ``(None, None)`` when they do not all share one (S3 perf, AC-3.4) - the same "name
+    none rather than one of several" rule ``list_recommendations``'s old per-row
+    read-time ``LEFT JOIN LATERAL`` applied by unnesting this same
+    ``plan_basis.locations`` list on every request. Computed here, once, at generation
+    time instead, off the ``pool_warehouse_id``/``pool_warehouse_code`` `_plan_basis`
+    already carries per location."""
+    locations = (plan_basis or {}).get("locations") or []
+    pool_ids = {loc.get("pool_warehouse_id") for loc in locations if loc.get("pool_warehouse_id")}
+    if len(pool_ids) != 1:
+        return None, None
+    pool_id = next(iter(pool_ids))
+    pool_code = next(
+        (loc.get("pool_warehouse_code") for loc in locations
+         if loc.get("pool_warehouse_id") == pool_id and loc.get("pool_warehouse_code")),
+        None,
+    )
+    # Nit (review): in practice this never returns an id with no code - every
+    # location's own `pool_warehouse_code` is populated by `_plan_basis` off the same
+    # `COALESCE(pw.warehouse_code, w.warehouse_code)` the main planning query already
+    # carries, so a consensus `pool_id` always has at least one location naming its
+    # code too. Left as `(pool_id, None)` rather than folded to `(None, None)` should
+    # that assumption ever break on real data - a caller failing to resolve a code for
+    # a real pool id is a data gap worth surfacing, not one worth hiding behind a
+    # second null.
+    return pool_id, pool_code
+
 
 def _build_rec(run_id: str, rec_type: str, row: dict, c: dict, *,
                warehouse_id: Optional[str], order_qty: Optional[float],
@@ -2479,12 +2530,23 @@ def _build_rec(run_id: str, rec_type: str, row: dict, c: dict, *,
         "xyz_class": row["xyz_class"],
         "category_code": row.get("category_code"),
     }
+    # S3 perf quick wins (AC-3.4): a location-grain row already carries its own pool off
+    # the main planning query; a product/network-grain row (no single `warehouse_id`)
+    # reads its group's consensus pool back off the `plan_basis` just built above -
+    # precomputed here so `list_recommendations` never re-derives it per row.
+    if warehouse_id:
+        pool_wh_id = _str_or_none(row.get("pool_warehouse_id"))
+        pool_wh_code = row.get("pool_warehouse_code")
+    else:
+        pool_wh_id, pool_wh_code = _group_pool_from_basis(plan_basis)
     return ReorderRecommendation(
         id=str(uuid.uuid4()),
         run_id=run_id,
         rec_type=rec_type,
         product_id=str(row["product_id"]),
         warehouse_id=warehouse_id,
+        pool_warehouse_id=pool_wh_id,
+        pool_warehouse_code=pool_wh_code,
         supplier_id=(chosen["supplier_id"] if chosen else None),
         net_position=_r(c.get("net")),
         reorder_point=_r(c.get("rop")),
