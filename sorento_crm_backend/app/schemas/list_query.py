@@ -179,6 +179,11 @@ class UserListColumnConfigPayload(BaseModel):
     # The page's own filter-shape version, so a page can detect and discard the blobs
     # its own previous shape wrote.
     filtersVersion: Optional[int] = None
+    # S4 (PLAN-scm-reorder-oi-feedback-1sep.md, AC-4.4): the saved view (segment) THIS
+    # user wants auto-applied on open, distinct from a listing's PUBLISHED default
+    # (`saved_views.is_default`, everyone's). Opaque like `filters` - `SavedViewsMenu`
+    # is the only reader/writer, and a listing key with no saved views never touches it.
+    defaultSavedViewId: Optional[str] = None
 
 
 class UserListColumnConfigResponse(BaseModel):

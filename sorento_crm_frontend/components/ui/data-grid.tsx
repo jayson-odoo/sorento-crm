@@ -107,6 +107,15 @@ export interface DataGridProps<TData extends object> {
    * entirely - the right call when the columns are data rather than a fixed set.
    */
   listingKey?: string | null;
+  /**
+   * B1 (PR #489 review round): true while a caller is driving `columnOrder`/
+   * `columnVisibility` itself rather than the reader - a saved segment applying
+   * (`components/list/SavedViewsMenu.tsx`) is the first user. Without it the
+   * segment's own columns flow straight into the reader's PERSONAL saved layout,
+   * and a published default segment (which auto-applies, AC-4.4) clobbers every
+   * reader's layout the moment the page opens.
+   */
+  suppressPersist?: boolean;
   tableLayout?: {
     dense?: boolean;
     cellBorder?: boolean;
@@ -189,7 +198,13 @@ function DataGridProvider<TData extends object>({
   );
 }
 
-function DataGrid<TData extends object>({ children, table, listingKey, ...props }: DataGridProps<TData>) {
+function DataGrid<TData extends object>({
+  children,
+  table,
+  listingKey,
+  suppressPersist,
+  ...props
+}: DataGridProps<TData>) {
   const pathname = usePathname();
   const defaultProps: Partial<DataGridProps<TData>> = {
     loadingMode: 'skeleton',
@@ -279,6 +294,7 @@ function DataGrid<TData extends object>({ children, table, listingKey, ...props 
   const { resetToDefaults, isLoading: isPrefsLoading } = useListingColumnPreferences({
     table,
     listingKey: effectiveListingKey,
+    suppressPersist,
   });
 
   return (

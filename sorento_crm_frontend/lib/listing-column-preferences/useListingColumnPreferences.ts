@@ -60,10 +60,20 @@ export function useListingColumnPreferences<TData extends object>({
   table,
   listingKey,
   debounceMs = 800,
+  suppressPersist = false,
 }: {
   table: Table<TData>;
   listingKey?: string | null;
   debounceMs?: number;
+  /**
+   * B1 (PR #489 review round): true while something OTHER than the reader's own
+   * hands is driving `columnOrder`/`columnVisibility` - a saved segment applying,
+   * for instance (`components/list/SavedViewsMenu.tsx`). Without this, a segment's
+   * columns flow through this hook's own save effect and overwrite the reader's
+   * personal layout the moment it applies - worse, a PUBLISHED default segment then
+   * clobbers EVERY reader's layout on page open, since it auto-applies (AC-4.4).
+   */
+  suppressPersist?: boolean;
 }) {
   const key = (listingKey || '').trim();
   const queryClient = useQueryClient();
@@ -275,6 +285,7 @@ export function useListingColumnPreferences<TData extends object>({
     if (!key) return;
     if (isFetching) return;
     if (!appliedRef.current) return;
+    if (suppressPersist) return;
     if (skipSaveOnceRef.current) {
       skipSaveOnceRef.current = false;
       return;
@@ -317,7 +328,7 @@ export function useListingColumnPreferences<TData extends object>({
       columnSizing: filteredSizing,
     };
     debouncedSaveRef.current(payload);
-  }, [key, orderFingerprint, visibilityFingerprint, sizingFingerprint, isFetching, table]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [key, orderFingerprint, visibilityFingerprint, sizingFingerprint, isFetching, table, suppressPersist]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const resetMutation = useMutation({
     mutationFn: () => resetUserListColumnConfig(key),
