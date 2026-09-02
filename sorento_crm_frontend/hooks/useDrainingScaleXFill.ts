@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useState, type CSSProperties } from 'react';
 
 /**
  * The ONE shared mechanism every fill bar counting down against a server
@@ -15,6 +15,19 @@ import { useEffect, useRef, useState, type CSSProperties } from 'react';
  * the starting scale with no transition property set, or there is nothing
  * for the second frame's flip to `scaleX(0)` to animate FROM.
  *
+ * **The arm carries no guard on purpose, and that is the whole design.**
+ * `next.config.mjs` sets `reactStrictMode: true`, so React mounts every effect,
+ * cleans it up and mounts it AGAIN before the browser paints. The first version
+ * of this hook remembered the armed target in a ref that the cleanup did not
+ * reset: pass one set the ref and queued the frames, the synthetic cleanup
+ * cancelled them, and pass two saw the ref already equal to the target and did
+ * nothing - so the bar sat frozen at `scaleX(1)` for the entire window on both
+ * surfaces (measured, `evidence/M3/README.md` M3-01). The effect now does the
+ * same work unconditionally every time it runs and publishes the result as
+ * STATE, so a replayed mount simply re-arms; `armed.target === targetMs` is a
+ * match on the value rendered, not a "have I run yet" flag, so it cannot get
+ * out of step with an effect that ran a different number of times.
+ *
  * `transform` runs on the compositor and never triggers layout, unlike the
  * `width` tween this replaces - `components/common/gpu-properties.inventory.test.ts`
  * is the guardrail that keeps a future bar from reverting to it.
@@ -27,35 +40,40 @@ import { useEffect, useRef, useState, type CSSProperties } from 'react';
  *   can mount partway through its window.
  */
 export function useDrainingScaleXFill(targetMs: number, startFraction: number): CSSProperties {
-  const [style, setStyle] = useState<CSSProperties>(() => ({
-    transform: `scaleX(${startFraction})`,
-  }));
-  const armedTargetRef = useRef<number | null>(null);
+  /** The target this fill is currently transitioning to zero for, and over how long. */
+  const [armed, setArmed] = useState<{ target: number; remaining: number } | null>(null);
 
   useEffect(() => {
-    if (targetMs <= 0 || armedTargetRef.current === targetMs) return;
-    armedTargetRef.current = targetMs;
-    setStyle({ transform: `scaleX(${startFraction})` });
-    const remaining = Math.max(0, targetMs - Date.now());
-    let raf2 = 0;
-    const raf1 = requestAnimationFrame(() => {
-      raf2 = requestAnimationFrame(() => {
-        setStyle({
-          transform: 'scaleX(0)',
-          transitionProperty: 'transform',
-          transitionDuration: `${remaining}ms`,
-          transitionTimingFunction: 'linear',
-        });
-      });
+    if (targetMs <= 0) return;
+    // Read at arm time: two frames from now is within a frame or two of this,
+    // and reading it inside the callback would make the duration depend on
+    // when the browser got round to the frame.
+    const arm = { target: targetMs, remaining: Math.max(0, targetMs - Date.now()) };
+    let second = 0;
+    const first = requestAnimationFrame(() => {
+      second = requestAnimationFrame(() => setArmed(arm));
     });
     return () => {
-      cancelAnimationFrame(raf1);
-      if (raf2) cancelAnimationFrame(raf2);
+      cancelAnimationFrame(first);
+      // 0 is never a live handle, so this is a no-op when the outer frame has
+      // not fired yet - which is exactly the StrictMode replay's first pass.
+      cancelAnimationFrame(second);
     };
     // startFraction is read at arm time only (a re-arm happens on a new
     // targetMs, which always carries its own fresh startFraction with it).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [targetMs]);
 
-  return style;
+  // A new target renders the start fraction again on the SAME frame it arrives,
+  // with no transition, without waiting for the effect: the armed value belongs
+  // to the target it was armed for, and no other.
+  if (armed && armed.target === targetMs) {
+    return {
+      transform: 'scaleX(0)',
+      transitionProperty: 'transform',
+      transitionDuration: `${armed.remaining}ms`,
+      transitionTimingFunction: 'linear',
+    };
+  }
+  return { transform: `scaleX(${startFraction})` };
 }
