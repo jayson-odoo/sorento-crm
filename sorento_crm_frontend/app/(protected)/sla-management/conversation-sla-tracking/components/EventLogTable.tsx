@@ -159,7 +159,6 @@ export default function EventLogTable({ trackingId, agentCode, teamSetCode }: Ev
     },
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,
-    refetchOnWindowFocus: false,
   });
 
   const isAdmin = currentUser?.role === 'admin';

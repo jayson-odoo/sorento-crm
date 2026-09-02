@@ -291,7 +291,6 @@ export default function TeamPendingList() {
                       <SearchableSelect
                         value={assigneeFilter}
                         onChange={setAssigneeFilter}
-                        disabled={isLoading}
                         options={[
                           { value: ALL, label: 'All assignees' },
                           ...visibleUsers.map((u) => ({
@@ -307,7 +306,6 @@ export default function TeamPendingList() {
                       <SearchableSelect
                         value={teamFilter}
                         onChange={setTeamFilter}
-                        disabled={isLoading}
                         options={[
                           { value: ALL, label: 'All teams' },
                           ...teamOptions.map((t) => ({

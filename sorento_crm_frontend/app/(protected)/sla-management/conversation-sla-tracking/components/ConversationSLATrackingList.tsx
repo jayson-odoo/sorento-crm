@@ -592,7 +592,6 @@ export default function ConversationSLATrackingList() {
                       })),
                     ]}
                     placeholder="Assignee"
-                    disabled={isLoading}
                   />
                   {hasActiveFilters && (
                     <Button variant="outline" size="sm" onClick={handleClearFilters} className="w-full">

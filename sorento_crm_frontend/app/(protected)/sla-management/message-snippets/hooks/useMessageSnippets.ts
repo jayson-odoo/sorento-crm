@@ -34,7 +34,6 @@ export function useMessageSnippets(query: MessageSnippetListQuery) {
   return useQuery({
     queryKey: [...LIST_KEY, query],
     queryFn: () => listMessageSnippets(query),
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }

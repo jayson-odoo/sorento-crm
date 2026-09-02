@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 import {
   getTeamPendingSLA,
   getVisibleUsers,
@@ -13,6 +14,7 @@ import {
 /** Visible-team pending tasks (Team Tasks page + home widget "My Team" mode). */
 export function useTeamPendingSLA(filters: TeamPendingFilters) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: ['team-pending-sla', filters.page, filters.limit, filters.assignee, filters.team, filters.query],
     queryFn: () => getTeamPendingSLA(filters),
     retry: 1,
