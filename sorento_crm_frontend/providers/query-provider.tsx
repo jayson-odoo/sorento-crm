@@ -52,8 +52,8 @@ const QueryProvider = ({ children }: { children: ReactNode }) => {
 
             if (isPermissionError) {
               toast.custom(
-                () => (
-                  <Alert variant="mono" icon="destructive" close={false}>
+                (id) => (
+                  <Alert variant="mono" icon="destructive" close onClose={() => toast.dismiss(id)}>
                     <AlertIcon>
                       <RiErrorWarningFill />
                     </AlertIcon>
@@ -62,20 +62,21 @@ const QueryProvider = ({ children }: { children: ReactNode }) => {
                     </AlertTitle>
                   </Alert>
                 ),
-                { id: 'permission-denied' },
+                { id: 'permission-denied', duration: Infinity },
               );
               return;
             }
 
             toast.custom(
-              () => (
-                <Alert variant="mono" icon="destructive" close={false}>
+              (id) => (
+                <Alert variant="mono" icon="destructive" close onClose={() => toast.dismiss(id)}>
                   <AlertIcon>
                     <RiErrorWarningFill />
                   </AlertIcon>
                   <AlertTitle>{message}</AlertTitle>
                 </Alert>
               ),
+              { duration: Infinity },
             );
           },
         }),

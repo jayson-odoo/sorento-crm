@@ -19,6 +19,14 @@ import type { ExternalToast } from 'sonner';
  * A caller that already passes its own `duration` or `closeButton` wins - this
  * only sets the DEFAULT, the same way `sonnerToast.success(msg, opts)` always
  * let `opts` override its own defaults.
+ *
+ * `promise`, `custom` and `warning` are deliberate raw passthroughs, not
+ * bugs: nothing in the app calls `toast.promise` today (its error branch
+ * would need to unwrap a string/JSX/function result to make sticky, which is
+ * machinery with no caller to justify it - see PRINCIPLES.md "simplest thing
+ * that works"), and every live `toast.custom` call site already sets its own
+ * `duration`/`close` per call (query-provider's error path included), which
+ * is the same "caller wins" contract this file enforces for `success`/`error`.
  */
 const SUCCESS_DURATION_MS = 4000;
 
