@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { toast } from 'sonner';
-import { ArrowLeft, CheckCircle2, LoaderCircle, Save } from 'lucide-react';
+import { ArrowLeft, LoaderCircle, Save } from 'lucide-react';
 import {
   AlertDialog,
   AlertDialogContent,
@@ -55,7 +55,7 @@ import {
   type LoadingPlanStatus,
 } from '../../services/fulfilmentService';
 import { useLoadingPlanActions } from '../actions';
-import { UnmatchedSupplierCodesPanel } from './UnmatchedSupplierCodesPanel';
+import { SupplierCodesTab } from './SupplierCodesTab';
 import { ContainerRequestSection } from './ContainerRequestSection';
 import { SendRequestDialog } from './SendRequestDialog';
 import { SentRequestsPanel } from './SentRequestsPanel';
@@ -177,12 +177,12 @@ export function LoadingPlanView({ planId }: { planId: string }) {
   const stockListFile = useSupplierStockListFile(
     plan?.document_kind === 'stock_list' ? supplierId : null,
   );
-  // The same action `RefreshMatchingButton` runs on the queue panel - the panel hides itself
-  // when every code binds, and that is exactly the state somebody is trying to reach after
-  // adding the missing products (R18), so it is also reachable from up here.
+  // The same action `RefreshMatchingButton` runs on the Supplier codes tab - the tab's
+  // "Needs a decision" group empties out and that is exactly the state somebody is trying
+  // to reach after adding the missing products (R18), so it is also reachable from up here.
   const rematch = useRematchSupplierCodes();
   // Read here too (S2), for the Supplier codes tab's own badge - same query key as
-  // `UnmatchedSupplierCodesPanel`, so React Query serves both callers from one fetch.
+  // `SupplierCodesTab`, so React Query serves both callers from one fetch.
   const { data: unmatchedCodes = [] } = useUnmatchedSupplierCodes(supplierId || null);
 
   // The tab lives in the URL (AC-B2), not component state: reload and the record's own
@@ -503,18 +503,11 @@ export function LoadingPlanView({ planId }: { planId: string }) {
         </TabsContent>
 
         <TabsContent value="codes">
-          {unmatchedCodes.length > 0 ? (
-            // The queue of codes this supplier's file names and our catalogue does not - the
-            // stock behind them is invisible to the plan until somebody answers them.
-            <UnmatchedSupplierCodesPanel supplierId={supplierId} />
-          ) : (
-            <Card className="flex flex-col items-center gap-3 p-10 text-center">
-              <span className="flex size-10 items-center justify-center rounded-full bg-muted text-muted-foreground">
-                <CheckCircle2 className="size-5" />
-              </span>
-              <p className="text-sm font-medium">Every code on file is matched</p>
-            </Card>
-          )}
+          {/* The queue of codes this supplier's file names and our catalogue does not, AND
+              the supplier's memory of every ruling ever made (S3) - both always render, so
+              the Remembered list is reachable even once the queue itself is answered down to
+              nothing; the tab's own empty states cover each half. */}
+          <SupplierCodesTab supplierId={supplierId} documentLabel={plan.document_label} />
         </TabsContent>
 
         <TabsContent value="sent">

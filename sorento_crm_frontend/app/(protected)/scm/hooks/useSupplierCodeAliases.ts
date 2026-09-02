@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
   dismissSupplierCode,
+  forgetSupplierCodeMatch,
   listSupplierCodeAliases,
   listUnmatchedSupplierCodes,
   matchSupplierCode,
@@ -115,7 +116,51 @@ export function useRematchSupplierCodes() {
   });
 }
 
-// Forgetting a match has no mutation hook: both screens that offer it park
+/**
+ * Match / dismiss for the Supplier codes tab's "Needs a decision" queue (S3).
+ *
+ * Unlike `useMatchSupplierCode` / `useDismissSupplierCode` above, these do NOT invalidate
+ * the unmatched or remembered queries on success: AC-C1/AC-C2/AC-C3 keep the row exactly
+ * where it is, showing the decision with Undo, and the decided row only joins Remembered
+ * on the NEXT load (an explicit Undo, or leaving the tab). Invalidating here would refetch
+ * the unmatched list mid-visit and the row the operator just answered would vanish out from
+ * under them - the very behaviour S3 exists to fix.
+ */
+export function useMatchSupplierCodeInPlace() {
+  return useMutation({
+    mutationFn: matchSupplierCode,
+    onError: (e: Error) => toast.error(e.message),
+  });
+}
+
+export function useDismissSupplierCodeInPlace() {
+  return useMutation({
+    mutationFn: dismissSupplierCode,
+    onError: (e: Error) => toast.error(e.message),
+  });
+}
+
+/**
+ * Undo of a decision made THIS visit (AC-C1/AC-C2): the same DELETE `Forget` runs on the
+ * remembered list, called here immediately rather than through the deferred engine - undoing
+ * a pick made seconds ago is a correction, not a destructive action on someone else's data,
+ * so it carries no countdown. Invalidates on success so the picker's fresh state (the ladder
+ * may since answer differently) is what comes back.
+ */
+export function useUndoSupplierCodeDecision() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: forgetSupplierCodeMatch,
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: KEY });
+      void qc.invalidateQueries({ queryKey: ['scm', 'proforma-invoices'] });
+      void qc.invalidateQueries({ queryKey: ['scm', 'fulfilment'] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+}
+
+// Forgetting a REMEMBERED match has no mutation hook: both screens that offer it park
 // `supplier_code_alias.forget` through `useDeferredRowAction` instead (D7), so the
 // server applies it when the window lapses and the same three lists are refetched
 // from the action's own invalidateKeys.

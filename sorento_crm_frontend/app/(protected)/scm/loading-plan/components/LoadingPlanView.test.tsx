@@ -80,9 +80,10 @@ vi.mock('@/components/ui/dropdown-menu', () => ({
 }));
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
-// The queue panel has its own suite; here it only has to prove it mounted.
-vi.mock('./UnmatchedSupplierCodesPanel', () => ({
-  UnmatchedSupplierCodesPanel: () => <div data-testid="unmatched-panel" />,
+// The tab has its own suite (SupplierCodesTab.test.tsx); here it only has to prove it
+// mounted, on the codes tab and nowhere else.
+vi.mock('./SupplierCodesTab', () => ({
+  SupplierCodesTab: () => <div data-testid="supplier-codes-tab" />,
 }));
 
 // The grid is a controlled child now (R5): the record owns the typed quantities, so the stub
@@ -152,9 +153,9 @@ const state = {
   /** Make the pre-send Save refuse, which used to leave an unhandled rejection and send anyway. */
   saveFails: false,
   /** The Supplier codes tab's badge count (S2) - empty by default in this suite, which is
-   *  about the toolbar and the Lines tab, not the queue itself (`UnmatchedSupplierCodesPanel`
-   *  and `SentRequestsPanel` own their own contents; `LoadingPlanView.test.tsx` (tabs)
-   *  covers the strip and the badges). */
+   *  about the toolbar and the Lines tab, not the queue itself (`SupplierCodesTab` and
+   *  `SentRequestsPanel` own their own contents; `LoadingPlanView.test.tsx` (tabs) covers
+   *  the strip and the badges). */
   unmatchedCodes: [] as unknown[],
   /** The Sent tab's badge count and body (S2). */
   notices: [] as unknown[],
@@ -530,7 +531,7 @@ describe('LoadingPlanView - the tab strip (S2, AC-B1-B4)', () => {
     // On screen already, since Lines is the default tab.
     expect(screen.getByTestId('container-request-section')).toBeInTheDocument();
     // Neither of the other two tabs' bodies is mounted yet.
-    expect(screen.queryByTestId('unmatched-panel')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('supplier-codes-tab')).not.toBeInTheDocument();
     expect(screen.queryByTestId('requests-sent')).not.toBeInTheDocument();
   });
 
@@ -564,7 +565,7 @@ describe('LoadingPlanView - the tab strip (S2, AC-B1-B4)', () => {
   // does not actually navigate, so these preset `?tab=` before mount rather than click and
   // expect the same jsdom render to reflow - exactly how `LoadingPlanView` itself reads a
   // deep link or a reload, and the click tests above already prove the write half survives.
-  it('?tab=codes lands on the Supplier codes tab and shows the queue (AC-B2)', () => {
+  it('?tab=codes lands on the Supplier codes tab and shows the tab body (AC-B2)', () => {
     state.unmatchedCodes = [{ item_code: 'A' }];
     currentSearchParams = new URLSearchParams('tab=codes');
     renderView();
@@ -573,16 +574,19 @@ describe('LoadingPlanView - the tab strip (S2, AC-B1-B4)', () => {
       'data-state',
       'active',
     );
-    expect(screen.getByTestId('unmatched-panel')).toBeInTheDocument();
+    expect(screen.getByTestId('supplier-codes-tab')).toBeInTheDocument();
     expect(screen.queryByTestId('container-request-section')).not.toBeInTheDocument();
   });
 
-  it('an empty Supplier codes tab says every code is matched, not a blank body (AC-B4)', () => {
+  // The exact empty-state copy ("Every code on file is matched") is `SupplierCodesTab`'s own
+  // (SupplierCodesTab.test.tsx, AC-B4/AC-C3): the tab now mounts unconditionally so the
+  // Remembered group is reachable even once the queue is answered down to nothing, so what
+  // this level of the record owns is only that the tab keeps mounting at zero.
+  it('the Supplier codes tab still mounts its body with nothing left to answer (AC-B4)', () => {
     currentSearchParams = new URLSearchParams('tab=codes');
     renderView();
 
-    expect(screen.getByText('Every code on file is matched')).toBeInTheDocument();
-    expect(screen.queryByTestId('unmatched-panel')).not.toBeInTheDocument();
+    expect(screen.getByTestId('supplier-codes-tab')).toBeInTheDocument();
   });
 
   it('an empty Sent tab says nothing has gone out yet and offers Send (AC-B4)', async () => {
