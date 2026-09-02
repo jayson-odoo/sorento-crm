@@ -4386,12 +4386,21 @@ class ProjectSupplyService:
         * the line is INSIDE `immediate_window_days` - beyond it the pool is whole or
           nothing (R-B), so a part share there is not a composition the engine would ever
           make (review round 1, S8);
-        * each pool's quantity is inside THAT POOL's own allowance, which is what R-L draws
-          when another site's pool answers the remainder;
+        * each pool's quantity is inside THAT POOL's own allowance, AND the pools' total is
+          inside the ONE five-pool net (R-D, review round 2 blocker 2) - per-pool alone let
+          two pools of 1,000 netting 100 between them be reserved 100 each, which is the
+          over-draw the engine itself was making;
         * and the allowance is read off `pool_chain_for`, the SAME source `compose_lines`
           seeds its ledger from - never `fact.pool_available`, which is 0 for a bare site
           bin like `BRW-IB` and refused the composition the board had just proposed (review
           round 1, B2).
+
+        DELIBERATELY WIDER THAN THE WALK (captain, 2 Sep): a Reserve at ANY site pool of the
+        chain is admitted, not only the asking bin's own, because S3 lets a planner ADD a
+        pool location to Reserve by hand (R-G) and the product must be able to confirm what
+        it invites. The ENGINE's own R-L step stays whole-or-nothing, so it never composes
+        another site's part share beside a Buy; this rule is about what a person may
+        compose, and the allowance and the net are what bound them.
         """
         chain = {
             str(entry_pool.get("location") or ""): entry_pool
@@ -4419,7 +4428,7 @@ class ProjectSupplyService:
         if pooled <= _ZERO or pooled != from_stock:
             return False
         pct = settings.get("pool_share_pct")
-        return all(
+        return pooled <= max(_dec(fact.pools_net), _ZERO) and all(
             qty <= available_for_project(chain[code].get("available"), fact.pools_net, pct)
             for code, qty in per_pool.items()
         )

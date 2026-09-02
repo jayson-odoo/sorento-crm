@@ -219,6 +219,47 @@ def pool_allowance(
     return min(allowed, max(_dec(stated), ZERO))
 
 
+def pool_share_capacity(
+    *,
+    pools: Sequence[Mapping[str, Any]],
+    pools_net: Any,
+    pool_share_pct: Optional[int] = None,
+    share_left: Optional[Mapping[str, Any]] = None,
+) -> List[Tuple[str, Decimal, Decimal]]:
+    """What EACH site pool of a chain may lend a PROJECT line, over the WHOLE chain.
+
+    `pool_reserve_capacity`'s shape - `(location, capacity)` in draw order, the one
+    five-pool net spent down as the chain is walked - with the v8 share rule applied on top
+    of it: a pool's own capacity is its `available_for_project` allowance, less what this
+    walk has already taken out of it (`share_left`), and never more than its FREE floor.
+    The allowance travels back as the third member because it is what the components'
+    sentences are a share of ("300 of the 400 it may lend a project").
+
+    ONE walk of the chain, three readers that must agree: the engine's R-L spill
+    (`_draw_other_pools`), the board proof's `offered` for the pool question, and that
+    question's own sentence. Each of them used to cap the chain by the FIRST pool's
+    allowance and spread that one number over every location, which printed `offered=0`
+    beside `taken=300` the moment another site's pool answered (review round 2, S5).
+    """
+    left = max(_dec(pools_net), ZERO)
+    out: List[Tuple[str, Decimal, Decimal]] = []
+    for pool in pools:
+        if left <= ZERO:
+            break
+        location = pool.get("location")
+        if not location:
+            continue
+        allowance = min(
+            pool_allowance(pool, pools_net, pool_share_pct, share_left), left
+        )
+        capacity = min(max(_dec(pool.get("free")), ZERO), allowance)
+        if capacity <= ZERO:
+            continue
+        out.append((str(location), capacity, allowance))
+        left -= capacity
+    return out
+
+
 def available_for_project(
     available: Any, pools_net: Any, pool_share_pct: Optional[int] = None
 ) -> Decimal:
@@ -551,6 +592,7 @@ def pool_share_option_reason(
     open_qty: Decimal,
     allowance: Decimal,
     share: Decimal,
+    free: Any = None,
 ) -> str:
     """The `pool_share` option row's own sentence (AC-2.4).
 
@@ -562,10 +604,18 @@ def pool_share_option_reason(
     WHAT IT GAVE, not what it could have given, wherever it gave anything (review round 1,
     S3): the allowance belongs in the sentence that REFUSES, where it is the reason, and
     beside a quantity it merely disagrees with the Gives column next to it.
+
+    THE FLOOR IS ASKED BEFORE THE SIZE (review round 2, nit 8): a pool with an allowance of
+    450 and nothing actually on the floor refused a line of 600 with "600 is more than the
+    450 BRW can spare", which sends a planner to a pile that is not there. An empty floor is
+    its own answer and it comes first; `free` is optional, and where the caller does not
+    state it the older wording stands.
     """
     if allowance <= ZERO:
         return f"{location} has nothing to spare for projects"
     if share <= ZERO:
+        if free is not None and _dec(free) <= ZERO:
+            return f"{location} has nothing free on the floor to spare"
         if open_qty > allowance:
             return (
                 f"{qty_text(open_qty)} is more than the {qty_text(allowance)} {location} "
@@ -587,6 +637,25 @@ def _pool_share_label(pools: Optional[Sequence[Mapping[str, Any]]]) -> str:
     first = (pools or [None])[0]
     location = (first or {}).get("location") if first else None
     return f"Use {location} stock" if location else STEP_LABELS[STEP_POOL_SHARE]
+
+
+def _spilled_share_label(components: Sequence["Component"]) -> Optional[str]:
+    """"Use BRW stock" when BRW is the pool that ANSWERED (R-L, review round 2 S3).
+
+    `_pool_share_label` names the ASKING bin's own pool, which is the right name for step 0
+    and the wrong one the moment the remainder spills into another site's pool: R-L's own
+    worked case has DC1's pool empty and BRW covering 300, and the row read "Use DC1 stock"
+    over it. Several pools answering are named together, in the order they were drawn, so
+    the label never claims one pool did what two of them did.
+    """
+    seen: List[str] = []
+    for component in components:
+        location = component.source_location
+        if location and location not in seen:
+            seen.append(str(location))
+    if not seen:
+        return None
+    return f"Use {' and '.join(seen)} stock"
 
 
 def group_water_reason(
@@ -1016,6 +1085,12 @@ def walk_line(
     offers[STEP_SUPPLY_BORROW] = _draw_supply_borrow(supply_borrow_candidates, need)
 
     chosen: Optional[str] = None
+    #: The components the R-L spill contributed, where it answered. The option row is
+    #: written from them rather than from the pool the walk STARTED at (review round 2, S3):
+    #: the chosen row used to read "Use DC1 stock / DC1 has nothing to spare for projects"
+    #: beside a Reserve of 300 at BRW, which is the table contradicting the composition
+    #: printed next to it.
+    spilled_components: Tuple[Component, ...] = ()
     if remainder <= ZERO and share_qty > ZERO:
         chosen = STEP_POOL_SHARE
     else:
@@ -1030,9 +1105,13 @@ def walk_line(
             # (its Available less the kept share, its own ledger), all bounded by the one
             # five-pool net. Whole or nothing, like every other step of the remainder walk:
             # a DC1-IB line of 300 with DC1's pool empty and BRW sparing 400 reads BRW 300.
+            #
+            # WHAT IS LEFT OF THE NET, never the whole of it again (review round 2, blocker
+            # 1): step 0 has already spent `share_qty` of the one pile the five pools share,
+            # and handing this step the opening figure let a chain netting 100 lend 200.
             spilled = _draw_other_pools(
                 pools[1:],
-                pools_net,
+                max(_dec(pools_net) - share_qty, ZERO),
                 remainder,
                 pool_share_pct=pool_share_pct,
                 share_left=pool_share_left,
@@ -1040,6 +1119,7 @@ def walk_line(
             if spilled.qty >= remainder and spilled.components:
                 for component in spilled.components:
                     step_share.add(component)
+                spilled_components = tuple(spilled.components)
                 chosen = STEP_POOL_SHARE
         if chosen is None and pool_borrow_candidates:
             # The pool's own later orders, asked LAST exactly as v7.1 asked them - after
@@ -1061,16 +1141,24 @@ def walk_line(
         open_qty=open_amount,
         share_whole=share_qty >= open_amount,
         pool_share_reason_text=(
-            pool_share_option_reason(
-                str((pools or [{}])[0].get("location")),
-                open_qty=open_amount,
-                allowance=allowance,
-                share=share_qty,
+            # The pools that ANSWERED write the sentence when the spill answered - their
+            # own components' reasons, which already name the pool and what it spared
+            # ("Pool BRW spares 300 of the 400 it may lend a project").
+            " ".join(component.reason for component in spilled_components)
+            if spilled_components
+            else (
+                pool_share_option_reason(
+                    str((pools or [{}])[0].get("location")),
+                    open_qty=open_amount,
+                    allowance=allowance,
+                    share=share_qty,
+                    free=(pools[0].get("free") if pools else None),
+                )
+                if pools and (pools[0].get("location"))
+                else None
             )
-            if pools and (pools[0].get("location"))
-            else None
         ),
-        pool_share_label=_pool_share_label(pools),
+        pool_share_label=_spilled_share_label(spilled_components) or _pool_share_label(pools),
         as_of=today,
         own_location=fulfilment_location,
         transfer_days=transfer_days,
@@ -1402,35 +1490,35 @@ def _draw_other_pools(
     five-pool net, because the five pools are one pile (v4 section 1d) whatever their
     individual positions.
 
+    `pools_net` IS THE PILE THAT IS LEFT, not the pile the line started with (review round
+    2, blocker 1): step 0 has already taken the asking pool's share off it, and seeding this
+    walk from the full net again let two pools of 1,000 netting 100 between them answer one
+    line with 100 each. The caller does that subtraction, because only the caller knows what
+    step 0 actually took.
+
     The caller applies the whole-or-nothing rule to what comes back: this is a step of the
     remainder walk (R-C), so half of it is not an answer.
     """
     offer = _Offer()
-    left_in_pile = max(_dec(pools_net), ZERO)
-    for pool in pools:
+    for location, capacity, allowance in pool_share_capacity(
+        pools=pools,
+        pools_net=pools_net,
+        pool_share_pct=pool_share_pct,
+        share_left=share_left,
+    ):
         left = need - offer.qty
-        if left <= ZERO or left_in_pile <= ZERO:
+        if left <= ZERO:
             break
-        location = pool.get("location")
-        if not location:
-            continue
-        allowance = min(
-            pool_allowance(pool, pools_net, pool_share_pct, share_left), left_in_pile
-        )
-        capacity = min(max(_dec(pool.get("free")), ZERO), allowance)
-        if capacity <= ZERO:
-            continue
         take = min(left, capacity)
         offer.add(
             Component(
                 kind=RESERVE,
                 qty=take,
-                reason=pool_share_reason(str(location), take, allowance),
-                source_location=str(location),
+                reason=pool_share_reason(location, take, allowance),
+                source_location=location,
                 rung=RUNG_POOL,
             )
         )
-        left_in_pile -= take
     return offer
 
 

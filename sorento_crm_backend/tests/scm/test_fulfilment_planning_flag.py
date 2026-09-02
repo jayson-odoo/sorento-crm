@@ -267,6 +267,13 @@ def test_the_pool_still_lends_when_every_sibling_bin_in_the_group_is_flagged_off
     The sibling holds real, sizeable stock on purpose - if the flag failed to exclude it
     from the group rung, THAT stock would cover the line and the pool would never be
     reached, which would hide the bug this test exists to catch.
+
+    RE-BLESSED BY LADDER V8 (R-B, the 2 Sep share ruling). The pool used to lend the whole
+    40 and the line read one component; the pool now keeps `pool_share_pct` of itself back
+    for dealers, so it spares 20 and the remaining 20 is bought. The FLAG behaviour under
+    test is untouched and both halves of it still discriminate: no Reserve at all would mean
+    the flag had taken the pool away, and a Reserve of 40 covering the line whole would mean
+    the flagged-off sibling's 500 had been drawn.
     """
     with blank_session() as db:
         company_id, _eling, project, product = _world(db)
@@ -287,12 +294,15 @@ def test_the_pool_still_lends_when_every_sibling_bin_in_the_group_is_flagged_off
         sibling_code = sibling.warehouse_code
         pool_code = pool.warehouse_code
 
-    assert len(components) == 1, components
-    assert components[0]["kind"] == "reserve"
-    assert components[0]["rung"] == "pool"
-    assert components[0]["source_location"] == pool_code
-    assert components[0]["source_location"] != sibling_code
-    assert components[0]["qty"] == "40"
+    assert [
+        (c["kind"], c["rung"], c["qty"], c["source_location"]) for c in components
+    ] == [
+        ("reserve", "pool", "20", pool_code),
+        ("buy", "buy", "20", None),
+    ], components
+    assert sibling_code not in [c["source_location"] for c in components], (
+        "the flagged-off sibling's 500 is outside the group rung's candidate list"
+    )
 
 
 def test_a_retired_bin_holds_nothing_the_ladder_can_draw_and_keeps_its_old_verdict():

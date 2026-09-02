@@ -753,6 +753,10 @@ class OptionRow:
     #: The step's own sentence, where it has something to say a quantity does not (AC-2.4).
     reason: str | None = None
     chosen: bool = False
+    #: The row's own words, where the case turns on WHICH pool answered (review round 2,
+    #: S3): `pool_share` names the pool it asks, and on the R-L path that is not the pool
+    #: the walk started at. `None` means the case does not pin the label.
+    label: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1104,17 +1108,80 @@ OTHER_POOL_COVERS_THE_REMAINDER_CASE = WalkCase(
         ),
     ),
     options=(
+        # RE-BLESSED, review round 2 (S3): the row names the pool that ANSWERED. It used to
+        # read `Use DC1 stock` / "DC1 has nothing to spare for projects" beside a chosen
+        # Reserve of 300 at BRW, which is the row telling the reader the opposite of what
+        # the composition beside it says.
         OptionRow(
             step="pool_share",
             whole=True,
             gives_qty=Decimal("300"),
-            reason="DC1 has nothing to spare for projects",
+            reason="Pool BRW spares 300 of the 400 it may lend a project",
             chosen=True,
+            label="Use BRW stock",
         ),
         OptionRow(step="use", whole=False, gives_qty=Decimal("110")),
         OptionRow(step="order_borrow", whole=False, gives_qty=Decimal("0")),
         OptionRow(step="supply_borrow", whole=False, gives_qty=Decimal("0")),
         OptionRow(step="buy", whole=True, gives_qty=Decimal("300")),
+    ),
+)
+
+
+NET_BOUNDS_THE_WHOLE_POOL_CHAIN_CASE = WalkCase(
+    ac="R-D/R-L",
+    title=(
+        "the five-pool net bounds the WHOLE chain, not each step of it: a line of 200 with "
+        "two pools holding 1,000 each but the pools netting only 100 takes 100 and buys "
+        "the rest, never 100 from each pool"
+    ),
+    inputs=_v8_inputs(
+        open_qty=Decimal("200"),
+        required_date=IMMEDIATE_DATE,
+        fulfilment_location="DC1-IB",
+        group_code="IB",
+        pools=[
+            {
+                "location": "DC1",
+                "free": Decimal("1000"),
+                "available": Decimal("1000"),
+            },
+            {
+                "location": POOL_LOCATION,
+                "free": Decimal("1000"),
+                "available": Decimal("1000"),
+            },
+        ],
+        # A third pool oversold by 1,900 is what leaves two piles of 1,000 netting 100
+        # between them: the pile is one book (v4 section 1d), and step 0 drawing 100 leaves
+        # the R-L step nothing at all rather than a second 100.
+        pools_net=Decimal("100"),
+    ),
+    components=(
+        Component(
+            kind=RESERVE,
+            qty=Decimal("100"),
+            reason="Pool DC1 spares 100 of the 100 it may lend a project",
+            source_location="DC1",
+        ),
+        Component(
+            kind=BUY,
+            qty=Decimal("100"),
+            reason="Only 0 of the remaining 100 can be covered from stock - buy the rest",
+        ),
+    ),
+    options=(
+        OptionRow(
+            step="pool_share",
+            whole=False,
+            gives_qty=Decimal("100"),
+            reason="DC1 can spare 100 of the 200 needed",
+            label="Use DC1 stock",
+        ),
+        OptionRow(step="use", whole=False, gives_qty=Decimal("0")),
+        OptionRow(step="order_borrow", whole=False, gives_qty=Decimal("0")),
+        OptionRow(step="supply_borrow", whole=False, gives_qty=Decimal("0")),
+        OptionRow(step="buy", whole=True, gives_qty=Decimal("100"), chosen=True),
     ),
 )
 
@@ -1163,5 +1230,6 @@ V8_WALK_CASES = (
     NET_BOUNDS_THE_SHARE_CASE,
     DEALER_HOT_SELLING_TAKES_THE_POOL_CASE,
     OTHER_POOL_COVERS_THE_REMAINDER_CASE,
+    NET_BOUNDS_THE_WHOLE_POOL_CHAIN_CASE,
     BEYOND_WINDOW_FREE_PILE_SHORT_CASE,
 )

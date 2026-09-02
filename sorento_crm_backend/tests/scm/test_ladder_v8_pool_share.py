@@ -96,6 +96,10 @@ def test_the_v8_options_table_reads_as_the_uac_writes_it(case):
         )
         assert option.reason == expected.reason, (case.ac, option.step)
         assert option.chosen is expected.chosen, (case.ac, option.step)
+        if expected.label is not None:
+            # Review round 2 (S3): the `pool_share` row names the pool that ANSWERED, which
+            # on the R-L path is not the pool the walk started at.
+            assert option.label == expected.label, (case.ac, option.step)
     assert sum(1 for option in options if option.chosen) == 1
 
 
@@ -379,6 +383,73 @@ def test_a_bin_whose_own_pool_is_empty_is_covered_by_another_site_pool():
     ]
 
 
+def _oversold_chain_world(db):
+    """Two pools holding 1,000 each, a third oversold by 1,900, so the five pools net 100.
+
+    The shape review round 2's blocker 1 lives in: each pool's OWN allowance (half of its
+    Available, capped by the net) is 100, and two of them added together are twice the pile
+    the whole chain is allowed to lend. A line of 200 must therefore read 100 and a Buy.
+    """
+    from tests.scm.test_project_supply_service_ladder import _group_sites, _seed_line, _world
+    from tests.test_so_supply_confirmation import _core_line, _core_so, _stock
+
+    company_id, eling, project, product = _world(db)
+    _group, sites = _group_sites(db)
+    own, own_pool = sites["DC1"]
+    _far_own, far_pool = sites["BRW"]
+    _sunk_own, sunk_pool = sites["MWH"]
+    _stock(db, product, own, on_hand=0)
+    _stock(db, product, own_pool, on_hand=1000)
+    _stock(db, product, far_pool, on_hand=1000)
+    _stock(db, product, sunk_pool, on_hand=0)
+    # The oversold third pool: 1,900 of retail demand booked at it, which the pile's one
+    # book owes whatever the other two hold.
+    _core_line(
+        db, _core_so(db, company_id), product, sunk_pool,
+        qty_ordered="1900", required_date=date.today() + timedelta(days=10),
+    )
+    order, line, _cso, _cline = _seed_line(
+        db, company_id, project, product, own,
+        qty_ordered="200", required_date=date.today() + timedelta(days=10),
+    )
+    return company_id, eling, order, line, own_pool, far_pool
+
+
+def test_the_pool_chain_never_lends_more_than_the_one_five_pool_net():
+    """R-D at the CHAIN level (review round 2, blocker 1).
+
+    Step 0 takes the asking pool's share off the net, and R-L's spill into the other site
+    pools must be handed what is LEFT of that net - not the whole of it again. Two pools of
+    1,000 netting 100 between them used to answer a line of 200 with "DC1 100 + BRW 100",
+    twice the pile the book actually holds, and the confirm refused the board's own
+    proposal because `pool_reserve_capacity` distributes ONE net across the same chain.
+    """
+    from tests._pg_fixture import blank_session
+    from tests.scm.test_project_supply_service_ladder import _components
+    from app.services.project_supply_service import ProjectSupplyService
+
+    with blank_session() as db:
+        _company_id, _eling, order, _line, own_pool, far_pool = _oversold_chain_world(db)
+        proposal = ProjectSupplyService(db).proposal_for(order)
+        components = _components(proposal)
+        own_code, far_code = own_pool.warehouse_code, far_pool.warehouse_code
+
+    pooled = sum(
+        (Decimal(c["qty"]) for c in components if c["rung"] == "pool"), Decimal("0")
+    )
+    assert pooled == Decimal("100"), (
+        "the whole chain lends the net and not a unit more",
+        [(c["kind"], c["qty"], c["source_location"]) for c in components],
+    )
+    assert [(c["kind"], c["qty"], c["source_location"]) for c in components] == [
+        ("reserve", "100", own_code),
+        ("buy", "100", None),
+    ], "the asking pool's share, and the remainder bought"
+    assert far_code not in [c["source_location"] for c in components], (
+        "the second pool has nothing left of the net to lend"
+    )
+
+
 # --------------------------------------------------------------- S6 / S8: the confirm
 
 
@@ -506,10 +577,72 @@ def test_the_confirm_refuses_a_split_for_a_line_beyond_the_immediate_window():
     assert "wholly from stock or wholly bought" in body["failing_lines"][0]["reason"]
 
 
+def test_the_confirm_accepts_the_engines_own_proposal_on_an_oversold_chain():
+    """Review round 2, blocker 1's other half: the board's own answer must confirm.
+
+    Two pools of 1,000 netting 100, a line of 200 - the engine proposes `DC1 100 + Buy 100`
+    and the confirm has to take it. It could not take the OLD answer (`DC1 100 + BRW 100`),
+    because `pool_reserve_capacity` distributes the one net across the same chain and left
+    BRW a capacity of 0: the board was proposing a composition its own confirm refused.
+    """
+    from tests._pg_fixture import blank_session
+
+    with blank_session() as db:
+        company_id, eling, order, line, own_pool, _far_pool = _oversold_chain_world(db)
+        response = _confirm_split(
+            db, company_id, eling, order,
+            _split_payload(line, warehouse=own_pool, share="100", buy="100"),
+        )
+        status, body = response.status_code, response.text
+
+    assert status == 200, body
+
+
+def test_the_confirm_refuses_a_pool_split_that_outruns_the_five_pool_net():
+    """Review round 2, blocker 2: the carve-out is bounded by the NET as well as by each
+    pool's own allowance.
+
+    `_is_pool_share_split` checked every pool against its own `available_for_project` and
+    nothing against the pile the five pools share, so `DC1 100 + BRW 50 + Buy 50` passed
+    the whole-line rule on a chain netting 100 - the same over-draw the engine itself used
+    to compose. Each pool is inside its own allowance; the three of them together are not.
+    """
+    from tests._pg_fixture import blank_session
+
+    with blank_session() as db:
+        company_id, eling, order, line, own_pool, far_pool = _oversold_chain_world(db)
+        response = _confirm_split(
+            db, company_id, eling, order,
+            {
+                "project_line_id": str(line.id),
+                "timely_spo_qty": "0",
+                "reserve": [
+                    {"warehouse_id": str(own_pool.id), "qty": "100"},
+                    {"warehouse_id": str(far_pool.id), "qty": "50"},
+                ],
+                "buy_qty": "50",
+            },
+        )
+        status, body = response.status_code, response.json()
+
+    assert status == 422, body
+    assert any(
+        "wholly from stock or wholly bought" in row["reason"]
+        for row in body["failing_lines"]
+    ), body
+
+
 def test_the_confirm_takes_another_site_pools_share_but_only_up_to_its_own_allowance():
-    """S8's second half, which is R-L at the confirm: a Reserve at a pool that is NOT the
-    chain's first is fine - that is exactly what R-L draws - as long as it stays inside
-    THAT pool's own allowance. Above it, the mix is refused like any other."""
+    """S8's second half: a Reserve at a pool that is NOT the chain's first, beside a Buy,
+    is admitted by the carve-out as long as it stays inside THAT pool's own allowance.
+
+    Not because the ENGINE composes it - R-L's own step is whole or nothing, so the walk
+    never proposes another site's part share beside a Buy - but because S3 lets a planner
+    ADD a pool location to Reserve by hand (R-G), and a composition the product invites
+    must be confirmable. The carve-out is therefore deliberately wider than the walk: any
+    site pool of this line's chain, inside its own allowance and inside the one five-pool
+    net (blocker 2), beside a Buy. Above the allowance the mix is refused like any other.
+    """
     from tests._pg_fixture import blank_session
     from tests.scm.test_project_supply_service_ladder import _group_sites, _seed_line, _world
     from tests.test_so_supply_confirmation import _stock
