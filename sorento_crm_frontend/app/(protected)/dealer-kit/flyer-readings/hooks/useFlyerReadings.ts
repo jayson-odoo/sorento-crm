@@ -40,7 +40,6 @@ export function useFlyerReadingsQuery() {
       (query.state.data ?? []).some((row) => row.status === 'processing')
         ? PROCESSING_POLL_MS
         : false,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }
@@ -73,7 +72,6 @@ export function useFlyerReadingQuery(readingId: string, promotionId: string | nu
     refetchInterval: (query) =>
       query.state.data?.status === 'processing' ? PROCESSING_POLL_MS : false,
     staleTime: 0,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }
