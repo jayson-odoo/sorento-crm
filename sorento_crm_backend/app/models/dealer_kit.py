@@ -726,7 +726,18 @@ class TagTemplate(Base, CompanyScopedMixin):
     print_size = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
     published_version_id = Column(
         UUID(as_uuid=False),
-        ForeignKey(f"{SCHEMA}.tag_template_version.id", ondelete="SET NULL"),
+        ForeignKey(
+            f"{SCHEMA}.tag_template_version.id",
+            ondelete="SET NULL",
+            # Named to match migration 454's probe/create_foreign_key: create_all's
+            # default name (`tag_template_published_version_id_fkey`) does not match
+            # what the migration's `_constraint_exists("fk_dealer_kit_tag_template_
+            # published_version")` looks for, so a database bootstrapped from these
+            # models (CI, the shared dev DB) has the FK under a name the migration's
+            # downgrade() then can't find - see fk_spo_allocations_supplier_id
+            # (migration 420) for the same fix on the same class of bug.
+            name="fk_dealer_kit_tag_template_published_version",
+        ),
         nullable=True,
     )
     created_by = Column(UUID(as_uuid=False), nullable=True)
