@@ -51,10 +51,18 @@ def _u() -> str:
 
 @pytest.fixture()
 def db():
+    """A rolled-back session with the SCM suite's shared reference rows guaranteed.
+
+    `ensure_reference_data` is not optional (CI's database has NO data): the builders this
+    file borrows - `tests.scm.test_m3_run._mk_product`, `test_channel_read_model.
+    _confirmed_leg` - resolve their FK targets with `LIMIT 1` off `products`, which finds
+    something real on the local prod copy and returns None on an empty one.
+    """
     from app.models.base import company_scope
-    from tests.scm.conftest import SORENTO_COMPANY_ID
+    from tests.scm.conftest import SORENTO_COMPANY_ID, ensure_reference_data
 
     with pg_session() as session:
+        ensure_reference_data(session)
         with company_scope(session, frozenset({SORENTO_COMPANY_ID})):
             yield session
 
