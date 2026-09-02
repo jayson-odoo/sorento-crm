@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 import {
   createReorderPolicy,
   deleteReorderPolicy,
@@ -45,6 +46,7 @@ const optionOpts = { staleTime: 5 * 60_000, retry: 1 } as const;
 
 export function useReorderPolicies(query: PolicyListQuery) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: [...REORDER_KEY, query],
     queryFn: () => listReorderPolicies(query),
     retry: 1,

@@ -448,6 +448,7 @@ export function useReorderRecommendations(
   enabled: boolean,
 ) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: ['scm', 'reorder', 'recs', runId, query],
     queryFn: () => getRecommendations(runId as string, query),
     enabled: enabled && !!runId,

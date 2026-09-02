@@ -59,7 +59,7 @@ export default function MessageSnippetsList() {
     setPagination((p) => ({ ...p, pageIndex: 0 }));
   }, [debouncedSearch, sorting]);
 
-  const { data, isLoading, isFetching, isError, error } = useMessageSnippets({
+  const { data, isLoading, isFetching, isPlaceholderData, isError, error } = useMessageSnippets({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -216,6 +216,7 @@ export default function MessageSnippetsList() {
         table={table}
         recordCount={total}
         isLoading={isLoading}
+        isPlaceholderData={isPlaceholderData}
         tableLayout={{ width: 'fixed', columnsResizable: true }}
         rowPending={rowPending}
         emptyMessage="No snippets yet. Add one and it appears in the ticket composer."

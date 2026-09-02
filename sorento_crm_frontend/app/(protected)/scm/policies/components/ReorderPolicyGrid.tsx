@@ -81,7 +81,7 @@ export function ReorderPolicyGrid() {
   // Server-side paging / sorting / search - the backend GET /policies honours
   // page/limit/sort/dir/query, so nothing is truncated and search reaches fields
   // the grid never renders (product_code, name, category).
-  const { data, isLoading, isFetching, isError, error } = useReorderPolicies({
+  const { data, isLoading, isFetching, isPlaceholderData, isError, error } = useReorderPolicies({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -285,6 +285,7 @@ export function ReorderPolicyGrid() {
         table={table}
         recordCount={total}
         isLoading={isLoading}
+        isPlaceholderData={isPlaceholderData}
         tableLayout={{ width: 'fixed', columnsResizable: true }}
         rowPending={rowPending}
         emptyMessage="No reorder policies configured."

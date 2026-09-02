@@ -21,6 +21,15 @@
  * Comments are blanked before the scan: an apostrophe inside a comment
  * ("the row's page") otherwise opens a string in the brace matcher and every
  * `useQuery` after it in that file is silently skipped.
+ *
+ * **This walk is the hook-side FLOOR, not the whole rule.** It reads queryKeys,
+ * so a list hook that keys on a bare `filters` or `query` identifier names
+ * nothing any of the three triggers can see, and widening the regex to catch
+ * those two words flags the report and detail queries that legitimately key on
+ * the same words. The grid-side CEILING is the third walk at the bottom of this
+ * file: it starts from `manualPagination: true`, which is the code declaring
+ * that the server owns the page, and that is the check a new list actually has
+ * to get past. A hook missed here is caught there the moment its grid renders.
  */
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
@@ -469,6 +478,10 @@ describe('every grid fed by a LIST_QUERY_OPTIONS hook forwards isPlaceholderData
 const MANUAL_PAGINATION_ALLOWLIST: Record<string, string> = {
   'app/(protected)/dealer-kit/price-tag-requests/components/PriceTagRequestsList.tsx':
     'fetches in a useEffect, not react-query, so no query reports isPlaceholderData',
+  'components/spec-table/SpecTable.tsx':
+    'manualPagination with pageCount 1 turns paging OFF on prop-fed rows; there is no page to turn',
+  'components/spec-proposals/SpecProposalReview.tsx':
+    'manualPagination with pageCount 1 turns paging OFF on prop-fed rows; there is no page to turn',
 };
 
 function findManualPaginationMisses(): string[] {
@@ -503,12 +516,24 @@ describe('every server-paged grid forwards isPlaceholderData (M4-01b)', () => {
     expect(misses).toEqual([]);
   });
 
-  it('every allowlist entry still exists and still pages on the server', () => {
+  it('every allowlist entry still exists and still sets manualPagination', () => {
     for (const rel of Object.keys(MANUAL_PAGINATION_ALLOWLIST)) {
       const full = path.join(ROOT, rel);
 
       expect(fs.existsSync(full), `${rel} is allowlisted but gone`).toBe(true);
       expect(fs.readFileSync(full, 'utf8')).toContain('manualPagination: true');
+    }
+  });
+
+  it('the two spec grids are allowlisted on a claim the code still makes', () => {
+    // `pageCount: 1` is the whole reason they are here: manualPagination is how
+    // they turn client paging OFF on a handful of prop-fed rows. Drop that and
+    // they are a server-paged grid like any other, and this test says so.
+    for (const rel of [
+      'components/spec-table/SpecTable.tsx',
+      'components/spec-proposals/SpecProposalReview.tsx',
+    ]) {
+      expect(fs.readFileSync(path.join(ROOT, rel), 'utf8')).toContain('pageCount: 1');
     }
   });
 });
