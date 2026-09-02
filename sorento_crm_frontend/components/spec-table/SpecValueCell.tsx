@@ -98,7 +98,7 @@ export function SpecValueCell({
     return (
       <div className="flex min-w-0 flex-col">
         <span className="truncate text-sm" title={String(row.value ?? '')}>
-          {readableValue(row.value, row.unit ?? undefined)}
+          {readableValue(row.value, row.unit ?? undefined, row.valueLabels)}
         </span>
         <span className="text-[11px] text-muted-foreground">Not in the registry</span>
       </div>
@@ -106,15 +106,16 @@ export function SpecValueCell({
   }
 
   if (!editing) {
+    const displayed = readableValue(row.value, row.unit ?? undefined, row.valueLabels);
     return (
       <button
         type="button"
         onClick={onStartEdit}
         className="block w-full truncate text-start text-sm hover:underline"
-        title={readableValue(row.value, row.unit ?? undefined)}
+        title={displayed}
         data-spec-value={row.specKey}
       >
-        {readableValue(row.value, row.unit ?? undefined)}
+        {displayed}
       </button>
     );
   }
@@ -148,7 +149,10 @@ export function SpecValueCell({
           <SearchableSelect
             value={draft}
             onChange={onDraftChange}
-            options={row.options.map((option) => ({ value: option, label: readable(option) }))}
+            options={row.options.map((option) => ({
+              value: option,
+              label: row.valueLabels[option] ?? readable(option),
+            }))}
             size="sm"
             disabled={disabled}
             placeholder={
@@ -170,7 +174,7 @@ export function SpecValueCell({
                           <span className="text-muted-foreground">
                             &ldquo;{query}&rdquo; is already{' '}
                             <span className="font-medium text-foreground">
-                              {readable(match.value)}
+                              {row.valueLabels[match.value] ?? readable(match.value)}
                             </span>
                             {match.viaSynonym ? ' - pick it above' : ''}
                           </span>

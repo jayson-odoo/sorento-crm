@@ -95,6 +95,7 @@ function toDefinition(key: ApplicableSpecKey): SpecKeyDefinition {
     unit: key.unit,
     allowed_values: key.allowed_values,
     synonyms: key.synonyms,
+    value_labels: key.value_labels,
   };
 }
 

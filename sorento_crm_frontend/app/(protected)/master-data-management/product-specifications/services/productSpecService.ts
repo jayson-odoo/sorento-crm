@@ -243,6 +243,8 @@ export interface ApplicableSpecKey {
   unit: string | null;
   allowed_values: string[];
   synonyms: Record<string, string[]>;
+  /** How each value reads on screen (#423), keyed by the stored slug. */
+  value_labels?: Record<string, string>;
   /** The `applies_when` gate, evaluated the way derivation evaluates it. */
   applicable: boolean;
   /** Already on the product, meaning it has a value. A removed key is reported not held. */

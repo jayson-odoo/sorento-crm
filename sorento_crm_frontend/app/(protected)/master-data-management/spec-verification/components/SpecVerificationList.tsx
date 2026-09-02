@@ -54,8 +54,9 @@ import { usePermissions } from '@/hooks/usePermissions';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
-import { readable, readableEntry } from '@/lib/spec-readable';
+import { readable, readableEntry, valueLabelsByKey } from '@/lib/spec-readable';
 import { statusPillClass, STATUS_PILL_BASE } from '@/lib/status-pill';
+import { useSpecRegistryQuery } from '../../product-specifications/hooks/useSpecRegistryQuery';
 import {
   skippedUnverifyCodes,
   skippedVerifyCodes,
@@ -89,7 +90,10 @@ function productCodeCount(n: number): string {
 }
 
 /** Who vouched for the code and when, or what moved under the stamp. */
-function verificationTitle(block: VerificationBlock): string {
+function verificationTitle(
+  block: VerificationBlock,
+  valueLabels: Record<string, Record<string, string>>,
+): string {
   const stamp =
     block.verified_by_name && block.verified_at
       ? `${block.verified_by_name} on ${formatDateTimeInMalaysia(block.verified_at)}`
@@ -99,15 +103,15 @@ function verificationTitle(block: VerificationBlock): string {
   }
   if (block.state === 'needs_reverify') {
     const changed = block.invalidated_diff?.changed ?? [];
-    // The diff carries the stored ENTRIES (`{ value, unit }`), not scalars, and there
-    // is no registry to hand here for the labels - `readable` is that fallback.
+    // The diff carries the stored ENTRIES (`{ value, unit }`), not scalars - `readable`
+    // is the fallback for a key with no label of its own (E.2).
     const diff = changed
-      .map(
-        (c) =>
-          `${readable(c.spec_key)}: ${readableEntry(c.was) || 'nothing'} to ${
-            readableEntry(c.now) || 'nothing'
-          }`,
-      )
+      .map((c) => {
+        const labels = valueLabels[c.spec_key];
+        return `${readable(c.spec_key)}: ${readableEntry(c.was, labels) || 'nothing'} to ${
+          readableEntry(c.now, labels) || 'nothing'
+        }`;
+      })
       .join('; ');
     const head = stamp ? `Was verified by ${stamp}.` : 'Was verified.';
     return changed.length
@@ -325,6 +329,10 @@ export default function SpecVerificationList() {
   // would 403 at submit.
   const { permissionSet } = usePermissions();
   const canEdit = permissionSet.has('master_data.products.edit');
+  // `{spec_key: value_labels}` (E.2) - the registry is small and ETag-cached (D9),
+  // so this list pays no extra round trip for it.
+  const { data: registryKeys } = useSpecRegistryQuery();
+  const valueLabels = useMemo(() => valueLabelsByKey(registryKeys), [registryKeys]);
 
   const rows = useMemo(() => data?.data ?? [], [data]);
   const summary = data?.summary;
@@ -504,7 +512,7 @@ export default function SpecVerificationList() {
           return (
             <span
               className={`${STATUS_PILL_BASE} ${statusPillClass(block.state)}`}
-              title={verificationTitle(block)}
+              title={verificationTitle(block, valueLabels)}
             >
               {STATE_LABEL[block.state]}
             </span>
@@ -567,7 +575,7 @@ export default function SpecVerificationList() {
       },
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [pending, rows, canEdit],
+    [pending, rows, canEdit, valueLabels],
   );
 
   const [columnOrder, setColumnOrder] = useState<string[]>(() =>
