@@ -21,7 +21,7 @@ import re
 import json
 from typing import Any, Optional
 
-from fastapi import APIRouter, Body, Depends, Request, Response, status
+from fastapi import APIRouter, Body, Depends, Query, Request, Response, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -685,6 +685,14 @@ async def products_carrying_spec(
     spec_key: str,
     value: Optional[str] = None,
     q: Optional[str] = None,
+    class_label: Optional[str] = Query(
+        None, description="Narrows to one product class (`class`), e.g. \"Kitchen Sink\"."
+    ),
+    source_filter: Optional[str] = Query(
+        None,
+        alias="source",
+        description="Narrows to one provenance source, e.g. \"derived\" or \"human\".",
+    ),
     limit: int = 100,
     offset: int = 0,
     # The second product-scoped registry read relaxed the same way (AC-A.13). It
@@ -706,6 +714,13 @@ async def products_carrying_spec(
     Grouped counts come back with the list so a whole key can be judged at a glance:
     `has_drainer` reading `true` on 74 bathtubs is obvious in the tally and invisible
     in a page of rows.
+
+    `class_label` and `source` narrow the query itself, not the page that came back -
+    a key with 10,000 rows only has one page loaded client-side, so filtering the page
+    would silently report on whatever happened to land on it. The tallies are computed
+    before those two filters (though after `value`/`q`, which already narrowed the set
+    they describe), so the Class and Source dropdown options stay complete once one of
+    them is picked, instead of collapsing to the choice just made.
     """
     from sqlalchemy import func, or_
 
@@ -718,7 +733,7 @@ async def products_carrying_spec(
 
     stored_value = ProductSpecifications.values[spec_key]["value"].astext
     stored_class = ProductSpecifications.values["class"]["value"].astext
-    source = ProductSpecifications.provenance[spec_key]["source"].astext
+    stored_source = ProductSpecifications.provenance[spec_key]["source"].astext
 
     base = (
         db.query(ProductSpecifications, Product)
@@ -742,7 +757,10 @@ async def products_carrying_spec(
             )
         )
 
-    # Counted over the same filter the list uses, so the tally and the rows agree.
+    # Counted over `base` before `class_label`/`source` narrow it further, so the
+    # dropdown options describe everything there is to pick, not just what is already
+    # picked - narrowing them to match the current filter would make the other options
+    # disappear the moment one is chosen.
     tallies = {
         "by_value": [
             {"value": v, "count": n}
@@ -756,10 +774,15 @@ async def products_carrying_spec(
         ],
         "by_source": [
             {"source": s, "count": n}
-            for s, n in base.with_entities(source, func.count()).group_by(source)
+            for s, n in base.with_entities(stored_source, func.count()).group_by(stored_source)
             .order_by(func.count().desc()).all()
         ],
     }
+
+    if class_label is not None:
+        base = base.filter(stored_class == class_label)
+    if source_filter is not None:
+        base = base.filter(stored_source == source_filter)
 
     total = base.count()
     rows = (
