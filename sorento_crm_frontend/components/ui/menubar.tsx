@@ -149,15 +149,17 @@ function MenubarContent({
   const variants = surfaceVariants(prefersReducedMotion);
   const transition = surfaceTransition(prefersReducedMotion, 'menu');
 
-  // MenubarMenu (unlike DropdownMenu/ContextMenu/HoverCard) exposes no
-  // open/onOpenChange of its own - only a `value` scoped to the Menubar
-  // Root's single-active-item tracking - so there is no external open signal
-  // to gate an <AnimatePresence> on. Radix still owns Content's mount/unmount
-  // lifecycle here (no forceMount): the panel plays the menu spring in on
-  // mount and simply unmounts on close, same as a plain React exit. Lower
-  // traffic than Popover/DropdownMenu (3 call sites, all top-nav bars), so an
-  // un-animated close is the accepted trade rather than building a
-  // data-state observer for one primitive.
+  // No exit here: the panel plays the menu spring in on mount and simply
+  // unmounts on close, because Radix still owns Content's mount/unmount
+  // lifecycle (no forceMount, no <AnimatePresence> gate).
+  //
+  // It IS reachable - MenubarMenu takes a `value`, and our own Menubar wrapper
+  // could generate one per menu and compare it against the Root's value
+  // context to derive the open signal the other primitives hand us directly.
+  // That is a wrapper, a context and a generated id for three demo call sites
+  // (the demo2/demo3/navbar top bars), none of which render under the layout
+  // this product ships, so the close is left un-animated instead. Build it when
+  // there is a fourth call site, or when a real product surface uses Menubar.
   return (
     <MenubarPrimitive.Portal>
       <MenubarPrimitive.Content

@@ -406,9 +406,12 @@ export function DataGridListToolbar<TData extends object>({
       </Tooltip>
     );
 
+  // The fragment stays: the toolbar div has the export and filter dialogs as
+  // siblings. Only the stray indentation left by the TooltipProvider that used
+  // to wrap them goes.
   return (
     <>
-     <div data-slot="data-grid-list-toolbar" className="flex w-full flex-col gap-2 py-5">
+      <div data-slot="data-grid-list-toolbar" className="flex w-full flex-col gap-2 py-5">
       {/* `flex-wrap`: at a narrow desktop width the two clusters used to push each
           other past the viewport edge instead of stacking, so Quick filters and
           Group by went out of reach. */}
@@ -631,7 +634,7 @@ export function DataGridListToolbar<TData extends object>({
           )}
         </div>
       ) : null}
-     </div>
+      </div>
 
       {/* Column-selection export modal - pre-ticked to visible columns (D4).
           Only for selection (client) export; listQuery uses its own dialog below. */}

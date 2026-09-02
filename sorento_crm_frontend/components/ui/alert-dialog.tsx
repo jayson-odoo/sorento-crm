@@ -44,6 +44,11 @@ function AlertDialogPortal({ ...props }: React.ComponentProps<typeof AlertDialog
   return <AlertDialogPrimitive.Portal data-slot="alert-dialog-portal" {...props} />;
 }
 
+// Deliberately NOT mirrored from dialog.tsx yet: the focus-return logic that
+// hands focus back to the plain button that opened the surface (Radix returns it
+// to its own Trigger, which this product almost never renders). An AlertDialog
+// is nearly always opened from a row action the user is about to leave anyway,
+// so it is a follow-up rather than a copy made on the spot.
 function AlertDialogContent({
   className,
   children,
