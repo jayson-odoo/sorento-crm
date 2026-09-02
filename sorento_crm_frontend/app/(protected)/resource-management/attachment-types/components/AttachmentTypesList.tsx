@@ -43,7 +43,7 @@ export default function AttachmentTypesList() {
   const [selectedTypeId, setSelectedTypeId] = useState<string | null>(null);
   const [selectedTypeForDelete, setSelectedTypeForDelete] = useState<AttachmentType | null>(null);
 
-  const { data, isLoading, refetch, isFetching } = useAttachmentTypes({
+  const { data, isLoading, isPlaceholderData, refetch, isFetching } = useAttachmentTypes({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -170,6 +170,7 @@ export default function AttachmentTypesList() {
       tableLayout={{ columnsVisibility: true }}
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
+      isPlaceholderData={isPlaceholderData}
       emptyAction={listPrimaryAction}
     >
       <Card>
