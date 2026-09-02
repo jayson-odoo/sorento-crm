@@ -164,6 +164,11 @@ export default function AttachmentPreviewModal({
       // Arrow-key navigation jumps straight to the slide (M2-02, no
       // animation) - only drag and the dot/arrow-button navigation still
       // play Embla's own scroll (carousel.tsx, duration 20).
+      //
+      // Kept even though carousel.tsx now jumps on the same keys: its handler
+      // is a capture listener on the carousel region, and focus inside this
+      // dialog usually sits on the panel or a header button instead, where
+      // that listener never sees the key.
       if (e.key === 'ArrowRight') api?.scrollNext(true);
       else if (e.key === 'ArrowLeft') api?.scrollPrev(true);
       else if (e.key === '+' || e.key === '=') zoomBy(1.25);
