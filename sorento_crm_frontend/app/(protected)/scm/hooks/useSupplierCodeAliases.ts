@@ -22,11 +22,19 @@ export function useSupplierCodeAliases(supplierId: string | null) {
   });
 }
 
-export function useUnmatchedSupplierCodes(supplierId: string | null) {
+/**
+ * The unknown codes on ONE plan's own statement (S6, AC-C7).
+ *
+ * Keyed on the PLAN, not the supplier: the queue used to be supplier-wide, so a plan
+ * started with no file at all listed 79 codes off a snapshot another plan had uploaded.
+ * The remembered list below stays per supplier - a ruling is the supplier's memory and it
+ * is consulted on every later upload.
+ */
+export function useUnmatchedSupplierCodes(planId: string | null) {
   return useQuery({
-    queryKey: [...KEY, 'unmatched', supplierId],
-    queryFn: () => listUnmatchedSupplierCodes(supplierId as string),
-    enabled: !!supplierId,
+    queryKey: [...KEY, 'unmatched', planId],
+    queryFn: () => listUnmatchedSupplierCodes(planId as string),
+    enabled: !!planId,
     refetchOnWindowFocus: false,
   });
 }

@@ -133,6 +133,7 @@ const PLAN: LoadingPlanRecord = {
   plan_horizon_date: '2026-09-30',
   document_kind: 'stock_list',
   document_label: 'Stock list 27/07/2026',
+  statement_as_of: '2026-07-27',
   source_attachment_id: 'att-1',
   status: 'planning',
   sent_channel: null,

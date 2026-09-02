@@ -26,10 +26,11 @@ import { fmtInt } from '../../lib/format';
 import { useCreateLoadingPlan } from '../../hooks/useFulfilment';
 import {
   applyStockList,
+  deleteLoadingPlan,
   getFulfilmentSuppliers,
-  getSupplierStockListFile,
   previewStockList,
   testStockList,
+  type LoadingPlanRecord,
   type PlanDocumentKind,
   type StockListPreview,
 } from '../../services/fulfilmentService';
@@ -51,10 +52,13 @@ import { verdictFromPreview } from '../../proforma-invoices/components/ProformaU
  * upload) now run in place; the stock-list and proforma dialogs keep serving their own pages
  * unchanged, and nothing about either read is re-implemented here.
  *
- * Confirm does three things in order, and they have to be in that order: apply the file
- * (which replaces the supplier's snapshot), find the sheet it was retained as, then create
- * the plan row pointing at it - so the record the buyer lands on names the file it was
- * started from rather than whatever was on file a moment earlier.
+ * Confirm does three things in order, and since S6 that order is: create the PLAN, apply the
+ * file INTO it (`loading_plan_id`), then open it. The plan has to exist first because it is
+ * what the rows are stamped with - that stamp is the whole of "a plan owns its statement",
+ * and without it a plan read whatever the supplier had sent most recently, from any plan.
+ * An apply that fails deletes the plan it just made, so a refused file never leaves an empty
+ * record behind (AC-F2). The retained sheet is pointed at by the server during the apply,
+ * so there is nothing to look up here between the two calls.
  *
  * "No file" is the third answer, and it is a real one: a supplier whose list or proforma is
  * already held needs no upload at all, and forcing one is what made the old toolbar's two
@@ -94,6 +98,10 @@ export function PlanContainerDialog({
   // there is none. Same shape as `ProformaUploadDialog`.
   const proformaPreviewRef = useRef<ProformaInvoicePreview | null>(null);
 
+  /** The plan the current Confirm created, so a failing apply knows what to take back and
+   *  the navigation knows where to land. */
+  const startedPlanRef = useRef<LoadingPlanRecord | null>(null);
+
   useEffect(() => {
     if (!open) return;
     setSupplierId('');
@@ -103,32 +111,31 @@ export function PlanContainerDialog({
     setStarting(false);
     setStartError(null);
     proformaPreviewRef.current = null;
+    startedPlanRef.current = null;
   }, [open]);
 
-  /**
-   * The plan row itself. Created AFTER the file has landed so `source_attachment_id` names
-   * the sheet this plan was started from, and the buyer is taken straight to it (R4).
-   */
+  const createPlan = () =>
+    create.mutateAsync({
+      supplier_id: supplierId,
+      plan_horizon_date: planHorizonDate || null,
+      document_kind: docKind,
+      // Stamped by the server while the file is being applied (S6): the sheet is retained
+      // during that same call, so there is nothing for this dialog to look up. Null on a
+      // proforma or a "No file" plan, which have no retained sheet of their own.
+      source_attachment_id: null,
+    });
+
+  const openPlan = (plan: LoadingPlanRecord) => {
+    onOpenChange(false);
+    router.push(`/scm/loading-plan/${plan.id}`);
+  };
+
+  /** The "No file" answer: there is no upload, so the plan is the whole of Confirm (R4). */
   const startPlan = async () => {
     setStarting(true);
     setStartError(null);
     try {
-      let sourceAttachmentId: string | null = null;
-      if (docKind === 'stock_list') {
-        // Best-effort: the retain is itself best-effort on apply, and a plan without a
-        // pointer to the sheet is still a plan - it just cannot offer "View uploaded list".
-        sourceAttachmentId = await getSupplierStockListFile(supplierId)
-          .then((f) => f.attachment_id)
-          .catch(() => null);
-      }
-      const plan = await create.mutateAsync({
-        supplier_id: supplierId,
-        plan_horizon_date: planHorizonDate || null,
-        document_kind: docKind,
-        source_attachment_id: sourceAttachmentId,
-      });
-      onOpenChange(false);
-      router.push(`/scm/loading-plan/${plan.id}`);
+      openPlan(await createPlan());
     } catch (e) {
       setStartError(e instanceof Error ? e.message : 'Failed to start the plan.');
     } finally {
@@ -143,15 +150,36 @@ export function PlanContainerDialog({
         ? previewProformaInvoice(file, supplierId)
         : previewStockList(file, supplierId),
     apply: async (file) => {
-      if (docKind === 'proforma') {
-        const read =
-          proformaPreviewRef.current ?? (await previewProformaInvoice(file, supplierId));
-        return applyProformaInvoice(file, supplierId, revisionsFrom(read));
+      // The plan FIRST (S6): every row this apply writes carries its id, which is what
+      // makes the statement the plan's own rather than the supplier's latest.
+      const plan = await createPlan();
+      startedPlanRef.current = plan;
+      try {
+        if (docKind === 'proforma') {
+          const read =
+            proformaPreviewRef.current ?? (await previewProformaInvoice(file, supplierId));
+          return await applyProformaInvoice(
+            file,
+            supplierId,
+            revisionsFrom(read),
+            null,
+            plan.id,
+          );
+        }
+        return await applyStockList(file, supplierId, plan.id);
+      } catch (e) {
+        // AC-F2: the file was refused, so the plan it was for goes with it. Nobody is left
+        // holding an empty record they did not ask for and cannot tell from a real one.
+        startedPlanRef.current = null;
+        await deleteLoadingPlan(plan.id).catch(() => undefined);
+        throw e;
       }
-      return applyStockList(file, supplierId);
     },
     test: docKind === 'proforma' ? undefined : (file) => testStockList(file, supplierId),
-    onApplied: () => void startPlan(),
+    onApplied: () => {
+      const plan = startedPlanRef.current;
+      if (plan) openPlan(plan);
+    },
   });
 
   const { preview, previewing, applying, error } = upload;

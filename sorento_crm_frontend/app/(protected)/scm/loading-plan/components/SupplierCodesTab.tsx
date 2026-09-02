@@ -29,7 +29,9 @@ import type {
   UnmatchedSupplierCode,
 } from '../../services/supplierCodeAliasService';
 import { RefreshMatchingButton } from './RefreshMatchingButton';
+import type { PlanDocumentKind } from '../../services/fulfilmentService';
 import { EM_DASH, fmtDateTime, fmtInt } from '../../lib/format';
+import { formatDateInMalaysia } from '@/lib/helpers';
 
 /**
  * The Supplier codes tab (S3): what this supplier's file names that our catalogue does not
@@ -79,16 +81,48 @@ type RowDecision =
   | { kind: 'matched'; aliasId: string; label: string }
   | { kind: 'dismissed'; aliasId: string };
 
+/**
+ * Which statement these codes came off, in a sentence (AC-G2).
+ *
+ * Composed here rather than printed from `document_label` verbatim because the label is
+ * written to head a record ("Proforma invoice X · 5 blocks") and this line is written to
+ * answer "where am I being asked about these codes from". A plan with no file says so
+ * outright: it reads no statement, so its queue is empty by design rather than by accident.
+ */
+function statementLine(
+  documentKind: PlanDocumentKind,
+  documentLabel: string,
+  statementAsOf: string | null,
+): string {
+  if (documentKind === 'none') return 'No file on this plan';
+  if (documentKind === 'stock_list') {
+    return statementAsOf
+      ? `Codes from the stock list of ${formatDateInMalaysia(statementAsOf)}`
+      : `Codes from ${documentLabel}`;
+  }
+  // "Proforma invoice 2026-7-31 SORENTO 预装清单 · 5 blocks" reads as the file and its block
+  // count once the record's own heading word is taken off the front.
+  return `Codes from ${documentLabel.replace(/^Proforma invoice /, '').replace(' · ', ', ')}`;
+}
+
 export function SupplierCodesTab({
+  planId,
   supplierId,
+  documentKind,
   documentLabel,
+  statementAsOf,
 }: {
+  /** The queue and Refresh matching are scoped to THIS plan's own rows (S6, AC-C7). */
+  planId: string;
+  /** Still the supplier's: a ruling is written against the supplier and remembered for
+   *  every later upload, whichever plan answered it. */
   supplierId: string;
-  /** Names the statement this plan reads its codes off (AC-G2 lands the full wording in S7;
-   *  here it is the plan's own `document_label`, verbatim). */
+  documentKind: PlanDocumentKind;
+  /** The plan's own statement, named (AC-G2) - never the supplier's latest. */
   documentLabel: string;
+  statementAsOf: string | null;
 }) {
-  const { data: rows = [] } = useUnmatchedSupplierCodes(supplierId || null);
+  const { data: rows = [] } = useUnmatchedSupplierCodes(planId || null);
   const { data: aliases = [] } = useSupplierCodeAliases(supplierId || null);
   const match = useMatchSupplierCodeInPlace();
   const dismiss = useDismissSupplierCodeInPlace();
@@ -421,7 +455,7 @@ export function SupplierCodesTab({
   return (
     <div className="space-y-4">
       <p className="text-xs text-muted-foreground" data-testid="supplier-codes-statement">
-        Codes read off {documentLabel}
+        {statementLine(documentKind, documentLabel, statementAsOf)}
       </p>
 
       <Card>
@@ -430,7 +464,7 @@ export function SupplierCodesTab({
             <CardTitle className="truncate text-sm">Needs a decision ({rows.length})</CardTitle>
           </CardHeading>
           <div className="flex shrink-0 items-center gap-2">
-            <RefreshMatchingButton supplierId={supplierId} size="sm" />
+            <RefreshMatchingButton planId={planId} size="sm" />
           </div>
         </CardHeader>
         {rows.length === 0 ? (

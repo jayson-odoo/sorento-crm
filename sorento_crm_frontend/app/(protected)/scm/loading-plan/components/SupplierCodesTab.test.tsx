@@ -145,6 +145,7 @@ vi.mock('@/components/common/SearchableSelect', () => ({
 }));
 
 import { SupplierCodesTab } from './SupplierCodesTab';
+import type { PlanDocumentKind } from '../../services/fulfilmentService';
 
 const row = (over: Record<string, unknown> = {}) => ({
   item_code: 'SRTWC286-SH-250UF',
@@ -171,12 +172,22 @@ const alias = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-function renderTab(documentLabel = 'Stock list 27/07/2026') {
+function renderTab(
+  documentLabel = 'Stock list 27/07/2026',
+  documentKind: PlanDocumentKind = 'stock_list',
+  statementAsOf: string | null = '2026-07-27',
+) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const invalidateSpy = vi.spyOn(qc, 'invalidateQueries');
   const utils = render(
     <QueryClientProvider client={qc}>
-      <SupplierCodesTab supplierId="sup-1" documentLabel={documentLabel} />
+      <SupplierCodesTab
+        planId="plan-1"
+        supplierId="sup-1"
+        documentKind={documentKind}
+        documentLabel={documentLabel}
+        statementAsOf={statementAsOf}
+      />
     </QueryClientProvider>,
   );
   return { ...utils, invalidateSpy };
@@ -217,10 +228,20 @@ beforeEach(() => {
   deferred.run.mockClear();
 });
 
-describe('SupplierCodesTab - names the statement (AC-G2 stub)', () => {
-  it('names the plan\'s own document', () => {
-    renderTab('Stock list 27/07/2026');
-    expect(screen.getByText('Codes read off Stock list 27/07/2026')).toBeInTheDocument();
+describe('SupplierCodesTab - names the statement (AC-G2)', () => {
+  it("names the plan's own stock list by its date", () => {
+    renderTab('Stock list 27/07/2026', 'stock_list', '2026-07-27');
+    expect(screen.getByText('Codes from the stock list of 27/07/2026')).toBeInTheDocument();
+  });
+
+  it('names the proforma file and its block count', () => {
+    renderTab('Proforma invoice 2026-7-31 SORENTO · 5 blocks', 'proforma', '2026-07-31');
+    expect(screen.getByText('Codes from 2026-7-31 SORENTO, 5 blocks')).toBeInTheDocument();
+  });
+
+  it('says a plan with no file has no statement to read codes off', () => {
+    renderTab('No file', 'none', null);
+    expect(screen.getByText('No file on this plan')).toBeInTheDocument();
   });
 });
 
@@ -247,7 +268,7 @@ describe('SupplierCodesTab - Needs a decision', () => {
 
     fireEvent.click(screen.getByTestId('refresh-matching'));
 
-    expect(state.rematch).toHaveBeenCalledWith({ supplier_id: 'sup-1' });
+    expect(state.rematch).toHaveBeenCalledWith({ plan_id: 'plan-1' });
   });
 
   it('picking a product keeps the row in place with Undo, and never invalidates (AC-C1)', async () => {

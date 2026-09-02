@@ -182,8 +182,9 @@ export function LoadingPlanView({ planId }: { planId: string }) {
   // to reach after adding the missing products (R18), so it is also reachable from up here.
   const rematch = useRematchSupplierCodes();
   // Read here too (S2), for the Supplier codes tab's own badge - same query key as
-  // `SupplierCodesTab`, so React Query serves both callers from one fetch.
-  const { data: unmatchedCodes = [] } = useUnmatchedSupplierCodes(supplierId || null);
+  // `SupplierCodesTab`, so React Query serves both callers from one fetch. Keyed on the
+  // PLAN since S6: the badge counts what THIS plan's statement left unanswered.
+  const { data: unmatchedCodes = [] } = useUnmatchedSupplierCodes(planId || null);
 
   // The tab lives in the URL (AC-B2), not component state: reload and the record's own
   // prev/next pager both have to land back on the tab she was reading. `?tab=` follows the
@@ -310,7 +311,7 @@ export function LoadingPlanView({ planId }: { planId: string }) {
     },
     refreshMatching: {
       disabled: rematch.isPending,
-      run: () => rematch.mutate({ supplier_id: supplierId }),
+      run: () => rematch.mutate({ plan_id: planId }),
     },
     copyLink: {
       disabled: !liveLinkNotice,
@@ -507,7 +508,13 @@ export function LoadingPlanView({ planId }: { planId: string }) {
               the supplier's memory of every ruling ever made (S3) - both always render, so
               the Remembered list is reachable even once the queue itself is answered down to
               nothing; the tab's own empty states cover each half. */}
-          <SupplierCodesTab supplierId={supplierId} documentLabel={plan.document_label} />
+          <SupplierCodesTab
+            planId={planId}
+            supplierId={supplierId}
+            documentKind={plan.document_kind}
+            documentLabel={plan.document_label}
+            statementAsOf={plan.statement_as_of}
+          />
         </TabsContent>
 
         <TabsContent value="sent">

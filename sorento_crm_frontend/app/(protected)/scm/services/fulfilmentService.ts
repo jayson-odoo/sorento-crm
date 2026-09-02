@@ -179,10 +179,19 @@ async function readJson<T>(res: Response, fallback: string): Promise<T> {
   return (await res.json()) as T;
 }
 
-function stockForm(file: File, supplierId: string): FormData {
+function stockForm(
+  file: File,
+  supplierId: string,
+  loadingPlanId?: string | null,
+): FormData {
   const body = new FormData();
   body.append('file', file);
   body.append('supplier_id', supplierId);
+  // S6 - which plan OWNS the rows this upload writes. Stated, the apply replaces only that
+  // plan's rows and stamps the new ones with it, so a later upload for the same supplier
+  // cannot move an older plan's figures. Absent (the standalone stock-list page) it keeps
+  // the supplier-wide replace it always did.
+  if (loadingPlanId) body.append('loading_plan_id', loadingPlanId);
   return body;
 }
 
@@ -199,10 +208,24 @@ export async function previewStockList(
   return { ...body, ok: body.readable };
 }
 
-export async function applyStockList(file: File, supplierId: string): Promise<StockListResult> {
+/**
+ * Write the supplier's stock list.
+ *
+ * ── CONTRACT ADDED BY S6 ───────────────────────────────────────────────────
+ * `loadingPlanId` (multipart field `loading_plan_id`, optional) - the plan this snapshot
+ * belongs to. With it the apply deletes and rewrites ONLY that plan's rows; without it the
+ * supplier-wide snapshot is replaced exactly as before. It is what makes "a plan owns its
+ * statement" true: the ROYAL MIRROR plan read a stale supplier-wide snapshot uploaded from
+ * a different plan, and said "No file" while doing it.
+ */
+export async function applyStockList(
+  file: File,
+  supplierId: string,
+  loadingPlanId?: string | null,
+): Promise<StockListResult> {
   const res = await apiFetch('/api/v1/scm/supplier-inventory/apply', {
     method: 'POST',
-    body: stockForm(file, supplierId),
+    body: stockForm(file, supplierId, loadingPlanId),
   });
   return readJson<StockListResult>(res, 'Failed to save the stock list');
 }
@@ -321,8 +344,14 @@ export interface LoadingPlanRecord {
   /** "Sales order cut-off". Null = every open order counts. */
   plan_horizon_date: string | null;
   document_kind: PlanDocumentKind;
-  /** Ready to print: "Stock list 27/07/2026" / "Proforma invoice PI-x" / "No file". */
+  /** Ready to print, off THIS plan's own rows (S6, AC-F7): "Stock list 27/07/2026",
+   *  "Proforma invoice PI-x", "Proforma invoice <file stem> · 5 blocks", "No file". Never
+   *  re-looked-up from whatever the supplier sent last. */
   document_label: string;
+  /** The date of the statement this plan is bound to - its stock rows' `as_of`, or the
+   *  latest invoice date across its bound invoices. Null on a "No file" plan, which reads
+   *  no statement at all (AC-G1). */
+  statement_as_of: string | null;
   source_attachment_id: string | null;
   status: LoadingPlanStatus;
   /** The latest notice for this plan, so the list can say how and when it went out. */
@@ -558,6 +587,14 @@ export async function getNoticeDocumentUrl(
  *       Body: { supplier_id, plan_horizon_date?: "YYYY-MM-DD" }. Auth: `scm.dashboard.view`.
  *  POST /api/v1/scm/container-requests       -> 201 { notices, document_filename }. Auth: `scm.reorder.run`.
  */
+/** One invoice block behind a proforma row's "They hold" figure (S6, AC-F4). */
+export interface ContainerRequestHoldingBlock {
+  /** Which block of the uploaded file this invoice was read from, 1-based. */
+  block_index: number | null;
+  pi_number: string;
+  qty: number;
+}
+
 export interface ContainerRequestRow {
   /** Whose FIGURES this row shows. On a set row that is the driver member's id (R19), which
    *  is what the SO drill and the twelve-month history are keyed on. */
@@ -629,6 +666,14 @@ export interface ContainerRequestRow {
    *  quantity on a proforma row. Null - never 0 - when neither document names it. */
   holding_qty: number | null;
   holding_as_of: string | null;
+  /** How many invoice blocks this plan's proforma statement was read from (S6, AC-F4). One
+   *  file can hold five stacked blocks, and the plan binds to every one of them, so the cell
+   *  says "PI 31/07/2026 · 5 blocks" rather than quietly reporting one block's figure. 1 on
+   *  a single-invoice plan, 0 on a stock-list or "No file" row. */
+  holding_blocks: number;
+  /** The per-block split behind `holding_qty`, so the drill can show where the sum came
+   *  from. Empty on anything but a proforma row. */
+  blocks: ContainerRequestHoldingBlock[];
   /** The stock list's own two figures. Both 0 on a proforma row: a proforma states one
    *  quantity per line and there is no unfinished half of it to report. */
   qty_packed: number;
@@ -732,13 +777,50 @@ export interface ContainerRequestBuild {
   plan_horizon_date: string | null;
 }
 
+/**
+ * PHASE 1 MOCK (S6) - DELETE WITH THIS COMMENT in Phase 2.
+ *
+ * `holding_blocks`, `blocks` and `plan.statement_as_of` are the fields S6 adds to this
+ * response; the backend does not serve them until Phase 2. Until it does, a proforma row's
+ * figure is split over two INVENTED blocks so the cell, its drill and the codes-tab header
+ * can be tuned and verified in a browser without a backend. Nothing here reaches a write,
+ * and every value is discarded the moment the real fields arrive.
+ */
+function mockStatementFields(build: ContainerRequestBuild): ContainerRequestBuild {
+  const rows = build.rows.map((row) => {
+    if (row.blocks !== undefined) return row;
+    if (row.holding_source !== 'proforma' || row.holding_qty === null) {
+      return { ...row, holding_blocks: 0, blocks: [] };
+    }
+    const pi = build.sources.proforma_pi_number ?? 'PI';
+    const first = Math.round(row.holding_qty * 0.6);
+    return {
+      ...row,
+      holding_blocks: 2,
+      blocks: [
+        { block_index: 4, pi_number: `${pi}-4`, qty: first },
+        { block_index: 5, pi_number: `${pi}-5`, qty: row.holding_qty - first },
+      ],
+    };
+  });
+  const plan =
+    build.plan.statement_as_of === undefined
+      ? { ...build.plan, statement_as_of: build.stock_list_as_of ?? build.sources.proforma_as_of }
+      : build.plan;
+  return { ...build, rows, plan };
+}
+
 export async function buildContainerRequest(planId: string): Promise<ContainerRequestBuild> {
   const res = await apiFetch('/api/v1/scm/container-requests/build?include_lines=true', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ plan_id: planId }),
   });
-  return readJson<ContainerRequestBuild>(res, 'Failed to work out what to ask this supplier for');
+  const build = await readJson<ContainerRequestBuild>(
+    res,
+    'Failed to work out what to ask this supplier for',
+  );
+  return mockStatementFields(build);
 }
 
 /**

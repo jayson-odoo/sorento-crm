@@ -36,12 +36,16 @@ import type {
   ContainerRequestSoLine,
 } from '../../services/fulfilmentService';
 import {
+  DocTable,
+  EmptyRow,
   IncomingPlTable,
   OnHandTable,
   PlanRowDialog,
   PoTabs,
   ProjectRetailTabs,
   SpoTabs,
+  Td,
+  Th,
   monthLabel,
   type PlanDemandLineRow,
   type PlanHistoryPoint,
@@ -133,14 +137,35 @@ export function holdingSortValue(row: ContainerRequestRow): number {
  * not the same fact as stock in their warehouse. Neither reads as a dash rather than a zero:
  * "they have told us nothing" and "they told us they have none" are different answers.
  */
-function HoldingCell({ row }: { row: ContainerRequestRow }) {
+/** "PI 31/07/2026 · 5 blocks" - which statement the figure came off, and out of how many
+ *  invoices it was added up (S6, AC-F4). The block count is only said when there is more
+ *  than one, because "1 block" is what an invoice is. */
+function proformaHoldingNote(row: ContainerRequestRow): string {
+  const when = row.holding_as_of ? formatDateInMalaysia(row.holding_as_of) : EM_DASH;
+  const blocks = row.holding_blocks ?? 0;
+  return blocks > 1 ? `PI ${when} · ${fmtInt(blocks)} blocks` : `PI ${when}`;
+}
+
+function HoldingCell({
+  row,
+  onOpenBlocks,
+}: {
+  row: ContainerRequestRow;
+  onOpenBlocks: () => void;
+}) {
   if (row.holding_source === 'proforma') {
+    const split = row.blocks ?? [];
     return (
       <div className="flex flex-col text-2xs">
-        <span className="tabular-nums">{fmtInt(row.holding_qty ?? 0)}</span>
-        <span className="text-muted-foreground">
-          PI {row.holding_as_of ? formatDateInMalaysia(row.holding_as_of) : EM_DASH}
-        </span>
+        {/* The sum opens its own parts: five blocks added together is a figure nobody can
+            check against the supplier's paper unless the split is one click away. */}
+        <PlanNumberButton
+          value={fmtInt(row.holding_qty ?? 0)}
+          label="Invoice blocks behind this figure"
+          onClick={onOpenBlocks}
+          disabled={split.length === 0}
+        />
+        <span className="text-muted-foreground">{proformaHoldingNote(row)}</span>
       </div>
     );
   }
@@ -148,6 +173,37 @@ function HoldingCell({ row }: { row: ContainerRequestRow }) {
     return <span className="text-2xs text-muted-foreground">{EM_DASH}</span>;
   }
   return <span className="tabular-nums">{fmtInt(row.qty_packed)}</span>;
+}
+
+/** The per-block split behind one proforma row's figure (AC-F4). */
+function BlocksTable({ row }: { row: ContainerRequestRow }) {
+  const blocks = row.blocks ?? [];
+  return (
+    <DocTable>
+      <thead>
+        <tr className="border-b">
+          <Th>Block</Th>
+          <Th>Invoice</Th>
+          <Th right>Packed</Th>
+        </tr>
+      </thead>
+      <tbody>
+        {blocks.length === 0 ? (
+          <EmptyRow colSpan={3}>No invoice on this plan names this product.</EmptyRow>
+        ) : (
+          blocks.map((b) => (
+            <tr key={`${b.pi_number}-${b.block_index ?? 0}`} className="border-b last:border-0">
+              <Td>{b.block_index ?? EM_DASH}</Td>
+              <Td title={b.pi_number}>
+                <span className="block max-w-56 truncate">{b.pi_number}</span>
+              </Td>
+              <Td right>{fmtInt(b.qty)}</Td>
+            </tr>
+          ))
+        )}
+      </tbody>
+    </DocTable>
+  );
 }
 
 /** What the grid holds while a lightbox is open: which figure was clicked, and on which row. */
@@ -220,6 +276,12 @@ function dialogContext(dialog: OpenPlanRowDialog, horizon: string | null): strin
   if (kind === 'on_hand') return `${fmtInt(row.on_hand)} at site pools`;
   if (kind === 'spo') return `${fmtInt(row.incoming_spo)} arriving at site pools`;
   if (kind === 'incoming_pl') return `${fmtInt(row.incoming_pl)} on packing lists`;
+  if (kind === 'blocks') {
+    const blocks = row.holding_blocks ?? 0;
+    return `${fmtInt(row.holding_qty ?? 0)} over ${fmtInt(blocks)} ${
+      blocks === 1 ? 'invoice block' : 'invoice blocks'
+    }`;
+  }
   return `${fmtInt(row.outstanding_po)} still to come`;
 }
 
@@ -622,7 +684,12 @@ export function ContainerRequestSection({
         // Sortable: `accessorFn` gives the sort its number; the cell shows the figure.
         accessorFn: holdingSortValue,
         header: ({ column }) => <DataGridColumnHeader title="Packed" column={column} />,
-        cell: ({ row }) => <HoldingCell row={row.original} />,
+        cell: ({ row }) => (
+          <HoldingCell
+            row={row.original}
+            onOpenBlocks={() => setDialog({ kind: 'blocks', row: row.original })}
+          />
+        ),
         size: 100,
         enableSorting: true,
         sortDescFirst: true,
@@ -992,6 +1059,8 @@ export function ContainerRequestSection({
             <OnHandTable productId={dialog.row.product_id} />
           ) : dialog.kind === 'spo' ? (
             <SpoTabs supplierId={supplierId} productId={dialog.row.product_id} />
+          ) : dialog.kind === 'blocks' ? (
+            <BlocksTable row={dialog.row} />
           ) : dialog.kind === 'incoming_pl' ? (
             <IncomingPlTable
               supplierId={supplierId}

@@ -391,6 +391,7 @@ function proformaForm(
   supplierId: string,
   revisionOf?: RevisionSelection | null,
   fileAsNew?: string[] | null,
+  loadingPlanId?: string | null,
 ): FormData {
   const body = new FormData();
   body.append('file', file);
@@ -404,6 +405,10 @@ function proformaForm(
   if (fileAsNew && fileAsNew.length > 0) {
     body.append('file_as_new', JSON.stringify(fileAsNew));
   }
+  // S6 - the plan that OWNS the invoices this upload writes. Every invoice created or
+  // revised here is stamped with it, so the plan reads its own five blocks rather than
+  // whichever single invoice sorted first for the supplier.
+  if (loadingPlanId) body.append('loading_plan_id', loadingPlanId);
   return body;
 }
 
@@ -418,15 +423,26 @@ export async function previewProformaInvoice(
   return readJson<ProformaInvoicePreview>(res, 'Failed to read the proforma invoice');
 }
 
+/**
+ * Write one proforma invoice per block in the file.
+ *
+ * ── CONTRACT ADDED BY S6 ───────────────────────────────────────────────────
+ * `loadingPlanId` (multipart field `loading_plan_id`, optional) - the plan these invoices
+ * belong to. Every invoice this apply creates or revises is stamped with it, so the plan's
+ * "They hold" figures are the SUM over its own blocks and a later upload for the same
+ * supplier cannot move them. Refused with 422 `invoice_supplier_mismatch` when the plan
+ * belongs to a different supplier. Absent (the standalone proforma page) nothing is stamped.
+ */
 export async function applyProformaInvoice(
   file: File,
   supplierId: string,
   revisionOf?: RevisionSelection | null,
   fileAsNew?: string[] | null,
+  loadingPlanId?: string | null,
 ): Promise<ProformaApplyResult> {
   const res = await apiFetch('/api/v1/scm/proforma-invoices/apply', {
     method: 'POST',
-    body: proformaForm(file, supplierId, revisionOf, fileAsNew),
+    body: proformaForm(file, supplierId, revisionOf, fileAsNew, loadingPlanId),
   });
   return readJson<ProformaApplyResult>(res, 'Failed to save the proforma invoice');
 }
