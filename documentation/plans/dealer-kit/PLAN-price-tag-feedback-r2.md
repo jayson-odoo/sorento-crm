@@ -1,6 +1,7 @@
 # PLAN - Price Tag Feedback R2
 
-Status: Approved 1 Sep 2026 - implementation starting
+Status: Approved 1 Sep 2026 - in implementation. Round 3: S11 built (PR #511, review
+round 2 Sep); S8/S9/S10 on their own branches.
 UAC: `documentation/plans/dealer-kit/price-tag-feedback-r2-acceptance-criteria.md`
 Predecessor: `documentation/plans/dealer-kit/PLAN-price-tag-request.md` (shipped, PR #289)
 
@@ -247,3 +248,50 @@ S7 independent; its connector half ships whenever the AutoCount side sends
 ### S9 - barcode override + tag size control (D23, D24)
 ### S10 - request detail tabs + per-line Design (D25)
 ### S11 - tag templates bulk delete, deferred action (D26)
+
+Shipped on `price-tag-r3-s11` (PR #511), review round 2 Sep.
+
+Frontend (`TagTemplatesList.tsx`):
+- Checkbox selection (`buildSelectColumn`) + a Delete action in
+  `DataGridListToolbar`'s bulk strip. No dialog: ONE `useDeferredAction` parked
+  on a client-generated batch token, with the countdown in a toast naming the
+  COUNT ("Deleting 12 templates"), and every selected row dimmed for the window
+  via the new `dimEntityIds` (store + `DataGrid`'s `rowPending`). The count says
+  how many, the dimming says which - which is what the old "a countdown can only
+  name one record" objection to deferring a bulk action was missing.
+- One parked action per batch, never one per row (`useDeferredBulkAction`'s
+  shape): the server refuses or applies the whole selection together, and a
+  per-row action cannot express that.
+- The PER-ROW Delete moved to the same model (`useDeferredRowAction` over
+  `tag_template.delete`); `ConfirmDeleteDialog` and the now-unused
+  `deleteTemplate` service call left the file.
+- Ids and the outcome noun are frozen at the click, because the selection is
+  cleared immediately afterwards.
+
+Backend:
+- `tag_template_service.bulk_delete` / `delete_template`: all-or-nothing over the
+  batch, one 404 with the SAME sentence for a missing id and for another
+  company's (no existence oracle), the company predicate spliced on EXPLICITLY
+  rather than left to the `do_orm_execute` listener alone. `DELETE
+  /tag-templates/{id}` now calls the same service method, so immediate and
+  deferred cannot drift. One audit row per deleted template (the templates
+  themselves are gone afterwards, and the action row names the CLICK) plus an
+  INFO log naming ids, names and the requester.
+- `record_actions`: `tag_template.delete` + `tag_template.bulk_delete`, both
+  `dealer_kit.tag_templates.manage`, destructive window.
+
+Executor company scope (the review round's blocker, and NOT specific to this
+slice):
+- A parked action was executed on whatever session got to it first - the
+  scheduler sweep runs `set_company_scope(db, None)` (every company, because a
+  tick has no principal), and a lazy commit runs inside somebody else's request.
+  The permission check at the click is a SLUG check and never was a company
+  check, so a company-A user could park an action naming a company-B record and
+  the sweep would carry it out ten seconds later. Every record action shared
+  this, not just the batch.
+- Fix: `dispatch` stores the requester's resolved scope on the parked row under
+  a reserved payload key (`__company_scope`), and `_execute` puts it back around
+  `action.execute`. A row parked before the key existed commits UNSET (0 rows),
+  never `None` - fail-closed, the same rule a session that never resolved a scope
+  gets. The key is stripped before any handler sees the payload; nothing renders
+  the payload, so this needed no migration.

@@ -55,6 +55,13 @@ export interface UseDeferredActionInput {
   successMessage: string;
   /** What the handler needs at commit time. `start()` may override it per click. */
   payload?: Record<string, unknown>;
+  /**
+   * Rows to dim alongside this action, when the action is about a SELECTION rather
+   * than one record (D26): `entityId` is then a token naming the click, and these
+   * are the records the reader actually picked. Handed to the store, so the dimming
+   * lasts exactly as long as the parked action and survives leaving the list.
+   */
+  dimEntityIds?: readonly string[];
   /** Lists to refetch once the action has committed. */
   invalidateKeys?: readonly (readonly unknown[])[];
   /** Where to go afterwards - a record page cannot stay open on a deleted row. */
@@ -93,6 +100,7 @@ export function useDeferredAction(
     watchFromMount = false,
     successMessage,
     payload,
+    dimEntityIds,
     invalidateKeys,
     onCommitted,
   } = input;
@@ -163,6 +171,7 @@ export function useDeferredAction(
         actionKey,
         commitAt: action.commit_at,
         successMessage,
+        dimEntityIds,
         invalidateKeys: invalidateKeys ?? [],
       });
       if (surface === 'toast') {

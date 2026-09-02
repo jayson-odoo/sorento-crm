@@ -85,15 +85,6 @@ export async function updateTemplate(
   return response.json();
 }
 
-export async function deleteTemplate(id: string): Promise<void> {
-  const response = await apiFetch(`${BASE}/${encodeURIComponent(id)}`, {
-    method: 'DELETE',
-  });
-  if (!response.ok) {
-    throw new Error(await extractApiError(response, 'Failed to delete template'));
-  }
-}
-
 /**
  * The request designer's template source (AC-S5-2): only templates with a
  * live pointer, and each one's PUBLISHED doc - never its draft, which keeps
