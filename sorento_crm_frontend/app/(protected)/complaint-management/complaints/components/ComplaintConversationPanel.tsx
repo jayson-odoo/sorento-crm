@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -9,6 +10,7 @@ import { useComplaintConversation } from '../hooks/useComplaints';
 import RespondChatList from '@/components/common/RespondChatList';
 import SharedConversationComposer from '@/components/common/conversation/SharedConversationComposer';
 import { invalidateConversationWindow } from '@/components/common/conversation/useConversationWindowState';
+import { usePendingThreadItems } from '@/components/common/conversation/usePendingThreadItems';
 
 interface ComplaintConversationPanelProps {
   complaintId: string;
@@ -43,8 +45,16 @@ export default function ComplaintConversationPanel({
 }: ComplaintConversationPanelProps) {
   const { data, isLoading, refetch, isRefetching } = useComplaintConversation(complaintId, { limit: 50 });
   const queryClient = useQueryClient();
+  const pending = usePendingThreadItems();
 
-  const items = data?.items ?? [];
+  // A different complaint is a different draft: never leave a stranger's
+  // in-flight send dimmed in a thread that just mounted under a new id.
+  useEffect(() => {
+    pending.clearPending();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [complaintId]);
+
+  const items = [...(data?.items ?? []), ...pending.pendingItems];
 
   // Refresh control: re-pull messages AND re-evaluate the 24h window (an incoming
   // reply re-opens it → composer flips template mode → plain textbox).
@@ -53,11 +63,14 @@ export default function ComplaintConversationPanel({
     invalidateConversationWindow(queryClient, 'complaint', complaintId);
   };
 
+  // Returned so the composer's optimistic bubble (M6-01) waits for THIS
+  // refetch before it comes down; the 1.6s pulse only chases delivery ticks.
   const refetchSoon = () => {
-    void refetch();
+    const refetched = refetch();
     window.setTimeout(() => {
       void refetch();
     }, 1600);
+    return refetched;
   };
 
   const headerTitle = showAsPopup ? 'Chat Records' : 'Conversation (Respond.io)';
@@ -128,6 +141,7 @@ export default function ComplaintConversationPanel({
           onGetViewLink={onGetViewLink}
           replyComposePrefill={replyComposePrefill}
           onSent={refetchSoon}
+          pendingBubble={{ add: pending.addPending, remove: pending.removePending }}
         />
       </CardContent>
     </Card>
