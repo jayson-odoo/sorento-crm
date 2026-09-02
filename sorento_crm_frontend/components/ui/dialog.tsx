@@ -265,7 +265,10 @@ function DialogContent({
               ) : null}
               {children}
               {showCloseButton && (
-                <DialogClose className="cursor-pointer outline-0 absolute end-5 top-5 rounded-sm opacity-60 ring-offset-background transition-opacity hover:opacity-100 focus:outline-hidden disabled:pointer-events-none data-[state=open]:bg-accent data-[state=open]:text-muted-foreground">
+                // M6-05: no `outline-0` / `focus:outline-hidden` - both
+                // defeated the global `*:focus-visible` ring (styles.css:13)
+                // unconditionally, so a keyboard user tabbing here saw nothing.
+                <DialogClose className="cursor-pointer absolute end-5 top-5 rounded-sm opacity-60 ring-offset-background transition-opacity hover:opacity-100 disabled:pointer-events-none data-[state=open]:bg-accent data-[state=open]:text-muted-foreground">
                   <X className="size-4" />
                   <span className="sr-only">Close</span>
                 </DialogClose>
