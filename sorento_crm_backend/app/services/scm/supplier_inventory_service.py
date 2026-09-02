@@ -430,3 +430,38 @@ def latest_stock_list_attachment(db: Session, *, supplier_id: str) -> Optional[d
         "filename": row.stored_filename or row.original_filename,
         "uploaded_at": row.uploaded_at,
     }
+
+
+def snapshot(db: Session, *, supplier_id: str) -> dict:
+    """What the STANDALONE stock-list page shows: the supplier's own snapshot.
+
+    `loading_plan_id IS NULL` is the whole scope, and it is what "the supplier's snapshot"
+    has meant since migration 454: a plan's rows belong to that plan and are read on its
+    record. Unscoped, the page listed the same model number once per plan that had ever
+    uploaded it and dated the whole list off whichever of them was newest.
+    """
+    rows = (
+        db.query(SupplierInventory)
+        .filter(
+            SupplierInventory.supplier_id == supplier_id,
+            SupplierInventory.loading_plan_id.is_(None),
+        )
+        .order_by(SupplierInventory.qty_packed.desc())
+        .all()
+    )
+    return {
+        "supplier_id": supplier_id,
+        "as_of": max((r.as_of for r in rows), default=None),
+        "rows": [
+            {
+                "item_code": r.item_code,
+                "product_id": str(r.product_id) if r.product_id else None,
+                "product_name": r.product_name,
+                "qty_packed": float(r.qty_packed or 0),
+                "qty_unfinished": float(r.qty_unfinished or 0),
+                "cbm_per_unit": float(r.cbm_per_unit) if r.cbm_per_unit is not None else None,
+                "matched": r.product_id is not None,
+            }
+            for r in rows
+        ],
+    }

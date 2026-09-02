@@ -643,15 +643,30 @@ def _request_pack(db: Session, lines: list[dict]) -> list[dict]:
     ]
 
 
-def _request_sheet(db: Session, supplier_id: str, pack: list[dict]) -> "SheetModel":
+def _request_sheet(
+    db: Session,
+    supplier_id: str,
+    pack: list[dict],
+    *,
+    loading_plan_id: Optional[str] = None,
+) -> "SheetModel":
     """The document, built ONCE (R12 / AC-D7).
 
     Both renderers take this object. Building it twice would let the emailed sheet and the
     emailed PDF disagree about the same ask, which is the defect S4 exists to close.
+
+    `loading_plan_id` is the plan the ask belongs to: since migration 454 the supplier's own
+    codes are held once per plan, and the sheet states what THIS plan's statement says they
+    hold - never another plan's figures (`supplier_document_model.build`).
     """
     from app.services.scm import supplier_document_model
 
-    return supplier_document_model.build(db, supplier_id=str(supplier_id), lines=pack)
+    return supplier_document_model.build(
+        db,
+        supplier_id=str(supplier_id),
+        lines=pack,
+        loading_plan_id=loading_plan_id,
+    )
 
 
 def _render_request_pdf(
@@ -670,7 +685,12 @@ def _render_request_pdf(
 
 
 def request_document(
-    db: Session, *, supplier_id: str, lines: list[dict], fmt: str
+    db: Session,
+    *,
+    supplier_id: str,
+    lines: list[dict],
+    fmt: str,
+    loading_plan_id: Optional[str] = None,
 ) -> tuple[bytes, str]:
     """The request as a file, WITHOUT sending anything (R23).
 
@@ -687,7 +707,7 @@ def request_document(
 
     supplier = _supplier(db, supplier_id)
     pack = _request_pack(db, lines)
-    sheet = _request_sheet(db, str(supplier_id), pack)
+    sheet = _request_sheet(db, str(supplier_id), pack, loading_plan_id=loading_plan_id)
 
     if fmt == "xlsx":
         from app.services.scm import container_request_xlsx
@@ -1032,7 +1052,7 @@ def request_and_notify(
             }
         ]
 
-    sheet = _request_sheet(db, str(supplier_id), pack)
+    sheet = _request_sheet(db, str(supplier_id), pack, loading_plan_id=loading_plan_id)
 
     document = _render_request_pdf(supplier, pack, sheet)
     filename = _request_filename(supplier)
@@ -1285,7 +1305,11 @@ def public_request_page(db: Session, token: str) -> dict:
         .order_by(SupplierNoticeLine.sort_order)
         .all()
     )
-    held = _held_by_item_code(db, str(notice.supplier_id))
+    held = _held_by_item_code(
+        db,
+        str(notice.supplier_id),
+        loading_plan_id=str(notice.loading_plan_id) if notice.loading_plan_id else None,
+    )
     payload = {
         "supplier_name": _supplier_name(db, str(notice.supplier_id)),
         "requested_at": notice.created_at.isoformat() if notice.created_at else None,
@@ -1306,6 +1330,7 @@ def public_request_page(db: Session, token: str) -> dict:
                 }
                 for ln in lines
             ],
+            loading_plan_id=str(notice.loading_plan_id) if notice.loading_plan_id else None,
         ).to_dict(),
         "lines": [
             {
@@ -1326,18 +1351,27 @@ def public_request_page(db: Session, token: str) -> dict:
     return payload
 
 
-def _held_by_item_code(db: Session, supplier_id: str) -> dict[str, dict]:
-    from app.models.scm import SupplierInventory
+def _held_by_item_code(
+    db: Session, supplier_id: str, *, loading_plan_id: Optional[str] = None
+) -> dict[str, dict]:
+    """Their own packed / unfinished per code, for the plan this link was sent from.
 
-    rows = (
-        db.query(
-            SupplierInventory.item_code,
-            SupplierInventory.qty_packed,
-            SupplierInventory.qty_unfinished,
-        )
-        .filter(SupplierInventory.supplier_id == supplier_id)
-        .all()
-    )
+    Keyed by their code, which since migration 454 is held once per plan - so an unscoped
+    read collapses several plans' rows onto whichever one came back last, on a payload the
+    supplier reads through a public link.
+    """
+    from app.models.scm import SupplierInventory
+    from app.services.scm import plan_statement
+
+    query = db.query(
+        SupplierInventory.item_code,
+        SupplierInventory.qty_packed,
+        SupplierInventory.qty_unfinished,
+    ).filter(SupplierInventory.supplier_id == supplier_id)
+    scope = plan_statement.stock_scope(db, loading_plan_id)
+    if scope is not None:
+        query = query.filter(scope)
+    rows = query.all()
     return {
         str(r.item_code): {
             "qty_packed": _f(r.qty_packed),

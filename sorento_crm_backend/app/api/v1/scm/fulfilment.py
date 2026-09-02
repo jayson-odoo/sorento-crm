@@ -207,31 +207,13 @@ def list_supplier_inventory(
     _user: dict = Depends(_READ),
     db: Session = Depends(get_db),
 ):
-    """What we currently believe this supplier is holding."""
-    from app.models.scm import SupplierInventory
+    """What we currently believe this supplier is holding, off their own snapshot.
 
-    rows = (
-        db.query(SupplierInventory)
-        .filter(SupplierInventory.supplier_id == supplier_id)
-        .order_by(SupplierInventory.qty_packed.desc())
-        .all()
-    )
-    return {
-        "supplier_id": supplier_id,
-        "as_of": max((r.as_of for r in rows), default=None),
-        "rows": [
-            {
-                "item_code": r.item_code,
-                "product_id": str(r.product_id) if r.product_id else None,
-                "product_name": r.product_name,
-                "qty_packed": float(r.qty_packed or 0),
-                "qty_unfinished": float(r.qty_unfinished or 0),
-                "cbm_per_unit": float(r.cbm_per_unit) if r.cbm_per_unit is not None else None,
-                "matched": r.product_id is not None,
-            }
-            for r in rows
-        ],
-    }
+    The standalone page's scope is `loading_plan_id IS NULL` (BL-1): a plan's rows are read
+    on the plan's own record, and listing every plan's here showed the same model number once
+    per plan that had ever uploaded it.
+    """
+    return supplier_inventory_service.snapshot(db, supplier_id=supplier_id)
 
 
 @router.get("/supplier-inventory/unfinished")

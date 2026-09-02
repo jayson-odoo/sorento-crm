@@ -42,6 +42,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.services.import_alias_service import AliasResolver
+from app.services.scm import plan_statement
 from app.services.scm.outstanding_reader import all_sheet_rows
 from app.services.scm.supplier_inventory_reader import DOC_TYPE
 
@@ -192,16 +193,35 @@ class SheetModel:
 # --------------------------------------------------------------------------- build
 
 
-def build(db: Session, *, supplier_id: str, lines: list[dict]) -> SheetModel:
+def build(
+    db: Session,
+    *,
+    supplier_id: str,
+    lines: list[dict],
+    loading_plan_id: Optional[str] = None,
+) -> SheetModel:
     """The document for one container request. Never raises: a bad stored file falls back.
 
     ``lines`` are the reviewed lines as `supplier_notice_service._request_pack` holds them:
     `{product_id, item_code, product_name, qty}`.
+
+    ``loading_plan_id`` is the plan this ask belongs to. Since migration 454 a supplier holds
+    the same model number once per plan, and both stock reads below are keyed by the
+    supplier's own code - so without it the two dicts collapsed those rows onto an arbitrary
+    winner and the document that went to the factory could state another plan's figures. With
+    a plan in scope the rows are its own (`plan_statement.stock_scope`); with none, the read
+    is the supplier-wide one it always was.
     """
     raw = _retained_stock_list(db, supplier_id)
     if raw:
         try:
-            return _from_their_sheet(raw, db=db, supplier_id=supplier_id, lines=lines)
+            return _from_their_sheet(
+                raw,
+                db=db,
+                supplier_id=supplier_id,
+                lines=lines,
+                loading_plan_id=loading_plan_id,
+            )
         except Exception as exc:  # noqa: BLE001 - a stored file is not the caller's fault
             logger.warning(
                 "supplier document: supplier %s has a retained stock list that could not be "
@@ -209,7 +229,9 @@ def build(db: Session, *, supplier_id: str, lines: list[dict]) -> SheetModel:
                 supplier_id,
                 exc,
             )
-    return _from_our_data(db, supplier_id=supplier_id, lines=lines)
+    return _from_our_data(
+        db, supplier_id=supplier_id, lines=lines, loading_plan_id=loading_plan_id
+    )
 
 
 def _retained_stock_list(db: Session, supplier_id: str) -> Optional[bytes]:
@@ -242,7 +264,12 @@ def _retained_stock_list(db: Session, supplier_id: str) -> Optional[bytes]:
 
 
 def _from_their_sheet(
-    data: bytes, *, db: Session, supplier_id: str, lines: list[dict]
+    data: bytes,
+    *,
+    db: Session,
+    supplier_id: str,
+    lines: list[dict],
+    loading_plan_id: Optional[str] = None,
 ) -> SheetModel:
     """Their workbook as a model: values, merges, fills, red figures, plus our column.
 
@@ -253,7 +280,13 @@ def _from_their_sheet(
     """
     workbook = _openable(data)
     if workbook is None:
-        return _from_their_values(data, db=db, supplier_id=supplier_id, lines=lines)
+        return _from_their_values(
+            data,
+            db=db,
+            supplier_id=supplier_id,
+            lines=lines,
+            loading_plan_id=loading_plan_id,
+        )
 
     ws = workbook.active
     if ws is None:
@@ -298,7 +331,9 @@ def _from_their_sheet(
     code_col = next((c for c, f in fields.items() if f == "item_code"), None)
     if code_col is None:
         raise ValueError("no item_code column in the retained stock list")
-    asks = _Asks(db, supplier_id=supplier_id, lines=lines)
+    asks = _Asks(
+        db, supplier_id=supplier_id, lines=lines, loading_plan_id=loading_plan_id
+    )
 
     for r in range(header_row + 1, last_data_row + 1):
         cells = [
@@ -323,7 +358,12 @@ def _from_their_sheet(
 
 
 def _from_their_values(
-    data: bytes, *, db: Session, supplier_id: str, lines: list[dict]
+    data: bytes,
+    *,
+    db: Session,
+    supplier_id: str,
+    lines: list[dict],
+    loading_plan_id: Optional[str] = None,
 ) -> SheetModel:
     """Their rows out of a container openpyxl cannot open for writing (an old `.xls`)."""
     rows = [list(r) for r in all_sheet_rows(data)]
@@ -356,7 +396,9 @@ def _from_their_values(
     )
 
     code_col = next(c for c, f in fields.items() if f == "item_code")
-    asks = _Asks(db, supplier_id=supplier_id, lines=lines)
+    asks = _Asks(
+        db, supplier_id=supplier_id, lines=lines, loading_plan_id=loading_plan_id
+    )
     model = SheetModel(
         columns=columns,
         title=_text(rows[0][0]) if header_idx > 0 and rows[0] else None,
@@ -528,7 +570,13 @@ def _sum_of(model: SheetModel, pos: int) -> Optional[float]:
 # --------------------------------------------------------------------------- our data
 
 
-def _from_our_data(db: Session, *, supplier_id: str, lines: list[dict]) -> SheetModel:
+def _from_our_data(
+    db: Session,
+    *,
+    supplier_id: str,
+    lines: list[dict],
+    loading_plan_id: Optional[str] = None,
+) -> SheetModel:
     """The same eleven columns, built from what we hold (AC-D6).
 
     Their holdings come off the snapshot rather than off a file, because on this branch there
@@ -541,7 +589,7 @@ def _from_our_data(db: Session, *, supplier_id: str, lines: list[dict]) -> Sheet
     )
     model = SheetModel(columns=columns, title=NO_FILE_TITLE)
 
-    held = _snapshot(db, supplier_id)
+    held = _snapshot(db, supplier_id, loading_plan_id)
     letters = _company_letters(db, [ln.get("product_id") for ln in lines])
 
     for serial, line in enumerate(lines, start=1):
@@ -575,10 +623,17 @@ def _from_our_data(db: Session, *, supplier_id: str, lines: list[dict]) -> Sheet
     return model
 
 
-def _snapshot(db: Session, supplier_id: str) -> dict[str, dict]:
+def _snapshot(
+    db: Session, supplier_id: str, loading_plan_id: Optional[str] = None
+) -> dict[str, dict]:
+    """What they say they hold, keyed by THEIR code, for the plan this document belongs to.
+
+    Keyed by code, so two plans holding the same model number would collapse onto one of
+    them at random - see `build`.
+    """
     from app.models.scm import SupplierInventory
 
-    rows = (
+    query = (
         db.query(
             SupplierInventory.item_code,
             SupplierInventory.qty_packed,
@@ -590,8 +645,11 @@ def _snapshot(db: Session, supplier_id: str) -> dict[str, dict]:
             SupplierInventory.remark,
         )
         .filter(SupplierInventory.supplier_id == supplier_id)
-        .all()
     )
+    scope = plan_statement.stock_scope(db, loading_plan_id)
+    if scope is not None:
+        query = query.filter(scope)
+    rows = query.all()
     return {
         str(r.item_code): {
             "qty_packed": _number(r.qty_packed),
@@ -641,7 +699,14 @@ class _Asks:
        it is still part of the ask.
     """
 
-    def __init__(self, db: Session, *, supplier_id: str, lines: list[dict]):
+    def __init__(
+        self,
+        db: Session,
+        *,
+        supplier_id: str,
+        lines: list[dict],
+        loading_plan_id: Optional[str] = None,
+    ):
         self._lines = [dict(ln) for ln in lines]
         self._by_code: dict[str, int] = {}
         self._by_product: dict[str, int] = {}
@@ -652,7 +717,9 @@ class _Asks:
             product_id = line.get("product_id")
             if product_id and str(product_id) not in self._by_product:
                 self._by_product[str(product_id)] = pos
-        self._bindings = _snapshot_bindings(db, supplier_id) if self._by_product else {}
+        self._bindings = (
+            _snapshot_bindings(db, supplier_id, loading_plan_id) if self._by_product else {}
+        )
         self._taken: set[int] = set()
 
     def take(self, their_code: Optional[str]) -> Optional[float]:
@@ -680,17 +747,27 @@ class _Asks:
         return [ln for pos, ln in enumerate(self._lines) if pos not in self._taken]
 
 
-def _snapshot_bindings(db: Session, supplier_id: str) -> dict[str, str]:
+def _snapshot_bindings(
+    db: Session, supplier_id: str, loading_plan_id: Optional[str] = None
+) -> dict[str, str]:
+    """Their code -> our product, off the rows of the plan this document belongs to.
+
+    Keyed by their code like `_snapshot`, and scoped for the same reason: a code re-matched
+    on a later plan's upload must not decide where THIS plan's ask lands.
+    """
     from app.models.scm import SupplierInventory
 
-    rows = (
+    query = (
         db.query(SupplierInventory.item_code, SupplierInventory.product_id)
         .filter(
             SupplierInventory.supplier_id == supplier_id,
             SupplierInventory.product_id.isnot(None),
         )
-        .all()
     )
+    scope = plan_statement.stock_scope(db, loading_plan_id)
+    if scope is not None:
+        query = query.filter(scope)
+    rows = query.all()
     bindings: dict[str, str] = {}
     for row in rows:
         key = _key(row.item_code)
