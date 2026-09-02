@@ -14,7 +14,7 @@
 
 import { useState } from 'react';
 import { Download, Pencil, RefreshCw, RotateCcw, Trash2 } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { useQueryClient } from '@tanstack/react-query';
 
 import {

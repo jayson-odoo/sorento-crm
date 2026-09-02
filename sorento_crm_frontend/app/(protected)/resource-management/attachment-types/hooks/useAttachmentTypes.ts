@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 import { getAttachmentTypes, getAttachmentType, createAttachmentType, updateAttachmentType, deleteAttachmentType } from '../services/attachmentTypeService';
 import type { AttachmentTypeFormData } from '../types/attachmentType.types';
