@@ -302,7 +302,7 @@ function MonthRangePicker({
               type="button"
               onClick={() => handleClick(m)}
               className={cn(
-                'rounded-md px-3 py-2 text-sm transition',
+                'rounded-md px-3 py-2 text-sm transition-colors',
                 isFrom || isTo
                   ? 'bg-primary text-primary-foreground'
                   : inRange
@@ -399,7 +399,7 @@ function YearRangePicker({
               type="button"
               onClick={() => handleClick(y)}
               className={cn(
-                'rounded-md px-3 py-2 text-sm transition',
+                'rounded-md px-3 py-2 text-sm transition-colors',
                 isFrom || isTo
                   ? 'bg-primary text-primary-foreground'
                   : r

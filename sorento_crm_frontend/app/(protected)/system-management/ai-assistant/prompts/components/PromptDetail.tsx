@@ -259,7 +259,7 @@ export function PromptDetail({ name }: { name: string }) {
                     }
                   }}
                   className={cn(
-                    'w-full cursor-pointer rounded-md border p-2 text-left text-xs transition',
+                    'w-full cursor-pointer rounded-md border p-2 text-left text-xs transition-colors',
                     isBase ? 'border-primary bg-primary/5' : 'hover:bg-muted/50',
                   )}
                   data-testid={`version-row-${v.version}`}

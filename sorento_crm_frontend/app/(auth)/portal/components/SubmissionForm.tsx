@@ -2067,7 +2067,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
             )
           }
           aria-label="Previous submission"
-          className="fixed left-1 top-1/2 z-30 flex size-8 -translate-y-1/2 items-center justify-center rounded-full border border-border bg-background/80 opacity-60 shadow-sm backdrop-blur transition hover:opacity-100 sm:left-3 sm:size-10"
+          className="fixed left-1 top-1/2 z-30 flex size-8 -translate-y-1/2 items-center justify-center rounded-full border border-border bg-background/80 opacity-60 shadow-sm backdrop-blur transition-opacity hover:opacity-100 sm:left-3 sm:size-10"
         >
           <ChevronLeft className="h-4 w-4 sm:h-5 sm:w-5" />
         </button>
@@ -2081,7 +2081,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
             )
           }
           aria-label="Next submission"
-          className="fixed right-1 top-1/2 z-30 flex size-8 -translate-y-1/2 items-center justify-center rounded-full border border-border bg-background/80 opacity-60 shadow-sm backdrop-blur transition hover:opacity-100 sm:right-3 sm:size-10"
+          className="fixed right-1 top-1/2 z-30 flex size-8 -translate-y-1/2 items-center justify-center rounded-full border border-border bg-background/80 opacity-60 shadow-sm backdrop-blur transition-opacity hover:opacity-100 sm:right-3 sm:size-10"
         >
           <ChevronRight className="h-4 w-4 sm:h-5 sm:w-5" />
         </button>

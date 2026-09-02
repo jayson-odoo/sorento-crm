@@ -214,7 +214,7 @@ export function AsyncMultiCombobox<T>({
                   aria-selected={isActive}
                   disabled={isSelected}
                   className={
-                    'block w-full text-left px-3 py-2 text-sm transition ' +
+                    'block w-full text-left px-3 py-2 text-sm transition-colors ' +
                     (isSelected
                       ? 'opacity-50 cursor-not-allowed'
                       : isActive
