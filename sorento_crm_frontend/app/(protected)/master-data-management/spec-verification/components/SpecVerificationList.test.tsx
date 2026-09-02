@@ -17,7 +17,7 @@ import {
 } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-vi.mock('sonner', () => ({
+vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), warning: vi.fn(), error: vi.fn(), dismiss: vi.fn() },
 }));
 
@@ -610,7 +610,7 @@ describe('data state', () => {
       fireEvent.click(within(rowWC200).getByRole('button', { name: 'Verify' }));
 
       await waitFor(() => expect(verifySpecBulk).toHaveBeenCalled());
-      const { toast } = await import('sonner');
+      const { toast } = await import('@/lib/toast');
       await waitFor(() =>
         expect(toast.error).toHaveBeenCalledWith('Failed to verify'),
       );

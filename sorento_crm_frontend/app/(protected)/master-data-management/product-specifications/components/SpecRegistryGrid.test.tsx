@@ -23,7 +23,7 @@ vi.mock('@/hooks/usePermissions', () => ({
   useHasPermission: () => true,
 }));
 
-vi.mock('sonner', () => ({
+vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
 }));
 
@@ -41,7 +41,7 @@ vi.mock('../services/productSpecService', () => ({
   getKeysForProduct: (...a: unknown[]) => getKeysForProduct(...a),
 }));
 
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { SpecRegistryGrid } from './SpecRegistryGrid';
 
 function baseKey(overrides: Record<string, unknown> = {}) {

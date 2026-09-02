@@ -22,7 +22,7 @@ if (!window.matchMedia) {
 }
 Element.prototype.scrollIntoView = vi.fn();
 
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), custom: vi.fn() } }));
+vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn(), custom: vi.fn() } }));
 
 vi.mock('@/components/common/SearchableSelect', () => ({
   SearchableSelect: ({

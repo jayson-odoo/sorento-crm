@@ -24,7 +24,7 @@ import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch
 import { useDeferredBulkAction } from '@/hooks/useDeferredBulkAction';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { pendingEntityKey, usePendingEntityKeys } from '@/lib/pending-entity-store';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { SpecKeyRowActions } from '../actions';
 import { AddSpecificationDialog } from './AddSpecificationDialog';
 import { TryPhraseDialog } from './TryPhraseDialog';

@@ -58,7 +58,7 @@ import {
   type ProductsListParams,
 } from '../lib/listQuery';
 import { useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { generateExcelFile } from '@/lib/excel-utils';
 import type { ColumnOption } from '@/lib/excel-utils';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';

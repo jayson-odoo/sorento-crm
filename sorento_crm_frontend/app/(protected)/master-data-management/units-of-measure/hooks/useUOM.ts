@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 import { getUOMs, getUOM, createUOM, updateUOM } from '../services/uomService';
 import type { UOMFormData } from '../types/uom.types';

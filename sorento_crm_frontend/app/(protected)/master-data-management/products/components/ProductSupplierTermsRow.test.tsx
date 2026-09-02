@@ -23,7 +23,7 @@ class ResizeObserverStub { observe() {} unobserve() {} disconnect() {} }
 Element.prototype.scrollIntoView = Element.prototype.scrollIntoView ?? (() => {});
 Element.prototype.hasPointerCapture = Element.prototype.hasPointerCapture ?? (() => false);
 
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), custom: vi.fn() } }));
+vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn(), custom: vi.fn() } }));
 
 const CURRENCIES = [
   { value: 'MYR', label: 'MYR' },
