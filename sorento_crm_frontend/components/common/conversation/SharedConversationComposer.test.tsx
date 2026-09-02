@@ -383,7 +383,10 @@ describe('SharedConversationComposer', () => {
 
     const removeC = screen.getByRole('button', { name: 'Remove c.pdf' });
     expect(removeC).toBeDisabled();
-    expect(screen.getByRole('button', { name: /attach/i })).toBeDisabled();
+    // M6-01: Attach itself stays enabled through a send (only the per-file
+    // remove is frozen, for the positional reason above) - `addFiles` already
+    // no-ops while `sending` is true, so nothing actually gets staged either way.
+    expect(screen.getByRole('button', { name: /attach/i })).not.toBeDisabled();
 
     fireEvent.click(removeC);
     expect(screen.getByTestId('composer-attachments').textContent).toContain('c.pdf');
