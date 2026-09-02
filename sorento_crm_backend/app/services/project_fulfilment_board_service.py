@@ -2077,7 +2077,7 @@ class FulfilmentBoardService:
             # afterwards would state what was left instead.
             (
                 components, pool_open, borrow_open, net_open, options, other_group_open,
-                supply_open,
+                supply_open, share_open, own_group_open,
             ) = composed[row.key]
             row.options = [_option_row(option) for option in options]
             # Ladder v2's group take / group borrow / cross-group borrow rungs name a
@@ -2127,6 +2127,7 @@ class FulfilmentBoardService:
             row.trail, offerable = self._trail(
                 row, fact, components, pool_open, borrow_open, net_open, as_of=as_of,
                 other_group_open=other_group_open, supply_open=supply_open,
+                share_open=share_open, own_group_open=own_group_open,
             )
             row.sources = [
                 self._source(component, row, offerable) for component in components
@@ -2419,6 +2420,8 @@ class FulfilmentBoardService:
         as_of: Optional[date] = None,
         other_group_open: Optional[MutableMapping[str, Decimal]] = None,
         supply_open: Optional[MutableMapping[str, Decimal]] = None,
+        share_open: Optional[Mapping[str, Decimal]] = None,
+        own_group_open: Optional[MutableMapping[str, Decimal]] = None,
     ) -> Tuple[List[Dict[str, Any]], List[str]]:
         """The four questions ladder v8 asks about this line, and Buy.
 
@@ -2426,6 +2429,14 @@ class FulfilmentBoardService:
         (`compose_lines`' third ledger); `None` reads the fact's own. Question 2 is
         answered from it, so the second delivery date says "the site pools net 1" and
         not the 31 the first date has already drawn from.
+
+        `share_open` and `own_group_open` are the other two ledgers of that same walk, as
+        this LINE found them (C3, code review round 4): what is left of each site pool's
+        project share, and what is left of the unit's own ownership-group pile. Passed for
+        exactly the reason `borrow_open` and `other_group_open` are - the proof has to be
+        the answer the engine actually got. Without them question 2 re-offered a pool share
+        an earlier line had spent, and question 1 offered the 135 at BRW-BB to the 1,305
+        line of the same unit that the 135 line had just taken.
 
         FIVE ROWS, always, in the WALK's own order (v8, R-A): the site pool's share, our
         own locations, borrowing on hand from a later order, borrowing what one is waiting
@@ -2616,6 +2627,7 @@ class FulfilmentBoardService:
                 pools=list(pool_chain),
                 pools_net=pools_net_open,
                 pool_share_pct=self.supply.fulfilment_settings().get("pool_share_pct"),
+                share_left=share_open,
             )
         )
         # The two halves are ALTERNATIVES, never a sum: one step, one story (R33), so the
@@ -2650,6 +2662,7 @@ class FulfilmentBoardService:
                     pools_net=pools_net_open,
                     borrow_donors=pool_borrow_candidates,
                     components=components,
+                    share_left=share_open,
                 )
             ),
             pool=pool_pile,
@@ -2675,7 +2688,8 @@ class FulfilmentBoardService:
             # walk had spent, and the Buy's sentence sent a planner to a bin with nothing in
             # it (`test_the_proof_never_offers_a_donor_the_walk_has_already_spent`).
             else self.supply.use_candidates_for(
-                fact, as_of=as_of, other_left=other_group_open
+                fact, as_of=as_of, other_left=other_group_open,
+                own_left=own_group_open,
             )
         )
         # What the group has ON THE WATER, both halves. The timely half is already inside
@@ -3080,11 +3094,14 @@ class FulfilmentBoardService:
         pools_net: Optional[Decimal] = None,
         borrow_donors: Sequence[Dict[str, Any]] = (),
         components: Sequence[Any] = (),
+        share_left: Optional[Mapping[str, Decimal]] = None,
     ) -> str:
         """Question 2's one sentence, with the PILE's net inside it (section 1e).
 
         `pools_net` is the walk's running net for this unit when the caller has one;
-        `None` reads the fact's own.
+        `None` reads the fact's own. `share_left` is the same for each pool's own project
+        share (C3): without it the sentence named a pool whose share an earlier line of the
+        walk had already spent.
 
         One entry point where the old trail had three - the line's own pool, a line with no
         pool of its own, and no active pool anywhere - because the answer to "can we take
@@ -3137,6 +3154,7 @@ class FulfilmentBoardService:
                 pools=list(pool_chain),
                 pools_net=net,
                 pool_share_pct=self.supply.fulfilment_settings().get("pool_share_pct"),
+                share_left=share_left,
             )
         }
         pools_net_refused = not capacity and any(

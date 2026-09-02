@@ -1311,13 +1311,16 @@ class ProjectSupplyService:
 
         `entries` is `(key, fact, unit_key)` in walk order, and the answer for each key is
         `(components, pool_open, borrow_open, net_open, options, other_group_open,
-        supply_open)` - the composition, the five options behind it (R36), and what the
-        shared piles held when its unit was reached: this line's own site pool's free
-        stock, the cross-group donors by warehouse id, and the five site pools' NET (the
-        number that bounds rung 2, `pool_reserve_capacity`). The board's proof states both, and it states
-        them from HERE rather than re-reading the live figures, which is how question 3
-        came to say "free stock at DC1-NT, within the limit" beside a Buy the ledger had
-        just forced.
+        supply_open, share_open, own_group_open)` - the composition, the five options behind
+        it (R36), and what EVERY shared pile held when this LINE was reached: this line's
+        own site pool's free stock, the cross-group donors by warehouse id, the five site
+        pools' NET (the number that bounds rung 2, `pool_reserve_capacity`), what is left of
+        each site pool's PROJECT SHARE (v8, R-B), and what is left of the unit's own
+        ownership-group pile (v8, R-E). The board's proof states them from HERE rather than
+        re-reading the live figures, which is how question 3 came to say "free stock at
+        DC1-NT, within the limit" beside a Buy the ledger had just forced - and, until the
+        last two were handed over, how question 1 came to offer the 135 at BRW-BB to the
+        1,305 line that the 135 line had already taken (C3, code review round 4).
 
         THE UNIT (ladder v6, `PLAN-scm-order-unit-ladder-v6.md`). Entries sharing a
         `unit_key` are ONE quantity to plan: the captain, reading SO381895's lines 31 and 32
@@ -1351,7 +1354,7 @@ class ProjectSupplyService:
         walk: List[Any] = []
         for key, fact, unit_key in entries:
             if fact.unplannable_reason:
-                out[key] = ((), None, {}, None, (), {}, {})
+                out[key] = ((), None, {}, None, (), {}, {}, {}, {})
                 continue
             if unit_key not in units:
                 units[unit_key] = []
@@ -1476,6 +1479,12 @@ class ProjectSupplyService:
                 borrow_open = dict(donors) if donors is not None else {}
                 other_group_open = dict(other_group) if other_group is not None else {}
                 supply_open = dict(supply) if supply is not None else {}
+                # The two ledgers v8 added, in the same shape and for the same reason (C3):
+                # what is left of each site pool's project SHARE, and what is left of the
+                # UNIT's own ownership-group pile. Copies, because the walk below draws both
+                # down in place and the proof has to state what this line was offered.
+                share_snapshot = dict(share_open) if share_open is not None else {}
+                own_group_open = dict(own_group)
                 walked = self.walk(
                     fact,
                     pool_free_left=pool_open,
@@ -1561,6 +1570,8 @@ class ProjectSupplyService:
                     walked.options,
                     other_group_open,
                     supply_open,
+                    share_snapshot,
+                    own_group_open,
                 )
         return out
 

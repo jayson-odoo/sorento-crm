@@ -6740,3 +6740,111 @@ def test_a_saved_decision_is_attached_to_its_own_contribution_and_to_no_other():
         # Saved against the suggestion it is still being shown beside.
         assert saved["draft"]["stale"] is False
         assert untouched["draft"] is None
+
+
+# --------------------------------------------------------------------------- #
+# C3 (code review round 4) - the proof may not advertise stock the walk has spent
+#
+# `compose_lines` keeps two ledgers the proof never saw: `share_left`, what is left of each
+# site pool's project share in this walk, and the unit's own ownership-group pile. The proof
+# recomputed both from scratch, so from the SECOND line of a product or a unit on it offered
+# stock an earlier line had already taken - "offered 500" beside "took 0", and the 135 at
+# BRW-BB offered to the 1,305 line that could never have had it.
+# --------------------------------------------------------------------------- #
+
+
+def test_the_proof_never_offers_a_pool_share_an_earlier_line_has_spent():
+    """C3(a). One pool of 20 spares 10 to project work (R-B), and the first line takes all
+    of it; the second line's pool question must not name that pool as offering anything.
+
+    Read through `_pool_why_no_own`, which is the sentence a line at a location with no pool
+    of its own gets - it names every pool the chain could still offer from, and it named
+    this one over a step that had nothing left to give.
+    """
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        _own, pool = _pooled_warehouses(db)
+        lonely = _warehouse(db, f"ZZTL{_uid()[:6]}"[:20])
+        _stock(db, product, lonely, on_hand=0)
+        # 20 in the pool, half of it kept for dealers: 10 is the whole project allowance.
+        _stock(db, product, pool, on_hand=20)
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        _line(db, order, product, qty="10", required_date=date(2026, 9, 3), warehouse=lonely)
+        _line(db, order, product, qty="10", required_date=date(2026, 9, 10), warehouse=lonely)
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+
+        first = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
+        second = _cell(board, product.product_code, "2026-09-07")["contributions"][0]
+        pool_code = pool.warehouse_code
+
+    took = _step(first, "pool")
+    assert took["answer"] == "yes" and took["took"] == "10", (
+        "sanity: the first line takes the whole project share"
+    )
+    spent = _step(second, "pool")
+    assert spent["answer"] == "no" and spent["took"] == "0"
+    assert pool_code not in spent["why"], (
+        "the share was spent by the earlier line, so the pool has nothing to offer this one",
+        spent["why"],
+    )
+    assert "has anything to offer" in spent["why"], spent["why"]
+
+
+def _unit_world(db, *, on_hand: int, first_qty: str, second_qty: str):
+    """SO419208's own shape: two lines of one order, one product, one location, one date.
+
+    Ladder v8 (R-E) walks them one at a time, smallest first, so the small line takes the
+    floor and the big one buys - and the big one's proof must say the floor is gone. The
+    site pool is empty here, so question 2 answers nothing and question 1 is the whole story.
+    """
+    group = f"Z{_uid()[:3]}".upper()
+    product = _product(db, f"ZZT-{_uid()[:6]}")
+    pool = _warehouse(db, f"ZZTP{_uid()[:5]}"[:20])
+    own = _warehouse(db, f"ZZTA{_uid()[:4]}-{group}"[:20])
+    own.pool_warehouse_id = pool.id
+    db.flush()
+    _stock(db, product, own, on_hand=on_hand)
+    _stock(db, product, pool, on_hand=0)
+    agent = _agent(db, f"ZZT-AM-{_uid()[:4]}", location_group=group)
+    order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+    order.sales_agent_id = agent.id
+    db.flush()
+    _line(db, order, product, qty=first_qty, required_date=date(2026, 9, 3), warehouse=own)
+    _line(db, order, product, qty=second_qty, required_date=date(2026, 9, 3), warehouse=own)
+    return product, own, order
+
+
+def test_the_proof_never_offers_the_units_own_floor_twice():
+    """C3(b), AC-2.6's own numbers: 135 free at the bin, lines of 1,305 and 135.
+
+    The 135 line walks first (R-E) and takes the floor; the 1,305 line then buys whole. Its
+    question 1 was still recomputing the candidates without the unit's own ledger, so it
+    named the bin and offered the same 135 the line before it had just taken - the one place
+    a planner reading that sentence would go and find nothing.
+    """
+    with blank_session() as db:
+        product, own, order = _unit_world(
+            db, on_hand=135, first_qty="1305", second_qty="135"
+        )
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+
+        cell = _cell(board, product.product_code, "2026-08-31")
+        small = next(c for c in cell["contributions"] if c["qty"] == "135")
+        big = next(c for c in cell["contributions"] if c["qty"] == "1305")
+        own_code = own.warehouse_code
+
+    assert [(s["kind"], s["qty"], s["location"]) for s in small["sources"]] == [
+        ("reserve", "135", own_code)
+    ], "sanity: the small line takes the floor (R-E walks it first)"
+    assert [(s["kind"], s["qty"]) for s in big["sources"]] == [("buy", "1305")]
+    spent = _step(big, "own")
+    assert spent["answer"] == "no" and spent["took"] == "0"
+    assert own_code not in spent["why"], (
+        "the floor went to the line before it, so question 1 has no location to name",
+        spent["why"],
+    )
+    assert spent["note"] is None, (
+        "and the row's own note must not list a location the walk has emptied"
+    )
