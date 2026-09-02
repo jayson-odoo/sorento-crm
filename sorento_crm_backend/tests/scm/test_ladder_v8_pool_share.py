@@ -297,3 +297,251 @@ def test_a_units_lines_walk_one_at_a_time_smallest_first():
     ) == "1440"
     # The walk order itself: ascending quantity, then line number.
     assert [key for key in composed] == [3, 2]
+
+
+# --------------------------------------------------------------------------- R-L
+
+
+def test_another_sites_pool_covers_the_remainder_and_keeps_its_own_share():
+    """R-L (2 Sep) on a board, and reviewer S1's ledger with it.
+
+    Two sites, one product. The asking line stands at BRW-BB and takes BRW's whole share;
+    the SECOND line stands at MWH-BB, finds BRW's share spent, and takes MWH's - which is
+    untouched, because the share ledger is keyed by POOL and not by product alone. Under one
+    number across the five pools the second line would have been told the pile was spent.
+    """
+    from app.services.project_supply_service import ProjectSupplyService
+
+    from tests._pg_fixture import blank_session
+    from tests.scm.test_ladder_v6_order_unit import _seed_order, _sheet
+    from tests.scm.test_project_supply_service_ladder import _group_sites, _world
+    from tests.test_so_supply_confirmation import _stock
+
+    when = date.today() + timedelta(days=10)
+    with blank_session() as db:
+        company_id, _eling, project, product = _world(db)
+        _group, sites = _group_sites(db)
+        brw_own, brw_pool = sites["BRW"]
+        mwh_own, mwh_pool = sites["MWH"]
+        _stock(db, product, brw_pool, on_hand=20)
+        _stock(db, product, mwh_pool, on_hand=40)
+        brw_code, mwh_code = brw_pool.warehouse_code, mwh_pool.warehouse_code
+
+        _core_so, order, _mirrors = _seed_order(
+            db, company_id, project, product,
+            lines=[(1, "10", brw_own, when), (2, "20", mwh_own, when)],
+        )
+        lines = _sheet(db, order)
+
+    stated = {
+        line_no: [(c["kind"], c["qty"], c["source_location"]) for c in line["components"]]
+        for line_no, line in lines.items()
+    }
+    assert stated[1] == [("reserve", "10", brw_code)], (
+        "the BRW line takes BRW's own share, which is half of its 20"
+    )
+    assert stated[2] == [("reserve", "20", mwh_code)], (
+        "and the MWH line takes MWH's, untouched by the first draw (S1: the ledger is "
+        "keyed by pool)"
+    )
+
+
+def test_a_bin_whose_own_pool_is_empty_is_covered_by_another_site_pool():
+    """R-L's own worked case: the asking bin's pool holds nothing, the group cannot cover
+    the line whole, and the OTHER site pool spares enough - so the line reads that pool,
+    not Buy. Asked AFTER the group (which is offered first and refused for not covering
+    the whole remainder), which is what makes it a step of the remainder walk."""
+    from app.services.project_supply_service import ProjectSupplyService
+
+    from tests._pg_fixture import blank_session
+    from tests.scm.test_project_supply_service_ladder import _group_sites, _seed_line, _world
+    from tests.test_so_supply_confirmation import _stock
+
+    when = date.today() + timedelta(days=10)
+    with blank_session() as db:
+        company_id, _eling, project, product = _world(db)
+        _group, sites = _group_sites(db)
+        own, own_pool = sites["DC1"]
+        _other_own, far_pool = sites["BRW"]
+        _stock(db, product, own_pool, on_hand=0)
+        _stock(db, product, own, on_hand=110)
+        _stock(db, product, far_pool, on_hand=800)
+        far_code = far_pool.warehouse_code
+
+        order, _line, _cso, _cline = _seed_line(
+            db, company_id, project, product, own,
+            qty_ordered="300", required_date=when,
+        )
+        components = ProjectSupplyService(db).proposal_for(order)["lines"][0]["components"]
+
+    assert [(c["kind"], c["qty"], c["source_location"]) for c in components] == [
+        ("reserve", "300", far_code)
+    ]
+
+
+# --------------------------------------------------------------- S6 / S8: the confirm
+
+
+def _split_payload(line, *, warehouse, share, buy):
+    """A line hand-composed the way v8 proposes one: a pool Reserve beside a Buy (R-C)."""
+    return {
+        "project_line_id": str(line.id),
+        "timely_spo_qty": "0",
+        "reserve": [{"warehouse_id": str(warehouse.id), "qty": str(share)}],
+        "buy_qty": str(buy),
+    }
+
+
+def _confirm_split(db, company_id, actor, order, payload):
+    from app.models.base import company_scope
+
+    from tests.test_so_supply_confirmation import BASE, _client, _restore
+
+    client, originals = _client(db, actor)
+    try:
+        with company_scope(db, frozenset({company_id})):
+            return client.post(
+                f"{BASE}/sales-orders/{order.id}/confirm", json={"lines": [payload]}
+            )
+    finally:
+        _restore(originals)
+
+
+def _split_world(db, *, site="BRW", own_pool=True, pool_qty=200, line_qty="150", days=10):
+    """One line at a site's own bin, with that site's pool holding `pool_qty`.
+
+    `own_pool=False` clears the bin's `pool_warehouse_id`, which is the live book's own
+    shape for `BRW-IB` (migration 311: a bare site code is its own pool) - the case where
+    `fact.pool_available` reads 0 and the walk still offers the chain's first pool.
+    """
+    from tests.scm.test_project_supply_service_ladder import _group_sites, _seed_line, _world
+    from tests.test_so_supply_confirmation import _stock, _uid, _warehouse
+
+    company_id, eling, project, product = _world(db)
+    _group, sites = _group_sites(db)
+    own, pool = sites[site]
+    if not own_pool:
+        # The live book's own shape (migration 311): `BRW-IB` names no pool of its own while
+        # BRW is still a site pool, because its SIBLING bins point at it. Clearing the FK on
+        # the asking bin alone is what makes `fact.pool_available` read 0 while the walk
+        # still offers the chain's first pool.
+        own.pool_warehouse_id = None
+        sibling = _warehouse(db, f"ZZT{site}-XX{_uid()[:3]}")
+        sibling.pool_warehouse_id = pool.id
+        db.flush()
+    _stock(db, product, pool, on_hand=pool_qty)
+    order, line, _cso, _cline = _seed_line(
+        db, company_id, project, product, own,
+        qty_ordered=line_qty, required_date=date.today() + timedelta(days=days),
+    )
+    return company_id, eling, order, line, pool
+
+
+def test_the_confirm_accepts_the_pool_share_and_buy_the_engine_proposes():
+    """S6 (R-C): the ONE mix the whole-line rule allows. 200 in the pool, half of it on
+    offer, and a line of 150 reads Pool 100 + Buy 50 - which has to be confirmable, or the
+    engine proposes something nobody can act on."""
+    from tests._pg_fixture import blank_session
+
+    with blank_session() as db:
+        company_id, eling, order, line, pool = _split_world(db)
+        response = _confirm_split(
+            db, company_id, eling, order,
+            _split_payload(line, warehouse=pool, share="100", buy="50"),
+        )
+        status, body = response.status_code, response.text
+
+    assert status == 200, body
+
+
+def test_the_confirm_accepts_the_split_at_a_bin_with_no_pool_of_its_own():
+    """S6/B2: `BRW-IB` names no `pool_warehouse_id`, so the line's own `pool_available`
+    reads 0 while the WALK offers it the chain's first pool. A recheck reading the fact
+    instead of the chain refused the composition the board had just proposed."""
+    from tests._pg_fixture import blank_session
+
+    with blank_session() as db:
+        company_id, eling, order, line, pool = _split_world(db, own_pool=False)
+        response = _confirm_split(
+            db, company_id, eling, order,
+            _split_payload(line, warehouse=pool, share="100", buy="50"),
+        )
+        status, body = response.status_code, response.text
+
+    assert status == 200, body
+
+
+def test_the_confirm_refuses_a_hand_typed_share_above_the_allowance():
+    """S6, the other side: the carve-out is the ALLOWANCE, not the pool. 120 of a pool that
+    may spare 100 is not the engine's composition and the whole-line rule still refuses it."""
+    from tests._pg_fixture import blank_session
+
+    with blank_session() as db:
+        company_id, eling, order, line, pool = _split_world(db)
+        response = _confirm_split(
+            db, company_id, eling, order,
+            _split_payload(line, warehouse=pool, share="120", buy="30"),
+        )
+        status, body = response.status_code, response.json()
+
+    assert status == 422, body
+    assert "wholly from stock or wholly bought" in body["failing_lines"][0]["reason"]
+
+
+def test_the_confirm_refuses_a_split_for_a_line_beyond_the_immediate_window():
+    """S8: beyond `immediate_window_days` the pool is whole or nothing (R-B), so the engine
+    never proposes a part share there - and a hand-composed one is refused for the reason
+    every other mix is: purchasing cannot act on half a line."""
+    from tests._pg_fixture import blank_session
+
+    with blank_session() as db:
+        company_id, eling, order, line, pool = _split_world(db, days=90)
+        response = _confirm_split(
+            db, company_id, eling, order,
+            _split_payload(line, warehouse=pool, share="100", buy="50"),
+        )
+        status, body = response.status_code, response.json()
+
+    assert status == 422, body
+    assert "wholly from stock or wholly bought" in body["failing_lines"][0]["reason"]
+
+
+def test_the_confirm_takes_another_site_pools_share_but_only_up_to_its_own_allowance():
+    """S8's second half, which is R-L at the confirm: a Reserve at a pool that is NOT the
+    chain's first is fine - that is exactly what R-L draws - as long as it stays inside
+    THAT pool's own allowance. Above it, the mix is refused like any other."""
+    from tests._pg_fixture import blank_session
+    from tests.scm.test_project_supply_service_ladder import _group_sites, _seed_line, _world
+    from tests.test_so_supply_confirmation import _stock
+
+    def world(db):
+        company_id, eling, project, product = _world(db)
+        _group, sites = _group_sites(db)
+        own, own_pool = sites["DC1"]
+        _brw_own, far_pool = sites["BRW"]
+        _stock(db, product, own_pool, on_hand=0)
+        _stock(db, product, far_pool, on_hand=200)
+        order, line, _cso, _cline = _seed_line(
+            db, company_id, project, product, own,
+            qty_ordered="150", required_date=date.today() + timedelta(days=10),
+        )
+        return company_id, eling, order, line, far_pool
+
+    with blank_session() as db:
+        company_id, eling, order, line, far_pool = world(db)
+        inside = _confirm_split(
+            db, company_id, eling, order,
+            _split_payload(line, warehouse=far_pool, share="100", buy="50"),
+        )
+        inside_status, inside_body = inside.status_code, inside.text
+
+    with blank_session() as db:
+        company_id, eling, order, line, far_pool = world(db)
+        above = _confirm_split(
+            db, company_id, eling, order,
+            _split_payload(line, warehouse=far_pool, share="120", buy="30"),
+        )
+        above_status = above.status_code
+
+    assert inside_status == 200, inside_body
+    assert above_status == 422

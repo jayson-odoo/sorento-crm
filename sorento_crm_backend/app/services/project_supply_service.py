@@ -1288,7 +1288,7 @@ class ProjectSupplyService:
         other_group_left: Optional[MutableMapping[str, Decimal]] = None,
         supply_left: Optional[MutableMapping[str, Decimal]] = None,
         own_group_left: Optional[MutableMapping[str, Decimal]] = None,
-        pool_share_left: Optional[Decimal] = None,
+        pool_share_left: Optional[MutableMapping[str, Decimal]] = None,
     ):
         """`compose_line` plus the five OPTIONS behind it (R36, AC-S3-14).
 
@@ -1354,10 +1354,12 @@ class ProjectSupplyService:
             # how much of the pool a project may take.
             pool_share_pct=settings.get("pool_share_pct"),
             immediate_window_days=settings.get("immediate_window_days"),
-            # LADDER V8 (R-B): what is LEFT of the pool's project share in this walk. The
-            # share is a share of the PILE - "the pool keeps half of itself for dealers" -
-            # so two lines of one board cannot each be offered half of it, which is how a
-            # pool of 20 came to lend all 20 to two lines of 10.
+            # LADDER V8 (R-B): what is LEFT of each POOL's project share in this walk, by
+            # pool location. The share is a share of the PILE - "the pool keeps half of
+            # itself for dealers" - so two lines of one board cannot each be offered half of
+            # it, which is how a pool of 20 came to lend all 20 to two lines of 10. Keyed by
+            # POOL (review round 1, S1): BRW's share being spent says nothing about MWH's,
+            # and one number across the five pools spent them all at once.
             pool_share_left=pool_share_left,
         )
 
@@ -1440,11 +1442,13 @@ class ProjectSupplyService:
         # Keyed by PRODUCT alone: the net is one pile across every pool (section 1d), so a
         # draw at any of them is a draw on the same number.
         net_left: Dict[str, Decimal] = {}
-        # product id -> what is LEFT of the site pool's PROJECT SHARE in this walk (ladder
-        # v8, R-B). The share is a share of the PILE, not of each line: without this ledger
-        # a pool of 20 was offered as 10 to one line and 10 to the next, and lent all of it.
-        # Keyed by product for the same reason `net_left` is - one pile, one number.
-        share_left: Dict[str, Decimal] = {}
+        # product id -> POOL LOCATION -> what is LEFT of that pool's PROJECT SHARE in this
+        # walk (ladder v8, R-B). The share is a share of the PILE, not of each line: without
+        # this ledger a pool of 20 was offered as 10 to one line and 10 to the next, and lent
+        # all of it. Keyed by POOL as well as product (review round 1, S1) because each pool
+        # has its own allowance under R-L - BRW's share being spent leaves MWH's untouched -
+        # while `net_left` above stays ONE number, because the five pools are one pile.
+        share_left: Dict[str, Dict[str, Decimal]] = {}
         # product id -> DONOR LINE id -> what is still borrowable from it in this walk
         # (v7.1, AC-S3-9: a borrow takes one order's committed quantity, so the ledger is
         # keyed by that order's line and not by the bin it happens to sit in).
@@ -1482,18 +1486,21 @@ class ProjectSupplyService:
             product_id = unit_fact.product_id
             if product_id and product_id not in net_left:
                 net_left[product_id] = _dec(unit_fact.pools_net)
-            if product_id and product_id not in share_left:
-                # Seeded off the CHAIN's first pool, which is what the walk itself reads
-                # (`_pool_chain`: this line's own site pool first, then the others by on
-                # hand). A bare site code names no pool of its own - `BRW-IB` on the live
-                # book - and reading `fact.pool_available` there would seed 0 for a line
-                # the walk offers BRW's share to.
-                chain = self.pool_chain_for(unit_fact)
-                share_left[product_id] = available_for_project(
-                    chain[0].get("available") if chain else _ZERO,
-                    unit_fact.pools_net,
-                    self._fulfilment_settings().get("pool_share_pct"),
-                )
+            if product_id:
+                # Seeded off the CHAIN, which is what the walk itself reads (`_pool_chain`:
+                # this line's own site pool first, then the others by on hand), one entry per
+                # POOL. A bare site code names no pool of its own - `BRW-IB` on the live book
+                # - and reading `fact.pool_available` would seed 0 for a line the walk offers
+                # BRW's share to. Seeded once per pool and then drawn down: a pool nobody
+                # asks about costs nothing.
+                shares = share_left.setdefault(product_id, {})
+                pct = self._fulfilment_settings().get("pool_share_pct")
+                for entry in self.pool_chain_for(unit_fact):
+                    code = str(entry.get("location") or "")
+                    if code and code not in shares:
+                        shares[code] = available_for_project(
+                            entry.get("available"), unit_fact.pools_net, pct
+                        )
             # A fact with no product cannot borrow at all (`_cross_group_borrow_candidates`
             # refuses it by rule), so it keeps no ledger either - one bucket keyed by the
             # empty string would pool every such line's donors together.
@@ -1571,8 +1578,19 @@ class ProjectSupplyService:
                         _ZERO,
                     )
                     net_left[product_id] = max(net_open - drawn_net, _ZERO)
-                    if share_open is not None:
-                        share_left[product_id] = max(share_open - drawn_net, _ZERO)
+                if share_open is not None:
+                    # Per POOL, off what each one actually gave (R-L): a draw at MWH does
+                    # not spend BRW's share, and the free half is what the share bounds -
+                    # a pool BORROW (R34) is a later order's stock, not the pile's share.
+                    for component in components:
+                        if component.kind != RESERVE or component.rung != "pool":
+                            continue
+                        code = component.source_location
+                        if not code:
+                            continue
+                        share_open[code] = max(
+                            share_open.get(code, _ZERO) - component.qty, _ZERO
+                        )
                 if donors is not None:
                     self._draw_donors(donors, fact, components)
                 for component in components:
@@ -4427,32 +4445,50 @@ class ProjectSupplyService:
         the ownership group beside a Buy is the composition purchasing cannot act on, and it
         is what this check exists for.
 
-        Three conditions, all of them: every from-stock unit is a RESERVE at a SITE POOL (a
-        borrow or a timely SPO beside a Buy is still a mix), and the quantity is inside the
-        allowance the walk itself was bound by (`available_for_project`) - so a planner
-        cannot hand-compose a bigger "share" than the rule allows and have it pass as one.
+        Four conditions, all of them:
+
+        * every from-stock unit is a RESERVE at a SITE POOL of this line's own chain (a
+          borrow or a timely SPO beside a Buy is still a mix);
+        * the line is INSIDE `immediate_window_days` - beyond it the pool is whole or
+          nothing (R-B), so a part share there is not a composition the engine would ever
+          make (review round 1, S8);
+        * each pool's quantity is inside THAT POOL's own allowance, which is what R-L draws
+          when another site's pool answers the remainder;
+        * and the allowance is read off `pool_chain_for`, the SAME source `compose_lines`
+          seeds its ledger from - never `fact.pool_available`, which is 0 for a bare site
+          bin like `BRW-IB` and refused the composition the board had just proposed (review
+          round 1, B2).
         """
-        pool_codes = {
-            warehouse.warehouse_code
-            for warehouse in self._site_pool_warehouses().values()
-            if warehouse.warehouse_code
+        chain = {
+            str(entry_pool.get("location") or ""): entry_pool
+            for entry_pool in self.pool_chain_for(fact)
+            if entry_pool.get("location")
         }
-        if not pool_codes or entry.borrow:
+        if not chain or entry.borrow:
             return False
-        pooled = _ZERO
+        settings = self._fulfilment_settings()
+        window = max(int(settings.get("immediate_window_days") or 0), 0)
+        as_of = self._walk_as_of or date.today()
+        if (
+            fact.required_date is not None
+            and fact.required_date > as_of + timedelta(days=window)
+        ):
+            return False
+        per_pool: Dict[str, Decimal] = {}
         for item in entry.reserve or []:
             row = self._warehouse_row(str(item.warehouse_id))
-            if row is None or row.warehouse_code not in pool_codes:
+            code = row.warehouse_code if row is not None else None
+            if not code or code not in chain:
                 return False
-            pooled += _dec(item.qty)
+            per_pool[code] = per_pool.get(code, _ZERO) + _dec(item.qty)
+        pooled = sum(per_pool.values(), _ZERO)
         if pooled <= _ZERO or pooled != from_stock:
             return False
-        allowance = available_for_project(
-            fact.pool_available,
-            fact.pools_net,
-            self._fulfilment_settings().get("pool_share_pct"),
+        pct = settings.get("pool_share_pct")
+        return all(
+            qty <= available_for_project(chain[code].get("available"), fact.pools_net, pct)
+            for code, qty in per_pool.items()
         )
-        return pooled <= allowance
 
     def _check_reserve_against_on_hand(
         self,

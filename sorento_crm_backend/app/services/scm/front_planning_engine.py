@@ -194,6 +194,31 @@ DEFAULT_POOL_SHARE_PCT = 50
 DEFAULT_IMMEDIATE_WINDOW_DAYS = 30
 
 
+def pool_allowance(
+    pool: Optional[Mapping[str, Any]],
+    pools_net: Any,
+    pool_share_pct: Optional[int] = None,
+    share_left: Optional[Mapping[str, Any]] = None,
+) -> Decimal:
+    """What ONE site pool may lend this line, ledger included.
+
+    `available_for_project` is the rule; this is that rule applied to a pool of the chain
+    and then capped by what the WALK has already taken out of that pool's share
+    (`share_left`, keyed by pool location - `compose_lines` keeps it). The share is a share
+    of the PILE and not a share per line, so without the ledger a pool of 20 is offered as
+    10 to one line and 10 to the next and lends all of itself.
+    """
+    if not pool:
+        return ZERO
+    allowed = available_for_project(pool.get("available"), pools_net, pool_share_pct)
+    if share_left is None:
+        return allowed
+    stated = share_left.get(str(pool.get("location") or ""))
+    if stated is None:
+        return allowed
+    return min(allowed, max(_dec(stated), ZERO))
+
+
 def available_for_project(
     available: Any, pools_net: Any, pool_share_pct: Optional[int] = None
 ) -> Decimal:
@@ -534,6 +559,10 @@ def pool_share_option_reason(
     it may give PART of a line, and when it gives nothing the reason is the whole point -
     "600 is more than the 450 BRW can spare" is what stops a planner hunting for a pool
     they can see 900 sitting in.
+
+    WHAT IT GAVE, not what it could have given, wherever it gave anything (review round 1,
+    S3): the allowance belongs in the sentence that REFUSES, where it is the reason, and
+    beside a quantity it merely disagrees with the Gives column next to it.
     """
     if allowance <= ZERO:
         return f"{location} has nothing to spare for projects"
@@ -545,10 +574,8 @@ def pool_share_option_reason(
             )
         return f"{location} has nothing free on the floor to spare"
     if share < open_qty:
-        return (
-            f"{location} can spare {qty_text(allowance)} of the {qty_text(open_qty)} needed"
-        )
-    return f"{location} can spare {qty_text(allowance)}"
+        return f"{location} can spare {qty_text(share)} of the {qty_text(open_qty)} needed"
+    return f"{location} can spare {qty_text(share)}"
 
 
 def _pool_share_label(pools: Optional[Sequence[Mapping[str, Any]]]) -> str:
@@ -848,12 +875,12 @@ def walk_line(
     #: documented default, so a direct caller still walks the rule.
     pool_share_pct: Optional[int] = None,
     immediate_window_days: Optional[int] = None,
-    #: What is LEFT of the pool's project share in this walk (`compose_lines`' own ledger).
-    #: The allowance is a share of the pile, not a share per line: without a running figure
-    #: two lines of one board would each be offered half the pool and the pool would end up
-    #: lending all of it. `None` reads the pile fresh, which is what a single line on its
-    #: own may draw.
-    pool_share_left: Optional[Decimal] = None,
+    #: What is LEFT of each POOL's project share in this walk, by pool location
+    #: (`compose_lines`' own ledger, keyed by product and pool). The allowance is a share of
+    #: the pile, not a share per line: without a running figure two lines of one board would
+    #: each be offered half the pool and the pool would end up lending all of it. `None`
+    #: reads every pile fresh, which is what a single line on its own may draw.
+    pool_share_left: Optional[Mapping[str, Any]] = None,
 ) -> Walk:
     """LADDER V7.1: the five steps, in order, each answered (PLAN 3.2, R1/R13/R33/R36).
 
@@ -931,13 +958,8 @@ def walk_line(
     #     take (R-A, R-B, R-D). Inside the immediate window it may answer with PART of the
     #     line; beyond it, whole or nothing. The dealer hot-selling gate that used to refuse
     #     the whole step is retired: the share is what keeps stock for dealers now.
-    allowance = available_for_project(
-        (pools or [{}])[0].get("available") if pools else ZERO,
-        pools_net,
-        pool_share_pct,
-    )
-    if pool_share_left is not None:
-        allowance = min(allowance, max(_dec(pool_share_left), ZERO))
+    own_pool = (pools or [None])[0]
+    allowance = pool_allowance(own_pool, pools_net, pool_share_pct, pool_share_left)
     window_days = (
         DEFAULT_IMMEDIATE_WINDOW_DAYS
         if immediate_window_days is None
@@ -955,7 +977,16 @@ def walk_line(
     )
     step_share = _Offer()
     if wanted > ZERO:
-        _draw_pool(step_share, pools, allowance, wanted, share=True)
+        # The ASKING BIN'S OWN pool alone (R-A). The other site pools are a step of their
+        # own further down (R-L) with their own allowances, and drawing them here would
+        # spend them before the group and the borrows had been asked.
+        _draw_pool(step_share, pools[:1] if pools else None, allowance, wanted, share=True)
+    if not immediate and step_share.qty < open_amount:
+        # BEYOND THE WINDOW THE POOL IS WHOLE OR NOTHING IN FACT, not only in intention
+        # (R-B): the line fitted inside the allowance, but the floor could not actually
+        # supply it, and a part share for a far line is the thing the rule refuses. A
+        # partial draw here left the remainder to buy and quietly kept the stock.
+        step_share = _Offer()
     share_qty = step_share.qty
     offers[STEP_POOL_SHARE] = step_share
 
@@ -990,6 +1021,24 @@ def walk_line(
             if offers[step].qty >= remainder and offers[step].components:
                 chosen = step
                 break
+        if chosen is None and pools and len(pools) > 1:
+            # R-L (2 Sep): the OTHER site pools still supply the remainder. Asked here -
+            # after own locations and both borrows, before the pool's own later orders and
+            # before Buy - in the caller's own draw order, each under its OWN allowance
+            # (its Available less the kept share, its own ledger), all bounded by the one
+            # five-pool net. Whole or nothing, like every other step of the remainder walk:
+            # a DC1-IB line of 300 with DC1's pool empty and BRW sparing 400 reads BRW 300.
+            spilled = _draw_other_pools(
+                pools[1:],
+                pools_net,
+                remainder,
+                pool_share_pct=pool_share_pct,
+                share_left=pool_share_left,
+            )
+            if spilled.qty >= remainder and spilled.components:
+                for component in spilled.components:
+                    step_share.add(component)
+                chosen = STEP_POOL_SHARE
         if chosen is None and pool_borrow_candidates:
             # The pool's own later orders, asked LAST exactly as v7.1 asked them - after
             # every free step and before Buy - and reported inside the first row, because
@@ -1335,10 +1384,58 @@ def _draw_supply_borrow(
     return offer
 
 
+def _draw_other_pools(
+    pools: Sequence[Mapping[str, Any]],
+    pools_net: Optional[Decimal],
+    need: Decimal,
+    *,
+    pool_share_pct: Optional[int] = None,
+    share_left: Optional[Mapping[str, Any]] = None,
+) -> "_Offer":
+    """R-L: the site pools that are NOT the asking bin's own, each under its own allowance.
+
+    One offer, several pools, in the caller's own draw order (`_pool_chain`: by on hand).
+    Each pool spares its own share - its Available less what the policy keeps for dealers,
+    less what this walk has already taken from it - and the whole draw is bounded by the one
+    five-pool net, because the five pools are one pile (v4 section 1d) whatever their
+    individual positions.
+
+    The caller applies the whole-or-nothing rule to what comes back: this is a step of the
+    remainder walk (R-C), so half of it is not an answer.
+    """
+    offer = _Offer()
+    left_in_pile = max(_dec(pools_net), ZERO)
+    for pool in pools:
+        left = need - offer.qty
+        if left <= ZERO or left_in_pile <= ZERO:
+            break
+        location = pool.get("location")
+        if not location:
+            continue
+        allowance = min(
+            pool_allowance(pool, pools_net, pool_share_pct, share_left), left_in_pile
+        )
+        capacity = min(max(_dec(pool.get("free")), ZERO), allowance)
+        if capacity <= ZERO:
+            continue
+        take = min(left, capacity)
+        offer.add(
+            Component(
+                kind=RESERVE,
+                qty=take,
+                reason=pool_share_reason(str(location), take, allowance),
+                source_location=str(location),
+                rung=RUNG_POOL,
+            )
+        )
+        left_in_pile -= take
+    return offer
+
+
 def _draw_pool(
     offer: "_Offer",
     pools: Optional[Sequence[Mapping[str, Any]]],
-    pools_net: Optional[Decimal],
+    pile_limit: Optional[Decimal],
     need: Decimal,
     *,
     share: bool = False,
@@ -1346,10 +1443,11 @@ def _draw_pool(
     """Step 0a (v8) / step 4a (v7.1): the site pools as ONE pile, own site first (the
     caller's draw order).
 
-    `share` says which rule the quantity is a share OF, and therefore which sentence it
-    carries: under v8 the pile handed in is the ALLOWANCE (`available_for_project`) and the
-    reason names that, because a component reading "3 of the 47 the site pools net between
-    them" invites the reader to ask for the other 44 the pool is keeping for dealers.
+    `pile_limit` is what may be drawn in total: the five pools' NET on the v7.1 path, and
+    the ALLOWANCE (`pool_allowance`) on v8's share path. `share` says which of the two it is
+    and therefore which sentence the components carry - a component reading "3 of the 47 the
+    site pools net between them" invites the reader to ask for the other 44 the pool is
+    keeping for dealers.
 
     The pile offers `max(pools_net, 0)` and not a unit more - `BRW -103` beside `DC1 +1`
     nets -102 and offers NOTHING, where per-pool arithmetic would have offered the 1, which
@@ -1357,7 +1455,7 @@ def _draw_pool(
     quantity can come from; the net says HOW MUCH. Nobody is owed a free pool draw back
     (AC-L13 as it applies to the free half; the BORROW half is 4b).
     """
-    left_in_pile = max(_dec(pools_net), ZERO)
+    left_in_pile = max(_dec(pile_limit), ZERO)
     for pool in pools or []:
         left = need - offer.qty
         if left <= ZERO or left_in_pile <= ZERO:
@@ -1374,9 +1472,9 @@ def _draw_pool(
                 kind=RESERVE,
                 qty=take,
                 reason=(
-                    pool_share_reason(str(location), take, max(_dec(pools_net), ZERO))
+                    pool_share_reason(str(location), take, max(_dec(pile_limit), ZERO))
                     if share
-                    else pool_reason(str(location), take, pools_net)
+                    else pool_reason(str(location), take, pile_limit)
                 ),
                 source_location=str(location),
                 rung=RUNG_POOL,

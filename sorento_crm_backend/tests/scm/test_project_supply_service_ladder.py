@@ -204,15 +204,15 @@ def test_the_own_location_is_a_group_source_again_under_ladder_v3():
 # --------------------------------------------------------------------------- rung 2: pool
 
 
-def test_the_share_offered_is_the_asking_bins_own_pools_and_not_every_pools():
-    """LADDER V8 (R-A/R-B): the ASKING bin's own site pool is the one whose share is on
-    offer - BRW's 15 spares 7 - and the other site pools are not a second allowance behind
-    it. They are still in the draw chain (`_pool_chain`) and are reached when the own pool
-    cannot physically supply the share it owes; here it can, so the walk never leaves BRW
-    and the rest of the line walks the ladder (R-C).
+def test_the_asking_bins_pool_spares_its_share_and_another_site_covers_the_remainder():
+    """LADDER V8 (R-A/R-B/R-L). Step 0 is the ASKING bin's own site pool and its own share:
+    BRW's 15 spares 7. What is LEFT of the line then walks the ladder (R-C) - own locations,
+    both borrows - and reaches the OTHER site pools last (R-L), where MWH's 100 spares 50
+    and covers the remaining 33 whole.
 
-    Under v7.1 this case read "15 from BRW, 25 from MWH": the whole five-pool net was on the
-    table for one project line, which is exactly what the share rule exists to stop.
+    Under v7.1 this read "15 from BRW, 25 from MWH": the whole five-pool net was on the
+    table for one project line as one draw. Under v8 each pool spares its own half, and the
+    second pool answers as a step of its own rather than as an overflow of the first.
     """
     with blank_session() as db:
         company_id, _eling, project, product = _world(db)
@@ -230,9 +230,9 @@ def test_the_share_offered_is_the_asking_bins_own_pools_and_not_every_pools():
         components = _components(proposal)
 
     reserves = {c["source_location"]: c for c in components if c["kind"] == "reserve"}
-    assert set(reserves) == {pool.warehouse_code}
-    assert reserves[pool.warehouse_code]["qty"] == "7"
-    assert [c["kind"] for c in components] == ["reserve", "buy"]
+    assert set(reserves) == {pool.warehouse_code, other_pool.warehouse_code}
+    assert reserves[pool.warehouse_code]["qty"] == "7", "BRW's own share, and no more"
+    assert reserves[other_pool.warehouse_code]["qty"] == "33", "MWH covers the remainder"
     assert sum(Decimal(c["qty"]) for c in components) == Decimal("40")
 
 

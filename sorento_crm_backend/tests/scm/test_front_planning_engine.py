@@ -78,22 +78,27 @@ def test_pool_reserve_draws_the_own_site_pool_before_the_other_site_pools():
     not enough on its own, so the residual comes from the SECOND pool in the ordered list,
     never the reverse.
 
-    LADDER V8 sharpens exactly this: the ALLOWANCE (half of the asking bin's own pool
-    availability, 90 of 180) says HOW MUCH the pool may lend, and each pool's FREE pile says
-    WHERE it can come from - BRW has only 30 on a floor, so the other 60 comes from MWH.
+    LADDER V8 splits it in two and keeps the answer: step 0 draws the ASKING BIN's own pool
+    for its own share (half of BRW's 180 availability, and only 30 of that is on a floor),
+    and R-L asks the OTHER site pools for the remainder further down the walk - after the
+    group and both borrows, under MWH's own allowance (half of its 200). 30 from BRW and 60
+    from MWH, exactly as before, and now each pool's share is its own.
     """
     from app.services.scm.front_planning_engine import propose_line
 
     proposed = _components(
         propose_line(
             open_qty=Decimal("90"),
-            required_date=REQUIRED_DATE,
+            # DUE SOON, and pinned: a PART share is the immediate window's own rule (R-B),
+            # and beyond the window BRW's 30 on the floor would be discarded whole (B3).
+            as_of=date(2026, 9, 2),
+            required_date=date(2026, 9, 12),
             fulfilment_location=OWN_LOCATION,
             pools=[
                 {"location": "BRW", "free": Decimal("30"), "available": Decimal("180")},
-                {"location": "MWH", "free": Decimal("100"), "available": Decimal("100")},
+                {"location": "MWH", "free": Decimal("100"), "available": Decimal("200")},
             ],
-            pools_net=Decimal("130"),
+            pools_net=Decimal("230"),
         )
     )
 

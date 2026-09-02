@@ -875,7 +875,7 @@ SMALL_LINE_WHOLE_FROM_POOL_CASE = WalkCase(
             step="pool_share",
             whole=True,
             gives_qty=Decimal("3"),
-            reason="BRW can spare 23",
+            reason="BRW can spare 3",
             chosen=True,
         ),
         OptionRow(step="use", whole=True, gives_qty=Decimal("3")),
@@ -913,7 +913,7 @@ BEYOND_WINDOW_FITS_THE_ALLOWANCE_CASE = WalkCase(
             step="pool_share",
             whole=True,
             gives_qty=Decimal("100"),
-            reason="BRW can spare 450",
+            reason="BRW can spare 100",
             chosen=True,
         ),
         OptionRow(step="use", whole=False, gives_qty=Decimal("0")),
@@ -1043,7 +1043,7 @@ DEALER_HOT_SELLING_TAKES_THE_POOL_CASE = WalkCase(
             step="pool_share",
             whole=True,
             gives_qty=Decimal("40"),
-            reason="BRW can spare 3250",
+            reason="BRW can spare 40",
             chosen=True,
         ),
         OptionRow(step="use", whole=False, gives_qty=Decimal("0")),
@@ -1074,6 +1074,87 @@ AVAILABLE_FOR_PROJECT_CASES = (
 )
 
 
+OTHER_POOL_COVERS_THE_REMAINDER_CASE = WalkCase(
+    ac="R-L",
+    title=(
+        "the OTHER site pools still supply the remainder: DC1's own pool is empty, the "
+        "group holds 110 of a 300 line, and BRW spares 400 - so BRW covers it whole"
+    ),
+    inputs=_v8_inputs(
+        open_qty=Decimal("300"),
+        required_date=IMMEDIATE_DATE,
+        fulfilment_location="DC1-IB",
+        group_code="IB",
+        group_take_candidates=[
+            {"location": "DC1-IB", "qty": Decimal("110")},
+        ],
+        group_offer=Decimal("110"),
+        pools=[
+            {"location": "DC1", "free": Decimal("0"), "available": Decimal("0")},
+            {"location": POOL_LOCATION, "free": Decimal("800"), "available": Decimal("800")},
+        ],
+        pools_net=Decimal("800"),
+    ),
+    components=(
+        Component(
+            kind=RESERVE,
+            qty=Decimal("300"),
+            reason="Pool BRW spares 300 of the 400 it may lend a project",
+            source_location=POOL_LOCATION,
+        ),
+    ),
+    options=(
+        OptionRow(
+            step="pool_share",
+            whole=True,
+            gives_qty=Decimal("300"),
+            reason="DC1 has nothing to spare for projects",
+            chosen=True,
+        ),
+        OptionRow(step="use", whole=False, gives_qty=Decimal("110")),
+        OptionRow(step="order_borrow", whole=False, gives_qty=Decimal("0")),
+        OptionRow(step="supply_borrow", whole=False, gives_qty=Decimal("0")),
+        OptionRow(step="buy", whole=True, gives_qty=Decimal("300")),
+    ),
+)
+
+
+BEYOND_WINDOW_FREE_PILE_SHORT_CASE = WalkCase(
+    ac="AC-2.3b",
+    title=(
+        "beyond the window the pool is whole or nothing IN FACT, not only in intention: "
+        "an allowance of 450 with 60 on the floor gives nothing at all, never a part share"
+    ),
+    inputs=_v8_inputs(
+        open_qty=Decimal("100"),
+        required_date=FAR_DATE,
+        pools=[
+            {"location": POOL_LOCATION, "free": Decimal("60"), "available": Decimal("900")}
+        ],
+        pools_net=Decimal("900"),
+    ),
+    components=(
+        Component(
+            kind=BUY,
+            qty=Decimal("100"),
+            reason="Only 0 of 100 can be covered from stock - buy the whole line",
+        ),
+    ),
+    options=(
+        OptionRow(
+            step="pool_share",
+            whole=False,
+            gives_qty=Decimal("0"),
+            reason="BRW has nothing free on the floor to spare",
+        ),
+        OptionRow(step="use", whole=False, gives_qty=Decimal("0")),
+        OptionRow(step="order_borrow", whole=False, gives_qty=Decimal("0")),
+        OptionRow(step="supply_borrow", whole=False, gives_qty=Decimal("0")),
+        OptionRow(step="buy", whole=True, gives_qty=Decimal("100"), chosen=True),
+    ),
+)
+
+
 V8_WALK_CASES = (
     IMMEDIATE_SHARE_CASE,
     SMALL_LINE_WHOLE_FROM_POOL_CASE,
@@ -1081,4 +1162,6 @@ V8_WALK_CASES = (
     BEYOND_WINDOW_EXCEEDS_THE_ALLOWANCE_CASE,
     NET_BOUNDS_THE_SHARE_CASE,
     DEALER_HOT_SELLING_TAKES_THE_POOL_CASE,
+    OTHER_POOL_COVERS_THE_REMAINDER_CASE,
+    BEYOND_WINDOW_FREE_PILE_SHORT_CASE,
 )

@@ -189,10 +189,16 @@ def test_the_site_pools_share_is_asked_before_another_groups_free_pile_under_v8(
 # --------------------------------------------------------------------------- AC-V6
 
 
-def test_dealer_hot_selling_refuses_the_whole_pile_not_only_this_site_s_pool():
-    """AC-V6. The product is hot-selling at the line's own location; DC1 and MWH pool stock
-    is not offered either, because the five pools are one pile and the gate refuses the
-    pile."""
+def test_another_sites_pool_answers_when_the_asking_sites_pool_is_empty():
+    """AC-V6, RE-BLESSED TWICE. The dealer hot-selling gate it was written for is retired
+    (v8, R-A), and R-L then reverses what was left of it: the asking site's pool holds
+    nothing, so the OTHER site pools are asked for the remainder - after the group and both
+    borrows - each under its own allowance, and 1000 between DC1 and MWH covers a line of
+    10 rather than leaving it to Buy.
+
+    The five pools are still ONE pile bounded by one net; what R-L adds is that an empty
+    pool at the asking site is not the end of the step.
+    """
     from app.models.scm import ItemClassification
 
     with blank_session() as db:
@@ -217,6 +223,6 @@ def test_dealer_hot_selling_refuses_the_whole_pile_not_only_this_site_s_pool():
         )
         components = _components(ProjectSupplyService(db).proposal_for(order))
 
-    assert [c["kind"] for c in components] == ["buy"], (
-        "1000 sits in the pile at DC1 and MWH and none of it is offered"
-    )
+    assert [(c["kind"], c["qty"], c["rung"]) for c in components] == [
+        ("reserve", "10", "pool")
+    ], "1000 sits in the pile at DC1 and MWH, and R-L asks them for the remainder"

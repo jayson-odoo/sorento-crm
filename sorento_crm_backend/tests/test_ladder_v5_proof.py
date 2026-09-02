@@ -156,15 +156,14 @@ def test_the_pool_is_asked_before_another_location_and_answers_the_whole_line():
 # --------------------------------------------------------------------------- AC-V6
 
 
-def test_a_pool_holding_nothing_at_the_asking_site_offers_nothing_of_another_sites():
-    """AC-V6, RE-BLESSED BY LADDER V8 (R-A): the dealer hot-selling gate is retired - the
-    SHARE keeps stock for dealers now - so a hot item is no longer refused the pile for
-    being hot.
+def test_another_sites_pool_answers_a_line_whose_own_pool_is_empty():
+    """AC-V6, RE-BLESSED TWICE BY LADDER V8. R-A retired the dealer hot-selling gate this
+    case was written for - the SHARE keeps stock for dealers now - and R-L then answers the
+    question the case asks: the asking bin's own pool holds nothing, so the OTHER site
+    pool is asked for the remainder, under its own allowance, and its 500 covers a line of
+    10 whole.
 
-    The answer is the same and the REASON is different: the share a project line may take is
-    a share of the ASKING bin's own site pool (R-B), and that pool holds nothing. The 500 at
-    the other site's pool is where the other site's own orders draw from; it is not a second
-    allowance behind an empty one.
+    The pool step therefore says YES here, where every earlier ladder said no.
     """
     from app.models.scm import ItemClassification
 
@@ -192,11 +191,10 @@ def test_a_pool_holding_nothing_at_the_asking_site_offers_nothing_of_another_sit
         contribution = _contribution(db, order, product)
 
         pool = _step(contribution, "pool")
-        assert pool["answer"] == "no"
-        assert pool["took"] == "0"
-        assert "no stock" in pool["why"], pool["why"]
-        assert _step(contribution, "buy")["took"] == "10", (
-            "500 sits in the pile at the other site and none of it is offered"
+        assert pool["answer"] == "yes"
+        assert pool["took"] == "10"
+        assert _step(contribution, "buy")["took"] == "0", (
+            "500 sits in the pile at the other site and R-L asks it for the remainder"
         )
 
 
