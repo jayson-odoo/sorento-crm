@@ -902,7 +902,8 @@ somebody writes and a DBA runs.
 
 - No per-contact grant UI. `contact_portal_form_overrides` exists and the resolver honours it, but
   nobody has asked to grant one person a form their access type does not carry. The access type is
-  the unit the request was made in.
+  the unit the request was made in. This deferral was lifted on 1 September 2026; see
+  `PLAN-contact-portal-form-override.md` for the admin surface that writes the table.
 - No data migration that re-grants. D61a says a grant is an admin decision; a downgrade or a later
   migration that guesses one is the failure mode being removed, not a convenience.
 - No new permission. Editing an access type is already gated where the rest of that row is edited.

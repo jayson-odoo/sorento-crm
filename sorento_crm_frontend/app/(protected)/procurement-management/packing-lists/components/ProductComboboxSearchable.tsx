@@ -19,6 +19,8 @@ export interface ProductComboboxSearchableProps {
   placeholder?: string;
   disabled?: boolean;
   className?: string;
+  /** One-line ellipsis trigger for fixed-width table cells. */
+  truncateTriggerLabel?: boolean;
 }
 
 const itemLabel = (p: ProductOption) =>
@@ -37,6 +39,7 @@ export function ProductComboboxSearchable({
   placeholder = 'Search or select product',
   disabled,
   className,
+  truncateTriggerLabel,
 }: ProductComboboxSearchableProps) {
   return (
     <SearchableSelect
@@ -46,6 +49,7 @@ export function ProductComboboxSearchable({
       placeholder={placeholder}
       emptyMessage="No product found."
       triggerClassName={className}
+      truncateTriggerLabel={truncateTriggerLabel}
       paginated
       pageSize={PAGE_SIZE}
       fetchOptions={async (query, pageIndex) => {

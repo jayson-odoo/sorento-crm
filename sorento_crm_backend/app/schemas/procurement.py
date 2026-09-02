@@ -442,6 +442,11 @@ class SPOAllocationUpdate(BaseModel):
     quantity_received: Optional[int] = None
     quantity_rejected: Optional[int] = None
     allocation_notes: Optional[str] = None
+    # The document form view's Lines-tab editors (PLAN-spo-investigation-grid.md UAT
+    # batch, AC-24 parts 2/3): the line's OWN ETA fallback and its OWN supplier,
+    # never the shipment's - those stay read-only, booked against the shipment record.
+    expected_date: Optional[date] = None
+    supplier_id: Optional[str] = None
 
 
 class BulkDeleteSPOAllocationsRequest(BaseModel):
@@ -545,6 +550,98 @@ class SPOWithAllocationsGroup(BaseModel):
     """SPO number with its allocations (grouped list view by SPO)."""
     spo_number: str
     spo_allocations: List[SPOAllocationWithShippedResponse]
+
+
+# ---------------------------------------------------------------------------------------
+# SPO document list + form view (PLAN-spo-investigation-grid.md). A DOCUMENT read of
+# `spo_allocations`, grouped by `spo_number` at read time - no new table. Every computed
+# field here is declared explicitly: `response_model` silently drops an undeclared one
+# (LESSONS-LEARNT), and each is asserted present by a drop-guard test (AC-13).
+# ---------------------------------------------------------------------------------------
+
+
+class SPODocumentLine(BaseModel):
+    """One allocation line, with the computed fields the Lines tab renders (AC-13)."""
+    id: str
+    spo_number: Optional[str] = None
+    product_id: Optional[str] = None
+    product: Optional[ProductSimple] = None
+    warehouse_id: Optional[str] = None
+    warehouse: Optional[WarehouseSimple] = None
+    allocated_quantity: int
+    quantity_received: int
+    quantity_rejected: int
+    #: `max(allocated - received, 0)`.
+    balance: int
+    #: The one coalesce: shipment `eta_delay_date` -> shipment `estimated_arrival_date` ->
+    #: line `expected_date`. Rendered AS IS - no TBA masking (plan Q3).
+    arrival_date: Optional[date] = None
+    #: `spo_supply.overdue_days` - 0 when not late, unstated, or the line is not outstanding.
+    overdue_days: int
+    #: Shipment supplier when a shipment is booked, else the line's own supplier.
+    supplier_name: Optional[str] = None
+    #: The line's OWN supplier (editable, UAT AC-24 part 3) - distinct from
+    #: `supplier_name`, which reads the shipment's supplier first when one is booked.
+    supplier_id: Optional[str] = None
+    #: The line's OWN expected date (editable, UAT AC-24 part 2) - the fallback arm of
+    #: the `arrival_date` coalesce, never the shipment's own ETA fields.
+    expected_date: Optional[date] = None
+    #: `in_plan` | `pool` | `off` | `none` (plan Q4, UAC AC-14).
+    planning_span: str
+    receipt_status: str
+    #: `open_incoming_clauses()` AND balance > 0 - the fifth reader of the one rule (AC-12).
+    outstanding: bool
+    inbound_shipment: Optional[InboundShipmentSimple] = None
+    line_status: Optional[str] = None
+    #: The GRNs whose picking lines name THIS allocation (`picking_lines.spo_allocation_id`).
+    #: Sparse on live data (the weak-matcher backfill) - the Received cell falls back to the
+    #: document's key-matched `linked_grns` when this is empty.
+    grns: List[LinkedGRNSimple] = []
+
+    class Config:
+        from_attributes = True
+
+
+class SPODocumentRow(BaseModel):
+    """One SPO number's header row, as the document list renders it (AC-2, AC-15)."""
+    #: The document's own key, echoed as `id` so the row satisfies the frontend pager's
+    #: `{id: string}` contract without a second field meaning the same thing.
+    id: str
+    spo_number: str
+    #: Earliest line `created_at` on the document.
+    doc_date: Optional[date] = None
+    #: The majority supplier across the document's lines.
+    supplier_name: Optional[str] = None
+    #: How many OTHER suppliers disagree with `supplier_name` - 0 when every line agrees.
+    supplier_extra_count: int = 0
+    status: str
+    #: Earliest ETA across the document's OUTSTANDING lines, AS IS.
+    earliest_eta: Optional[date] = None
+    total_allocated: int
+    total_received: int
+    #: Sum of `balance` over OUTSTANDING lines only.
+    balance: int
+    line_count: int
+    #: Max `overdue_days` over the document's OUTSTANDING lines; 0 when none are late.
+    worst_overdue_days: int
+
+
+class SPODocument(BaseModel):
+    """The document form view's payload: header rollup + every line (AC-16)."""
+    spo_number: str
+    doc_date: Optional[date] = None
+    supplier_name: Optional[str] = None
+    supplier_extra_count: int = 0
+    status: str
+    total_allocated: int
+    total_received: int
+    balance: int
+    line_count: int
+    lines: List[SPODocumentLine]
+    # The GRNs received against this SPO number (variant formats matched by key),
+    # so a Completed document can answer "received on WHICH goods receipt" - the
+    # capability the retired per-allocation page's Related Documents panel carried.
+    linked_grns: List[LinkedGRNSimple] = []
 
 
 class PickingLineBase(BaseModel):

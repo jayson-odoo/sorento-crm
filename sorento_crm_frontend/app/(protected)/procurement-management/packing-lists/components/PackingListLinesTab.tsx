@@ -609,32 +609,50 @@ export function PackingListLinesTab() {
                                       Related SPO
                                     </p>
                                     <div className="space-y-2">
-                                      {line.related_spo_allocations.map((spo) => (
-                                        <Link
-                                          key={spo.id}
-                                          href={`/procurement-management/spo-allocations/${spo.id}`}
-                                          className="block rounded-md border px-3 py-2 hover:bg-muted/50"
-                                        >
-                                          <div className="flex items-center justify-between gap-2">
-                                            <span className="text-sm font-medium text-primary">
-                                              {spo.spo_number || 'SPO Allocation'}
-                                            </span>
-                                            {spo.receipt_status ? (
-                                              <Badge
-                                                status={spo.receipt_status}
-                                                className="shrink-0"
+                                      {line.related_spo_allocations.map((spo) => {
+                                        // The retired per-allocation page is gone; every
+                                        // link now lands on the SPO DOCUMENT (grouped by
+                                        // spo_number, slash-encoded - Q7). An allocation
+                                        // with no SPO number has no document to open.
+                                        const content = (
+                                          <>
+                                            <div className="flex items-center justify-between gap-2">
+                                              <span
+                                                className={
+                                                  spo.spo_number
+                                                    ? 'text-sm font-medium text-primary'
+                                                    : 'text-sm font-medium'
+                                                }
                                               >
-                                                {formatStatusLabel(spo.receipt_status)}
-                                              </Badge>
+                                                {spo.spo_number || 'SPO Allocation'}
+                                              </span>
+                                              {spo.receipt_status ? (
+                                                <Badge status={spo.receipt_status} className="shrink-0">
+                                                  {formatStatusLabel(spo.receipt_status)}
+                                                </Badge>
+                                              ) : null}
+                                            </div>
+                                            {spo.allocated_quantity != null ? (
+                                              <p className="mt-1 text-xs text-muted-foreground">
+                                                Allocated: {spo.allocated_quantity}
+                                              </p>
                                             ) : null}
+                                          </>
+                                        );
+                                        return spo.spo_number ? (
+                                          <Link
+                                            key={spo.id}
+                                            href={`/procurement-management/spo-allocations/${encodeURIComponent(spo.spo_number)}`}
+                                            className="block rounded-md border px-3 py-2 hover:bg-muted/50"
+                                          >
+                                            {content}
+                                          </Link>
+                                        ) : (
+                                          <div key={spo.id} className="block rounded-md border px-3 py-2">
+                                            {content}
                                           </div>
-                                          {spo.allocated_quantity != null ? (
-                                            <p className="mt-1 text-xs text-muted-foreground">
-                                              Allocated: {spo.allocated_quantity}
-                                            </p>
-                                          ) : null}
-                                        </Link>
-                                      ))}
+                                        );
+                                      })}
                                     </div>
                                   </div>
                                 </PopoverContent>
