@@ -48,10 +48,13 @@ export function availableForProject(
 ): string | null {
   if (availableQty === null || availableQty === undefined) return null;
   const share = Math.min(Math.max(sharePct ?? DEFAULT_POOL_SHARE_PCT, 0), 100);
-  const spare =
-    Math.floor(
-      (Math.max(toMinor(availableQty), 0) / QTY_SCALE) * ((100 - share) / 100),
-    ) * QTY_SCALE;
+  // INTEGER arithmetic, in minor units, in the order the server does it (review round 1,
+  // S2): `floor(minor x (100 - share) / 100)` and only then down to whole units. Dividing
+  // by the scale first and multiplying by a float share is where 90 at 30 % read 62 on the
+  // client and 63 on the server - one unit, on the number a planner is deciding against.
+  const spare = Math.floor(
+    Math.floor((Math.max(toMinor(availableQty), 0) * (100 - share)) / 100) / QTY_SCALE,
+  ) * QTY_SCALE;
   if (fivePoolNet === null || fivePoolNet === undefined) return fromMinor(spare);
   return fromMinor(Math.min(spare, Math.max(toMinor(fivePoolNet), 0)));
 }

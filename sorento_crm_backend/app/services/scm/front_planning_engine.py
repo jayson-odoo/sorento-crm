@@ -472,7 +472,6 @@ def _coverage_date_reason(coverage_until: date) -> str:
 
 def pool_reserve_capacity(
     *,
-    is_dealer_hot_selling: bool,
     pools: Sequence[Mapping[str, Any]],
     pools_net: Any,
 ) -> List[Tuple[str, Decimal]]:
@@ -489,11 +488,11 @@ def pool_reserve_capacity(
     that rule capped such a line's draw at the pool's own signed availability, and the
     pile's net now bounds EVERY draw the same way, for every item.
 
-    `is_dealer_hot_selling` IS ACCEPTED AND NOT READ since ladder v8 (R-A). It used to
-    exclude the whole rung - "the pool is kept for retail" - and what keeps stock for
-    dealers now is the SHARE (`available_for_project`), which keeps a percentage of every
-    pool rather than the whole of one for a subset of items. The parameter survives because
-    three callers pass it and the flag itself is still a fact about the product.
+    THE DEALER HOT-SELLING GATE IS GONE (v8, R-A), and its parameter with it (review round
+    1): it used to exclude the whole rung - "the pool is kept for retail" - and what keeps
+    stock for dealers now is the SHARE (`available_for_project`), a percentage of every pool
+    rather than the whole of one for a subset of items. A parameter nothing reads is a rule
+    a reader still believes in.
 
     Nothing is un-netted here, unlike rung 2: this line's demand is booked at
     `BRW-<group>`, never at a pool, so none of it is inside `pools_net`.
@@ -853,10 +852,13 @@ def walk_line(
     #: the caller reads off `_fulfilment_settings()` and passes through.
     transfer_days: int = 0,
     group_code: Optional[str] = None,
+    #: Both flags are ACCEPTED AND NOT READ. `is_project_hot_selling` since ladder v4
+    #: (section 1d: the pile's net bounds every draw the same way, for every item) and
+    #: `is_dealer_hot_selling` since v8 (R-A: the SHARE keeps stock for dealers now, so
+    #: being hot no longer removes the step). They stay in the signature because every
+    #: caller states them off the same fact and a walk is easier to read beside the flags
+    #: it was taken under; nothing here branches on either.
     is_dealer_hot_selling: bool = False,
-    #: Accepted and NOT read since ladder v4 (section 1d). 3.3a capped a project
-    #: hot-selling line's pool draw at the pool's own signed availability; the pile's net
-    #: now bounds every draw the same way, for every item.
     is_project_hot_selling: bool = False,
     pools: Optional[Sequence[Mapping[str, Any]]] = None,
     is_discontinued: bool = False,

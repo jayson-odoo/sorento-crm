@@ -1766,7 +1766,9 @@ def test_build_batch_proposal_for_a_covered_replan_row_is_the_boards_full_contri
     already render off the live board."""
     client, world = api
     db = world.db
-    _stock(db, world.product, world.pool_wh, on_hand=500)
+    # 1000, not 500: ladder v8 lends a project HALF the pool (R-B), and these cases are
+    # about a fresh proposal CITING the pool rather than about the size of the share.
+    _stock(db, world.product, world.pool_wh, on_hand=1000)
     core_so = _core_so(db, world.company_id)
     core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="432",
                             required_date=date(2026, 8, 25))
@@ -1803,8 +1805,9 @@ def test_build_batch_proposal_for_a_covered_replan_row_is_the_boards_full_contri
     # question's facts - and incoming is not a question at all, because an SPO is inside
     # the ownership group's own net.
     assert [step["step"] for step in proposal["trail"]] == [1, 2, 3, 4, 5]
+    # LADDER V8 (R-A): the site pool leads the walk, and the proof follows it.
     assert [step["kind"] for step in proposal["trail"]] == [
-        "own", "order_borrow", "supply_borrow", "pool", "buy",
+        "pool", "own", "order_borrow", "supply_borrow", "buy",
     ]
     assert proposal["rank_factors"]
     assert proposal["sources"]
@@ -2437,7 +2440,9 @@ def test_apply_advance_with_pool_available_redirects_both_placed_rows_to_the_poo
     links. The arithmetic is unchanged: 432 placed, 432 redirected, nothing re-raised."""
     client, world = api
     db = world.db
-    _stock(db, world.product, world.pool_wh, on_hand=500)
+    # 1000, not 500: ladder v8 lends a project HALF the pool (R-B), and these cases are
+    # about a fresh proposal CITING the pool rather than about the size of the share.
+    _stock(db, world.product, world.pool_wh, on_hand=1000)
     core_so = _core_so(db, world.company_id)
     core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="432",
                             required_date=date(2026, 8, 25))

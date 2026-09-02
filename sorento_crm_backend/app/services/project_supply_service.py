@@ -1212,71 +1212,6 @@ class ProjectSupplyService:
         self._lead_time_memo[product_id] = days
         return days
 
-    def compose_line(
-        self,
-        fact: _LineFacts,
-        *,
-        pool_free_left: Optional[Decimal] = None,
-        borrow_left: Optional[Mapping[str, Decimal]] = None,
-        as_of: Optional[date] = None,
-        pools_net_left: Optional[Decimal] = None,
-    ) -> Tuple[Component, ...]:
-        """The source ladder for ONE line, ladder v5's four questions
-        (`PLAN-scm-cs-planning-uat.md` section 1e): the lead-time window and purchasing's
-        coverage date, then the ownership group (own location first), the shared pool as one
-        pile, cross-group borrow, then the whole-line rule. Incoming is not among them - an
-        SPO is inside the group's net (section 1e, first bullet).
-
-        Public because it has two callers and must never have two implementations. The sheet
-        composes one order's lines; the multi-order board composes every contributing line of a
-        selection. A board that walked a reduced ladder proposed a Buy for a line the sheet
-        would have covered from the pool, so purchasing acting on the board and purchasing
-        acting on the sheet disagreed about the same line - which is the whole reason this is a
-        method rather than a loop body.
-
-        `pool_free_left` is the caller's running balance for this line's OWN site pool,
-        because that one pool is shared: the sheet draws it down across one order's lines,
-        the board across the whole selection. The OTHER site pools (rung 2's second half)
-        are read fresh per line - they are the overflow, not the contested pile, and
-        tracking a running balance across every secondary pool for every line on a board
-        of hundreds is cost nothing here asks for. Defaults to the whole pool free, which
-        is what a single line on its own may draw.
-
-        `borrow_left` is the same idea for rung 5's DONORS: warehouse id -> what is still
-        borrowable there in this walk. A donor outside the group is one pile too, and it had
-        no ledger at all - so every date of one order was offered the same free stock, four
-        lines were each proposed a Borrow of 10 from a location holding 10, and the
-        confirmation refused all but the first ("BRW-SYNT has 0 free, and 10 was asked for",
-        28 August 2026). `None` reads the live free stock, which is what a single line on its
-        own may draw; `compose_lines` states it for every line of a walk.
-
-        `pools_net_left` is the third ledger, and the one that actually BOUNDS rung 2:
-        `pool_reserve_capacity` offers `max(pools_net, 0)` across the five pools, and each
-        pool's `free` only says where it can come from. Drawing `pool_free_left` down was
-        not drawing the pile down - BRW held 3365 with 31 net, so every delivery date of
-        SO381895 was offered "30 of the 31" and the confirmation refused all but the first
-        (28 August 2026). `None` reads the fact's own net, which is what a single line on
-        its own may draw.
-        """
-        # The ATP reserve window (`front_planning_engine`): a line due beyond
-        # `as_of + lead time + buffer` takes NO STOCK under ladder v3, so none of the STOCK
-        # candidate lists - which cost queries - is built for it at all. The trail still
-        # states every rung with the window as its reason, so "not walked" is visible
-        # rather than silent.
-        #
-        # LADDER V5 (section 1e): there is no exception to that any more. Incoming used to
-        # be one - it ran on both sides of the window because supply on its way is already
-        # bought - and it is not a rung at all now: an SPO sits inside `group_net`, where
-        # AutoCount already counts it, so a far line beyond the window walks nothing and
-        # buys whole.
-        return self.walk(
-            fact,
-            pool_free_left=pool_free_left,
-            borrow_left=borrow_left,
-            as_of=as_of,
-            pools_net_left=pools_net_left,
-        ).components
-
     def walk(
         self,
         fact: _LineFacts,
@@ -4222,7 +4157,6 @@ class ProjectSupplyService:
         capacity: Dict[str, Decimal] = {}
         location_ids: Dict[str, str] = {}
         for location, live_qty in pool_reserve_capacity(
-            is_dealer_hot_selling=unit.fact.is_dealer_hot_selling,
             pools=pools,
             pools_net=unit.fact.pools_net,
         ):
@@ -6357,7 +6291,6 @@ class ProjectSupplyService:
         location it named - ladder v3's GROUP first (this line's own location, then its
         siblings), then the pool chain (own site pool, then every other)."""
         for candidate, qty in pool_reserve_capacity(
-            is_dealer_hot_selling=fact.is_dealer_hot_selling,
             pools=self._pool_chain(fact, own_pool_free_left=None),
             pools_net=fact.pools_net,
         ):

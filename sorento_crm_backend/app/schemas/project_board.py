@@ -203,20 +203,25 @@ class BoardItemFlags(BaseModel):
     project hot selling / discontinued, to see if we can take from BRW?" They were consulted
     on every line and never printed - stating the flags plainly is the answer.
 
-    Amended 19 August 2026 (PLAN 3.3a): hot-selling is now judged PER DEMAND CLASS - a SKU
-    can be hot-selling on retail demand, on project demand, on both (dealer wins) or on
-    neither, ranked BY QUANTITY delivered in that class in the trailing-12mo window, not by
-    value. Own-location Reserve is always eligible regardless of either flag; the flags gate
-    only how much the SHARED POOL contributes.
+    Amended 19 August 2026 (PLAN 3.3a): hot-selling is judged PER DEMAND CLASS - a SKU can
+    be hot-selling on retail demand, on project demand, on both (dealer wins) or on neither,
+    ranked BY QUANTITY delivered in that class in the trailing-12mo window, not by value.
+
+    NEITHER FLAG GATES ANYTHING any more (ladder v8, R-A, and v4 section 1d before it).
+    They are evidence a planner reads beside the pool's own numbers; what decides how much
+    the pool contributes is its SHARE and the five pools' net.
     """
 
-    #: ABC class A by quantity on RETAIL (dealer)-classed demand (3.3a): the shared pool
-    #: contributes nothing at all - it is kept for retail.
+    #: ABC class A by quantity on RETAIL (dealer)-classed demand (3.3a). EVIDENCE ONLY
+    #: since ladder v8 (R-A): it used to remove the pool step entirely, and what keeps
+    #: stock for dealers now is the SHARE the pool holds back from every project line,
+    #: whatever the item's class. The chip is still shown, because the class is a fact the
+    #: planner reads.
     dealer_hot_selling: bool = False
     #: The locations where it earned that, by code. Evidence, not a bare verdict.
     dealer_hot_selling_where: List[str] = []
-    #: ABC class A by quantity on PROJECT-classed demand (3.3a): the shared pool contributes
-    #: only while its own signed availability stays positive.
+    #: ABC class A by quantity on PROJECT-classed demand (3.3a). Evidence only too, since
+    #: ladder v4 (section 1d): the pile's own net bounds every draw the same way.
     project_hot_selling: bool = False
     #: The locations where it earned that, by code.
     project_hot_selling_where: List[str] = []
@@ -273,7 +278,7 @@ class BoardTrailStep(BaseModel):
     #: WHY, in ONE plain sentence, with the deciding figure in it.
     why: Optional[str] = None
     #: ONE short structured hint, never a paragraph: "checked BRW, DC1", "MWH-IB 12000 · BRW
-    #: 9000", "dealer hot-selling: the whole pile is kept for retail".
+    #: 9000", "no shared pool".
     note: Optional[str] = None
     #: Warehouse CODE of the source. Null for Buy, which is held nowhere, and for the borrow
     #: questions, whose donors are several and are listed on the contribution itself.

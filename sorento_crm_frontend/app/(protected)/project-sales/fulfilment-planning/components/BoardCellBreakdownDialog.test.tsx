@@ -2219,8 +2219,11 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
     expect(
       screen.getByTestId(`trail-flag-${contribution.key}-dealer-hot-selling`),
     ).toHaveAttribute(
+      // LADDER v8 (R-A): the chip names the classification and no longer promises that the
+      // pool is kept for retail - the SHARE is what keeps stock for dealers now, and it
+      // keeps it from every project line whatever the item's class.
       'title',
-      'Dealer hot-selling at BRW, BRW-IB. The shared pool is kept for retail, not offered.',
+      'Dealer hot-selling at BRW, BRW-IB.',
     );
     expect(
       screen.queryByTestId(`trail-flag-${contribution.key}-not-classified`),

@@ -716,10 +716,7 @@ class FulfilmentBoardService:
             # a figure no row carries, because it is the SET's position rather than a bin's.
             # Every pool ROW already arrives with its own `available_for_project` computed
             # here; this is the one number the client still has to apply the rule with.
-            "pool_share_pct": int(
-                self.supply.fulfilment_settings().get("pool_share_pct")
-                or 0
-            ),
+            "pool_share_pct": self._pool_share_pct(),
         }
 
     # ----------------------------------------------------- the stock drill-down
@@ -972,9 +969,7 @@ class FulfilmentBoardService:
                     "five_pool_net": qty_text(
                         self.supply.netting().pools_net(str(product.id)).net
                     ),
-                    "pool_share_pct": int(
-                        self.supply.fulfilment_settings().get("pool_share_pct") or 0
-                    ),
+                    "pool_share_pct": self._pool_share_pct(),
                 }
                 if (group or "").strip().lower() == POOLS_SET
                 else {}
@@ -2415,17 +2410,20 @@ class FulfilmentBoardService:
         other_group_open: Optional[MutableMapping[str, Decimal]] = None,
         supply_open: Optional[MutableMapping[str, Decimal]] = None,
     ) -> Tuple[List[Dict[str, Any]], List[str]]:
-        """The four questions ladder v5 asks about this line, and Buy (section 1e).
+        """The four questions ladder v8 asks about this line, and Buy.
 
         `net_open` is the site pools' net as the walk found it for this line's unit
         (`compose_lines`' third ledger); `None` reads the fact's own. Question 2 is
         answered from it, so the second delivery date says "the site pools net 1" and
         not the 31 the first date has already drawn from.
 
-        FIVE ROWS, always, in one order: our own location, the pool, another location,
-        the same agent's other order, Buy. The captain, walking SO381895: "our thought
-        process is simpler now" - so the proof is the questions a planner would ask out
-        loud, each answered Yes or No with the figure that decided it inside the words.
+        FIVE ROWS, always, in the WALK's own order (v8, R-A): the site pool's share, our
+        own locations, borrowing on hand from a later order, borrowing what one is waiting
+        on, Buy. The captain, walking SO381895: "our thought process is simpler now" - so
+        the proof is the questions a planner would ask out loud, in the order the ladder
+        asks them, each answered Yes or No with the figure that decided it inside the
+        words. `OPTION_STEPS` is that order and this list mirrors it; two orders for one
+        walk is a reader reconciling two screens.
 
         Every question is answered even when the line was covered two rows above, because
         "the pool was checked and had none" is the answer to that question and an omitted
@@ -2560,6 +2558,98 @@ class FulfilmentBoardService:
         ungrouped_donors = (
             [] if outside_window or fact.group_code else list(row.borrow_candidates)
         )
+
+        # ------------------------------------------- 0. Can the site pool spare us a share?
+        #
+        # FIRST since ladder v8 (R-A), and in the walk's own order (review round 1, S5): a
+        # proof that asked its questions in a different order from the ladder made the
+        # reader do the reconciling. ALL FIVE site pools are ONE pile (section 1d) and each
+        # spares its own share (R-B, R-L); the dealer hot-selling gate that used to refuse
+        # the whole pile is retired. The step has a second half since v7.1 - a LATER POOL
+        # ORDER may lend its on hand, and that half DOES raise an order-back at the pool
+        # order's own date (R34).
+        pool_chain = (
+            [] if outside_window else self.supply.pool_chain_for(fact, pool_free_left=pool_open)
+        )
+        pools_net_open = fact.pools_net if net_open is None else net_open
+        pool_taken = took_at("pool")
+        pool_pile = (
+            self._pool_pile(row, fact, max(_dec(pool_open), _ZERO))
+            if pool_code and pool_chain
+            else None
+        )
+        pool_capacity = (
+            []
+            if outside_window
+            else pool_reserve_capacity(
+                pools=list(pool_chain),
+                pools_net=pools_net_open,
+            )
+        )
+        # Step 4b's donors: the LATER POOL ORDERS holding on hand. Read off the same builder
+        # the engine walked (`pool=True`), because without them the step printed
+        # `answer=yes, took=30` beside `offered=0` and "No shared pool holds this product."
+        # over a borrow it had just composed.
+        pool_borrow_candidates = (
+            []
+            if outside_window or fact.is_dealer_hot_selling
+            else self.supply.order_borrow_candidates_for(
+                fact, as_of=as_of, borrow_left=borrow_open, pool=True
+            )
+        )
+        # LADDER V8 (R-B): what the pile can offer THIS line is its share, not the whole
+        # net - the same `available_for_project` the walk's own step 0 was bound by, read
+        # off the chain's first pool exactly as the walk reads it. Without the cap the proof
+        # advertised 31 beside a step that could only ever have given 15.
+        pool_allowance = (
+            _ZERO
+            if outside_window
+            else available_for_project(
+                (pool_chain[0].get("available") if pool_chain else _ZERO),
+                pools_net_open,
+                self.supply.fulfilment_settings().get("pool_share_pct"),
+            )
+        )
+        # The two halves are ALTERNATIVES, never a sum: one step, one story (R33), so the
+        # offer is the larger of them and not both added together.
+        pool_offered = max(
+            min(
+                sum((amount for _location, amount in pool_capacity), _ZERO),
+                pool_allowance,
+            ),
+            sum((_dec(c.get("qty")) for c in pool_borrow_candidates), _ZERO),
+        )
+        add(
+            "pool",
+            "Can we take from the pool?",
+            taken=pool_taken,
+            offered=pool_offered,
+            # LADDER V8 (R-A): the dealer hot-selling gate is retired - the SHARE is what
+            # keeps stock for dealers now - so a hot item's pool step is walked like any
+            # other item's.
+            eligible=not outside_window,
+            sources=drawn_at("pool"),
+            location=pool_code,
+            warehouse_id=row.warehouse_ids.get(pool_code) if pool_code else None,
+            note=(
+                None
+                if outside_window
+                else self._pool_note(fact, pool_chain)
+                or self._order_borrow_note(pool_borrow_candidates)
+            ),
+            why=lambda outcome: (
+                _RESERVE_WINDOW_RUNG_WHY
+                if outside_window
+                else self._pool_answer_why(
+                    fact, pool_chain, pool_taken, pool_pile, pool_open, outcome,
+                    pools_net=pools_net_open,
+                    borrow_donors=pool_borrow_candidates,
+                    components=components,
+                )
+            ),
+            pool=pool_pile,
+        )
+
 
         # ------------------------------------------- 1. Can we use our locations?
         #
@@ -2715,97 +2805,7 @@ class FulfilmentBoardService:
             ),
         )
 
-        # ------------------------------------------- 4. Can we take from the pool?
-        #
-        # ALL FIVE site pools as ONE pile (section 1d), and the dealer hot-selling gate
-        # refuses the WHOLE pile rather than this site's share of it (AC-V6): the pool is
-        # kept for retail, wherever the retail is. Since v7.1 the step has a second half -
-        # a LATER POOL ORDER may lend its on hand, and that half DOES raise an order-back
-        # at the pool order's own date (R34).
-        pool_chain = (
-            [] if outside_window else self.supply.pool_chain_for(fact, pool_free_left=pool_open)
-        )
-        pools_net_open = fact.pools_net if net_open is None else net_open
-        pool_taken = took_at("pool")
-        pool_pile = (
-            self._pool_pile(row, fact, max(_dec(pool_open), _ZERO))
-            if pool_code and pool_chain
-            else None
-        )
-        pool_capacity = (
-            []
-            if outside_window
-            else pool_reserve_capacity(
-                is_dealer_hot_selling=fact.is_dealer_hot_selling,
-                pools=list(pool_chain),
-                pools_net=pools_net_open,
-            )
-        )
-        # Step 4b's donors: the LATER POOL ORDERS holding on hand. Read off the same builder
-        # the engine walked (`pool=True`), because without them the step printed
-        # `answer=yes, took=30` beside `offered=0` and "No shared pool holds this product."
-        # over a borrow it had just composed.
-        pool_borrow_candidates = (
-            []
-            if outside_window or fact.is_dealer_hot_selling
-            else self.supply.order_borrow_candidates_for(
-                fact, as_of=as_of, borrow_left=borrow_open, pool=True
-            )
-        )
-        # LADDER V8 (R-B): what the pile can offer THIS line is its share, not the whole
-        # net - the same `available_for_project` the walk's own step 0 was bound by, read
-        # off the chain's first pool exactly as the walk reads it. Without the cap the proof
-        # advertised 31 beside a step that could only ever have given 15.
-        pool_allowance = (
-            _ZERO
-            if outside_window
-            else available_for_project(
-                (pool_chain[0].get("available") if pool_chain else _ZERO),
-                pools_net_open,
-                self.supply.fulfilment_settings().get("pool_share_pct"),
-            )
-        )
-        # The two halves are ALTERNATIVES, never a sum: one step, one story (R33), so the
-        # offer is the larger of them and not both added together.
-        pool_offered = max(
-            min(
-                sum((amount for _location, amount in pool_capacity), _ZERO),
-                pool_allowance,
-            ),
-            sum((_dec(c.get("qty")) for c in pool_borrow_candidates), _ZERO),
-        )
-        add(
-            "pool",
-            "Can we take from the pool?",
-            taken=pool_taken,
-            offered=pool_offered,
-            # LADDER V8 (R-A): the dealer hot-selling gate is retired - the SHARE is what
-            # keeps stock for dealers now - so a hot item's pool step is walked like any
-            # other item's.
-            eligible=not outside_window,
-            sources=drawn_at("pool"),
-            location=pool_code,
-            warehouse_id=row.warehouse_ids.get(pool_code) if pool_code else None,
-            note=(
-                None
-                if outside_window
-                else self._pool_note(fact, pool_chain)
-                or self._order_borrow_note(pool_borrow_candidates)
-            ),
-            why=lambda outcome: (
-                _RESERVE_WINDOW_RUNG_WHY
-                if outside_window
-                else self._pool_answer_why(
-                    fact, pool_chain, pool_taken, pool_pile, pool_open, outcome,
-                    pools_net=pools_net_open,
-                    borrow_donors=pool_borrow_candidates,
-                    components=components,
-                )
-            ),
-            pool=pool_pile,
-        )
-
-        # ------------------------------------------- 5. Buy
+        # ------------------------------------------- 4. Buy
         #
         # The whole-line rule: a unit no single step could cover in full is bought WHOLE,
         # and the partial components the steps above produced are what the ladder tried,
@@ -3051,11 +3051,14 @@ class FulfilmentBoardService:
         WH3?" They were all considered - the five are one pile - but only the pool a proposal
         happened to cite was named, so a pool that was opened and gave nothing looked exactly
         like one that was never opened.
+
+        The dealer hot-selling line it used to carry is gone with the gate (v8, R-A): every
+        pool in the chain is opened for every item now, and the share is what is kept back.
+        `fact` stays in the signature because the caller passes the walk's own fact and a
+        note about the pile may need it again.
         """
         if not pool_chain:
             return "no shared pool"
-        if fact.is_dealer_hot_selling:
-            return "dealer hot-selling: the whole pile is kept for retail"
         opened = ", ".join(
             str(entry.get("location")) for entry in pool_chain if entry.get("location")
         )
@@ -3115,7 +3118,6 @@ class FulfilmentBoardService:
         # an offer the engine itself refused.
         net = fact.pools_net if pools_net is None else pools_net
         capacity = pool_reserve_capacity(
-            is_dealer_hot_selling=fact.is_dealer_hot_selling,
             pools=list(pool_chain),
             pools_net=net,
         )
@@ -4237,6 +4239,20 @@ class FulfilmentBoardService:
             ),
             "net_of": group,
         }
+
+    def _pool_share_pct(self) -> int:
+        """How much of a site pool is kept back for dealers, for the CLIENT's own subtotal.
+
+        The documented default when the policy row states none (review round 1, S7) - `or 0`
+        read a missing figure as "keep nothing back", which is the one value that makes the
+        client print a share twice the size of the one the walk obeyed. The engine defaults
+        the same way (`front_planning_engine.DEFAULT_POOL_SHARE_PCT`), off the same
+        `priority.FULFILMENT_SETTINGS_DEFAULTS`.
+        """
+        stated = self.supply.fulfilment_settings().get("pool_share_pct")
+        if stated is None:
+            return int(priority.FULFILMENT_SETTINGS_DEFAULTS["pool_share_pct"])
+        return int(stated)
 
     def _project_share_fields(
         self,

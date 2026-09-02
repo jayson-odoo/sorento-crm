@@ -365,11 +365,13 @@ def test_the_trail_is_five_rows_with_no_leaked_rung_vocabulary_and_a_note_that_a
         contribution = _contribution(db, order, product)
 
         # ---- shape ----
+        # LADDER V8 (R-A, review round 1 S5): five rows still, in the WALK's own order -
+        # the site pool's share leads it now.
         assert [step["question"] for step in contribution["trail"]] == [
+            "Can we take from the pool?",
             "Can we use our locations?",
             "Can we borrow on hand from a later order?",
             "Can we borrow incoming from a later order?",
-            "Can we take from the pool?",
             "Buy",
         ]
         for step in contribution["trail"]:

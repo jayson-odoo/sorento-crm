@@ -3728,19 +3728,22 @@ def test_the_trail_asks_the_four_questions_in_order_and_then_buy():
         board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
 
         contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
+        # LADDER V8 (R-A) and review round 1 (S5): the proof asks its questions in the
+        # WALK's own order, and the walk asks the site pool first. `OPTION_STEPS` is that
+        # order; a proof in a different one made the reader reconcile two screens.
         assert [step["kind"] for step in _trail(contribution)] == [
+            "pool",
             "own",
             "order_borrow",
             "supply_borrow",
-            "pool",
             "buy",
         ]
         assert [step["step"] for step in _trail(contribution)] == [1, 2, 3, 4, 5]
         assert [step["question"] for step in _trail(contribution)] == [
+            "Can we take from the pool?",
             "Can we use our locations?",
             "Can we borrow on hand from a later order?",
             "Can we borrow incoming from a later order?",
-            "Can we take from the pool?",
             "Buy",
         ]
 
@@ -4146,7 +4149,7 @@ def test_the_supply_on_the_water_is_inside_question_ones_own_offer():
         contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
 
         assert [step["kind"] for step in contribution["trail"]] == [
-            "own", "order_borrow", "supply_borrow", "pool", "buy",
+            "pool", "own", "order_borrow", "supply_borrow", "buy",
         ]
         assert "group nets" in _step(contribution, "own")["why"]
         assert _step(contribution, "buy")["took"] == "20"
@@ -4784,7 +4787,7 @@ def test_an_uncovered_line_of_a_partly_confirmed_order_is_still_proposed():
         assert sibling["qty_proposed_reserve"] == "0"
         assert sibling["qty_proposed_buy"] == "21"
         assert [step["kind"] for step in sibling["trail"]] == [
-            "own", "order_borrow", "supply_borrow", "pool", "buy",
+            "pool", "own", "order_borrow", "supply_borrow", "buy",
         ]
 
 

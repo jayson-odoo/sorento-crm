@@ -85,17 +85,19 @@ def test_the_proof_is_five_rows_the_four_questions_and_buy():
 
         contribution = _contribution(db, order, product)
 
+        # LADDER V8 (R-A, review round 1 S5): the proof asks its questions in the WALK's
+        # own order, and the walk asks the site pool first.
         assert [step["question"] for step in contribution["trail"]] == [
+            "Can we take from the pool?",
             "Can we use our locations?",
             "Can we borrow on hand from a later order?",
             "Can we borrow incoming from a later order?",
-            "Can we take from the pool?",
             "Buy",
         ]
         # The rung names stay INTERNAL keys. Nothing renders them, and nothing here reads
         # "Incoming" - an SPO is inside question 1's own net (AC-V2).
         assert [step["kind"] for step in contribution["trail"]] == [
-            "own", "order_borrow", "supply_borrow", "pool", "buy",
+            "pool", "own", "order_borrow", "supply_borrow", "buy",
         ]
         for step in contribution["trail"]:
             assert step["answer"] in ("yes", "no")

@@ -20,6 +20,15 @@ describe('availableForProject', () => {
     expect(availableForProject('590', '900', 50)).toBe('295');
   });
 
+  it('does its arithmetic in integers, as the server does (review round 1, S2)', () => {
+    // 90 x 70 / 100 = 62.99999... in floating point and 63 in integers. The server floors
+    // an exact Decimal, so a client flooring a float would print one unit less than the
+    // number the walk obeyed - on the figure a planner decides against.
+    expect(availableForProject('90', '900', 30)).toBe('63');
+    expect(availableForProject('29', '900', 30)).toBe('20');
+    expect(availableForProject('7', '900', 30)).toBe('4');
+  });
+
   it('is capped by the five-pool net, which is the bound the walk obeyed (R-D)', () => {
     expect(availableForProject('3034', '1', 50)).toBe('1');
     expect(availableForProject('590', '-1', 50)).toBe('0');
