@@ -8,7 +8,6 @@ import { Button } from '@/components/ui/button';
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -99,9 +98,6 @@ export function AddSpecificationDialog({
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Add a specification</DialogTitle>
-          <DialogDescription>
-            A new specification becomes part of the vocabulary every product shares.
-          </DialogDescription>
         </DialogHeader>
 
         <div className="flex flex-col gap-3">
