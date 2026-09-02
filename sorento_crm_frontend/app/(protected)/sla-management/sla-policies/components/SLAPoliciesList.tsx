@@ -47,7 +47,7 @@ export default function SLAPoliciesList() {
     setPagination((prev) => ({ ...prev, pageIndex: 0 }));
   }, [statusFilter, searchQuery]);
 
-  const { data, isLoading, refetch, isFetching } = useSLAPolicies({
+  const { data, isLoading, isPlaceholderData, refetch, isFetching } = useSLAPolicies({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -151,6 +151,7 @@ export default function SLAPoliciesList() {
       table={table}
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
+      isPlaceholderData={isPlaceholderData}
       onRowClick={handleRowClick}
       standardToolbar={false}
       tableLayout={{ columnsVisibility: true }}

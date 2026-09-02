@@ -114,7 +114,7 @@ export default function ConversationSLATrackingList() {
     setPagination((prev) => ({ ...prev, pageIndex: 0 }));
   }, [searchQuery, assignedToFilter, contactFilter, resolvedParam, resolvedByFilter]);
 
-  const { data, isLoading, isFetching } = useConversationSLATracking({
+  const { data, isLoading, isPlaceholderData, isFetching } = useConversationSLATracking({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -555,6 +555,7 @@ export default function ConversationSLATrackingList() {
       tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
+      isPlaceholderData={isPlaceholderData}
       rowHref={rowHref}
       rowPending={rowPending}
     >

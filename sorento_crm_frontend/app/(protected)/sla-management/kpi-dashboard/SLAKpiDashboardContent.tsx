@@ -375,6 +375,7 @@ function TasksCard({ scope, filter, onClear, window }: { scope: KpiScope; filter
       table={table}
       recordCount={total}
       isLoading={tasksQ.isLoading}
+      isPlaceholderData={tasksQ.isPlaceholderData}
       standardToolbar={false}
       listingKey="sla.kpi.view::tasks"
       emptyMessage="No tasks in this scope."

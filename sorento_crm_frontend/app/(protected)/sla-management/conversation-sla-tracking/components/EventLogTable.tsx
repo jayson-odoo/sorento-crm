@@ -120,7 +120,7 @@ export default function EventLogTable({ trackingId, agentCode, teamSetCode }: Ev
   const [rowSelection, setRowSelection] = useState<Record<string, boolean>>({});
   const deleteMutation = useDeleteConversationSLAEventLog();
 
-  const { data: eventLogsResponse, isLoading } = useConversationSLAEventLogs(trackingId, {
+  const { data: eventLogsResponse, isLoading, isPlaceholderData } = useConversationSLAEventLogs(trackingId, {
     page: pagination.pageIndex + 1,
     limit: pagination.pageSize,
     sort: sorting?.[0]?.id || 'event_at',
@@ -326,8 +326,14 @@ export default function EventLogTable({ trackingId, agentCode, teamSetCode }: Ev
 
   return (
     <>
-      <DataGrid table={table} recordCount={totalCount} isLoading={isLoading} tableLayout={{ columnsVisibility: true }}
-      standardToolbar={false}>
+      <DataGrid
+        table={table}
+        recordCount={totalCount}
+        isLoading={isLoading}
+        isPlaceholderData={isPlaceholderData}
+        tableLayout={{ columnsVisibility: true }}
+        standardToolbar={false}
+      >
         <Card>
           <CardHeader className="block space-y-3">
             <CardTitle>Event Log</CardTitle>
