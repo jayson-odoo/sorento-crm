@@ -53,7 +53,7 @@ Fix per symptom (captain asked for the mapping on the markup round):
 | "The data in the plan should be respective to the plan, not per supplier" | **A plan owns its statement.** The stock list rows and the invoices a plan's upload created are stamped with the plan id; the codes tab, the holdings and the subtitle read the plan's own rows, never the supplier's latest. A "No file" plan has no codes and no holdings. Supersedes p4 R2 / AC-A17 (older plan's figures moving on a newer upload) and section 4's "not built: per-plan snapshot". S6 widens to both document kinds. |
 | "Put Send to supplier in the gear icon dropdown" | Send to supplier becomes a gear item (and a row menu item). Toolbar right cluster: pager, gear, Save (N), Back. |
 | "I need this (the memory) to be in UI" | S3 Remembered list + S4 "Their code" on the product's Suppliers tab, as planned. |
-| Stack slot | A third slot: FE :3120, BE :8120. |
+| Stack slot | A third slot: FE :3130, BE :8130 (3120/8120 were already held by integration-1sep). |
 | Formats doc | Repo doc AND Outline user guide. |
 | Prod ROYAL MIRROR snapshot | Leave it. With per-plan statements it can no longer leak into a plan. |
 

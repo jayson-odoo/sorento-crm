@@ -24,11 +24,15 @@ tests/test_company_scope_params.py
 tests/test_grn_sanitizer.py
 tests/test_lookup_tools.py
 tests/test_merge_consolidation_sanitizer.py
+tests/test_multi_company_lookup_sanitizer.py
 tests/test_orders_sanitizer.py
 tests/test_portal_body_params.py
 tests/test_presenters.py
 tests/test_presenters_certificates.py
+tests/test_presenters_stock.py
+tests/test_projects_sanitizer.py
 tests/test_promotion_active_filter.py
+tests/test_promotion_drilldown_serving.py
 tests/test_promotion_serving_policy_pin.py
 tests/test_record_actions.py
 tests/test_resource_attachments_direct_access.py
