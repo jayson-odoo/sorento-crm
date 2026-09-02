@@ -257,6 +257,19 @@ export interface SpecRegistryKey {
   /** A number above this is dropped as implausible rather than stored. Null/absent
    *  means no cap. Seeded 5000 on mm keys; editable per key. */
   max_value?: number | null;
+  /**
+   * How each value reads on screen, when the raw slug does not already read as one
+   * (#423 folded into this redesign). `{ pp: "PP" }` overrides `readableValue('pp')`,
+   * which would otherwise render "Pp". Staff-owned on seed AND user rows alike -
+   * editable regardless of who owns the value itself (D4, AC-D.3).
+   *
+   * MOCKED in Phase 1 (S2): the backend column ships in S4. Until then
+   * `useSpecKeyRecord` echoes the saved dict back into the cached row locally, so the
+   * record page shows the edit immediately; it does not survive a reload. Optional
+   * because neither the real API response nor an older test fixture carries it yet -
+   * every reader treats an absent dict as `{}`.
+   */
+  value_labels?: Record<string, string>;
 }
 
 /** One tunable number in the ranker's scoring. */

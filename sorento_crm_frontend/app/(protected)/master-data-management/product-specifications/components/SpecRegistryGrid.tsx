@@ -18,6 +18,7 @@ import { buildDetailSearch } from '@/lib/listNavQuery';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { useKeysForProductQuery } from '../hooks/useKeysForProductQuery';
 import { useSpecRegistryQuery } from '../hooks/useSpecRegistryQuery';
+import { filterSpecKeys } from '../lib/specRegistryFilter';
 import { specTypeLabel } from '../lib/specTypeLabel';
 import type { SpecRegistryKey } from '../types/productSpec.types';
 
@@ -39,27 +40,14 @@ export function SpecRegistryGrid() {
   const { matchedCode, keys: productKeys, loading: probeLoading } =
     useKeysForProductQuery(debouncedFilter);
 
-  const visible = useMemo(() => {
-    const all = keys ?? [];
-    const needle = filter.trim().toLowerCase();
-    const filtered = !needle
-      ? all
-      : all.filter((key) => {
-          // A matched product wins over word matching: the reader asked about a
-          // code, so the answer is that code's specifications, not every key
-          // whose wording happens to contain the digits.
-          if (productKeys) return key.spec_key in productKeys;
-          const words = Object.entries(key.synonyms ?? {}).flatMap(([value, list]) => [
-            value,
-            ...list,
-          ]);
-          return [key.spec_key, key.label, ...key.allowed_values, ...words]
-            .join(' ')
-            .toLowerCase()
-            .includes(needle);
-        });
-    return [...filtered].sort((a, b) => a.label.localeCompare(b.label));
-  }, [keys, filter, productKeys]);
+  // A matched product wins over word matching: the reader asked about a code, so
+  // the answer is that code's specifications, not every key whose wording happens
+  // to contain the digits. Shared with the record page's pager (D9) via
+  // `filterSpecKeys`, so the two never disagree about what "the current list" is.
+  const visible = useMemo(
+    () => filterSpecKeys(keys ?? [], filter, productKeys),
+    [keys, filter, productKeys],
+  );
 
   const rowHref = useCallback(
     (row: SpecRegistryKey) => {
