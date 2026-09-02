@@ -6,6 +6,7 @@ import { Check, ChevronRight, Circle } from 'lucide-react';
 import { DropdownMenu as DropdownMenuPrimitive } from 'radix-ui';
 import { AnimatePresence, motion } from 'motion/react';
 import { surfaceTransition, surfaceVariants, useOpenState, useReducedMotion } from '@/lib/motion';
+import { PRESSED_CLASS } from '@/components/ui/primitive-classes';
 
 // Mirrors the Root's open state so DropdownMenuContent can gate its own
 // <AnimatePresence> (S8-01) - see the identical DialogOpenContext in dialog.tsx.
@@ -146,6 +147,7 @@ function DropdownMenuItem({
         inset && 'ps-8',
         variant === 'destructive' &&
           'text-destructive hover:text-destructive focus:text-destructive hover:bg-destructive/5 focus:bg-destructive/5 data-[active=true]:bg-destructive/5',
+        PRESSED_CLASS,
         className,
       )}
       {...props}
