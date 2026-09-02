@@ -1,5 +1,4 @@
 import {
-  keepPreviousData,
   useMutation,
   useQuery,
   useQueryClient,
@@ -87,10 +86,10 @@ export function useScmProducts(
   query: Omit<ProductsQuery, 'status' | 'warehouse'> = {},
 ) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: ['scm', 'products', filters, target, query],
     queryFn: () => getProducts(filters, { ...target, ...query }),
     enabled: !!target,
-    placeholderData: keepPreviousData,
     ...baseOptions,
   });
 }

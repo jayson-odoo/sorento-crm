@@ -33,6 +33,7 @@ import {
   type SpoConfirmLine,
 } from '../services/fulfilmentService';
 import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 const KEY = ['scm', 'fulfilment'] as const;
 
@@ -97,9 +98,9 @@ export const loadingPlanPagerQuery = {
 
 export function useLoadingPlanList(params: LoadingPlanListParams) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: loadingPlanListQueryKey(params),
     queryFn: () => getLoadingPlanList(params),
-    placeholderData: (prev) => prev,
   });
 }
 

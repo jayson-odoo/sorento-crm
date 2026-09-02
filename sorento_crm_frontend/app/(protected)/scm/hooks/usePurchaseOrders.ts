@@ -8,6 +8,7 @@ import {
 } from '../services/purchaseOrderService';
 import type { PurchaseOrderUpdateData } from '../types/scm.types';
 import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 export interface UsePurchaseOrdersParams {
   pageIndex: number;
@@ -81,6 +82,7 @@ export const purchaseOrdersPagerQuery = {
 
 export function usePurchaseOrders(params: UsePurchaseOrdersParams) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: purchaseOrdersListQueryKey(params),
     queryFn: () =>
       getPurchaseOrders({

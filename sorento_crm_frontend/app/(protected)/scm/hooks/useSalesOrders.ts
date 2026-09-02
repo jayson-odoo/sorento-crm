@@ -13,6 +13,7 @@ import {
 } from '../services/salesOrderService';
 import type { SalesOrderFormData } from '../types/scm.types';
 import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 export interface UseSalesOrdersParams {
   pageIndex: number;
@@ -90,6 +91,7 @@ export const salesOrdersPagerQuery = {
 
 export function useSalesOrders(params: UseSalesOrdersParams) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: salesOrdersListQueryKey(params),
     queryFn: () =>
       getSalesOrders({
