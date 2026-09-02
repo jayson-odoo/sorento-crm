@@ -72,8 +72,11 @@ export function RulesTab({ row, mode, draft, setDraft, onEnterEdit }: RulesTabPr
           winnerIndex={tryResult?.winner_index}
         />
       ) : rules.length === 0 ? (
-        <div className="rounded-md border border-dashed p-8 text-center text-sm text-muted-foreground">
-          No rules yet.
+        <div className="flex flex-col items-center gap-3 rounded-md border border-dashed p-8 text-center">
+          <p className="text-sm font-medium">No rules yet</p>
+          <Button type="button" size="sm" variant="outline" onClick={onEnterEdit}>
+            Add rule
+          </Button>
         </div>
       ) : (
         <div className="flex flex-col gap-2">
