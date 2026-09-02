@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { usePathname, useRouter } from 'next/navigation';
+import { usePathname } from 'next/navigation';
 import {
   getCoreRowModel,
   getPaginationRowModel,
@@ -20,6 +20,7 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { useHasPermission } from '@/hooks/usePermissions';
+import { readableValue } from '@/lib/spec-readable';
 import { useSpecKeyProductsQuery } from '../../hooks/useSpecKeyProductsQuery';
 import { useSpecRegistryMutations } from '../../hooks/useSpecRegistryMutations';
 import type { SpecKeyProduct } from '../../services/productSpecService';
@@ -43,11 +44,16 @@ const PAGE_SIZE = 25;
 export function SeenInProductsTab({
   specKey,
   label,
+  unit,
+  valueLabels,
 }: {
   specKey: string;
   label: string;
+  unit?: string | null;
+  /** The key's value_labels (#423), so a value already reads the same label here
+   *  as it does on the record's own Values and words tab (item 6). */
+  valueLabels?: Record<string, string>;
 }) {
-  const router = useRouter();
   const pathname = usePathname();
   const canEdit = useHasPermission('master_data.spec_registry.edit');
   const { reread } = useSpecRegistryMutations();
@@ -77,12 +83,8 @@ export function SeenInProductsTab({
   const products = data?.products ?? [];
   const total = data?.total ?? 0;
 
-  const openProduct = (row: SpecKeyProduct) => {
-    const back = `${pathname}`;
-    router.push(
-      `/master-data-management/products/${row.id}?tab=specifications&back=${encodeURIComponent(back)}`,
-    );
-  };
+  const productHref = (row: SpecKeyProduct) =>
+    `/master-data-management/products/${row.id}?tab=specifications&back=${encodeURIComponent(pathname)}`;
 
   const columns = useMemo<ColumnDef<SpecKeyProduct>[]>(
     () => [
@@ -124,11 +126,17 @@ export function SeenInProductsTab({
         header: ({ column }) => <DataGridColumnHeader title="Value" column={column} />,
         size: 130,
         meta: { headerTitle: 'Value' },
-        cell: ({ row }) => (
-          <span className="truncate font-mono text-xs" title={String(row.original.value ?? '')}>
-            {String(row.original.value ?? '-')}
-          </span>
-        ),
+        cell: ({ row }) =>
+          row.original.value === null || row.original.value === undefined ? (
+            <span className="truncate text-xs">-</span>
+          ) : (
+            <span
+              className="truncate text-xs"
+              title={readableValue(row.original.value, unit ?? undefined, valueLabels)}
+            >
+              {readableValue(row.original.value, unit ?? undefined, valueLabels)}
+            </span>
+          ),
       },
       {
         accessorKey: 'source',
@@ -156,7 +164,7 @@ export function SeenInProductsTab({
         ),
       },
     ],
-    [],
+    [unit, valueLabels],
   );
 
   const table = useReactTable({
@@ -190,74 +198,85 @@ export function SeenInProductsTab({
     </div>
   );
 
+  const hasFacets =
+    !!data && (data.by_value.length > 0 || data.by_class.length > 0 || data.by_source.length > 0);
+
   return (
     <div className="flex flex-col gap-3">
-      {data && (data.by_value.length > 0 || data.by_class.length > 0 || data.by_source.length > 0) && (
-        <div className="flex flex-col gap-1.5 text-xs">
-          {data.by_value.length > 0 && (
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="w-14 shrink-0 uppercase tracking-wide text-muted-foreground">
-                Values
-              </span>
-              {valueFilter && (
-                <button
-                  type="button"
-                  className="text-muted-foreground underline"
-                  onClick={() => setValueFilter(undefined)}
+      {/* Always mounted (item 6): an empty facet strip still tells the reader
+          there is nothing to narrow by, rather than the section just vanishing. */}
+      <div className="flex flex-col gap-1.5 text-xs">
+        {!hasFacets && (
+          <span className="text-muted-foreground">No facets yet</span>
+        )}
+        {data && data.by_value.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="w-14 shrink-0 uppercase tracking-wide text-muted-foreground">
+              Values
+            </span>
+            {valueFilter && (
+              <Button
+                type="button"
+                variant="link"
+                size="sm"
+                onClick={() => setValueFilter(undefined)}
+              >
+                Show all
+              </Button>
+            )}
+            {data.by_value.slice(0, 30).map((row) => (
+              <Button
+                key={String(row.value)}
+                type="button"
+                variant="ghost"
+                size="sm"
+                aria-pressed={valueFilter === String(row.value)}
+                onClick={() => setValueFilter(String(row.value))}
+              >
+                <Badge
+                  variant={valueFilter === String(row.value) ? 'primary' : 'secondary'}
+                  size="sm"
+                  appearance="light"
                 >
-                  Show all
-                </button>
-              )}
-              {data.by_value.slice(0, 30).map((row) => (
-                <button
-                  key={String(row.value)}
-                  type="button"
-                  onClick={() => setValueFilter(String(row.value))}
-                >
-                  <Badge
-                    variant={valueFilter === String(row.value) ? 'primary' : 'secondary'}
-                    size="sm"
-                    appearance="light"
-                  >
-                    {String(row.value)} · {row.count.toLocaleString()}
-                  </Badge>
-                </button>
-              ))}
-            </div>
-          )}
-          {data.by_class.length > 0 && (
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="w-14 shrink-0 uppercase tracking-wide text-muted-foreground">
-                Class
-              </span>
-              {data.by_class.slice(0, 30).map((row) => (
-                <Badge key={String(row.class)} variant="outline" size="sm" appearance="light">
-                  {row.class ?? 'unclassed'} · {row.count.toLocaleString()}
-                </Badge>
-              ))}
-            </div>
-          )}
-          {data.by_source.length > 0 && (
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="w-14 shrink-0 uppercase tracking-wide text-muted-foreground">
-                Source
-              </span>
-              {data.by_source.slice(0, 30).map((row) => (
-                <Badge key={String(row.source)} variant="outline" size="sm" appearance="light">
-                  {SOURCE_LABEL[String(row.source)] ?? row.source ?? 'unknown'} ·{' '}
+                  {readableValue(row.value, unit ?? undefined, valueLabels)} ·{' '}
                   {row.count.toLocaleString()}
                 </Badge>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
+              </Button>
+            ))}
+          </div>
+        )}
+        {data && data.by_class.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="w-14 shrink-0 uppercase tracking-wide text-muted-foreground">
+              Class
+            </span>
+            {data.by_class.slice(0, 30).map((row) => (
+              <Badge key={String(row.class)} variant="outline" size="sm" appearance="light">
+                {row.class ?? 'unclassed'} · {row.count.toLocaleString()}
+              </Badge>
+            ))}
+          </div>
+        )}
+        {data && data.by_source.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="w-14 shrink-0 uppercase tracking-wide text-muted-foreground">
+              Source
+            </span>
+            {data.by_source.slice(0, 30).map((row) => (
+              <Badge key={String(row.source)} variant="outline" size="sm" appearance="light">
+                {SOURCE_LABEL[String(row.source)] ?? row.source ?? 'unknown'} ·{' '}
+                {row.count.toLocaleString()}
+              </Badge>
+            ))}
+          </div>
+        )}
+      </div>
 
       <DataGrid
         table={table}
         recordCount={total}
         isLoading={isLoading}
-        onRowClick={openProduct}
+        rowHref={productHref}
         tableLayout={{ width: 'fixed', columnsResizable: true }}
         emptyMessage={total === 0 && !isLoading ? emptyState : undefined}
       >

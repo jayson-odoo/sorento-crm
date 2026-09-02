@@ -193,7 +193,12 @@ export function SpecKeyRecordDetail({ specKey }: { specKey: string }) {
           </TabsContent>
 
           <TabsContent value="seen-in" className="mt-0 focus-visible:outline-none">
-            <SeenInProductsTab specKey={row.spec_key} label={row.label} />
+            <SeenInProductsTab
+              specKey={row.spec_key}
+              label={row.label}
+              unit={row.unit}
+              valueLabels={row.value_labels}
+            />
           </TabsContent>
         </Tabs>
       </Container>
