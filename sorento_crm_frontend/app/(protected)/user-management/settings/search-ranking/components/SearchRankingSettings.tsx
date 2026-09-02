@@ -42,7 +42,9 @@ export function SearchRankingSettings() {
 
   const doSave = (row: SpecSearchPolicyRow) => {
     const draft = drafts[row.policy_key] ?? String(row.value);
-    save.mutate({ policyKey: row.policy_key, value: Number(draft) });
+    const numericDraft = draft.trim() === '' ? NaN : Number(draft);
+    if (!Number.isFinite(numericDraft)) return;
+    save.mutate({ policyKey: row.policy_key, value: numericDraft });
   };
 
   if (policyQuery.isError) {
@@ -79,7 +81,9 @@ export function SearchRankingSettings() {
         ) : (
           policyQuery.data.map((row) => {
             const draft = drafts[row.policy_key] ?? String(row.value);
-            const dirty = Number(draft) !== row.value;
+            const numericDraft = draft.trim() === '' ? NaN : Number(draft);
+            const isValidDraft = Number.isFinite(numericDraft);
+            const dirty = isValidDraft && numericDraft !== row.value;
             const saving = save.isPending && save.variables?.policyKey === row.policy_key;
             return (
               <div

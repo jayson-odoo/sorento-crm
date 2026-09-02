@@ -85,6 +85,27 @@ describe('SearchRankingSettings', () => {
     expect(mockMutate).toHaveBeenCalledWith({ policyKey: 'class_boost', value: 7 });
   });
 
+  it('item 11 - an emptied draft does not save 0: Save stays disabled', () => {
+    render(<SearchRankingSettings />);
+    const saveButtons = screen.getAllByRole('button', { name: 'Save' });
+    const inputs = screen.getAllByRole('spinbutton');
+
+    fireEvent.change(inputs[0], { target: { value: '' } });
+    expect(saveButtons[0]).toBeDisabled();
+
+    fireEvent.click(saveButtons[0]);
+    expect(mockMutate).not.toHaveBeenCalled();
+  });
+
+  it('item 11 - a non-finite draft (e.g. a bare "-") does not enable Save', () => {
+    render(<SearchRankingSettings />);
+    const saveButtons = screen.getAllByRole('button', { name: 'Save' });
+    const inputs = screen.getAllByRole('spinbutton');
+
+    fireEvent.change(inputs[0], { target: { value: '-' } });
+    expect(saveButtons[0]).toBeDisabled();
+  });
+
   it('renders the field hint but not the removed explainer paragraph', () => {
     render(<SearchRankingSettings />);
     expect(

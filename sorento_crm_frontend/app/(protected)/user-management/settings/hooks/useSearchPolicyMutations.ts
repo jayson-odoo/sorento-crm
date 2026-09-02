@@ -18,6 +18,7 @@ export function useSearchPolicyMutations() {
       updateSearchPolicy(policyKey, value),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: SEARCH_POLICY_QUERY_KEY });
+      toast.success('Search ranking saved');
     },
     onError: (error: Error) => {
       toast.error(error.message || 'Failed to save the search setting');
