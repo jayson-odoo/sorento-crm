@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 import re
 import uuid
+from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 from datetime import date
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
@@ -29,6 +30,7 @@ from app.models.product import Product
 from app.services import import_outcome_codes as oc
 from app.services.import_outcome import ImportOutcome
 from app.services.import_alias_service import AliasResolver
+from app.utils.chunking import chunked as _chunked
 from app.services.scm.outstanding_diff import (
     ADDED,
     CLOSED,
@@ -418,6 +420,25 @@ def _norm(code: str) -> str:
     return (code or "").strip().upper()
 
 
+def _in_chunks(query, expr, values) -> list:
+    """`query.filter(expr.in_(chunk)).all()` over every chunk of `values`, concatenated.
+
+    Every resolver below used to hand the whole code/name/document set to ONE `IN (...)`
+    clause - fine at a few hundred, and exactly the shape that shipped a 13,519-parameter
+    statement on the file that dropped the connection (S5 review round 1). `query` is built
+    with everything EXCEPT this predicate (its own filters, joins, `order_by`), so the same
+    base query is safely reused across chunks - `Query.filter()` returns a new query rather
+    than mutating the one it was called on.
+    """
+    values = list(values)
+    if not values:
+        return []
+    out: list = []
+    for chunk in _chunked(values):
+        out.extend(query.filter(expr.in_(chunk)).all())
+    return out
+
+
 def _resolve_parties(db: Session, read: ReadResult, bind: _Binding) -> dict[str, str]:
     """Counterparty code -> id, within the active company.
 
@@ -431,14 +452,8 @@ def _resolve_parties(db: Session, read: ReadResult, bind: _Binding) -> dict[str,
     if not codes:
         return {}
     code_col = getattr(bind.party, bind.party_code_col)
-    return {
-        _norm(code): str(pid)
-        for pid, code in (
-            db.query(bind.party.id, code_col)
-            .filter(func.upper(code_col).in_(list(codes)))
-            .all()
-        )
-    }
+    rows = _in_chunks(db.query(bind.party.id, code_col), func.upper(code_col), codes)
+    return {_norm(code): str(pid) for pid, code in rows}
 
 
 def _resolve_parties_by_name(db: Session, read: ReadResult, bind: _Binding) -> dict[str, str]:
@@ -453,7 +468,9 @@ def _resolve_parties_by_name(db: Session, read: ReadResult, bind: _Binding) -> d
     `supplier_name` carries no uniqueness constraint (unlike `supplier_code`), so more
     than one supplier can legitimately share a name - ordered by id so the dict
     comprehension's last-write-wins lands on the same row every time, rather than
-    whatever order Postgres happened to return.
+    whatever order Postgres happened to return. The order survives chunking: a given NAME
+    falls entirely within one chunk (only the CODE/NAME set is split, never the party rows a
+    single name matches), so the tie-break is exactly as correct per chunk as it was whole.
     """
     if bind.party is None or not bind.party_back_create or bind.party_name_col is None:
         return {}
@@ -465,15 +482,11 @@ def _resolve_parties_by_name(db: Session, read: ReadResult, bind: _Binding) -> d
     if not names:
         return {}
     name_col = getattr(bind.party, bind.party_name_col)
-    return {
-        _norm(name): str(pid)
-        for pid, name in (
-            db.query(bind.party.id, name_col)
-            .filter(func.upper(name_col).in_(list(names)))
-            .order_by(bind.party.id.desc())
-            .all()
-        )
-    }
+    rows = _in_chunks(
+        db.query(bind.party.id, name_col).order_by(bind.party.id.desc()),
+        func.upper(name_col), names,
+    )
+    return {_norm(name): str(pid) for pid, name in rows}
 
 
 def _resolve(db: Session, read: ReadResult, bind: _Binding) -> _Resolved:
@@ -491,23 +504,21 @@ def _resolve(db: Session, read: ReadResult, bind: _Binding) -> _Resolved:
     item_codes = {_norm(l.item_code) for l in read.lines if l.item_code}
     loc_codes = {_norm(l.location) for l in read.lines if l.location}
 
-    products: dict[str, str] = {}
-    if item_codes:
-        for pid, code in (
-            db.query(Product.id, Product.product_code)
-            .filter(func.upper(Product.product_code).in_(list(item_codes)))
-            .all()
-        ):
-            products[_norm(code)] = str(pid)
+    products: dict[str, str] = {
+        _norm(code): str(pid)
+        for pid, code in _in_chunks(
+            db.query(Product.id, Product.product_code), func.upper(Product.product_code),
+            item_codes,
+        )
+    }
 
-    warehouses: dict[str, str] = {}
-    if loc_codes:
-        for wid, code in (
-            db.query(Warehouse.id, Warehouse.warehouse_code)
-            .filter(func.upper(Warehouse.warehouse_code).in_(list(loc_codes)))
-            .all()
-        ):
-            warehouses[_norm(code)] = str(wid)
+    warehouses: dict[str, str] = {
+        _norm(code): str(wid)
+        for wid, code in _in_chunks(
+            db.query(Warehouse.id, Warehouse.warehouse_code),
+            func.upper(Warehouse.warehouse_code), loc_codes,
+        )
+    }
 
     parties = _resolve_parties(db, read, bind)
     names_by_key = _resolve_parties_by_name(db, read, bind)
@@ -691,7 +702,10 @@ def _existing_lines(db: Session, docs: set[str], bind: _Binding, *,
     line, header = bind.line, bind.header
     fulfilled = getattr(line, bind.fulfilled)
     money = [getattr(line, col) for col, _key in bind.money_cols]
-    rows = (
+    # The document-number IN chunked (S5 review round 1): everything else about the query -
+    # joins, the other filters - is built ONCE and reused per chunk (`_in_chunks`), only the
+    # documents named ever grows with the file.
+    base_query = (
         db.query(
             line.id,
             getattr(header, bind.number),
@@ -706,7 +720,6 @@ def _existing_lines(db: Session, docs: set[str], bind: _Binding, *,
         .join(Product, Product.id == line.product_id)
         .outerjoin(Warehouse, Warehouse.id == line.warehouse_id)
         .filter(
-            getattr(header, bind.number).in_(list(docs)),
             # Every status the readers call live, not only the one this import writes.
             header.status.in_(list(bind.live_statuses)),
             # Open lines ONLY. A closed line that comes back arrives as an ADD, which is where
@@ -716,8 +729,8 @@ def _existing_lines(db: Session, docs: set[str], bind: _Binding, *,
             line.line_status == "open",
             line.qty_ordered > fulfilled,
         )
-        .all()
     )
+    rows = _in_chunks(base_query, getattr(header, bind.number), docs)
     if fulfilled_into is not None:
         fulfilled_into.update({str(r[0]): float(r[6] or 0) for r in rows})
     if money_into is not None:
@@ -740,11 +753,10 @@ def _header_state(db: Session, docs: tuple[str, ...],
     """
     if not docs:
         return {}
-    rows = (
-        db.query(getattr(bind.header, bind.number), bind.header.status,
-                 getattr(bind.header, bind.party_fk))
-        .filter(getattr(bind.header, bind.number).in_(list(docs)))
-        .all()
+    number_col = getattr(bind.header, bind.number)
+    rows = _in_chunks(
+        db.query(number_col, bind.header.status, getattr(bind.header, bind.party_fk)),
+        number_col, docs,
     )
     return {r[0]: (r[1], str(r[2]) if r[2] else None) for r in rows}
 
@@ -795,12 +807,11 @@ def _demand_state(db: Session, docs: tuple[str, ...],
     """
     if bind.demand_class_col is None or bind.demand_split_col is None or not docs:
         return {}
-    rows = (
-        db.query(getattr(bind.header, bind.number),
-                 getattr(bind.header, bind.demand_split_col),
-                 getattr(bind.header, bind.demand_class_col))
-        .filter(getattr(bind.header, bind.number).in_(list(docs)))
-        .all()
+    number_col = getattr(bind.header, bind.number)
+    rows = _in_chunks(
+        db.query(number_col, getattr(bind.header, bind.demand_split_col),
+                 getattr(bind.header, bind.demand_class_col)),
+        number_col, docs,
     )
     return {r[0]: (r[1], r[2]) for r in rows}
 
@@ -1235,12 +1246,16 @@ def _spo_plan(db: Session, read: ReadResult) -> tuple[dict, dict, dict]:
     if not by_document:
         return {}, {}, {}
 
+    # Chunked through `_in_chunks` (review round 2, S2): a shipping-order book names its
+    # own document family, so its product/warehouse code sets grow with the same file size
+    # the rest of `apply` already chunks against.
     codes = {_norm(l.item_code) for lines in by_document.values() for l in lines}
     products = {
         _norm(code): str(pid)
-        for pid, code in db.query(Product.id, Product.product_code)
-        .filter(func.upper(Product.product_code).in_(list(codes)))
-        .all()
+        for pid, code in _in_chunks(
+            db.query(Product.id, Product.product_code), func.upper(Product.product_code),
+            codes,
+        )
     }
     locations = {
         _norm(l.location)
@@ -1250,12 +1265,12 @@ def _spo_plan(db: Session, read: ReadResult) -> tuple[dict, dict, dict]:
     }
     warehouses: dict[str, str] = {}
     if locations:
-        for wid, code in (
+        rows = _in_chunks(
             db.query(Warehouse.id, Warehouse.warehouse_code)
-            .filter(func.upper(Warehouse.warehouse_code).in_(list(locations)),
-                    Warehouse.is_active.is_(True))
-            .all()
-        ):
+            .filter(Warehouse.is_active.is_(True)),
+            func.upper(Warehouse.warehouse_code), locations,
+        )
+        for wid, code in rows:
             # FIRST wins on a case collision, for the reason `po_history_service` states:
             # last would make the answer depend on the order Postgres returned rows in.
             warehouses.setdefault(_norm(code), str(wid))
@@ -1624,53 +1639,114 @@ def preview(db: Session, file_data: bytes, doc_type: str = SO) -> PreviewResult:
     )
 
 
-def _closed_line(db: Session, bind: _Binding, header_id: str, product_id: Optional[str],
-                 warehouse_id: Optional[str], when: Optional[date],
-                 exclude_ids: Optional[set[str]] = None):
-    """A closed line on this document matching the incoming row exactly, if there is one.
+def _preload_closed_lines(db: Session, bind: _Binding,
+                          header_ids: set[str]) -> dict[tuple[str, str], list]:
+    """Every closed, revivable line on these documents, grouped by (header, product).
 
-    An explicit lookup rather than widening `_existing_lines`: the diff must stay open-only,
-    or a closed line simply absent from the next upload would be re-closed on every re-run
-    and `applied.closed` would never settle at 0.
+    Loaded ONCE per batch (`apply`'s `_DOCUMENT_BATCH` loop) rather than once per ADDED row.
+    The prod trace: the old per-row lookup (`_closed_line`, retired here) excluded every line
+    this run had already claimed with a `NOT IN (<ids>)` clause that GREW with every settled
+    row - on the completed 2020-Sep 2026 book that list reached 13,519 ids, so each later row
+    shipped a statement with that many bound parameters. Rows times settled-ids is quadratic;
+    Postgres dropped the connection. Loading the candidates once and excluding in PYTHON
+    (`_match_closed_line`'s `exclude_ids`) removes the exclusion from the wire entirely.
 
-    **A HISTORY line is never revived.** `po_history_service` writes into these same tables,
-    closed and fully received, precisely so `scm.on_order_v` and `scm.po_ordered_v` cannot
-    count it. Reviving one sets `line_status='open'` and adds the incoming quantity on top of
-    what was already received, which satisfies both views: a 2023 purchase that was delivered
-    years ago would read as stock on its way in, permanently, and re-uploading would never
-    correct it. The two feeds share the table and are told apart by the stamp
-    (`history_sources.HISTORY_SOURCE_SYSTEMS`) - so the outstanding book adds its own line for
-    that item instead, which is the truth: this document really is open again, and the closed
-    history row really did happen.
+    **A HISTORY line is never a candidate.** `po_history_service` writes into these same
+    tables, closed and fully received, precisely so `scm.on_order_v` and `scm.po_ordered_v`
+    cannot count it. Reviving one sets `line_status='open'` and adds the incoming quantity on
+    top of what was already received, which satisfies both views: a 2023 purchase that was
+    delivered years ago would read as stock on its way in, permanently, and re-uploading
+    would never correct it. The two feeds share the table and are told apart by the stamp
+    (`history_sources.HISTORY_SOURCE_SYSTEMS`), filtered out here at the SQL level so a
+    history line can never reach the match in `_match_closed_line` at all.
 
-    Only reachable since S5, which is what makes the guard necessary now: history lines used
-    to carry NULL `warehouse_id` and NULL `expected_date`, so the equality below could not
-    match a row that stated either. The structured PO + SPO export states both.
+    Ordered by `created_at` per group, exactly as the retired per-row query was, so the
+    earliest closed line wins a match the same way it always did.
+    """
+    if not header_ids:
+        return {}
+    line = bind.line
+    out: dict[tuple[str, str], list] = defaultdict(list)
+    for chunk in _chunked(sorted(header_ids)):
+        rows = (
+            db.query(line)
+            .filter(getattr(line, bind.header_fk).in_(chunk),
+                    line.line_status == "closed",
+                    sa.or_(line.source_system.is_(None),
+                           line.source_system.notin_(list(HISTORY_SOURCE_SYSTEMS))))
+            # `line.id` breaks a tie on `created_at` deterministically (two lines can share
+            # a timestamp when both were written in the same bulk statement) - without it
+            # the "earliest wins" rule below depends on whatever order Postgres happens to
+            # return same-timestamp rows in.
+            .order_by(line.created_at, line.id)
+            .all()
+        )
+        for l in rows:
+            out[(str(getattr(l, bind.header_fk)), str(l.product_id))].append(l)
+    return out
 
-    `exclude_ids` are lines THIS run has already claimed. A settled row leaves its line
-    closed, so it stays matchable, and two byte-identical rows of a completed book ("totally
-    acceptable in 1 SO") would otherwise both land on the first line and the second quantity
-    would disappear. The revive path never needed it - flipping the line to `open` took it
-    out of this query by itself.
+
+def _match_closed_line(candidates: dict[tuple[str, str], list], bind: _Binding,
+                       header_id: str, product_id: Optional[str],
+                       warehouse_id: Optional[str], when: Optional[date],
+                       exclude_ids: set[str]):
+    """A closed line matching the incoming row exactly, over `_preload_closed_lines`' set.
+
+    Same match the retired `_closed_line` query made - (header, product) exact, warehouse and
+    date exact-or-both-null - just against candidates already in memory instead of a query
+    per row. An explicit lookup rather than widening `_existing_lines`: the diff must stay
+    open-only, or a closed line simply absent from the next upload would be re-closed on
+    every re-run and `applied.closed` would never settle at 0.
+
+    `l.line_status == "closed"` is checked on the LIVE object (review round 1b, C5), not only
+    at preload time: `candidates` holds the actual ORM instances, so a line an EARLIER match
+    in this same batch already reopened (`revived.line_status = "open"`) is excluded here by
+    the same attribute that made it a candidate in the first place - self-enforcing, with no
+    second bookkeeping set needed for that case. `exclude_ids` is narrower than before for
+    exactly that reason: it now only has to carry a line that stays CLOSED after being
+    claimed (the settled branch, where `_write_settled` leaves `line_status` alone), because
+    the status check cannot see that one for itself. A settled row leaves its line closed, so
+    it stays matchable, and two byte-identical rows of a completed book ("totally acceptable
+    in 1 SO") would otherwise both land on the first line and the second quantity would
+    disappear.
     """
     if product_id is None:
         return None
-    line = bind.line
-    q = (
-        db.query(line)
-        .filter(getattr(line, bind.header_fk) == header_id,
-                line.product_id == product_id,
-                line.line_status == "closed",
-                sa.or_(line.source_system.is_(None),
-                       line.source_system.notin_(list(HISTORY_SOURCE_SYSTEMS))))
-    )
-    if exclude_ids:
-        q = q.filter(line.id.notin_(list(exclude_ids)))
-    q = q.filter(line.warehouse_id.is_(None) if warehouse_id is None
-                 else line.warehouse_id == warehouse_id)
-    dated = getattr(line, bind.date)
-    q = q.filter(dated.is_(None) if when is None else dated == when)
-    return q.order_by(line.created_at).first()
+    for l in candidates.get((str(header_id), str(product_id)), ()):
+        if l.line_status != "closed" or str(l.id) in exclude_ids:
+            continue
+        line_warehouse = str(l.warehouse_id) if l.warehouse_id else None
+        want_warehouse = str(warehouse_id) if warehouse_id else None
+        if line_warehouse != want_warehouse:
+            continue
+        if getattr(l, bind.date) != when:
+            continue
+        return l
+    return None
+
+
+def _preload_lines_by_id(db: Session, bind: _Binding, ids: set[str]) -> dict[str, Any]:
+    """Every line these ids name, loaded once instead of once per changed row (S5).
+
+    `diff.changes` carries the DB line id as `row_ref` on its `before` half for CLOSED,
+    QTY_CHANGED, DATE_AND_QTY_CHANGED and a repriced UNCHANGED (`_existing_lines` set it that
+    way) - the write loop used to re-fetch each one by id, a query per changed row, which is
+    exactly the shape the prod trace measured as quadratic once `_closed_line`'s exclusion
+    is added on top. Chunked (`app.utils.chunking.chunked`) so a 22,111-row file's id list
+    still ships as a handful of statements, none of them over `chunked`'s own 500-per-chunk
+    default.
+
+    `ids` is the caller's to narrow (S5 review round 1): the majority of `UNCHANGED` rows
+    never touch this dict at all (only a repriced one does), so `apply` only asks for the ids
+    it will actually look up rather than every `before.row_ref` in the batch.
+    """
+    if not ids:
+        return {}
+    out: dict[str, Any] = {}
+    for chunk in _chunked(sorted(str(i) for i in ids)):
+        for l in db.query(bind.line).filter(bind.line.id.in_(chunk)).all():
+            out[str(l.id)] = l
+    return out
 
 
 #: Both money columns on both books are stored at 2 decimal places, so that is the precision
@@ -1848,7 +1924,8 @@ def _record_rows_never_written(read: ReadResult, resolved: _Resolved,
 
 
 def _supersede_crm_raised_pos(db: Session, resolved: _Resolved,
-                              outcome: ImportOutcome) -> tuple[int, list[dict]]:
+                              outcome: ImportOutcome,
+                              lines: Optional[list[Line]] = None) -> tuple[int, list[dict]]:
     """Close the CRM's own recommendation once AutoCount confirms the same order.
 
     The captain's ruling of 21 Aug: the CRM can raise its own purchase order from a
@@ -1856,7 +1933,7 @@ def _supersede_crm_raised_pos(db: Session, resolved: _Resolved,
     `bulk_confirm`). When Joey keys the SAME physical order into AutoCount and this
     outstanding-PO book is uploaded, the two must not both count as on-order for the
     same (product, supplier) - AutoCount is the book of record (the same doctrine the
-    `adopted` handover above and `_closed_line`'s history guard already follow), so
+    `adopted` handover above and `_preload_closed_lines`' history guard already follow), so
     ITS import is what retires the CRM's own draft-turned-order, never the reverse.
 
     Matched on (product, supplier), never on document number: the CRM's own number
@@ -1882,9 +1959,15 @@ def _supersede_crm_raised_pos(db: Session, resolved: _Resolved,
 
     Never called from `preview()`: like every other write in this module, a
     supersession only happens on `apply`.
+
+    `lines`, default `resolved.lines`: `apply` (S5 review round 1, B2/B3) calls this once
+    PER DOCUMENT BATCH now, passing only the lines that batch's documents named, so the
+    supersession runs inside that batch's own transaction, before its commit, rather than
+    once for the whole file after every batch has already committed - a defect here fails
+    only the batch it belongs to, and the caller's counts/documents accumulate across calls.
     """
     pairs: dict[tuple[str, str], tuple[str, str]] = {}
-    for l in resolved.lines:
+    for l in (lines if lines is not None else resolved.lines):
         supplier_id = resolved.party_by_doc.get(l.doc_number)
         product_id = resolved.product_by_code.get(_norm(l.item_code))
         if supplier_id and product_id:
@@ -1893,16 +1976,17 @@ def _supersede_crm_raised_pos(db: Session, resolved: _Resolved,
         return 0, []
 
     product_ids = {product_id for product_id, _supplier_id in pairs}
-    candidates = (
+    # Chunked (review round 2, N1): a batch's own supersession candidates are bounded by
+    # its documents, but the product set they name is not guaranteed small.
+    candidates = _in_chunks(
         db.query(PurchaseOrderLine, PurchaseOrder)
         .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
         .filter(
             PurchaseOrder.source_system == "scm_recommendation",
             PurchaseOrder.status == "active",
             PurchaseOrderLine.line_status == "open",
-            PurchaseOrderLine.product_id.in_(list(product_ids)),
-        )
-        .all()
+        ),
+        PurchaseOrderLine.product_id, product_ids,
     )
     to_close: list[tuple] = []
     for line, header in candidates:
@@ -1922,10 +2006,10 @@ def _supersede_crm_raised_pos(db: Session, resolved: _Resolved,
 
     placed_row_ids = [
         row_id for (row_id,) in
-        db.query(OrderInquiryRow.id)
-        .filter(OrderInquiryRow.po_line_id.in_(line_ids),
-                OrderInquiryRow.state == INQUIRY_PLACED)
-        .all()
+        _in_chunks(
+            db.query(OrderInquiryRow.id).filter(OrderInquiryRow.state == INQUIRY_PLACED),
+            OrderInquiryRow.po_line_id, line_ids,
+        )
     ]
     if placed_row_ids:
         from app.services.project_order_inquiry_service import (
@@ -1971,6 +2055,323 @@ def _supersede_crm_raised_pos(db: Session, resolved: _Resolved,
     db.flush()
 
     return len(to_close), superseded_documents
+
+
+#: Documents `apply` commits together (S5). A worker killed mid-run keeps every batch
+#: already committed rather than losing the whole file to one uncommitted transaction, and
+#: each batch's own preloads (`_preload_closed_lines`, `_preload_lines_by_id`) stay well
+#: under the 1,000 bound-parameter statement that dropped the connection in production even
+#: on a document that carries far more than one line.
+_DOCUMENT_BATCH = 500
+
+
+def _write_header(db: Session, bind: _Binding, doc_type: str, plan: _Plan, lift: set,
+                  resolved: _Resolved, agent_ids: dict[str, str],
+                  existing_headers: dict, order_ids: dict[str, str],
+                  activated: list[str], adopted: list[str], number: str) -> None:
+    """Create or update ONE document's header, and record its id in `order_ids`.
+
+    Extracted out of `apply`'s batch loop (review round 1b, C7) so the per-document body is
+    flat again - behaviour-preserving, the exact logic the inline loop body ran. `plan`,
+    `existing_headers`, `order_ids`, `activated`, `adopted` are all mutated in place; nothing
+    is returned.
+    """
+    header = existing_headers.get(number)
+    if header is None:
+        header = bind.header(**{
+            bind.number: number,
+            # A document the file states COMPLETE is born closed. Created live and
+            # closed a moment later it would be the same row, but a whole-year book
+            # would first announce thousands of live orders to every listener on the
+            # status column.
+            "status": (_COMPLETE_STATUS if number in plan.complete
+                       else bind.write_status),
+            "source_system": "scm_upload",
+            "source_ref": doc_type,
+        })
+        db.add(header)
+        db.flush()
+    else:
+        if number in plan.complete:
+            # Nothing is owed on it any more. The header follows its lines: left
+            # open, a fully delivered order reads as a live commitment on every
+            # screen.
+            header.status = _COMPLETE_STATUS
+        if number in lift:
+            # The extract is evidence the document has been placed, and AutoCount is
+            # the system of record for that. Left as a draft the lines land and the
+            # supply is invisible, while the response still reports them as added.
+            header.status = bind.write_status
+            activated.append(number)
+        # ADOPTION. A document another feed created - the Order Inquiry sheet is the
+        # one that does this - is taken over here, because this extract is a
+        # statement of the WHOLE open book and that sheet is one person's working
+        # record. Without the handover the sheet keeps ownership, and its next
+        # upload reverts a quantity CS just corrected. Only a foreign source is
+        # claimed: re-uploading this extract must not churn the rows it already owns.
+        if (header.source_system or "") not in ("", "scm_upload"):
+            header.source_system = "scm_upload"
+            header.source_ref = doc_type
+            adopted.append(number)
+    # Header-level values the file states (PO DATE, currency). Written whenever the
+    # file supplies one: `scm.receipt_lead_v` measures lead days from `issue_date`,
+    # so discarding it costs the module every lead-time observation it could have had.
+    for col, key in bind.header_cols:
+        value = resolved.header_by_doc.get(number, {}).get(key)
+        if value is not None:
+            setattr(header, col, value)
+    # A purchase header with no currency, from the file or from before, is CNY
+    # (`DEFAULT_PO_CURRENCY`); a stated one has just been written above and stands.
+    if doc_type == PO and not getattr(header, "currency", None):
+        header.currency = DEFAULT_PO_CURRENCY
+    # Columns the file FILLS rather than restates. The sales book's order type is
+    # the case: for a document this upload creates the file is the only evidence
+    # there is, while a value already on the header was set by a person and a weekly
+    # re-upload silently overwriting it is the failure.
+    for col, key in bind.header_fill_cols:
+        value = resolved.header_by_doc.get(number, {}).get(key)
+        if value is not None and not getattr(header, col, None):
+            setattr(header, col, value)
+    # Who sold it. Written whenever the file names an agent we could resolve or
+    # create, because the extract is the record of that and a re-upload restating
+    # the same code is a no-op. An absent code never clears an existing link: a file
+    # that simply left the column blank is not evidence that the order changed hands.
+    if bind.agent_fk:
+        agent_id = agent_ids.get(resolved.agent_by_doc.get(number, ""))
+        if agent_id:
+            setattr(header, bind.agent_fk, agent_id)
+    # What the fulfilment policy actually weighs, stamped from the split above.
+    # Written ONLY when this upload could decide it: a document nothing classified
+    # keeps whatever it already had and is reported by name instead
+    # (`_classify_demand`).
+    cls = plan.demand.get(number)
+    if cls and bind.demand_class_col:
+        setattr(header, bind.demand_class_col, cls)
+    # Attach the counterparty when the file named one we could resolve. A missing
+    # code never overwrites a present link; a code that CONTRADICTS it does, because
+    # the file is the system of record for who we bought from and chasing the wrong
+    # supplier is the failure mode. Both halves are reported by `_honesty_issues`.
+    party_id = resolved.party_by_doc.get(number)
+    if party_id and str(getattr(header, bind.party_fk, None) or "") != str(party_id):
+        setattr(header, bind.party_fk, party_id)
+    # The code as printed, kept whether or not it linked. The file is the record of
+    # what the document says, so a restated code overwrites; a file that simply
+    # omits it never blanks one we already hold.
+    #
+    # `party_code_by_doc` holds it already `_norm`ed (trimmed, upper), which is what
+    # `customer_label.normalize_debtor_code` writes from the history feed. The two
+    # feeds write the SAME column, so a difference in spelling shows up as two
+    # Who-bought-it rows for one debtor - passed through that helper here so there
+    # is one authority for the value rather than two that merely agree today.
+    if bind.party_code_header_col:
+        code = normalize_debtor_code(resolved.party_code_by_doc.get(number))
+        if code:
+            setattr(header, bind.party_code_header_col, code)
+    order_ids[number] = header.id
+
+
+def _write_change(db: Session, bind: _Binding, order_ids: dict[str, str],
+                  resolved: _Resolved, read: ReadResult, outcome: ImportOutcome,
+                  applied: dict, applied_line_ids: dict[int, str],
+                  settled_line_ids: set[str], closed_candidates: dict,
+                  lines_by_id: dict, money_differs_by_c: dict[int, bool], c) -> None:
+    """Write ONE diff change - CLOSED, ADDED, unchanged, or a real qty/date change.
+
+    Extracted out of `apply`'s batch loop (review round 1b, C7) so the per-document body is
+    flat again - behaviour-preserving, the exact logic the inline loop body ran (every
+    `continue` there is a `return` here, since this now runs once per change rather than as
+    one iteration of a bigger loop). `applied`, `applied_line_ids`, `settled_line_ids` are
+    mutated in place; nothing is returned.
+    """
+    source_row = (int(c.after.row_ref) if c.after is not None
+                  and (c.after.row_ref or "").isdigit() else None)
+    identity = _identity(c.doc_number, c.item_code, c.location)
+    if c.kind == CLOSED:
+        line = lines_by_id.get(str(c.before.row_ref))
+        if line is not None:
+            if c.after is None:
+                # Closed by ABSENCE: the file has stopped stating this line. A
+                # status change, never a delete, and never a fabricated receipt
+                # - the line was planned against, and inventing a receipt no GRN
+                # supports would corrupt lead-time measurement and the picking
+                # reconciliation.
+                line.line_status = "closed"
+            else:
+                # Closed by STATEMENT: the row is in the file and says the line
+                # is finished. Here the delivered figure is not invented, it is
+                # quoted - so it is written, along with the date and the money
+                # the same row carries. Anything less leaves a completed line
+                # claiming it shipped nothing, on the only record of that order
+                # this system will ever have.
+                _write_settled(line, c.after,
+                               read.extras.get(str(c.after.row_ref), {}), bind,
+                               c.before.required_date)
+            applied["closed"] += 1
+            # `source_row` is None for the absence half - there is no row in the
+            # upload to point at - and the row number itself for a stated
+            # settlement. Recorded either way: it is the destructive half, and
+            # the job detail is where somebody goes to find out what an upload
+            # took away.
+            outcome.updated(row=source_row, code=oc.LINE_CLOSED, identity=identity,
+                            value=c.doc_number, entity_type="order_line",
+                            entity_id=c.before.row_ref)
+            applied_line_ids[id(c)] = str(c.before.row_ref)
+        elif source_row is not None:
+            # The line has gone since the diff was read, and this half came from
+            # a real source row - so it needs its own outcome or the job finishes
+            # short of its own total. Same answer the update branch gives.
+            outcome.skip(row=source_row, code=oc.ORDER_NOT_FOUND, identity=identity,
+                         value=c.doc_number,
+                         message="the line this row settles no longer exists")
+        return
+
+    if c.kind == ADDED:
+        extra = read.extras.get(str(c.after.row_ref), {})
+        product_id = resolved.product_by_code.get(_norm(c.item_code))
+        warehouse_id = (resolved.warehouse_by_code.get(_norm(c.location))
+                        if c.location else None)
+        settled = states_settled(c.after)
+        # A line that comes back is the SAME line, and the receipt already
+        # booked against it belongs to it. Inserting a second row would leave
+        # that receipt stranded on the old one while the new row starts at zero
+        # received, so the two together claim the full ordered quantity is still
+        # at sea - overstated for good, and stable, so re-uploading never
+        # corrects it.
+        revived = _match_closed_line(
+            closed_candidates, bind, order_ids[c.doc_number], product_id,
+            warehouse_id, c.after.required_date, settled_line_ids)
+        if revived is not None and settled:
+            # NOT a revival: the file states this line finished, and the line is
+            # already closed. This is what a re-upload of a completed book runs
+            # into on every row, so it has to leave the database exactly as it
+            # found it - reopening here would make a delivered order read as
+            # stock on its way in, and adding the quantity on top would do it
+            # twice.
+            held = {col: getattr(revived, col) for col, _key in bind.money_cols}
+            ordered, fulfilled = _settled_quantities(c.after, extra)
+            moved = (_settled_qty_differs(revived, ordered, fulfilled, bind)
+                     or _money_differs(held, extra, bind))
+            _write_settled(revived, c.after, extra, bind, getattr(revived, bind.date))
+            settled_line_ids.add(str(revived.id))
+            applied_line_ids[id(c)] = str(revived.id)
+            if moved:
+                applied["updated"] += 1
+                outcome.updated(row=source_row, identity=identity, value=c.doc_number,
+                                entity_type="order_line", entity_id=revived.id)
+            else:
+                applied["unchanged"] += 1
+                outcome.unchanged(row=source_row, identity=identity, value=c.doc_number)
+            return
+        if revived is not None:
+            already = float(getattr(revived, bind.fulfilled) or 0)
+            # Setting `line_status = "open"` here is ALSO what keeps a second row
+            # wanting the identical match from reviving this same line twice
+            # (review round 1b, C5): `_match_closed_line` checks `line_status ==
+            # "closed"` on the live object, `revived` IS that object, and
+            # `candidates` was never re-queried mid-batch - so the very mutation
+            # this line needed anyway is what excludes it, with no separate
+            # `settled_line_ids` entry required for this branch.
+            revived.line_status = "open"
+            revived.qty_ordered = already + c.after.qty
+            setattr(revived, bind.date,
+                    _write_date(c.after, getattr(revived, bind.date)))
+            _refresh_money(revived, extra, bind)
+            applied["added"] += 1
+            applied_line_ids[id(c)] = str(revived.id)
+            outcome.success(row=source_row, code=oc.CREATED, identity=identity,
+                            value=c.doc_number, entity_type="order_line",
+                            entity_id=revived.id)
+            return
+        # An explicit id, not the column's own default: `planning_change_service`
+        # (called after this function flushes) needs the CORE line id an ADDED
+        # change wrote, and that default is a client-side callable SQLAlchemy
+        # would not resolve onto this instance until the flush below.
+        new_line_id = str(uuid.uuid4())
+        # A completed document this database has never seen: the whole line is
+        # written from the file, closed, with the order and the quantity that
+        # went out both intact. Ordered and fulfilled come from the row rather
+        # than from `c.after.qty`, which on a settled line is the nothing that
+        # is left.
+        ordered, fulfilled = (_settled_quantities(c.after, extra) if settled
+                              else (c.after.qty, 0))
+        fields = {
+            "id": new_line_id,
+            bind.header_fk: order_ids[c.doc_number],
+            "product_id": product_id,
+            "warehouse_id": warehouse_id,
+            "qty_ordered": ordered,
+            bind.fulfilled: fulfilled,
+            bind.date: c.after.required_date,
+            "line_status": _COMPLETE_STATUS if settled else "open",
+        }
+        for col, key in bind.money_cols:
+            fields[col] = extra.get(key)
+        # A new purchase line with no stated currency is CNY
+        # (`DEFAULT_PO_CURRENCY`), the same fill `_refresh_money` applies to a
+        # line that already exists.
+        if bind.header is PurchaseOrder and not fields.get("currency"):
+            fields["currency"] = DEFAULT_PO_CURRENCY
+        db.add(bind.line(**fields))
+        if settled:
+            # Claimed for this run, so a second identical row of the same
+            # completed book inserts its own line instead of landing on this one
+            # (it is not in `closed_candidates` either, for the same reason).
+            settled_line_ids.add(new_line_id)
+        applied["added"] += 1
+        applied_line_ids[id(c)] = new_line_id
+        outcome.success(row=source_row, code=oc.CREATED, identity=identity,
+                        value=c.doc_number)
+        return
+
+    if c.kind == "unchanged":
+        # Unchanged is about the QUANTITY and the DATE, which is what the diff
+        # compares. The same line can still be repriced, and nothing else on
+        # either channel ever revisits that column, so a line left alone here
+        # quotes last week's money for ever. Compared at the 2 decimals the
+        # column stores, so a sheet that states a third one cannot report an
+        # update on every re-upload. `money_differs_by_c` was computed once,
+        # above, when `lines_by_id` was built - read back rather than asked
+        # twice, so the two can never quietly disagree.
+        extra = read.extras.get(str(c.after.row_ref), {})
+        if money_differs_by_c.get(id(c), False):
+            line = lines_by_id.get(str(c.before.row_ref))
+            if line is not None:
+                _refresh_money(line, extra, bind)
+                applied["updated"] += 1
+                outcome.updated(row=source_row, identity=identity, value=c.doc_number,
+                                entity_type="order_line", entity_id=line.id)
+                return
+        applied["unchanged"] += 1
+        outcome.unchanged(row=source_row, identity=identity, value=c.doc_number)
+        return
+
+    # qty and/or date changed: update the row the diff paired, in place.
+    line = lines_by_id.get(str(c.before.row_ref))
+    if line is None:
+        # The line the diff paired against has gone since it was read. Nothing
+        # is written, so the row is a skip rather than a silent nothing.
+        outcome.skip(row=source_row, code=oc.ORDER_NOT_FOUND, identity=identity,
+                     value=c.doc_number,
+                     message="the line this row updates no longer exists")
+        return
+    # The extract states what is OUTSTANDING, so ordered is outstanding plus
+    # whatever has already been delivered or received. Writing the figure
+    # straight in would erase a booked receipt and leave the goods counted as
+    # still at sea.
+    already = float(getattr(line, bind.fulfilled) or 0)
+    line.qty_ordered = already + c.after.qty
+    # `c.kind` reaches here for QTY_CHANGED too, not only a real date move: an
+    # unreadable incoming date leaves `_classify` reading the date as unchanged,
+    # but the row still lands in this branch on the quantity alone, and a
+    # straight `c.after.required_date` would still write the `None` `_classify`
+    # was built to avoid. `_write_date` keeps the line's own stored date in that
+    # case.
+    setattr(line, bind.date, _write_date(c.after, c.before.required_date))
+    _refresh_money(line, read.extras.get(str(c.after.row_ref), {}), bind)
+    applied["updated"] += 1
+    applied_line_ids[id(c)] = str(line.id)
+    outcome.updated(row=source_row, identity=identity, value=c.doc_number,
+                    entity_type="order_line", entity_id=line.id)
 
 
 def apply(db: Session, file_data: bytes, doc_type: str = SO,
@@ -2156,101 +2557,6 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
     #: Documents another feed created that this extract has taken ownership of. Reported so
     #: the handover is visible rather than a silent change of who may edit what.
     adopted: list[str] = []
-    for number in diff.scope_documents:
-        header = (
-            db.query(bind.header)
-            .filter(getattr(bind.header, bind.number) == number)
-            .one_or_none()
-        )
-        if header is None:
-            header = bind.header(**{
-                bind.number: number,
-                # A document the file states COMPLETE is born closed. Created live and
-                # closed a moment later it would be the same row, but a whole-year book
-                # would first announce thousands of live orders to every listener on the
-                # status column.
-                "status": (_COMPLETE_STATUS if number in plan.complete
-                           else bind.write_status),
-                "source_system": "scm_upload",
-                "source_ref": doc_type,
-            })
-            db.add(header)
-            db.flush()
-        else:
-            if number in plan.complete:
-                # Nothing is owed on it any more. The header follows its lines: left open, a
-                # fully delivered order reads as a live commitment on every screen.
-                header.status = _COMPLETE_STATUS
-            if number in lift:
-                # The extract is evidence the document has been placed, and AutoCount is the
-                # system of record for that. Left as a draft the lines land and the supply is
-                # invisible, while the response still reports them as added.
-                header.status = bind.write_status
-                activated.append(number)
-            # ADOPTION. A document another feed created - the Order Inquiry sheet is the one
-            # that does this - is taken over here, because this extract is a statement of the
-            # WHOLE open book and that sheet is one person's working record. Without the
-            # handover the sheet keeps ownership, and its next upload reverts a quantity CS
-            # just corrected. Only a foreign source is claimed: re-uploading this extract
-            # must not churn the rows it already owns.
-            if (header.source_system or "") not in ("", "scm_upload"):
-                header.source_system = "scm_upload"
-                header.source_ref = doc_type
-                adopted.append(number)
-        # Header-level values the file states (PO DATE, currency). Written whenever the file
-        # supplies one: `scm.receipt_lead_v` measures lead days from `issue_date`, so
-        # discarding it costs the module every lead-time observation it could have had.
-        for col, key in bind.header_cols:
-            value = resolved.header_by_doc.get(number, {}).get(key)
-            if value is not None:
-                setattr(header, col, value)
-        # A purchase header with no currency, from the file or from before, is CNY
-        # (`DEFAULT_PO_CURRENCY`); a stated one has just been written above and stands.
-        if doc_type == PO and not getattr(header, "currency", None):
-            header.currency = DEFAULT_PO_CURRENCY
-        # Columns the file FILLS rather than restates. The sales book's order type is the
-        # case: for a document this upload creates the file is the only evidence there is,
-        # while a value already on the header was set by a person and a weekly re-upload
-        # silently overwriting it is the failure.
-        for col, key in bind.header_fill_cols:
-            value = resolved.header_by_doc.get(number, {}).get(key)
-            if value is not None and not getattr(header, col, None):
-                setattr(header, col, value)
-        # Who sold it. Written whenever the file names an agent we could resolve or create,
-        # because the extract is the record of that and a re-upload restating the same code
-        # is a no-op. An absent code never clears an existing link: a file that simply left
-        # the column blank is not evidence that the order changed hands.
-        if bind.agent_fk:
-            agent_id = agent_ids.get(resolved.agent_by_doc.get(number, ""))
-            if agent_id:
-                setattr(header, bind.agent_fk, agent_id)
-        # What the fulfilment policy actually weighs, stamped from the split above.
-        # Written ONLY when this upload could decide it: a document nothing classified keeps
-        # whatever it already had and is reported by name instead (`_classify_demand`).
-        cls = plan.demand.get(number)
-        if cls and bind.demand_class_col:
-            setattr(header, bind.demand_class_col, cls)
-        # Attach the counterparty when the file named one we could resolve. A missing code
-        # never overwrites a present link; a code that CONTRADICTS it does, because the file
-        # is the system of record for who we bought from and chasing the wrong supplier is
-        # the failure mode. Both halves are reported by `_honesty_issues`.
-        party_id = resolved.party_by_doc.get(number)
-        if party_id and str(getattr(header, bind.party_fk, None) or "") != str(party_id):
-            setattr(header, bind.party_fk, party_id)
-        # The code as printed, kept whether or not it linked. The file is the record of
-        # what the document says, so a restated code overwrites; a file that simply omits
-        # it never blanks one we already hold.
-        #
-        # `party_code_by_doc` holds it already `_norm`ed (trimmed, upper), which is what
-        # `customer_label.normalize_debtor_code` writes from the history feed. The two feeds
-        # write the SAME column, so a difference in spelling shows up as two Who-bought-it
-        # rows for one debtor - passed through that helper here so there is one authority
-        # for the value rather than two that merely agree today.
-        if bind.party_code_header_col:
-            code = normalize_debtor_code(resolved.party_code_by_doc.get(number))
-            if code:
-                setattr(header, bind.party_code_header_col, code)
-        order_ids[number] = header.id
 
     applied = {"added": 0, "updated": 0, "closed": 0, "unchanged": 0}
     # The CORE line id each change actually wrote, keyed by the change object's identity
@@ -2259,194 +2565,178 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
     # ADDED change's own `row_ref` is the source ROW NUMBER, not a line id: there is no id
     # to have until the insert below runs.
     applied_line_ids: dict[int, str] = {}
-    #: Closed lines this run has already written or restated. A settled row leaves its line
-    #: closed, so it stays matchable by `_closed_line` - without this, two identical rows of
-    #: a completed book would both land on the first line and the second quantity would
-    #: simply vanish.
+    #: Closed lines this run has claimed while LEAVING them closed - the settled branch only
+    #: (review round 1b, C5): a reopened line no longer needs an entry here, because
+    #: `_match_closed_line` checks `line_status == "closed"` on the live object and the
+    #: reopen itself (`revived.line_status = "open"`) is what excludes it from a second
+    #: match. A settled row leaves its line closed, so THAT case stays matchable in
+    #: `_preload_closed_lines`' candidates even after being claimed, and two identical rows
+    #: of a completed book would otherwise both land on the first line and the second
+    #: quantity would simply vanish.
     settled_line_ids: set[str] = set()
+    # Accumulated across every batch's own PER-BATCH reaction call (S5 review round 1,
+    # B2/B3): `_supersede_crm_raised_pos` and the relink pass now run once per document
+    # batch rather than once for the whole file, so their counts/documents build up here
+    # exactly the way `applied` above does for the line writes.
+    superseded_lines = 0
+    superseded_documents: list[dict] = []
+    relinked = 0
+
+    # Grouped by document, not walked flat: `diff.changes` is already sorted (doc, item,
+    # location) (`outstanding_diff.diff_lines`), so this is a partition, not a re-order - and
+    # it is what lets the batch loop below write one document's header AND lines together.
+    changes_by_doc: dict[str, list] = defaultdict(list)
     for c in diff.changes:
-        source_row = (int(c.after.row_ref)
-                      if c.after is not None and (c.after.row_ref or "").isdigit() else None)
-        identity = _identity(c.doc_number, c.item_code, c.location)
-        if c.kind == CLOSED:
-            line = db.query(bind.line).filter(bind.line.id == c.before.row_ref).one_or_none()
-            if line is not None:
-                if c.after is None:
-                    # Closed by ABSENCE: the file has stopped stating this line. A status
-                    # change, never a delete, and never a fabricated receipt - the line was
-                    # planned against, and inventing a receipt no GRN supports would corrupt
-                    # lead-time measurement and the picking reconciliation.
-                    line.line_status = "closed"
-                else:
-                    # Closed by STATEMENT: the row is in the file and says the line is
-                    # finished. Here the delivered figure is not invented, it is quoted -
-                    # so it is written, along with the date and the money the same row
-                    # carries. Anything less leaves a completed line claiming it shipped
-                    # nothing, on the only record of that order this system will ever have.
-                    _write_settled(line, c.after,
-                                   read.extras.get(str(c.after.row_ref), {}), bind,
-                                   c.before.required_date)
-                applied["closed"] += 1
-                # `source_row` is None for the absence half - there is no row in the upload
-                # to point at - and the row number itself for a stated settlement. Recorded
-                # either way: it is the destructive half, and the job detail is where
-                # somebody goes to find out what an upload took away.
-                outcome.updated(row=source_row, code=oc.LINE_CLOSED, identity=identity,
-                                value=c.doc_number, entity_type="order_line",
-                                entity_id=c.before.row_ref)
-                applied_line_ids[id(c)] = str(c.before.row_ref)
-            elif source_row is not None:
-                # The line has gone since the diff was read, and this half came from a real
-                # source row - so it needs its own outcome or the job finishes short of its
-                # own total. Same answer the update branch gives.
-                outcome.skip(row=source_row, code=oc.ORDER_NOT_FOUND, identity=identity,
-                             value=c.doc_number,
-                             message="the line this row settles no longer exists")
-            continue
+        changes_by_doc[c.doc_number].append(c)
 
-        if c.kind == ADDED:
-            extra = read.extras.get(str(c.after.row_ref), {})
-            product_id = resolved.product_by_code.get(_norm(c.item_code))
-            warehouse_id = (resolved.warehouse_by_code.get(_norm(c.location))
-                            if c.location else None)
-            settled = states_settled(c.after)
-            # A line that comes back is the SAME line, and the receipt already booked against
-            # it belongs to it. Inserting a second row would leave that receipt stranded on
-            # the old one while the new row starts at zero received, so the two together claim
-            # the full ordered quantity is still at sea - overstated for good, and stable, so
-            # re-uploading never corrects it.
-            revived = _closed_line(db, bind, order_ids[c.doc_number], product_id,
-                                   warehouse_id, c.after.required_date,
-                                   exclude_ids=settled_line_ids)
-            if revived is not None and settled:
-                # NOT a revival: the file states this line finished, and the line is already
-                # closed. This is what a re-upload of a completed book runs into on every
-                # row, so it has to leave the database exactly as it found it - reopening
-                # here would make a delivered order read as stock on its way in, and adding
-                # the quantity on top would do it twice.
-                held = {col: getattr(revived, col) for col, _key in bind.money_cols}
-                ordered, fulfilled = _settled_quantities(c.after, extra)
-                moved = (_settled_qty_differs(revived, ordered, fulfilled, bind)
-                         or _money_differs(held, extra, bind))
-                _write_settled(revived, c.after, extra, bind, getattr(revived, bind.date))
-                settled_line_ids.add(str(revived.id))
-                applied_line_ids[id(c)] = str(revived.id)
-                if moved:
-                    applied["updated"] += 1
-                    outcome.updated(row=source_row, identity=identity, value=c.doc_number,
-                                    entity_type="order_line", entity_id=revived.id)
-                else:
-                    applied["unchanged"] += 1
-                    outcome.unchanged(row=source_row, identity=identity, value=c.doc_number)
-                continue
-            if revived is not None:
-                already = float(getattr(revived, bind.fulfilled) or 0)
-                revived.line_status = "open"
-                revived.qty_ordered = already + c.after.qty
-                setattr(revived, bind.date, _write_date(c.after, getattr(revived, bind.date)))
-                _refresh_money(revived, extra, bind)
-                applied["added"] += 1
-                applied_line_ids[id(c)] = str(revived.id)
-                outcome.success(row=source_row, code=oc.CREATED, identity=identity,
-                                value=c.doc_number, entity_type="order_line",
-                                entity_id=revived.id)
-                continue
-            # An explicit id, not the column's own default: `planning_change_service`
-            # (called after this function flushes) needs the CORE line id an ADDED change
-            # wrote, and that default is a client-side callable SQLAlchemy would not
-            # resolve onto this instance until the flush at the end of this loop.
-            new_line_id = str(uuid.uuid4())
-            # A completed document this database has never seen: the whole line is written
-            # from the file, closed, with the order and the quantity that went out both
-            # intact. Ordered and fulfilled come from the row rather than from `c.after.qty`,
-            # which on a settled line is the nothing that is left.
-            ordered, fulfilled = (_settled_quantities(c.after, extra) if settled
-                                  else (c.after.qty, 0))
-            fields = {
-                "id": new_line_id,
-                bind.header_fk: order_ids[c.doc_number],
-                "product_id": product_id,
-                "warehouse_id": warehouse_id,
-                "qty_ordered": ordered,
-                bind.fulfilled: fulfilled,
-                bind.date: c.after.required_date,
-                "line_status": _COMPLETE_STATUS if settled else "open",
-            }
-            for col, key in bind.money_cols:
-                fields[col] = extra.get(key)
-            # A new purchase line with no stated currency is CNY (`DEFAULT_PO_CURRENCY`),
-            # the same fill `_refresh_money` applies to a line that already exists.
-            if bind.header is PurchaseOrder and not fields.get("currency"):
-                fields["currency"] = DEFAULT_PO_CURRENCY
-            db.add(bind.line(**fields))
-            if settled:
-                # Claimed for this run, so a second identical row of the same completed book
-                # inserts its own line instead of landing on this one.
-                settled_line_ids.add(new_line_id)
-            applied["added"] += 1
-            applied_line_ids[id(c)] = new_line_id
-            outcome.success(row=source_row, code=oc.CREATED, identity=identity,
-                            value=c.doc_number)
-            continue
+    # S5: committed in batches of `_DOCUMENT_BATCH` documents rather than once for the whole
+    # file. A worker killed mid-run used to lose the entire upload to one uncommitted
+    # transaction (the completed 2020-Sep 2026 book, 82,257 rows, died after an hour with
+    # nothing kept); now it leaves every batch that finished behind, and the outcome rows
+    # (their own session, flushed alongside) say exactly where it stopped.
+    # `outcome.flush(publish=True)` after each commit is also what keeps the activity card
+    # counting up WHILE the job runs, rather than jumping from 0 to the final total only on
+    # completion.
+    for doc_batch in _chunked(diff.scope_documents, _DOCUMENT_BATCH):
+        doc_batch_set = set(doc_batch)
+        # One bulk lookup per batch instead of one SELECT per document (review round 1b, C1):
+        # `doc_batch` is at most `_DOCUMENT_BATCH` documents, so a single `IN (...)` here
+        # never approaches the bound-parameter ceiling the other preloads chunk against. The
+        # dict comprehension's "last wins" on a repeated key is never actually ambiguous:
+        # `uq_sales_orders_company_so_number` / `uq_purchase_orders_company_po_number` make
+        # `(company_id, number)` unique, and this query already runs inside one company's
+        # scope, so at most one row can ever come back per document number.
+        number_col = getattr(bind.header, bind.number)
+        existing_headers = {
+            getattr(h, bind.number): h
+            for h in db.query(bind.header).filter(number_col.in_(list(doc_batch))).all()
+        }
+        for number in doc_batch:
+            _write_header(db, bind, doc_type, plan, lift, resolved, agent_ids,
+                         existing_headers, order_ids, activated, adopted, number)
 
-        if c.kind == "unchanged":
-            # Unchanged is about the QUANTITY and the DATE, which is what the diff compares.
-            # The same line can still be repriced, and nothing else on either channel ever
-            # revisits that column, so a line left alone here quotes last week's money for
-            # ever. Compared at the 2 decimals the column stores, so a sheet that states a
-            # third one cannot report an update on every re-upload.
-            extra = read.extras.get(str(c.after.row_ref), {})
-            if _money_differs(plan.money_by_line.get(str(c.before.row_ref), {}), extra, bind):
-                line = (db.query(bind.line)
-                        .filter(bind.line.id == c.before.row_ref).one_or_none())
-                if line is not None:
-                    _refresh_money(line, extra, bind)
-                    applied["updated"] += 1
-                    outcome.updated(row=source_row, identity=identity, value=c.doc_number,
-                                    entity_type="order_line", entity_id=line.id)
+        # Closed-line candidates and existing-line lookups for THIS BATCH's documents only
+        # (S5): one preload each instead of one query per ADDED / CLOSED / changed row. The
+        # write below matches at most one header at a time, so preloading beyond this batch
+        # would only hold memory a later batch's commit does not need yet.
+        batch_changes = [c for number in doc_batch for c in changes_by_doc.get(number, ())]
+        # Skipped entirely when nothing in this batch is ADDED (review round 1b, cap
+        # finding): `closed_candidates` is read only by the ADDED branch below, and a batch
+        # that is all CLOSED / repriced / qty-changed rows - a re-upload against a book
+        # already on file - never looks at it.
+        closed_candidates = (
+            _preload_closed_lines(db, bind, {order_ids[number] for number in doc_batch})
+            if any(c.kind == ADDED for c in batch_changes) else {}
+        )
+        # Narrowed to the rows that will actually be looked up (S5 review round 1, S6): a
+        # CLOSED or a real qty/date change always needs its line, but the common
+        # `unchanged` case never touches `lines_by_id` unless the file also repriced it -
+        # fetching the line object for every merely-unchanged row was wasted work at file
+        # scale. `_money_differs` is computed here once and cached by change identity so the
+        # `unchanged` branch below reads the same answer rather than asking twice.
+        money_differs_by_c: dict[int, bool] = {}
+        line_ids: set[str] = set()
+        for c in batch_changes:
+            if c.before is None:
+                continue
+            if c.kind == UNCHANGED:
+                extra = read.extras.get(str(c.after.row_ref), {})
+                differs = _money_differs(
+                    plan.money_by_line.get(str(c.before.row_ref), {}), extra, bind)
+                money_differs_by_c[id(c)] = differs
+                if not differs:
                     continue
-            applied["unchanged"] += 1
-            outcome.unchanged(row=source_row, identity=identity, value=c.doc_number)
-            continue
+            line_ids.add(str(c.before.row_ref))
+        lines_by_id = _preload_lines_by_id(db, bind, line_ids)
 
-        # qty and/or date changed: update the row the diff paired, in place.
-        line = db.query(bind.line).filter(bind.line.id == c.before.row_ref).one_or_none()
-        if line is None:
-            # The line the diff paired against has gone since it was read. Nothing is
-            # written, so the row is a skip rather than a silent nothing.
-            outcome.skip(row=source_row, code=oc.ORDER_NOT_FOUND, identity=identity,
-                         value=c.doc_number,
-                         message="the line this row updates no longer exists")
-            continue
-        # The extract states what is OUTSTANDING, so ordered is outstanding plus whatever has
-        # already been delivered or received. Writing the figure straight in would erase a
-        # booked receipt and leave the goods counted as still at sea.
-        already = float(getattr(line, bind.fulfilled) or 0)
-        line.qty_ordered = already + c.after.qty
-        # `c.kind` reaches here for QTY_CHANGED too, not only a real date move: an
-        # unreadable incoming date leaves `_classify` reading the date as unchanged, but
-        # the row still lands in this branch on the quantity alone, and a straight
-        # `c.after.required_date` would still write the `None` `_classify` was built to
-        # avoid. `_write_date` keeps the line's own stored date in that case.
-        setattr(line, bind.date, _write_date(c.after, c.before.required_date))
-        _refresh_money(line, read.extras.get(str(c.after.row_ref), {}), bind)
-        applied["updated"] += 1
-        applied_line_ids[id(c)] = str(line.id)
-        outcome.updated(row=source_row, identity=identity, value=c.doc_number,
-                        entity_type="order_line", entity_id=line.id)
+        for number in doc_batch:
+            for c in changes_by_doc.get(number, ()):
+                _write_change(db, bind, order_ids, resolved, read, outcome, applied,
+                             applied_line_ids, settled_line_ids, closed_candidates,
+                             lines_by_id, money_differs_by_c, c)
 
-    db.flush()
+        # CRM<->AutoCount supersession (captain, 21 Aug) and the placement relink, PER
+        # BATCH and inside that batch's own transaction, before its commit (S5 review round
+        # 1, B2/B3): both read only THIS batch's own documents/lines, so both can be scoped
+        # and both land or roll back together with the lines they follow - never a batch
+        # whose lines committed while its reaction silently did not. Supersession keeps its
+        # existing rule of never being wrapped in a best-effort guard: a failure here must
+        # fail the whole BATCH (not the whole upload any more - the earlier batches already
+        # committed) rather than let AutoCount lines land while the CRM's own duplicate
+        # stays open.
+        if doc_type == PO:
+            batch_lines = [l for l in resolved.lines if l.doc_number in doc_batch_set]
+            batch_superseded, batch_superseded_docs = _supersede_crm_raised_pos(
+                db, resolved, outcome, lines=batch_lines)
+            superseded_lines += batch_superseded
+            superseded_documents.extend(batch_superseded_docs)
 
-    # CRM<->AutoCount supersession (captain, 21 Aug): PO book only, and never wrapped in
-    # a best-effort guard like the two batches below - a failure here must fail the whole
-    # upload rather than let AutoCount lines land while the CRM's own duplicate stays open.
-    superseded_lines, superseded_documents = (
-        _supersede_crm_raised_pos(db, resolved, outcome) if doc_type == PO else (0, [])
-    )
-    # This job's own count, exactly like `closed_rows` above: a line closed here carries
-    # an outcome and no source row either, so the total has to grow with it or `processed`
-    # runs past `total_rows` on the progress bar.
+            # Section 3.G, AC-G3, scoped to this batch's own headers. Best-effort, same
+            # reason the single-transaction reactions below are: the write has already
+            # succeeded, and a defect in the reaction must cost the operator a relocation
+            # the next upload makes again, never the upload itself.
+            try:
+                from app.services.project_order_inquiry_service import (
+                    ProjectOrderInquiryService,
+                )
+
+                # On its OWN savepoint (review round 2), same as `_write_spo_lines` below:
+                # a DB error here must not poison this batch's own commit - the lines this
+                # batch already wrote are good regardless of whether the relink is.
+                with db.begin_nested():
+                    relinked += ProjectOrderInquiryService(db).relink_to_matching_lines(
+                        [order_ids[number] for number in doc_batch],
+                        actor_user_id=actor, trigger="po_book_upload",
+                    )
+            except Exception:  # pragma: no cover - defensive, see above
+                logger.exception("re-linking placements failed for a confirmed PO upload")
+
+        # One commit per batch (S5), not one for the whole file: a worker killed after this
+        # point keeps every batch up to here, its lines AND its reactions above together.
+        # No `db.flush()` first - `Session.commit()` flushes on its own before it emits
+        # COMMIT, so a separate call here was one more round trip for nothing.
+        # `outcome.flush(publish=True)` runs AFTER the commit above, never during it (review
+        # round 1b, C2: the buffer-full auto-flush inside `_record` never publishes) - so
+        # the card can only ever LAG the committed state by up to one batch, never lead it:
+        # a crash right after this line still leaves `processed_rows` at the previous
+        # batch's true, already-durable count.
+        db.commit()
+        outcome.flush(publish=True)
+
+    # This job's own count, exactly like `closed_rows` above: a line closed by supersession
+    # carries an outcome and no source row either, so the total has to grow with it or
+    # `processed` runs past `total_rows` on the progress bar. Published again here (review
+    # round 2, S3): every batch's own supersession outcomes were already counted into
+    # `outcome`'s running total DURING the loop (each batch's `outcome.flush(publish=True)`
+    # published `processed_rows` reflecting them), but the JOB's own `total_rows` field was
+    # still the pre-supersession figure until now - `processed_rows` could momentarily read
+    # ahead of the total the card shows beside it. `_run_scm_upload_job`'s `on_total_rows`
+    # wrapper (C3) only touches `total_rows` on a call after the first, never resetting
+    # `processed_rows` back to 0, so this is safe to call again here.
     total_rows += superseded_lines
+    if on_total_rows is not None:
+        on_total_rows(total_rows)
+
+    # The three reactions below run ONCE for the whole file, after every batch has already
+    # committed - NOT per batch, unlike supersession and the relink pass above (S5 review
+    # round 1, B2/B3). Each one genuinely cannot be scoped to a subset of this upload's
+    # changes without changing what it MEANS:
+    #
+    #   * the plan-exception batch is ONE before/after comparison against the reorder plan
+    #     for the WHOLE upload - `before_positions` was captured once, before any batch
+    #     wrote anything, and splitting it into one exception batch per document chunk would
+    #     turn a single coherent "did this upload contradict the plan" answer into
+    #     `_DOCUMENT_BATCH`-many fragments the exception screen (keyed on ONE
+    #     `exception_batch_id`) has no contract for reading;
+    #   * the shipping-order write reads `read.spo_lines` - a document family the diff never
+    #     batches at all, since SPO documents are filtered out of `diff.scope_documents` at
+    #     the reader (R4) - so there is no "this batch's SPO lines" to scope it to;
+    #   * the planning-change batch is ONE reviewable unit for the SO book's re-planning
+    #     screen (`order_count` / `line_count` describe the WHOLE upload), and fragmenting
+    #     it the same way would break that screen's contract too.
+    #
+    # A defect in any of the three costs the operator that one reaction for the whole
+    # upload, never the write itself, which has already committed, batch by batch, above.
 
     # AC-D2a: exceptions are a BATCH produced on confirmation, not ad-hoc signals arriving
     # one at a time. Best-effort, because the upload itself has already succeeded: a failure
@@ -2505,28 +2795,6 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
             )
     if spo.product_ids:
         touched_pids = sorted(set(touched_pids) | set(spo.product_ids))
-
-    # Section 3.G, AC-G3: the buyer acted on the occupancy panel's "location differs", split
-    # the line in AutoCount and uploaded the book again. The book now states BRW-BB 487 + BRW
-    # 13 and the placements are still on the line that used to be DC1 - so each one is moved
-    # onto the line of this same document whose warehouse matches the demand's own location.
-    # PO book only: a sales-order upload changes no supply line.
-    #
-    # Best-effort for the same reason the two batches below are: the write has already
-    # succeeded, and a defect in the reaction must cost the operator a relocation the next
-    # upload makes again, never the upload itself.
-    relinked = 0
-    if doc_type == PO and order_ids:
-        try:
-            from app.services.project_order_inquiry_service import (
-                ProjectOrderInquiryService,
-            )
-
-            relinked = ProjectOrderInquiryService(db).relink_to_matching_lines(
-                list(order_ids.values()), actor_user_id=actor, trigger="po_book_upload",
-            )
-        except Exception:  # pragma: no cover - defensive, see above
-            logger.exception("re-linking placements failed for a confirmed PO upload")
 
     # PLAN-so-book-diff-replanning.md section 2: the SO book's own reaction. Best-effort
     # for the same reason the exception batch above is - the upload has already succeeded,

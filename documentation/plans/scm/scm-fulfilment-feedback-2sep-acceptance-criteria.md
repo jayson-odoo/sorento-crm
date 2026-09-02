@@ -105,8 +105,17 @@ or a rule: those live once on the Policies page.
 - AC-5.3 Killing the worker mid-run leaves documents committed up to the last batch and
   the job marked failed with the row it reached; re-upload resumes without duplicates.
 - AC-5.4 `pytest tests/scm/test_outstanding_import*.py` green; a new test asserts the
-  query count for a 200-row apply stays under 60 (no per-row SELECT) and that no statement
-  carries more than 1,000 bound parameters (the prod trace shipped 13,519 per row).
+  query count for a 200-row apply stays under 100 (no per-row SELECT) and that no SELECT
+  carries more than 1,000 bound parameters (the prod trace shipped 13,519 per row). 100, not
+  a literal 60: company-scope resolution costs a handful more statements depending on which
+  fixture warmed it up earlier in the same pytest session against the shared local
+  database - `test_query_count_does_not_scale_with_row_count` (40 rows vs 200 rows, same
+  shape) is the precise regression guard the absolute ceiling only backs up (review round
+  1, S4). The 1,000-parameter ceiling is scoped to SELECTs: SQLAlchemy's `insertmanyvalues`
+  legitimately coalesces a batch's own new-line INSERTs into one multi-row statement with
+  one parameter per column per row, bounded by `_DOCUMENT_BATCH` rather than by the file's
+  row count, and that is not the shape the prod trace measured (a SELECT's `NOT IN` exclude
+  list growing with every row already processed).
 
 ## S6
 

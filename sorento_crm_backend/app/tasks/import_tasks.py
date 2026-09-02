@@ -3519,19 +3519,35 @@ def _run_scm_upload_job(
 
     job_id_str = str(job.job_id)
     label = f"{job_label} {filename or ''}".strip()
-    outcome = ImportOutcome(getattr(job, "id", None), session_factory=SessionLocal)
-    try:
-        job_service.start_job(job_id_str)
-        result = apply_fn(
-            db,
-            outcome,
+    # `bump_job_progress=True` only here (S5 review round 1, S2): this is the SCM upload
+    # machinery `outcome.flush(publish=True)` was built for, and every other
+    # `ImportOutcome(...)` construction elsewhere keeps its own, unrelated progress
+    # reporting untouched by leaving the flag at its default (off).
+    outcome = ImportOutcome(getattr(job, "id", None), session_factory=SessionLocal,
+                            bump_job_progress=True)
+    # `apply_fn` calls this callback more than once - `_build()` publishes the FILE's own
+    # row count the moment it is read, `apply()` publishes it again once closures are
+    # counted in. Only the FIRST call may reset `processed_rows` to 0 (review round 1b, C3):
+    # a later call happens before any batch has run too, but resetting unconditionally on
+    # every call is what would zero out a live count the moment the SAME total is restated,
+    # if a future caller of `apply_fn` ever republished mid-run. `total_seen` makes "only the
+    # very first call is an initialisation" true by construction rather than by which call
+    # sites currently exist.
+    total_seen = {"n": 0}
+
+    def _on_total_rows(total: int) -> None:
+        total_seen["n"] += 1
+        if total_seen["n"] == 1:
             # Publish the row total the moment the file is read. Without it `total_rows`
             # first appears in `complete_job` and the drawer shows 0/0 for the whole run,
             # which reads as stuck.
-            lambda total: job_service.update_job_progress(
-                job_id_str, total_rows=total, processed_rows=0
-            ),
-        )
+            job_service.update_job_progress(job_id_str, total_rows=total, processed_rows=0)
+        else:
+            job_service.update_job_progress(job_id_str, total_rows=total)
+
+    try:
+        job_service.start_job(job_id_str)
+        result = apply_fn(db, outcome, _on_total_rows)
 
         problem = unreadable_message(result)
         if problem:
