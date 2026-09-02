@@ -400,12 +400,8 @@ export async function updateSpecKey(
     applies_when?: Record<string, string[]>;
     /** The plausibility cap (AC-A.5, C.5). null clears it; absent leaves it as stored. */
     max_value?: number | null;
-    /**
-     * How each value reads on screen (#423, folded into the spec workbench
-     * redesign). Rides the PATCH already, but the column ships in S4 - until then
-     * the backend accepts and drops it (Pydantic `extra='ignore'`), and
-     * `useSpecKeyRecord.save()` mocks the echo onto the client cache itself.
-     */
+    /** How each value reads on screen (#423, folded into the spec workbench
+     * redesign). Trimmed and validated server-side; an empty label drops the key. */
     value_labels?: Record<string, string>;
   },
 ): Promise<SpecRegistryKey> {

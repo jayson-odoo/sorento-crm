@@ -147,8 +147,6 @@ function buildPatchBody(row: SpecRegistryKey, draft: SpecKeyDraft) {
     suppressed_synonyms,
     user_values,
     suppressed_values,
-    // Rides the PATCH even though the backend does not persist it yet (S4 ships the
-    // column). The mock echo happens below, once the PATCH has resolved.
     value_labels: trimmedValueLabels(draft.valueLabels),
     derivation_rules: draft.rules,
   };
@@ -187,24 +185,21 @@ export function useSpecKeyRecord(row: SpecRegistryKey | undefined): UseSpecKeyRe
     try {
       const body = buildPatchBody(row, draft);
       const updated = await update.mutateAsync({ specKey: row.spec_key, body });
-      // Phase 1 mock (D9, folded #423): the real response never carries
-      // `value_labels` until S4 adds the column, so the save would otherwise look
-      // like it did nothing. Merged onto the cache in the SAME write the PATCH
-      // response lands in - see `useSpecRegistryMutations.update` for why this
-      // hook, not the mutation's own `onSuccess`, owns the cache write.
-      const merged: SpecRegistryKey = { ...updated, value_labels: body.value_labels };
+      // Written straight onto the cache rather than via `invalidateQueries` - see
+      // `useSpecRegistryMutations.update` for why this hook, not the mutation's own
+      // `onSuccess`, owns the write.
       queryClient.setQueryData<{ keys: SpecRegistryKey[] }>(
         SPEC_REGISTRY_QUERY_KEY,
         (old) =>
           old
             ? {
                 keys: old.keys.map((key) =>
-                  key.spec_key === row.spec_key ? merged : key,
+                  key.spec_key === row.spec_key ? updated : key,
                 ),
               }
             : old,
       );
-      toast.success(`${merged.label} saved`, {
+      toast.success(`${updated.label} saved`, {
         description:
           draft.rules.length > 0
             ? 'Read the catalogue again to apply it to products.'

@@ -15,7 +15,7 @@ import { SPEC_REGISTRY_QUERY_KEY } from './useSpecRegistryQuery';
  * The registry mutations both routes need: create and reread from the list (S1),
  * update from the record page (S2). `update` is the low-level PATCH -
  * `useSpecKeyRecord` is what turns an edit session's draft into the one call B.2
- * promises and layers the `value_labels` echo (D9 mock) on top of it.
+ * promises.
  *
  * No `delete` here: B.6 runs Delete through the deferred-action engine
  * (`hooks/useDeferredAction`), the same pattern every other record's gear uses -
@@ -53,10 +53,8 @@ export function useSpecRegistryMutations() {
   >({
     mutationFn: ({ specKey, body }) => updateSpecKey(specKey, body),
     // No `invalidateQueries` here, deliberately: `useSpecKeyRecord.save()` writes the
-    // registry cache itself, merging the (still Phase-1-mocked) `value_labels` onto
-    // the server's response in the SAME write. An invalidate here would race that
-    // merge with a background refetch that comes back without the mock and wipe it
-    // moments after Save.
+    // registry cache itself with the PATCH response, in the same call. An invalidate
+    // here would race that write with a background refetch of the same data.
     onError: (error) => {
       toast.error(error.message || 'Failed to save the specification', {
         duration: 10_000,

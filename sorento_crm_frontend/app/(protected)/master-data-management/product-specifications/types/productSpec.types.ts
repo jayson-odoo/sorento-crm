@@ -263,11 +263,8 @@ export interface SpecRegistryKey {
    * which would otherwise render "Pp". Staff-owned on seed AND user rows alike -
    * editable regardless of who owns the value itself (D4, AC-D.3).
    *
-   * MOCKED in Phase 1 (S2): the backend column ships in S4. Until then
-   * `useSpecKeyRecord` echoes the saved dict back into the cached row locally, so the
-   * record page shows the edit immediately; it does not survive a reload. Optional
-   * because neither the real API response nor an older test fixture carries it yet -
-   * every reader treats an absent dict as `{}`.
+   * Optional because an older test fixture may not carry it - every reader treats an
+   * absent dict as `{}`.
    */
   value_labels?: Record<string, string>;
 }
