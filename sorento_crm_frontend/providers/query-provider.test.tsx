@@ -187,14 +187,18 @@ describe('QueryProvider default query options (M4-04)', () => {
   // The 176 per-hook repeats of this exact value are gone: the default above
   // is now the ONLY place it is set. A hook opting into `true` (a genuinely
   // different value) is untouched by this test.
-  it('no hook under app/** or hooks/** sets refetchOnWindowFocus: false itself', () => {
+  it('nothing outside this provider sets refetchOnWindowFocus: false itself', () => {
+    // Every directory a query can be written in, not just `app/` and `hooks/`:
+    // the first pass scanned two of them and left the repeat in
+    // `components/common/LinkAttachmentBrowserDialog.tsx` standing.
     const root = path.resolve(__dirname, '..');
-    const files = [
-      ...listSourceFiles(path.join(root, 'app')),
-      ...listSourceFiles(path.join(root, 'hooks')),
-    ];
+    const files = ['app', 'components', 'hooks', 'lib', 'providers', 'services'].flatMap((dir) =>
+      listSourceFiles(path.join(root, dir)),
+    );
+    const self = path.join(root, 'providers', 'query-provider.tsx');
 
     const offenders = files
+      .filter((file) => file !== self)
       .filter((file) => fs.readFileSync(file, 'utf8').includes('refetchOnWindowFocus: false'))
       .map((file) => path.relative(root, file));
 
