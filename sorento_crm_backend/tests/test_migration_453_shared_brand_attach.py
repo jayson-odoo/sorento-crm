@@ -110,9 +110,18 @@ def test_down_revision_is_the_main_head_at_branch_time():
 
 
 def test_453_is_the_single_head_of_the_whole_graph():
-    heads = _script_directory().get_heads()
-    assert heads == [REVISION_ID], (
-        f"453 must be the ONLY head after upgrade; found {heads}"
+    """453 does not have to BE the head - a later migration is free to chain on
+    top of it - but the graph must still resolve to exactly one head, and 453
+    must sit on the path to it (never orphaned onto a second branch)."""
+    script = _script_directory()
+    heads = script.get_heads()
+    assert len(heads) == 1, f"the graph must resolve to exactly one head; found {heads}"
+
+    revision_id = heads[0]
+    while revision_id is not None and revision_id != REVISION_ID:
+        revision_id = script.get_revision(revision_id).down_revision
+    assert revision_id == REVISION_ID, (
+        f"453 must be an ancestor of the single head {heads[0]}"
     )
 
 
