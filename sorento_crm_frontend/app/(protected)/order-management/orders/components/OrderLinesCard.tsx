@@ -29,7 +29,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { useBulkDeleteOrderLines, useCreateOrderLine } from '../hooks/useOrders';
 import { importDeliveryOrderDetail } from '../services/orderService';
 import type { OrderLine } from '../types/order.types';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import OrderLineDeleteDialog from './OrderLineDeleteDialog';
 
 interface OrderLinesCardProps {

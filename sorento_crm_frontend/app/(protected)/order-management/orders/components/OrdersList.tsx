@@ -43,7 +43,7 @@ import { bulkImportOrders, importOrderTracking, validateOrderTracking, validateD
 import { OrderTrackingUploadDialog } from './OrderTrackingUploadDialog';
 import { OrderLinesImportDialog } from './OrderLinesImportDialog';
 import { useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import {
   buildDetailSearch,
   decodeAdvancedFilter,

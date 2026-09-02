@@ -41,7 +41,7 @@ if (!window.matchMedia) {
   });
 }
 
-vi.mock('sonner', () => ({
+vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() },
 }));
 
@@ -365,7 +365,7 @@ describe('CustomerImportDialog', () => {
   });
 
   it('surfaces a failure to queue', async () => {
-    const { toast } = await import('sonner');
+    const { toast } = await import('@/lib/toast');
     const onUpload = vi.fn().mockRejectedValue(new Error('Queue unavailable'));
     renderDialog({ onUpload });
     choose(xlsx());
@@ -376,7 +376,7 @@ describe('CustomerImportDialog', () => {
   });
 
   it('offers a shortcut to the queued job', async () => {
-    const { toast } = await import('sonner');
+    const { toast } = await import('@/lib/toast');
     renderDialog();
     choose(xlsx());
 
