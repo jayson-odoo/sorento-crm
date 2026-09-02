@@ -87,7 +87,7 @@ export default function ContactAccessAgentsList() {
     setPagination((p) => ({ ...p, pageIndex: 0 }));
   }, [searchQuery]);
 
-  const { data, isLoading, refetch, isFetching } = useContactAccessAgents({
+  const { data, isLoading, isPlaceholderData, refetch, isFetching } = useContactAccessAgents({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -234,6 +234,7 @@ export default function ContactAccessAgentsList() {
 
   return (
     <DataGrid table={table} recordCount={data?.pagination.total || 0} isLoading={isLoading}
+      isPlaceholderData={isPlaceholderData}
       tableLayout={{ columnsVisibility: true }}
     >
       <Card>

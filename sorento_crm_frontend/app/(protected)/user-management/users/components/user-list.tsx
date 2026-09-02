@@ -404,7 +404,7 @@ const UserList = () => {
     [pagination, sorting, searchQuery, selectedRole, selectedStatus, selectedTrashed],
   );
 
-  const { data, isLoading, isFetching } = useQuery({
+  const { data, isLoading, isPlaceholderData, isFetching } = useQuery({
     ...LIST_QUERY_OPTIONS,
     queryKey: usersListQueryKey(listParams),
     queryFn: () => fetchUsersListPage(listParams),
@@ -762,6 +762,7 @@ const UserList = () => {
         emptyAction={addUserButton}
         recordCount={data?.pagination.total || 0}
         isLoading={isLoading}
+        isPlaceholderData={isPlaceholderData}
         rowHref={rowHref}
         rowPending={rowPending}
         standardToolbar={false}

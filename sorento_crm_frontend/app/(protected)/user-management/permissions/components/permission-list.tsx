@@ -119,7 +119,7 @@ const PermissionList = () => {
   };
 
   // Permissions query
-  const { data, isLoading, isFetching } = useQuery({
+  const { data, isLoading, isPlaceholderData, isFetching } = useQuery({
     ...LIST_QUERY_OPTIONS,
     queryKey: [
       'user-permissions',
@@ -335,6 +335,7 @@ const PermissionList = () => {
         table={table}
         recordCount={data?.pagination.total || 0}
         isLoading={isLoading}
+        isPlaceholderData={isPlaceholderData}
         tableLayout={{
           columnsResizable: true,
           columnsPinnable: true,

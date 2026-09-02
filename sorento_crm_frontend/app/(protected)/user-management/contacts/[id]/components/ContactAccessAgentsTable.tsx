@@ -43,7 +43,7 @@ export default function ContactAccessAgentsTable({ contactId }: ContactAccessAge
   // Which agent's per-contact field exceptions are being edited.
   const [fieldAccessFor, setFieldAccessFor] = useState<ContactAgentAccess | null>(null);
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isPlaceholderData } = useQuery({
     ...LIST_QUERY_OPTIONS,
     queryKey: ['contact-access-agents', contactId, pagination, sorting],
     queryFn: async () => {
@@ -232,6 +232,7 @@ export default function ContactAccessAgentsTable({ contactId }: ContactAccessAge
             table={table}
             recordCount={data?.pagination.total || 0}
             isLoading={isLoading}
+            isPlaceholderData={isPlaceholderData}
             onRowClick={handleEdit}
           >
             <DataGridTable />

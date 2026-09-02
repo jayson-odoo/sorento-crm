@@ -100,7 +100,7 @@ export default function ContactsList() {
     [pagination, sorting, searchQuery],
   );
 
-  const { data, isLoading, refetch, isFetching } = useQuery({
+  const { data, isLoading, isPlaceholderData, refetch, isFetching } = useQuery({
     ...LIST_QUERY_OPTIONS,
     queryKey: contactsListQueryKey(listParams),
     queryFn: () => fetchContactsPage(listParams),
@@ -372,6 +372,7 @@ export default function ContactsList() {
       tableLayout={{ columnsVisibility: true }}
       recordCount={data?.pagination?.total || 0}
       isLoading={isLoading}
+      isPlaceholderData={isPlaceholderData}
       rowHref={rowHref}
       emptyAction={listPrimaryAction}
     >

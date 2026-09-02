@@ -87,7 +87,7 @@ const RoleList = () => {
   } = useDebouncedSearch();
 
   // Role list
-  const { data, isLoading, isFetching } = useQuery({
+  const { data, isLoading, isPlaceholderData, isFetching } = useQuery({
     ...LIST_QUERY_OPTIONS,
     queryKey: ['user-roles', pagination, sorting, searchQuery],
     queryFn: () =>
@@ -330,6 +330,7 @@ const RoleList = () => {
         table={table}
         recordCount={data?.pagination.total || 0}
         isLoading={isLoading}
+        isPlaceholderData={isPlaceholderData}
         rowPending={rowPending}
         tableLayout={{
           columnsResizable: true,

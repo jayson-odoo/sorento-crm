@@ -98,7 +98,7 @@ const LogList = () => {
   };
 
   // Users query
-  const { data, isLoading, isFetching } = useQuery({
+  const { data, isLoading, isPlaceholderData, isFetching } = useQuery({
     ...LIST_QUERY_OPTIONS,
     queryKey: [
       'user-logs',
@@ -261,6 +261,7 @@ const LogList = () => {
       table={table}
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
+      isPlaceholderData={isPlaceholderData}
       tableLayout={{
         columnsPinnable: true,
         columnsMovable: true,
