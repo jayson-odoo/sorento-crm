@@ -522,7 +522,19 @@ describe('FulfilmentBoardPanel: the cells', () => {
 
     renderPanel();
 
-    expect(await screen.findByTitle('BRW-BB 22 · BRW 21')).toBeInTheDocument();
+    // S3b: the strip is pills now, not a `·`-joined title string - one pill per location,
+    // folding what does not fit into "+N". jsdom lays every element out at width 0, so only
+    // the first pill shows and the second folds behind "+1" (the same trap
+    // `PillOverflow.test.tsx` documents); both locations are still present either way.
+    const cell = await screen.findByRole('button', {
+      name: /WESERP10B, 43 across 1 sales order/,
+    });
+    // Scoped to the visible pill row (`role="group"`), not just the cell: the hidden
+    // measuring row repeats the same label text off-screen so it can size itself, and a
+    // plain `getByText` finds that copy too.
+    const pills = within(cell).getByRole('group', { name: 'Locations' });
+    expect(within(pills).getByText('BRW-BB 22')).toBeInTheDocument();
+    expect(within(pills).getByText('+1')).toBeInTheDocument();
   });
 
   it('marks a cell that carries a line with no location', async () => {
@@ -593,7 +605,11 @@ describe('FulfilmentBoardPanel: the cells', () => {
     const empty = matrix.querySelector('[data-cell="TPE-9204|2026-08-31"]');
     expect(empty).not.toBeNull();
     expect(empty?.textContent).toBe('');
-    expect(within(matrix).getAllByRole('button').length).toBe(2);
+    // Scoped to /across/ - a cell button's own accessible name - because the source strip's
+    // pills (S3b) are `role="button"` too, and an unscoped query would also count those.
+    expect(
+      within(matrix).getAllByRole('button', { name: /across/ }).length,
+    ).toBe(2);
   });
 });
 
@@ -687,9 +703,13 @@ describe('FulfilmentBoardPanel: the confirm counter is selection-scoped, not win
       ),
     );
 
-    // The window shows three of the forty; the counter must still say forty.
+    // The window shows three of the forty; the counter must still say forty. Scoped to
+    // /across/ - a cell button's own accessible name - because the source strip's pills
+    // (S3b) are `role="button"` too, and an unscoped query would also count those.
     const matrix = await screen.findByTestId('fulfilment-board-matrix');
-    expect(within(matrix).getAllByRole('button')).toHaveLength(3);
+    expect(
+      within(matrix).getAllByRole('button', { name: /across/ }),
+    ).toHaveLength(3);
     await waitFor(() =>
       expect(screen.getByTestId('board-confirm-summary')).toHaveTextContent(
         '40 to confirm · 0 rejected',

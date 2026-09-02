@@ -163,16 +163,16 @@ describe('PillOverflow: fitting pills to the container it measures', () => {
     });
   });
 
-  it('caps the first pill\'s own width so "+N" still has room beside it, when the first pill alone overflows', () => {
-    // The Phase 1 hit-test bug: an uncapped pill 0 clipped invisibly under `overflow-hidden`
-    // and still ate the click meant for "+N" beside it.
+  it('never truncates the first pill\'s text, even when it alone overflows the container (S3b fix)', () => {
+    // A quantity is never cut: pill 0 always renders whole, and "+N" wraps to its own line
+    // instead of pill 0's text being capped below its content to make room for it.
     containerWidth = 200;
     widthOverrides = { AAA: 500 };
     const row = renderPills();
 
     const firstPill = row.getByText('AAA');
-    // width(200) - (overflowWidth(60) + GAP_PX(4)) = 136.
-    expect(firstPill).toHaveStyle({ maxWidth: '136px' });
+    expect(firstPill).toHaveTextContent('AAA');
+    expect(firstPill.style.maxWidth).toBe('');
     expect(row.getByText('+2')).toBeInTheDocument();
   });
 });

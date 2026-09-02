@@ -47,10 +47,15 @@ const GAP_PX = 4;
  * a scroll container's size - the count of pills shown is read off the container's actual
  * width every time it changes, never off a breakpoint or a guess.
  *
- * MEASURED, NOT GUESSED. A hidden row renders every pill (and the widest possible "+N") once,
- * off-screen but laid out, so `offsetWidth` is the real rendered width in this font at this
- * size - not an estimate that drifts the moment a label gets longer. The visible row and the
- * measuring row share the same pill markup for that reason.
+ * MEASURED, NOT GUESSED. A hidden row renders every pill once, off-screen but laid out, so
+ * `offsetWidth` is the real rendered width in this font at this size - not an estimate that
+ * drifts the moment a label gets longer. The visible row and the measuring row share the same
+ * pill markup for that reason.
+ *
+ * A QUANTITY IS NEVER CUT (S3b fix). Pill 0 always renders at its own natural width - never
+ * capped below its content to leave room for "+N" beside it. When the two do not both fit on
+ * one line, "+N" wraps to a second line instead (`flex-wrap` on the visible row); pill 0's
+ * text is never the thing that gives.
  *
  * ONE POPOVER FOR THE WHOLE ROW. Every pill, "+N" included, is a plain, unlabelled trigger for
  * the SAME popover (`renderPopover` renders every item, not only the folded ones) - the
@@ -88,44 +93,25 @@ export function PillOverflow({
 }) {
   const containerRef = React.useRef<HTMLDivElement | null>(null);
   const pillRefs = React.useRef<(HTMLSpanElement | null)[]>([]);
-  const overflowRef = React.useRef<HTMLSpanElement | null>(null);
   const [open, setOpen] = React.useState(false);
   const [visibleCount, setVisibleCount] = React.useState(items.length);
-  /**
-   * Set only when pill 0 itself is wider than the container AND there is a "+N" to make room
-   * for. Left unconstrained, `overflow-hidden` clips pill 0's own overrun invisibly - and an
-   * invisible span is still there for hit-testing, sitting on top of whatever the flex row
-   * placed after the pills (`FulfilmentBoardMatrix`'s cell has an info icon and a trail icon
-   * right there), so a click aimed at "+N" landed on one of THOSE instead (measured: both
-   * boxes reported the same x range). Capping pill 0's own width guarantees "+N" always has
-   * real, clickable room beside it, per AC-3b.4 ("the cell shows one pill and +N").
-   */
-  const [firstPillMaxWidth, setFirstPillMaxWidth] = React.useState<
-    number | null
-  >(null);
 
   const recompute = React.useCallback(() => {
     const container = containerRef.current;
     if (!container || items.length === 0) return;
     const width = container.clientWidth;
     const pillWidths = pillRefs.current.map((el) => el?.offsetWidth ?? 0);
-    const overflowWidth = overflowRef.current?.offsetWidth ?? 0;
 
     let used = 0;
     let count = 0;
-    let firstMax: number | null = null;
     for (let i = 0; i < pillWidths.length; i += 1) {
-      const remaining = pillWidths.length - (i + 1);
-      // Room has to be left for "+N" unless this pill is the last one.
-      const reserve = remaining > 0 ? overflowWidth + GAP_PX : 0;
       const withThis = used + (count > 0 ? GAP_PX : 0) + pillWidths[i];
-      // The first pill always shows (AC-3b.4: "the cell shows one pill and +N"), even at a
-      // width narrower than the pill itself - capped to what is actually left, so a "+N"
-      // that follows renders inside the container rather than past its edge.
-      if (count === 0 && withThis + reserve > width) {
-        firstMax = Math.max(0, width - reserve);
-      }
-      if (count === 0 || withThis + reserve <= width) {
+      // The first pill always shows, WHOLE (AC-3b.4, S3b fix: a quantity is never
+      // truncated) - even at a width narrower than the pill itself. There is nothing here
+      // reserving room for a "+N" beside it: `flex-wrap` on the visible row (below) lets
+      // "+N" drop to its own line instead, so pill 0's own text is never capped below its
+      // content to make room for it.
+      if (count === 0 || withThis <= width) {
         used = withThis;
         count += 1;
       } else {
@@ -133,7 +119,6 @@ export function PillOverflow({
       }
     }
     setVisibleCount(count);
-    setFirstPillMaxWidth(count === 1 ? firstMax : null);
   }, [items.length]);
 
   React.useLayoutEffect(() => {
@@ -152,9 +137,6 @@ export function PillOverflow({
   if (items.length === 0) return null;
 
   const overflowCount = items.length - visibleCount;
-  // The widest a "+N" pill can ever be for this list, so the measuring row reserves enough
-  // room for it whatever N turns out to be.
-  const widestOverflowLabel = `+${items.length}`;
 
   return (
     <div
@@ -190,7 +172,6 @@ export function PillOverflow({
             }}
           />
         ))}
-        <Pill label={widestOverflowLabel} tone="neutral" measureRef={overflowRef} />
       </div>
 
       <Popover open={open} onOpenChange={setOpen}>
@@ -204,20 +185,16 @@ export function PillOverflow({
             role="group"
             aria-label={ariaLabel}
             data-testid={testId}
-            className="flex min-w-0 items-center gap-1 overflow-hidden"
+            // `flex-wrap` (S3b fix): pill 0 never has its text capped to make room for
+            // "+N" - when the two cannot sit on one line, "+N" wraps to its own line
+            // instead. `overflow-hidden` + `min-w-0` are the Phase 1 hit-test fix, kept:
+            // they stop an oversized pill 0 from bleeding into whatever sits after this
+            // strip (the cell's info/trail icon buttons), they just no longer do it by
+            // shrinking the pill's own text below its content.
+            className="flex min-w-0 flex-wrap items-center gap-1 overflow-hidden"
           >
-            {items.slice(0, visibleCount).map((item, index) => (
-              <Pill
-                key={item.key}
-                label={item.label}
-                tone={item.tone}
-                interactive
-                maxWidth={
-                  index === 0 && firstPillMaxWidth !== null
-                    ? firstPillMaxWidth
-                    : undefined
-                }
-              />
+            {items.slice(0, visibleCount).map((item) => (
+              <Pill key={item.key} label={item.label} tone={item.tone} interactive />
             ))}
             {overflowCount > 0 && (
               <Pill label={`+${overflowCount}`} tone="neutral" interactive />
@@ -259,15 +236,11 @@ function Pill({
   tone = 'neutral',
   interactive = false,
   measureRef,
-  maxWidth,
 }: {
   label: string;
   tone?: PillTone;
   interactive?: boolean;
   measureRef?: React.Ref<HTMLSpanElement>;
-  /** Set only on a pill 0 the container cannot fit whole (see `firstPillMaxWidth`). Every
-   * other pill renders at its natural width - it was only shown because it already fit. */
-  maxWidth?: number;
 }) {
   return (
     <span
@@ -284,7 +257,6 @@ function Pill({
             }
           : undefined
       }
-      style={maxWidth !== undefined ? { maxWidth } : undefined}
       className={cn(
         'inline-flex h-5 shrink-0 items-center truncate rounded-full px-1.5 text-2xs font-medium tabular-nums',
         interactive &&
