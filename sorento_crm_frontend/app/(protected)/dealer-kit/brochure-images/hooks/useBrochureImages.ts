@@ -1,6 +1,6 @@
 import { useCallback, useRef } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 // The flag is product master data, so the write lives with the products
 // feature and this screen is its second caller, not its second implementation.

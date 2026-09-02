@@ -18,7 +18,7 @@ import {
   getPaginationRowModel,
 } from '@tanstack/react-table';
 import { ChevronRight, Search, UserPlus, X } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';

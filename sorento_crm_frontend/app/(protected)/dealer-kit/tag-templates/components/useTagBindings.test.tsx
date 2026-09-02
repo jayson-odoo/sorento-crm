@@ -9,7 +9,7 @@
 import { act, renderHook } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 vi.mock('../../services/tagDataService', () => ({
   getProductTagData: vi.fn(),
@@ -21,7 +21,7 @@ vi.mock('../../services/assetService', () => ({
   listFontAssets: vi.fn(async () => []),
 }));
 
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { getProductTagData, getProductSetTagData } from '../../services/tagDataService';
 import {
   resetTagBindingsToastDedupeForTests,

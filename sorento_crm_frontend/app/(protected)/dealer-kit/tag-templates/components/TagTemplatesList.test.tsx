@@ -53,7 +53,7 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: async () => {}, isLoading: false }),
 }));
 
-vi.mock('sonner', () => ({
+vi.mock('@/lib/toast', () => ({
   toast: {
     success: vi.fn(),
     error: vi.fn(),

@@ -16,7 +16,7 @@
  */
 
 import { useEffect, useState } from 'react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { Eye, RotateCcw } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';

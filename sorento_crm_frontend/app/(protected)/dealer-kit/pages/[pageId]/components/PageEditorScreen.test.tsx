@@ -16,7 +16,7 @@ import { render, screen, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 // Radix renders its menu into a portal only once a real pointer opens it, which
 // jsdom does not do. Both primitives are stubbed so the menu's CONTENTS render

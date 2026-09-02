@@ -26,7 +26,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { BlockInspector } from './BlockInspector';
 import { EMPTY_SELECTION, type ProductSelection } from './ProductPickerDialog';
 import { useQueries, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { useQuery } from '@tanstack/react-query';
 import {
   createCollection,

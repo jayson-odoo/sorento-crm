@@ -19,8 +19,8 @@ import React from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
-import { toast } from 'sonner';
+vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+import { toast } from '@/lib/toast';
 const mockToastSuccess = vi.mocked(toast.success);
 const mockToastError = vi.mocked(toast.error);
 

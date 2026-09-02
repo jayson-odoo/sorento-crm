@@ -33,7 +33,7 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
 // `dismiss` too: Undo now parks a deferred action, and the countdown toast is
 // dismissed from an effect when the row settles - a stub without it throws out
 // of an effect no assertion here can catch.
-vi.mock('sonner', () => ({
+vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn(), custom: vi.fn(), dismiss: vi.fn() },
 }));
 
