@@ -237,6 +237,22 @@ def test_applicable_keys_404s_an_unknown_code(api):
     assert response.status_code == 404, response.text
 
 
+def test_applicable_keys_carries_value_labels(api):
+    """AC-E.2: the product page's only registry source must carry `value_labels`
+    too, or a labelled value renders its slug there while the registry list (which
+    already carries the field) renders the label."""
+    db, _as = api
+    _as(_MERCHANDISER)
+    client = TestClient(app)
+    _key(db, "zzt_finish", allowed_values=["pp"], value_labels={"pp": "PP"})
+    product = _product(db)
+
+    response = client.get(f"{_BASE}/applicable-keys", params={"code": product.product_code})
+    assert response.status_code == 200, response.text
+    keys = {row["spec_key"]: row for row in response.json()["keys"]}
+    assert keys["zzt_finish"]["value_labels"] == {"pp": "PP"}
+
+
 # --------------------------------------------------------------------------- #
 # AC-A.13 - the two relaxations
 # --------------------------------------------------------------------------- #
@@ -1004,3 +1020,171 @@ def test_saving_the_shipped_list_back_keeps_every_field_the_engine_reads(api):
         assert stored.get("builder") == shipped.get("builder")
         # The tag is the API's, not the database's: a saved list belongs to the business.
         assert "shipped" not in stored
+
+
+# --------------------------------------------------------------------------- #
+# Value labels (#423 folded in as Group D of PLAN-spec-workbench-redesign.md)
+# --------------------------------------------------------------------------- #
+def test_value_labels_ships_on_the_list_read(api):
+    """AC-D.2: an undeclared field vanishes off `response_model`, so this asserts the
+    key is actually there rather than trusting the schema."""
+    db, _as = api
+    _as(_MERCHANDISER)
+    client = TestClient(app)
+    _key(db, "zzt_finish", allowed_values=["chrome"], value_labels={"chrome": "Chrome"})
+
+    listed = {key["spec_key"]: key for key in client.get(_BASE).json()["keys"]}
+    assert listed["zzt_finish"]["value_labels"] == {"chrome": "Chrome"}
+
+
+def test_a_new_key_reads_an_empty_value_labels_dict(api):
+    db, _as = api
+    _as(_MERCHANDISER)
+    client = TestClient(app)
+    _key(db, "zzt_finish", allowed_values=["chrome"])
+
+    listed = {key["spec_key"]: key for key in client.get(_BASE).json()["keys"]}
+    assert listed["zzt_finish"]["value_labels"] == {}
+
+
+def test_a_label_is_saved_trimmed(api):
+    db, _as = api
+    _as(_REGISTRY_ADMIN)
+    client = TestClient(app)
+    _key(db, "zzt_finish", allowed_values=["chrome"])
+
+    response = client.patch(f"{_BASE}/zzt_finish", json={"value_labels": {"chrome": "  Chrome  "}})
+    assert response.status_code == 200, response.text
+    assert response.json()["value_labels"] == {"chrome": "Chrome"}
+
+
+def test_an_empty_label_drops_the_key(api):
+    db, _as = api
+    _as(_REGISTRY_ADMIN)
+    client = TestClient(app)
+    _key(db, "zzt_finish", allowed_values=["chrome"], value_labels={"chrome": "Chrome"})
+
+    response = client.patch(f"{_BASE}/zzt_finish", json={"value_labels": {"chrome": "   "}})
+    assert response.status_code == 200, response.text
+    assert response.json()["value_labels"] == {}
+
+
+def test_value_labels_are_editable_on_a_seed_row(api):
+    """Staff-owned, like `user_synonyms`: a seed row's vocabulary is untouchable, its
+    label is not."""
+    db, _as = api
+    _as(_REGISTRY_ADMIN)
+    client = TestClient(app)
+    _key(db, "zzt_finish", allowed_values=["chrome"], source="seed")
+
+    response = client.patch(f"{_BASE}/zzt_finish", json={"value_labels": {"chrome": "Chrome"}})
+    assert response.status_code == 200, response.text
+    assert response.json()["value_labels"] == {"chrome": "Chrome"}
+
+
+def test_a_label_on_an_unknown_value_is_refused(api):
+    db, _as = api
+    _as(_REGISTRY_ADMIN)
+    client = TestClient(app)
+    _key(db, "zzt_finish", allowed_values=["chrome"])
+
+    response = client.patch(
+        f"{_BASE}/zzt_finish", json={"value_labels": {"not_a_value": "Nope"}}
+    )
+    assert response.status_code == 422, response.text
+    assert response.json()["code"] == "spec_registry_label_unknown_value"
+
+
+def test_a_label_may_name_an_open_lists_synonym_key(api):
+    """`brand`/`class` ship with no closed `allowed_values`; a label there is only
+    valid against a value that already has a synonym entry."""
+    db, _as = api
+    _as(_REGISTRY_ADMIN)
+    client = TestClient(app)
+    _key(db, "zzt_brand", allowed_values=[], user_synonyms={"acme": ["acme co"]})
+
+    response = client.patch(
+        f"{_BASE}/zzt_brand", json={"value_labels": {"acme": "ACME"}}
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["value_labels"] == {"acme": "ACME"}
+
+
+def test_a_label_on_an_open_lists_unknown_word_is_refused(api):
+    db, _as = api
+    _as(_REGISTRY_ADMIN)
+    client = TestClient(app)
+    _key(db, "zzt_brand", allowed_values=[], user_synonyms={"acme": ["acme co"]})
+
+    response = client.patch(
+        f"{_BASE}/zzt_brand", json={"value_labels": {"widgetco": "WidgetCo"}}
+    )
+    assert response.status_code == 422, response.text
+    assert response.json()["code"] == "spec_registry_label_unknown_value"
+
+
+def test_a_label_over_the_cap_is_refused(api):
+    db, _as = api
+    _as(_REGISTRY_ADMIN)
+    client = TestClient(app)
+    _key(db, "zzt_finish", allowed_values=["chrome"])
+
+    response = client.patch(
+        f"{_BASE}/zzt_finish", json={"value_labels": {"chrome": "x" * 61}}
+    )
+    assert response.status_code == 422, response.text
+    assert response.json()["code"] == "spec_registry_label_too_long"
+
+
+def test_value_labels_are_reassigned_not_mutated(api):
+    """JSONB in-place mutation is not tracked by SQLAlchemy - a second save must still
+    persist, which it would not if the column object were ever mutated in place."""
+    db, _as = api
+    _as(_REGISTRY_ADMIN)
+    client = TestClient(app)
+    _key(db, "zzt_finish", allowed_values=["chrome", "brushed"])
+
+    first = client.patch(f"{_BASE}/zzt_finish", json={"value_labels": {"chrome": "Chrome"}})
+    assert first.status_code == 200, first.text
+    second = client.patch(f"{_BASE}/zzt_finish", json={"value_labels": {"brushed": "Brushed"}})
+    assert second.status_code == 200, second.text
+    # PATCH replaces the dict wholesale, same bargain as every other vocabulary field
+    # in this route - the caller re-sends the merged view it read.
+    assert second.json()["value_labels"] == {"brushed": "Brushed"}
+
+
+def test_a_merchandiser_may_not_set_a_value_label(api):
+    """AC-D.5: `value_labels` is not in `_VOCABULARY_ONLY_FIELDS`, so it is held to
+    the stricter grant like `rank_weight`."""
+    db, _as = api
+    _as(_MERCHANDISER)
+    client = TestClient(app)
+    _key(db, "zzt_finish", allowed_values=["chrome"], source="user")
+
+    response = client.patch(f"{_BASE}/zzt_finish", json={"value_labels": {"chrome": "Chrome"}})
+    assert response.status_code == 403, response.text
+
+
+def test_seed_repair_leaves_a_value_label_alone(api):
+    """AC-D.4: `_seed_values` never names `value_labels`, so the repair loop cannot
+    touch it even on a seed row it otherwise repairs."""
+    from app.services.product_spec_registry import seed_spec_registry, SPEC_REGISTRY_SEED
+
+    db, _as = api
+    seed_key = SPEC_REGISTRY_SEED[0]["spec_key"]
+    row = _key(
+        db,
+        seed_key,
+        label="Drifted label",
+        data_type=SPEC_REGISTRY_SEED[0]["data_type"],
+        source="seed",
+        value_labels={"pp": "PP"},
+    )
+    db.commit()
+
+    seed_spec_registry(db, commit=True)
+    db.refresh(row)
+
+    assert row.value_labels == {"pp": "PP"}
+    # Confirms the repair actually ran and this is not a false pass.
+    assert row.label == SPEC_REGISTRY_SEED[0]["label"]

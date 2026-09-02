@@ -354,6 +354,37 @@ class PriceTagRequestService:
             )
 
     @staticmethod
+    def validate_designable(request: PriceTagRequest) -> None:
+        """Mirrors the FE's ``priceTagActions`` design/"view design" predicate.
+
+        The CRM Lines tab and the request header both compute
+        ``actions.some(spec => spec.action === 'design')`` off
+        ``priceTagActions(status, assigned_to_id)`` to decide whether the
+        designer route is legal right now; this is that same rule, so the
+        endpoint that actually writes a design doc cannot be reached from a
+        status the UI never offers it from. ``designing`` / ``changes_requested``
+        / ``proof_ready`` are legal outright; ``new`` is legal only once
+        claimed (``assigned_to_id`` set) - the FE checks ``!assignedToId``
+        truthiness only, never "claimed by ME", so this does the same and
+        does not additionally require ``assigned_to_id == the caller``.
+        """
+        legal_claimed_new = request.status == STATUS_NEW and request.assigned_to_id
+        legal_status = request.status in (
+            STATUS_DESIGNING,
+            STATUS_CHANGES_REQUESTED,
+            STATUS_PROOF_READY,
+        )
+        if not (legal_claimed_new or legal_status):
+            raise AppException(
+                status_code=409,
+                message=(
+                    "This request's tags cannot be designed in its current "
+                    "status."
+                ),
+                code="INVALID_STATE",
+            )
+
+    @staticmethod
     def validate_set_guard(db: Session, request: PriceTagRequest) -> None:
         """Validate the set guard on an existing request's lines.
 
@@ -504,10 +535,15 @@ class PriceTagRequestService:
         than were submitted is the worse failure.
 
         Lives here, not in a route module, because the CRM detail route and the
-        portal detail route both answer with it (D49).
+        portal detail route both answer with it (D49). Same reason
+        ``attachments`` is resolved here rather than in either route: one call
+        to ``list_attachments_for_entity`` is what keeps the two screens from
+        ever disagreeing about what this request's PO files look like
+        (PLAN-price-tag-feedback-r2 S1).
         """
-        from app.schemas.price_tag import PriceTagRequestResponse
+        from app.schemas.price_tag import PriceTagRequestAttachment, PriceTagRequestResponse
         from app.services.dealer_kit import tag_data_service
+        from app.services.entity_attachment_service import list_attachments_for_entity
 
         response = PriceTagRequestResponse.model_validate(request)
         resolved = {
@@ -525,6 +561,22 @@ class PriceTagRequestService:
             # is serialised as a JSON STRING and the page's `.toFixed(2)` throws.
             line.list_price = None if row["list_price"] is None else float(row["list_price"])
             line.sell_price = None if row["sell_price"] is None else float(row["sell_price"])
+
+        response.attachments = [
+            PriceTagRequestAttachment(**row)
+            for row in list_attachments_for_entity(db, "price_tag_request", request.id)
+        ]
+
+        # Function-local: breaks a module cycle. tag_sheet_export_service
+        # imports STATUS_APPROVED/STATUS_READY from THIS module at its own
+        # top level, so a top-level import here would be circular.
+        from app.services.dealer_kit.tag_sheet_export_service import (
+            latest_completed_export,
+        )
+
+        response.has_completed_export = (
+            latest_completed_export(db, request.id) is not None
+        )
 
         # The header's names, from the same resolver the listing uses so the two
         # screens cannot disagree about who claimed a request.
@@ -693,6 +745,60 @@ class PriceTagRequestService:
             for row in tag_data_service.search_products(db, query, limit=limit)
         )
         return items
+
+    @staticmethod
+    def lookup_promotions(
+        db: Session, contact_id: str, query: str | None = None
+    ) -> list[dict]:
+        """Active-window, audience-gated promotions for the portal's promotion
+        dropdown (S4, #477).
+
+        The active-window half mirrors ``resolve_prices``' ``_offer_prices``:
+        switched-on (``is_active``) AND inside an inclusive ``[start_date,
+        end_date]`` window, either end open. Company scoping is not written here
+        on purpose - ``Promotion`` carries ``CompanyScopedMixin`` and the ordinary
+        ORM scope filter already keeps another company's promotion off this list,
+        the same way it already keeps it out of a price.
+
+        The audience half is applied too - a first cut of this lookup shipped
+        without it, so a dealer-only promotion showed up in every contact's
+        dropdown. It intersects the contact's own access codes
+        (``ContactAccessTypeService.get_contact_access_codes``) against
+        ``Promotion.access_levels``, same rule ``pricing._may_see_offer``
+        enforces: an empty ``access_levels`` reaches nobody. It deliberately does
+        NOT call ``_may_see_offer`` itself, though, because that helper's other
+        half does not apply here - an empty ``ViewerContext.access_codes`` there
+        falls back to the PUBLIC access code, because the anonymous public
+        catalogue is a real, intentional viewer. A portal contact is never
+        anonymous: one with no assigned access code is missing data, not a
+        member of the public, so it fails closed instead of widening to the
+        public audience.
+        """
+        from app.models.marketing import Promotion
+        from app.services.contact_access_type_service import ContactAccessTypeService
+        from app.services.dealer_kit.pricing import business_today
+
+        contact_codes = set(
+            ContactAccessTypeService(db).get_contact_access_codes(contact_id)
+        )
+        if not contact_codes:
+            return []
+
+        today = business_today()
+        q = (
+            db.query(Promotion)
+            .filter(Promotion.is_active.is_(True))
+            .filter(or_(Promotion.start_date.is_(None), Promotion.start_date <= today))
+            .filter(or_(Promotion.end_date.is_(None), Promotion.end_date >= today))
+        )
+        if query:
+            q = q.filter(Promotion.description.ilike(f"%{query}%"))
+        rows = q.order_by(Promotion.description).all()
+        return [
+            {"id": row.id, "name": row.description or ""}
+            for row in rows
+            if row.access_levels and contact_codes & set(row.access_levels)
+        ]
 
     @staticmethod
     def lookup_debtors_for_agent(

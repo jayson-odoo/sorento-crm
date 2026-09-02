@@ -121,7 +121,7 @@ class ProductBase(BaseModel):
     product_code: str
     product_name: str
 
-    @field_validator("product_code", "product_name", mode="before")
+    @field_validator("product_code", "product_name", "barcode", mode="before")
     @classmethod
     def strip_string_fields(cls, v):
         """Trim leading/trailing whitespace to avoid dirty data."""
@@ -142,6 +142,9 @@ class ProductBase(BaseModel):
     brand_id: Optional[str] = None
     base_uom_id: str
     item_type: Optional[str] = None
+    # CRM-owned (PLAN D14): manual entry here, or a non-empty AutoCount sync
+    # value. Never unique - a placeholder product may carry none at all.
+    barcode: Optional[str] = Field(None, max_length=100)
     list_price: Decimal
     cost_price: Optional[Decimal] = None
     invoice_price: Optional[Decimal] = None
@@ -169,6 +172,16 @@ class ProductBase(BaseModel):
         s = str(v).strip().upper()
         return s or "MYR"
 
+    @field_validator("barcode", mode="before")
+    @classmethod
+    def normalize_barcode(cls, v):
+        """Blank normalizes to None, same rule `normalize_currency` uses for an
+        empty value - a cleared field is unset, not a stored empty string."""
+        if v is None:
+            return None
+        s = str(v).strip()
+        return s or None
+
 
 class ProductCreate(ProductBase):
     pass
@@ -181,6 +194,7 @@ class ProductUpdate(BaseModel):
     brand_id: Optional[str] = None
     base_uom_id: Optional[str] = None
     item_type: Optional[str] = None
+    barcode: Optional[str] = Field(None, max_length=100)
     list_price: Optional[Decimal] = None
     cost_price: Optional[Decimal] = None
     invoice_price: Optional[Decimal] = None
@@ -206,13 +220,23 @@ class ProductUpdate(BaseModel):
         s = str(v).strip().upper()
         return s or None
 
-    @field_validator("product_name", "description", mode="before")
+    @field_validator("product_name", "description", "barcode", mode="before")
     @classmethod
     def strip_optional_strings(cls, v):
         """Trim leading/trailing whitespace when provided."""
         if isinstance(v, str):
             return v.strip()
         return v
+
+    @field_validator("barcode", mode="before")
+    @classmethod
+    def normalize_barcode(cls, v):
+        """Blank normalizes to None, same rule `normalize_currency` uses for an
+        empty value - a cleared field is unset, not a stored empty string."""
+        if v is None:
+            return None
+        s = str(v).strip()
+        return s or None
 
     @field_validator("list_price", "cost_price", "invoice_price", mode="after")
     @classmethod

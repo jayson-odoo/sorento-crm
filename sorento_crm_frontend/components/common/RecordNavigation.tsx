@@ -34,6 +34,12 @@ export interface RecordNavigationProps {
   /** e.g. "delivery order" - used for the chevrons' accessible names. */
   ariaLabel?: string;
   className?: string;
+  /**
+   * Stays mounted, both chevrons inert. For the one caller that keeps the pager
+   * on screen while it no longer means anything to click - a client-side route
+   * change fires no `beforeunload` and would drop an in-progress edit draft.
+   */
+  disabled?: boolean;
 }
 
 export default function RecordNavigation({
@@ -46,6 +52,7 @@ export default function RecordNavigation({
   isLoading = false,
   ariaLabel = 'record',
   className,
+  disabled = false,
 }: RecordNavigationProps) {
   const counterLabel =
     isLoading && index == null
@@ -68,7 +75,7 @@ export default function RecordNavigation({
         variant="outline"
         size="icon"
         aria-label={`Previous ${ariaLabel}`}
-        disabled={!hasPrevious}
+        disabled={disabled || !hasPrevious}
         onClick={onPrevious}
       >
         <ChevronLeft className="size-4" />
@@ -90,7 +97,7 @@ export default function RecordNavigation({
         variant="outline"
         size="icon"
         aria-label={`Next ${ariaLabel}`}
-        disabled={!hasNext}
+        disabled={disabled || !hasNext}
         onClick={onNext}
       >
         <ChevronRight className="size-4" />

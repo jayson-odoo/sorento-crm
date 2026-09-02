@@ -181,6 +181,10 @@ export interface ReorderRecommendation {
   alternatives: SupplierChoice[];
   /** True when this row is a no-supplier exception (visibly flagged, no buy). */
   is_exception: boolean;
+  /** Re-plan (S5, G8): this row's product/location carried a decision on the run this
+   *  one superseded, but the suggestion changed - flagged so the buyer decides again
+   *  rather than trusting a carried figure. Absent/false on a run nobody re-planned. */
+  needs_recheck?: boolean;
   /** Disposition action (disposition rows only). */
   disposition_action: DispositionAction | null;
   /** Advisory transfer hint, e.g. "consider transfer 60: WH-JB → WH-KL". */
@@ -407,13 +411,6 @@ export interface ReorderRunSummary {
   total_cash_impact: number;
   /** Total rows to review (buy + disposition) - powers the completion CTA. */
   recommendation_count: number;
-  /**
-   * Order inquiry rows purchasing has not acknowledged yet (`PLAN-scm-oi-handshake.md`,
-   * AC-H10) - the plan page's own chip. LIVE, unlike the counts above it, which are
-   * frozen in the run log: the plan counts acknowledged rows only, so this is the work
-   * the plan itself cannot see, and it drops as the buyer clears it.
-   */
-  awaiting_rows?: number;
 }
 
 /** The run record returned by create / poll. `stage` is UI-only progress. */
@@ -433,6 +430,15 @@ export interface ReorderRun {
   plan_horizon_date?: string | null;
   /** When the engine started - the plan header's "Plan dd/mm/yyyy HH:mm" (C1). */
   started_at?: string | null;
+  /** Header tab scope (plan 5.1, S5, AC-5.1) - pre-fills a Re-plan edit. */
+  warehouse_codes?: string[];
+  is_all_warehouses?: boolean;
+  /** null = every product (the run stored no scope); a list, INCLUDING empty, is a real
+   *  narrowing. */
+  product_codes?: string[] | null;
+  /** Re-plan supersede pointers (G8). At most one is ever set on a given run. */
+  supersedes_run_id?: string | null;
+  superseded_by_run_id?: string | null;
 }
 
 /** Request to launch a run. `budget_id` is greyed in the UI until M4. Planning scope

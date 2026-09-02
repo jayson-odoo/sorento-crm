@@ -166,7 +166,7 @@ def test_apply_budget_pins_accepted_regardless_of_rank(scm_app):
     # Accept / reject below are LOCATION-grain decisions (front planning 5.4), so the run
     # has to be created under the location policy or it owns the Product decision instead.
     set_plan_grain(db, "location")
-    created = svc.create_run(db, ["M4W-CASH"], "warehouse", enqueue=False)
+    created = svc.create_run(db, ["M4W-CASH"], "warehouse", product_codes=["M4P-URGENT", "M4P-CALM"], enqueue=False)
     svc.run_reorder(created["run_id"], db=db)
     rid = created["run_id"]
 
@@ -196,7 +196,7 @@ def test_apply_budget_excludes_dismissed(scm_app):
     # Accept / reject below are LOCATION-grain decisions (front planning 5.4), so the run
     # has to be created under the location policy or it owns the Product decision instead.
     set_plan_grain(db, "location")
-    created = svc.create_run(db, ["M4W-CASH"], "warehouse", enqueue=False)
+    created = svc.create_run(db, ["M4W-CASH"], "warehouse", product_codes=["M4P-URGENT", "M4P-CALM"], enqueue=False)
     svc.run_reorder(created["run_id"], db=db)
     rid = created["run_id"]
 
@@ -221,7 +221,7 @@ def test_apply_full_budget_persists_all_costed_funded(scm_app):
     stamps a null budget_amount on the run."""
     app, db = _client(scm_app, "purchasing")
     _seed_two_buys(db)
-    created = svc.create_run(db, ["M4W-CASH"], "warehouse", enqueue=False)
+    created = svc.create_run(db, ["M4W-CASH"], "warehouse", product_codes=["M4P-URGENT", "M4P-CALM"], enqueue=False)
     svc.run_reorder(created["run_id"], db=db)
     rid = created["run_id"]
 
@@ -249,7 +249,7 @@ def test_put_budget_full_request_funds_all(scm_app):
 
     app, db = _client(scm_app, "purchasing")
     _seed_two_buys(db)
-    created = svc.create_run(db, ["M4W-CASH"], "warehouse", enqueue=False)
+    created = svc.create_run(db, ["M4W-CASH"], "warehouse", product_codes=["M4P-URGENT", "M4P-CALM"], enqueue=False)
     svc.run_reorder(created["run_id"], db=db)
     rid = created["run_id"]
 

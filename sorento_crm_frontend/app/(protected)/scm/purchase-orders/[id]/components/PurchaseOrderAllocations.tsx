@@ -18,8 +18,11 @@ import type { PurchaseOrderLineAllocation } from '../../../types/scm.types';
  *
  * THE THREE FIGURES PER LINE. `Outstanding` is what is still to arrive on the line (the same
  * figure the grid above prints), `Allocated` is the sum of every order-inquiry link on it,
- * and `Free` is what is left. They are computed on the server off one reader, so this panel
- * and the order-inquiry worklist cannot come to disagree about where a quantity sits.
+ * and `Free` is what is left AFTER the claims other sales orders hold on the line as well
+ * (G7 dedication, `PLAN-scm-reorder-oi-feedback-1sep.md`). They are computed on the server
+ * off one reader, so this panel and the order-inquiry worklist cannot come to disagree
+ * about where a quantity sits: 202607-S0067's BRW-IB line read Free 69 while the AutoCount
+ * book dedicated the whole 114 to SO391853, which is the buy that gets made twice.
  *
  * NO IDS. The inquiry reads as its number, the sales order as its document number, the
  * customer and the agent as the labels the worklist already prints for them.
@@ -42,8 +45,8 @@ export function PurchaseOrderAllocations({
           // a hidden section on a detail page is a code-review hard fail, and a buyer who
           // sees nothing cannot tell "nobody is waiting on this" from "the panel is broken".
           <p className="text-sm text-muted-foreground">
-            No order inquiry is linked to this purchase order yet. Purchasing links one from
-            Order inquiries.
+            No order inquiry is linked to this purchase order, and no sales order claims a
+            line of it. Purchasing links one from Order inquiries.
           </p>
         ) : (
           <div className="space-y-5">
@@ -73,6 +76,27 @@ export function PurchaseOrderAllocations({
                     <span className="font-medium text-foreground">{fmtInt(line.free)}</span>
                   </span>
                 </div>
+
+                {/* WHO already owns this line, beside the three figures rather than folded
+                    into them. `Free` nets what these claims still reserve, so a line the
+                    book dedicates elsewhere reads 0 - and this is the sentence that says
+                    why, which is the difference between "nothing left" and "SO391853
+                    bought it". */}
+                {(line.dedicated_to ?? []).length > 0 ? (
+                  <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground">
+                    <span>Dedicated to</span>
+                    {(line.dedicated_to ?? []).map((claim) => (
+                      <Badge
+                        key={`${line.line_id}-${claim.so_number}`}
+                        variant="warning"
+                        appearance="light"
+                        size="sm"
+                      >
+                        {`${claim.so_number} ${fmtInt(claim.reserved)}`}
+                      </Badge>
+                    ))}
+                  </p>
+                ) : null}
 
                 <ScrollArea>
                   <table className="w-full min-w-[640px] text-sm">

@@ -40,10 +40,19 @@ _PO_CANONICAL = re.compile(r"^PO-\d{4}/\d{2}-\d{4}$")
 # fixture builders (all inside the savepoint)
 # ===========================================================================
 
-def _run_buys(db, wid_code) -> str:
+#: The two seed shapes' product codes, so every `_run_buys` caller can name its own
+#: SKUs (G10) - see the module docstring for why: G1 (`PLAN-scm-reorder-oi-feedback-
+#: 1sep.md`) makes the unscoped daily run committed-demand only, and these fixtures
+#: build a plain stock-shortage buy off `demand_stat`, not a committed order.
+_SAME_SUPPLIER_CODES = ["M4P-SHARED-A", "M4P-SHARED-B", "M4P-OTHER-C"]
+_TWO_SUPPLIER_CODES = ["M4P-ALT"]
+
+
+def _run_buys(db, wid_code, product_codes=None) -> str:
     # These are LOCATION-grain decisions, so the run must be created under that policy.
     set_plan_grain(db, "location")
-    created = run_svc.create_run(db, [wid_code], "warehouse", enqueue=False)
+    created = run_svc.create_run(db, [wid_code], "warehouse",
+                                 product_codes=product_codes, enqueue=False)
     assert run_svc.run_reorder(created["run_id"], db=db)["status"] == "completed"
     return created["run_id"]
 
@@ -112,7 +121,7 @@ def _seed_two_supplier_product(db):
 def test_accept_stages_no_po_until_confirm(scm_app):
     _, db, _, _ = scm_app
     wid_code, a, b, c = _seed_same_supplier(db)
-    run_id = _run_buys(db, wid_code)
+    run_id = _run_buys(db, wid_code, product_codes=_SAME_SUPPLIER_CODES)
     recs = {str(r["product_id"]): r for r in _buy_recs(db, run_id)}
 
     res = dsvc.accept_recommendation(db, recs[a]["id"], actor="tester")
@@ -145,7 +154,7 @@ def test_moq_override_reaches_the_draft_po_at_confirm(scm_app):
     _link(db, p, _mk_supplier(db, "M4 MoQ Override Supplier"), moq=500, mult=1, cost=60)
     db.flush()
 
-    run_id = _run_buys(db, "M4W-MOQOV")
+    run_id = _run_buys(db, "M4W-MOQOV", product_codes=["M4P-MOQOV"])
     recs = {str(r["product_id"]): r for r in _buy_recs(db, run_id)}
     assert p in recs
     rec = recs[p]
@@ -182,7 +191,7 @@ def test_moq_override_reaches_the_draft_po_at_confirm(scm_app):
 def test_confirm_consolidates_one_draft_po_per_supplier(scm_app):
     _, db, _, _ = scm_app
     wid_code, a, b, c = _seed_same_supplier(db)
-    run_id = _run_buys(db, wid_code)
+    run_id = _run_buys(db, wid_code, product_codes=_SAME_SUPPLIER_CODES)
     recs = {str(r["product_id"]): r for r in _buy_recs(db, run_id)}
     assert set(recs) >= {a, b, c}, "all three SKUs should buy"
 
@@ -235,7 +244,7 @@ def test_draft_excluded_from_on_order_until_confirmed(scm_app):
     wid_code, a, b, c = _seed_same_supplier(db)
     wid = db.execute(text("SELECT id FROM warehouses WHERE warehouse_code = :c"),
                      {"c": wid_code}).scalar()
-    run_id = _run_buys(db, wid_code)
+    run_id = _run_buys(db, wid_code, product_codes=_SAME_SUPPLIER_CODES)
     rec_a = {str(r["product_id"]): r for r in _buy_recs(db, run_id)}[a]
 
     before = _ordered(db, a, wid)
@@ -264,7 +273,7 @@ def test_draft_excluded_from_on_order_until_confirmed(scm_app):
 def test_confirm_renumbers_draft_to_canonical_sequential(scm_app):
     _, db, _, _ = scm_app
     wid_code, a, b, c = _seed_same_supplier(db)
-    run_id = _run_buys(db, wid_code)
+    run_id = _run_buys(db, wid_code, product_codes=_SAME_SUPPLIER_CODES)
     recs = {str(r["product_id"]): r for r in _buy_recs(db, run_id)}
     # two distinct suppliers → two distinct draft POs (materialised at confirm)
     dsvc.accept_recommendation(db, recs[a]["id"], actor="t")
@@ -293,7 +302,7 @@ def test_confirm_renumbers_draft_to_canonical_sequential(scm_app):
 def test_confirm_is_idempotent(scm_app):
     _, db, _, _ = scm_app
     wid_code, a, b, c = _seed_same_supplier(db)
-    run_id = _run_buys(db, wid_code)
+    run_id = _run_buys(db, wid_code, product_codes=_SAME_SUPPLIER_CODES)
     recs = {str(r["product_id"]): r for r in _buy_recs(db, run_id)}
     dsvc.accept_recommendation(db, recs[a]["id"], actor="t")
     dsvc.confirm_decisions(db, run_id, ids=None, actor="t")
@@ -316,7 +325,7 @@ def test_confirm_is_idempotent(scm_app):
 def test_adjust_switches_supplier_and_appends_override(scm_app):
     _, db, _, _ = scm_app
     wid_code, p = _seed_two_supplier_product(db)
-    run_id = _run_buys(db, wid_code)
+    run_id = _run_buys(db, wid_code, product_codes=_TWO_SUPPLIER_CODES)
     rec = _buy_recs(db, run_id)[0]
     rec_id = rec["id"]
     orig_qty = float(rec["rounded_qty"])
@@ -388,7 +397,7 @@ def test_adjust_switches_supplier_and_appends_override(scm_app):
 def test_adjust_rejects_non_positive_qty(scm_app):
     _, db, _, _ = scm_app
     wid_code, p = _seed_two_supplier_product(db)
-    run_id = _run_buys(db, wid_code)
+    run_id = _run_buys(db, wid_code, product_codes=_TWO_SUPPLIER_CODES)
     rec_id = _buy_recs(db, run_id)[0]["id"]
     from app.services.error_handler import AppException
     import pytest
@@ -404,7 +413,7 @@ def test_adjust_rejects_non_positive_qty(scm_app):
 def test_reject_dismisses_and_stores_reason(scm_app):
     _, db, _, _ = scm_app
     wid_code, a, b, c = _seed_same_supplier(db)
-    run_id = _run_buys(db, wid_code)
+    run_id = _run_buys(db, wid_code, product_codes=_SAME_SUPPLIER_CODES)
     recs = {str(r["product_id"]): r for r in _buy_recs(db, run_id)}
 
     dsvc.accept_recommendation(db, recs[a]["id"], actor="t")  # accept…
@@ -434,7 +443,7 @@ def test_reject_dismisses_and_stores_reason(scm_app):
 def test_bulk_accept_then_bulk_confirm(scm_app):
     _, db, _, _ = scm_app
     wid_code, a, b, c = _seed_same_supplier(db)
-    run_id = _run_buys(db, wid_code)
+    run_id = _run_buys(db, wid_code, product_codes=_SAME_SUPPLIER_CODES)
     recs = _buy_recs(db, run_id)
     ids = [r["id"] for r in recs]
 
@@ -459,7 +468,7 @@ def test_bulk_accept_then_bulk_confirm(scm_app):
 def test_create_gr_stamps_received_and_rejects_draft(scm_app):
     _, db, _, _ = scm_app
     wid_code, a, b, c = _seed_same_supplier(db)
-    run_id = _run_buys(db, wid_code)
+    run_id = _run_buys(db, wid_code, product_codes=_SAME_SUPPLIER_CODES)
     recs = {str(r["product_id"]): r for r in _buy_recs(db, run_id)}
     actor = str(uuid.uuid4())  # picked_by_user_id is a uuid FK to users in the DB
     dsvc.accept_recommendation(db, recs[a]["id"], actor=actor)
@@ -499,7 +508,7 @@ def test_list_decisions_reflects_status_and_confirmed_number(scm_app):
     app, db = _client(scm_app, "purchasing")
     _, db2, _, _ = scm_app
     wid_code, a, b, c = _seed_same_supplier(db)
-    run_id = _run_buys(db, wid_code)
+    run_id = _run_buys(db, wid_code, product_codes=_SAME_SUPPLIER_CODES)
     recs = {str(r["product_id"]): r for r in _buy_recs(db, run_id)}
 
     dsvc.accept_recommendation(db, recs[a]["id"], actor="t")
@@ -560,7 +569,7 @@ def test_confirm_decisions_denied_without_reorder_run_permission(scm_app):
 def test_confirm_decisions_endpoint_materialises_drafts(scm_app):
     app, db = _client(scm_app, "purchasing")
     wid_code, a, b, c = _seed_same_supplier(db)
-    run_id = _run_buys(db, wid_code)
+    run_id = _run_buys(db, wid_code, product_codes=_SAME_SUPPLIER_CODES)
     recs = {str(r["product_id"]): r for r in _buy_recs(db, run_id)}
     for pid in (a, b, c):
         dsvc.accept_recommendation(db, recs[pid]["id"], actor="t")

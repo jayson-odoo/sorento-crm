@@ -2156,7 +2156,7 @@ def _shift_links_off_retired_lines(
             touched.append(cancelled)
 
     if touched:
-        service._refresh_link_state(touched)
+        service.refresh_link_state(touched)
         db.flush()
     return moved
 

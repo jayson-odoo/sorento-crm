@@ -637,9 +637,32 @@ export interface PurchaseOrderLineAllocation {
   outstanding: number;
   /** The sum of every link on this line. */
   allocated: number;
-  /** `outstanding - allocated`, floored at 0. */
+  /**
+   * `outstanding - allocated - what other sales orders' CLAIMS still reserve`, floored at
+   * 0. A claim reserves the claiming order line's live outstanding (G7), so a line the
+   * AutoCount book dedicates to somebody else is not free to buy against even where
+   * nothing has been linked to it yet.
+   */
   free: number;
+  /** WHO the book (or a person, or the buy that created the line) dedicated it to, in
+   *  sales-order date order. Empty on an ordinary undedicated line. */
+  dedicated_to: PurchaseOrderDedication[];
   placements: PurchaseOrderPlacement[];
+}
+
+/** One sales order's claim on a purchase order line (G7 dedication). */
+export interface PurchaseOrderDedication {
+  /** The sales order document number - never an id. */
+  so_number: string;
+  /** What the claim reserves: that order line's LIVE outstanding. */
+  reserved: number;
+  /** How much of `reserved` the order has not placed on this line yet - what is actually
+   *  still taken out of `free`. */
+  unplaced: number;
+  /** Which feed stated it: the purchase book (`po_history` / `po_upload`), the buy that
+   *  created the line (`crm_supply`), a person in the Link dialog (`manual`), or the
+   *  placement's own audit row (`order_inquiry`). */
+  source: string;
 }
 
 export interface PurchaseOrder {

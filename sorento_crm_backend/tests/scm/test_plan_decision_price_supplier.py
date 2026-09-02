@@ -59,7 +59,11 @@ def _two_supplier_buy(db, wid_code, product_code):
     db.flush()
 
     set_plan_grain(db, "location")
-    created = run_svc.create_run(db, [wid_code], "warehouse", enqueue=False)
+    # G1/G10 (`PLAN-scm-reorder-oi-feedback-1sep.md`): the daily run plans committed
+    # demand only; `product_codes` names the SKU (G10) - this fixture builds a plain
+    # stock-shortage buy off `demand_stat`, not a committed order.
+    created = run_svc.create_run(db, [wid_code], "warehouse",
+                                 product_codes=[product_code], enqueue=False)
     assert run_svc.run_reorder(created["run_id"], db=db)["status"] == "completed"
     rec = db.execute(text(
         "SELECT id::text AS id FROM scm.reorder_recommendation "

@@ -27,8 +27,10 @@ import { describe, it, expect } from 'vitest';
 const ROOTS = ['app', 'components'];
 
 /**
- * The 18 files holding the 19 migrated strips (AttachmentDetailModal has two:
+ * The 17 files holding the 18 migrated strips (AttachmentDetailModal has two:
  * the linkage strip and the details/integration strip inside its preview card).
+ * SpecWorkbench.tsx left this list when the spec workbench redesign deleted it
+ * (the registry list it hosted has no Tabs strip at all now).
  */
 const LINE_MIGRATED = [
   'app/(protected)/master-data-management/products/components/ProductForm.tsx',
@@ -42,7 +44,6 @@ const LINE_MIGRATED = [
   'app/(protected)/resource-management/attachments/components/AttachmentDetailModal.tsx',
   'app/(protected)/sla-management/_shared/FormSLATrackerDetail.tsx',
   'app/(protected)/sla-management/conversation-sla-tracking/components/ConversationSLATrackingDetail.tsx',
-  'app/(protected)/master-data-management/product-specifications/components/SpecWorkbench.tsx',
   'app/(protected)/scm/simulation/components/SimulationView.tsx',
   'app/(protected)/scm/policies/components/PolicyConfigView.tsx',
   'app/(protected)/user-management/settings/layout.tsx',

@@ -31,7 +31,7 @@ function isTextFile(name?: string | null, type?: string | null): boolean {
 }
 import {
   PortalAttachment,
-  PortalSubmissionKind,
+  PortalLandingKind,
   deleteAttachment,
   uploadAttachment,
 } from '../lib/portal-client';
@@ -49,7 +49,7 @@ function isVideoAttachment(a: PortalAttachment): boolean {
 }
 
 interface Props {
-  kind: PortalSubmissionKind;
+  kind: PortalLandingKind;
   submissionId: string | null;
   attachments: PortalAttachment[];
   onChange: (next: PortalAttachment[]) => void;

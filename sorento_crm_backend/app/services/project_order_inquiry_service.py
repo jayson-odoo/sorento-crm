@@ -45,7 +45,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from sqlalchemy import func, or_
+from sqlalchemy import event, func, or_
 from sqlalchemy.orm import Session
 
 from app.models.inventory import Warehouse
@@ -60,7 +60,6 @@ from app.models.procurement import (
 from app.models.product import Product
 from app.models.scm import OrderLinkClaim
 from app.models.project_so import (
-    ACK_ACKNOWLEDGEABLE,
     ACK_ACKNOWLEDGED,
     ACK_AWAITING,
     ACK_CHANGED,
@@ -103,6 +102,7 @@ from app.models.projects import (
 )
 from app.services.error_handler import AppException
 from app.services.scm import order_link_service, priority, spo_supply
+from app.services.scm.pool_predicate import is_site_pool
 from app.services.scm.supply_assignment import (
     KIND_PO as SA_KIND_PO,
     KIND_SPO as SA_KIND_SPO,
@@ -129,6 +129,11 @@ from app.services.project_order_inquiry_engine import (
 logger = logging.getLogger(__name__)
 
 _ZERO = Decimal("0")
+
+#: `Session.info` key for `order_inquiry_changed_with_links` dispatches queued mid-
+#: transaction and fired once the session actually commits - see
+#: `_dispatch_changed_with_links` / `register_order_inquiry_post_commit_dispatch`.
+_CHANGED_WITH_LINKS_PENDING_KEY = "oi_changed_with_links_pending"
 
 #: How many purchase orders `relink_to_matching_lines` walks per pass. A purchase-history
 #: upload names thousands of documents in one call, and one `IN` list that long is a bad
@@ -380,6 +385,11 @@ class ProjectOrderInquiryService:
         # `_invalidate_link_cache` on every write, so the cascade cannot read a total it
         # has already changed.
         self._linked_by_target_cache: Optional[Tuple[Dict[str, Decimal], Dict[str, Decimal]]] = None
+        # G7 dedication evidence per candidate LINE (`PLAN-scm-reorder-oi-feedback-1sep.md`
+        # S6), filled by `_prime_claims` for the targets actually under consideration and
+        # dropped by the same invalidation `_linked_by_target` uses - a claim written
+        # mid-pass must not be read stale by the next row.
+        self._claims_cache: Dict[str, Sequence[Dict[str, Any]]] = {}
         # Ladder v4's availability reader (`app.services.scm.group_netting`), over the
         # products this instance has been asked about. A candidate walk needs to know what
         # the group it would link into already owes, and a listing asks the same question
@@ -391,6 +401,10 @@ class ProjectOrderInquiryService:
         # 27 Aug 2026). Five uncached queries per product, and the cascade asks it once
         # per row, so it is answered per product and remembered for the instance.
         self._awaiting_link_cache: Dict[str, Dict[str, set]] = {}
+        # This service instance's own answer to "what SO does this row's claim identity
+        # name" (`claim_identity`'s first element), memoised per row: the cascade calls
+        # `_candidates_for_row` once per row and the identity costs two queries to derive.
+        self._so_number_cache: Dict[str, Optional[str]] = {}
 
     # ------------------------------------------------------------- derivation
 
@@ -554,17 +568,23 @@ class ProjectOrderInquiryService:
             # instruction (two still-owed rows, or a lone placed row carrying no link at
             # all), and those fall through to the netting below exactly as they always
             # did: the drafted rows stand and only the outstanding remainder is raised.
+            # `ack_state` is never a signal here any more (G4, S1) - every row is born
+            # acknowledged. `_cascade_only` is the fact that used to hide behind it: a
+            # row nobody has MANUALLY linked is still the cascade's own guess, and
+            # settling it in place costs nobody a decision they made. Batched (S6): one
+            # grouped load for this line's own rows rather than one query per row.
+            drafted_links = self._links_by_row([str(row.id) for row in rows])
             drafted = [
                 row
                 for row in rows
                 if row.verb in (IV_ORDER, IV_ORDER_BACK)
                 and row.state in (INQUIRY_PLACED, INQUIRY_PARTLY_LINKED)
-                and row.ack_state != ACK_ACKNOWLEDGED
+                and self._cascade_only(drafted_links.get(str(row.id), []))
                 and not row.redirected_to_pool
             ]
             asked_to_settle = str(line.id) in settle_in_place
             if (asked_to_settle or drafted) and self._settle_row_in_place(
-                inquiry, entry, rows, need, decision
+                inquiry, entry, rows, need, decision, actor_user_id=actor_user_id
             ):
                 # Only what the CALLER asked for is reported back: the planning-change
                 # apply reads this list to decide whether to raise a separate DELAY /
@@ -615,7 +635,7 @@ class ProjectOrderInquiryService:
                     # (`po_ref` / `po_line_id` / `spo_ref`) is restated with the state, and
                     # setting `placed` here alone would have left them saying whatever the
                     # last link change happened to leave.
-                    self._refresh_link_state([row])
+                    self.refresh_link_state([row])
                     row.note = (
                         f"{row.note}; Remainder superseded by revision "
                         f"{decision.revision_no}"
@@ -639,7 +659,7 @@ class ProjectOrderInquiryService:
             # that this is one they had already read. The acknowledgement stamps travel
             # with it, so the cell can still say who had taken it on.
             ack_state, acknowledged_by, acknowledged_at, changed_at = self._handshake_for_raise(
-                prior_ack, carried=carried
+                prior_ack, carried=carried, actor_user_id=actor_user_id
             )
             outstanding = need - placed
             if outstanding > _ZERO:
@@ -693,6 +713,11 @@ class ProjectOrderInquiryService:
                         note=message,
                         supply_decision_id=decision.id,
                         state=INQUIRY_RAISED,
+                        # Born acknowledged (G4): nobody manually confirms an exception
+                        # row any more than they confirm a Buy.
+                        ack_state=ACK_ACKNOWLEDGED,
+                        acknowledged_by=actor_user_id,
+                        acknowledged_at=datetime.utcnow(),
                     )
                 )
                 exceptions.append(
@@ -720,6 +745,7 @@ class ProjectOrderInquiryService:
                 and entry.get("order_back")
                 and _dec(entry.get("buy_qty")) > _ZERO
             },
+            actor_user_id=actor_user_id,
         )
         created += shortfalls
         raised += shortfalls
@@ -758,17 +784,21 @@ class ProjectOrderInquiryService:
 
     @staticmethod
     def _handshake_for_raise(
-        prior: Optional[OrderInquiryRow], *, carried: bool
+        prior: Optional[OrderInquiryRow], *, carried: bool, actor_user_id: Optional[str] = None
     ) -> Tuple[str, Optional[str], Optional[datetime], Optional[datetime]]:
         """What the row about to be raised says about the handshake.
 
         Three answers, and the middle one is the whole point: nobody had read this line
-        (`awaiting`, no stamps); this confirmation is only CARRYING the line, so its row
-        says exactly what the row it replaces said; this confirmation is CHANGING a line
-        purchasing had read, so the replacement reads `changed` from today.
+        before, so it is born ACKNOWLEDGED - system-attributed, or the confirming actor's,
+        if there is one (G4, `PLAN-scm-reorder-oi-feedback-1sep.md` S1); this confirmation
+        is only CARRYING the line, so its row says exactly what the row it replaces said;
+        this confirmation is CHANGING a line purchasing had read, so the replacement stamps
+        `changed` from today and is immediately re-acknowledged too - no manual confirm
+        exists anywhere any more.
         """
+        now = datetime.utcnow()
         if prior is None:
-            return ACK_AWAITING, None, None, None
+            return ACK_ACKNOWLEDGED, actor_user_id, now, None
         if carried:
             return (
                 prior.ack_state,
@@ -777,10 +807,10 @@ class ProjectOrderInquiryService:
                 prior.changed_at,
             )
         return (
-            ACK_CHANGED,
-            prior.acknowledged_by,
-            prior.acknowledged_at,
-            datetime.utcnow(),
+            ACK_ACKNOWLEDGED,
+            actor_user_id,
+            now,
+            now,
         )
 
     def _settle_row_in_place(
@@ -790,6 +820,8 @@ class ProjectOrderInquiryService:
         rows: Sequence[OrderInquiryRow],
         need: Decimal,
         decision: Any,
+        *,
+        actor_user_id: Optional[str] = None,
     ) -> bool:
         """A planning change moved THIS line: update its one row rather than replace it.
 
@@ -850,6 +882,7 @@ class ProjectOrderInquiryService:
             # free for whoever needs it next rather than held against a withdrawn
             # instruction; `_remove_links` writes its own "Unlinked from ..." stamp.
             links = self._links_of(row.id)
+            had_links = bool(links)
             if links:
                 self._remove_links(row, links)
             row.state = INQUIRY_CANCELLED
@@ -860,6 +893,12 @@ class ProjectOrderInquiryService:
             )
             self._retire_settled_cancel_balance(rows, decision)
             self.db.flush()
+            if had_links:
+                # S4: a row that carried supply and is now zeroed out is exactly what
+                # purchasing has to hear about - the document it held is going back. The
+                # row holds no link any more by the time this runs, so the fact has to
+                # travel as an explicit flag rather than a fresh query re-deriving it.
+                self._dispatch_changed_with_links(inquiry, row, had_link=True)
             return True
 
         links = self._links_of(row.id)
@@ -891,35 +930,129 @@ class ProjectOrderInquiryService:
             if giving_back:
                 self._remove_links(row, giving_back)
 
+        # Did the CONFIRMATION actually restate this line, or is it only riding along
+        # because a different line in the same order was named (review of PR #471, B2)?
+        # Every row is born acknowledged now (G4), so `drafted` above reaches EVERY
+        # still-cascaded row of EVERY confirm, including a line nobody touched - and this
+        # function used to stamp `changed_at`/`previous_qty`/re-acknowledge and fire the
+        # automation on every one of them regardless, rendering a false "Was 10 -> Now
+        # 10" on a line that never moved. `required_date` is compared only when the
+        # confirmation states one - an entry that names none is not proposing a date
+        # change, whatever the row's own date already reads.
+        required_date = entry.get("required_date")
+        changed = need != previous_qty or (
+            required_date is not None and required_date != previous_date
+        )
+
         row.qty = need
         # Only when the confirmation states one. A line whose new composition carries no
         # required date must not have the date purchasing is working to erased.
-        if entry.get("required_date"):
-            row.delivery_date = entry.get("required_date")
+        if required_date:
+            row.delivery_date = required_date
         if entry.get("stock_location"):
             row.stock_location = entry.get("stock_location")
         row.supply_decision_id = decision.id
         row.order_inquiry_id = inquiry.id
-        row.note = f"{row.note}; {moved}" if row.note else moved
-        # The same two facts as figures, for the Was / Now table (the note above is the
-        # sentence a person reads, and stays one). Written on every settle, not only on a
-        # row purchasing has read: the question they answer is "what did this row say
-        # before", which has the same answer either way.
-        row.previous_qty = previous_qty
-        row.previous_delivery_date = previous_date
-        # The handshake, if there is one to speak of (`PLAN-scm-oi-handshake.md` section
-        # 3). A row purchasing had already taken on has just been amended under them, so it
-        # reads CHANGED until they acknowledge it again - with its links kept, because the
-        # buyer's arrangements are still good for most of the new quantity. A row still
-        # AWAITING is left alone and says nothing: CS is free to change what nobody has
-        # read, and marking it would ask purchasing to re-read something they never read.
-        if row.ack_state in (ACK_ACKNOWLEDGED, ACK_CHANGED):
-            row.ack_state = ACK_CHANGED
-            row.changed_at = datetime.utcnow()
+        if changed:
+            row.note = f"{row.note}; {moved}" if row.note else moved
+            # The same two facts as figures, for the Was / Now table (the note above is
+            # the sentence a person reads, and stays one). Written on every REAL settle,
+            # not only on a row purchasing has read: the question they answer is "what
+            # did this row say before", which has the same answer either way.
+            row.previous_qty = previous_qty
+            row.previous_delivery_date = previous_date
+            # The handshake, if there is one to speak of (`PLAN-scm-oi-handshake.md`
+            # section 3, revised by G4). A row purchasing had already taken on has just
+            # been amended under them, so it stamps CHANGED - `changed_at` plus the
+            # previous_qty/date above ARE the audit the Was/Now table reads - and is
+            # immediately re-acknowledged: there is no manual confirm anywhere any more,
+            # so leaving it sitting on `changed` would invent a step nobody takes. A row
+            # still AWAITING is left alone and says nothing: CS is free to change what
+            # nobody has read, and marking it would ask purchasing to re-read something
+            # they never read.
+            if row.ack_state in (ACK_ACKNOWLEDGED, ACK_CHANGED):
+                row.changed_at = datetime.utcnow()
+                row.ack_state = ACK_ACKNOWLEDGED
+                row.acknowledged_by = actor_user_id
+                row.acknowledged_at = row.changed_at
         self._retire_settled_cancel_balance(rows, decision)
-        self._refresh_link_state([row])
+        self.refresh_link_state([row])
         self.db.flush()
+        if changed:
+            # `linked` is the CURRENT total after any over-cover trim above, not the
+            # pre-trim count - the row may have given a link back entirely.
+            self._dispatch_changed_with_links(inquiry, row, had_link=linked > _ZERO)
         return True
+
+    def _dispatch_changed_with_links(
+        self, inquiry: OrderInquiry, row: OrderInquiryRow, *, had_link: bool
+    ) -> None:
+        """Queue `order_inquiry_changed_with_links` (G6, `PLAN-scm-reorder-oi-feedback-
+        1sep.md` S1) to fire once this session actually COMMITS (S5, review of PR #471).
+
+        `had_link` is the caller's own fact, not a fresh query: by the time a zeroed-out
+        settle calls this, the row's links are already GONE - the very thing purchasing
+        needs telling about - so re-deriving "does it have a link" here would always read
+        False and the notification meant for exactly that case would never fire. A
+        linkless amendment still queues nothing: CS changing an instruction nobody has
+        bought anything against yet has nothing for purchasing to be warned moved.
+
+        This runs deep inside the atomic confirm transaction, unlike the post-commit
+        dispatches `complaints_service` and `form_skip_service` run AFTER their own
+        `db.commit()` - there is no equivalent seam here to call it from, several
+        callers deep in `refresh_for_decision`. A SAVEPOINT around the dispatch was tried
+        and does not work: `AutomationService` commits internally (queueing the
+        notification/email outbox), and `Session.commit()` releases every savepoint
+        above it, not just the innermost one - so the wrapping savepoint's own
+        bookkeeping broke the instant a real dispatch ran. Queuing the CONTEXT now (while
+        the row is live) and firing it from `_fire_pending_changed_with_links`, a
+        module-level `after_commit` listener, is the same pattern
+        `product_spec_write.py`'s bypass backstop already uses for the same reason: real
+        work, off the transaction this write cannot afford to poison.
+        """
+        if not had_link:
+            return
+        try:
+            from app.services.automation_triggers import build_order_inquiry_link
+
+            order = (
+                self.db.query(ProjectSalesOrder)
+                .filter(ProjectSalesOrder.id == inquiry.project_sales_order_id)
+                .one_or_none()
+            )
+            so_number = (
+                (order.autocount_doc_no or order.provisional_ref) if order else None
+            )
+            ctx = {
+                "order_inquiry_row": {
+                    "id": str(row.id),
+                    "item_code": row.item_code,
+                    "so_number": so_number,
+                    "qty": str(row.qty),
+                    "previous_qty": (
+                        str(row.previous_qty) if row.previous_qty is not None else None
+                    ),
+                    "delivery_date": (
+                        row.delivery_date.isoformat() if row.delivery_date else None
+                    ),
+                    "previous_delivery_date": (
+                        row.previous_delivery_date.isoformat()
+                        if row.previous_delivery_date
+                        else None
+                    ),
+                    "link": build_order_inquiry_link(so_number),
+                },
+                "today": date.today().isoformat(),
+            }
+            self.db.info.setdefault(_CHANGED_WITH_LINKS_PENDING_KEY, []).append(
+                {"context": ctx, "source_id": str(row.id)}
+            )
+        except Exception:  # noqa: BLE001 - a notification must not fail the settle
+            logger.exception(
+                "Automation dispatch(order_inquiry_changed_with_links) failed to queue"
+                " for row %s",
+                row.id,
+            )
 
     def _retire_settled_cancel_balance(
         self, rows: Sequence[OrderInquiryRow], decision: Any
@@ -961,6 +1094,7 @@ class ProjectOrderInquiryService:
         decision: Any,
         shortfalls: Sequence[Dict[str, Any]],
         buy_line_ids: Optional[set] = None,
+        actor_user_id: Optional[str] = None,
     ) -> int:
         """One row per donor location this confirmation left oversold (PLAN 13.11).
 
@@ -1069,6 +1203,11 @@ class ProjectOrderInquiryService:
                     covered_by=None,
                     supply_decision_id=decision.id,
                     state=INQUIRY_RAISED,
+                    # Born acknowledged (G4): the hole a borrow left is purchasing's work
+                    # the moment it exists, not something somebody has to say yes to first.
+                    ack_state=ACK_ACKNOWLEDGED,
+                    acknowledged_by=actor_user_id,
+                    acknowledged_at=datetime.utcnow(),
                 )
             )
             created += 1
@@ -1090,7 +1229,9 @@ class ProjectOrderInquiryService:
         every one of them alive on a line CS had taken back out of the decision, holding
         purchase-order quantity for an instruction that no longer exists. The links come
         down with the row, because they were drafts and the document is owed to whoever
-        needs it next. A CONFIRMED row is left exactly where it is: purchasing bought it.
+        needs it next. A row a PERSON has manually linked is left exactly where it is:
+        purchasing bought it (`_only_cascade_links`, S1 - `ack_state` stopped being able to
+        say this the moment a row was born acknowledged).
         """
         covered = {str(entry["line"].id) for entry in buy_lines}
         stale = (
@@ -1107,6 +1248,9 @@ class ProjectOrderInquiryService:
             .all()
         )
         stamp = f"Superseded by revision {decision.revision_no}"
+        # Batched (S6): one grouped load for every stale row's links, rather than one
+        # query per row inside the loop below.
+        stale_links = self._links_by_row([str(row.id) for row in stale])
         for row in stale:
             if str(row.so_line_id) in covered:
                 continue
@@ -1114,13 +1258,17 @@ class ProjectOrderInquiryService:
                 row.state = INQUIRY_CANCELLED
                 row.note = stamp
                 continue
-            if row.ack_state == ACK_ACKNOWLEDGED:
+            if not self._cascade_only(stale_links.get(str(row.id), [])):
                 continue
             # The draft's own history is kept rather than overwritten: which document it
             # was holding, and that the retirement is what took it back.
             self._unplace_drafts([row], trigger="retired")
             row.state = INQUIRY_CANCELLED
             row.note = f"{row.note}; {stamp}" if row.note else stamp
+            # S4: this line dropped out of the revision taking real cascade-linked
+            # supply with it - a superseded row that held a link is exactly what
+            # purchasing has to hear about, the same as a zeroed settle-in-place.
+            self._dispatch_changed_with_links(inquiry, row, had_link=True)
 
     def derive_for_amendment(
         self, amendment: SOAmendment, *, actor_user_id: Optional[str] = None
@@ -1271,6 +1419,7 @@ class ProjectOrderInquiryService:
         self.db.add(inquiry)
         self.db.flush()
 
+        now = datetime.utcnow()
         for plan in plans:
             self.db.add(
                 OrderInquiryRow(
@@ -1286,6 +1435,12 @@ class ProjectOrderInquiryService:
                     covered_by=plan.covered_by,
                     note=plan.note,
                     state=INQUIRY_RAISED,
+                    # Born acknowledged (G4): an amendment's own instruction reads the
+                    # same as any other - system-attributed, or the actor who published
+                    # it, when there is one.
+                    ack_state=ACK_ACKNOWLEDGED,
+                    acknowledged_by=actor_user_id,
+                    acknowledged_at=now,
                 )
             )
         self.db.flush()
@@ -2170,18 +2325,22 @@ class ProjectOrderInquiryService:
         confirm, which meant a buyer found their own purchase orders already dealt out to
         instructions they had never read.
 
-        Only `awaiting` and `changed` rows may be acknowledged. An already-acknowledged one
-        is refused rather than silently re-stamped - the second press would move the time
-        and the name onto somebody who only pressed a button twice - and a rejected one is
-        refused because taking it back is CS re-deciding the line, not purchasing changing
-        its mind about a row that no longer counts.
+        Kept as a route rather than removed once every row was born acknowledged (G4,
+        `PLAN-scm-reorder-oi-feedback-1sep.md` S1): there is no FE press onto it any more,
+        but a caller this build does not control (a script, a future integration) may still
+        reach for the one API that both takes a row on AND runs its cascade. The guard is
+        TOLERANT of that world rather than refusing it: an already-acknowledged row is left
+        exactly as it is - not re-stamped with a fresh time and name, because that would
+        move the record of who actually read it - and still joins the cascade below, so
+        calling this on a row purchasing (or the system) already acknowledged is a no-op on
+        the handshake and a real re-run of Link. Only a REJECTED row is refused: taking it
+        back is CS re-deciding the line, not purchasing changing its mind about a row that
+        no longer counts.
 
         The row's SUPPLY state is refused on too, and it is a different question from the
         handshake: a CANCELLED row was called off and an ACTIONED one was answered
         somewhere else, so taking either on is taking on work nobody is doing, and the
-        cascade behind the press would link nothing for it anyway. The checkbox already
-        refuses them (`orderInquiryAck.isAcknowledgeable`); this is the same rule where it
-        cannot be bypassed by a second tab, a replayed request or a future caller.
+        cascade behind the press would link nothing for it anyway.
 
         `link_up_to` is the LINK HORIZON the cascade half of the press runs under (section
         11): every named row is TAKEN ON whatever its date, and only the linking stops at
@@ -2200,21 +2359,28 @@ class ProjectOrderInquiryService:
                 ),
                 code="order_inquiry_row_not_open",
             )
-        refused = [row for row in rows if row.ack_state not in ACK_ACKNOWLEDGEABLE]
+        refused = [row for row in rows if row.ack_state == ACK_REJECTED]
         if refused:
             raise AppException(
                 status_code=422,
                 message=(
-                    f"{len(refused)} of those rows cannot be acknowledged: a row is "
-                    "acknowledged once, and a rejected one goes back to CS."
+                    f"{len(refused)} of those rows cannot be acknowledged: a rejected "
+                    "row goes back to CS."
                 ),
                 code="order_inquiry_not_acknowledgeable",
             )
         now = datetime.utcnow()
+        transitioned = 0
         for row in rows:
+            # Already acknowledged (the ordinary case, born-ack world): left untouched
+            # rather than re-stamped, so a re-run of this call cannot move who took the
+            # row on or when.
+            if row.ack_state == ACK_ACKNOWLEDGED:
+                continue
             row.ack_state = ACK_ACKNOWLEDGED
             row.acknowledged_by = actor_user_id
             row.acknowledged_at = now
+            transitioned += 1
         # FLUSHED before the cascade: the session runs `autoflush=False` the way the
         # application's does, so the pass below would read these rows at their OLD
         # acknowledgement state and link none of them.
@@ -2228,7 +2394,11 @@ class ProjectOrderInquiryService:
             link_horizon=link_horizon,
         )
         return {
-            "acknowledged": len(rows),
+            # Rows actually TRANSITIONED (nit, review of PR #471), not every row named:
+            # the guard is tolerant of an already-acknowledged row now (G4), and counting
+            # it as "acknowledged" here would tell a caller it did something to a row
+            # this press left untouched.
+            "acknowledged": transitioned,
             "linked_rows": placed["placed_rows"],
             "links": placed["allocations"],
             "after_horizon": placed["after_horizon"],
@@ -2352,7 +2522,7 @@ class ProjectOrderInquiryService:
         links = self._links_of(row.id)
         if links:
             self._remove_links(row, links)
-            self._refresh_link_state([row])
+            self.refresh_link_state([row])
             self.db.flush()
         row.ack_state = ACK_REJECTED
         row.rejected_by = actor_user_id
@@ -2526,7 +2696,7 @@ class ProjectOrderInquiryService:
     # so a cascade needing two lines SPLIT the row - and nine sales-order lines read as
     # eleven instructions. `projects.order_inquiry_links` (migration 421) is one row per
     # placement; the row's `state` and `po_ref` are DERIVED from them, never written by
-    # hand (`_refresh_link_state`).
+    # hand (`refresh_link_state`).
     #
     # **The lever on the reorder engine is netting, not a state test.** `committed_v`'s
     # confirmed leg counts `qty - sum(links.qty)` (migration 422), so a fully linked row
@@ -2553,7 +2723,7 @@ class ProjectOrderInquiryService:
     # the most specific thing anybody knows about the row, and a walk that ignored it would
     # be answering a question nobody asked.
 
-    def _refresh_link_state(self, rows: Sequence[OrderInquiryRow]) -> None:
+    def refresh_link_state(self, rows: Sequence[OrderInquiryRow]) -> None:
         """Set each row's state and its derived display from its own links.
 
         The ONE writer of `state` / `po_ref` / `po_line_id` / `spo_ref` on a linkable row,
@@ -2606,6 +2776,60 @@ class ProjectOrderInquiryService:
             .order_by(OrderInquiryLink.linked_at.asc(), OrderInquiryLink.id.asc())
             .all()
         )
+
+    def _links_by_row(
+        self, row_ids: Sequence[str]
+    ) -> Dict[str, List[OrderInquiryLink]]:
+        """Every named row's links, grouped - ONE query for a whole set of rows.
+
+        `_only_cascade_links` used to be a row-at-a-time convenience every caller walking
+        more than a handful of rows reached for in a loop, which is an N+1 the moment that
+        set grows past a few (review of PR #471, S6): a plan-wide re-deal or a per-line
+        settle check both walk this per row. Callers holding a SET of candidate rows
+        should load through here once and read `_cascade_only` off the preloaded list;
+        `_only_cascade_links` stays for a genuine single-row caller.
+        """
+        wanted = [row_id for row_id in row_ids if row_id]
+        if not wanted:
+            return {}
+        grouped: Dict[str, List[OrderInquiryLink]] = {}
+        for link in (
+            self.db.query(OrderInquiryLink)
+            .filter(OrderInquiryLink.row_id.in_(wanted))
+            .order_by(OrderInquiryLink.linked_at.asc(), OrderInquiryLink.id.asc())
+            .all()
+        ):
+            grouped.setdefault(str(link.row_id), []).append(link)
+        return grouped
+
+    @staticmethod
+    def _cascade_only(links: Sequence[OrderInquiryLink]) -> bool:
+        """Whether a row's links are ALL the cascade's own guess (`auto=True`) - AND
+        there is at least one.
+
+        `ack_state` used to be this proxy (B2/B3, `PLAN-scm-oi-draft-links.md`): a row
+        nobody had acknowledged held only links the system found on its own, so settling
+        it in place or retiring it with a dropped line cost nobody a decision they had
+        made. Since a row is born acknowledged now (G4, `PLAN-scm-reorder-oi-feedback-
+        1sep.md` S1) that reading is gone - every row reads `acknowledged` whether or not
+        a person has ever looked at it - and `OrderInquiryLink.auto` is what was always
+        the TRUE fact underneath it: written by the cascade rather than by a person
+        clicking (its own column comment).
+
+        A LINKLESS row is NOT cascade-only (review of PR #471, S1): `all()` over an empty
+        list is vacuously True, which read a row purchasing placed through a path that
+        writes no link row (the SO349754/WESERP10B shape - `mark_rows`' own `actioned`,
+        or any other placement this table never learned of) as a "draft" free for the
+        walk to settle, retire or redeal. A row with nothing to show here is exactly the
+        row `_settle_row_in_place`'s own PLACED/ACTIONED-with-no-link guard already
+        declines for the same reason; this reading has to agree with it.
+        """
+        return bool(links) and all(link.auto for link in links)
+
+    def _only_cascade_links(self, row_id: str) -> bool:
+        """Single-row convenience over `_cascade_only` - a caller walking more than one
+        row should batch through `_links_by_row` instead (S6)."""
+        return self._cascade_only(self._links_of(row_id))
 
     def _linked_qty_by_row(self, row_ids: Sequence[str]) -> Dict[str, Decimal]:
         """How much of each row already sits on a document. One query for a whole page."""
@@ -2663,7 +2887,143 @@ class ProjectOrderInquiryService:
         across them.
         """
         self._linked_by_target_cache = None
+        self._claims_cache = {}
         self._awaiting_link_cache = {}
+        # A write that resolves or creates a claim (`_write_link`, every placement) must
+        # not leave the NEXT row in the same pass reading the dedication state as it was
+        # before this one wrote - which is why `_claims_cache` is dropped above.
+        # `_so_number_cache` stays: a row's own identity does not change inside a pass.
+
+    def _row_so_number(self, row: OrderInquiryRow) -> Optional[str]:
+        """This row's own SO number, the identity G7 dedication ranks a candidate's own
+        claim against - the same identity `claim_identity` writes a claim under, so a
+        row can never be told its OWN document is "dedicated to" a different one.
+
+        Memoised per row (`_so_number_cache`): the cascade calls `_candidates_for_row`
+        once per row and `claim_identity` costs two queries to derive.
+        """
+        key = str(row.id)
+        if key not in self._so_number_cache:
+            so_number, _item_code, _core_line_id = self.claim_identity(row)
+            self._so_number_cache[key] = so_number
+        return self._so_number_cache[key]
+
+    def _prime_claims(self, target_ids: Sequence[str]) -> None:
+        """Read the dedication evidence for these candidate lines, once.
+
+        Scoped to the targets actually under consideration (S5, review of PR #490). This
+        used to read every RESOLVED claim in the database on the first candidate walk of
+        every service instance - 33,231 rows on the live book - and again after every
+        `_write_link`, because a placement invalidates the cache. A cascade over a product
+        with fifty candidates paid for the whole table each time somebody was linked.
+
+        Cached per TARGET rather than as one whole-table answer, so a second row asking
+        about the same purchase order pays nothing and a row asking about a new one pays
+        only for its own lines.
+        """
+        missing = [str(t) for t in target_ids if str(t) not in self._claims_cache]
+        if not missing:
+            return
+        found = order_link_service.reservations_by_target(self.db, target_ids=missing)
+        for target_id in missing:
+            self._claims_cache[target_id] = found.get(target_id, [])
+
+    def _claims_of(self, target_id: str) -> Sequence[Dict[str, Any]]:
+        """This line's claims, reading through the primed cache and filling it if the
+        caller never primed (`po_candidates_for_row`'s single-line reads, tests)."""
+        if target_id not in self._claims_cache:
+            self._prime_claims([target_id])
+        return self._claims_cache.get(target_id, ())
+
+    def _dedication_for_target(
+        self,
+        target_id: str,
+        own_so_number: Optional[str],
+        *,
+        ignore_claim_ids: frozenset = frozenset(),
+    ) -> Tuple[Decimal, Optional[str], bool]:
+        """`(reserved, dedicated_to, claimed_by_own_so)` for one candidate line (G7 + G12).
+
+        `reserved` is the SUM of every OTHER SO's claimed outstanding on this line -
+        mathematically the same figure a strict SO-date-ordered cascade against the
+        line's own capacity would land on, since both are clamped to zero the same way
+        once subtracted (PO 100, SO A 30 + SO B 50 claimed both read 80 reserved,
+        whichever order they are summed in - the ORDER only decides which SO's number is
+        shown when more than one holds a claim, which `dedicated_to` answers by picking
+        the earliest SO date).
+
+        `dedicated_to` is None when nobody but this row's own SO claims the line - the
+        ordinary case - so a candidate list where nothing is dedicated adds no queries a
+        caller has to filter back out. A claim whose SO line has SETTLED reserves zero
+        (G7) and is excluded here entirely, not just from the sum: a fulfilled or
+        cancelled order is not who the line is "dedicated to" any more, whatever the
+        claim itself still names - the claim row stays, the dedication does not.
+
+        `ignore_claim_ids` is `_candidates_for_row`'s `credit_own_links` reaching in here
+        too (bug found chasing PR #490's CI failures, `test_order_inquiry_draft_links.py`
+        R2/S4 redeal): crediting the row's own DRAFT link's quantity back to `remaining`
+        but leaving the claim `_write_link` wrote for that SAME placement standing made
+        `own_so_claim` true for the document the row ALREADY holds and nothing else -
+        which G7's own sort ranks first (AC-6.4, deliberately, for a REAL dedication) -
+        so a redeal could never move a draft to a genuinely nearer document once G7
+        started writing claims for the cascade's own ordinary, revisable guesses and not
+        only for a person's deliberate ones. The row's own draft claims named here are
+        invisible for this one evaluation - neither own nor another's - so the walk
+        compares the held document and the alternatives on the same terms `credit_own_
+        links` already promises for their quantity.
+        """
+        claims = self._claims_of(target_id)
+        own_claim = False
+        others: List[Dict[str, Any]] = []
+        for claim in claims:
+            if claim["claim_id"] in ignore_claim_ids:
+                continue
+            if own_so_number is not None and claim["so_number"] == own_so_number:
+                # A SETTLED claim does not unlock the line either (nit, review of PR #490).
+                # G12 opens a project bin to the sales order that claims it, and an order
+                # that has been delivered or cancelled is not claiming anything any more -
+                # the same test the `others` branch below applies to a stranger's claim.
+                own_claim = own_claim or claim["outstanding"] > _ZERO
+                continue
+            if claim["outstanding"] > _ZERO:
+                others.append(claim)
+        if not others:
+            return _ZERO, None, own_claim
+        others.sort(
+            key=lambda c: (
+                c["so_date"] is None,
+                c["so_date"] or date.max,
+                c["claim_id"],
+            )
+        )
+        # The WALKED reservation (B2), not the claiming line's raw outstanding: a need
+        # already reserved on an earlier document is not reserved again here.
+        reserved = sum((c["reserved"] for c in others), _ZERO)
+        return reserved, others[0]["so_number"], own_claim
+
+    def _reserved_for_netting(
+        self, target_id: str, own_so_number: Optional[str]
+    ) -> Decimal:
+        """What comes off a candidate's `remaining` on top of the LINKS already netted out.
+
+        `order_link_service.reservations_by_target` has already done the arithmetic (B2):
+        each claim's `reserved` is its share of the claiming SALES ORDER LINE's still
+        unplaced need, capped at the document's own capacity and handed out once across
+        every document that line claims. So what is left to subtract here is simply the
+        sum of the OTHER sales orders' shares - the part of the line somebody else is
+        owed and has not taken yet.
+
+        The row's own claims are skipped: a line this row's order claims reserves nothing
+        against that same order (AC-6.4), and its own placements are already in
+        `by_po` / `by_spo`.
+        """
+        total = _ZERO
+        for claim in self._claims_of(target_id):
+            if own_so_number is not None and claim["so_number"] == own_so_number:
+                continue
+            if claim["reserved"] > _ZERO:
+                total += claim["reserved"]
+        return total
 
     def _pool_codes(self) -> set:
         """Every warehouse that is SOME location's pool, by code.
@@ -2765,13 +3125,55 @@ class ProjectOrderInquiryService:
         covered when the group is 15,514 short of covering what it already owes. A
         pool-location line has no group and is always offered; the row that finds nothing
         stays raised and buys, which is the honest outcome.
+
+        DEDICATION (G7, `PLAN-scm-reorder-oi-feedback-1sep.md` S6): `scm.order_link_claim`
+        - explicit claims only, never a location or product match - subtracts every OTHER
+        SO's live outstanding from a line's `remaining`, in the same order regardless of
+        which claim is walked first (a straight sum, clamped at zero the same way a
+        SO-date-ordered cascade against the line's own capacity would be). This row's OWN
+        claim reserves nothing against itself, and a line it claims ranks first among the
+        candidates (`_candidate`'s sort key). Never removed from the list on account of
+        dedication alone - a fully dedicated line still shows, greyed, so the buyer sees
+        why and can still name it by hand (AC-6.5); the OLD `remaining <= 0` exclusion
+        below fires only for a line already spoken for by an actual link, unchanged.
+
+        PROJECT-BIN LOCK (G12, same slice): a line at a `segment = 'project'` warehouse is
+        `cascadable` ONLY when this row's own claim names it - claimed by another SO or
+        claimed by nobody are refused alike. Never a `remaining` cut: an unclaimed bin's
+        whole quantity is still there for a manual link to take, which is what converts it
+        to claimed (AC-6.9). A pool-destination line carries no such lock (AC-6.10).
+
+        The claim the lock waits for comes from ONE of three places, and never from this
+        walk (captain, 2 Sep 2026, on real data - see `_candidate`'s `cascadable`):
+
+          * the book's own `FromSODocList` column, on either purchase channel
+            (`po_history` / `po_upload` claims);
+          * the SUPPLY WRITER that created the line, at the moment it created it
+            (`app/services/scm/supply_claim.py`, `crm_supply` claims) - a purchase order
+            this codebase raised off the plan is a buy for the order-inquiry rows that
+            sized it, and it says so in the same transaction that opens the line;
+          * a person naming the line by hand in the Link dialog (`manual`, AC-6.9).
+
+        A line none of the three attributed is UNATTRIBUTED and stays manual-link only.
+        A blank `FromSODocList` beside a Loading Date remark such as "REPLACE BACK" means
+        the line belongs to somebody else's order (captain, 2 Sep), which is one more
+        reason the automatic pass may not help itself to one.
         """
         product_id = self._resolve_product_id(row)
         if not product_id:
             return []
+        own_so_number = self._row_so_number(row)
         by_po, by_spo = self._linked_by_target()
+        # `credit_own_links` reaching `_dedication_for_target` too (bug found chasing
+        # PR #490's CI failures, `test_order_inquiry_draft_links.py` R2/S4 redeal): the
+        # row's OWN draft claims are ignored the SAME way its own linked quantity
+        # already is, below, so a redeal compares the held document and a genuinely
+        # nearer one on equal terms rather than always keeping the one G7's own claim
+        # sort ranks first.
+        ignore_claim_ids: frozenset = frozenset()
         if credit_own_links:
             by_po, by_spo = dict(by_po), dict(by_spo)
+            own_claim_ids = set()
             for link in self._links_of(str(row.id)):
                 key = str(link.po_line_id) if link.po_line_id else None
                 if key and key in by_po:
@@ -2779,6 +3181,9 @@ class ProjectOrderInquiryService:
                 key = str(link.spo_allocation_id) if link.spo_allocation_id else None
                 if key and key in by_spo:
                     by_spo[key] = by_spo[key] - _dec(link.qty)
+                if link.claim_id:
+                    own_claim_ids.add(str(link.claim_id))
+            ignore_claim_ids = frozenset(own_claim_ids)
         pools = self._pool_codes()
         cited = self._cited_documents(row)
         own_location = (row.stock_location or "").strip().upper() or None
@@ -2813,6 +3218,9 @@ class ProjectOrderInquiryService:
         # 27 Aug 2026): a group holding an acknowledged, unlinked row may reach its own
         # purchase order, and the row that earns that is the one being placed. Lifted per
         # product instead, a row at any other group walked first took the line.
+        # S5: one scoped read of the dedication evidence for every line this walk could
+        # offer, instead of the whole claim table per candidate.
+        self._prime_claims([str(line.id) for line, _po, _sup, _wh in po_rows])
         deficit = (
             set()
             if manual
@@ -2832,10 +3240,19 @@ class ProjectOrderInquiryService:
             location = warehouse.warehouse_code if warehouse else None
             if group_of_warehouse_code(location) in deficit:
                 continue
+            target_id = str(line.id)
+            raw_remaining = remaining
+            _, dedicated_to, own_claim = self._dedication_for_target(
+                target_id, own_so_number, ignore_claim_ids=ignore_claim_ids
+            )
+            remaining = max(
+                remaining - self._reserved_for_netting(target_id, own_so_number), _ZERO
+            )
+            project_bin = not is_site_pool(warehouse.segment if warehouse else None)
             candidates.append(
                 self._candidate(
                     kind="po",
-                    target_id=str(line.id),
+                    target_id=target_id,
                     document=po.po_number,
                     line_label=self._line_label(line.source_ref),
                     location=location,
@@ -2850,6 +3267,11 @@ class ProjectOrderInquiryService:
                     own_location=own_location,
                     pools=pools,
                     cited=cited,
+                    own_so_claim=own_claim,
+                    dedicated_to=dedicated_to,
+                    project_locked=project_bin and not own_claim,
+                    unattributed=project_bin and dedicated_to is None and not own_claim,
+                    raw_remaining=raw_remaining,
                 )
             )
 
@@ -2866,6 +3288,7 @@ class ProjectOrderInquiryService:
                 )
                 .all()
             )
+            self._prime_claims([str(a.id) for a, _sup, _wh in spo_rows])
             for allocation, supplier, warehouse in spo_rows:
                 remaining = (
                     _dec(allocation.allocated_quantity)
@@ -2874,6 +3297,15 @@ class ProjectOrderInquiryService:
                 )
                 if remaining <= _ZERO:
                     continue
+                target_id = str(allocation.id)
+                raw_remaining = remaining
+                _, dedicated_to, own_claim = self._dedication_for_target(
+                    target_id, own_so_number, ignore_claim_ids=ignore_claim_ids
+                )
+                remaining = max(
+                    remaining - self._reserved_for_netting(target_id, own_so_number),
+                    _ZERO,
+                )
                 location = (
                     warehouse.warehouse_code if warehouse else allocation.location_code
                 )
@@ -2902,10 +3334,11 @@ class ProjectOrderInquiryService:
                     not in pools
                 ):
                     continue
+                project_bin = not is_site_pool(warehouse.segment if warehouse else None)
                 candidates.append(
                     self._candidate(
                         kind="spo",
-                        target_id=str(allocation.id),
+                        target_id=target_id,
                         document=allocation.spo_number,
                         line_label=self._line_label(allocation.spo_line_number),
                         location=location,
@@ -2920,6 +3353,11 @@ class ProjectOrderInquiryService:
                         own_location=own_location,
                         pools=pools,
                         cited=cited,
+                        own_so_claim=own_claim,
+                        dedicated_to=dedicated_to,
+                        project_locked=project_bin and not own_claim,
+                        unattributed=project_bin and dedicated_to is None and not own_claim,
+                        raw_remaining=raw_remaining,
                     )
                 )
 
@@ -3164,18 +3602,31 @@ class ProjectOrderInquiryService:
         own_location: Optional[str],
         pools: set,
         cited: Dict[str, int],
+        own_so_claim: bool = False,
+        dedicated_to: Optional[str] = None,
+        project_locked: bool = False,
+        unattributed: bool = False,
+        raw_remaining: Optional[Decimal] = None,
     ) -> Dict[str, Any]:
-        """One candidate, with the sort key that IS the walk (Q5 then Q7).
+        """One candidate, with the sort key that IS the walk (G7, then Q5, then Q7).
 
-        The key, outermost first: WHICH document CS cited, in the order they wrote them -
-        `SPO-2026/08-0061 & 202606-S0082` tries the allocation before the purchase order,
-        and a rank rather than a flag is what makes that true (a flag puts both in one
-        bucket and lets the date decide between two documents the form already ordered);
-        then an SPO before a purchase order (an order back is owed against what is already
-        shipped before it is owed against a new purchase); then the location tier; then the
-        pool sub-rank inside tier 3 (the row's own site pool before the others); then the
-        PO's own issue date, then the line's expected date, then the document number, then
-        the id so a tie breaks the same way twice.
+        The key, outermost first: whether THIS row's own SO claims the line (G7, AC-6.4) -
+        an explicit dedication outranks even what CS cited, because a claim is a fact
+        while a citation is a hint typed on a form; then WHICH document CS cited, in the
+        order they wrote them - `SPO-2026/08-0061 & 202606-S0082` tries the allocation
+        before the purchase order, and a rank rather than a flag is what makes that true (a
+        flag puts both in one bucket and lets the date decide between two documents the
+        form already ordered); then an SPO before a purchase order (an order back is owed
+        against what is already shipped before it is owed against a new purchase); then the
+        location tier; then the pool sub-rank inside tier 3 (the row's own site pool before
+        the others); then the PO's own issue date, then the line's expected date, then the
+        document number, then the id so a tie breaks the same way twice.
+
+        `dedicated_to` / `unattributed` are the Link dialog's grey states (G7 / G12): the
+        SO number another claim names, or - project-bin only - that nobody has claimed it
+        at all. `project_locked` folds into `cascadable` below rather than living beside
+        it: a line the automatic pass may not touch is exactly what `cascadable` already
+        means, whichever rule refused it.
         """
         tier, sub = link_location_tier(own_location, location, pools)
         # Uncited sorts after every citation, however many there are.
@@ -3192,18 +3643,41 @@ class ProjectOrderInquiryService:
             "tier": tier,
             # What the automatic pass may take (the captain, 27 Aug): the row's own site
             # pool and better, never a sibling group or another site. A row naming no
-            # location ranks nothing and keeps the whole list, as before.
-            "cascadable": own_location is None or tier <= TIER_POOL,
+            # location ranks nothing and keeps the whole list, as before. G12 narrows this
+            # further for a project-bin line this row's own SO has not claimed - refused
+            # to the automatic pass however good its location tier, because the SO that
+            # claims it is the only one allowed to auto-take it.
+            #
+            # There is no trial, preview or self-claiming variant of this test, and there
+            # must never be one (captain, 2 Sep 2026, on real data): the cascade writing
+            # its OWN claim for a line it did not create is how PO 202607-S0067's 114
+            # units at BRW-IB - bought for SO391853 per the AutoCount book - were taken by
+            # SO381895. A project-bin line is attributed by the SUPPLY WRITER that created
+            # it (`app/services/scm/supply_claim.py`) or by the book's own FromSODocList
+            # column, never by the pass that wants to consume it.
+            "cascadable": (own_location is None or tier <= TIER_POOL) and not project_locked,
             "issue_date": issue_date,
             "expected_date": expected_date,
             "remaining": remaining,
+            # `remaining` before G7's dedication subtracted anything - what an ACTUAL
+            # link already claims, and nothing a claim alone reserves. `po_candidates_for_row`
+            # reads `already_tagged` off this rather than off `remaining`, or a dedicated
+            # line with no link on it at all would misreport a link that was never written.
+            "raw_remaining": raw_remaining if raw_remaining is not None else remaining,
             "qty_ordered": qty_ordered,
             "qty_received": qty_received,
             "supplier_name": supplier_name,
             "unit_cost": unit_cost,
             "currency": currency,
             "cited": is_cited,
+            # G7's dedication label: the SO another claim names, when this row's own SO
+            # is not the one holding it. None on the ordinary, unclaimed line.
+            "dedicated_to": dedicated_to,
+            # G12's project-bin lock, unclaimed by ANY SO - the "Unattributed" state,
+            # distinct from `dedicated_to` (claimed, just not by this row).
+            "unattributed": unattributed,
             "sort": (
+                0 if own_so_claim else 1,
                 citation_rank,
                 0 if kind == "spo" else 1,
                 tier,
@@ -3276,8 +3750,14 @@ class ProjectOrderInquiryService:
         claims_by_line = self._linked_claims_by_target(candidates)
         out: List[Dict[str, Any]] = []
         for candidate in candidates:
+            # Off `raw_remaining` - what an ACTUAL link already claims - never off the
+            # dedication-reduced `remaining`, or a line no link has ever touched but
+            # another SO's claim reserves would misreport that claim as an "already
+            # tagged" placement nobody made (G7).
             already = (
-                candidate["qty_ordered"] - candidate["qty_received"] - candidate["remaining"]
+                candidate["qty_ordered"]
+                - candidate["qty_received"]
+                - candidate["raw_remaining"]
             )
             out.append(
                 {
@@ -3306,6 +3786,9 @@ class ProjectOrderInquiryService:
                     ),
                     "currency": candidate["currency"],
                     "claims": claims_by_line.get(candidate["target_id"], []),
+                    # G7 / G12 (S6): the dedication state the dialog greys with.
+                    "dedicated_to": candidate["dedicated_to"],
+                    "unattributed": candidate["unattributed"],
                 }
             )
         recommended = next((entry for entry in out if entry["covers"]), None)
@@ -3354,7 +3837,7 @@ class ProjectOrderInquiryService:
 
         claim_id = None
         if document:
-            so_number, item_code, core_line_id = self._claim_identity(row)
+            so_number, item_code, core_line_id = self.claim_identity(row)
             claim = order_link_service.claim_placed_on_po(
                 self.db,
                 company_id=row.company_id,
@@ -3467,7 +3950,7 @@ class ProjectOrderInquiryService:
         if released > _ZERO:
             self.db.flush()
             self._invalidate_link_cache()
-            self._refresh_link_state(touched)
+            self.refresh_link_state(touched)
             self.db.flush()
         return released
 
@@ -3636,10 +4119,21 @@ class ProjectOrderInquiryService:
             )
 
         need = self._unlinked_need(row)
+        manual = auto_trigger is None
         by_target = {
             candidate["target_id"]: candidate
-            for candidate in self._candidates_for_row(row, manual=auto_trigger is None)
+            for candidate in self._candidates_for_row(row, manual=manual)
         }
+        # AC-6.5's "manual override stays" (B3, review of PR #490). A PERSON naming a
+        # dedicated line is measured against what the line ACTUALLY has left -
+        # `raw_remaining`, net of real LINKS - never against the dedication-reduced
+        # `remaining` the automatic walk uses. The dialog greys such a line and still
+        # offers it (AC-6.5), and G12's whole answer for an unattributed project bin is
+        # "link it manually" (AC-6.9) - but the check refused exactly those links with a
+        # 409, so the override the design promised could not be taken. What another
+        # order's CLAIM reserves is guidance for the automatic pass; a buyer overriding it
+        # deliberately is the escape hatch, and it is audited like any other placement.
+        capacity_field = "raw_remaining" if manual else "remaining"
 
         resolved: List[Tuple[Dict[str, Any], Decimal]] = []
         taken_within_call: Dict[str, Decimal] = {}
@@ -3675,7 +4169,7 @@ class ProjectOrderInquiryService:
                     po_line_id=po_line_id, spo_allocation_id=spo_allocation_id,
                     product_id=product_id,
                 )
-            left = candidate["remaining"] - taken_within_call.get(target_id, _ZERO)
+            left = candidate[capacity_field] - taken_within_call.get(target_id, _ZERO)
             if left < qty:
                 raise AppException(
                     status_code=409,
@@ -3711,7 +4205,7 @@ class ProjectOrderInquiryService:
                 row, candidate, qty, actor_user_id=actor_user_id, auto_trigger=auto_trigger
             )
 
-        self._refresh_link_state([row])
+        self.refresh_link_state([row])
         self.db.flush()
         self._refresh_inquiry_states({row.order_inquiry_id})
         return self.serialize_rows([row])
@@ -3864,8 +4358,26 @@ class ProjectOrderInquiryService:
     def rows_needed_at(
         self, cells: Sequence[Tuple[str, Optional[str]]]
     ) -> List[str]:
+        """Every row `rows_needed_at_by_cell` found, flattened - what the confirm's own
+        first cascade pass hands to `auto_place_for_products`, which is product-wide and
+        has no use for which cell a row came from."""
+        found: List[str] = []
+        for row_ids in self.rows_needed_at_by_cell(cells).values():
+            found.extend(row_ids)
+        return found
+
+    def rows_needed_at_by_cell(
+        self, cells: Sequence[Tuple[str, Optional[str]]]
+    ) -> Dict[Tuple[str, Optional[str]], List[str]]:
         """The ids of raised rows whose demand sits at these `(product_id, warehouse_id)`
-        cells - the rows that SIZED a plan line, in other words.
+        cells - the rows that SIZED a plan line, in other words - KEYED BY THE CELL.
+
+        Per cell rather than flat because the two callers want different grains. The
+        cascade's first pass wants "everybody this order bought for" and flattens it
+        (`rows_needed_at`); G12's write-time claim wants "who is this LINE's buy for", and
+        one purchase order can carry lines at two bins for two different customers
+        (`supply_claim.claim_purchase_order_for_sizing_rows`) - a flat list there would
+        claim each line for both.
 
         `PLAN-scm-purchasing-uat-journey.md` P7. A purchase order confirmed off the plan is
         a buy for particular plan rows, and a plan row is a `(product, location)` cell whose
@@ -3889,7 +4401,7 @@ class ProjectOrderInquiryService:
         """
         wanted = {(str(pid), str(wid) if wid else None) for pid, wid in cells if pid}
         if not wanted:
-            return []
+            return {}
         # Narrowed to the confirmed lines' PRODUCTS before anything is fetched. Without it
         # this walks every raised row in the book to answer a question about one purchase
         # order, which on the live book is thousands of rows and their product lookups.
@@ -3900,7 +4412,7 @@ class ProjectOrderInquiryService:
         query = self._narrow_to_products(query, [pid for pid, _wid in wanted])
         rows = query.all() if query is not None else []
         if not rows:
-            return []
+            return {}
         product_by_row = self._resolve_product_ids_bulk(rows)
 
         # The core line's fulfilment warehouse, one query for the whole set.
@@ -3937,7 +4449,7 @@ class ProjectOrderInquiryService:
                 ).filter(Warehouse.warehouse_code.in_(list(codes)))
             }
 
-        out: List[str] = []
+        out: Dict[Tuple[str, Optional[str]], List[str]] = {}
         for row in rows:
             product_id = product_by_row.get(row.id)
             if not product_id:
@@ -3952,8 +4464,9 @@ class ProjectOrderInquiryService:
                 warehouse_id = stated or core_warehouse.get(str(row.so_line_id or ""))
             else:
                 warehouse_id = core_warehouse.get(str(row.so_line_id or ""))
-            if (str(product_id), warehouse_id) in wanted:
-                out.append(str(row.id))
+            cell = (str(product_id), warehouse_id)
+            if cell in wanted:
+                out.setdefault(cell, []).append(str(row.id))
         return out
 
     def resolve_link_horizon(
@@ -4127,6 +4640,11 @@ class ProjectOrderInquiryService:
         # not seen, so a loop that met them one at a time would rebuild per row - three
         # queries each, over a growing product list, on a pass that names thousands.
         self._netting([self._resolve_product_id(row) for row in rows])
+        # Batched (S6): one grouped load for the WHOLE pass - "a pass that names
+        # thousands" (the comment above) turned the old per-row `_links_of` +
+        # `_only_cascade_links` pair into a doubled N+1 across every row it walked.
+        # Only when there is a re-deal to measure; an ordinary pass never touches drafts.
+        redeal_links = self._links_by_row([str(row.id) for row in rows]) if redeal_drafts else {}
 
         placed_rows = 0
         allocation_count = 0
@@ -4141,11 +4659,11 @@ class ProjectOrderInquiryService:
             # holding nothing (B1, review round 28 Aug). Held per ROW rather than over the
             # whole scope, because every guard below is a reason to leave a row exactly as
             # it is - and a scope-wide unplace had already taken the answer away by then.
-            drafts = (
-                self._links_of(str(row.id))
-                if redeal_drafts and row.ack_state != ACK_ACKNOWLEDGED
-                else []
-            )
+            # `_cascade_only`, not `ack_state` (S1): a row is born acknowledged now, so
+            # the stamp cannot tell a draft from a promise any more - whether a PERSON
+            # has ever manually linked the row is the fact underneath it that survives.
+            row_links = redeal_links.get(str(row.id), [])
+            drafts = row_links if redeal_drafts and self._cascade_only(row_links) else []
             need = _dec(row.qty) if drafts else self._unlinked_need(row)
             if need <= _ZERO:
                 continue
@@ -4221,28 +4739,31 @@ class ProjectOrderInquiryService:
     def _unplace_drafts(self, rows: Sequence[OrderInquiryRow], *, trigger: str) -> None:
         """Take the DRAFT links off these rows so the walk can deal them again (R2).
 
-        A draft is a link whose row is not `acknowledged` - there is no state on the link
-        itself (R1) - so the test is the row's own stamp and nothing else. A confirmed row
-        is skipped whole: its link is a promise purchasing made, and an automatic pass that
-        moved it would move a commitment nobody was asked about.
+        A draft is a link nobody has manually made - there is no state on the link itself
+        (R1) - so the test is `_only_cascade_links`, not the row's own `ack_state` (S1: a
+        row is born acknowledged, so that stamp stopped being able to tell a draft from a
+        promise). A row carrying so much as one MANUAL link is skipped whole: that link is
+        a promise purchasing made, and an automatic pass that moved it would move a
+        commitment nobody was asked about.
 
         WHY, on the row's note: `_remove_links` already writes "Unlinked from X", which
         says what happened and not why. The trigger says why, so a buyer reading a row that
         changed document overnight finds the press that did it.
         """
+        # Batched (S6): one grouped load, read twice (the cascade-only test, then the
+        # removal itself) instead of two separate queries per row.
+        links_by_row = self._links_by_row([str(row.id) for row in rows])
         touched: List[OrderInquiryRow] = []
         for row in rows:
-            if row.ack_state == ACK_ACKNOWLEDGED:
-                continue
-            links = self._links_of(row.id)
-            if not links:
+            links = links_by_row.get(str(row.id), [])
+            if not self._cascade_only(links):
                 continue
             self._remove_links(row, links)
             stamp = f"Re-dealt by {trigger}"
             row.note = f"{row.note}; {stamp}" if row.note else stamp
             touched.append(row)
         if touched:
-            self._refresh_link_state(touched)
+            self.refresh_link_state(touched)
             self.db.flush()
             self._refresh_inquiry_states({row.order_inquiry_id for row in touched})
 
@@ -4557,7 +5078,7 @@ class ProjectOrderInquiryService:
             self._invalidate_link_cache()
             # The derived display (`po_ref` / `po_line_id`) is read off the links, so it has
             # to be restated or the row keeps naming the line it has just left.
-            self._refresh_link_state(touched)
+            self.refresh_link_state(touched)
             self.db.flush()
         return moved
 
@@ -4588,7 +5109,7 @@ class ProjectOrderInquiryService:
                 code="order_inquiry_not_placed",
             )
         self._remove_links(row, links)
-        self._refresh_link_state([row])
+        self.refresh_link_state([row])
         self.db.flush()
         self._refresh_inquiry_states({row.order_inquiry_id})
         return self.serialize_rows([row])[0]
@@ -4624,7 +5145,7 @@ class ProjectOrderInquiryService:
         for row in rows:
             self._remove_links(row, self._links_of(row.id))
         if rows:
-            self._refresh_link_state(rows)
+            self.refresh_link_state(rows)
             self.db.flush()
             self._refresh_inquiry_states({row.order_inquiry_id for row in rows})
         return len(rows)
@@ -4901,7 +5422,7 @@ class ProjectOrderInquiryService:
             return True
         return verb in _SPO_LINKABLE_VERBS and product_id in candidates.get("spo", ())
 
-    def _claim_identity(
+    def claim_identity(
         self, row: OrderInquiryRow
     ) -> Tuple[str, Optional[str], Optional[str]]:
         """The (so_number, item_code, core so_line_id) the audit claim is written and
@@ -5063,3 +5584,69 @@ def confirmed_unplaced_buy_rows(
     if warehouse_id:
         query = query.filter(SalesOrderLine.warehouse_id == warehouse_id)
     return query.all()
+
+
+_POST_COMMIT_DISPATCH_REGISTERED = False
+
+
+def register_order_inquiry_post_commit_dispatch() -> None:
+    """Fire every `order_inquiry_changed_with_links` a settle queued, once this session's
+    write actually commits (S5, review of PR #471).
+
+    Mirrors `product_spec_write.register_spec_write_backstop`: `_dispatch_changed_with_links`
+    cannot dispatch synchronously (see its own docstring - `AutomationService` commits
+    internally, which would release every SAVEPOINT above it, not just its own), so it
+    queues the fully-built context on `Session.info` instead and this module-level
+    listener drains the queue after a REAL commit. `after_soft_rollback` discards the
+    queue on any rollback (including a savepoint's, which is what every test in this
+    suite exercises) - a write that never landed has nothing to report.
+
+    Idempotent and called once at startup, the same as every other global session
+    listener this app registers (`register_audit_listeners`, the embedding listeners,
+    the spec backstop above).
+    """
+    global _POST_COMMIT_DISPATCH_REGISTERED
+    if _POST_COMMIT_DISPATCH_REGISTERED:
+        return
+
+    @event.listens_for(Session, "after_commit")
+    def _fire_pending_changed_with_links(session):  # noqa: ANN001
+        pending = session.info.pop(_CHANGED_WITH_LINKS_PENDING_KEY, None)
+        if not pending:
+            return
+        # A FRESH session, not this one (S5): `session` just committed and, under
+        # `join_transaction_mode="create_savepoint"` (every test in this suite),
+        # `after_commit` fires before the session has re-begun a usable transaction of
+        # its own - a query here raises "Can't operate on closed transaction". A
+        # dispatch is real, independent work (`AutomationService` commits its own
+        # notification/email-outbox rows), so it earns its own connection the same way
+        # the embedding pipeline hands its own work to a separate consumer rather than
+        # keep running on the producer's session.
+        from app.database import SessionLocal
+        from app.services.automation_service import AutomationService
+
+        fresh = SessionLocal()
+        try:
+            for item in pending:
+                try:
+                    AutomationService(fresh).dispatch_event(
+                        "order_inquiry_changed_with_links",
+                        context=item["context"],
+                        source_kind="order_inquiry_row",
+                        source_id=item["source_id"],
+                    )
+                except Exception:  # noqa: BLE001 - a post-commit side effect never raises
+                    fresh.rollback()
+                    logger.exception(
+                        "Automation dispatch(order_inquiry_changed_with_links) failed"
+                        " for row %s",
+                        item.get("source_id"),
+                    )
+        finally:
+            fresh.close()
+
+    @event.listens_for(Session, "after_soft_rollback")
+    def _discard_pending_changed_with_links(session, previous_transaction):  # noqa: ANN001
+        session.info.pop(_CHANGED_WITH_LINKS_PENDING_KEY, None)
+
+    _POST_COMMIT_DISPATCH_REGISTERED = True

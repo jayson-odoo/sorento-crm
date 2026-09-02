@@ -75,7 +75,11 @@ def _install_no_provider(monkeypatch) -> None:
 def _seed_buy_rec(db) -> ReorderRecommendation:
     """One frozen BUY recommendation inside the savepoint."""
     _seed_two_buys(db)
-    created = run_svc.create_run(db, ["M4W-CASH"], "warehouse", enqueue=False)
+    # G1/G10 (`PLAN-scm-reorder-oi-feedback-1sep.md`): the daily run plans committed
+    # demand only; `_seed_two_buys` builds a plain stock-shortage buy off `demand_stat`,
+    # not a committed order, so it needs G10's named-product bypass to enter the run.
+    created = run_svc.create_run(db, ["M4W-CASH"], "warehouse",
+                                 product_codes=["M4P-URGENT", "M4P-CALM"], enqueue=False)
     assert run_svc.run_reorder(created["run_id"], db=db)["status"] == "completed"
     rec = (
         db.query(ReorderRecommendation)
@@ -386,7 +390,8 @@ def test_advisory_denied_without_dashboard_view(scm_app):
 def _seed_run(db) -> str:
     """Run the M4 cash seed and return the completed run_id (with buys frozen)."""
     _seed_two_buys(db)
-    created = run_svc.create_run(db, ["M4W-CASH"], "warehouse", enqueue=False)
+    created = run_svc.create_run(db, ["M4W-CASH"], "warehouse",
+                                 product_codes=["M4P-URGENT", "M4P-CALM"], enqueue=False)
     assert run_svc.run_reorder(created["run_id"], db=db)["status"] == "completed"
     return created["run_id"]
 

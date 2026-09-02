@@ -85,6 +85,14 @@ def list_purchase_orders(
             "uploaded (AC-H13). Omitted = every order; naming none matches none."
         ),
     ),
+    unclaimed_project_bin: Optional[bool] = Query(
+        None,
+        description=(
+            "true = carries an open line at a project-segment warehouse no "
+            "scm.order_link_claim names (G12) - the backfill Joey works from "
+            "FromSODocList in AutoCount; false = the complement; omitted = every order."
+        ),
+    ),
     db: Session = Depends(get_db),
     _user: dict = Depends(_READ),
 ):
@@ -112,6 +120,7 @@ def list_purchase_orders(
     return PurchaseOrderService(db).list(
         page, limit, sort, dir, query, status, supplier,
         product_code=product_code, outstanding=outstanding, allocated=allocated,
+        unclaimed_project_bin=unclaimed_project_bin,
         documents=documents.split(",") if documents is not None else None,
     )
 

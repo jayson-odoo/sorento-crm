@@ -965,7 +965,7 @@ class OrderInquiryRow(Base, CompanyScopedMixin):
     # being written"). The TRUTH is `projects.order_inquiry_links`, one row per placement:
     # a row may sit on two lines of one purchase order and on an SPO allocation at the
     # same time, and a single column cannot say that. Nothing writes these two by hand any
-    # more - `_refresh_link_state` derives them from the links whenever the links change.
+    # more - `refresh_link_state` derives them from the links whenever the links change.
     # SET NULL, not CASCADE: a purchase order line getting deleted must not take the
     # instruction's history with it.
     po_ref = Column(String(80), nullable=True)

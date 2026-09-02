@@ -240,13 +240,8 @@ def test_asking_about_nothing_returns_nothing(db):
     assert _last_purchase_map(db, []) == {}
 
 
-def test_the_age_is_quoted_in_the_reason_rather_than_asserted(db):
-    """"dead stock" with no figure is an assertion; a number is something to check."""
-    from app.services.scm.reorder_run_service import _disposition_label
-
-    label = _disposition_label("dead", {"last_purchase_days": 1876}, "ageing")
-
-    assert "1,876 days ago" in label
-    assert "never moved" in label
-    # And the movement wording is untouched, so the two are distinguishable on screen.
-    assert _disposition_label("dead", {}, "movement") != label
+# `_disposition_label` (the reason-text formatter for a `disposition` rec) was removed
+# with the rec type itself (G2, `PLAN-scm-reorder-oi-feedback-1sep.md`) - a dead-stock /
+# overstock report is BL-045, not a run recommendation. `eng.disposition()` above is
+# still the classification the engine reads to suppress a contradictory buy
+# (`reorder_run_service._emit_cell`); only the label text nobody could see any more is gone.

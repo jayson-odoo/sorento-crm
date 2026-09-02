@@ -1,14 +1,15 @@
 /**
  * Purchasing's cross-project order inquiry (the screen), rewritten for
- * `PLAN-scm-oi-draft-links.md`: the toolbar is Actions + Start (item 12), the row Actions
- * column and the State column/filter are gone (R8/item 11), the list opens on Confirmed =
- * To confirm (R3/AC-D12), and the "Link up to" box moved off the toolbar into the Auto
- * link all dialog (item 12, tested on its own in `AutoLinkOrderInquiryDialog.test.tsx`).
+ * `PLAN-scm-oi-draft-links.md` and again for `PLAN-scm-reorder-oi-feedback-1sep.md` S1: the
+ * toolbar is Actions + Start (item 12), the row Actions column, the State column/filter and
+ * the Confirmed column are all gone (R8/item 11, S1 AC-1.5), the list opens on every row -
+ * no default ack filter (S1, G5) - and the "Link up to" box moved off the toolbar into the
+ * Auto link all dialog (item 12, tested on its own in `AutoLinkOrderInquiryDialog.test.tsx`).
  *
  * What is worth pinning here: every response shape renders explicitly, the columns read
  * in the sheet's own order with the renamed headers, the two menus carry the right counts
- * and disable at zero, the default filter and its clear round-trip through the URL, and
- * the handshake presses (Confirm selected, Reject selected) send what they say they send.
+ * and disable at zero, an explicit ack filter and its clear round-trip through the URL,
+ * and the handshake press that remains (Reject selected) sends what it says it sends.
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -219,13 +220,6 @@ function openActionsMenu() {
   });
 }
 
-function openStartMenu() {
-  fireEvent.pointerDown(screen.getByRole('button', { name: /^start$/i }), {
-    button: 0,
-    ctrlKey: false,
-  });
-}
-
 /**
  * Escape closes the menu - and, like every Radix modal layer, it stays
  * mounted (keeping `aria-hidden` over the rest of the page) for as long as
@@ -301,7 +295,6 @@ describe('OrderInquiriesClient: reading the page', () => {
       'Instruction',
       'Raised by',
       'Raised at',
-      'Confirmed',
     ];
     let cursor = -1;
     for (const title of order) {
@@ -313,8 +306,10 @@ describe('OrderInquiriesClient: reading the page', () => {
     }
     // The State column and its header are gone entirely (item 11).
     expect(headers.some((text) => text === 'State')).toBe(false);
-    // No row Actions column either (R8).
+    // No row Actions column either (R8), and no Confirmed column any more (S1,
+    // AC-1.5) - there is no manual confirm left to report on.
     expect(headers.some((text) => /^actions$/i.test(text))).toBe(false);
+    expect(headers.some((text) => text === 'Confirmed')).toBe(false);
   });
 
   it('says nothing has been raised yet, and offers the screen that raises it', async () => {
@@ -400,51 +395,8 @@ describe('OrderInquiriesClient: reading the page', () => {
   });
 });
 
-describe('AC-D12: the page opens on Confirmed = To confirm', () => {
-  it('opens with the active-filter chip shown, off no `?ack=` at all', async () => {
-    renderClient();
-    await screen.findByText('SO385126');
-
-    await waitFor(() =>
-      expect(listOrderInquiryWorklist).toHaveBeenCalledWith(
-        expect.objectContaining({ ack: 'to_confirm' }),
-      ),
-    );
-    expect(screen.getByText('Confirmed: To confirm')).toBeInTheDocument();
-  });
-
-  it('clearing the chip requests ?ack=all (never absent) and drops the chip', async () => {
-    renderClient();
-    await screen.findByText('SO385126');
-    await waitFor(() =>
-      expect(routerReplace).toHaveBeenCalledWith(
-        expect.stringContaining('ack=to_confirm'),
-        expect.anything(),
-      ),
-    );
-
-    fireEvent.click(
-      screen.getByRole('button', {
-        name: 'Clear filter: Confirmed: To confirm',
-      }),
-    );
-
-    await waitFor(() =>
-      expect(listOrderInquiryWorklist).toHaveBeenLastCalledWith(
-        expect.objectContaining({ ack: undefined }),
-      ),
-    );
-    expect(screen.queryByText('Confirmed: To confirm')).not.toBeInTheDocument();
-    await waitFor(() =>
-      expect(routerReplace).toHaveBeenLastCalledWith(
-        expect.stringContaining('ack=all'),
-        expect.anything(),
-      ),
-    );
-  });
-
-  it('a URL naming ?ack=all opens on every row, not the default', async () => {
-    currentSearchParams = new URLSearchParams('ack=all');
+describe('AC-1.5/G5: no default ack filter', () => {
+  it('opens on every row, off no `?ack=` at all, and shows no active-filter chip', async () => {
     renderClient();
     await screen.findByText('SO385126');
 
@@ -456,15 +408,31 @@ describe('AC-D12: the page opens on Confirmed = To confirm', () => {
     expect(screen.queryByText(/^Confirmed:/)).not.toBeInTheDocument();
   });
 
-  it('the Confirmed filter offers To confirm first, with its own count', async () => {
+  it('a URL naming an explicit ?ack= still narrows the list and shows its chip', async () => {
+    currentSearchParams = new URLSearchParams('ack=rejected');
+    renderClient();
+    await screen.findByText('SO385126');
+
+    await waitFor(() =>
+      expect(listOrderInquiryWorklist).toHaveBeenCalledWith(
+        expect.objectContaining({ ack: 'rejected' }),
+      ),
+    );
+    expect(screen.getByText('Confirmed: Rejected')).toBeInTheDocument();
+  });
+
+  it('the Confirmed filter no longer offers To confirm (S3, review of PR #471)', async () => {
+    // A row is born acknowledged now (G4) and a settle auto-acknowledges again, so
+    // nothing purchasing still has to answer sits in `awaiting` any more - the FE stops
+    // offering the option even though the backend still accepts an old bookmark's
+    // `?ack=to_confirm` for compatibility.
     getOrderInquiryWorklistSummary.mockResolvedValue({
       ...MOCK_WORKLIST_SUMMARY,
       ack: {
-        awaiting: 3,
+        awaiting: 0,
         acknowledged: 1,
         changed: 1,
         rejected: 0,
-        to_confirm: 4,
       },
     });
     renderClient();
@@ -474,7 +442,6 @@ describe('AC-D12: the page opens on Confirmed = To confirm', () => {
     const select = (await screen.findByLabelText('Any')) as HTMLSelectElement;
     expect([...select.options].map((option) => option.textContent)).toEqual([
       'Any',
-      'To confirm (4)',
       'Confirmed (1)',
       'Changed (1)',
       'Rejected (0)',
@@ -502,18 +469,17 @@ describe('AC-D13/AC-D14: one toolbar row, Actions + Start, counts disabling at 0
     expect(screen.queryByRole('menuitem', { name: /^Acknowledge/ })).toBeNull();
   });
 
-  it('Start holds Upload purchase orders and Confirm selected, no history upload', async () => {
+  it('Start is a single Upload purchase orders press, no Confirm and no history upload', async () => {
+    // S1 (AC-1.5): a row is born acknowledged, so there is no second press left for
+    // Start to hold - it is one button, not a dropdown.
     renderClient();
     await screen.findByText('SO385126');
 
-    openStartMenu();
     expect(
-      screen.getByRole('menuitem', { name: 'Upload purchase orders' }),
+      screen.getByRole('button', { name: 'Upload purchase orders' }),
     ).toBeInTheDocument();
-    expect(
-      screen.getByRole('menuitem', { name: /Confirm selected \(0\)/ }),
-    ).toBeInTheDocument();
-    expect(screen.queryByRole('menuitem', { name: /history/i })).toBeNull();
+    expect(screen.queryByRole('menuitem', { name: /Confirm selected/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /history/i })).toBeNull();
   });
 
   it('Link selected is enabled ONLY with exactly one row ticked', async () => {
@@ -587,25 +553,18 @@ describe('AC-D13/AC-D14: one toolbar row, Actions + Start, counts disabling at 0
     expect(item).not.toHaveAttribute('aria-disabled', 'true');
   });
 
-  it('Confirm selected disables at 0 with a reason, and counts only confirmable rows', async () => {
+  it('offers no tickable checkbox for a row nothing is left to act on', async () => {
     renderClient();
     await screen.findByText('SO385126');
 
-    openStartMenu();
-    const empty = screen.getByRole('menuitem', {
-      name: /Confirm selected \(0\)/,
-    });
-    expect(empty).toHaveAttribute('aria-disabled', 'true');
-    expect(empty).toHaveAttribute('title', 'Tick the rows you are taking on.');
-    await closeMenu();
-
-    fireEvent.click(
-      screen.getByLabelText('Select SRTWC8605-SC-RL on SO386461'),
-    );
-    openStartMenu();
+    // row-1 is `actioned`, row-4 is `cancelled` - disabled rather than absent, since
+    // Reject is the only bulk action a tick still feeds (S1 retires Confirm).
     expect(
-      screen.getByRole('menuitem', { name: 'Confirm selected (1)' }),
-    ).not.toHaveAttribute('aria-disabled', 'true');
+      screen.getByLabelText('Select SRTWB5400 on SO385126'),
+    ).toBeDisabled();
+    expect(
+      screen.getByLabelText('Select SRTWC8605-SC-RL on SO386461'),
+    ).toBeEnabled();
   });
 });
 
@@ -657,76 +616,6 @@ describe('Unlink selected asks first', () => {
 
     await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
     expect(unplaceOrderInquiryRow).not.toHaveBeenCalled();
-  });
-});
-
-describe('AC-D5: Confirm selected', () => {
-  it('sends exactly the ticked row ids, with no horizon of its own (R6)', async () => {
-    acknowledgeOrderInquiryRows.mockResolvedValue({
-      acknowledged: 2,
-      linked_rows: 1,
-      links: 1,
-    });
-    renderClient();
-    await screen.findByText('SO385126');
-
-    fireEvent.click(
-      screen.getByLabelText('Select SRTWC8605-SC-RL on SO386461'),
-    );
-    fireEvent.click(screen.getByLabelText('Select SRTWT107 on SO363150'));
-    openStartMenu();
-    fireEvent.click(
-      screen.getByRole('menuitem', { name: 'Confirm selected (2)' }),
-    );
-
-    await waitFor(() =>
-      expect(acknowledgeOrderInquiryRows).toHaveBeenCalledWith(
-        ['row-2', 'row-3'],
-        undefined,
-      ),
-    );
-  });
-
-  it('clears the tick marks once the press succeeds', async () => {
-    acknowledgeOrderInquiryRows.mockResolvedValue({
-      acknowledged: 1,
-      linked_rows: 0,
-      links: 0,
-    });
-    renderClient();
-    await screen.findByText('SO385126');
-
-    fireEvent.click(
-      screen.getByLabelText('Select SRTWC8605-SC-RL on SO386461'),
-    );
-    openStartMenu();
-    fireEvent.click(
-      screen.getByRole('menuitem', { name: 'Confirm selected (1)' }),
-    );
-
-    // Wait for the press to land (and the Radix menu to finish closing) before reopening
-    // it once - reopening it repeatedly inside the poll races the menu's own animation.
-    await waitFor(() => expect(acknowledgeOrderInquiryRows).toHaveBeenCalled());
-    await waitFor(() =>
-      expect(screen.queryByRole('menu')).not.toBeInTheDocument(),
-    );
-    openStartMenu();
-    expect(
-      await screen.findByRole('menuitem', { name: /Confirm selected \(0\)/ }),
-    ).toBeInTheDocument();
-  });
-
-  it('offers no tickable checkbox for a row that cannot be acknowledged', async () => {
-    renderClient();
-    await screen.findByText('SO385126');
-
-    // row-1 is `actioned`, row-4 is `cancelled` - disabled rather than absent.
-    expect(
-      screen.getByLabelText('Select SRTWB5400 on SO385126'),
-    ).toBeDisabled();
-    expect(
-      screen.getByLabelText('Select SRTWC8605-SC-RL on SO386461'),
-    ).toBeEnabled();
   });
 });
 
@@ -835,7 +724,7 @@ describe('AC-D9: Auto link all - the date lives in the dialog now', () => {
   });
 });
 
-describe('AC-H13: the uploaded book, offered from the Start menu', () => {
+describe('AC-H13: the uploaded book, offered from the Start button', () => {
   it('offers nothing while the worker is still reading the book', async () => {
     uploadSessions = [
       { session_id: 'job-1', import_job_id: 'job-1', status: 'processing' },
@@ -843,9 +732,8 @@ describe('AC-H13: the uploaded book, offered from the Start menu', () => {
     renderClient();
     await screen.findByText('SO385126');
 
-    openStartMenu();
     fireEvent.click(
-      screen.getByRole('menuitem', { name: 'Upload purchase orders' }),
+      screen.getByRole('button', { name: 'Upload purchase orders' }),
     );
     fireEvent.click(screen.getByRole('button', { name: 'Upload (stub)' }));
 
@@ -866,9 +754,8 @@ describe('AC-H13: the uploaded book, offered from the Start menu', () => {
     renderClient();
     await screen.findByText('SO385126');
 
-    openStartMenu();
     fireEvent.click(
-      screen.getByRole('menuitem', { name: 'Upload purchase orders' }),
+      screen.getByRole('button', { name: 'Upload purchase orders' }),
     );
     fireEvent.click(screen.getByRole('button', { name: 'Upload (stub)' }));
 
@@ -895,12 +782,18 @@ describe('AC-D8: a CS user (no acknowledge grant) sees the column, not the actio
     granted = new Set(['projects.order_inquiry.action']);
   });
 
-  it('sees the Confirmed column, but no Start menu and no confirm/reject items', async () => {
+  it('sees the rows, but no Upload button and no confirm/reject items', async () => {
     renderClient();
     await screen.findByText('SO385126');
 
-    expect(screen.getAllByText('To confirm').length).toBeGreaterThan(0);
-    expect(screen.queryByRole('button', { name: /^start$/i })).toBeNull();
+    // No Confirmed column any more (S1, AC-1.5) - and no upload/Start press either,
+    // since that is purchasing's own grant.
+    expect(
+      screen.queryByRole('columnheader', { name: 'Confirmed' }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole('button', { name: 'Upload purchase orders' }),
+    ).toBeNull();
 
     openActionsMenu();
     expect(
@@ -1002,11 +895,14 @@ describe('Unlink all (S2/S3/N1, carried over unchanged from the handshake plan)'
 
 describe('exports the set the screen is showing, not the whole book', () => {
   it('carries the active ack filter into the export request', async () => {
+    // No default filter any more (S1, AC-1.5) - an explicit one, named in the URL,
+    // still has to reach the export exactly as it reaches the list.
+    currentSearchParams = new URLSearchParams('ack=rejected');
     renderClient();
     await screen.findByText('SO385126');
     await waitFor(() =>
       expect(listOrderInquiryWorklist).toHaveBeenCalledWith(
-        expect.objectContaining({ ack: 'to_confirm' }),
+        expect.objectContaining({ ack: 'rejected' }),
       ),
     );
 
@@ -1017,7 +913,7 @@ describe('exports the set the screen is showing, not the whole book', () => {
 
     await waitFor(() =>
       expect(downloadOrderInquiryWorklistXlsx).toHaveBeenCalledWith(
-        expect.objectContaining({ ack: 'to_confirm' }),
+        expect.objectContaining({ ack: 'rejected' }),
       ),
     );
     await waitFor(() => expect(saveBlobAs).toHaveBeenCalled());

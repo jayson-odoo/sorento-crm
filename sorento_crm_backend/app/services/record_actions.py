@@ -801,6 +801,52 @@ register(
     )
 )
 
+def _unverify_spec_verification(db: Session, payload: dict):
+    from app.services import product_spec_verification
+
+    # Keyed by the PRODUCT CODE, not a uuid - `product_spec_verification.unverify_code`
+    # takes the code, and the verification ledger has no row of its own to key on
+    # (`ProductSpecVerification` is append-only and never re-pointed).
+    return product_spec_verification.unverify_code(
+        db, _entity_id(payload), actor=_actor(db, payload)
+    )
+
+
+register(
+    FormAction(
+        key="spec_verification.unverify",
+        entity_types=("spec_verification",),
+        execute=_unverify_spec_verification,
+        # Reversible: withdrawing a stamp is not a delete - Verify can be pressed again
+        # on the same row afterwards, and the ledger row itself is never removed, only
+        # marked withdrawn (D8).
+        window=WINDOW_REVERSIBLE,
+        permission="master_data.products.edit",
+        label="Unverify",
+    )
+)
+
+
+def _delete_spec_key(db: Session, payload: dict):
+    from app.services.product_spec_registry import delete_registry_key
+
+    # Keyed by the spec key ITSELF, not a uuid - `delete_registry_key` takes it and is
+    # the same refusal `DELETE /spec-registry/{spec_key}` runs (D.6, PLAN-spec-
+    # workbench-redesign.md): a seed-sourced key is refused, never deleted.
+    return delete_registry_key(db, _entity_id(payload))
+
+
+register(
+    FormAction(
+        key="spec_key.delete",
+        entity_types=("spec_key",),
+        execute=_delete_spec_key,
+        window=WINDOW_DESTRUCTIVE,
+        permission="master_data.spec_registry.delete",
+        label="Delete specification",
+    )
+)
+
 register(
     FormAction(
         key="stock_visibility_policy.remove",
@@ -915,6 +961,51 @@ for _key, _entity, _fn, _label in (
             execute=_fn,
             window=WINDOW_DESTRUCTIVE,
             permission="dealer_kit.page.edit",
+            label=_label,
+        )
+    )
+
+
+def _bulk_delete_tag_templates(db: Session, payload: dict):
+    """Delete a SELECTION of templates atomically (D26, S11).
+
+    One handler, one call, over the whole list of ids - not
+    `useDeferredBulkAction`'s one-pending-action-per-row shape, because the
+    batch has to refuse together (AC-S11-2): a foreign or missing id must stop
+    every row in the selection, not just its own. `entity_id` here is a
+    client-generated token naming the CLICK, not a real template - there is
+    no single record a multi-row delete is "about", and the ids that matter
+    travel in the payload instead.
+    """
+    from app.services.dealer_kit import tag_template_service
+
+    ids = payload.get("template_ids") or []
+    return tag_template_service.bulk_delete(
+        db,
+        [str(i) for i in ids],
+        requested_by_id=payload.get("requested_by_id"),
+    )
+
+
+def _delete_tag_template(db: Session, payload: dict):
+    from app.services.dealer_kit import tag_template_service
+
+    return tag_template_service.delete_template(
+        db, _entity_id(payload), requested_by_id=payload.get("requested_by_id")
+    )
+
+
+for _key, _fn, _label in (
+    ("tag_template.delete", _delete_tag_template, "Delete tag template"),
+    ("tag_template.bulk_delete", _bulk_delete_tag_templates, "Delete tag templates"),
+):
+    register(
+        FormAction(
+            key=_key,
+            entity_types=("tag_template",),
+            execute=_fn,
+            window=WINDOW_DESTRUCTIVE,
+            permission="dealer_kit.tag_templates.manage",
             label=_label,
         )
     )
@@ -1223,5 +1314,31 @@ register(
         window=WINDOW_REVERSIBLE,
         permission=OWN_RECORD,
         label="Delete notification",
+    )
+)
+
+
+def _delete_saved_view(db: Session, payload: dict):
+    from app.services.saved_views_service import SavedViewsService
+
+    # `SavedViewsService.delete` already answers 404 (via `handle_not_found`) for a view
+    # that is not the requester's own, so ownership IS the check - the same shape
+    # `notification.delete` above uses.
+    SavedViewsService(db).delete(_entity_id(payload), str(payload.get("requested_by_id") or ""))
+    return {"message": "Deleted"}
+
+
+register(
+    FormAction(
+        key="saved_view.delete",
+        entity_types=("saved_view",),
+        execute=_delete_saved_view,
+        # Destructive (the suite's own default for every `.delete`, `test_record_actions_s6b
+        # .SHORT_WINDOW_DELETES` is a narrow allowlist): unlike a notification, a saved view
+        # can carry real, non-trivial filter/sort/column work a reader built up over time,
+        # so ten seconds to catch a stray click is worth more than the five-second window.
+        window=WINDOW_DESTRUCTIVE,
+        permission=OWN_RECORD,
+        label="Delete view",
     )
 )

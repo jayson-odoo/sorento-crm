@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { MoreVertical, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
@@ -25,7 +25,7 @@ import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
-import { readableEntry } from '@/lib/spec-readable';
+import { readableEntry, valueLabelsByKey } from '@/lib/spec-readable';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { AddSpecificationDialog, SpecTable, type SpecKeyDefinition } from '@/components/spec-table';
 import { usePermissions } from '@/hooks/usePermissions';
@@ -154,6 +154,8 @@ function VerificationStrip({
   const changed = block.state === 'needs_reverify' ? block.invalidated_diff?.changed ?? [] : [];
   const labelFor = (specKey: string) =>
     registry.find((key) => key.spec_key === specKey)?.label ?? specKey;
+  const valueLabelsFor = (specKey: string) =>
+    registry.find((key) => key.spec_key === specKey)?.value_labels;
 
   return (
     <div className="flex flex-col gap-2 rounded-md border p-3" data-spec-verification>
@@ -194,10 +196,12 @@ function VerificationStrip({
               <li key={entry.spec_key} className="text-sm break-words">
                 <span className="font-medium">{labelFor(entry.spec_key)}</span>: was{' '}
                 <span className="text-muted-foreground">
-                  {readableEntry(entry.was) || 'nothing'}
+                  {readableEntry(entry.was, valueLabelsFor(entry.spec_key)) || 'nothing'}
                 </span>
                 , now{' '}
-                <span className="font-medium">{readableEntry(entry.now) || 'nothing'}</span>
+                <span className="font-medium">
+                  {readableEntry(entry.now, valueLabelsFor(entry.spec_key)) || 'nothing'}
+                </span>
               </li>
             ))}
           </ul>
@@ -215,6 +219,9 @@ export default function ProductSpecificationsTab({ productId }: { productId: str
   const [confirmingUnverify, setConfirmingUnverify] = useState(false);
   const spec = useProductSpecTable(productId);
   const { detail, rows, registry, applicableKeys, otherKeys, heldKeys, isLoading, error } = spec;
+  // `{spec_key: value_labels}` (E.2) - built once off the registry this tab already
+  // loaded, so `SpecExtractPanel` needs no registry call of its own.
+  const valueLabels = useMemo(() => valueLabelsByKey(registry), [registry]);
 
   // The server is the guard; these only decide what to SHOW. A user without the grant
   // gets no affordance that would 403 at submit - the same rule the dialog's own
@@ -345,6 +352,7 @@ export default function ProductSpecificationsTab({ productId }: { productId: str
             productId={productId}
             productCode={detail.product_code}
             canEdit={canEdit}
+            valueLabels={valueLabels}
           />
 
           {detail.spec?.rendered_text && (

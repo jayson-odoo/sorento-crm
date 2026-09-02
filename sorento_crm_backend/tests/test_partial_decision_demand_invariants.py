@@ -20,9 +20,14 @@ planning as its Buy and the undecided one is AWAITING CS - counted and named by
 therefore still what these tests refuse: the undecided quantity has to be somewhere a
 planner can see it, and it must never be in the plan twice.
 
-The handshake (`PLAN-scm-oi-handshake.md`, captain 27 Aug) adds the second gate the engine
-test below now walks: the VIEW counts a Buy the moment CS confirms it, because the customer
-is owed it; the PLAN counts it only once purchasing has ACKNOWLEDGED the row.
+The handshake (`PLAN-scm-oi-handshake.md`, captain 27 Aug) added a second gate the engine
+test below used to walk: the VIEW counted a Buy the moment CS confirmed it, because the
+customer is owed it; the PLAN counted it only once purchasing had ACKNOWLEDGED the row.
+`PLAN-scm-reorder-oi-feedback-1sep.md` S1 (review of PR #471) retired the manual half of
+that gate - a row is born acknowledged now (G4), so the VIEW and the PLAN agree from the
+moment CS raises it. What survives is the OTHER gate the same states always carried:
+`rejected`. A row purchasing refuses is not demand; the manual acknowledge step it used to
+also gate on is gone.
 
 * `reorder_run_service._planning_rows` is what the engine plans from. It reads
   `scm.net_position_v` and `scm.committed_v`, so a number that is wrong in the view is
@@ -148,24 +153,6 @@ def _confirm(db, world, payload_lines):
         _restore(originals)
 
 
-def _acknowledge(db, world, row_ids):
-    """Purchasing takes the rows on (AC-H2), through the service the route calls.
-
-    The route itself is exercised by `tests/test_order_inquiry_handshake.py`; what this
-    file needs is the state change, so it goes straight at the service rather than
-    re-plumbing a permissioned client for one call.
-    """
-    from app.models.base import company_scope
-    from app.services.project_order_inquiry_service import ProjectOrderInquiryService
-
-    with company_scope(db, frozenset({world.company_id})):
-        result = ProjectOrderInquiryService(db).acknowledge_rows(
-            row_ids, actor_user_id=world.user_id
-        )
-    db.commit()
-    return result
-
-
 # ------------------------------------------------- the invariant the captain asked for
 
 
@@ -220,19 +207,21 @@ def test_the_undecided_lines_of_a_partly_confirmed_order_are_still_demand():
         assert aside["lines"] == 1
 
 
-def test_the_reorder_engine_reads_the_confirmed_demand_only_once_it_is_acknowledged():
-    """Not merely present in the view: present in the rows the engine plans from.
+def test_the_reorder_engine_plans_a_born_acknowledged_row_but_excludes_a_rejected_one():
+    """S1 (review of PR #471, `PLAN-scm-reorder-oi-feedback-1sep.md`) retired this
+    test's own premise: a confirm's row used to be born `awaiting` and the plan gated on
+    a manual acknowledge (`PLAN-scm-oi-handshake.md`). A row is born acknowledged now
+    (G4) - there is no manual step left for the engine to gate on, so "the plan must not
+    buy against an awaiting row" no longer occurs naturally (the migration backfilled
+    every pre-existing one, and nothing writes a fresh `awaiting` row any more).
 
-    And the two are deliberately different, which is the handshake
-    (`PLAN-scm-oi-handshake.md`): `scm.committed_v` counts CS's Buy immediately, because
-    the customer is owed it, while `horizon_committed_select_sql` - the only thing a plan
-    run reads - counts `PLANNED_ACK_STATES` alone. An instruction purchasing has not taken
-    on yet may still be amended or refused, so buying against it is buying against a
-    question. The engine therefore sees nothing until the row is acknowledged, and the
-    plan page shows the difference as its awaiting count.
+    `PLANNED_ACK_STATES` (`acknowledged`, `changed`) still excludes `rejected`, which is
+    the invariant that survives: a row purchasing refused is not demand, while a row born
+    acknowledged is demand from the moment CS raises it - no confirm step in between.
     """
     from app.models.base import company_scope
     from app.models.project_so import OrderInquiryRow
+    from app.services.project_order_inquiry_service import ProjectOrderInquiryService
 
     def _planning_row(db, world):
         with company_scope(db, frozenset({world.company_id})):
@@ -254,12 +243,15 @@ def test_the_reorder_engine_reads_the_confirmed_demand_only_once_it_is_acknowled
             ],
         )
 
-        awaiting = _planning_row(db, world)
-        assert Decimal(str(awaiting["project_committed"])) == Decimal("0"), (
-            "the row is awaiting acknowledgement, so the plan must not buy against it"
+        acknowledged = _planning_row(db, world)
+        assert Decimal(str(acknowledged["project_committed"])) == Decimal("50"), (
+            "born acknowledged (G4) - the plan buys against it from the moment CS raises "
+            "it, no confirm step in between"
         )
+        assert Decimal(str(acknowledged["project_confirmed_committed"])) == Decimal("50")
+        assert Decimal(str(acknowledged["committed"])) == Decimal("50")
         assert _committed(db, world)["project_committed"] == Decimal("50"), (
-            "the VIEW counts it all the same - it is owed to the customer either way"
+            "the VIEW agrees - it is owed to the customer either way"
         )
 
         row_ids = [
@@ -269,12 +261,27 @@ def test_the_reorder_engine_reads_the_confirmed_demand_only_once_it_is_acknowled
             .all()
         ]
         assert row_ids, "the confirmation must have raised the Buy as an inquiry row"
-        _acknowledge(db, world, row_ids)
 
-        acknowledged = _planning_row(db, world)
-        assert Decimal(str(acknowledged["project_committed"])) == Decimal("50")
-        assert Decimal(str(acknowledged["project_confirmed_committed"])) == Decimal("50")
-        assert Decimal(str(acknowledged["committed"])) == Decimal("50")
+        with company_scope(db, frozenset({world.company_id})):
+            ProjectOrderInquiryService(db).reject_row(
+                row_ids[0], reason="not this window", actor_user_id=world.user_id
+            )
+        db.commit()
+
+        # `reject_row` un-decides the LINE (`ProjectSupplyService.uncover_lines`), which
+        # cancels the row it raised outright rather than leaving a zero-committed one
+        # behind - `_seed` puts no stock at this warehouse (only at the pool it draws
+        # from), so with the row gone the product has NO presence here left to plan
+        # from at all. That absence, not a returned row reading zero, is what "excluded
+        # from planned demand" means once purchasing refuses the only instruction that
+        # put the product at this location in the first place.
+        with company_scope(db, frozenset({world.company_id})):
+            rejected_rows = reorder_run_service._planning_rows(
+                db, [str(world.warehouse.id)], product_ids=[str(world.product.id)]
+            )
+        assert rejected_rows == [], (
+            "purchasing refused the only instruction here - nothing left to plan against"
+        )
 
 
 def test_a_fully_confirmed_order_counts_its_buy_once_and_its_sheet_quantity_never():

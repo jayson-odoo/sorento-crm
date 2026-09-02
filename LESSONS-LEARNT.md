@@ -167,3 +167,16 @@ collapse it belonged to. The trick is reverted to a plain width animation.
 ## 95. `docker image prune -f` never removes SHA-tagged deploy images, so every deploy leaks ~4.7GB until the disk fills (31 Aug 2026)
 
 Prod hit 90% disk (173G/193G). `docker system df -v` showed 22 generations of `jayson1004/sorento-crm:{backend,frontend,mcp}-<sha>` - roughly 100GB of images with zero containers - because `blue_green_deploy.sh` step 8 ran `docker image prune -f`, which removes only DANGLING (untagged) images, and CI tags every image with the git SHA, so nothing ever qualified. The leak is invisible per-deploy (~4.7GB) and looks fine until the day it does not. Fix: `docker image prune -af --filter "until=48h"` - `-a` includes tagged-but-unused, the filter keeps the previous generation for same-day rollback, and images referenced by a running container are always kept. One-off recovery on the server: the same command by hand, then `df -h` to confirm.
+
+## 96. A per-migration test that asserts "X is the single head" fails on the very next migration (2 Sep 2026)
+
+`tests/test_migration_453_shared_brand_attach.py::test_453_is_the_single_head_of_the_whole_graph`
+asserted `heads == ['453_shared_brand_attach']`. It was true the day it was written and false the
+moment `454_spec_registry_value_labels` chained on 453: PR #520's backend shard 2 went red on that
+one test with nothing about 453 broken. The property the test wanted is "the graph has one head
+and my migration is on the trunk", not "my migration is the head".
+
+- Assert `len(heads) == 1` and that the migration under test is an ancestor of that head (walk
+  `down_revision` from the head). Never assert equality with a specific head id.
+- The single-head fast gate in CI already guards the "one head" half; a per-migration test only
+  needs the ancestry half.

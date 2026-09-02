@@ -128,4 +128,10 @@ export interface SpecProposalReviewProps {
    * actions render exactly the table they rendered before.
    */
   rowActions?: (proposal: SpecProposal) => ReactNode;
+  /**
+   * `{spec_key: value_labels}` (E.2), from the registry the caller already loaded.
+   * A proposal spans several keys, so this is keyed by `spec_key` rather than being
+   * the flat dict a single key's editor reads.
+   */
+  valueLabels?: Record<string, Record<string, string>>;
 }

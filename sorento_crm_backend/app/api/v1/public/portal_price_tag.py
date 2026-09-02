@@ -11,22 +11,26 @@ portal module.
 from __future__ import annotations
 
 import logging
+import mimetypes
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.api.v1.public.portal import get_portal_token
 from app.database import get_db
+from app.models.base import company_scope
 from app.models.portal import PortalToken
 from app.schemas.price_tag import (
     DebtorForAgentItem,
     PriceTagRequestCreate,
     PriceTagRequestResponse,
     PriceTagRequestUpdate,
+    PromotionLookupItem,
     TagItemLookupItem,
 )
+from app.services.dealer_kit.tag_sheet_export_service import latest_completed_export
 from app.services.error_handler import AppException
 from app.services.portal_form_visibility_service import resolve_visible_form_types
 from app.services.price_tag_request_service import (
@@ -35,6 +39,9 @@ from app.services.price_tag_request_service import (
     STATUS_CHANGES_REQUESTED,
     STATUS_NEW,
 )
+from app.services.storage_router import get_backend
+from app.services.uuid_path_param import validate_uuid_path
+from app.utils.http import content_disposition
 
 logger = logging.getLogger(__name__)
 
@@ -117,8 +124,72 @@ def portal_get_price_tag_request(
     Answers the same body as the CRM detail route (lines resolved to code, name
     and both prices), plus the attachments key the form reads unconditionally.
     """
+    request_id = validate_uuid_path(request_id, resource="Price tag request")
     _assert_visible(db, token.contact_id)
     return _detail_body(db, _require_own_request(db, token, request_id))
+
+
+# ---------------------------------------------------------------------------
+# Download the latest completed tag sheet PDF
+# ---------------------------------------------------------------------------
+
+
+@router.get("/submissions/price_tag_request/{request_id}/download")
+def portal_download_price_tag_pdf(
+    request_id: str,
+    token: PortalToken = Depends(get_portal_token),
+    db: Session = Depends(get_db),
+) -> Response:
+    """The request's latest completed tag sheet PDF, streamed same-origin.
+
+    Ownership is the request's contact (``_require_own_request``), exactly like
+    every other portal price tag route - never the download row's ``user_id``
+    (whichever marketing staffer ran the export). A foreign token refuses with
+    "Price tag request not found." (``_require_own_request``'s message, the
+    ownership check runs first); an owned request with no completed export
+    refuses with "No completed export exists for this request yet." - two
+    DIFFERENT messages, not the same one as an earlier version of this
+    docstring claimed. What they share is that neither leaks whether the OTHER
+    fact is true: a foreign token never learns whether an export exists, and a
+    "no export yet" 404 never confirms the request is genuinely this
+    contact's until ownership has already passed (AC-S2-4).
+    """
+    request_id = validate_uuid_path(request_id, resource="Price tag request")
+    _assert_visible(db, token.contact_id)
+    req = _require_own_request(db, token, request_id)
+    download = latest_completed_export(db, req.id)
+    if download is None or not download.storage_key:
+        raise AppException(
+            status_code=404,
+            message="No completed export exists for this request yet.",
+            code="NOT_FOUND",
+        )
+    try:
+        content = get_backend(download.storage_provider).download_file(download.storage_key)
+    except HTTPException:
+        # An AppException from the service is already the right answer -
+        # don't relabel it as a storage failure.
+        raise
+    except Exception as e:  # noqa: BLE001 - mirrors portal_download_attachment
+        logger.warning(
+            "portal_download_price_tag_pdf: could not read %s", download.storage_key,
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="File download failed. Please try again.",
+        ) from e
+
+    filename = download.filename or "tag-sheet.pdf"
+    media_type = mimetypes.guess_type(filename)[0] or "application/pdf"
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={
+            "Content-Disposition": content_disposition(filename),
+            "Content-Length": str(len(content)),
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -134,6 +205,7 @@ def portal_update_price_tag_request(
     db: Session = Depends(get_db),
 ):
     """Update a draft price tag request."""
+    request_id = validate_uuid_path(request_id, resource="Price tag request")
     _assert_visible(db, token.contact_id)
     req = _require_own_request(db, token, request_id)
     _require_draft(req, "Only draft requests can be updated.")
@@ -190,6 +262,7 @@ def portal_submit_price_tag_request(
 ):
     """Submit a draft price tag request: clears portal_draft_at, runs set guard,
     and fires the form SLA."""
+    request_id = validate_uuid_path(request_id, resource="Price tag request")
     _assert_visible(db, token.contact_id)
     req = _require_own_request(db, token, request_id)
     _require_draft(req, "This request has already been submitted.", code="ALREADY_SUBMITTED")
@@ -337,12 +410,52 @@ def portal_lookup_tag_items(
 
     Gated the same way as every other price tag route: a contact who cannot see the
     form cannot search the catalogue through it either.
+
+    Scoped to the SAME company ``_resolve_company`` will stamp the request with -
+    the ordinary portal-token company scope covers every company the contact
+    belongs to, so a contact shared between two companies (a duplicated product
+    catalogue) would otherwise see each code twice, and could pick the wrong
+    company's row onto a request already stamped with the other one.
     """
     _assert_visible(db, token.contact_id)
-    return [
-        TagItemLookupItem(**item)
-        for item in PriceTagRequestService.lookup_tag_items(db, q, limit=limit)
-    ]
+    with company_scope(db, frozenset({_resolve_company(db, token)})):
+        return [
+            TagItemLookupItem(**item)
+            for item in PriceTagRequestService.lookup_tag_items(db, q, limit=limit)
+        ]
+
+
+# ---------------------------------------------------------------------------
+# Promotion lookup
+# ---------------------------------------------------------------------------
+
+
+@router.get("/lookups/promotions", response_model=list[PromotionLookupItem])
+def portal_lookup_promotions(
+    q: Optional[str] = Query(None),
+    token: PortalToken = Depends(get_portal_token),
+    db: Session = Depends(get_db),
+):
+    """Active-window, audience-gated promotions for the portal form's promotion
+    dropdown (S4, #477).
+
+    Gated the same way as every other price tag route: a contact who cannot see
+    the form cannot browse the promotion book through it either. Beyond that,
+    the promotions returned are only the ones this contact's own access codes
+    are entitled to (``PriceTagRequestService.lookup_promotions``) - the same
+    audience rule a promotion's price is gated by everywhere else.
+
+    Scoped to the SAME company ``_resolve_company`` will stamp the request with,
+    same reasoning as ``portal_lookup_tag_items``: a contact who belongs to more
+    than one company would otherwise be offered the other company's promotion
+    alongside this one.
+    """
+    _assert_visible(db, token.contact_id)
+    with company_scope(db, frozenset({_resolve_company(db, token)})):
+        return [
+            PromotionLookupItem(**item)
+            for item in PriceTagRequestService.lookup_promotions(db, token.contact_id, q)
+        ]
 
 
 # ---------------------------------------------------------------------------
@@ -375,18 +488,17 @@ def _require_draft(req, message: str, code: str = "NOT_DRAFT") -> None:
 
 
 def _detail_body(db: Session, req) -> dict:
-    """The request with its lines resolved, plus the attachments key.
+    """The request with its lines AND its PO attachments resolved.
 
-    The portal form reads `attachments` without checking, and nothing writes an
-    attachment against a price tag request yet (the PO dropzone holds its files
-    on the client), so the honest answer today is an empty list rather than a
-    missing key that would crash the page.
+    ``response_with_resolved_lines`` (the same call the CRM detail route makes,
+    D49) already fills ``attachments`` via
+    ``entity_attachment_service.list_attachments_for_entity`` - real rows once
+    the PO dropzone has uploaded any, an empty list otherwise. The portal form
+    reads the key unconditionally, so it always has to be present.
     """
-    body = PriceTagRequestService.response_with_resolved_lines(db, req).model_dump(
+    return PriceTagRequestService.response_with_resolved_lines(db, req).model_dump(
         mode="json"
     )
-    body["attachments"] = []
-    return body
 
 
 def _resolve_company(db: Session, token: PortalToken) -> str:

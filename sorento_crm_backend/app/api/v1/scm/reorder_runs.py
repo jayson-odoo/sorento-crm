@@ -25,13 +25,14 @@ from app.schemas.scm_reorder import (
     ReorderRunListResponse,
     ReorderRunStatusResponse,
     ReorderRunTodayResponse,
+    ReplanReorderRunAccepted,
+    ReplanReorderRunRequest,
     UnlocatedDemandResponse,
 )
 from app.services.company_scope_sql import company_sql_predicate
 from app.services.dealer_kit import product_images
 from app.services.dealer_kit.viewer import ViewerContext
 from app.services.scm import cover_service
-from app.services.scm import decision_service
 from app.services.scm import plan_grain
 from app.services.scm import price_history_service
 from app.services.scm import spo_supply
@@ -99,6 +100,36 @@ def create_reorder_run(
     return result
 
 
+@router.post(
+    "/reorder-runs/{run_id}/replan",
+    response_model=ReplanReorderRunAccepted,
+    status_code=202,
+)
+def replan_reorder_run(
+    run_id: str,
+    payload: ReplanReorderRunRequest = Body(...),
+    response: Response = None,  # type: ignore[assignment]
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_RUN),
+):
+    """Re-plan (plan 5.1, G8): editing Plan until or the warehouse/product scope on a
+    completed plan offers this - a NEW run with the edited values, which supersedes
+    ``run_id`` once it finishes. The FE navigates to the returned ``run_id`` immediately
+    and polls it exactly like Start Plan's own 202 (the carry of decisions + the old
+    run's supersede stamp both happen once the new run's own worker job completes)."""
+    svc.assert_run_visible(db, run_id)
+    result = svc.replan_run(
+        db, run_id,
+        warehouse_codes=payload.warehouse_codes or [],
+        product_codes=payload.product_codes or [],
+        plan_horizon_date=payload.plan_horizon_date,
+        actor=(_user or {}).get("id"),
+    )
+    if response is not None:
+        response.status_code = 202
+    return {**result, "supersedes_run_id": run_id}
+
+
 #: The plans list's sortable columns, keyed by the column id the grid sends
 #: (`ReorderRunsGrid`). Allowlisted rather than interpolated: `sort` arrives from the
 #: query string straight into an ORDER BY.
@@ -109,24 +140,12 @@ _RUN_SORT = {
     "lines": "(run_log->>'recommendation_count')::numeric",
     "cash": "(run_log->>'total_cash_impact')::numeric",
     "products": "jsonb_array_length(COALESCE(product_ids, '[]'::jsonb))",
-    # The Decided column, by PRODUCT (R14) - the same count `_product_counts` puts in the
-    # row, restated here because ORDER BY runs over the whole filtered set before the page
-    # is cut, so it cannot be sorted in Python afterwards. Correlated rather than joined:
-    # the outer query is one page of runs and the recommendation table is indexed on
-    # `run_id`.
-    "decided": (
-        "(SELECT count(DISTINCT rr.product_id) "
-        "   FROM scm.reorder_recommendation rr "
-        "   JOIN scm.plan_row_decision d ON d.recommendation_id = rr.id "
-        "  WHERE rr.run_id = scm.reorder_run.id "
-        "    AND rr.rec_type = ANY(:decidable_types))"
-    ),
+    # The Decided column, by PRODUCT (R14) - reads the denormalised column (S3 perf,
+    # AC-3.3) instead of a correlated subquery joined against
+    # `scm.reorder_recommendation`/`scm.plan_row_decision` per row of the page; the
+    # column is kept current by `decision_service._refresh_run_counts`.
+    "decided": "decided_count",
 }
-
-
-#: The rows a plan can be decided on, straight off the service that owns the vocabulary -
-#: never a second literal list, which is how the counts and the decision endpoint drift.
-_DECIDABLE_TYPES = sorted(decision_service._PLAN_ROW_DECIDABLE_TYPES)
 
 
 @router.get("/reorder-runs", response_model=ReorderRunListResponse)
@@ -173,8 +192,6 @@ def list_reorder_runs(
     ).scalar() or 0
 
     sort_expr = _RUN_SORT.get(sort or "")
-    if sort_expr and ":decidable_types" in sort_expr:
-        params["decidable_types"] = _DECIDABLE_TYPES
     # `created_at` then `id`, always. `started_at` is not unique, and neither is
     # `created_at`: a whole transaction sees ONE `now()`, so several runs queued together
     # (or a bulk historical import) tie on both - and LIMIT/OFFSET paging over a full tie
@@ -197,6 +214,12 @@ def list_reorder_runs(
         SELECT id, status, buy_scope, warehouse_ids, product_ids, created_by,
                started_at, finished_at, run_log,
                decision_grain, front_planning_contract_version, plan_horizon_date,
+               -- Denormalised at write time by `decision_service._refresh_run_counts`
+               -- and at run completion (S3 perf, AC-3.3) - a plain column instead of the
+               -- LEFT JOIN against the whole `purchase_order_lines` table this page used
+               -- to run per load.
+               planned_count, decided_count, confirmed_count,
+               superseded_by_run_id,
                -- How many warehouses were there to plan WHEN THIS RUN RAN. Compared with
                -- the run's own scope, that is what says "all" rather than "60 warehouses"
                -- - and it has to be as-of the run: 60 warehouses existed on 27 Aug and 61
@@ -229,52 +252,11 @@ def list_reorder_runs(
 
     run_ids = [str(r["id"]) for r in rows]
     buy_counts = _costed_buy_counts(db, run_ids)
-    counts = _product_counts(db, run_ids)
-    data = [
-        _list_item(r, code_by_id, buy_counts, counts=counts.get(str(r["id"])))
-        for r in rows
-    ]
+    data = [_list_item(r, code_by_id, buy_counts) for r in rows]
     total_pages = max(1, (int(total) + limit - 1) // limit)
     return {"data": data,
             "pagination": {"page": page, "limit": limit, "total": int(total),
                            "total_pages": total_pages}}
-
-
-def _product_counts(db: Session, run_ids: list[str]) -> dict[str, dict[str, int]]:
-    """Per run: how many PRODUCTS it planned, decided and confirmed (R14).
-
-    All three by distinct `product_id`, never by recommendation. A product-grain row fans
-    one decision out to every location it summed, so counting rows read a product held in
-    three bins as three - the same defect `list_plan_row_decisions` carried.
-
-    "Confirmed" is read off the draft purchase orders rather than off a status column,
-    because that is what Confirm actually produces: a product whose line sits in a draft
-    PO raised from this run's own recommendations.
-    """
-    if not run_ids:
-        return {}
-    rows = db.execute(text("""
-        SELECT rr.run_id::text AS run_id,
-               count(DISTINCT rr.product_id) AS planned,
-               count(DISTINCT rr.product_id) FILTER (WHERE d.id IS NOT NULL) AS decided,
-               count(DISTINCT rr.product_id) FILTER (WHERE pol.id IS NOT NULL) AS confirmed
-          FROM scm.reorder_recommendation rr
-          LEFT JOIN scm.plan_row_decision d ON d.recommendation_id = rr.id
-          LEFT JOIN purchase_order_lines pol
-                 ON pol.source_ref = rr.id::text
-                AND pol.source_system IN ('scm_recommendation', 'scm_order_summary_row')
-         WHERE rr.run_id = ANY(CAST(:ids AS uuid[]))
-           AND rr.rec_type = ANY(:kinds)
-         GROUP BY rr.run_id
-    """), {"ids": run_ids, "kinds": _DECIDABLE_TYPES}).mappings().all()
-    return {
-        r["run_id"]: {
-            "planned": int(r["planned"] or 0),
-            "decided": int(r["decided"] or 0),
-            "confirmed": int(r["confirmed"] or 0),
-        }
-        for r in rows
-    }
 
 
 def _costed_buy_counts(db: Session, run_ids: list[str]) -> dict[str, int]:
@@ -304,8 +286,8 @@ def _list_item(
     r,
     code_by_id: dict,
     buy_counts: dict[str, int] | None = None,
-    awaiting_rows: int = 0,
     counts: dict[str, int] | None = None,
+    awaiting_rows: int = 0,
 ) -> dict:
     """One run-history row: scope resolved to warehouse codes + the completed
     summary counts frozen in ``run_log`` (buy_count overridden with the live
@@ -325,10 +307,6 @@ def _list_item(
             "exception_count": int(log_obj.get("exceptions", 0)),
             "total_cash_impact": float(log_obj.get("total_cash_impact", 0.0)),
             "recommendation_count": int(log_obj.get("recommendation_count", 0)),
-            # Live, off the rows themselves (AC-H10), never off this run's log: it drops
-            # as purchasing acknowledges, and the chip is what tells them there is work
-            # the plan itself cannot see.
-            "awaiting_rows": awaiting_rows,
         }
     return {
         "run_id": str(r["id"]),
@@ -352,9 +330,17 @@ def _list_item(
         "product_count": (
             len(_key(r, "product_ids")) if _key(r, "product_ids") is not None else None
         ),
-        "planned_product_count": (counts or {}).get("planned"),
-        "decided_product_count": (counts or {}).get("decided"),
-        "confirmed_product_count": (counts or {}).get("confirmed"),
+        # Denormalised columns (S3 perf, AC-3.3) - `None` on a caller that predates them
+        # (`today_or_latest_run`, `_key`'s own docstring case), the stored figure on the
+        # plans list.
+        "planned_product_count": _key(r, "planned_count"),
+        "decided_product_count": _key(r, "decided_count"),
+        "confirmed_product_count": _key(r, "confirmed_count"),
+        # AC-5.4: the superseded run stays readable and labelled in the plans list.
+        "superseded_by_run_id": (
+            str(_key(r, "superseded_by_run_id"))
+            if _key(r, "superseded_by_run_id") is not None else None
+        ),
     }
 
 
@@ -435,7 +421,6 @@ def get_today_reorder_run(
         row,
         code_by_id,
         _costed_buy_counts(db, [str(row["id"])]),
-        awaiting_rows=svc.awaiting_acknowledgement_rows(db),
     )
     item["is_today"] = picked["is_today"]
     item["in_progress"] = bool(picked.get("in_progress"))
@@ -501,7 +486,8 @@ def get_reorder_run(
     co, co_params = company_sql_predicate(db, "company_id", param_prefix="crg")
     row = db.execute(text(
         "SELECT id, status, buy_scope, error_text, run_log, decision_grain, "
-        "       front_planning_contract_version, plan_horizon_date, started_at "
+        "       front_planning_contract_version, plan_horizon_date, started_at, "
+        "       warehouse_ids, product_ids, supersedes_run_id, superseded_by_run_id "
         "  FROM scm.reorder_run "
         f"WHERE id = :id AND {co or 'true'}"
     ), {"id": run_id, **co_params}).mappings().first()
@@ -510,6 +496,7 @@ def get_reorder_run(
         # from one that does not exist.
         raise AppException(status_code=404, message="Reorder run not found.")
     log_obj = row["run_log"] or {}
+    scope = svc.resolve_run_scope(db, row["warehouse_ids"], row["product_ids"], row["started_at"])
     summary = None
     if row["status"] == "completed":
         buy_count = _costed_buy_counts(db, [str(row["id"])]).get(str(row["id"]))
@@ -519,9 +506,6 @@ def get_reorder_run(
             "exception_count": int(log_obj.get("exceptions", 0)),
             "total_cash_impact": float(log_obj.get("total_cash_impact", 0.0)),
             "recommendation_count": int(log_obj.get("recommendation_count", 0)),
-            # Live (AC-H10), the same figure `/reorder-runs/today` carries: the page reads
-            # whichever of the two responses it happens to be holding.
-            "awaiting_rows": svc.awaiting_acknowledgement_rows(db),
         }
     return {
         "run_id": str(row["id"]),
@@ -536,6 +520,13 @@ def get_reorder_run(
         # The plan header is "Plan dd/mm/yyyy HH:mm" (C1) and this is the only response
         # that page reads.
         "started_at": _iso(row["started_at"]),
+        "warehouse_codes": scope["warehouse_codes"],
+        "is_all_warehouses": scope["is_all_warehouses"],
+        "product_codes": scope["product_codes"],
+        "supersedes_run_id": (str(row["supersedes_run_id"])
+                              if row["supersedes_run_id"] else None),
+        "superseded_by_run_id": (str(row["superseded_by_run_id"])
+                                 if row["superseded_by_run_id"] else None),
     }
 
 
@@ -1003,35 +994,44 @@ def list_recommendations(
     rows = db.execute(text(f"""
         SELECT rr.id, rr.rec_type, rr.product_id, rr.warehouse_id, rr.net_position, rr.reorder_point,
                rr.days_of_cover, rr.rounded_qty, rr.recommended_qty, rr.confidence_band,
-               rr.allocation, rr.inputs, rr.moq_override,
+               rr.allocation, (rr.inputs - 'plan_basis') AS inputs, rr.moq_override,
                rr.rank, rr.rank_score, rr.unit_cost, rr.cash_impact, rr.funding_status,
                rr.currency, rr.rate_to_base, rr.rate_as_of, rr.status,
                p.product_code, p.product_name,
                w.warehouse_code, w.warehouse_name, w.segment,
-               COALESCE(w.pool_warehouse_id::text, w.id::text, plan_pool.pool_id)
-                   AS pool_warehouse_id,
-               COALESCE(pw.warehouse_code, w.warehouse_code, plan_pool.pool_code)
+               -- Precomputed at generation time (S3 perf, AC-3.4,
+               -- `reorder_run_service._build_rec`) instead of re-derived here on every
+               -- read: a LOCATION-grain row's own pool (or itself when it heads one) for
+               -- a warehoused row, and a PRODUCT/network-grain row's group-consensus pool
+               -- (named ONLY when every location it was netted over shares one) for a row
+               -- with no single warehouse. Used to be a `LEFT JOIN LATERAL` unnesting
+               -- `inputs.plan_basis.locations` per row - and that ran for the MAJORITY of
+               -- rows, since every product-grain row names no warehouse at all.
+               --
+               -- `rr.pool_warehouse_id` wins the COALESCE, not `w.pool_warehouse_id`, and
+               -- that order is deliberate FREEZE semantics (R15), not a migration-vintage
+               -- accident: once a recommendation is generated, its pool is fixed to
+               -- whatever the run computed it against, even if the warehouse's OWN pool
+               -- assignment changes later (a re-pool). The stored value winning is what
+               -- keeps a historical run's own numbers self-consistent after that.
+               --
+               -- The `w`/`pw` live join stays as the fallback for a LOCATION-grain row
+               -- with no stored value - deliberately never backfilled (review finding S2):
+               -- this live COALESCE computes the identical answer a backfill would have
+               -- written, for as long as the row exists, so a one-time pass over the
+               -- whole table bought nothing (see migration
+               -- `456_reorder_perf_quickwins`'s own comment on that dropped UPDATE). A
+               -- NULL-warehouse (product/network-grain) row with no precomputed pool has
+               -- no cheap live fallback and reads no pool, same as an unshared LATERAL
+               -- group used to.
+               COALESCE(rr.pool_warehouse_id, w.pool_warehouse_id, w.id) AS pool_warehouse_id,
+               COALESCE(rr.pool_warehouse_code, pw.warehouse_code, w.warehouse_code)
                    AS pool_warehouse_code,
                su.supplier_code, su.supplier_name
         FROM scm.reorder_recommendation rr
         JOIN products p ON p.id = rr.product_id
         LEFT JOIN warehouses w ON w.id = rr.warehouse_id
         LEFT JOIN warehouses pw ON pw.id = w.pool_warehouse_id
-        -- A PRODUCT-grain row names no warehouse at all: it is one buy for the whole
-        -- product, and the locations it was netted over live in the frozen
-        -- `inputs.plan_basis.locations`. The pool is named ONLY when every one of those
-        -- locations shares one - a row spanning two sites has no single destination, and
-        -- naming one of them beside a count that covers both is the mistake Phase 1
-        -- avoided by naming none.
-        LEFT JOIN LATERAL (
-            SELECT MIN(COALESCE(lw.pool_warehouse_id, lw.id)::text) AS pool_id,
-                   MIN(COALESCE(lpw.warehouse_code, lw.warehouse_code)) AS pool_code
-              FROM jsonb_array_elements(
-                       COALESCE(rr.inputs -> 'plan_basis' -> 'locations', '[]'::jsonb)) loc
-              JOIN warehouses lw ON lw.id = CAST(loc ->> 'warehouse_id' AS uuid)
-              LEFT JOIN warehouses lpw ON lpw.id = lw.pool_warehouse_id
-             HAVING COUNT(DISTINCT COALESCE(lw.pool_warehouse_id, lw.id)) = 1
-        ) plan_pool ON rr.warehouse_id IS NULL
         LEFT JOIN suppliers su ON su.id = rr.supplier_id
         WHERE {where_sql}
         ORDER BY {order_by}
@@ -1209,6 +1209,10 @@ def _row(r, funding_by_id: Optional[dict[str, str]] = None, *,
         "supplier_reason": inp.get("supplier_reason"),
         "alternatives": inp.get("alternatives") or [],
         "is_exception": bool(inp.get("is_exception")),
+        # Re-plan (plan 5.1, G8): this row's product/location carried a decision on the
+        # run this one superseded, but the suggestion changed - the buyer decides again,
+        # not blindly reads the carried figure. Never true on a run nobody re-planned.
+        "needs_recheck": bool(inp.get("needs_recheck")),
         # --- covered rows: the two numbers the stock-or-buy choice turns on ---
         # The decision taken on this row, if any. A covered row KEEPS its place in the
         # list after a decision so it can be changed; without the state the list would
