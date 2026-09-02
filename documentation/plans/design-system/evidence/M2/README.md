@@ -300,3 +300,130 @@ a follow-up `lsof -i :3081` returning empty. Only the `m2tester` agent-browser s
 to this run was closed (`close`, not `close --all`). `.env.local` left in place per the brief. No
 database writes were made - every check was a read/hover/open-close interaction; no create,
 update, delete or import action was submitted.
+
+## Run 2 (after fix round, HEAD ee24c67ca)
+
+Same worktree, branch `feat/motion2-M2-keyboard-timing`, now at HEAD `ee24c67ca`. `.env.local`
+verified unchanged from run 1's shape (`FASTAPI_INTERNAL_URL=http://localhost:8120`,
+`NEXTAUTH_URL=http://localhost:3081`, `AUTH_TRUST_HOST=true`, no `NEXT_PUBLIC_API_URL`).
+`lsof -i :3081` was empty before starting, so no port fallback was needed. FE dev server
+`PORT=3081 npm run dev` (own process group: `npm run dev` PID 53199, `next dev` PID 53224,
+`next-server` PID 53227, no separate Turbopack helper this run). BE reused read-only on `:8120`.
+agent-browser session `--session m2run2`. Login via `E2E_EMAIL`/`E2E_PASSWORD` from `.env.local`.
+Navigated by sidebar clicks from `/`, with the same tool-quirk workaround as run 1 (sidebar
+group/tab/Popover triggers frequently no-op under `click @ref`; a native `element.click()` or a
+full `pointerdown/mousedown/pointerup/mouseup/click` sequence dispatched via `eval --stdin` was
+used instead - not a product defect, the same finding logged in run 1/M1/M4).
+
+**Method.** Identical to run 1: dispatch a real or synthetic DOM event, then poll every
+`requestAnimationFrame` for `getComputedStyle(el).opacity`/`.transform` and `el.getAnimations()`,
+building a (t, opacity, scale) timeline. For menu-family surfaces (`dropdown-menu-content`,
+`popover-content`, `context-menu-content`) the timeline reads the STATIC wrapper's first child
+`<div>` (the wrapper itself carries only Radix Popper's positioning transform), per run 1's
+finding. `prefers-reduced-motion` was emulated via `agent-browser set media light reduced-motion`
+(CDP `Emulation.setEmulatedMedia` under the hood) - this DID work in this agent-browser version, so
+the M2-01 reduced-motion sub-check that run 1 could not attempt was completed this run.
+
+### Findings summary (pass/fail table)
+
+| Check | Target | Result | Measured value |
+| --- | --- | --- | --- |
+| M2-01 | Command palette open (Ctrl+Shift+K) | PASS (unchanged) | Not re-measured in full this run (no code changed on the open path); Escape re-test below confirms the palette still opens and the shared timeline harness still reads it correctly |
+| M2-01 | **Escape same frame - FIXED** | **PASS** (was PARTIAL in run 1) | Content opacity now flips from `1` to `0` within ~2-4ms of the Escape keydown (`t=21ms: opacity=1` -> `t=25ms: opacity=0`, and again `t=18ms -> t=20ms` on a repeat run), stays at `0` through the scrim's ~150-185ms fade, then unmounts at t≈189-201ms. Run 1 found the content's opacity stuck at `1` for the ENTIRE fade window (a real divergence from "no scale, no spring" as experienced); that is fixed - the content is visually gone (0 opacity) on the very next frame after Escape, well inside "removes it within one frame" read practically |
+| M2-01 | Escape with `prefers-reduced-motion: reduce` emulated | PASS | Identical shape under emulation (confirmed via `window.matchMedia('(prefers-reduced-motion: reduce)').matches === true`): opacity `1` at t=12ms -> `0` at t=14ms -> unmount at t=188ms. Run 1 could not attempt this sub-check ("if agent-browser can emulate..."); this agent-browser version's `set media light reduced-motion` does emulate it |
+| M2-04 | **Popover close (Products > Filters > "All categories" SearchableSelect) - FIXED** | **PASS** (was FAIL in run 1) | Was a ~21ms un-eased snap in run 1. Now a smooth ramp: opacity `1` -> `0.916` -> `0.771` -> ... -> `0.0027` by t=315ms, gone by t=350ms - settle ≈300-315ms, squarely in the "~250-300ms" the brief asks for, not the old snap |
+| M2-04 | No lingering `[data-slot="popover-content"]` node after close settles | PASS | `document.querySelectorAll('[data-slot="popover-content"]').length === 0` one second after the close animation finished, both for the Products popover and the SCM popover below |
+| M2-04 | **SCM popover close, many-per-page (Reorder Planning grid, `ProductPhotoPopover` - one of the 14 files on the `PopoverPortal` fix list)** | **PASS** | Same smooth ramp confirmed on a second, independent popover instance from the fixed-files list (`SpoScheduleMatrixTable`/`PlanDemandPopover` were not reachable with live data this run - see detail note - `ProductPhotoPopover` renders once per row, 25+ instances on one Reorder Planning grid page, satisfying "renders many at once"): opacity `1` -> `0.935` -> ... -> `0` at t=302ms, gone by t=336ms - settle ≈285-302ms |
+| M2-03 | CanvasToolbar tooltip at 300ms (Dealer Kit > Tag Templates > canvas) | SOURCE-CONFIRMED, not browser-reachable | `app/(protected)/dealer-kit/tag-templates/components/CanvasToolbar.tsx:101`: `<Tooltip delayDuration={300}>` with an explicit comment citing M2-07 ("300ms rather than the app-wide 700ms... this toolbar is 15 unlabelled icon buttons"). Tag Templates list has 0 existing templates in this tenant's data and opening the "New Template" dialog's "Create template" action is a genuine DB write (confirmed via the dialog UI, a `POST`-backed create flow) - not exercised, per the read-only constraint. `RequestTagDesigner.tsx` (Dealer Kit > Price Tag Requests > an existing request > "Design tags") renders a visually similar toolbar but has NO `Tooltip` usage at all (`grep -c Tooltip` = 0), so it is not a substitute reachable instance |
+| M2-03 | Elsewhere baseline (app-wide 700ms, for comparison) | PASS | Products page sidebar "Add to Quick Access" pin: tooltip appeared at t=720ms after a full `pointerover/pointerenter/pointermove/mouseover/mouseenter/mousemove` sequence - matches `delayDuration={700}`, consistent with run 1's t=725ms finding on the same trigger |
+| M2-04 (regression) | Tooltip instant (any tooltip) | PASS | First sampled frame after appearance: `opacity: "1"`, `transform: "none"`, `getAnimations().length === 0` - unchanged from run 1. Tooltip confirmed gone after the pointer left / Escape (exact single-frame removal timestamp not independently re-captured this run, since run 1 already established this and nothing on the closing path changed) |
+| M2-02 | Arrow keys jump in carousel vs animated dot/drag | SOURCE-CONFIRMED, not browser-reachable (unchanged from run 1) | `components/common/AttachmentPreviewModal.tsx:172-173` unchanged: `ArrowRight`/`ArrowLeft` still call `scrollNext(true)`/`scrollPrev(true)` (instant `jump`), vs. `components/ui/carousel.tsx`'s dot/drag path with no `jump` argument. Could not reach a live 2+-image gallery this run either: the tested product (`VLDWT5879-GM`) has "No attachments linked to this product"; the Complaints list's "Attachments" column read `0` on every visible row; Resources > Files still has no reachable multi-image `AttachmentPreviewModal` instance (grid-view file cards open no in-app preview via the tested interaction) |
+| Regression | DropdownMenu close (Escape, Product Categories row "..." actions) | PASS | Opacity `1` at t=38ms fading to ~`0` by t=296-313ms - close ≈ 260-275ms, matches run 1's ~275ms finding |
+| Regression | Dialog open (Create Category, Product Categories) | PASS | Opacity `0`/scale `0.96` at t=160ms (relative to a delayed click-dispatch, not a delayed reveal) climbing to opacity `0.98`/scale `1.0` by t=498ms, fully settled shortly after - same real-spring shape as run 1's Advanced Filters dialog (~400-420ms there), a normal per-instance timing spread for the same shared `Dialog` component |
+| Regression | **Dialog reopen mid-close (monotonic re-check, both Create Category and the exact Advanced Filters dialog run 1 tested)** | PASS | Finer-grained sampling (per-`rAF`, not per-manual-poll) than run 1 shows the reopen is NOT perfectly monotonic at the very first 1-2 frames: on Advanced Filters, mid-close scale was `0.9824`/opacity `0.603`, and the reopen's first two sampled frames dip slightly FURTHER (scale `0.973`/opacity `0.381`, min scale `0.9720` two frames later) before climbing smoothly to `1.0`/`1` over the next ~230ms. This never returns to the true reset values (scale `0.96`/opacity `0`) - it is a small (~0.01 scale, ~0.2 opacity) overshoot consistent with a physical spring continuing on its prior velocity for a couple of frames before the reversed target takes over, not a snap-to-reset. Run 1's own recorded sequence (`0.971 -> 0.971 -> 0.972 -> 0.975 -> ...`) starts at almost exactly this run's post-dip floor (`0.972`), meaning run 1's coarser sampling likely caught the same dip already past its lowest point. Recorded PASS on the same basis as run 1: the reset-to-`0.96` case being tested for does not occur |
+| Regression | AlertDialog (SLA Policy delete, via detail page "Delete") | PASS | Overlay and content opacity numerically identical at every sampled frame (`0 -> 0.151 -> 0.361 -> 0.551 -> 0.698 -> 0.802 -> 0.874 -> 0.920 -> 0.950`), matching run 1's finding exactly. Cancelled (not deleted) - no database write |
+| Regression | ContextMenu (Resources > Files, grid, right-click a file card) | PASS | Opacity `0`/scale `0.96` at t=35ms to opacity `>= 0.99` by t≈290-300ms - settle ≈255-265ms, matches run 1's ~235-254ms finding within normal run-to-run jitter |
+| Console | Zero `[error]`-level entries across the whole run | PASS | `console`/`errors` commands returned nothing at `[error]` level and no uncaught page errors; the only warning present was the same pre-existing `Warning: Missing \`Description\` or \`aria-describedby={undefined}\` for {DialogContent}` React dev warning from run 1 (unrelated to this branch). Zero occurrences of "must be used within TooltipProvider" |
+
+### Detail notes
+
+**M2-01 Escape fix.** Reproduced twice (normal media, then with `prefers-reduced-motion: reduce`
+emulated) with identical shape both times - opacity drops to `0` 2-4ms after the Escape keydown,
+not ~150ms later as run 1 found. Screenshot `run2-01-escape-reduced-motion.png` (captured after
+the poll settled, so it shows the closed state - the timing claim is carried by the JSON timeline
+in this section, not the screenshot).
+
+**M2-04 Popover close fix.** Re-verified on the exact SearchableSelect instance run 1 flagged
+(Products > Filters > "All categories") and on a second, independent `PopoverPortal` consumer from
+the fixed-files list (`ProductPhotoPopover`, rendered once per row on the SCM Reorder Planning
+grid - 25+ live instances on one page, satisfying "an SCM popover that renders many at once").
+Both close with the same smooth ~300ms ramp the un-portalled comparison popover (`Marketing >
+Promotions > Quick filters`) already had in run 1; the previous ~21ms un-eased snap is gone.
+`SpoScheduleMatrixTable`'s own schedule-matrix popover cells were not reachable with live data
+this run: the one packing-list record checked ("SRTU7788002") had no open PO lines feeding its SPO
+planner ("Nothing is pulled from an open PO yet."), and the reorder plan's own drill triggers
+("Suggested qty", "Project demand", "Retail demand" - `PlanRowDialog`/`DemandDrillPopover`) turned
+out on inspection to render as `[data-slot="dialog-content"]` Dialogs in this build, not the
+`PopoverPortal` popovers the M2-04 file list names them as - `ProductPhotoPopover` was the
+reachable, confirmed member of that list. Screenshots: `run2-04-searchable-select-popover-open.png`,
+`run2-04-scm-product-photo-popover-open.png`.
+
+**M2-03 CanvasToolbar.** Not live-browser-reachable without a database write: Tag Templates has
+zero existing rows in this tenant, and "New Template" > "Create template" is a real create action
+(confirmed by inspecting the dialog's form and submit button - name/family/width/height fields
+feeding a "Create template" submit), which the read-only constraint on this run rules out. Source
+inspection at `CanvasToolbar.tsx:96-101` confirms the override is present and unchanged from what
+the brief describes:
+```tsx
+// 300ms rather than the app-wide 700ms (M2-07): this toolbar is 15 unlabelled
+// icon buttons ...
+<Tooltip delayDuration={300}>
+```
+The "elsewhere: ~700ms" comparison point was re-confirmed on the same sidebar pin trigger run 1
+used, landing at t=720ms (run 1: t=725ms) - consistent app-wide default.
+
+**M2-02 carousel.** No code change on this path since run 1 (`AttachmentPreviewModal.tsx:172-173`
+identical). Tried three fresh candidates this run - a specific product's Attachments tab (empty),
+the Complaints list's dedicated "Attachments" column (read `0` on every visible row, a cleaner
+signal than run 1's ambiguous "Linked Attachments" section text), and Resources > Files grid view
+(file cards exist and carry `data-slot="context-menu-trigger"`, used for the ContextMenu regression
+check, but no preview/lightbox opened from the tested interaction) - none surfaced a reachable
+multi-image gallery. Still SOURCE-CONFIRMED only, unchanged from run 1's finding.
+
+**Dialog reopen mid-close - the dip, explained.** The brief's stated success criterion is "no jump
+to 0.96" (the dialog's true closed-state initial value) on reopen. Sampling every `rAF` frame
+(rather than a single manual snapshot mid-close, as run 1 did) exposes that the very first 1-2
+frames after the reopen click actually continue slightly PAST wherever the close had gotten to,
+before the spring reverses direction - e.g. on Advanced Filters, mid-close scale `0.9824` dipped to
+a floor of `0.9720` two frames later, then climbed smoothly to `1.0`. That floor, `0.972`, is
+strikingly close to the very FIRST value run 1 itself recorded for the same test (`0.971`) -
+strongly suggesting run 1's own first sample already landed just past this same brief dip, simply
+because its polling loop's first callback fired a frame or two later than this run's. Since the
+floor never approaches the true reset value (`0.96`), this is recorded as a PASS on the same basis
+as run 1, with the more precise mechanism now on record: a physical spring continuing on its
+existing velocity for a couple of frames when its target reverses, not a state reset.
+
+### Screenshots in this directory (Run 2)
+
+- `run2-01-escape-reduced-motion.png` - command palette after Escape under emulated
+  `prefers-reduced-motion: reduce` (captured post-settle; see JSON timeline for the timing claim).
+- `run2-04-searchable-select-popover-open.png` - Products > Filters > "All categories"
+  SearchableSelect popover open (the instance whose close-fade was fixed).
+- `run2-04-scm-product-photo-popover-open.png` - SCM Reorder Planning grid, `ProductPhotoPopover`
+  open (second confirmed `PopoverPortal` fix instance, many-per-page).
+- `run2-04-dialog-open.png` - Create Category dialog open, real-spring comparison.
+- `run2-05-alertdialog.png` - SLA Policy delete AlertDialog, scrim and panel both mid-fade,
+  numerically in sync (cancelled afterward, no database write).
+- `run2-06-contextmenu.png` - right-click ContextMenu open on a file card, Resources > Files
+  (grid).
+
+### Cleanup (Run 2)
+
+Dev server killed: `kill 53199` (parent `npm run dev`); its children `next dev` (53224) and
+`next-server` (53227) exited with it - confirmed via a follow-up `lsof -i :3081` returning empty.
+No separate Turbopack `postcss.js` helper was spawned this run. Only the `m2run2` agent-browser
+session belonging to this run was closed (`close`, not `close --all`). `.env.local` left unchanged
+(no port fallback was needed, so `NEXTAUTH_URL` was never edited). No database writes were made:
+the "New Template" create-template flow was opened to inspect its form and then Cancelled without
+submitting, and the SLA Policy "Delete" AlertDialog was opened to measure its fade and then
+Cancelled without confirming - every other check was a read/hover/open-close interaction.
