@@ -719,13 +719,15 @@ def test_the_outstanding_book_never_revives_a_history_line(db):
     `scm.po_ordered_v` as an order still to arrive, permanently, and destroys the quantity
     the file actually stated.
 
-    It became reachable in S5. `_closed_line` matches on (header, product, warehouse, date),
-    and history lines used to carry NULL for the last two - the structured PO + SPO export
-    states both, so the equality now matches.
+    It became reachable in S5. `_preload_closed_lines` / `_match_closed_line` (the per-row
+    `_closed_line` query they replaced, S5 review round 1) match on (header, product,
+    warehouse, date), and history lines used to carry NULL for the last two - the structured
+    PO + SPO export states both, so the equality now matches.
 
-    MUTATION PROOF: drop `source_system.notin_(HISTORY_SOURCE_SYSTEMS)` from `_closed_line`
-    and this test fails on all three counts - the history line goes open, its ordered
-    quantity becomes 50, and the outstanding channel's own line is never inserted.
+    MUTATION PROOF: drop `source_system.notin_(HISTORY_SOURCE_SYSTEMS)` from
+    `_preload_closed_lines` and this test fails on all three counts - the history line goes
+    open, its ordered quantity becomes 50, and the outstanding channel's own line is never
+    inserted.
     """
     from app.services.scm import outstanding_import_service as outstanding
     from app.services.scm.outstanding_reader import PO

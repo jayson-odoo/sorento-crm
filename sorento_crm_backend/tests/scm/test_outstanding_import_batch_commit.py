@@ -24,11 +24,15 @@ from datetime import date
 import pytest
 from sqlalchemy import event, text
 
+from app.database import SessionLocal
 from app.services.scm import outstanding_import_service as svc
-from app.services.scm.outstanding_reader import SO
+from app.services.scm.outstanding_reader import PO, SO
 from tests._pg_fixture import pg_session
 from tests.scm._outstanding_workbooks import (
     MARKER,
+    PO_MINIMAL,
+    po_minimal_row,
+    po_workbook,
     require_aliases,
     so_headers,
     so_row,
@@ -241,25 +245,264 @@ def test_a_200_row_reupload_that_closes_and_reprices_runs_no_select_per_row(db):
     )
 
 
+def test_3000_documents_query_count_and_param_ceiling_do_not_scale_with_document_count(db):
+    """C1 (header lookup) and S5 (the remaining unbounded `IN (...)` lists) together, at a
+    scale neither survives unfixed: 3,000 pre-existing documents, restated IDENTICALLY.
+
+    A re-upload, not a first-time book, deliberately: creating 3,000 brand new headers
+    always costs 3,000 INSERTs (and a follow-up UPDATE apiece for the header-level columns
+    the header loop sets after creating one) REGARDLESS of C1 or S5 - that write cost was
+    never these fixes' target and a test that could not tell the two apart would chase a
+    number no amount of query-bulking can move. Restating the SAME book unchanged isolates
+    exactly the READ side C1/S5 touch: SQLAlchemy's own dirty tracking skips the UPDATE
+    when nothing on an existing header actually changed, so what is left to count is the
+    header LOOKUP and the diff's own preloads.
+
+    Before C1, the header sub-loop ran one `SELECT ... WHERE so_number = :n` per document -
+    3,000 statements for this file alone, not the "few per batch" S5 promises. Before S5,
+    `_existing_lines` / `_header_state` / `_demand_state` each hand their FULL document set
+    to one `IN (...)` - a single statement with 3,000 document numbers, comfortably over the
+    1,000-bound-parameter ceiling the prod trace shipped. `_DOCUMENT_BATCH` (500) means this
+    file is 6 batches; C1's bulk header lookup is one query per batch (6), not one per
+    document (3,000).
+    """
+    tag = uuid.uuid4().hex[:8].upper()
+    items = _seed_products(db, 5, tag)
+    docs = [f"{MARKER}-BATCH-3K-{tag}-{i:05d}" for i in range(3000)]
+
+    data = workbook(
+        [_open_row(doc, items[i % len(items)], 3) for i, doc in enumerate(docs)],
+        headers=HEADERS,
+    )
+
+    seeded = svc.apply(db, data, SO)
+    assert seeded["ok"] and seeded["applied"]["added"] == 3000, seeded
+
+    seen, engine, tap = _query_log(db)
+    try:
+        out = svc.apply(db, data, SO)  # the SAME file again, byte for byte
+    finally:
+        event.remove(engine, "before_cursor_execute", tap)
+
+    assert out["ok"], out
+    assert out["applied"]["unchanged"] == 3000, out["applied"]
+
+    statements = [s for s, _p in seen]
+    assert len(statements) < 100, (
+        f"apply() ran {len(statements)} statements re-uploading 3,000 unchanged documents "
+        f"(C1: one bulk header lookup per batch, not one SELECT per document): "
+        f"{statements[:5]}..."
+    )
+
+    worst = _worst_select_param_count(seen)
+    assert worst <= 1000, (
+        f"a SELECT carried {worst} bound parameters over 3,000 documents; the document-"
+        "number IN lists in _existing_lines / _header_state / _demand_state must chunk "
+        "(S5 review round 1) rather than hand their whole set to one statement"
+    )
+
+
 # --------------------------------------------------------------------------- #
-# AC-5.3: batched commit resilience
+# C5 (review round 1b): the closed-line matcher self-enforces via line_status
 # --------------------------------------------------------------------------- #
 
-def test_a_failure_partway_through_leaves_earlier_batches_committed(db, monkeypatch):
+def test_two_identical_rows_in_one_batch_cannot_revive_the_same_closed_line_twice(db):
+    """`_match_closed_line` checks `line_status == "closed"` on the LIVE candidate object
+    (C5), so a line an earlier match in this SAME batch already reopened is excluded from a
+    second match by that same attribute - no separate bookkeeping needed for the reopen
+    case. One pre-existing CLOSED line, two identical incoming rows in one upload (neither
+    settled, so both want to REOPEN, not merely restate-and-keep-closed): the first revives
+    it, the second must insert its own line rather than reviving the SAME row twice - which
+    would silently fold the second row's quantity onto the first and lose a line.
+    """
+    from app.models.order import SalesOrder, SalesOrderLine
+
+    tag = uuid.uuid4().hex[:8].upper()
+    items = _seed_products(db, 1, tag)
+    item = items[0]
+    doc = f"{MARKER}-BATCH-DUPREVIVE-{tag}"
+
+    product_id = db.execute(
+        text("SELECT id FROM products WHERE product_code = :c"), {"c": item}
+    ).scalar()
+
+    order = SalesOrder(id=str(uuid.uuid4()), so_number=doc, status="open")
+    db.add(order)
+    db.flush()
+    closed_line = SalesOrderLine(
+        id=str(uuid.uuid4()), sales_order_id=order.id, product_id=product_id,
+        warehouse_id=None, qty_ordered=9, qty_delivered=9, required_date=DUE,
+        line_status="closed",
+    )
+    db.add(closed_line)
+    db.flush()
+    closed_line_id = str(closed_line.id)
+
+    # Two rows, same item/location/date, neither settled - both want the SAME closed
+    # candidate (header, product) with no location and the same date to revive.
+    data = workbook([_open_row(doc, item, 4), _open_row(doc, item, 6)], headers=HEADERS)
+
+    out = svc.apply(db, data, SO)
+
+    assert out["ok"], out
+    assert out["applied"]["added"] == 2, out["applied"]  # one revive, one fresh insert
+
+    rows = db.execute(text(
+        "SELECT id, (qty_ordered - qty_delivered) AS outstanding, line_status "
+        "FROM sales_order_lines WHERE sales_order_id = :o"
+    ), {"o": order.id}).all()
+
+    assert len(rows) == 2, (
+        f"expected the revived line plus one new line, got {rows} - a second revival of "
+        "the same closed line would leave only one row"
+    )
+    assert sorted(float(r.outstanding) for r in rows) == [4.0, 6.0], rows
+    assert all(r.line_status == "open" for r in rows)
+    ids = {str(r.id) for r in rows}
+    assert closed_line_id in ids, "the originally closed line must be one of the two - reopened"
+    assert len(ids) == 2, "the two rows must be genuinely different database rows"
+
+
+# --------------------------------------------------------------------------- #
+# AC-5.2 / S3 (review round 1): processed_rows moves DURING a run, on a real ImportJob
+# --------------------------------------------------------------------------- #
+
+def test_processed_rows_moves_before_the_job_completes(db, monkeypatch):
+    """A real `ImportJob` row, `apply()` driven through an `ImportOutcome(bump_job_progress=
+    True)`, `_DOCUMENT_BATCH` shrunk to 2 so a 6-document file spans three batches - and
+    `job.processed_rows` is snapshotted after every `outcome.flush(publish=True)` call
+    `apply()` makes. This test never calls `job_service.complete_job`, so any bump it
+    observes proves the card moves WHILE the job runs, not only once at the end.
+
+    The recorder's own session is bound to `db`'s connection rather than a real
+    `SessionLocal()`: `ImportOutcome.flush()` opens and commits its OWN session each call,
+    and a genuinely separate connection would never see this test's own uncommitted seed
+    data - binding to the SAME connection makes its commits savepoint releases in the same
+    sandbox `db` itself uses, so a read straight off `db` (via `db.refresh`) sees them.
+    """
+    from sqlalchemy.orm import Session as SASession
+
+    from app.models.job import ImportJob, JobStatus
+    from app.services.import_outcome import ImportOutcome
+
+    monkeypatch.setattr(svc, "_DOCUMENT_BATCH", 2)
+    tag = uuid.uuid4().hex[:8].upper()
+    items = _seed_products(db, 2, tag)
+    docs = [f"{MARKER}-BATCH-PROGRESS-{tag}-{i}" for i in range(6)]
+    data = workbook(
+        [_open_row(doc, item, 5) for doc in docs for item in items], headers=HEADERS)
+
+    job = ImportJob(id=uuid.uuid4(), job_id=str(uuid.uuid4()),
+                    job_type="outstanding_so_import", status=JobStatus.STARTED.value,
+                    user_id=str(uuid.uuid4()))
+    db.add(job)
+    db.flush()
+
+    outcome = ImportOutcome(
+        job.id, session_factory=lambda: SASession(bind=db.get_bind()),
+        bump_job_progress=True,
+    )
+    seen_progress: list[int] = []
+    real_flush = outcome.flush
+
+    def _watched_flush(*args, **kwargs):
+        real_flush(*args, **kwargs)
+        if kwargs.get("publish"):
+            db.refresh(job)
+            seen_progress.append(job.processed_rows)
+
+    monkeypatch.setattr(outcome, "flush", _watched_flush)
+
+    out = svc.apply(db, data, SO, outcome=outcome)
+
+    assert out["ok"], out
+    assert len(seen_progress) == 3, (
+        f"expected one publish per document batch (3), saw {seen_progress}"
+    )
+    assert seen_progress == sorted(seen_progress) and seen_progress[0] > 0, (
+        f"processed_rows must appear, then only grow, batch by batch: {seen_progress}"
+    )
+    assert job.processed_rows == seen_progress[-1] > 0, (
+        "the job row itself must already reflect the bump - no complete_job call happened "
+        "in this test at all"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# AC-5.3: batched commit resilience (review round 1, B4 - two REAL sessions)
+# --------------------------------------------------------------------------- #
+#
+# `pg_session()` wraps every test in one outer transaction, so `db.commit()` inside it is a
+# SAVEPOINT release, not a durable commit - a `rollback()` after the savepoint was released
+# still undoes it (Postgres SAVEPOINT semantics: released, not durable, until the OUTER
+# transaction itself commits). That makes it the wrong tool for proving `apply()` actually
+# calls `db.commit()` rather than `db.flush()`: both would look identical from inside the
+# same wrapped transaction. These two tests use `SessionLocal()` directly instead - two
+# independent connections against the real database, so only a commit the FIRST session
+# genuinely issued is visible to the SECOND - and clean up everything they wrote by hand,
+# scoped to a `ZZTBATCH-<hex>` marker no other row can collide with, in a `finally:` that
+# runs whether the test passes or fails.
+
+
+def _cleanup_real(marker: str) -> None:
+    """Delete every row a dual-session test created, by MARKER, on its own session."""
+    db = SessionLocal()
+    try:
+        db.execute(text(
+            "DELETE FROM sales_order_lines WHERE sales_order_id IN "
+            "(SELECT id FROM sales_orders WHERE so_number LIKE :m)"
+        ), {"m": f"{marker}%"})
+        db.execute(text("DELETE FROM sales_orders WHERE so_number LIKE :m"), {"m": f"{marker}%"})
+        db.execute(text(
+            "DELETE FROM purchase_order_lines WHERE purchase_order_id IN "
+            "(SELECT id FROM purchase_orders WHERE po_number LIKE :m)"
+        ), {"m": f"{marker}%"})
+        db.execute(text("DELETE FROM purchase_orders WHERE po_number LIKE :m"),
+                  {"m": f"{marker}%"})
+        db.execute(text("DELETE FROM products WHERE product_code LIKE :m"), {"m": f"{marker}%"})
+        db.execute(text("DELETE FROM suppliers WHERE supplier_code LIKE :m"),
+                  {"m": f"{marker}%"})
+        db.execute(text("DELETE FROM product_categories WHERE category_code LIKE :m"),
+                  {"m": f"{marker}%"})
+        db.execute(text("DELETE FROM units_of_measure WHERE uom_code LIKE :m"),
+                  {"m": f"{marker}%"})
+        db.commit()
+    finally:
+        db.close()
+
+
+def _seed_products_real(db, count: int, marker: str) -> list[str]:
+    from app.models.product import Product, ProductCategory, UnitOfMeasure
+
+    require_aliases(db, SO)
+    cat = ProductCategory(id=str(uuid.uuid4()), category_code=f"{marker}-CAT",
+                          category_name="bench category")
+    uom = UnitOfMeasure(id=str(uuid.uuid4()), uom_code=f"{marker}-U", uom_name="pcs")
+    db.add_all([cat, uom])
+    db.flush()
+    codes = [f"{marker}-{i:04d}" for i in range(count)]
+    for code in codes:
+        db.add(Product(id=str(uuid.uuid4()), product_code=code, product_name=code,
+                       category_id=cat.id, base_uom_id=uom.id, list_price=0,
+                       is_active=True, is_discontinued=False))
+    db.flush()
+    return codes
+
+
+def test_a_failure_partway_through_leaves_earlier_batches_committed(monkeypatch):
     """Simulates a worker killed mid-run: `_DOCUMENT_BATCH` is shrunk to 2 documents so a
     6-document file spans three batches, and the third batch's own preload is made to raise.
     The first two batches' `db.commit()` calls already returned by the time that happens, so
-    their documents and lines must survive - re-applying the full file afterwards must not
-    duplicate them.
-    """
-    tag = uuid.uuid4().hex[:8].upper()
-    items = _seed_products(db, 2, tag)
-    docs = [f"{MARKER}-BATCH-KILL-{tag}-{i:02d}" for i in range(6)]
+    their documents and lines must survive - checked from a SECOND, independent session, so
+    only a real commit counts - and re-applying the full file afterwards must not duplicate
+    them.
 
-    data = workbook(
-        [_open_row(doc, item, 8) for doc in docs for item in items],
-        headers=HEADERS,
-    )
+    Mutation-sensitive by construction: replace the batch loop's `db.commit()` with
+    `db.flush()` and `committed` below comes back empty - a flush alone is invisible to the
+    second connection, so the first assertion fails.
+    """
+    marker = f"ZZTBATCH-{uuid.uuid4().hex[:8].upper()}"
+    docs = [f"{marker}-D{i:02d}" for i in range(6)]
 
     monkeypatch.setattr(svc, "_DOCUMENT_BATCH", 2)
     real_preload = svc._preload_closed_lines
@@ -273,37 +516,148 @@ def test_a_failure_partway_through_leaves_earlier_batches_committed(db, monkeypa
 
     monkeypatch.setattr(svc, "_preload_closed_lines", _boom)
 
-    with pytest.raises(RuntimeError, match="simulated worker kill"):
-        svc.apply(db, data, SO)
-    # No `db.rollback()` here: `_boom` raises before touching the database at all, so the
-    # session's transaction is not in an aborted state - exactly like production, where
-    # `_run_scm_upload_job`'s `except: db.rollback()` only ever discards a batch that never
-    # reached its own commit. Calling `rollback()` on this SAVEPOINT-backed test session
-    # would undo the earlier batches' ALREADY-RELEASED savepoints too (Postgres SAVEPOINT
-    # semantics: released, not durable, until the outer transaction itself commits) - a
-    # property of the test harness's isolation trick, not of `apply()`.
+    try:
+        db_write = SessionLocal()
+        try:
+            items = _seed_products_real(db_write, 2, marker)
+            data = workbook(
+                [_open_row(doc, item, 8) for doc in docs for item in items],
+                headers=HEADERS,
+            )
+            db_write.commit()  # the catalogue is durable before the run, like a real book
 
-    def _line_count(doc: str) -> int:
-        return db.execute(text(
-            "SELECT count(*) FROM sales_order_lines sol "
-            "JOIN sales_orders so ON so.id = sol.sales_order_id "
-            "WHERE so.so_number = :n"
-        ), {"n": doc}).scalar()
+            with pytest.raises(RuntimeError, match="simulated worker kill"):
+                svc.apply(db_write, data, SO)
+            # A real rollback this time - `db_write` is a genuine, independent session (not
+            # a savepoint under a wrapping test transaction), so this discards exactly what
+            # production's `_run_scm_upload_job` except-clause discards: the current batch's
+            # own pending work, never an earlier batch that already committed.
+            db_write.rollback()
+        finally:
+            db_write.close()
 
-    committed = [doc for doc in docs if _line_count(doc) > 0]
-    assert committed == docs[:4], (
-        "the first two batches (4 documents) must be committed; the third must not be"
-    )
-    for doc in docs[4:]:
-        assert _line_count(doc) == 0
+        def _line_count(reader, doc: str) -> int:
+            return reader.execute(text(
+                "SELECT count(*) FROM sales_order_lines sol "
+                "JOIN sales_orders so ON so.id = sol.sales_order_id "
+                "WHERE so.so_number = :n"
+            ), {"n": doc}).scalar()
 
-    # Re-upload the SAME file: the survivor batches read `unchanged`, the lost one is
-    # written fresh, and nothing anywhere is duplicated.
-    out = svc.apply(db, data, SO)
-    assert out["ok"], out
+        db_read = SessionLocal()
+        try:
+            committed = [doc for doc in docs if _line_count(db_read, doc) > 0]
+            assert committed == docs[:4], (
+                "the first two batches (4 documents) must be committed, from a SECOND "
+                "session's own point of view; the third must not be"
+            )
+            for doc in docs[4:]:
+                assert _line_count(db_read, doc) == 0
+        finally:
+            db_read.close()
 
-    for doc in docs:
-        assert _line_count(doc) == len(items), (
-            f"{doc} holds {_line_count(doc)} lines after resume; a duplicate or a gap "
-            "means the resume is not idempotent"
-        )
+        # Re-upload the SAME file on a THIRD session: the survivor batches read `unchanged`,
+        # the lost one is written fresh, and nothing anywhere is duplicated.
+        db_write2 = SessionLocal()
+        try:
+            out = svc.apply(db_write2, data, SO)
+            assert out["ok"], out
+            db_write2.commit()
+        finally:
+            db_write2.close()
+
+        db_read2 = SessionLocal()
+        try:
+            for doc in docs:
+                n = _line_count(db_read2, doc)
+                assert n == len(items), (
+                    f"{doc} holds {n} lines after resume; a duplicate or a gap means the "
+                    "resume is not idempotent"
+                )
+        finally:
+            db_read2.close()
+    finally:
+        _cleanup_real(marker)
+
+
+def test_a_kill_during_a_batchs_reaction_leaves_that_batchs_lines_uncommitted_too(monkeypatch):
+    """B2/B3 extension (review round 1): the CRM-PO supersession reaction now runs INSIDE
+    each batch's own transaction, before that batch's `db.commit()` (S5 review round 1,
+    B2/B3) - so a reaction failure must roll back that batch's LINE writes too, never leave
+    them committed with the reaction silently missing. PO channel only: supersession is
+    PO-specific.
+
+    `_supersede_crm_raised_pos` is patched directly (not seeded with a real CRM-raised PO to
+    supersede - that path is covered by `test_outstanding_supersedes_crm_po.py`) so the only
+    variable under test is WHEN a reaction failure takes effect relative to the batch commit.
+    """
+    marker = f"ZZTBATCH-{uuid.uuid4().hex[:8].upper()}"
+    docs = [f"{marker}-D{i:02d}" for i in range(6)]
+    creditor = f"{marker}-CR"
+
+    monkeypatch.setattr(svc, "_DOCUMENT_BATCH", 2)
+    real_supersede = svc._supersede_crm_raised_pos
+    calls = {"n": 0}
+
+    def _boom(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 2:  # the second batch's own reaction (docs[2:4])
+            raise RuntimeError("simulated reaction failure")
+        return real_supersede(*args, **kwargs)
+
+    monkeypatch.setattr(svc, "_supersede_crm_raised_pos", _boom)
+
+    try:
+        db_write = SessionLocal()
+        try:
+            items = [f"{marker}-ITM{i}" for i in range(2)]
+            require_aliases(db_write, PO)
+            from app.models.product import Product, ProductCategory, UnitOfMeasure
+
+            cat = ProductCategory(id=str(uuid.uuid4()), category_code=f"{marker}-CAT",
+                                  category_name="bench category")
+            uom = UnitOfMeasure(id=str(uuid.uuid4()), uom_code=f"{marker}-U", uom_name="pcs")
+            db_write.add_all([cat, uom])
+            db_write.flush()
+            for code in items:
+                db_write.add(Product(id=str(uuid.uuid4()), product_code=code,
+                                     product_name=code, category_id=cat.id,
+                                     base_uom_id=uom.id, list_price=0, is_active=True,
+                                     is_discontinued=False))
+            db_write.flush()
+            db_write.commit()
+
+            data = po_workbook(
+                [po_minimal_row(doc, creditor, item, 8, DUE, "")
+                 for doc in docs for item in items],
+                headers=PO_MINIMAL,
+            )
+
+            with pytest.raises(RuntimeError, match="simulated reaction failure"):
+                svc.apply(db_write, data, PO)
+            db_write.rollback()
+        finally:
+            db_write.close()
+
+        def _po_line_count(reader, doc: str) -> int:
+            return reader.execute(text(
+                "SELECT count(*) FROM purchase_order_lines pol "
+                "JOIN purchase_orders po ON po.id = pol.purchase_order_id "
+                "WHERE po.po_number = :n"
+            ), {"n": doc}).scalar()
+
+        db_read = SessionLocal()
+        try:
+            # The first batch's reaction ran clean and committed with its lines; the SECOND
+            # batch's reaction raised, so THAT batch's lines must be gone too, not sitting
+            # committed with no matching reaction outcome - and the third batch never ran.
+            assert _po_line_count(db_read, docs[0]) > 0
+            assert _po_line_count(db_read, docs[1]) > 0
+            for doc in docs[2:]:
+                assert _po_line_count(db_read, doc) == 0, (
+                    f"{doc}'s lines are committed even though its batch's own reaction "
+                    "failed - lines and reactions are no longer atomic per batch"
+                )
+        finally:
+            db_read.close()
+    finally:
+        _cleanup_real(marker)
